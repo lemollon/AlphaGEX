@@ -1118,6 +1118,211 @@ All data below is from BEFORE the fixes deployed Feb 15 ~20:00 UTC.
 
 ---
 
-*Last Updated: February 15, 2026*
+## Common Mistakes to Avoid
+
+These are real, recurring bugs from our codebase history. Every single item below caused a production issue at least once. AI assistants MUST review this section before making changes.
+
+### 1. Equity Curve / Snapshot Bugs (11 fixes — Most Recurring)
+- **Never use per-trade P&L for equity curves** — always use CUMULATIVE running sum of realized_pnl
+- **Every bot MUST save equity snapshots every cycle** — if snapshots aren't saved, intraday equity charts are blank
+- **Equity chart endpoints must query the DATABASE directly** — never require the Trader class to be initialized (e.g., use `JubileeDatabase` not `JubileeICTrader`)
+- **Always add a "live snapshot fallback"** — if no snapshots exist yet today, calculate one from open positions so the chart is never blank
+- **Intraday chart must draw a LINE from open to now** — a single dot is useless; always have at least 2 data points (market open + current)
+- **Filter equity curves by instrument** when the bot trades multiple instruments (VALOR lesson)
+- **Never return an empty chart without explanation** — show "No closed trades yet" or similar, not a blank screen
+- **Historical equity must query ALL closed trades** — no date filter on SQL; filter the output only
+
+### 2. Position Closing / Stranded Positions (10 fixes)
+- **Always implement EOD (End of Day) position closing** — positions left open overnight cause accounting nightmares
+- **EOD closers MUST have fallback logic** — if a 4-leg spread close is rejected, fall back to 2x 2-leg spreads, then 4 individual legs (cascade)
+- **Handle "quotes unavailable" in close logic** — if you can't get a quote, don't crash; use last known price or market order
+- **Detect stale/overnight holdover positions** — add catch-up logic that finds positions that should have been closed yesterday
+- **Close ALL positions before market close on Fridays** — never hold 0DTE/1DTE over the weekend
+- **Implement orphan detection** — positions can exist at the broker but not in the database (or vice versa); reconcile regularly
+- **Add a close-only mode** — when things go wrong, the bot should be able to only close positions without opening new ones
+- **Track stranded positions** — if 5 positions are stuck open, you need a SQL script or API to force-close them
+
+### 3. Trader Initialization Failures (6 fixes)
+- **Never let data/read endpoints depend on Trader class initialization** — if the Trader fails to init (bad config, missing API key), ALL endpoints return 500s, even read-only ones like `/positions` or `/equity-curve`
+- **Decouple data endpoints from trading logic** — use the Database class directly for read operations
+- **If Trader init fails, the scheduler job must still register** — don't skip scheduling just because init threw an exception; use lazy re-initialization
+- **Add heartbeat logging** — if a bot is silently dead, you won't know without periodic "I'm alive" logs
+- **Never fatal re-raise in `_ensure_tables()`** — if table creation fails, log it and continue; crashing here kills the entire bot
+- **Add emergency checks** — a bot should detect if it's been down for hours and take recovery actions
+
+### 4. TypeScript / Frontend Build Failures (7 fixes)
+- **Never spread a `Set` in TypeScript** — `[...mySet]` and `Set` iteration cause build failures; use `Array.from()` or plain arrays
+- **Always handle `null`/`undefined` in TypeScript** — add null guards before accessing nested properties (especially in chart components and timestamps)
+- **Type `catch` errors as `unknown`, not `Error`** — TypeScript strict mode rejects `(error as Error).message`; use type narrowing
+- **Don't forget to copy static assets** in standalone Next.js builds — CSS/images will be missing in production
+- **Enable `output: 'standalone'`** in `next.config.js` for Render deployments — default builds don't work
+- **Always add missing helper functions** — if you reference `isMarketOpen()` in a page, make sure it's imported or defined; one missing helper = build fails
+- **Run `npm run build` before pushing frontend changes** — TypeScript catches errors at build time that dev mode ignores
+
+### 5. Timezone Bugs (5 fixes)
+- **ALL timestamps must be Central Time (America/Chicago)** — never display UTC or server time to the user
+- **Use `::timestamptz AT TIME ZONE 'America/Chicago'`** in SQL queries — raw `timestamp` columns will show wrong times
+- **Chart X-axes must format in CT** — a chart showing UTC confuses every trading decision
+- **Tooltip times must be formatted in CT** — even if the chart axis is correct, tooltips can still show UTC
+- **Session windows must be consistent across ALL files** — VALOR had overnight session defined as 5PM-3PM in one file and different in another
+
+### 6. NULL Database Values Crashing Everything (6 fixes)
+- **Always handle NULL `realized_pnl`** — open positions have NULL P&L; if you sum without `COALESCE`, you get NULL instead of a number
+- **Backfill NULL columns after schema changes** — adding a new column leaves all existing rows as NULL; write a migration to set defaults
+- **Frontend must null-guard ALL API response fields** — if any field is unexpectedly null, the entire page crashes (React error boundary)
+- **Never let a single failing API call crash the whole page** — wrap each data fetch independently; one 500 shouldn't blank the dashboard
+- **Bot reports must handle 0-trade days** — if there are no trades, the report should still generate (with zeros), not crash
+- **DriftStatusCard, OracleWidget, and similar shared components MUST have null guards** — they receive data from multiple bots that may not all be running
+
+### 7. API Key / Secret Management (5 fixes)
+- **Never hardcode API keys in source code** — use environment variables exclusively (even for sandbox keys)
+- **Add `.env.local` to `.gitignore` immediately** — sandbox keys in git history are permanent
+- **Separate sandbox URLs from production URLs** — using the wrong base URL sends paper trades to your real account (or vice versa)
+- **Verify API keys are actually wired up** — a bot can appear to "work" while silently using fallback/mock data because the key env var was never set
+- **Add `node_modules` and lock files to `.gitignore` early** — committing node_modules bloats the repo permanently
+
+### 8. Broker Order Execution (Iron Condors) (7 fixes)
+- **Brokers reject spread orders unpredictably** — always implement cascade fallback: 4-leg → 2x 2-leg → 4 individual legs
+- **Use market orders for sandbox** — limit orders in sandbox accounts rarely fill, making testing impossible
+- **MTM (Mark-to-Market) must use real quotes** — verify the actual parameter names match the API; wrong param names = silently using stale/zero prices
+- **Use batch quote API, not individual calls** — individual `get_quote()` calls are slow and hit rate limits; use `get_quotes([list])` for multiple symbols
+- **OCC symbol root matters** — use `SPX` for monthly expirations, `SPXW` for weeklies; using the wrong root = order rejected
+- **Round strikes to valid intervals** — SPX uses $5 intervals; submitting $587.50 will be rejected; always `round(strike / 5) * 5`
+- **Box spread pricing: verify bid/ask leg direction** — mirroring bid/ask legs causes `mid_price = 0`, making the entire position worth nothing
+
+### 9. Frontend Performance (7 fixes)
+- **Never fire 50+ API calls on page load** — batch related endpoints into a single `/batch` endpoint
+- **Lazy-load heavy pages** — pages over 200KB should use `dynamic(() => import(...), { ssr: false })`
+- **Lazy-load the chatbot widget** — it's on every page but rarely used immediately
+- **Gate API calls behind active tab** — if a page has tabs, only fetch data for the visible tab (JUBILEE went from 19 calls to 1)
+- **Increase DB connection pool for production** — default `max=15` isn't enough when 10+ bots share one database; use `max=40, min=5`
+- **Track bundle size** — install Speed Insights; pages over 200KB need code splitting
+- **Never load ALL bot data on a dashboard** — only load data for bots the user is actively viewing
+
+### 10. Database Table & Migration Issues (7 fixes)
+- **Auto-create tables on first use** — don't assume tables exist; a fresh deploy with no migrations = instant 500s
+- **Use savepoints in migrations** — if one `CREATE TABLE` fails, don't let it poison the entire transaction
+- **Never use `DEFAULT` values in Databricks table definitions** — only PostgreSQL supports them
+- **Migration order matters** — if table B references table A, create A first; wrong order = FK constraint error
+- **Verify table names in BOT_REGISTRY match actual tables** — `titan_closed_trades` vs `titan_trades` silently returns empty results
+- **Remove legacy columns before INSERT** — if you remove columns from a table, update ALL insert statements; leaving them causes silent failures
+- **Run a `SELECT 1 FROM table LIMIT 1` health check** after table creation to verify it actually worked
+
+### 11. Hardcoded Values That Break (5 fixes)
+- **Never hardcode `starting_capital`** — read from config table; different bots/accounts have different balances
+- **Never hardcode position limits** — read from config; `max_positions` varies per ticker and per bot
+- **Never hardcode box spread notional** — use config capital, not magic numbers like `$495,000`
+- **Never hardcode paper account balances** — they change; use config or query the broker
+- **PDT rules differ between live and sandbox** — sandbox accounts have no day trade limits; don't apply PDT rules to paper trading
+
+### 12. Stale Data / Caching (5 fixes)
+- **Database config can override code config** — if you add a new ticker in code but the DB has a stale config row, the DB wins and the ticker is silently excluded
+- **Add diagnostic logging at every gate/filter** — when a trade is blocked, log WHY so you can trace stale cache vs genuine rejection
+- **Kill switches can get stuck** — always add auto-resume logic and stale detection; a kill switch activated during a crash may never deactivate
+- **Tradier cache blocks TradingVolatility data** — when Tradier returns stale after-hours data, it prevents the fallback data source from being used
+- **Freeze after-hours data** — after market close, stop updating values; otherwise stale quotes overwrite valid closing data
+
+### 13. Trading Gates That Block Everything (8 fixes — Second Most Recurring)
+- **Overly strict gates silently kill all trading** — a bot that generates 100% NO_TRADE signals is worse than useless; it looks alive but does nothing
+- **RTH-only gates block extended-hours bots** — if a bot is designed to trade overnight (VALOR), don't apply regular-trading-hours restrictions
+- **Negative gamma regime restriction was too strict** — it blocked profitable trades; Oracle should decide, not a blanket gate
+- **Negative confidence scores mean the gate math is wrong** — if confidence is negative, the formula is broken, not the market
+- **Cold start floors needed** — new bots with no history will fail confidence checks; add a minimum floor so they can start trading
+- **Test overnight signal generation separately** — overnight thresholds are different from daytime; one set of params can't serve both
+- **Quote re-fetch gates can hard-block trading** — if a quote refresh fails, don't block the trade; use the last known quote
+- **When removing gates, remove ALL related code** — dead kill switch code once caused a syntax error that crashed the entire module
+
+### 14. Market Hours & Session Handling (8 fixes)
+- **Pre-market and after-hours candles must be included** — filtering to `session=open` misses extended hours data
+- **After market close, load next trading day's data** — don't show stale today's data; switch to tomorrow's GEX
+- **Session fallback must walk past holidays** — if today is a holiday, go back day-by-day until you find a valid session
+- **When market is closed, show last session data** — never show a blank chart; always fall back to the most recent session
+- **Friday expirations need special handling** — on Fridays, trade next Friday's expiration (7 DTE) for better premium, not today's 0DTE
+- **Overnight persistence for WebSocket data** — streaming charts lose data on reconnect; persist to DB and reload
+- **Data source switching at market open** — use TradingVolatility for pre-market GEX, switch to Tradier at open
+- **Different session windows for different strategies** — VALOR uses 5PM-3PM; ARES uses 8:30AM-3:00PM; don't mix them up
+
+### 15. Wrong Method Names & Parameter Mismatches (5 fixes)
+- **Tradier API method names change** — `get_expirations()` vs `get_option_expirations()` — always verify against the actual client
+- **MTM parameter names must match the API exactly** — wrong param names are silently ignored, returning zero/stale values
+- **Database adapter methods get deprecated** — `DatabaseAdapter.execute_query()` was removed; calling dead methods crashes silently in try/except blocks
+- **Prophet vs Tradier method names differ** — when switching data providers, every method call must be updated
+- **Field names in database vs code diverge** — `jubilee_capital_deployments` had old column names from a previous schema; INSERT fails silently
+
+### 16. Chart & Visualization Iterations (10 fixes)
+- **Bar chart direction is counterintuitive** — Net GEX bars went through 5 iterations (extend right → left → right-to-left → leftward → correct); define direction FIRST before coding
+- **Y-axis range must accommodate all data** — too narrow and strikes get cut off; too wide and data looks flat
+- **Sort strikes by proximity to current price** — don't just show the first 40; show the 40 nearest the current price
+- **Reference lines (zero line, mean, etc.) disappear behind data** — set z-index / layer order explicitly
+- **GEX zone bands must update with price** — static bands become useless when price moves
+- **Tooltips must show formatted values** — raw timestamps and unformatted numbers confuse users
+- **Add countdown timers to candles** — users need to know when the next candle closes
+- **Chart backgrounds must be solid** — transparent backgrounds make charts unreadable on dark themes
+- **Test chart rendering with NO data, ONE data point, and FULL data** — each has different failure modes
+- **When migrating chart libraries (Recharts → Plotly), clean up ALL old code** — leaving dead Recharts imports increases bundle size
+
+### 17. Capital Architecture & Position Sizing (6 fixes)
+- **Box spread is the sole capital source for JUBILEE/PROMETHEUS** — IC trading capital comes from the box spread; if box spread isn't funded, IC trading is blocked
+- **Box spread opens ONCE, IC trader trades DAILY** — don't re-open box spreads every cycle
+- **Paper box spreads should auto-extend, not roll** — rolling creates unnecessary transactions in simulation
+- **Position sizing must be balance-aware** — read actual account balance, not assumed balance; multi-account live trading requires per-account sizing
+- **Kelly criterion sizing requires real data** — if the DatabaseAdapter method is dead, Kelly returns garbage; verify the data pipeline
+- **Capital deployment tables need schema alignment** — legacy columns cause INSERT failures; clean up old columns
+
+### 18. Bot Registration & Wiring (4 fixes)
+- **New bots must be registered in bot branding** — FAITH was created but not in the branding system; it showed as "Unknown Bot"
+- **New bots must be added to unified metrics** — skipping this means the bot doesn't appear on the main dashboard
+- **New bots must be added to the scheduler** — creating a bot without scheduling it = it never runs
+- **New bots must have ALL standard endpoints** — missing toggle, force-close, daily-perf, config, or advisor endpoints means incomplete functionality
+
+### 19. Destructive Auto-Resets (CRITICAL)
+- **NEVER auto-reset equity or position data** — if numbers look wrong, RECONCILE (compare DB to broker), don't wipe and restart
+- **VALOR lost all position history from an auto-reset** — this is unrecoverable
+- **Always prefer reconciliation over reset** — compare your database to the broker's records and fix discrepancies
+
+### 20. Deployment & Infrastructure (6 fixes)
+- **Next.js standalone mode is required for Render** — default Next.js builds don't include node_modules in output
+- **CSS/static assets must be copied in standalone builds** — they're not included by default
+- **Verification scripts must use external Render URLs** — `localhost` doesn't work from your machine to Render
+- **CI must pass before merge** — resolve backend test AND frontend build failures; don't merge with broken CI
+- **Always run post-deploy verification** — have a script that hits key endpoints after every deploy
+- **Databricks and Render have different SQL dialects** — `DEFAULT` values, `CREATE CATALOG`, schema syntax all differ
+
+### 21. WebSocket & Real-Time Streaming (6 fixes)
+- **WebSocket handlers need extended hours support** — `session_filter=open` misses pre-market and after-hours data
+- **Persist streaming data to DB** — WebSocket reconnects lose all in-memory data; save to database every interval
+- **Fallback to last session after hours** — streaming stops at close; show historical data instead of nothing
+- **Don't replace working chart implementations** — the Plotly candlestick chart was accidentally replaced by a LiveSpyChart; had to be reverted
+- **Test streaming with market open, closed, and pre-market** — each state has different behavior
+- **Harden every section** — one streaming audit found 7 separate failure modes; audit systematically
+
+### 22. Duplicate Work Across Branches (Pattern from git history)
+- **Check if a feature already exists on another branch** — GEX Profile page was built twice on different branches with slightly different implementations
+- **Clean up dead code when migrating** — Recharts-to-Plotly migration left dead imports on two separate branches
+- **Resolve merge conflicts carefully** — omega simulate page had import conflicts from parallel work
+- **Don't build the same feature frontend+backend on separate PRs** — scorecard was added to frontend+backend, then frontend was reverted; keep them together
+
+### 23. Multi-Instrument / Multi-Account Gotchas (5 fixes)
+- **Portfolio stats must filter by selected instrument** — showing combined stats when user selected "MES" is confusing
+- **Instrument count must be derived dynamically** — hardcoding `5 instruments` breaks when you add MGC or MSTU
+- **Pagination is required for account balance API** — Tradier returns paginated results; without pagination you get partial data
+- **Mirror trades to multiple sandbox accounts carefully** — restrict mirroring per-bot; not every bot should mirror to every account
+- **Per-instrument GEX data** — when adding new instruments (MGC), ensure GEX calculations support the new symbol
+
+### 24. Report Generation (3 fixes)
+- **Reports must generate even on 0-trade days** — skipping days creates gaps in the reporting timeline
+- **Surface trade fetch errors in reports** — if the data query fails, show the error; don't silently produce an empty report
+- **Add report diagnostics endpoint** — when reports look wrong, you need an API to inspect what data they're reading
+
+### 25. Backtest vs Production Alignment (4 fixes)
+- **Backtest defaults must match production config** — FORTRESS backtest used different parameters than live, making results meaningless
+- **Use the correct database URL** — ORAT_DATABASE_URL for backtest data, DATABASE_URL for production; mixing them up gives wrong historical data
+- **Verify code against production before running** — 8 corrections were needed on the FORTRESS backtest prompt before it was accurate
+- **Add GO/NO-GO gates** — backtest results should have explicit pass/fail criteria before going live
+
+---
+
+*Last Updated: February 26, 2026*
+*Added Common Mistakes to Avoid section (25 categories, 90+ rules from 330 commits)*
 *AGAPE-SPOT audit findings and post-fix monitoring added*
 *PROMETHEUS updated to standalone system with IC trading (no longer deploys to ARES/TITAN/PEGASUS)*
