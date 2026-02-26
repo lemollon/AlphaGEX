@@ -49,19 +49,18 @@ export async function GET(
       WHERE bot_name = $1
     `, [heartbeatName(bot)])
 
-    // faith/grace equity_snapshots use "timestamp" column, not "snapshot_time"
     const snapshotQuery = dte
       ? query(`
-          SELECT unrealized_pnl, open_positions, "timestamp" as snapshot_time
+          SELECT unrealized_pnl, open_positions, snapshot_time
           FROM ${botTable(bot, 'equity_snapshots')}
           WHERE dte_mode = $1
-          ORDER BY "timestamp" DESC
+          ORDER BY snapshot_time DESC
           LIMIT 1
         `, [dte])
       : query(`
-          SELECT unrealized_pnl, open_positions, "timestamp" as snapshot_time
+          SELECT unrealized_pnl, open_positions, snapshot_time
           FROM ${botTable(bot, 'equity_snapshots')}
-          ORDER BY "timestamp" DESC
+          ORDER BY snapshot_time DESC
           LIMIT 1
         `)
 
