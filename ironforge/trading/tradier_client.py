@@ -203,9 +203,8 @@ class TradierClient:
         order_data = {
             "class": "multileg",
             "symbol": ticker,
-            "type": "credit",
+            "type": "market",
             "duration": "day",
-            "price": f"{total_credit:.2f}",
             "option_symbol[0]": ps_occ,
             "side[0]": "sell_to_open",
             "quantity[0]": str(contracts),
@@ -274,9 +273,8 @@ class TradierClient:
         order_data = {
             "class": "multileg",
             "symbol": ticker,
-            "type": "debit",
+            "type": "market",
             "duration": "day",
-            "price": f"{close_price:.2f}",
             "option_symbol[0]": ps_occ,
             "side[0]": "buy_to_close",
             "quantity[0]": str(contracts),

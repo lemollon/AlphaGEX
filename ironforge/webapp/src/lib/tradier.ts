@@ -326,9 +326,8 @@ export async function placeIcOrderAllAccounts(
   const orderBody: Record<string, string> = {
     class: 'multileg',
     symbol: ticker,
-    type: 'credit',
+    type: 'market',
     duration: 'day',
-    price: totalCredit.toFixed(2),
     'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
     'side[0]': 'sell_to_open',
     'quantity[0]': String(contracts),
@@ -388,9 +387,8 @@ export async function closeIcOrderAllAccounts(
   const orderBody: Record<string, string> = {
     class: 'multileg',
     symbol: ticker,
-    type: 'debit',
+    type: 'market',
     duration: 'day',
-    price: closePrice.toFixed(2),
     'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
     'side[0]': 'buy_to_close',
     'quantity[0]': String(contracts),
