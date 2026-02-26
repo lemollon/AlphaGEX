@@ -622,17 +622,19 @@ class AutonomousTraderScheduler:
                 self.cornerstone_trader = None
 
         # FORTRESS V2 - SPY Iron Condors (10% monthly target)
-        # Capital: Uses AlphaGEX internal capital allocation
-        # LIVE mode: Executes trades on Tradier SANDBOX accounts (3 accounts)
+        # DISABLED: FORTRESS disconnected from sandbox accounts (Feb 27, 2026)
+        # Positions closed at market open, no new trades will be placed.
+        # To re-enable: uncomment the block below and remove this comment.
         self.fortress_trader = None
-        if FORTRESS_AVAILABLE:
-            try:
-                config = FortressConfig(mode=FortressTradingMode.LIVE)
-                self.fortress_trader = FortressTrader(config=config)
-                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
-            except Exception as e:
-                logger.warning(f"FORTRESS V2 initialization failed: {e}")
-                self.fortress_trader = None
+        # if FORTRESS_AVAILABLE:
+        #     try:
+        #         config = FortressConfig(mode=FortressTradingMode.LIVE)
+        #         self.fortress_trader = FortressTrader(config=config)
+        #         logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
+        #     except Exception as e:
+        #         logger.warning(f"FORTRESS V2 initialization failed: {e}")
+        #         self.fortress_trader = None
+        logger.info("⚠️ FORTRESS V2 DISABLED - disconnected from sandbox accounts")
 
         # SOLOMON V2 - SPY Directional Spreads
         # Uses GEX + ML signals for directional spread trading
@@ -6778,23 +6780,25 @@ class AutonomousTraderScheduler:
         # =================================================================
         # FORTRESS ML JOB: ML Advisor Training - runs WEEKLY on Sunday at 7:00 PM CT
         # Trains XGBoost classifier for Iron Condor probability predictions
+        # DISABLED: FORTRESS disconnected from sandbox accounts (Feb 27, 2026)
         # =================================================================
-        if FORTRESS_ML_AVAILABLE:
-            self.scheduler.add_job(
-                self.scheduled_fortress_ml_training_logic,
-                trigger=CronTrigger(
-                    hour=19,       # 7:00 PM CT - after GEX ML training
-                    minute=0,
-                    day_of_week='sun',  # Every Sunday
-                    timezone='America/Chicago'
-                ),
-                id='fortress_ml_training',
-                name='FORTRESS ML - Weekly ML Advisor Training',
-                replace_existing=True
-            )
-            logger.info("✅ FORTRESS ML job scheduled (WEEKLY on Sunday at 7:00 PM CT)")
-        else:
-            logger.warning("⚠️ FORTRESS ML not available - ML advisor training disabled")
+        # if FORTRESS_ML_AVAILABLE:
+        #     self.scheduler.add_job(
+        #         self.scheduled_fortress_ml_training_logic,
+        #         trigger=CronTrigger(
+        #             hour=19,       # 7:00 PM CT - after GEX ML training
+        #             minute=0,
+        #             day_of_week='sun',  # Every Sunday
+        #             timezone='America/Chicago'
+        #         ),
+        #         id='fortress_ml_training',
+        #         name='FORTRESS ML - Weekly ML Advisor Training',
+        #         replace_existing=True
+        #     )
+        #     logger.info("✅ FORTRESS ML job scheduled (WEEKLY on Sunday at 7:00 PM CT)")
+        # else:
+        #     logger.warning("⚠️ FORTRESS ML not available - ML advisor training disabled")
+        logger.info("⚠️ FORTRESS ML DISABLED - FORTRESS disconnected from sandbox accounts")
 
         # =================================================================
         # DISCERNMENT ML JOB: ML Engine Training - runs WEEKLY on Sunday at 7:30 PM CT
@@ -7003,6 +7007,23 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ TRADIER SANDBOX startup check scheduled (runs NOW)")
+
+            # =================================================================
+            # ONE-TIME: Close all sandbox positions at market open Feb 27, 2026
+            # Ensures all FORTRESS positions are closed before disconnecting.
+            # This job runs once at 8:31 AM CT and can be removed after Feb 27.
+            # =================================================================
+            feb27_open = CENTRAL_TZ.localize(datetime(2026, 2, 27, 8, 31, 0))
+            if datetime.now(CENTRAL_TZ) < feb27_open:
+                self.scheduler.add_job(
+                    self.scheduled_tradier_sandbox_eod_close,
+                    trigger='date',
+                    run_date=feb27_open,
+                    id='tradier_sandbox_feb27_open_close',
+                    name='TRADIER SANDBOX - Close All at Open (Feb 27 one-time)',
+                    replace_existing=True
+                )
+                logger.info("✅ TRADIER SANDBOX one-time close scheduled: Feb 27, 2026 at 8:31 AM CT")
         else:
             logger.warning("⚠️ TRADIER SANDBOX EOD Closer not available - sandbox positions may not auto-close")
 
