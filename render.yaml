@@ -169,6 +169,66 @@ services:
           name: alphagex-db
           property: connectionString
 
+  # SERVICE 5: IronForge FLAME Worker (2DTE Iron Condor)
+  # Paper trades SPY Iron Condors with 2 days to expiration.
+  # Scans every 5 minutes during market hours, mirrors to 3 sandbox accounts.
+  - type: worker
+    name: ironforge-flame
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    gracePeriodSeconds: 30
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r ironforge/requirements.txt
+    startCommand: cd ironforge && python jobs/run_flame.py
+    envVars:
+      - key: TZ
+        value: America/Chicago
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_ACCOUNT_ID
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_MATT
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_LOGAN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+
+  # SERVICE 6: IronForge SPARK Worker (1DTE Iron Condor)
+  # Paper trades SPY Iron Condors with 1 day to expiration.
+  # Scans every 5 minutes during market hours, paper-only (no sandbox mirrors).
+  - type: worker
+    name: ironforge-spark
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    gracePeriodSeconds: 30
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r ironforge/requirements.txt
+    startCommand: cd ironforge && python jobs/run_spark.py
+    envVars:
+      - key: TZ
+        value: America/Chicago
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_ACCOUNT_ID
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+
 # PostgreSQL Database (shared by both services)
 databases:
   - name: alphagex-db
