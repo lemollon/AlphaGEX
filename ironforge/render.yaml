@@ -1,6 +1,7 @@
 # IronForge on Render
 # ====================
-# Deploy FLAME + SPARK Iron Condor paper trading bots on Render.
+# FLAME + SPARK Iron Condor paper trading bots.
+# The scan loop runs INSIDE the Next.js webapp (no separate workers).
 
 databases:
   - name: ironforge-db
@@ -9,7 +10,7 @@ databases:
     user: ironforge
 
 services:
-  # ---- Next.js Dashboard ----
+  # ---- Next.js Dashboard + Scanner ----
   - type: web
     name: ironforge-dashboard
     runtime: node
@@ -17,6 +18,7 @@ services:
     rootDir: ironforge/webapp
     buildCommand: npm install && npm run build
     startCommand: node .next/standalone/server.js
+    healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -35,51 +37,3 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
-
-  # ---- FLAME Trading Bot (2DTE) ----
-  - type: worker
-    name: ironforge-flame
-    runtime: python
-    plan: free
-    rootDir: ironforge
-    buildCommand: pip install -r requirements.txt
-    startCommand: python jobs/run_flame.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ironforge-db
-          property: connectionString
-      - key: TRADIER_API_KEY
-        sync: false
-      # TRADIER_BASE_URL intentionally omitted — defaults to production
-      # for live quotes. Sandbox orders use Config.TRADIER_SANDBOX_URL.
-      - key: TRADIER_SANDBOX_KEY_USER
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_MATT
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_LOGAN
-        sync: false
-
-  # ---- SPARK Trading Bot (1DTE) ----
-  - type: worker
-    name: ironforge-spark
-    runtime: python
-    plan: free
-    rootDir: ironforge
-    buildCommand: pip install -r requirements.txt
-    startCommand: python jobs/run_spark.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ironforge-db
-          property: connectionString
-      - key: TRADIER_API_KEY
-        sync: false
-      # TRADIER_BASE_URL intentionally omitted — defaults to production
-      # for live quotes. Sandbox orders use Config.TRADIER_SANDBOX_URL.
-      - key: TRADIER_SANDBOX_KEY_USER
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_MATT
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_LOGAN
-        sync: false
