@@ -14,3 +14,39 @@ body {
   height: 1px;
   background: linear-gradient(90deg, transparent, rgba(245,158,11,0.4), rgba(217,119,6,0.6), rgba(245,158,11,0.4), transparent);
 }
+
+/* ── Launch Countdown — rising ember particles ────────────────── */
+.countdown-ember {
+  position: absolute;
+  bottom: -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fbbf24, #f59e0b, #d97706);
+  box-shadow: 0 0 6px 2px rgba(245, 158, 11, 0.6),
+              0 0 12px 4px rgba(217, 119, 6, 0.3);
+  pointer-events: none;
+  animation: ember-rise linear infinite;
+}
+
+@keyframes ember-rise {
+  0% {
+    transform: translateY(0) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-120px) translateX(var(--drift, 8px)) scale(0);
+    opacity: 0;
+  }
+}
+
+/* Alternate drift directions for natural look */
+.countdown-ember:nth-child(odd)  { --drift: -12px; }
+.countdown-ember:nth-child(even) { --drift: 10px; }
+.countdown-ember:nth-child(3n)   { --drift: -6px; }
+.countdown-ember:nth-child(5n)   { --drift: 15px; }
+.countdown-ember:nth-child(7n)   { --drift: -18px; }
