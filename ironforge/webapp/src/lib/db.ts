@@ -242,6 +242,12 @@ async function ensureTables(): Promise<void> {
       }
     }
     tablesReady = true
+
+    // Start the scan loop in THIS process (same as API routes).
+    // Dynamic import avoids circular dependency (scanner imports db).
+    import('./scanner')
+      .then(m => m.ensureScannerStarted())
+      .catch(err => console.error('Scanner start failed:', err))
   } catch (err) {
     console.error('ensureTables failed:', err)
   } finally {
