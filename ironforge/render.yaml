@@ -76,4 +76,10 @@ services:
       - key: TRADIER_API_KEY
         sync: false
       # TRADIER_BASE_URL intentionally omitted — defaults to production
-      # for live quotes. SPARK doesn't use sandbox orders.
+      # for live quotes. Sandbox orders use Config.TRADIER_SANDBOX_URL.
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_MATT
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_LOGAN
+        sync: false
