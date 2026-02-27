@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import LaunchCountdown from '@/components/LaunchCountdown'
 
 /* ── Strategy Configuration (from BotConfig) ───────────────────────── */
 
@@ -112,6 +113,9 @@ export default function Home() {
           SPY Iron Condor Paper Trading &middot; Render + Tradier
         </p>
       </div>
+
+      {/* Launch Countdown */}
+      <LaunchCountdown />
 
       {/* Bot Cards */}
       <div className="grid md:grid-cols-3 gap-5">
