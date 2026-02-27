@@ -1,5 +1,7 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+
 interface StatusData {
   bot_name: string
   strategy: string
@@ -30,6 +32,24 @@ interface ConfigData {
   max_contracts?: number
 }
 
+const SCAN_INTERVAL_SEC = 300 // 5 minutes
+
+/** Compute seconds until next scan based on last heartbeat. */
+function getSecondsUntilNextScan(lastScan: string | null): number | null {
+  if (!lastScan) return null
+  const lastMs = new Date(lastScan).getTime()
+  if (isNaN(lastMs)) return null
+  const nextMs = lastMs + SCAN_INTERVAL_SEC * 1000
+  const remaining = Math.max(0, Math.ceil((nextMs - Date.now()) / 1000))
+  return remaining
+}
+
+function formatCountdown(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
+
 export default function StatusCard({
   data,
   accent,
@@ -49,6 +69,24 @@ export default function StatusCard({
   const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
   const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
 
+  /* ---- Next-scan countdown timer ---- */
+  const [countdown, setCountdown] = useState<number | null>(
+    getSecondsUntilNextScan(data.last_scan),
+  )
+
+  // Re-sync when last_scan changes from parent SWR refresh
+  useEffect(() => {
+    setCountdown(getSecondsUntilNextScan(data.last_scan))
+  }, [data.last_scan])
+
+  // Tick every second
+  useEffect(() => {
+    if (countdown === null) return
+    if (countdown <= 0) return
+    const timer = setTimeout(() => setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0)), 1000)
+    return () => clearTimeout(timer)
+  }, [countdown])
+
   return (
     <div className={`rounded-xl border ${accentBorder} bg-forge-card/80 p-4`}>
       {/* Header */}
@@ -66,6 +104,26 @@ export default function StatusCard({
         >
           {data.is_active ? 'ACTIVE' : 'INACTIVE'}
         </span>
+
+        {/* Next scan countdown */}
+        {data.last_scan && countdown !== null && (
+          <span
+            className={`ml-auto text-xs font-mono px-2 py-0.5 rounded ${
+              countdown === 0
+                ? 'bg-amber-500/20 text-amber-400 animate-pulse'
+                : 'bg-forge-border text-gray-400'
+            }`}
+          >
+            {countdown === 0 ? 'Scanning...' : `Next scan ${formatCountdown(countdown)}`}
+          </span>
+        )}
+
+        {/* No worker running indicator */}
+        {!data.last_scan && data.scan_count === 0 && (
+          <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded bg-red-500/15 text-red-400">
+            Worker not running
+          </span>
+        )}
       </div>
 
       {/* Main metrics: Balance | Realized | Unrealized | Total */}
@@ -161,7 +219,17 @@ export default function StatusCard({
       )}
 
       {data.last_scan && (
-        <p className="text-xs text-forge-muted mt-3">Last scan: {data.last_scan}</p>
+        <p className="text-xs text-forge-muted mt-3">
+          Last scan: {new Date(data.last_scan).toLocaleString('en-US', {
+            timeZone: 'America/Chicago',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+          })} CT
+        </p>
       )}
     </div>
   )
