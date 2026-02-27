@@ -289,29 +289,27 @@ export async function POST(
       ],
     )
 
-    // 10b. Mirror to all 3 Tradier sandbox accounts (FLAME only)
+    // 10b. Mirror to all 3 Tradier sandbox accounts (both FLAME and SPARK)
     let sandboxOrderIds: Record<string, number> = {}
-    if (bot === 'flame') {
-      try {
-        sandboxOrderIds = await placeIcOrderAllAccounts(
-          'SPY', expiration,
-          strikes.putShort, strikes.putLong,
-          strikes.callShort, strikes.callLong,
-          maxContracts, credits.totalCredit,
-          positionId,
+    try {
+      sandboxOrderIds = await placeIcOrderAllAccounts(
+        'SPY', expiration,
+        strikes.putShort, strikes.putLong,
+        strikes.callShort, strikes.callLong,
+        maxContracts, credits.totalCredit,
+        positionId,
+      )
+      if (Object.keys(sandboxOrderIds).length > 0) {
+        await query(
+          `UPDATE ${botTable(bot, 'positions')}
+           SET sandbox_order_id = $1, updated_at = NOW()
+           WHERE position_id = $2`,
+          [JSON.stringify(sandboxOrderIds), positionId],
         )
-        if (Object.keys(sandboxOrderIds).length > 0) {
-          await query(
-            `UPDATE ${botTable(bot, 'positions')}
-             SET sandbox_order_id = $1, updated_at = NOW()
-             WHERE position_id = $2`,
-            [JSON.stringify(sandboxOrderIds), positionId],
-          )
-        }
-      } catch (sbErr: any) {
-        // Sandbox mirror is non-fatal — paper trade still succeeds
-        console.warn(`Sandbox mirror failed for ${positionId}: ${sbErr.message}`)
       }
+    } catch (sbErr: any) {
+      // Sandbox mirror is non-fatal — paper trade still succeeds
+      console.warn(`Sandbox mirror failed for ${positionId}: ${sbErr.message}`)
     }
 
     // 11. Update paper account (deduct collateral)
