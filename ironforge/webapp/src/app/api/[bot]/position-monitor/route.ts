@@ -21,7 +21,7 @@ export async function GET(
                  call_short_strike, call_long_strike, call_credit,
                  contracts, spread_width, total_credit, max_loss, max_profit,
                  underlying_at_entry, vix_at_entry, collateral_required,
-                 wings_adjusted, open_time
+                 wings_adjusted, open_time, sandbox_order_id
           FROM ${botTable(bot, 'positions')}
           WHERE status = 'open' AND dte_mode = $1
           ORDER BY open_time DESC
@@ -32,7 +32,7 @@ export async function GET(
                  call_short_strike, call_long_strike, call_credit,
                  contracts, spread_width, total_credit, max_loss, max_profit,
                  underlying_at_entry, vix_at_entry, collateral_required,
-                 wings_adjusted, open_time
+                 wings_adjusted, open_time, sandbox_order_id
           FROM ${botTable(bot, 'positions')}
           WHERE status = 'open'
           ORDER BY open_time DESC
@@ -112,6 +112,7 @@ export async function GET(
           stop_loss_price: stopLossPrice,
           distance_to_pt: distanceToPt,
           distance_to_sl: distanceToSl,
+          sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
         }
       }),
     )

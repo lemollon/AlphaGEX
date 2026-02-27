@@ -21,6 +21,7 @@ restart_streamlit.sh
 # Next.js build output
 .next/
 frontend/.next/
+*.tsbuildinfo
 
 # Node modules
 node_modules/

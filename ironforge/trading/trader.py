@@ -60,6 +60,9 @@ class Trader:
         self.is_active = True
         self.last_scan_time = None
         self.last_scan_result = None
+        self.last_error = None
+        self.scans_today = 0
+        self._scans_today_date = None
         self._cycle_lock = threading.RLock()
         self._mtm_failure_counts = {}
         self.MAX_CONSECUTIVE_MTM_FAILURES = 10
@@ -136,7 +139,15 @@ class Trader:
             "traded": False,
             "positions_managed": 0,
             "details": {},
+            "market_data": {},
         }
+
+        # Track scans per day (reset at midnight)
+        today_str_for_count = now.strftime("%Y-%m-%d")
+        if self._scans_today_date != today_str_for_count:
+            self.scans_today = 0
+            self._scans_today_date = today_str_for_count
+        self.scans_today += 1
 
         try:
             # Step 1: ALWAYS manage existing positions
@@ -221,6 +232,15 @@ class Trader:
 
             # Step 9: Generate signal
             signal = self.signal_generator.generate_signal()
+
+            # Capture market data for logging (from signal if available)
+            if signal:
+                result["market_data"] = {
+                    "spy": round(signal.spot_price, 2),
+                    "vix": round(signal.vix, 2),
+                    "expected_move": round(signal.expected_move, 2),
+                }
+
             if not signal or not signal.is_valid:
                 skip_reason = signal.reasoning if signal else "No signal generated"
                 result["action"] = "no_signal"
@@ -331,6 +351,7 @@ class Trader:
             logger.error(f"{self.config.bot_name}: Run cycle failed: {e}")
             import traceback
             traceback.print_exc()
+            self.last_error = f"{e} at {now.isoformat()}"
             result["action"] = "error"
             result["details"]["error"] = str(e)
             self.db.log("ERROR", f"Run cycle error: {e}")
@@ -581,6 +602,8 @@ class Trader:
                 "reason": pdt_msg,
                 "next_reset": self.db.get_next_pdt_reset_date(),
             },
+            "scans_today": self.scans_today,
+            "last_error": self.last_error,
             "scheduler": {
                 "execution_count": (
                     heartbeat.get("scan_count", 0) if heartbeat else 0

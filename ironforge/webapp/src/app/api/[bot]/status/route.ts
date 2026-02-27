@@ -64,8 +64,36 @@ export async function GET(
           LIMIT 1
         `)
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery])
+    // Scans today: count heartbeat updates for today
+    const scansTodayQuery = dte
+      ? query(`
+          SELECT COUNT(*) as cnt
+          FROM ${botTable(bot, 'signals')}
+          WHERE signal_time::date = CURRENT_DATE AND dte_mode = $1
+        `, [dte])
+      : query(`
+          SELECT COUNT(*) as cnt
+          FROM ${botTable(bot, 'signals')}
+          WHERE signal_time::date = CURRENT_DATE
+        `)
+
+    // Last error: most recent error-level log
+    const lastErrorQuery = dte
+      ? query(`
+          SELECT log_time, message
+          FROM ${botTable(bot, 'logs')}
+          WHERE level = 'ERROR' AND dte_mode = $1
+          ORDER BY log_time DESC LIMIT 1
+        `, [dte])
+      : query(`
+          SELECT log_time, message
+          FROM ${botTable(bot, 'logs')}
+          WHERE level = 'ERROR'
+          ORDER BY log_time DESC LIMIT 1
+        `)
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery])
 
     const acct = accountRows[0]
     const balance = num(acct?.current_balance)
@@ -76,6 +104,7 @@ export async function GET(
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
     const hb = heartbeatRows[0]
+    const lastErr = lastErrorRows[0]
 
     return NextResponse.json({
       bot_name: bot.toUpperCase(),
@@ -100,6 +129,11 @@ export async function GET(
       last_scan: hb?.last_heartbeat?.toISOString?.() || hb?.last_heartbeat || null,
       last_snapshot: snapshotRows[0]?.snapshot_time?.toISOString?.() || snapshotRows[0]?.snapshot_time || null,
       scan_count: int(hb?.scan_count),
+      scans_today: int(scansTodayRows[0]?.cnt),
+      last_error: lastErr ? {
+        time: lastErr.log_time?.toISOString?.() || lastErr.log_time || null,
+        message: lastErr.message || null,
+      } : null,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
