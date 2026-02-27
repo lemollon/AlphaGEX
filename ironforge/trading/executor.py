@@ -282,6 +282,7 @@ class PaperExecutor:
             self.db.save_equity_snapshot(
                 balance=account.balance,
                 realized_pnl=account.cumulative_pnl,
+                unrealized_pnl=0.0,
                 open_positions=self.db.get_position_count(),
                 note=f"Opened {position_id}",
             )

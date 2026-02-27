@@ -359,6 +359,15 @@ export async function POST(
       ],
     )
 
+    // 13b. Log PDT entry (so force-trades count toward PDT limits)
+    await query(
+      `INSERT INTO ${botTable(bot, 'pdt_log')} (
+        trade_date, symbol, position_id, opened_at,
+        contracts, entry_credit, dte_mode
+      ) VALUES (CURRENT_DATE, $1, $2, NOW(), $3, $4, $5)`,
+      ['SPY', positionId, maxContracts, credits.totalCredit, dte],
+    )
+
     // 14. Save equity snapshot
     const updatedAcct = await query(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
