@@ -295,9 +295,9 @@ class PaperExecutor:
                 f"(collateral: ${total_collateral:.2f})"
             )
 
-            # Mirror to all Tradier sandbox accounts (FLAME only)
+            # Mirror to all Tradier sandbox accounts
             sandbox_orders = {}
-            if self.config.bot_name == "FLAME":
+            if self.sandbox_clients:
                 sandbox_orders = self._mirror_open_to_all_sandboxes(position)
                 if sandbox_orders:
                     self.db.update_sandbox_order_id(
@@ -389,9 +389,9 @@ class PaperExecutor:
                 note=f"Closed {position.position_id}: {reason}",
             )
 
-            # Mirror close to all Tradier sandbox accounts (FLAME only)
+            # Mirror close to all Tradier sandbox accounts
             sandbox_close_orders = {}
-            if self.config.bot_name == "FLAME":
+            if self.sandbox_clients:
                 sandbox_close_orders = self._mirror_close_to_all_sandboxes(
                     position, close_price
                 )
