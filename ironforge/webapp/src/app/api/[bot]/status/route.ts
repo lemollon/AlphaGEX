@@ -44,7 +44,7 @@ export async function GET(
         `)
 
     const heartbeatQuery = query(`
-      SELECT scan_count, last_heartbeat, status
+      SELECT scan_count, last_heartbeat, status, details
       FROM bot_heartbeats
       WHERE bot_name = $1
     `, [heartbeatName(bot)])
@@ -64,17 +64,17 @@ export async function GET(
           LIMIT 1
         `)
 
-    // Scans today: count heartbeat updates for today
+    // Scans today: count actual scan cycles (SCAN-level logs), not just executed trades
     const scansTodayQuery = dte
       ? query(`
           SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'signals')}
-          WHERE signal_time::date = CURRENT_DATE AND dte_mode = $1
+          FROM ${botTable(bot, 'logs')}
+          WHERE level = 'SCAN' AND log_time::date = CURRENT_DATE AND dte_mode = $1
         `, [dte])
       : query(`
           SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'signals')}
-          WHERE signal_time::date = CURRENT_DATE
+          FROM ${botTable(bot, 'logs')}
+          WHERE level = 'SCAN' AND log_time::date = CURRENT_DATE
         `)
 
     // Last error: most recent error-level log
@@ -106,6 +106,24 @@ export async function GET(
     const hb = heartbeatRows[0]
     const lastErr = lastErrorRows[0]
 
+    // Parse heartbeat details JSON for SPY/VIX and bot state
+    let hbDetails: { action?: string; reason?: string; spot?: number; vix?: number } = {}
+    if (hb?.details) {
+      try { hbDetails = typeof hb.details === 'string' ? JSON.parse(hb.details) : hb.details } catch {}
+    }
+
+    // Derive bot_state from heartbeat status + action
+    const hbStatus = hb?.status || 'unknown'
+    const hbAction = hbDetails.action || ''
+    const botState =
+      hbStatus === 'error' ? 'error'
+      : hbAction === 'monitoring' ? 'monitoring'
+      : hbAction === 'traded' || hbAction === 'closed' ? 'traded'
+      : hbAction === 'outside_window' || hbAction === 'outside_entry_window' ? 'market_closed'
+      : hbStatus === 'idle' ? 'idle'
+      : hbStatus === 'active' ? 'scanning'
+      : 'unknown'
+
     return NextResponse.json({
       bot_name: bot.toUpperCase(),
       strategy: bot === 'flame' ? '2DTE Paper Iron Condor' : '1DTE Paper Iron Condor',
@@ -130,6 +148,9 @@ export async function GET(
       last_snapshot: snapshotRows[0]?.snapshot_time?.toISOString?.() || snapshotRows[0]?.snapshot_time || null,
       scan_count: int(hb?.scan_count),
       scans_today: int(scansTodayRows[0]?.cnt),
+      spot_price: hbDetails.spot || null,
+      vix: hbDetails.vix || null,
+      bot_state: botState,
       last_error: lastErr ? {
         time: lastErr.log_time?.toISOString?.() || lastErr.log_time || null,
         message: lastErr.message || null,
