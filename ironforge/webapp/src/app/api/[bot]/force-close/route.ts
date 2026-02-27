@@ -137,24 +137,22 @@ export async function POST(
       [bal, cumPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
     )
 
-    // 8. Mirror close to all Tradier sandbox accounts (FLAME only)
+    // 8. Mirror close to all Tradier sandbox accounts (both FLAME and SPARK)
     let sandboxCloseIds: Record<string, number> = {}
-    if (bot === 'flame') {
-      try {
-        sandboxCloseIds = await closeIcOrderAllAccounts(
-          pos.ticker,
-          String(pos.expiration).slice(0, 10),
-          num(pos.put_short_strike),
-          num(pos.put_long_strike),
-          num(pos.call_short_strike),
-          num(pos.call_long_strike),
-          contracts,
-          closePrice,
-          position_id,
-        )
-      } catch (sbErr: any) {
-        console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
-      }
+    try {
+      sandboxCloseIds = await closeIcOrderAllAccounts(
+        pos.ticker,
+        String(pos.expiration).slice(0, 10),
+        num(pos.put_short_strike),
+        num(pos.put_long_strike),
+        num(pos.call_short_strike),
+        num(pos.call_long_strike),
+        contracts,
+        closePrice,
+        position_id,
+      )
+    } catch (sbErr: any) {
+      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
     }
 
     // 9. Log
