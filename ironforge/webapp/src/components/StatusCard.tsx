@@ -20,6 +20,9 @@ interface StatusData {
   last_scan: string | null
   last_snapshot: string | null
   scan_count: number
+  spot_price: number | null
+  vix: number | null
+  bot_state: string | null
 }
 
 interface ConfigData {
@@ -97,12 +100,25 @@ export default function StatusCard({
         </span>
         <span
           className={`text-xs px-2 py-0.5 rounded ${
-            data.is_active
-              ? 'bg-emerald-500/20 text-emerald-400'
-              : 'bg-gray-600/20 text-gray-400'
+            data.bot_state === 'monitoring'
+              ? 'bg-blue-500/20 text-blue-400'
+              : data.bot_state === 'scanning' || data.bot_state === 'traded'
+                ? 'bg-emerald-500/20 text-emerald-400'
+              : data.bot_state === 'error'
+                ? 'bg-red-500/20 text-red-400'
+              : data.bot_state === 'market_closed' || data.bot_state === 'idle'
+                ? 'bg-gray-600/20 text-gray-400'
+              : data.is_active
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : 'bg-gray-600/20 text-gray-400'
           }`}
         >
-          {data.is_active ? 'ACTIVE' : 'INACTIVE'}
+          {data.bot_state === 'monitoring' ? 'MONITORING'
+            : data.bot_state === 'scanning' ? 'SCANNING'
+            : data.bot_state === 'traded' ? 'TRADED'
+            : data.bot_state === 'error' ? 'ERROR'
+            : data.bot_state === 'market_closed' || data.bot_state === 'idle' ? 'MARKET CLOSED'
+            : data.is_active ? 'ACTIVE' : 'INACTIVE'}
         </span>
 
         {/* Next scan countdown */}
@@ -125,6 +141,25 @@ export default function StatusCard({
           </span>
         )}
       </div>
+
+      {/* Live market data */}
+      {(data.spot_price || data.vix) && (
+        <div className="flex items-center gap-4 mb-3 text-sm font-mono text-gray-300">
+          {data.spot_price != null && data.spot_price > 0 && (
+            <span>SPY <span className="text-white font-semibold">${data.spot_price.toFixed(2)}</span></span>
+          )}
+          {data.vix != null && data.vix > 0 && (
+            <span>VIX <span className={`font-semibold ${data.vix > 28 ? 'text-red-400' : data.vix > 22 ? 'text-amber-400' : 'text-white'}`}>{data.vix.toFixed(1)}</span></span>
+          )}
+          {data.last_scan && (
+            <span className="text-forge-muted text-xs">
+              Updated {new Date(data.last_scan).toLocaleTimeString('en-US', {
+                timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true,
+              })} CT
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Main metrics: Balance | Realized | Unrealized | Total */}
       <div className="grid grid-cols-4 gap-4 mb-4">
