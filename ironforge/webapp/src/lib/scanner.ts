@@ -155,7 +155,7 @@ function getTargetExpiration(minDte: number): string {
 /*  Position monitoring — PT / SL / EOD close                          */
 /* ------------------------------------------------------------------ */
 
-async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
+async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string; unrealizedPnl: number }> {
   const positions = await query(
     `SELECT position_id, ticker, expiration,
             put_short_strike, put_long_strike,
@@ -168,7 +168,7 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
     [bot.dte],
   )
 
-  if (positions.length === 0) return 'no_position'
+  if (positions.length === 0) return { status: 'no_position', unrealizedPnl: 0 }
 
   const pos = positions[0]
   const entryCredit = num(pos.total_credit)
@@ -191,11 +191,11 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, reason)
-    return `closed:${reason}`
+    return { status: `closed:${reason}`, unrealizedPnl: 0 }
   }
 
   // Get MTM
-  if (!isConfigured()) return 'monitoring:no_tradier'
+  if (!isConfigured()) return { status: 'monitoring:no_tradier', unrealizedPnl: 0 }
 
   const mtm = await getIcMarkToMarket(
     ticker, expiration,
@@ -203,7 +203,7 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
     num(pos.call_short_strike), num(pos.call_long_strike),
   )
 
-  if (!mtm) return 'monitoring:mtm_failed'
+  if (!mtm) return { status: 'monitoring:mtm_failed', unrealizedPnl: 0 }
 
   const costToClose = mtm.cost_to_close
 
@@ -213,7 +213,7 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'profit_target', costToClose)
-    return `closed:profit_target@${costToClose.toFixed(4)}`
+    return { status: `closed:profit_target@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
   // Stop loss: cost_to_close >= 200% of entry credit
@@ -222,11 +222,11 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<string> {
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
-    return `closed:stop_loss@${costToClose.toFixed(4)}`
+    return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
   const unrealizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
-  return `monitoring:mtm=${costToClose.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)}`
+  return { status: `monitoring:mtm=${costToClose.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)}`, unrealizedPnl }
 }
 
 /* ------------------------------------------------------------------ */
@@ -547,6 +547,7 @@ async function scanBot(bot: BotDef): Promise<void> {
   let reason = ''
   let spot = 0
   let vix = 0
+  let unrealizedPnl = 0
 
   try {
     // Check bot active state
@@ -566,8 +567,9 @@ async function scanBot(bot: BotDef): Promise<void> {
     if (hasOpenPosition) {
       // Monitor position even outside entry window (but within market hours or for stale detection)
       const monitorResult = await monitorPosition(bot, ct)
-      action = monitorResult.startsWith('closed:') ? 'closed' : 'monitoring'
-      reason = monitorResult
+      action = monitorResult.status.startsWith('closed:') ? 'closed' : 'monitoring'
+      reason = monitorResult.status
+      unrealizedPnl = monitorResult.unrealizedPnl
     }
 
     // Step 2: If market closed, just log and return
@@ -620,9 +622,9 @@ async function scanBot(bot: BotDef): Promise<void> {
         await query(
           `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
            (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-           VALUES ($1, $2, 0, $3, $4, $5)`,
+           VALUES ($1, $2, $3, $4, $5, $6)`,
           [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
-           int(openCount[0]?.cnt), `scan:${action}`, bot.dte],
+           unrealizedPnl, int(openCount[0]?.cnt), `scan:${action}`, bot.dte],
         )
       }
     } catch (snapErr: any) {
@@ -676,8 +678,16 @@ async function scanBot(bot: BotDef): Promise<void> {
 /*  Main entry point — starts the scan loop                            */
 /* ------------------------------------------------------------------ */
 
+let _intervalId: ReturnType<typeof setInterval> | null = null
 let _started = false
 let _scanCount = 0
+
+/** Fire-and-forget wrapper — errors are logged, never thrown, so the interval never dies. */
+function safeRunAllScans(): void {
+  runAllScans().catch(err => {
+    console.error('[scanner] scan cycle error (interval continues):', err)
+  })
+}
 
 export function startScanner(): void {
   if (_started) return
@@ -685,18 +695,13 @@ export function startScanner(): void {
 
   console.log('[scanner] IronForge scan loop starting — 5 min interval for FLAME + SPARK')
 
-  // Run first scan after a short delay to let db pool warm up
-  setTimeout(() => {
-    runAllScans().catch(err =>
-      console.error('[scanner] first scan failed:', err))
-  }, 3000)
+  // First scan immediately (fire-and-forget)
+  safeRunAllScans()
 
-  // Then every 5 minutes — use a wrapper that catches ALL errors
-  // so the interval never dies from an unhandled rejection
-  setInterval(() => {
-    runAllScans().catch(err =>
-      console.error('[scanner] scan cycle failed:', err))
-  }, SCAN_INTERVAL_MS)
+  // Persistent interval — stored in module-level variable so it can never be GC'd
+  _intervalId = setInterval(safeRunAllScans, SCAN_INTERVAL_MS)
+
+  console.log('[scanner] setInterval registered, id:', _intervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */
