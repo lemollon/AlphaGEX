@@ -677,6 +677,7 @@ async function scanBot(bot: BotDef): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 let _started = false
+let _scanCount = 0
 
 export function startScanner(): void {
   if (_started) return
@@ -684,14 +685,28 @@ export function startScanner(): void {
 
   console.log('[scanner] IronForge scan loop starting — 5 min interval for FLAME + SPARK')
 
-  // Run first scan immediately
-  runAllScans()
+  // Run first scan after a short delay to let db pool warm up
+  setTimeout(() => {
+    runAllScans().catch(err =>
+      console.error('[scanner] first scan failed:', err))
+  }, 3000)
 
-  // Then every 5 minutes
-  setInterval(runAllScans, SCAN_INTERVAL_MS)
+  // Then every 5 minutes — use a wrapper that catches ALL errors
+  // so the interval never dies from an unhandled rejection
+  setInterval(() => {
+    runAllScans().catch(err =>
+      console.error('[scanner] scan cycle failed:', err))
+  }, SCAN_INTERVAL_MS)
+}
+
+/** Called by db.ts ensureTables to start scanner in the API route process */
+export function ensureScannerStarted(): void {
+  startScanner()
 }
 
 async function runAllScans(): Promise<void> {
+  _scanCount++
+  console.log(`[scanner] === scan cycle #${_scanCount} starting ===`)
   for (const bot of BOTS) {
     try {
       await scanBot(bot)
@@ -699,4 +714,5 @@ async function runAllScans(): Promise<void> {
       console.error(`[scanner] ${bot.name.toUpperCase()} fatal error:`, err)
     }
   }
+  console.log(`[scanner] === scan cycle #${_scanCount} complete ===`)
 }
