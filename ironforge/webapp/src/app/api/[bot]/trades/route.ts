@@ -23,7 +23,7 @@ export async function GET(
             close_price, close_reason, realized_pnl,
             open_time, close_time,
             underlying_at_entry, vix_at_entry,
-            wings_adjusted
+            wings_adjusted, sandbox_order_id
           FROM ${botTable(bot, 'positions')}
           WHERE status IN ('closed', 'expired') AND dte_mode = $1
           ORDER BY close_time DESC
@@ -38,7 +38,7 @@ export async function GET(
             close_price, close_reason, realized_pnl,
             open_time, close_time,
             underlying_at_entry, vix_at_entry,
-            wings_adjusted
+            wings_adjusted, sandbox_order_id
           FROM ${botTable(bot, 'positions')}
           WHERE status IN ('closed', 'expired')
           ORDER BY close_time DESC
@@ -64,6 +64,7 @@ export async function GET(
       underlying_at_entry: num(r.underlying_at_entry),
       vix_at_entry: num(r.vix_at_entry),
       wings_adjusted: r.wings_adjusted === true,
+      sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
     }))
 
     return NextResponse.json({ trades })
