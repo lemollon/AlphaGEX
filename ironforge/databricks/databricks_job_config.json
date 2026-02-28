@@ -1,0 +1,56 @@
+{
+  "name": "IronForge Scanner",
+  "description": "IronForge SPY Iron Condor paper trading scanner (FLAME 2DTE + SPARK 1DTE). Runs continuously during market hours, scanning every 5 minutes.",
+  "tasks": [
+    {
+      "task_key": "ironforge_scanner",
+      "description": "Continuous scan loop for FLAME and SPARK bots",
+      "python_wheel_task": null,
+      "spark_python_task": {
+        "python_file": "dbfs:/ironforge/ironforge_scanner.py",
+        "parameters": []
+      },
+      "new_cluster": {
+        "spark_version": "14.3.x-scala2.12",
+        "node_type_id": "i3.xlarge",
+        "num_workers": 0,
+        "spark_conf": {
+          "spark.master": "local[*]",
+          "spark.databricks.cluster.profile": "singleNode"
+        },
+        "custom_tags": {
+          "ResourceClass": "SingleNode",
+          "project": "ironforge"
+        }
+      },
+      "libraries": [
+        {"pypi": {"package": "databricks-sql-connector>=3.0.0"}},
+        {"pypi": {"package": "requests>=2.31.0"}}
+      ],
+      "timeout_seconds": 0,
+      "max_retries": 10,
+      "min_retry_interval_millis": 60000,
+      "retry_on_timeout": true
+    }
+  ],
+  "schedule": null,
+  "continuous": {
+    "pause_status": "UNPAUSED"
+  },
+  "max_concurrent_runs": 1,
+  "tags": {
+    "project": "ironforge",
+    "team": "trading"
+  },
+  "email_notifications": {
+    "on_failure": [],
+    "on_success": [],
+    "no_alert_for_skipped_runs": true
+  },
+  "webhook_notifications": {},
+  "notification_settings": {
+    "no_alert_for_skipped_runs": true,
+    "no_alert_for_canceled_runs": true
+  },
+  "run_as": {}
+}
