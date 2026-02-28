@@ -7,8 +7,8 @@
 
 const HOSTNAME = process.env.DATABRICKS_SERVER_HOSTNAME || ''
 const TOKEN = process.env.DATABRICKS_TOKEN || ''
-const CATALOG = process.env.DATABRICKS_CATALOG || 'alpha_prime'
-const SCHEMA = process.env.DATABRICKS_SCHEMA || 'default'
+const CATALOG = process.env.DATABRICKS_CATALOG || 'ironforge'
+const SCHEMA = process.env.DATABRICKS_SCHEMA || 'trading'
 
 function getWarehouseId(): string {
   if (process.env.DATABRICKS_WAREHOUSE_ID) return process.env.DATABRICKS_WAREHOUSE_ID
@@ -108,4 +108,14 @@ export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
   if (b !== 'flame' && b !== 'spark') return null
   return b
+}
+
+/** Get DTE mode string for a bot. */
+export function dteMode(bot: string): string {
+  return bot === 'flame' ? '2DTE' : '1DTE'
+}
+
+/** Get heartbeat bot name (uppercase). */
+export function heartbeatName(bot: string): string {
+  return bot.toUpperCase()
 }

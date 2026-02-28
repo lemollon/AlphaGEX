@@ -64,9 +64,23 @@ def get_connection():
     """Get or create a Databricks SQL connection."""
     global _connection
     if _connection is None or not _connection.open:
-        host = os.environ["DATABRICKS_HOST"]
-        http_path = os.environ["DATABRICKS_HTTP_PATH"]
-        token = os.environ["DATABRICKS_TOKEN"]
+        host = (
+            os.environ.get("DATABRICKS_HOST")
+            or os.environ.get("DATABRICKS_SERVER_HOSTNAME")
+            or ""
+        )
+        warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
+        http_path = (
+            os.environ.get("DATABRICKS_HTTP_PATH")
+            or (f"/sql/1.0/warehouses/{warehouse_id}" if warehouse_id else "")
+        )
+        token = os.environ.get("DATABRICKS_TOKEN", "")
+        if not host or not http_path or not token:
+            raise RuntimeError(
+                "Missing Databricks credentials. Set DATABRICKS_HOST (or "
+                "DATABRICKS_SERVER_HOSTNAME), DATABRICKS_HTTP_PATH (or "
+                "DATABRICKS_WAREHOUSE_ID), and DATABRICKS_TOKEN."
+            )
         _connection = databricks_sql.connect(
             server_hostname=host,
             http_path=http_path,
