@@ -67,6 +67,7 @@ class PaperExecutor:
                 client = TradierClient(
                     api_key=acct["api_key"],
                     base_url=sandbox_url,
+                    account_id=acct["account_id"],
                 )
                 self._sandbox_clients.append({
                     "name": acct["name"],
