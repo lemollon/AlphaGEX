@@ -19,13 +19,13 @@ os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LW0b0F5fhXHh"
 
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
-SANDBOX_ACCOUNTS = {
-    "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA74964498"},
-    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
-    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240884"},
+SANDBOX_KEYS = {
+    "USER":  os.environ["TRADIER_SANDBOX_KEY_USER"],
+    "MATT":  os.environ["TRADIER_SANDBOX_KEY_MATT"],
+    "LOGAN": os.environ["TRADIER_SANDBOX_KEY_LOGAN"],
 }
 
-print("Keys and account IDs loaded")
+print("Keys loaded")
 
 # COMMAND ----------
 
@@ -63,7 +63,25 @@ else:
 
 # COMMAND ----------
 
-# Cell 5: Verify all 3 sandbox accounts (balance check)
+# Cell 5: Auto-discover sandbox account IDs + verify balances
+# Phase 1: Use /user/profile to find the real account ID for each token
+SANDBOX_ACCOUNTS = {}
+print("Phase 1: Discovering account IDs via /user/profile ...")
+for name, key in SANDBOX_KEYS.items():
+    r = requests.get(f"{SANDBOX_URL}/user/profile", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout=10)
+    if r.ok:
+        profile = r.json().get("profile", {})
+        acct = profile.get("account", {})
+        if isinstance(acct, list): acct = acct[0]
+        acct_id = acct.get("account_number", "UNKNOWN")
+        SANDBOX_ACCOUNTS[name] = {"key": key, "account_id": acct_id}
+        print(f"  {name}: Token VALID — account {acct_id}")
+    else:
+        print(f"  {name}: Token INVALID ({r.status_code}) — {r.text[:200]}")
+        print(f"         Go to https://web.tradier.com/user/api and copy the SANDBOX token (not production)")
+
+# Phase 2: Verify balances for discovered accounts
+print("\nPhase 2: Balance check ...")
 for name, info in SANDBOX_ACCOUNTS.items():
     r = requests.get(f"{SANDBOX_URL}/accounts/{info['account_id']}/balances", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
     if r.ok:
@@ -71,12 +89,12 @@ for name, info in SANDBOX_ACCOUNTS.items():
         equity = bal.get("total_equity", bal.get("equity", "?"))
         print(f"  {name}: Account {info['account_id']} — equity ${equity}")
     else:
-        print(f"  {name}: Account {info['account_id']} — FAILED ({r.status_code}) {r.text[:200]}")
+        print(f"  {name}: Account {info['account_id']} — balance FAILED ({r.status_code}) {r.text[:200]}")
 
 # COMMAND ----------
 
 # Cell 6: Place test IC orders on sandbox (won't fill — $0.10 limit)
-if SPY_PRICE > 0 and SANDBOX_ACCOUNTS:
+if SPY_PRICE > 0 and len(SANDBOX_ACCOUNTS) > 0:
     # Get expiration 2+ days out
     r = requests.get(f"{PROD_URL}/markets/options/expirations", params={"symbol": "SPY", "includeAllRoots": "true"}, headers={"Authorization": f"Bearer {os.environ['TRADIER_API_KEY']}", "Accept": "application/json"}, timeout=10)
     exps = r.json().get("expirations", {}).get("date", [])
