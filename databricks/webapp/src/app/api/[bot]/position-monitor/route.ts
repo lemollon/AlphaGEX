@@ -20,7 +20,7 @@ export async function GET(
              call_short_strike, call_long_strike, call_credit,
              contracts, spread_width, total_credit, max_loss, max_profit,
              underlying_at_entry, vix_at_entry, collateral_required,
-             wings_adjusted, open_time
+             wings_adjusted, sandbox_order_id, open_time
       FROM ${botTable(bot, 'positions')}
       WHERE status = 'open' AND dte_mode = '${dte}'
       ORDER BY open_time DESC
@@ -96,6 +96,7 @@ export async function GET(
           vix_at_entry: num(r.vix_at_entry),
           collateral_required: num(r.collateral_required),
           wings_adjusted: r.wings_adjusted === 'true' || r.wings_adjusted === '1',
+          sandbox_order_id: r.sandbox_order_id || null,
           open_time: r.open_time,
           // Live data
           current_cost_to_close: mtm,
