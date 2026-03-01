@@ -205,27 +205,35 @@ def to_int(val: Any) -> int:
 #  Tradier API Client (port of tradier.ts)
 # ---------------------------------------------------------------------------
 
-TRADIER_API_KEY = os.environ.get("TRADIER_API_KEY", "")
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
-# IronForge is a sandbox-only paper trading system — all API calls use sandbox
-TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
+
+
+def _get_tradier_api_key() -> str:
+    """Read Tradier API key lazily so notebook env vars set after import are picked up."""
+    return os.environ.get("TRADIER_API_KEY", "")
+
+
+def _get_tradier_base_url() -> str:
+    """Read Tradier base URL lazily."""
+    return os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
 
 
 def is_tradier_configured() -> bool:
     """Whether the Tradier API key is configured."""
-    return bool(TRADIER_API_KEY)
+    return bool(_get_tradier_api_key())
 
 
 def tradier_get(endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
     """Authenticated GET to Tradier API. Returns JSON or None on failure."""
-    if not TRADIER_API_KEY:
+    api_key = _get_tradier_api_key()
+    if not api_key:
         return None
     try:
-        url = f"{TRADIER_BASE_URL}{endpoint}"
+        url = f"{_get_tradier_base_url()}{endpoint}"
         resp = requests.get(
             url,
             headers={
-                "Authorization": f"Bearer {TRADIER_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Accept": "application/json",
             },
             params=params or {},
@@ -397,8 +405,16 @@ def _get_sandbox_accounts() -> list[dict]:
     return accounts
 
 
-_sandbox_accounts = _get_sandbox_accounts()
+_sandbox_accounts: Optional[list[dict]] = None
 _account_id_cache: dict[str, str] = {}
+
+
+def _get_sandbox_accounts_lazy() -> list[dict]:
+    """Lazy-load sandbox accounts so notebook env vars set after import are picked up."""
+    global _sandbox_accounts
+    if _sandbox_accounts is None:
+        _sandbox_accounts = _get_sandbox_accounts()
+    return _sandbox_accounts
 
 
 def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str) -> Optional[dict]:
@@ -446,7 +462,7 @@ def _get_account_id_for_key(api_key: str) -> Optional[str]:
         return _account_id_cache[api_key]
 
     # Check pre-configured account IDs first (like FORTRESS does)
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         if acct["api_key"] == api_key and acct.get("account_id"):
             _account_id_cache[api_key] = acct["account_id"]
             return acct["account_id"]
@@ -501,7 +517,7 @@ def place_ic_order_all_accounts(
     if tag:
         order_body["tag"] = tag[:255]
 
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         try:
             account_id = _get_account_id_for_key(acct["api_key"])
             if not account_id:
@@ -553,7 +569,7 @@ def close_ic_order_all_accounts(
     if tag:
         order_body["tag"] = tag[:255]
 
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         try:
             account_id = _get_account_id_for_key(acct["api_key"])
             if not account_id:
@@ -1405,7 +1421,7 @@ def main() -> None:
     log.info(f"  Catalog: {CATALOG}")
     log.info(f"  Schema: {SCHEMA}")
     log.info(f"  Tradier configured: {is_tradier_configured()}")
-    log.info(f"  Sandbox accounts: {len(_sandbox_accounts)}")
+    log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
     log.info(f"  Scan interval: {SCAN_INTERVAL}s")
 
     while True:
