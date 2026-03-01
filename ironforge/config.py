@@ -22,20 +22,27 @@ class Config:
     TRADIER_BASE_URL = os.getenv("TRADIER_BASE_URL", TRADIER_SANDBOX_URL)
 
     # Three sandbox accounts for FLAME trade mirroring
+    # Each needs a key + account ID (matching how FORTRESS does it)
     TRADIER_SANDBOX_KEY_USER = os.getenv("TRADIER_SANDBOX_KEY_USER", "")
     TRADIER_SANDBOX_KEY_MATT = os.getenv("TRADIER_SANDBOX_KEY_MATT", "")
     TRADIER_SANDBOX_KEY_LOGAN = os.getenv("TRADIER_SANDBOX_KEY_LOGAN", "")
+    TRADIER_SANDBOX_ACCOUNT_ID_USER = os.getenv("TRADIER_SANDBOX_ACCOUNT_ID_USER", "")
+    TRADIER_SANDBOX_ACCOUNT_ID_MATT = os.getenv("TRADIER_SANDBOX_ACCOUNT_ID_MATT", "")
+    TRADIER_SANDBOX_ACCOUNT_ID_LOGAN = os.getenv("TRADIER_SANDBOX_ACCOUNT_ID_LOGAN", "")
 
     @classmethod
     def get_sandbox_accounts(cls) -> list:
         """Return list of configured sandbox accounts for FLAME mirroring."""
         accounts = []
         if cls.TRADIER_SANDBOX_KEY_USER:
-            accounts.append({"name": "User", "api_key": cls.TRADIER_SANDBOX_KEY_USER})
+            accounts.append({"name": "User", "api_key": cls.TRADIER_SANDBOX_KEY_USER,
+                           "account_id": cls.TRADIER_SANDBOX_ACCOUNT_ID_USER})
         if cls.TRADIER_SANDBOX_KEY_MATT:
-            accounts.append({"name": "Matt", "api_key": cls.TRADIER_SANDBOX_KEY_MATT})
+            accounts.append({"name": "Matt", "api_key": cls.TRADIER_SANDBOX_KEY_MATT,
+                           "account_id": cls.TRADIER_SANDBOX_ACCOUNT_ID_MATT})
         if cls.TRADIER_SANDBOX_KEY_LOGAN:
-            accounts.append({"name": "Logan", "api_key": cls.TRADIER_SANDBOX_KEY_LOGAN})
+            accounts.append({"name": "Logan", "api_key": cls.TRADIER_SANDBOX_KEY_LOGAN,
+                           "account_id": cls.TRADIER_SANDBOX_ACCOUNT_ID_LOGAN})
         return accounts
 
     @classmethod
