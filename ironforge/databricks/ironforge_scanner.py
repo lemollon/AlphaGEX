@@ -540,6 +540,22 @@ def is_market_open(ct: datetime) -> bool:
     return 830 <= hhmm <= 1500
 
 
+# Pre-market warm-up window: 8:20-8:29 CT weekdays.
+# When the cron fires in this window, the scanner waits for market open
+# instead of exiting immediately.  This keeps the cluster warm so the
+# 8:30 run has zero cold-start delay.
+WARMUP_START = 820   # 8:20 AM CT
+WARMUP_END   = 829   # 8:29 AM CT (inclusive)
+
+
+def is_in_warmup_window(ct: datetime) -> bool:
+    """Check if within pre-market warm-up window: weekday, 8:20-8:29 CT."""
+    if ct.weekday() >= 5:
+        return False
+    hhmm = ct.hour * 100 + ct.minute
+    return WARMUP_START <= hhmm <= WARMUP_END
+
+
 def is_in_entry_window(ct: datetime) -> bool:
     """Check if within entry window: weekday, 8:30 AM - 2:00 PM CT."""
     dow = ct.weekday()
@@ -1339,11 +1355,26 @@ def main() -> None:
     )
 
     if not is_market_open(ct):
-        log.info(
-            f"Market closed ({ct.strftime('%H:%M')} CT, "
-            f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
-        )
-        return
+        if is_in_warmup_window(ct):
+            # Pre-market warm-up: wait for 8:30 so the cluster stays alive
+            from zoneinfo import ZoneInfo
+            market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
+            wait_secs = max(0, (market_open - ct).total_seconds())
+            log.info(
+                f"Pre-market warm-up window ({ct.strftime('%H:%M')} CT) — "
+                f"cluster warm, waiting {int(wait_secs)}s for market open"
+            )
+            if wait_secs > 0:
+                time.sleep(wait_secs)
+            # Re-check time after sleeping (should now be ~8:30)
+            ct = get_central_time()
+            log.info(f"Warm-up complete — now {ct.strftime('%H:%M:%S')} CT, proceeding to scan")
+        else:
+            log.info(
+                f"Market closed ({ct.strftime('%H:%M')} CT, "
+                f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
+            )
+            return
 
     run_scan_cycle()
     log.info("Scan complete — exiting")
