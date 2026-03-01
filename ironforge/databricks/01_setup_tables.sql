@@ -10,6 +10,7 @@
 --   - SERIAL / GENERATED ALWAYS AS IDENTITY → BIGINT GENERATED ALWAYS AS IDENTITY
 --   - No DEFAULT on columns in Delta Lake (handled in application layer)
 --   - ON CONFLICT → MERGE INTO (handled in application layer)
+--   - No UNIQUE constraints (disabled by default; enforced via MERGE INTO in app layer)
 --   - No CREATE INDEX → use OPTIMIZE + ZORDER
 --
 -- Usage: Run this notebook once in your Databricks workspace to create all tables.
@@ -158,8 +159,8 @@ CREATE TABLE IF NOT EXISTS flame_daily_perf (
   positions_closed INT,
   realized_pnl DECIMAL(10,2),
   updated_at TIMESTAMP,
-  CONSTRAINT flame_daily_perf_pk PRIMARY KEY (id),
-  CONSTRAINT flame_daily_perf_date_uq UNIQUE (trade_date)
+  CONSTRAINT flame_daily_perf_pk PRIMARY KEY (id)
+  -- Uniqueness on trade_date enforced via MERGE INTO in application layer
 );
 
 CREATE TABLE IF NOT EXISTS flame_pdt_log (
@@ -201,8 +202,8 @@ CREATE TABLE IF NOT EXISTS flame_config (
   starting_capital DECIMAL(12,2),
   created_at TIMESTAMP,
   updated_at TIMESTAMP,
-  CONSTRAINT flame_config_pk PRIMARY KEY (id),
-  CONSTRAINT flame_config_dte_uq UNIQUE (dte_mode)
+  CONSTRAINT flame_config_pk PRIMARY KEY (id)
+  -- Uniqueness on dte_mode enforced via MERGE INTO in application layer
 );
 
 -- =============================================================================
@@ -330,8 +331,8 @@ CREATE TABLE IF NOT EXISTS spark_daily_perf (
   positions_closed INT,
   realized_pnl DECIMAL(10,2),
   updated_at TIMESTAMP,
-  CONSTRAINT spark_daily_perf_pk PRIMARY KEY (id),
-  CONSTRAINT spark_daily_perf_date_uq UNIQUE (trade_date)
+  CONSTRAINT spark_daily_perf_pk PRIMARY KEY (id)
+  -- Uniqueness on trade_date enforced via MERGE INTO in application layer
 );
 
 CREATE TABLE IF NOT EXISTS spark_pdt_log (
@@ -373,8 +374,8 @@ CREATE TABLE IF NOT EXISTS spark_config (
   starting_capital DECIMAL(12,2),
   created_at TIMESTAMP,
   updated_at TIMESTAMP,
-  CONSTRAINT spark_config_pk PRIMARY KEY (id),
-  CONSTRAINT spark_config_dte_uq UNIQUE (dte_mode)
+  CONSTRAINT spark_config_pk PRIMARY KEY (id)
+  -- Uniqueness on dte_mode enforced via MERGE INTO in application layer
 );
 
 -- =============================================================================
@@ -407,11 +408,11 @@ WHEN NOT MATCHED THEN INSERT (
 
 -- =============================================================================
 -- Optimize tables for common query patterns
+-- Run these AFTER data has been inserted (not on empty tables).
 -- =============================================================================
-
-OPTIMIZE flame_positions ZORDER BY (status, dte_mode, open_time);
-OPTIMIZE spark_positions ZORDER BY (status, dte_mode, open_time);
-OPTIMIZE flame_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
-OPTIMIZE spark_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
-OPTIMIZE flame_logs ZORDER BY (dte_mode, log_time);
-OPTIMIZE spark_logs ZORDER BY (dte_mode, log_time);
+-- OPTIMIZE flame_positions ZORDER BY (status, dte_mode, open_time);
+-- OPTIMIZE spark_positions ZORDER BY (status, dte_mode, open_time);
+-- OPTIMIZE flame_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
+-- OPTIMIZE spark_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
+-- OPTIMIZE flame_logs ZORDER BY (dte_mode, log_time);
+-- OPTIMIZE spark_logs ZORDER BY (dte_mode, log_time);
