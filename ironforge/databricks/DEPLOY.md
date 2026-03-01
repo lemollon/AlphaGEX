@@ -17,7 +17,7 @@
                                ┌──────────▼───────────┐
                                │  Databricks Job       │
                                │  ironforge_scanner.py │
-                               │  Scheduled (*/5 cron) │
+                               │  Cron: 0/5 8-15 1-5  │
                                └──────────────────────┘
                                           │
                                ┌──────────▼───────────┐
@@ -187,13 +187,17 @@ Upload `ironforge_scanner.py` to your workspace. Options:
 
 6. **Schedule**:
    - **Trigger type**: Scheduled
-   - **Cron expression**: `*/5 * * * *` (every 5 minutes)
+   - **Cron expression**: `0/5 8-15 * * 1-5` (every 5 min, 8AM-3PM CT, weekdays)
    - **Timezone**: `America/Chicago`
 
-   > **IMPORTANT**: Databricks will fire this 24/7/365, but the scanner checks
-   > `is_market_open()` and exits immediately if market is closed. Off-hours
-   > runs show as "Succeeded" in seconds. No compute cost outside ~1 second
-   > of startup + market-hours check.
+   > **Cluster warm-up**: The cron starts at 8:00 AM, and the scanner has a
+   > built-in warm-up window (8:20-8:29 CT). When triggered during this window,
+   > instead of exiting immediately, the scanner sleeps until 8:30 AM and then
+   > runs the first scan. This eliminates the 5-10 minute cold-start delay at
+   > market open. Runs before 8:20 and after 3:00 PM exit immediately (< 1 sec).
+   >
+   > The previous `*/5 * * * *` cron (24/7/365) works too but wastes cluster
+   > spin-ups overnight and on weekends.
 
 7. **Retries**: 1 retry on failure, 60 second delay
 
@@ -321,13 +325,16 @@ All times in **Central Time (America/Chicago)**.
 
 | Window | Time | Purpose |
 |--------|------|---------|
+| Warm-up window | 8:20 - 8:29 AM CT | Cluster warm-up, scanner waits for open |
 | Entry window | 8:30 AM - 2:00 PM CT | New trades can be opened |
 | Monitoring window | 8:30 AM - 3:00 PM CT | Open positions are monitored |
 | EOD cutoff | 2:45 PM CT | All positions force-closed |
 | Weekends | Skipped | Scanner exits immediately |
 
-The cron fires 24/7 but the scanner self-gates: if outside market hours, it
-logs "Market closed" and exits in under 1 second.
+The cron fires during market hours only (`0/5 8-15 * * 1-5`). During the warm-up
+window (8:20-8:29), the scanner holds the cluster alive until 8:30 so the first
+real scan has zero cold-start delay. Outside market hours, the scanner exits in
+under 1 second.
 
 ---
 
