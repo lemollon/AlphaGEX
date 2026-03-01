@@ -17,7 +17,7 @@
                                ┌──────────▼───────────┐
                                │  Databricks Job       │
                                │  ironforge_scanner.py │
-                               │  Cron: 0/5 8-15 1-5  │
+                               │  Quartz: 0/5 8-15 MF │
                                └──────────────────────┘
                                           │
                                ┌──────────▼───────────┐
@@ -187,7 +187,7 @@ Upload `ironforge_scanner.py` to your workspace. Options:
 
 6. **Schedule**:
    - **Trigger type**: Scheduled
-   - **Cron expression**: `0/5 8-15 * * 1-5` (every 5 min, 8AM-3PM CT, weekdays)
+   - **Cron expression**: `0 0/5 8-15 ? * MON-FRI` (Quartz format: every 5 min, 8AM-3PM CT, weekdays)
    - **Timezone**: `America/Chicago`
 
    > **Cluster warm-up**: The cron starts at 8:00 AM, and the scanner has a
@@ -331,7 +331,7 @@ All times in **Central Time (America/Chicago)**.
 | EOD cutoff | 2:45 PM CT | All positions force-closed |
 | Weekends | Skipped | Scanner exits immediately |
 
-The cron fires during market hours only (`0/5 8-15 * * 1-5`). During the warm-up
+The cron fires during market hours only (`0 0/5 8-15 ? * MON-FRI`). During the warm-up
 window (8:20-8:29), the scanner holds the cluster alive until 8:30 so the first
 real scan has zero cold-start delay. Outside market hours, the scanner exits in
 under 1 second.
