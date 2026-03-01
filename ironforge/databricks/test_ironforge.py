@@ -15,14 +15,14 @@ from datetime import datetime
 os.environ["TRADIER_API_KEY"] = "HbOM7HNC6Ibs6QAE6hYgr02rpx2K"
 os.environ["TRADIER_SANDBOX_KEY_USER"] = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
 os.environ["TRADIER_SANDBOX_KEY_MATT"] = "AGoNTv6o6GKMKT8uc7ooVNOct0e0"
-os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "HbOM7HNC6Ibs6QAE6hYgr02rpx2K"
+os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "GSpjmwhuvY4tPNRYLJoH7f7UYT"
 
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
 SANDBOX_ACCOUNTS = {
     "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA39284047"},
     "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
-    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "6YA14858"},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240885"},
 }
 
 print("Keys and account IDs loaded")
