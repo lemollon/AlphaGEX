@@ -21,8 +21,8 @@ PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
 SANDBOX_ACCOUNTS = {
     "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA39284047"},
-    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": ""},
-    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": ""},
+    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA39284047"},
 }
 
 print("Keys and account IDs loaded")
