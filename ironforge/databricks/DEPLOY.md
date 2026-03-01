@@ -17,7 +17,7 @@
                                ┌──────────▼───────────┐
                                │  Databricks Job       │
                                │  ironforge_scanner.py │
-                               │  Continuous mode      │
+                               │  Scheduled (*/5 cron) │
                                └──────────────────────┘
                                           │
                                ┌──────────▼───────────┐
@@ -27,10 +27,24 @@
                                └──────────────────────┘
 ```
 
+### Scanner Modes
+
+| Mode | `SCANNER_MODE` | Behavior | Use Case |
+|------|----------------|----------|----------|
+| **Single scan** (default) | `single` | Runs one scan cycle, exits | Databricks Job (cron) |
+| **Loop** | `loop` | Infinite loop, 5-min sleep | Notebook testing |
+
 ### Data Flow
 
 - **FLAME (2DTE)**: Paper trades + mirrors to 3 Tradier sandbox accounts
 - **SPARK (1DTE)**: Paper trades only (no sandbox mirroring)
+
+### PDT Rules
+
+- Paper accounts **ARE** subject to PDT (3 day trades per rolling 5 business days)
+- If PDT blocked → **both** paper AND sandbox are skipped (sandbox mirrors paper)
+- A day trade = position opened AND closed on the same calendar day
+- PDT log entry created on OPEN, `is_day_trade` calculated on CLOSE
 
 ---
 
@@ -119,63 +133,85 @@ The scanner uses **sandbox** Tradier for order execution only (FLAME only):
 
 ---
 
-## Step 3: Deploy Scanner as Databricks Job
+## Step 3: Deploy Scanner as Databricks Scheduled Job
 
-### Option A: Databricks Job (Recommended)
+The scanner runs in **single-scan mode** by default: it scans once, then exits.
+The Databricks Job scheduler fires it every 5 minutes via cron.
 
-#### 3a. Upload the scanner
+### 3a. Upload the scanner
 
 Upload `ironforge_scanner.py` to your workspace. Options:
 - Databricks Repos (Git integration)
+- Workspace Files via UI
 - DBFS upload:
   ```bash
   databricks fs cp ironforge_scanner.py dbfs:/ironforge/ironforge_scanner.py
   ```
-- Workspace Files via UI
 
-#### 3b. Create the Job
+### 3b. Create the Job
 
 **In Databricks UI:**
 
 1. Go to **Workflows** > **Jobs** > **Create Job**
-2. Name: `IronForge Scanner`
-3. Task type: **Python script**
-4. Source: path to `ironforge_scanner.py`
-5. Cluster:
-   - **Single node** (no workers needed)
-   - Instance type: smallest available (e.g., `Standard_DS3_v2` on Azure)
-   - Databricks Runtime: **15.4 LTS** or latest LTS
-   - Install libraries: `databricks-sql-connector`, `requests`
-     (via cluster Libraries tab or `%pip install` in init script)
 
-6. Environment variables (set in **Advanced** > **Environment variables**):
+2. **Job name**: `IronForge Scanner`
+
+3. **Task**:
+   - **Task name**: `ironforge-scanner`
+   - **Type**: **Notebook** (NOT "Python script")
+   - **Source**: Workspace (or Git provider if using Repos)
+   - **Path**: Browse to `ironforge_scanner.py`
+
+   > **Why Notebook, not Python script?** The scanner uses `spark.sql()` for
+   > all database operations. The Databricks runtime injects the `spark` session
+   > automatically for Notebook tasks. Python script tasks do NOT get `spark`.
+
+4. **Cluster**:
+   - **Single node** (no workers needed — scanner is lightweight)
+   - **Compute type**: Jobs Compute (cheaper than All-Purpose)
+   - Instance type: smallest available (e.g., `Standard_DS3_v2` on Azure)
+   - Databricks Runtime: **14.3 LTS** or later
+
+5. **Environment variables** (set in **Advanced** > **Environment variables**):
    ```
-   DATABRICKS_HOST=adb-3765346025813768.8.azuredatabricks.net
-   DATABRICKS_HTTP_PATH=/sql/1.0/warehouses/4970853897f5a656
-   DATABRICKS_TOKEN=<your-databricks-pat>
+   TRADIER_API_KEY=<your-production-tradier-key>
+   TRADIER_SANDBOX_KEY_USER=<sandbox-key-user>
+   TRADIER_SANDBOX_KEY_MATT=<sandbox-key-matt>
+   TRADIER_SANDBOX_KEY_LOGAN=<sandbox-key-logan>
    DATABRICKS_CATALOG=alpha_prime
    DATABRICKS_SCHEMA=ironforge
-   TRADIER_API_KEY=<production-key-for-quotes>
-   TRADIER_SANDBOX_KEY_USER=<customer-1-sandbox-key>
-   TRADIER_SANDBOX_KEY_MATT=<customer-2-sandbox-key>
-   TRADIER_SANDBOX_KEY_LOGAN=<customer-3-sandbox-key>
+   SCANNER_MODE=single
    ```
 
-7. Schedule: **Continuous** (the scanner has its own 5-minute sleep loop)
-   - OR: Cron `*/5 * * * *` (every 5 min) if you want Databricks to manage the schedule
-   - If using cron, change `main()` to call `run_scan_cycle()` once (no loop)
+   **7 env vars total.** API keys come from Job config, NOT hardcoded in code.
 
-8. Retries: Enable **auto-restart on failure** (max retries: unlimited)
+6. **Schedule**:
+   - **Trigger type**: Scheduled
+   - **Cron expression**: `*/5 * * * *` (every 5 minutes)
+   - **Timezone**: `America/Chicago`
 
-9. Alerts: Set email/Slack notification on failure
+   > **IMPORTANT**: Databricks will fire this 24/7/365, but the scanner checks
+   > `is_market_open()` and exits immediately if market is closed. Off-hours
+   > runs show as "Succeeded" in seconds. No compute cost outside ~1 second
+   > of startup + market-hours check.
 
-#### 3c. Verify It's Running
+7. **Retries**: 1 retry on failure, 60 second delay
+
+8. **Alerts** (optional): Email on failure
+
+9. Click **Save** > **Run Now** (to test)
+
+### 3c. Verify It's Running
 
 ```sql
--- Check heartbeat (updated every scan cycle)
+-- Check heartbeat is updating (should show last_heartbeat within 5-10 min)
 SELECT * FROM alpha_prime.ironforge.bot_heartbeats;
 
--- Check recent logs
+-- Check scan count is incrementing
+SELECT bot_name, scan_count, last_heartbeat
+FROM alpha_prime.ironforge.bot_heartbeats;
+
+-- Check logs are being written
 SELECT * FROM alpha_prime.ironforge.flame_logs
 ORDER BY log_time DESC LIMIT 10;
 
@@ -183,23 +219,27 @@ SELECT * FROM alpha_prime.ironforge.spark_logs
 ORDER BY log_time DESC LIMIT 10;
 ```
 
-Healthy output: heartbeat `last_heartbeat` within last 5-10 minutes,
-status = `active` during market hours or `idle` outside.
+**Healthy output during market hours:**
+- `last_heartbeat` within last 5-10 minutes
+- `status` = `active`
+- `scan_count` incrementing
 
-### Option B: Run as Notebook
+**Healthy output outside market hours:**
+- Job runs succeed quickly (< 5 seconds)
+- No new heartbeat updates (scanner exits before scanning)
+- Log shows "Market closed — exiting"
+
+### 3d. Alternative: Run as Notebook (Testing Only)
+
+For interactive testing, open the scanner in a notebook and set loop mode:
 
 ```python
-# %pip install databricks-sql-connector requests
 import os
-os.environ["DATABRICKS_HOST"] = spark.conf.get("spark.databricks.workspaceUrl")
-os.environ["DATABRICKS_HTTP_PATH"] = "/sql/1.0/warehouses/4970853897f5a656"
-os.environ["DATABRICKS_TOKEN"] = dbutils.secrets.get("ironforge", "databricks_token")
+os.environ["SCANNER_MODE"] = "loop"  # Override to loop mode
 os.environ["TRADIER_API_KEY"] = dbutils.secrets.get("ironforge", "tradier_api_key")
-# Add sandbox keys from secrets if needed:
-# os.environ["TRADIER_SANDBOX_KEY_USER"] = dbutils.secrets.get("ironforge", "sandbox_user")
+# Set other env vars as needed...
 
-from ironforge_scanner import main
-main()
+# Then click "Run All" — it will loop every 5 minutes until you stop it
 ```
 
 ---
@@ -241,15 +281,13 @@ uvicorn ironforge_api:app --host 0.0.0.0 --port 8000
 
 | Variable | Required | Value |
 |----------|----------|-------|
-| `DATABRICKS_HOST` | Yes | `adb-3765346025813768.8.azuredatabricks.net` |
-| `DATABRICKS_HTTP_PATH` | Yes | `/sql/1.0/warehouses/4970853897f5a656` |
-| `DATABRICKS_TOKEN` | Yes | Personal access token |
-| `DATABRICKS_CATALOG` | No | `alpha_prime` (default) |
-| `DATABRICKS_SCHEMA` | No | `ironforge` (default) |
 | `TRADIER_API_KEY` | **Yes** | Production key for live SPY/VIX quotes |
 | `TRADIER_SANDBOX_KEY_USER` | No | Customer 1 sandbox key (FLAME mirror) |
 | `TRADIER_SANDBOX_KEY_MATT` | No | Customer 2 sandbox key (FLAME mirror) |
 | `TRADIER_SANDBOX_KEY_LOGAN` | No | Customer 3 sandbox key (FLAME mirror) |
+| `DATABRICKS_CATALOG` | No | `alpha_prime` (default) |
+| `DATABRICKS_SCHEMA` | No | `ironforge` (default) |
+| `SCANNER_MODE` | No | `single` (default) or `loop` for notebook testing |
 
 ### Vercel Dashboard
 
@@ -277,13 +315,34 @@ uvicorn ironforge_api:app --host 0.0.0.0 --port 8000
 
 ---
 
+## Market Hours Reference
+
+All times in **Central Time (America/Chicago)**.
+
+| Window | Time | Purpose |
+|--------|------|---------|
+| Entry window | 8:30 AM - 2:00 PM CT | New trades can be opened |
+| Monitoring window | 8:30 AM - 3:00 PM CT | Open positions are monitored |
+| EOD cutoff | 2:45 PM CT | All positions force-closed |
+| Weekends | Skipped | Scanner exits immediately |
+
+The cron fires 24/7 but the scanner self-gates: if outside market hours, it
+logs "Market closed" and exits in under 1 second.
+
+---
+
 ## Troubleshooting
 
 ### Scanner not trading
 1. Check `TRADIER_API_KEY` is set and is a **production** key (not sandbox)
-2. Check market is open (8:30 AM - 3:30 PM CT, weekdays)
+2. Check market is open (8:30 AM - 3:00 PM CT, weekdays)
 3. Check heartbeats: `SELECT * FROM alpha_prime.ironforge.bot_heartbeats`
 4. Check logs: `SELECT * FROM alpha_prime.ironforge.flame_logs ORDER BY log_time DESC LIMIT 20`
+5. Check PDT status: `SELECT * FROM alpha_prime.ironforge.flame_pdt_log WHERE trade_date >= CURRENT_DATE - 8 ORDER BY opened_at DESC`
+
+### Scanner shows "spark not available"
+The Job task type must be **Notebook**, not "Python script". Python script tasks
+don't get the `spark` session injected by the Databricks runtime.
 
 ### Dashboard showing empty data
 1. Verify `DATABRICKS_TOKEN` is valid
@@ -299,3 +358,15 @@ uvicorn ironforge_api:app --host 0.0.0.0 --port 8000
 1. Paper starts at $10,000
 2. Check if collateral_in_use is blocking: `SELECT * FROM alpha_prime.ironforge.flame_paper_account`
 3. Reset if needed: `UPDATE alpha_prime.ironforge.flame_paper_account SET buying_power = current_balance - collateral_in_use`
+
+### PDT blocked when it shouldn't be
+```sql
+-- Check rolling 5-day window
+SELECT trade_date, symbol, position_id, is_day_trade, opened_at, closed_at
+FROM alpha_prime.ironforge.flame_pdt_log
+WHERE is_day_trade = TRUE
+AND trade_date >= CURRENT_DATE - 8
+ORDER BY trade_date DESC;
+```
+Day trades drop off after 5 business days. If all 3 slots are used, wait for the
+oldest one to age out.

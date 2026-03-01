@@ -205,12 +205,10 @@ class Trader:
                 return result
 
             # Step 7: PDT check
+            # PDT applies to paper accounts. When paper is blocked,
+            # sandbox doesn't fire either (sandbox mirrors paper).
             can_trade, pdt_count, pdt_msg = self.can_trade_today()
             if not can_trade:
-                # FLAME: PDT blocks paper but sandbox still trades
-                if self.config.bot_name == "FLAME":
-                    self._sandbox_only_trade(now)
-
                 result["action"] = "pdt_blocked"
                 result["details"]["reason"] = pdt_msg
                 self.db.log("SKIP", f"PDT blocked: {pdt_msg}")
@@ -674,74 +672,6 @@ class Trader:
             ),
             "collateral_required": position.collateral_required,
         }
-
-    def _sandbox_only_trade(self, now: datetime) -> None:
-        """
-        Place a trade in all 3 Tradier sandbox accounts (no paper account changes).
-
-        Called when PDT blocks FLAME's paper trade but the sandbox accounts
-        have no PDT restriction and should still execute.
-        """
-        try:
-            signal = self.signal_generator.generate_signal()
-            if not signal or not signal.is_valid:
-                logger.info(f"{self.config.bot_name}: Sandbox-only skipped — no valid signal")
-                return
-
-            account = self.db.get_paper_account()
-            spread_width = signal.put_short - signal.put_long
-            collateral_per = self.executor.calculate_collateral(
-                spread_width, signal.total_credit
-            )
-            contracts = self.executor.calculate_max_contracts(
-                account.buying_power, collateral_per
-            )
-            if contracts < 1:
-                logger.info(f"{self.config.bot_name}: Sandbox-only skipped — 0 contracts")
-                return
-
-            # Mirror to all 3 sandbox accounts
-            sandbox_orders = {}
-            for sandbox in self.executor.sandbox_clients:
-                name = sandbox["name"]
-                client = sandbox["client"]
-                try:
-                    result = client.place_ic_order(
-                        ticker=self.config.ticker,
-                        expiration=signal.expiration,
-                        put_short=signal.put_short,
-                        put_long=signal.put_long,
-                        call_short=signal.call_short,
-                        call_long=signal.call_long,
-                        contracts=contracts,
-                        total_credit=signal.total_credit,
-                        tag=f"SANDBOX-PDT-{now.strftime('%Y%m%d')}",
-                    )
-                    order_id = result.get("order_id") if result else None
-                    if order_id:
-                        sandbox_orders[name] = str(order_id)
-                        logger.info(
-                            f"{self.config.bot_name} SANDBOX-ONLY [{name}] (PDT blocked): "
-                            f"{signal.put_long}/{signal.put_short}P-"
-                            f"{signal.call_short}/{signal.call_long}C "
-                            f"x{contracts} → order {order_id}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"{self.config.bot_name} SANDBOX-ONLY [{name}] ERROR: {e}"
-                    )
-
-            self.db.log(
-                "TRADE_OPEN",
-                f"SANDBOX-ONLY (PDT blocked): "
-                f"{signal.put_long}/{signal.put_short}P-"
-                f"{signal.call_short}/{signal.call_long}C "
-                f"x{contracts} @ ${signal.total_credit:.2f} "
-                f"[sandbox:{sandbox_orders}]",
-                {"sandbox_order_ids": sandbox_orders, "pdt_blocked_paper": True},
-            )
-        except Exception as e:
-            logger.warning(f"{self.config.bot_name}: Sandbox-only trade failed: {e}")
 
     def toggle(self, active: bool) -> Dict[str, Any]:
         """Enable or disable the bot (persisted to DB)."""

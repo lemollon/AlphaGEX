@@ -10,21 +10,24 @@
 
 # COMMAND ----------
 
-# Cell 1: Credentials — edit these if keys change
+# Cell 1: Credentials
+# In Job context, env vars come from Job configuration.
+# In notebook context, set them here as fallback (or use dbutils.secrets).
 import os
 
-os.environ["TRADIER_API_KEY"] = "HbOM7HNC6Ibs6QAE6hYgr02rpx2K"
+def _set_if_missing(key: str, fallback: str) -> None:
+    """Set env var only if not already set (Job env vars take priority)."""
+    if not os.environ.get(key):
+        os.environ[key] = fallback
 
-os.environ["TRADIER_SANDBOX_KEY_USER"] = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
-os.environ["TRADIER_SANDBOX_ACCOUNT_ID_USER"] = "VA39284047"
+# NOTE: For production, set these in Databricks Job environment variables
+# or use dbutils.secrets. The fallbacks below are for notebook testing only.
+_set_if_missing("TRADIER_API_KEY", "")
+_set_if_missing("TRADIER_SANDBOX_KEY_USER", "")
+_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "")
+_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "")
 
-os.environ["TRADIER_SANDBOX_KEY_MATT"] = "AGoNTv6o6GKMKT8uc7ooVNOct0e0"
-os.environ["TRADIER_SANDBOX_ACCOUNT_ID_MATT"] = "VA55391129"
-
-os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LWOb0F5fhXHh"
-os.environ["TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"] = "VA59240884"
-
-print("Credentials set")
+print(f"Credentials: TRADIER_API_KEY={'set' if os.environ.get('TRADIER_API_KEY') else 'MISSING'}")
 
 # COMMAND ----------
 
@@ -67,12 +70,27 @@ BOTS = [
 ]
 
 # ---------------------------------------------------------------------------
-#  Databricks SQL — uses spark.sql() in notebook context
+#  Databricks SQL — uses spark.sql() in notebook/job context
+#  IMPORTANT: Job task type must be "Notebook" (not "Python script")
+#  so that the Databricks runtime injects the spark session.
 # ---------------------------------------------------------------------------
+
+# Verify spark is available (injected by Databricks runtime)
+try:
+    spark  # noqa: F821
+    _HAS_SPARK = True
+except NameError:
+    _HAS_SPARK = False
+    log.error(
+        "spark is not available. The Job task type must be 'Notebook' "
+        "(not 'Python script') so Databricks injects the spark session."
+    )
 
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
     """Execute a SQL query and return rows as list of dicts."""
+    if not _HAS_SPARK:
+        raise RuntimeError("spark not available — use Notebook task type")
     try:
         result = spark.sql(sql_str)  # noqa: F821
         rows = result.collect()
@@ -87,6 +105,8 @@ def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
 
 def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
     """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
+    if not _HAS_SPARK:
+        raise RuntimeError("spark not available — use Notebook task type")
     try:
         spark.sql(sql_str)  # noqa: F821
     except Exception as e:
@@ -131,7 +151,8 @@ def _get_tradier_api_key() -> str:
 
 
 def _get_tradier_base_url() -> str:
-    return os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
+    # Production URL for quotes — NEVER use sandbox for quotes (stale data)
+    return os.environ.get("TRADIER_BASE_URL", "https://api.tradier.com/v1")
 
 
 def is_tradier_configured() -> bool:
@@ -502,12 +523,12 @@ def get_central_time() -> datetime:
 
 
 def is_market_open(ct: datetime) -> bool:
-    """Check if market is open: weekday, 8:30 AM - 3:30 PM CT."""
+    """Check if within monitoring window: weekday, 8:30 AM - 3:00 PM CT."""
     dow = ct.weekday()
     if dow >= 5:
         return False
     hhmm = ct.hour * 100 + ct.minute
-    return 830 <= hhmm <= 1530
+    return 830 <= hhmm <= 1500
 
 
 def is_in_entry_window(ct: datetime) -> bool:
@@ -520,9 +541,9 @@ def is_in_entry_window(ct: datetime) -> bool:
 
 
 def is_after_eod_cutoff(ct: datetime) -> bool:
-    """Check if past EOD cutoff: 3:45 PM CT."""
+    """Check if past EOD cutoff: 2:45 PM CT."""
     hhmm = ct.hour * 100 + ct.minute
-    return hhmm >= 1545
+    return hhmm >= 1445
 
 
 # ---------------------------------------------------------------------------
@@ -895,6 +916,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     if vix > 32:
         return f"skip:vix_too_high({vix:.1f})"
 
+    # Check 1: Already traded today? (max 1 trade/day)
     today_trades = db_query(f"""
         SELECT COUNT(*) as cnt
         FROM {bot_table(bot['name'], 'pdt_log')}
@@ -902,6 +924,21 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     """)
     if to_int(today_trades[0].get("cnt") if today_trades else 0) >= 1:
         return "skip:already_traded_today"
+
+    # Check 2: PDT rolling 5-day window (3 day trades in 5 business days = blocked)
+    # Paper accounts ARE subject to PDT. If PDT blocked, skip BOTH paper AND sandbox.
+    pdt_rows = db_query(f"""
+        SELECT COUNT(*) as cnt
+        FROM {bot_table(bot['name'], 'pdt_log')}
+        WHERE is_day_trade = TRUE
+        AND dte_mode = '{bot['dte']}'
+        AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
+        AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+    """)
+    pdt_count = to_int(pdt_rows[0].get("cnt") if pdt_rows else 0)
+    if pdt_count >= 3:
+        log.info(f"{bot['name'].upper()} PDT BLOCKED: {pdt_count}/3 day trades in rolling 5 biz days")
+        return f"skip:pdt_blocked({pdt_count}/3)"
 
     account_rows = db_query(f"""
         SELECT id, current_balance, buying_power
@@ -1259,22 +1296,63 @@ def scan_bot(bot: dict) -> None:
     log.info(f"{bot_name}: {action} | {reason}")
 
 
+def run_scan_cycle() -> None:
+    """Run one scan cycle for all bots."""
+    for bot in BOTS:
+        try:
+            scan_bot(bot)
+        except Exception as e:
+            log.error(f"{bot['name'].upper()} scan_bot crashed: {e}")
+            log.error(traceback.format_exc())
+
+
 print("Scanner code loaded")
 
 # COMMAND ----------
 
 # Cell 3: Run the scanner
-log.info("IronForge Databricks scanner starting")
-log.info(f"  Catalog: {CATALOG}")
-log.info(f"  Schema: {SCHEMA}")
-log.info(f"  Tradier configured: {is_tradier_configured()}")
-log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
-log.info(f"  Scan interval: {SCAN_INTERVAL}s")
 
-while True:
+
+def main() -> None:
+    """Single scan — called by Databricks Job every 5 minutes.
+
+    In Job context (SCANNER_MODE=single), runs one scan cycle and exits.
+    The Databricks Job scheduler handles the 5-minute repeat.
+
+    In notebook context (SCANNER_MODE=loop), runs in an infinite loop
+    with a 5-minute sleep between cycles.
+    """
     ct = get_central_time()
-    if is_market_open(ct):
-        run_scan_cycle()
-    else:
-        log.info(f"Market closed ({ct.hour}:{ct.minute:02d} CT), waiting...")
-    time.sleep(SCAN_INTERVAL)
+    log.info(
+        f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT "
+        f"| Catalog: {CATALOG} | Schema: {SCHEMA} "
+        f"| Tradier: {'OK' if is_tradier_configured() else 'MISSING'}"
+    )
+
+    if not is_market_open(ct):
+        log.info(
+            f"Market closed ({ct.strftime('%H:%M')} CT, "
+            f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
+        )
+        return
+
+    run_scan_cycle()
+    log.info("Scan complete — exiting")
+
+
+# Entry point: single-scan (Job) vs loop (notebook testing)
+_scanner_mode = os.environ.get("SCANNER_MODE", "single")
+
+if _scanner_mode == "loop":
+    # Notebook testing mode — infinite loop with 5-min sleep
+    log.info("Starting in LOOP mode (notebook testing)")
+    log.info(f"  Catalog: {CATALOG} | Schema: {SCHEMA}")
+    log.info(f"  Tradier configured: {is_tradier_configured()}")
+    log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
+    log.info(f"  Scan interval: {SCAN_INTERVAL}s")
+    while True:
+        main()
+        time.sleep(SCAN_INTERVAL)
+else:
+    # Job mode — single scan and exit
+    main()
