@@ -11,23 +11,32 @@
 # COMMAND ----------
 
 # Cell 1: Credentials
-# In Job context, env vars come from Job configuration.
-# In notebook context, set them here as fallback (or use dbutils.secrets).
+# These are set as notebook-level fallbacks. If env vars are already set
+# (e.g., via Databricks Job config or cluster env vars), those take priority.
 import os
 
 def _set_if_missing(key: str, fallback: str) -> None:
-    """Set env var only if not already set (Job env vars take priority)."""
+    """Set env var only if not already set (Job/cluster env vars take priority)."""
     if not os.environ.get(key):
         os.environ[key] = fallback
 
-# NOTE: For production, set these in Databricks Job environment variables
-# or use dbutils.secrets. The fallbacks below are for notebook testing only.
-_set_if_missing("TRADIER_API_KEY", "")
-_set_if_missing("TRADIER_SANDBOX_KEY_USER", "")
-_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "")
-_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "")
+# Tradier production key (for live SPY/VIX quotes)
+_set_if_missing("TRADIER_API_KEY", "HbOM7HNC6Ibs6QAE6hYgr02rpx2K")
+
+# Tradier sandbox keys (for FLAME order mirroring)
+_set_if_missing("TRADIER_SANDBOX_KEY_USER", "iPidGGnYrhzjp6vGBBQw8HyqF0xj")
+_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVN0ct0e0")
+_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh60LW0b0F5fhXHh")
+
+# Databricks catalog/schema
+_set_if_missing("DATABRICKS_CATALOG", "alpha_prime")
+_set_if_missing("DATABRICKS_SCHEMA", "ironforge")
+
+# Scanner mode (single = Job, loop = notebook testing)
+_set_if_missing("SCANNER_MODE", "single")
 
 print(f"Credentials: TRADIER_API_KEY={'set' if os.environ.get('TRADIER_API_KEY') else 'MISSING'}")
+print(f"  Mode: {os.environ.get('SCANNER_MODE', 'single')}")
 
 # COMMAND ----------
 
