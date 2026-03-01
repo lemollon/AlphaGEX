@@ -19,9 +19,13 @@ os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LW0b0F5fhXHh"
 
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
-SANDBOX_KEYS = {"USER": os.environ["TRADIER_SANDBOX_KEY_USER"], "MATT": os.environ["TRADIER_SANDBOX_KEY_MATT"], "LOGAN": os.environ["TRADIER_SANDBOX_KEY_LOGAN"]}
+SANDBOX_ACCOUNTS = {
+    "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA74964498"},
+    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240884"},
+}
 
-print("Keys loaded")
+print("Keys and account IDs loaded")
 
 # COMMAND ----------
 
@@ -59,18 +63,15 @@ else:
 
 # COMMAND ----------
 
-# Cell 5: Test all 3 sandbox accounts
-SANDBOX_ACCOUNTS = {}
-for name, key in SANDBOX_KEYS.items():
-    r = requests.get(f"{SANDBOX_URL}/user/profile", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout=10)
+# Cell 5: Verify all 3 sandbox accounts (balance check)
+for name, info in SANDBOX_ACCOUNTS.items():
+    r = requests.get(f"{SANDBOX_URL}/accounts/{info['account_id']}/balances", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
     if r.ok:
-        acct = r.json().get("profile", {}).get("account", {})
-        if isinstance(acct, list): acct = acct[0]
-        acct_id = acct.get("account_number", "?")
-        SANDBOX_ACCOUNTS[name] = acct_id
-        print(f"  {name}: Account {acct_id}")
+        bal = r.json().get("balances", {})
+        equity = bal.get("total_equity", bal.get("equity", "?"))
+        print(f"  {name}: Account {info['account_id']} — equity ${equity}")
     else:
-        print(f"  {name}: FAILED ({r.status_code})")
+        print(f"  {name}: Account {info['account_id']} — FAILED ({r.status_code}) {r.text[:200]}")
 
 # COMMAND ----------
 
@@ -92,15 +93,13 @@ if SPY_PRICE > 0 and SANDBOX_ACCOUNTS:
 
         def occ(strike, t): return f"SPY{exp_fmt}{t}{int(strike*1000):08d}"
 
-        for name, key in SANDBOX_KEYS.items():
-            acct_id = SANDBOX_ACCOUNTS.get(name)
-            if not acct_id: continue
+        for name, info in SANDBOX_ACCOUNTS.items():
             order_data = {"class": "multileg", "symbol": "SPY", "type": "credit", "duration": "day", "price": "0.10",
                           "option_symbol[0]": occ(ps,"P"), "side[0]": "sell_to_open", "quantity[0]": "1",
                           "option_symbol[1]": occ(pl,"P"), "side[1]": "buy_to_open", "quantity[1]": "1",
                           "option_symbol[2]": occ(cs,"C"), "side[2]": "sell_to_open", "quantity[2]": "1",
                           "option_symbol[3]": occ(cl,"C"), "side[3]": "buy_to_open", "quantity[3]": "1"}
-            r = requests.post(f"{SANDBOX_URL}/accounts/{acct_id}/orders", data=order_data, headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout=10)
+            r = requests.post(f"{SANDBOX_URL}/accounts/{info['account_id']}/orders", data=order_data, headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
             if r.ok:
                 oid = r.json().get("order", {}).get("id", "?")
                 print(f"  {name}: Order #{oid}")
