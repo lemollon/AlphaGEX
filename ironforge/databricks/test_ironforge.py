@@ -20,9 +20,9 @@ os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LW0b0F5fhXHh"
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
 SANDBOX_ACCOUNTS = {
-    "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA74964498"},
-    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
-    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240884"},
+    "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA39284047"},
+    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": ""},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": ""},
 }
 
 print("Keys and account IDs loaded")
@@ -63,15 +63,33 @@ else:
 
 # COMMAND ----------
 
-# Cell 5: Verify all 3 sandbox accounts (balance check)
+# Cell 5: Verify all 3 sandbox accounts
+# For each account: use hardcoded account_id if available, otherwise try auto-discover
 for name, info in SANDBOX_ACCOUNTS.items():
-    r = requests.get(f"{SANDBOX_URL}/accounts/{info['account_id']}/balances", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
+    acct_id = info["account_id"]
+
+    if not acct_id:
+        # Try auto-discover via /user/profile
+        r = requests.get(f"{SANDBOX_URL}/user/profile", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
+        if r.ok:
+            acct = r.json().get("profile", {}).get("account", {})
+            if isinstance(acct, list): acct = acct[0]
+            acct_id = acct.get("account_number", "")
+            info["account_id"] = acct_id
+            print(f"  {name}: Auto-discovered account {acct_id}")
+        else:
+            print(f"  {name}: No account ID and auto-discover failed ({r.status_code}) {r.text[:200]}")
+            print(f"         Get the account ID from Render env var TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_{{2,3}}")
+            continue
+
+    # Balance check
+    r = requests.get(f"{SANDBOX_URL}/accounts/{acct_id}/balances", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
     if r.ok:
         bal = r.json().get("balances", {})
         equity = bal.get("total_equity", bal.get("equity", "?"))
-        print(f"  {name}: Account {info['account_id']} — equity ${equity}")
+        print(f"  {name}: Account {acct_id} — equity ${equity}")
     else:
-        print(f"  {name}: Account {info['account_id']} — FAILED ({r.status_code}) {r.text[:200]}")
+        print(f"  {name}: Account {acct_id} — FAILED ({r.status_code}) {r.text[:200]}")
 
 # COMMAND ----------
 
@@ -94,6 +112,9 @@ if SPY_PRICE > 0 and len(SANDBOX_ACCOUNTS) > 0:
         def occ(strike, t): return f"SPY{exp_fmt}{t}{int(strike*1000):08d}"
 
         for name, info in SANDBOX_ACCOUNTS.items():
+            if not info.get("account_id"):
+                print(f"  {name}: SKIP (no account ID)")
+                continue
             order_data = {"class": "multileg", "symbol": "SPY", "type": "credit", "duration": "day", "price": "0.10",
                           "option_symbol[0]": occ(ps,"P"), "side[0]": "sell_to_open", "quantity[0]": "1",
                           "option_symbol[1]": occ(pl,"P"), "side[1]": "buy_to_open", "quantity[1]": "1",
