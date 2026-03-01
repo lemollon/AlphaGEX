@@ -21,7 +21,7 @@ export async function GET(
         contracts, spread_width, total_credit, max_loss, max_profit,
         underlying_at_entry, vix_at_entry, collateral_required,
         oracle_win_probability, oracle_advice,
-        wings_adjusted, status, open_time
+        wings_adjusted, sandbox_order_id, status, open_time
       FROM ${botTable(bot, 'positions')}
       WHERE status = 'open' AND dte_mode = '${dte}'
       ORDER BY open_time DESC
@@ -48,6 +48,7 @@ export async function GET(
       oracle_win_probability: num(r.oracle_win_probability),
       oracle_advice: r.oracle_advice,
       wings_adjusted: r.wings_adjusted === 'true' || r.wings_adjusted === '1',
+      sandbox_order_id: r.sandbox_order_id || null,
       open_time: r.open_time,
     }))
 

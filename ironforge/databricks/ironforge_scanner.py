@@ -45,8 +45,8 @@ log = logging.getLogger("ironforge")
 # ---------------------------------------------------------------------------
 
 SCAN_INTERVAL = 300  # 5 minutes
-CATALOG = os.environ.get("DATABRICKS_CATALOG", "ironforge")
-SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "trading")
+CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
+SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 
 BOTS = [
     {"name": "flame", "dte": "2DTE", "min_dte": 2},
@@ -119,7 +119,7 @@ def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
 
 
 def bot_table(bot_name: str, suffix: str) -> str:
-    """Build fully-qualified table name: ironforge.trading.{bot}_{suffix}."""
+    """Build fully-qualified table name: alpha_prime.ironforge.{bot}_{suffix}."""
     return f"{CATALOG}.{SCHEMA}.{bot_name}_{suffix}"
 
 
@@ -763,14 +763,15 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
-    # Mirror close to sandbox
-    try:
-        close_ic_order_all_accounts(
-            ticker, expiration, put_short, put_long, call_short, call_long,
-            contracts, price, position_id,
-        )
-    except Exception as e:
-        log.warning(f"Sandbox close failed for {position_id}: {e}")
+    # Mirror close to sandbox (FLAME only — SPARK is paper-only)
+    if bot["name"] == "flame":
+        try:
+            close_ic_order_all_accounts(
+                ticker, expiration, put_short, put_long, call_short, call_long,
+                contracts, price, position_id,
+            )
+        except Exception as e:
+            log.warning(f"Sandbox close failed for {position_id}: {e}")
 
     # Log
     details = json.dumps({
@@ -1036,25 +1037,26 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # Mirror to sandbox
+    # Mirror to sandbox (FLAME only — SPARK is paper-only)
     sandbox_order_ids: dict[str, int] = {}
-    try:
-        sandbox_order_ids = place_ic_order_all_accounts(
-            "SPY", expiration,
-            strikes["putShort"], strikes["putLong"],
-            strikes["callShort"], strikes["callLong"],
-            max_contracts, credits["totalCredit"], position_id,
-        )
-        if sandbox_order_ids:
-            sandbox_json = json.dumps(sandbox_order_ids).replace("'", "''")
-            db_execute(f"""
-                UPDATE {bot_table(bot['name'], 'positions')}
-                SET sandbox_order_id = '{sandbox_json}',
-                    updated_at = CURRENT_TIMESTAMP()
-                WHERE position_id = '{position_id}'
-            """)
-    except Exception as e:
-        log.warning(f"Sandbox open failed for {position_id}: {e}")
+    if bot["name"] == "flame":
+        try:
+            sandbox_order_ids = place_ic_order_all_accounts(
+                "SPY", expiration,
+                strikes["putShort"], strikes["putLong"],
+                strikes["callShort"], strikes["callLong"],
+                max_contracts, credits["totalCredit"], position_id,
+            )
+            if sandbox_order_ids:
+                sandbox_json = json.dumps(sandbox_order_ids).replace("'", "''")
+                db_execute(f"""
+                    UPDATE {bot_table(bot['name'], 'positions')}
+                    SET sandbox_order_id = '{sandbox_json}',
+                        updated_at = CURRENT_TIMESTAMP()
+                    WHERE position_id = '{position_id}'
+                """)
+        except Exception as e:
+            log.warning(f"Sandbox open failed for {position_id}: {e}")
 
     # Deduct collateral
     acct_id = acct["id"]

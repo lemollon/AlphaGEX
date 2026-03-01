@@ -12,6 +12,7 @@ interface Position {
   collateral_required: number
   underlying_at_entry: number
   open_time: string
+  sandbox_order_id?: string | null
   // Live data from position-monitor
   current_cost_to_close?: number | null
   spot_price?: number | null
@@ -27,10 +28,12 @@ export default function PositionTable({
   positions,
   spotPrice,
   tradierConnected,
+  bot,
 }: {
   positions: Position[]
   spotPrice?: number | null
   tradierConnected?: boolean
+  bot?: 'flame' | 'spark'
 }) {
   if (!positions.length) {
     return (
@@ -58,7 +61,7 @@ export default function PositionTable({
 
       {/* Position cards */}
       {positions.map((pos) => (
-        <PositionCard key={pos.position_id} pos={pos} hasLiveData={hasLiveData} />
+        <PositionCard key={pos.position_id} pos={pos} hasLiveData={hasLiveData} showSandbox={bot === 'flame'} />
       ))}
     </div>
   )
@@ -68,7 +71,16 @@ export default function PositionTable({
 /*  Position Card                                                      */
 /* ------------------------------------------------------------------ */
 
-function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolean }) {
+function parseSandboxOrders(raw: string | null | undefined): Record<string, string> | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+  } catch { /* not valid JSON */ }
+  return null
+}
+
+function PositionCard({ pos, hasLiveData, showSandbox }: { pos: Position; hasLiveData: boolean; showSandbox?: boolean }) {
   const pnl = pos.unrealized_pnl
   const pnlPct = pos.unrealized_pnl_pct
   const pnlColor =
@@ -196,6 +208,22 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
         <span>Entry: ${pos.underlying_at_entry.toFixed(2)}</span>
         <span>Opened: {pos.open_time?.slice(0, 16)}</span>
       </div>
+
+      {/* Sandbox orders (FLAME only) */}
+      {showSandbox && (() => {
+        const orders = parseSandboxOrders(pos.sandbox_order_id)
+        if (!orders || Object.keys(orders).length === 0) return null
+        return (
+          <div className="flex items-center gap-3 text-xs border-t border-forge-border/50 pt-2">
+            <span className="text-forge-muted">Sandbox:</span>
+            {Object.entries(orders).map(([name, id]) => (
+              <span key={name} className="bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-mono">
+                {name} #{id}
+              </span>
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 }

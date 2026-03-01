@@ -42,8 +42,8 @@ class DatabricksConfig:
         self.server_hostname = os.getenv('DATABRICKS_SERVER_HOSTNAME')
         self.http_path = os.getenv('DATABRICKS_HTTP_PATH')
         self.access_token = os.getenv('DATABRICKS_ACCESS_TOKEN')
-        self.catalog = os.getenv('DATABRICKS_CATALOG', 'alphagex')
-        self.schema = os.getenv('DATABRICKS_SCHEMA', 'trading')
+        self.catalog = os.getenv('DATABRICKS_CATALOG', 'alpha_prime')
+        self.schema = os.getenv('DATABRICKS_SCHEMA', 'ironforge')
 
     def get_connection(self):
         """Create Databricks SQL connection"""

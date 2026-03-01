@@ -149,9 +149,10 @@ export default function BotDashboard({
             positions={positionMonitor?.positions || []}
             spotPrice={positionMonitor?.spot_price}
             tradierConnected={positionMonitor?.tradier_connected}
+            bot={bot}
           />
         )}
-        {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} />}
+        {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} bot={bot} />}
         {tab === 'Logs' && logs && <LogsTable logs={logs.logs} />}
       </div>
     </div>

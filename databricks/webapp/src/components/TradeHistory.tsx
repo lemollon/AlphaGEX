@@ -13,6 +13,7 @@ interface Trade {
   close_reason: string
   realized_pnl: number
   close_time: string
+  sandbox_order_id?: string | null
 }
 
 const reasonColors: Record<string, string> = {
@@ -23,7 +24,16 @@ const reasonColors: Record<string, string> = {
   expired_previous_day: 'bg-blue-500/20 text-blue-400',
 }
 
-export default function TradeHistory({ trades }: { trades: Trade[] }) {
+function parseSandboxOrders(raw: string | null | undefined): Record<string, string> | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'object' && parsed !== null) return parsed
+  } catch { /* not valid JSON */ }
+  return null
+}
+
+export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: 'flame' | 'spark' }) {
   if (!trades.length) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">
@@ -44,6 +54,7 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
             <th className="text-right p-3">Close $</th>
             <th className="text-right p-3">P&L</th>
             <th className="text-left p-3">Reason</th>
+            {bot === 'flame' && <th className="text-left p-3">Sandbox</th>}
           </tr>
         </thead>
         <tbody>
@@ -66,6 +77,25 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
                     {trade.close_reason}
                   </span>
                 </td>
+                {bot === 'flame' && (
+                  <td className="p-3">
+                    {(() => {
+                      const orders = parseSandboxOrders(trade.sandbox_order_id)
+                      if (!orders || Object.keys(orders).length === 0) {
+                        return <span className="text-xs text-gray-600">--</span>
+                      }
+                      return (
+                        <div className="flex flex-wrap gap-1">
+                          {Object.entries(orders).map(([name, id]) => (
+                            <span key={name} className="text-[10px] bg-amber-500/10 text-amber-400 px-1.5 py-0.5 rounded font-mono">
+                              {name} #{id}
+                            </span>
+                          ))}
+                        </div>
+                      )
+                    })()}
+                  </td>
+                )}
               </tr>
             )
           })}

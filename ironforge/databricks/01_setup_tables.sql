@@ -17,10 +17,10 @@
 -- =============================================================================
 
 -- Create catalog and schema
-CREATE CATALOG IF NOT EXISTS ironforge;
-USE CATALOG ironforge;
-CREATE SCHEMA IF NOT EXISTS trading;
-USE SCHEMA trading;
+CREATE CATALOG IF NOT EXISTS alpha_prime;
+USE CATALOG alpha_prime;
+CREATE SCHEMA IF NOT EXISTS ironforge;
+USE SCHEMA ironforge;
 
 -- =============================================================================
 -- Shared Tables

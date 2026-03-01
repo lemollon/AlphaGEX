@@ -22,7 +22,7 @@ export async function GET(
         close_price, close_reason, realized_pnl,
         open_time, close_time,
         underlying_at_entry, vix_at_entry,
-        wings_adjusted
+        wings_adjusted, sandbox_order_id
       FROM ${botTable(bot, 'positions')}
       WHERE status IN ('closed', 'expired') AND dte_mode = '${dte}'
       ORDER BY close_time DESC
@@ -48,6 +48,7 @@ export async function GET(
       underlying_at_entry: num(r.underlying_at_entry),
       vix_at_entry: num(r.vix_at_entry),
       wings_adjusted: r.wings_adjusted === 'true' || r.wings_adjusted === '1',
+      sandbox_order_id: r.sandbox_order_id || null,
     }))
 
     return NextResponse.json({ trades })
