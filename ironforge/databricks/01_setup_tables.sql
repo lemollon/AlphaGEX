@@ -408,11 +408,11 @@ WHEN NOT MATCHED THEN INSERT (
 
 -- =============================================================================
 -- Optimize tables for common query patterns
+-- Run these AFTER data has been inserted (not on empty tables).
 -- =============================================================================
-
-OPTIMIZE flame_positions ZORDER BY (status, dte_mode, open_time);
-OPTIMIZE spark_positions ZORDER BY (status, dte_mode, open_time);
-OPTIMIZE flame_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
-OPTIMIZE spark_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
-OPTIMIZE flame_logs ZORDER BY (dte_mode, log_time);
-OPTIMIZE spark_logs ZORDER BY (dte_mode, log_time);
+-- OPTIMIZE flame_positions ZORDER BY (status, dte_mode, open_time);
+-- OPTIMIZE spark_positions ZORDER BY (status, dte_mode, open_time);
+-- OPTIMIZE flame_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
+-- OPTIMIZE spark_equity_snapshots ZORDER BY (dte_mode, snapshot_time);
+-- OPTIMIZE flame_logs ZORDER BY (dte_mode, log_time);
+-- OPTIMIZE spark_logs ZORDER BY (dte_mode, log_time);
