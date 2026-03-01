@@ -22,7 +22,7 @@ SANDBOX_URL = "https://sandbox.tradier.com/v1"
 SANDBOX_ACCOUNTS = {
     "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA39284047"},
     "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
-    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240885"},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240884"},
 }
 
 print("Keys and account IDs loaded")
