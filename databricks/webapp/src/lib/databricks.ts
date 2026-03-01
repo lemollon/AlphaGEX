@@ -7,8 +7,8 @@
 
 const HOSTNAME = process.env.DATABRICKS_SERVER_HOSTNAME || ''
 const TOKEN = process.env.DATABRICKS_TOKEN || ''
-const CATALOG = process.env.DATABRICKS_CATALOG || 'ironforge'
-const SCHEMA = process.env.DATABRICKS_SCHEMA || 'trading'
+const CATALOG = process.env.DATABRICKS_CATALOG || 'alpha_prime'
+const SCHEMA = process.env.DATABRICKS_SCHEMA || 'ironforge'
 
 function getWarehouseId(): string {
   if (process.env.DATABRICKS_WAREHOUSE_ID) return process.env.DATABRICKS_WAREHOUSE_ID
