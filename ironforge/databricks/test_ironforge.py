@@ -19,13 +19,13 @@ os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LW0b0F5fhXHh"
 
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
-SANDBOX_KEYS = {
-    "USER":  os.environ["TRADIER_SANDBOX_KEY_USER"],
-    "MATT":  os.environ["TRADIER_SANDBOX_KEY_MATT"],
-    "LOGAN": os.environ["TRADIER_SANDBOX_KEY_LOGAN"],
+SANDBOX_ACCOUNTS = {
+    "USER":  {"key": os.environ["TRADIER_SANDBOX_KEY_USER"],  "account_id": "VA74964498"},
+    "MATT":  {"key": os.environ["TRADIER_SANDBOX_KEY_MATT"],  "account_id": "VA55391129"},
+    "LOGAN": {"key": os.environ["TRADIER_SANDBOX_KEY_LOGAN"], "account_id": "VA59240884"},
 }
 
-print("Keys loaded")
+print("Keys and account IDs loaded")
 
 # COMMAND ----------
 
@@ -63,41 +63,7 @@ else:
 
 # COMMAND ----------
 
-# Cell 5: Verify sandbox accounts using explicit account IDs
-# FORTRESS approach: provide key + account_id pairs (no auto-discover needed)
-# Set these env vars with the account IDs from each user's Tradier sandbox
-SANDBOX_ACCOUNT_IDS = {
-    "USER":  os.environ.get("TRADIER_SANDBOX_ACCOUNT_ID_USER", ""),
-    "MATT":  os.environ.get("TRADIER_SANDBOX_ACCOUNT_ID_MATT", ""),
-    "LOGAN": os.environ.get("TRADIER_SANDBOX_ACCOUNT_ID_LOGAN", ""),
-}
-
-SANDBOX_ACCOUNTS = {}
-
-print("Phase 1: Checking sandbox accounts ...")
-for name, key in SANDBOX_KEYS.items():
-    acct_id = SANDBOX_ACCOUNT_IDS.get(name, "")
-
-    if acct_id:
-        # Explicit account ID provided — use it directly (like FORTRESS)
-        SANDBOX_ACCOUNTS[name] = {"key": key, "account_id": acct_id}
-        print(f"  {name}: Account ID {acct_id} (from env var)")
-    else:
-        # Fall back to auto-discover via /user/profile
-        r = requests.get(f"{SANDBOX_URL}/user/profile", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}, timeout=10)
-        if r.ok:
-            profile = r.json().get("profile", {})
-            acct = profile.get("account", {})
-            if isinstance(acct, list): acct = acct[0]
-            acct_id = acct.get("account_number", "UNKNOWN")
-            SANDBOX_ACCOUNTS[name] = {"key": key, "account_id": acct_id}
-            print(f"  {name}: Account ID {acct_id} (auto-discovered)")
-        else:
-            print(f"  {name}: No account ID env var and auto-discover failed ({r.status_code})")
-            print(f"         Set TRADIER_SANDBOX_ACCOUNT_ID_{name} env var with the account number")
-
-# Phase 2: Verify balances for all accounts
-print("\nPhase 2: Balance check ...")
+# Cell 5: Verify all 3 sandbox accounts (balance check)
 for name, info in SANDBOX_ACCOUNTS.items():
     r = requests.get(f"{SANDBOX_URL}/accounts/{info['account_id']}/balances", headers={"Authorization": f"Bearer {info['key']}", "Accept": "application/json"}, timeout=10)
     if r.ok:
@@ -105,7 +71,7 @@ for name, info in SANDBOX_ACCOUNTS.items():
         equity = bal.get("total_equity", bal.get("equity", "?"))
         print(f"  {name}: Account {info['account_id']} — equity ${equity}")
     else:
-        print(f"  {name}: Account {info['account_id']} — balance FAILED ({r.status_code}) {r.text[:200]}")
+        print(f"  {name}: Account {info['account_id']} — FAILED ({r.status_code}) {r.text[:200]}")
 
 # COMMAND ----------
 
