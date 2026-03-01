@@ -1,29 +1,46 @@
-"""
-IronForge Databricks Scanner — complete port of scanner.ts + tradier.ts
+# Databricks notebook source
 
-Runs every 5 minutes for both FLAME (2DTE) and SPARK (1DTE) bots.
-Uses Tradier API for market data and Databricks for persistence.
+# COMMAND ----------
 
-Works in two contexts:
-  1. Databricks notebook — uses spark.sql() directly (no extra deps needed)
-  2. Standalone Python   — uses databricks-sql-connector (pip install databricks-sql-connector)
+# MAGIC %md
+# MAGIC # IronForge Scanner
+# MAGIC Scans every 5 minutes for FLAME (2DTE) and SPARK (1DTE) Iron Condor opportunities on SPY.
+# MAGIC
+# MAGIC **Just click Run All** — credentials are in Cell 1 below, everything else is automatic.
 
-Env vars (standalone only — notebook context auto-detects):
-  DATABRICKS_HOST          - Databricks workspace hostname
-  DATABRICKS_HTTP_PATH     - SQL warehouse HTTP path
-  DATABRICKS_TOKEN         - Personal access token
+# COMMAND ----------
 
-Env vars (always required):
-  TRADIER_API_KEY          - Production API key (for live quotes)
-  TRADIER_SANDBOX_KEY_USER  - Sandbox key for User account (optional)
-  TRADIER_SANDBOX_KEY_MATT  - Sandbox key for Matt account (optional)
-  TRADIER_SANDBOX_KEY_LOGAN - Sandbox key for Logan account (optional)
-  TRADIER_SANDBOX_ACCOUNT_ID_USER  - Account ID for User (optional, auto-discovers if omitted)
-  TRADIER_SANDBOX_ACCOUNT_ID_MATT  - Account ID for Matt (required if auto-discover fails)
-  TRADIER_SANDBOX_ACCOUNT_ID_LOGAN - Account ID for Logan (required if auto-discover fails)
-"""
-
+# Cell 1: Credentials
+# These are set as notebook-level fallbacks. If env vars are already set
+# (e.g., via Databricks Job config or cluster env vars), those take priority.
 import os
+
+def _set_if_missing(key: str, fallback: str) -> None:
+    """Set env var only if not already set (Job/cluster env vars take priority)."""
+    if not os.environ.get(key):
+        os.environ[key] = fallback
+
+# Tradier production key (for live SPY/VIX quotes)
+_set_if_missing("TRADIER_API_KEY", "HbOM7HNC6Ibs6QAE6hYgr02rpx2K")
+
+# Tradier sandbox keys (for FLAME order mirroring)
+_set_if_missing("TRADIER_SANDBOX_KEY_USER", "iPidGGnYrhzjp6vGBBQw8HyqF0xj")
+_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVN0ct0e0")
+_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh60LW0b0F5fhXHh")
+
+# Databricks catalog/schema
+_set_if_missing("DATABRICKS_CATALOG", "alpha_prime")
+_set_if_missing("DATABRICKS_SCHEMA", "ironforge")
+
+# Scanner mode (single = Job, loop = notebook testing)
+_set_if_missing("SCANNER_MODE", "single")
+
+print(f"Credentials: TRADIER_API_KEY={'set' if os.environ.get('TRADIER_API_KEY') else 'MISSING'}")
+print(f"  Mode: {os.environ.get('SCANNER_MODE', 'single')}")
+
+# COMMAND ----------
+
+# Cell 2: Scanner code (all functions)
 import sys
 import json
 import math
@@ -37,21 +54,6 @@ from decimal import Decimal
 
 import requests
 
-# Detect notebook vs standalone context
-_IN_NOTEBOOK = False
-try:
-    spark  # noqa: F821 — injected by Databricks notebook runtime
-    _IN_NOTEBOOK = True
-except NameError:
-    pass
-
-databricks_sql = None
-if not _IN_NOTEBOOK:
-    try:
-        from databricks import sql as databricks_sql
-    except ImportError:
-        pass
-
 # ---------------------------------------------------------------------------
 #  Logging
 # ---------------------------------------------------------------------------
@@ -62,55 +64,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("ironforge")
-
-# ---------------------------------------------------------------------------
-#  Configuration — call configure() from notebook before main()
-# ---------------------------------------------------------------------------
-
-
-def configure(
-    tradier_api_key: str = "",
-    sandbox_accounts: Optional[dict] = None,
-) -> None:
-    """Set credentials so the scanner can trade.
-
-    Call this from a notebook cell BEFORE main():
-        from ironforge_scanner import configure, main
-        configure(
-            tradier_api_key="HbOM7...",
-            sandbox_accounts={
-                "User":  {"key": "iPid...", "account_id": "VA39284047"},
-                "Matt":  {"key": "AGoN...", "account_id": "VA55391129"},
-                "Logan": {"key": "AcDu...", "account_id": "VA59240884"},
-            },
-        )
-        main()
-    """
-    if tradier_api_key:
-        os.environ["TRADIER_API_KEY"] = tradier_api_key
-
-    if sandbox_accounts:
-        env_map = {
-            "User":  ("TRADIER_SANDBOX_KEY_USER",  "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
-            "Matt":  ("TRADIER_SANDBOX_KEY_MATT",  "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
-            "Logan": ("TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
-        }
-        for name, info in sandbox_accounts.items():
-            key_env, acct_env = env_map.get(name, (None, None))
-            if key_env and info.get("key"):
-                os.environ[key_env] = info["key"]
-            if acct_env and info.get("account_id"):
-                os.environ[acct_env] = info["account_id"]
-
-        # Reset the lazy cache so new accounts are picked up
-        global _sandbox_accounts
-        _sandbox_accounts = None
-
-    log.info(
-        f"configure(): Tradier={'YES' if tradier_api_key else 'no'}, "
-        f"Sandbox accounts={len(sandbox_accounts) if sandbox_accounts else 0}"
-    )
-
 
 # ---------------------------------------------------------------------------
 #  Constants
@@ -126,103 +79,48 @@ BOTS = [
 ]
 
 # ---------------------------------------------------------------------------
-#  Databricks SQL Connection (Step 3)
-#  Supports both notebook context (spark.sql) and standalone (databricks-sql-connector)
+#  Databricks SQL — uses spark.sql() in notebook/job context
+#  IMPORTANT: Job task type must be "Notebook" (not "Python script")
+#  so that the Databricks runtime injects the spark session.
 # ---------------------------------------------------------------------------
 
-_connection = None
-
-
-def get_connection():
-    """Get or create a Databricks SQL connection (standalone mode only)."""
-    if _IN_NOTEBOOK:
-        return None  # not used in notebook context
-    global _connection
-    if databricks_sql is None:
-        raise RuntimeError(
-            "databricks-sql-connector not installed. "
-            "Run: pip install databricks-sql-connector"
-        )
-    if _connection is None or not _connection.open:
-        host = (
-            os.environ.get("DATABRICKS_HOST")
-            or os.environ.get("DATABRICKS_SERVER_HOSTNAME")
-            or ""
-        )
-        warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
-        http_path = (
-            os.environ.get("DATABRICKS_HTTP_PATH")
-            or (f"/sql/1.0/warehouses/{warehouse_id}" if warehouse_id else "")
-        )
-        token = os.environ.get("DATABRICKS_TOKEN", "")
-        if not host or not http_path or not token:
-            raise RuntimeError(
-                "Missing Databricks credentials. Set DATABRICKS_HOST (or "
-                "DATABRICKS_SERVER_HOSTNAME), DATABRICKS_HTTP_PATH (or "
-                "DATABRICKS_WAREHOUSE_ID), and DATABRICKS_TOKEN."
-            )
-        _connection = databricks_sql.connect(
-            server_hostname=host,
-            http_path=http_path,
-            access_token=token,
-            catalog=CATALOG,
-            schema=SCHEMA,
-        )
-    return _connection
+# Verify spark is available (injected by Databricks runtime)
+try:
+    spark  # noqa: F821
+    _HAS_SPARK = True
+except NameError:
+    _HAS_SPARK = False
+    log.error(
+        "spark is not available. The Job task type must be 'Notebook' "
+        "(not 'Python script') so Databricks injects the spark session."
+    )
 
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
-    """Execute a SQL query and return rows as list of dicts.
-
-    Works in both Databricks notebook (spark.sql) and standalone
-    (databricks-sql-connector) contexts.
-    """
-    if _IN_NOTEBOOK:
-        try:
-            result = spark.sql(sql_str)  # noqa: F821
-            rows = result.collect()
-            if not rows:
-                return []
-            columns = result.columns
-            return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            log.error(f"DB query error (notebook): {e}\nSQL: {sql_str[:200]}")
-            raise
-    else:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(sql_str, params)
-                if cursor.description:
-                    columns = [desc[0] for desc in cursor.description]
-                    rows = cursor.fetchall()
-                    return [dict(zip(columns, row)) for row in rows]
-                return []
-        except Exception as e:
-            log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
-            raise
+    """Execute a SQL query and return rows as list of dicts."""
+    if not _HAS_SPARK:
+        raise RuntimeError("spark not available — use Notebook task type")
+    try:
+        result = spark.sql(sql_str)  # noqa: F821
+        rows = result.collect()
+        if not rows:
+            return []
+        columns = result.columns
+        return [dict(zip(columns, row)) for row in rows]
+    except Exception as e:
+        log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
+        raise
 
 
 def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
-    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows.
-
-    Works in both Databricks notebook (spark.sql) and standalone
-    (databricks-sql-connector) contexts.
-    """
-    if _IN_NOTEBOOK:
-        try:
-            spark.sql(sql_str)  # noqa: F821
-        except Exception as e:
-            log.error(f"DB execute error (notebook): {e}\nSQL: {sql_str[:200]}")
-            raise
-    else:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(sql_str, params)
-        except Exception as e:
-            log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
-            raise
+    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
+    if not _HAS_SPARK:
+        raise RuntimeError("spark not available — use Notebook task type")
+    try:
+        spark.sql(sql_str)  # noqa: F821
+    except Exception as e:
+        log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
+        raise
 
 
 def bot_table(bot_name: str, suffix: str) -> str:
@@ -251,29 +149,27 @@ def to_int(val: Any) -> int:
 
 
 # ---------------------------------------------------------------------------
-#  Tradier API Client (port of tradier.ts)
+#  Tradier API Client
 # ---------------------------------------------------------------------------
 
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
 
 
 def _get_tradier_api_key() -> str:
-    """Read Tradier API key lazily so notebook env vars set after import are picked up."""
     return os.environ.get("TRADIER_API_KEY", "")
 
 
 def _get_tradier_base_url() -> str:
-    """Read Tradier base URL lazily."""
-    return os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
+    # Production URL for quotes — NEVER use sandbox for quotes (stale data)
+    return os.environ.get("TRADIER_BASE_URL", "https://api.tradier.com/v1")
 
 
 def is_tradier_configured() -> bool:
-    """Whether the Tradier API key is configured."""
     return bool(_get_tradier_api_key())
 
 
 def tradier_get(endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
-    """Authenticated GET to Tradier API. Returns JSON or None on failure."""
+    """Authenticated GET to Tradier API."""
     api_key = _get_tradier_api_key()
     if not api_key:
         return None
@@ -417,7 +313,6 @@ def get_ic_mark_to_market(
     if not all([ps_q, pl_q, cs_q, cl_q]):
         return None
 
-    # Cost to close = buy back shorts (at ask) - sell longs (at bid)
     cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
     return {
         "cost_to_close": max(0, round(cost, 4)),
@@ -435,12 +330,7 @@ def get_ic_mark_to_market(
 
 
 def _get_sandbox_accounts() -> list[dict]:
-    """Load sandbox accounts from env vars.
-
-    Each account needs a key and account ID. Account IDs can be provided
-    explicitly (like FORTRESS does) or auto-discovered via /user/profile.
-    Explicit IDs are preferred — auto-discovery doesn't work with all token types.
-    """
+    """Load sandbox accounts from env vars."""
     accounts = []
     for name, key_env, acct_env in [
         ("User", "TRADIER_SANDBOX_KEY_USER", "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
@@ -459,7 +349,6 @@ _account_id_cache: dict[str, str] = {}
 
 
 def _get_sandbox_accounts_lazy() -> list[dict]:
-    """Lazy-load sandbox accounts so notebook env vars set after import are picked up."""
     global _sandbox_accounts
     if _sandbox_accounts is None:
         _sandbox_accounts = _get_sandbox_accounts()
@@ -467,7 +356,6 @@ def _get_sandbox_accounts_lazy() -> list[dict]:
 
 
 def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str) -> Optional[dict]:
-    """GET request to Tradier sandbox."""
     if not api_key:
         return None
     try:
@@ -486,7 +374,6 @@ def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str) -> Optiona
 
 
 def _sandbox_post(endpoint: str, body: dict, api_key: str) -> Optional[dict]:
-    """POST request to Tradier sandbox."""
     if not api_key:
         return None
     try:
@@ -510,13 +397,11 @@ def _get_account_id_for_key(api_key: str) -> Optional[str]:
     if api_key in _account_id_cache:
         return _account_id_cache[api_key]
 
-    # Check pre-configured account IDs first (like FORTRESS does)
     for acct in _get_sandbox_accounts_lazy():
         if acct["api_key"] == api_key and acct.get("account_id"):
             _account_id_cache[api_key] = acct["account_id"]
             return acct["account_id"]
 
-    # Fall back to auto-discovery via /user/profile
     data = _sandbox_get("/user/profile", None, api_key)
     if not data:
         log.warning("Auto-discover failed for key — set TRADIER_SANDBOX_ACCOUNT_ID_* env var")
@@ -637,24 +522,22 @@ def close_ic_order_all_accounts(
 
 
 # ---------------------------------------------------------------------------
-#  Market Hours (Central Time) — mirrors scanner.ts exactly
+#  Market Hours (Central Time)
 # ---------------------------------------------------------------------------
 
 
 def get_central_time() -> datetime:
-    """Get current time in Central Time."""
     from zoneinfo import ZoneInfo
-
     return datetime.now(ZoneInfo("America/Chicago"))
 
 
 def is_market_open(ct: datetime) -> bool:
-    """Check if market is open: weekday, 8:30 AM - 3:30 PM CT."""
-    dow = ct.weekday()  # 0=Monday, 6=Sunday
-    if dow >= 5:  # Saturday=5, Sunday=6
+    """Check if within monitoring window: weekday, 8:30 AM - 3:00 PM CT."""
+    dow = ct.weekday()
+    if dow >= 5:
         return False
     hhmm = ct.hour * 100 + ct.minute
-    return 830 <= hhmm <= 1530
+    return 830 <= hhmm <= 1500
 
 
 def is_in_entry_window(ct: datetime) -> bool:
@@ -667,18 +550,18 @@ def is_in_entry_window(ct: datetime) -> bool:
 
 
 def is_after_eod_cutoff(ct: datetime) -> bool:
-    """Check if past EOD cutoff: 3:45 PM CT."""
+    """Check if past EOD cutoff: 2:45 PM CT."""
     hhmm = ct.hour * 100 + ct.minute
-    return hhmm >= 1545
+    return hhmm >= 1445
 
 
 # ---------------------------------------------------------------------------
-#  Advisor — port of evaluateAdvisor() from scanner.ts
+#  Advisor — evaluates trading conditions
 # ---------------------------------------------------------------------------
 
 
 def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: str) -> dict:
-    """Lightweight advisor that scores trading conditions. Identical to scanner.ts."""
+    """Lightweight advisor that scores trading conditions."""
     BASE_WP = 0.65
     win_prob = BASE_WP
     factors: list[tuple[str, float]] = []
@@ -701,11 +584,9 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
         win_prob += a
         factors.append(("VIX_HIGH_RISK", a))
 
-    # Day of week (JS: 0=Sun, 6=Sat. Python weekday(): 0=Mon, 6=Sun)
-    # We convert to JS convention for identical behavior
+    # Day of week
     ct = get_central_time()
-    py_dow = ct.weekday()  # 0=Mon ... 6=Sun
-    # Convert to JS: Sun=0, Mon=1, ..., Sat=6
+    py_dow = ct.weekday()
     js_dow = (py_dow + 1) % 7
 
     if 2 <= js_dow <= 4:  # Tue-Thu
@@ -720,7 +601,7 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
         a = -0.10
         win_prob += a
         factors.append(("DAY_FRIDAY_RISK", a))
-    else:  # Sat/Sun
+    else:
         a = -0.20
         win_prob += a
         factors.append(("DAY_WEEKEND", a))
@@ -782,12 +663,12 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
 
 
 # ---------------------------------------------------------------------------
-#  Strike Calculation — port of calculateStrikes() from scanner.ts
+#  Strike Calculation
 # ---------------------------------------------------------------------------
 
 
 def calculate_strikes(spot: float, expected_move: float) -> dict:
-    """Calculate IC strikes using 1.2x SD, $5 width. Identical to scanner.ts."""
+    """Calculate IC strikes using 1.2x SD, $5 width."""
     SD = 1.2
     WIDTH = 5
 
@@ -799,7 +680,6 @@ def calculate_strikes(spot: float, expected_move: float) -> dict:
     put_long = put_short - WIDTH
     call_long = call_short + WIDTH
 
-    # Sanity guard
     if call_short <= put_short:
         put_short = math.floor(spot - spot * 0.02)
         call_short = math.ceil(spot + spot * 0.02)
@@ -815,19 +695,18 @@ def calculate_strikes(spot: float, expected_move: float) -> dict:
 
 
 def get_target_expiration(min_dte: int) -> str:
-    """Find target expiration N trading days out. Identical to scanner.ts."""
+    """Find target expiration N trading days out."""
     target = datetime.now()
     counted = 0
     while counted < min_dte:
         target += timedelta(days=1)
-        # weekday(): 0=Mon ... 4=Fri, 5=Sat, 6=Sun
         if target.weekday() < 5:
             counted += 1
     return target.strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
-#  Close Position — port of closePosition() from scanner.ts
+#  Close Position
 # ---------------------------------------------------------------------------
 
 
@@ -847,7 +726,6 @@ def close_position(
     close_price: Optional[float] = None,
 ) -> None:
     """Close a position: update DB, paper account, PDT, sandbox mirror, logs."""
-    # Determine close price if not provided
     price = close_price if close_price is not None else 0.0
     if close_price is None and is_tradier_configured():
         mtm = get_ic_mark_to_market(
@@ -861,7 +739,6 @@ def close_position(
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_str = get_central_time().strftime("%Y-%m-%d")
 
-    # Close position
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'positions')}
         SET status = 'closed',
@@ -875,7 +752,6 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
-    # Update paper account
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'paper_account')}
         SET current_balance = current_balance + {realized_pnl},
@@ -890,7 +766,6 @@ def close_position(
         WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
     """)
 
-    # PDT log
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'pdt_log')}
         SET closed_at = CAST('{now_ts}' AS TIMESTAMP),
@@ -902,7 +777,6 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
-    # Mirror close to sandbox (FLAME only — SPARK is paper-only)
     if bot["name"] == "flame":
         try:
             close_ic_order_all_accounts(
@@ -912,7 +786,6 @@ def close_position(
         except Exception as e:
             log.warning(f"Sandbox close failed for {position_id}: {e}")
 
-    # Log
     details = json.dumps({
         "position_id": position_id,
         "close_price": price,
@@ -932,7 +805,6 @@ def close_position(
         )
     """)
 
-    # Daily perf — use MERGE for upsert
     db_execute(f"""
         MERGE INTO {bot_table(bot['name'], 'daily_perf')} AS t
         USING (SELECT CURRENT_DATE() AS trade_date) AS s
@@ -953,7 +825,7 @@ def close_position(
 
 
 # ---------------------------------------------------------------------------
-#  Monitor Position — port of monitorPosition() from scanner.ts
+#  Monitor Position
 # ---------------------------------------------------------------------------
 
 
@@ -983,13 +855,11 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     exp_raw = pos.get("expiration")
     expiration = str(exp_raw)[:10] if exp_raw else ""
 
-    # Check for stale holdover (position from prior day)
     open_time = pos.get("open_time")
     open_date_str = str(open_time)[:10] if open_time else None
     today_str = ct.strftime("%Y-%m-%d")
     is_stale_holdover = open_date_str is not None and open_date_str < today_str
 
-    # EOD cutoff or stale holdover → force close
     if is_after_eod_cutoff(ct) or is_stale_holdover:
         close_reason = "stale_holdover" if is_stale_holdover else "eod_cutoff"
         close_position(
@@ -1000,7 +870,6 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
         )
         return {"status": f"closed:{close_reason}", "unrealizedPnl": 0}
 
-    # Get MTM
     if not is_tradier_configured():
         return {"status": "monitoring:no_tradier", "unrealizedPnl": 0}
 
@@ -1015,7 +884,6 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
 
     cost_to_close = mtm["cost_to_close"]
 
-    # Profit target: cost_to_close <= 70% of entry credit
     if cost_to_close <= profit_target_price:
         close_position(
             bot, pos["position_id"], ticker, expiration,
@@ -1028,7 +896,6 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
             "unrealizedPnl": 0,
         }
 
-    # Stop loss: cost_to_close >= 200% of entry credit
     if cost_to_close >= stop_loss_price:
         close_position(
             bot, pos["position_id"], ticker, expiration,
@@ -1049,17 +916,16 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
 
 
 # ---------------------------------------------------------------------------
-#  Try Open Trade — port of tryOpenTrade() from scanner.ts
+#  Try Open Trade
 # ---------------------------------------------------------------------------
 
 
 def try_open_trade(bot: dict, spot: float, vix: float) -> str:
-    """Attempt to open a new IC position. Returns status string."""
-    # VIX filter
+    """Attempt to open a new IC position."""
     if vix > 32:
         return f"skip:vix_too_high({vix:.1f})"
 
-    # Already traded today?
+    # Check 1: Already traded today? (max 1 trade/day)
     today_trades = db_query(f"""
         SELECT COUNT(*) as cnt
         FROM {bot_table(bot['name'], 'pdt_log')}
@@ -1068,7 +934,21 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     if to_int(today_trades[0].get("cnt") if today_trades else 0) >= 1:
         return "skip:already_traded_today"
 
-    # Get account
+    # Check 2: PDT rolling 5-day window (3 day trades in 5 business days = blocked)
+    # Paper accounts ARE subject to PDT. If PDT blocked, skip BOTH paper AND sandbox.
+    pdt_rows = db_query(f"""
+        SELECT COUNT(*) as cnt
+        FROM {bot_table(bot['name'], 'pdt_log')}
+        WHERE is_day_trade = TRUE
+        AND dte_mode = '{bot['dte']}'
+        AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
+        AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+    """)
+    pdt_count = to_int(pdt_rows[0].get("cnt") if pdt_rows else 0)
+    if pdt_count >= 3:
+        log.info(f"{bot['name'].upper()} PDT BLOCKED: {pdt_count}/3 day trades in rolling 5 biz days")
+        return f"skip:pdt_blocked({pdt_count}/3)"
+
     account_rows = db_query(f"""
         SELECT id, current_balance, buying_power
         FROM {bot_table(bot['name'], 'paper_account')}
@@ -1086,12 +966,10 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
 
     expected_move = (vix / 100 / math.sqrt(252)) * spot
 
-    # Advisor
     adv = evaluate_advisor(vix, spot, expected_move, bot["dte"])
     if adv["advice"] == "SKIP":
         return f"skip:advisor({adv['reasoning']})"
 
-    # Expiration
     target_exp = get_target_expiration(bot["min_dte"])
     expirations = get_option_expirations("SPY")
     expiration = target_exp
@@ -1106,7 +984,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                 nearest = exp
         expiration = nearest
 
-    # Strikes + credits
     strikes = calculate_strikes(spot, expected_move)
     credits = get_ic_entry_credit(
         "SPY", expiration,
@@ -1117,7 +994,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         credit_val = credits["totalCredit"] if credits else 0
         return f"skip:credit_too_low(${credit_val:.4f})"
 
-    # Sizing
     spread_width = strikes["putShort"] - strikes["putLong"]
     collateral_per = max(0, (spread_width - credits["totalCredit"]) * 100)
     if collateral_per <= 0:
@@ -1128,7 +1004,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     max_profit = credits["totalCredit"] * 100 * max_contracts
     max_loss = total_collateral
 
-    # Position ID
     now = datetime.now()
     date_str = now.strftime("%Y%m%d")
     hex_str = format(random.randint(0, 0xFFFFFF), "06X")
@@ -1138,10 +1013,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_date = get_central_time().strftime("%Y-%m-%d")
 
-    # Build oracle factors as JSON string
     factors_json = json.dumps(adv["topFactors"]).replace("'", "''")
 
-    # Insert position
     db_execute(f"""
         INSERT INTO {bot_table(bot['name'], 'positions')} (
             position_id, ticker, expiration,
@@ -1176,7 +1049,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # Mirror to sandbox (FLAME only — SPARK is paper-only)
     sandbox_order_ids: dict[str, int] = {}
     if bot["name"] == "flame":
         try:
@@ -1197,7 +1069,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         except Exception as e:
             log.warning(f"Sandbox open failed for {position_id}: {e}")
 
-    # Deduct collateral
     acct_id = acct["id"]
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'paper_account')}
@@ -1207,7 +1078,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         WHERE id = {acct_id}
     """)
 
-    # Signal log
     db_execute(f"""
         INSERT INTO {bot_table(bot['name'], 'signals')} (
             signal_time, spot_price, vix, expected_move, call_wall, put_wall,
@@ -1224,7 +1094,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # Trade log
     trade_details = json.dumps({
         "position_id": position_id,
         "contracts": max_contracts,
@@ -1245,7 +1114,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # PDT log
     db_execute(f"""
         INSERT INTO {bot_table(bot['name'], 'pdt_log')} (
             trade_date, symbol, position_id, opened_at,
@@ -1257,7 +1125,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # Equity snapshot
     updated_acct = db_query(f"""
         SELECT current_balance, cumulative_pnl
         FROM {bot_table(bot['name'], 'paper_account')}
@@ -1276,7 +1143,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    # Daily perf — MERGE for upsert
     db_execute(f"""
         MERGE INTO {bot_table(bot['name'], 'daily_perf')} AS t
         USING (SELECT CURRENT_DATE() AS trade_date) AS s
@@ -1300,12 +1166,12 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
 
 
 # ---------------------------------------------------------------------------
-#  Scan Bot — port of scanBot() from scanner.ts
+#  Scan Bot
 # ---------------------------------------------------------------------------
 
 
 def scan_bot(bot: dict) -> None:
-    """One scan cycle for one bot — mirrors scanner.ts scanBot() exactly."""
+    """One scan cycle for one bot."""
     ct = get_central_time()
     bot_name = bot["name"].upper()
     action = "scan"
@@ -1315,7 +1181,6 @@ def scan_bot(bot: dict) -> None:
     unrealized_pnl = 0.0
 
     try:
-        # Step 1: Always monitor open positions first
         open_rows = db_query(f"""
             SELECT position_id
             FROM {bot_table(bot['name'], 'positions')}
@@ -1333,12 +1198,10 @@ def scan_bot(bot: dict) -> None:
             reason = monitor_result["status"]
             unrealized_pnl = monitor_result["unrealizedPnl"]
 
-        # Step 2: If market closed, log and return
         if not is_market_open(ct):
             if not has_open_position:
                 action = "outside_window"
                 reason = f"Market closed ({ct.hour}:{ct.minute:02d} CT)"
-        # Step 3: If in entry window and no position → try to trade
         elif not has_open_position and is_in_entry_window(ct):
             if not is_tradier_configured():
                 action = "skip"
@@ -1363,7 +1226,7 @@ def scan_bot(bot: dict) -> None:
             action = "outside_entry_window"
             reason = f"Past entry cutoff ({ct.hour}:{ct.minute:02d} CT, cutoff 14:00)"
 
-        # Take equity snapshot every cycle
+        # Equity snapshot every cycle
         try:
             acct_rows = db_query(f"""
                 SELECT current_balance, cumulative_pnl
@@ -1399,7 +1262,6 @@ def scan_bot(bot: dict) -> None:
         reason = str(err)
         log.error(f"{bot_name} scan error: {traceback.format_exc()}")
 
-    # Update heartbeat + log
     status = "error" if action == "error" else ("active" if is_market_open(ct) else "idle")
     hb_details = json.dumps({"action": action, "reason": reason, "spot": spot, "vix": vix}).replace("'", "''")
 
@@ -1420,7 +1282,6 @@ def scan_bot(bot: dict) -> None:
     except Exception as hb_err:
         log.warning(f"{bot_name} heartbeat error: {hb_err}")
 
-    # Log every scan
     try:
         spot_str = f" SPY=${spot:.2f}" if spot > 0 else ""
         vix_str = f" VIX={vix:.1f}" if vix > 0 else ""
@@ -1444,43 +1305,63 @@ def scan_bot(bot: dict) -> None:
     log.info(f"{bot_name}: {action} | {reason}")
 
 
-# ---------------------------------------------------------------------------
-#  Main Loop
-# ---------------------------------------------------------------------------
-
-_scan_count = 0
-
-
 def run_scan_cycle() -> None:
-    """Run one full cycle for all bots."""
-    global _scan_count
-    _scan_count += 1
-    log.info(f"=== scan cycle #{_scan_count} starting ===")
+    """Run one scan cycle for all bots."""
     for bot in BOTS:
         try:
             scan_bot(bot)
         except Exception as e:
-            log.error(f"{bot['name'].upper()} fatal error: {traceback.format_exc()}")
-    log.info(f"=== scan cycle #{_scan_count} complete ===")
+            log.error(f"{bot['name'].upper()} scan_bot crashed: {e}")
+            log.error(traceback.format_exc())
+
+
+print("Scanner code loaded")
+
+# COMMAND ----------
+
+# Cell 3: Run the scanner
 
 
 def main() -> None:
-    """Main entry point — runs scan loop every 5 minutes."""
-    log.info("IronForge Databricks scanner starting")
-    log.info(f"  Catalog: {CATALOG}")
-    log.info(f"  Schema: {SCHEMA}")
+    """Single scan — called by Databricks Job every 5 minutes.
+
+    In Job context (SCANNER_MODE=single), runs one scan cycle and exits.
+    The Databricks Job scheduler handles the 5-minute repeat.
+
+    In notebook context (SCANNER_MODE=loop), runs in an infinite loop
+    with a 5-minute sleep between cycles.
+    """
+    ct = get_central_time()
+    log.info(
+        f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT "
+        f"| Catalog: {CATALOG} | Schema: {SCHEMA} "
+        f"| Tradier: {'OK' if is_tradier_configured() else 'MISSING'}"
+    )
+
+    if not is_market_open(ct):
+        log.info(
+            f"Market closed ({ct.strftime('%H:%M')} CT, "
+            f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
+        )
+        return
+
+    run_scan_cycle()
+    log.info("Scan complete — exiting")
+
+
+# Entry point: single-scan (Job) vs loop (notebook testing)
+_scanner_mode = os.environ.get("SCANNER_MODE", "single")
+
+if _scanner_mode == "loop":
+    # Notebook testing mode — infinite loop with 5-min sleep
+    log.info("Starting in LOOP mode (notebook testing)")
+    log.info(f"  Catalog: {CATALOG} | Schema: {SCHEMA}")
     log.info(f"  Tradier configured: {is_tradier_configured()}")
     log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
     log.info(f"  Scan interval: {SCAN_INTERVAL}s")
-
     while True:
-        ct = get_central_time()
-        if is_market_open(ct):
-            run_scan_cycle()
-        else:
-            log.info(f"Market closed ({ct.hour}:{ct.minute:02d} CT), waiting...")
+        main()
         time.sleep(SCAN_INTERVAL)
-
-
-if __name__ == "__main__":
+else:
+    # Job mode — single scan and exit
     main()
