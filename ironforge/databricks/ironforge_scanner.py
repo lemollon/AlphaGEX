@@ -2,12 +2,18 @@
 IronForge Databricks Scanner — complete port of scanner.ts + tradier.ts
 
 Runs every 5 minutes for both FLAME (2DTE) and SPARK (1DTE) bots.
-Connects to Databricks SQL for persistence and Tradier API for market data.
+Uses Tradier API for market data and Databricks for persistence.
 
-Env vars required:
+Works in two contexts:
+  1. Databricks notebook — uses spark.sql() directly (no extra deps needed)
+  2. Standalone Python   — uses databricks-sql-connector (pip install databricks-sql-connector)
+
+Env vars (standalone only — notebook context auto-detects):
   DATABRICKS_HOST          - Databricks workspace hostname
   DATABRICKS_HTTP_PATH     - SQL warehouse HTTP path
   DATABRICKS_TOKEN         - Personal access token
+
+Env vars (always required):
   TRADIER_API_KEY          - Production API key (for live quotes)
   TRADIER_SANDBOX_KEY_USER  - Sandbox key for User account (optional)
   TRADIER_SANDBOX_KEY_MATT  - Sandbox key for Matt account (optional)
@@ -30,7 +36,21 @@ from typing import Any, Optional
 from decimal import Decimal
 
 import requests
-from databricks import sql as databricks_sql
+
+# Detect notebook vs standalone context
+_IN_NOTEBOOK = False
+try:
+    spark  # noqa: F821 — injected by Databricks notebook runtime
+    _IN_NOTEBOOK = True
+except NameError:
+    pass
+
+databricks_sql = None
+if not _IN_NOTEBOOK:
+    try:
+        from databricks import sql as databricks_sql
+    except ImportError:
+        pass
 
 # ---------------------------------------------------------------------------
 #  Logging
@@ -58,14 +78,22 @@ BOTS = [
 
 # ---------------------------------------------------------------------------
 #  Databricks SQL Connection (Step 3)
+#  Supports both notebook context (spark.sql) and standalone (databricks-sql-connector)
 # ---------------------------------------------------------------------------
 
 _connection = None
 
 
 def get_connection():
-    """Get or create a Databricks SQL connection."""
+    """Get or create a Databricks SQL connection (standalone mode only)."""
+    if _IN_NOTEBOOK:
+        return None  # not used in notebook context
     global _connection
+    if databricks_sql is None:
+        raise RuntimeError(
+            "databricks-sql-connector not installed. "
+            "Run: pip install databricks-sql-connector"
+        )
     if _connection is None or not _connection.open:
         host = (
             os.environ.get("DATABRICKS_HOST")
@@ -95,30 +123,57 @@ def get_connection():
 
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
-    """Execute a SQL query and return rows as list of dicts."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql_str, params)
-            if cursor.description:
-                columns = [desc[0] for desc in cursor.description]
-                rows = cursor.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
-            return []
-    except Exception as e:
-        log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
-        raise
+    """Execute a SQL query and return rows as list of dicts.
+
+    Works in both Databricks notebook (spark.sql) and standalone
+    (databricks-sql-connector) contexts.
+    """
+    if _IN_NOTEBOOK:
+        try:
+            result = spark.sql(sql_str)  # noqa: F821
+            rows = result.collect()
+            if not rows:
+                return []
+            columns = result.columns
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            log.error(f"DB query error (notebook): {e}\nSQL: {sql_str[:200]}")
+            raise
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql_str, params)
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    rows = cursor.fetchall()
+                    return [dict(zip(columns, row)) for row in rows]
+                return []
+        except Exception as e:
+            log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
+            raise
 
 
 def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
-    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql_str, params)
-    except Exception as e:
-        log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
-        raise
+    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows.
+
+    Works in both Databricks notebook (spark.sql) and standalone
+    (databricks-sql-connector) contexts.
+    """
+    if _IN_NOTEBOOK:
+        try:
+            spark.sql(sql_str)  # noqa: F821
+        except Exception as e:
+            log.error(f"DB execute error (notebook): {e}\nSQL: {sql_str[:200]}")
+            raise
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql_str, params)
+        except Exception as e:
+            log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
+            raise
 
 
 def bot_table(bot_name: str, suffix: str) -> str:
