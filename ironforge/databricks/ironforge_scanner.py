@@ -64,6 +64,55 @@ logging.basicConfig(
 log = logging.getLogger("ironforge")
 
 # ---------------------------------------------------------------------------
+#  Configuration — call configure() from notebook before main()
+# ---------------------------------------------------------------------------
+
+
+def configure(
+    tradier_api_key: str = "",
+    sandbox_accounts: Optional[dict] = None,
+) -> None:
+    """Set credentials so the scanner can trade.
+
+    Call this from a notebook cell BEFORE main():
+        from ironforge_scanner import configure, main
+        configure(
+            tradier_api_key="HbOM7...",
+            sandbox_accounts={
+                "User":  {"key": "iPid...", "account_id": "VA39284047"},
+                "Matt":  {"key": "AGoN...", "account_id": "VA55391129"},
+                "Logan": {"key": "AcDu...", "account_id": "VA59240884"},
+            },
+        )
+        main()
+    """
+    if tradier_api_key:
+        os.environ["TRADIER_API_KEY"] = tradier_api_key
+
+    if sandbox_accounts:
+        env_map = {
+            "User":  ("TRADIER_SANDBOX_KEY_USER",  "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
+            "Matt":  ("TRADIER_SANDBOX_KEY_MATT",  "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
+            "Logan": ("TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
+        }
+        for name, info in sandbox_accounts.items():
+            key_env, acct_env = env_map.get(name, (None, None))
+            if key_env and info.get("key"):
+                os.environ[key_env] = info["key"]
+            if acct_env and info.get("account_id"):
+                os.environ[acct_env] = info["account_id"]
+
+        # Reset the lazy cache so new accounts are picked up
+        global _sandbox_accounts
+        _sandbox_accounts = None
+
+    log.info(
+        f"configure(): Tradier={'YES' if tradier_api_key else 'no'}, "
+        f"Sandbox accounts={len(sandbox_accounts) if sandbox_accounts else 0}"
+    )
+
+
+# ---------------------------------------------------------------------------
 #  Constants
 # ---------------------------------------------------------------------------
 
