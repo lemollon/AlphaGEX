@@ -2,12 +2,18 @@
 IronForge Databricks Scanner — complete port of scanner.ts + tradier.ts
 
 Runs every 5 minutes for both FLAME (2DTE) and SPARK (1DTE) bots.
-Connects to Databricks SQL for persistence and Tradier API for market data.
+Uses Tradier API for market data and Databricks for persistence.
 
-Env vars required:
+Works in two contexts:
+  1. Databricks notebook — uses spark.sql() directly (no extra deps needed)
+  2. Standalone Python   — uses databricks-sql-connector (pip install databricks-sql-connector)
+
+Env vars (standalone only — notebook context auto-detects):
   DATABRICKS_HOST          - Databricks workspace hostname
   DATABRICKS_HTTP_PATH     - SQL warehouse HTTP path
   DATABRICKS_TOKEN         - Personal access token
+
+Env vars (always required):
   TRADIER_API_KEY          - Production API key (for live quotes)
   TRADIER_SANDBOX_KEY_USER  - Sandbox key for User account (optional)
   TRADIER_SANDBOX_KEY_MATT  - Sandbox key for Matt account (optional)
@@ -30,7 +36,21 @@ from typing import Any, Optional
 from decimal import Decimal
 
 import requests
-from databricks import sql as databricks_sql
+
+# Detect notebook vs standalone context
+_IN_NOTEBOOK = False
+try:
+    spark  # noqa: F821 — injected by Databricks notebook runtime
+    _IN_NOTEBOOK = True
+except NameError:
+    pass
+
+databricks_sql = None
+if not _IN_NOTEBOOK:
+    try:
+        from databricks import sql as databricks_sql
+    except ImportError:
+        pass
 
 # ---------------------------------------------------------------------------
 #  Logging
@@ -42,6 +62,55 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("ironforge")
+
+# ---------------------------------------------------------------------------
+#  Configuration — call configure() from notebook before main()
+# ---------------------------------------------------------------------------
+
+
+def configure(
+    tradier_api_key: str = "",
+    sandbox_accounts: Optional[dict] = None,
+) -> None:
+    """Set credentials so the scanner can trade.
+
+    Call this from a notebook cell BEFORE main():
+        from ironforge_scanner import configure, main
+        configure(
+            tradier_api_key="HbOM7...",
+            sandbox_accounts={
+                "User":  {"key": "iPid...", "account_id": "VA39284047"},
+                "Matt":  {"key": "AGoN...", "account_id": "VA55391129"},
+                "Logan": {"key": "AcDu...", "account_id": "VA59240884"},
+            },
+        )
+        main()
+    """
+    if tradier_api_key:
+        os.environ["TRADIER_API_KEY"] = tradier_api_key
+
+    if sandbox_accounts:
+        env_map = {
+            "User":  ("TRADIER_SANDBOX_KEY_USER",  "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
+            "Matt":  ("TRADIER_SANDBOX_KEY_MATT",  "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
+            "Logan": ("TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
+        }
+        for name, info in sandbox_accounts.items():
+            key_env, acct_env = env_map.get(name, (None, None))
+            if key_env and info.get("key"):
+                os.environ[key_env] = info["key"]
+            if acct_env and info.get("account_id"):
+                os.environ[acct_env] = info["account_id"]
+
+        # Reset the lazy cache so new accounts are picked up
+        global _sandbox_accounts
+        _sandbox_accounts = None
+
+    log.info(
+        f"configure(): Tradier={'YES' if tradier_api_key else 'no'}, "
+        f"Sandbox accounts={len(sandbox_accounts) if sandbox_accounts else 0}"
+    )
+
 
 # ---------------------------------------------------------------------------
 #  Constants
@@ -58,14 +127,22 @@ BOTS = [
 
 # ---------------------------------------------------------------------------
 #  Databricks SQL Connection (Step 3)
+#  Supports both notebook context (spark.sql) and standalone (databricks-sql-connector)
 # ---------------------------------------------------------------------------
 
 _connection = None
 
 
 def get_connection():
-    """Get or create a Databricks SQL connection."""
+    """Get or create a Databricks SQL connection (standalone mode only)."""
+    if _IN_NOTEBOOK:
+        return None  # not used in notebook context
     global _connection
+    if databricks_sql is None:
+        raise RuntimeError(
+            "databricks-sql-connector not installed. "
+            "Run: pip install databricks-sql-connector"
+        )
     if _connection is None or not _connection.open:
         host = (
             os.environ.get("DATABRICKS_HOST")
@@ -95,30 +172,57 @@ def get_connection():
 
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
-    """Execute a SQL query and return rows as list of dicts."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql_str, params)
-            if cursor.description:
-                columns = [desc[0] for desc in cursor.description]
-                rows = cursor.fetchall()
-                return [dict(zip(columns, row)) for row in rows]
-            return []
-    except Exception as e:
-        log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
-        raise
+    """Execute a SQL query and return rows as list of dicts.
+
+    Works in both Databricks notebook (spark.sql) and standalone
+    (databricks-sql-connector) contexts.
+    """
+    if _IN_NOTEBOOK:
+        try:
+            result = spark.sql(sql_str)  # noqa: F821
+            rows = result.collect()
+            if not rows:
+                return []
+            columns = result.columns
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            log.error(f"DB query error (notebook): {e}\nSQL: {sql_str[:200]}")
+            raise
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql_str, params)
+                if cursor.description:
+                    columns = [desc[0] for desc in cursor.description]
+                    rows = cursor.fetchall()
+                    return [dict(zip(columns, row)) for row in rows]
+                return []
+        except Exception as e:
+            log.error(f"DB query error: {e}\nSQL: {sql_str[:200]}")
+            raise
 
 
 def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
-    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
-    conn = get_connection()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(sql_str, params)
-    except Exception as e:
-        log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
-        raise
+    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows.
+
+    Works in both Databricks notebook (spark.sql) and standalone
+    (databricks-sql-connector) contexts.
+    """
+    if _IN_NOTEBOOK:
+        try:
+            spark.sql(sql_str)  # noqa: F821
+        except Exception as e:
+            log.error(f"DB execute error (notebook): {e}\nSQL: {sql_str[:200]}")
+            raise
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(sql_str, params)
+        except Exception as e:
+            log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
+            raise
 
 
 def bot_table(bot_name: str, suffix: str) -> str:
@@ -150,27 +254,35 @@ def to_int(val: Any) -> int:
 #  Tradier API Client (port of tradier.ts)
 # ---------------------------------------------------------------------------
 
-TRADIER_API_KEY = os.environ.get("TRADIER_API_KEY", "")
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
-# IronForge is a sandbox-only paper trading system — all API calls use sandbox
-TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
+
+
+def _get_tradier_api_key() -> str:
+    """Read Tradier API key lazily so notebook env vars set after import are picked up."""
+    return os.environ.get("TRADIER_API_KEY", "")
+
+
+def _get_tradier_base_url() -> str:
+    """Read Tradier base URL lazily."""
+    return os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
 
 
 def is_tradier_configured() -> bool:
     """Whether the Tradier API key is configured."""
-    return bool(TRADIER_API_KEY)
+    return bool(_get_tradier_api_key())
 
 
 def tradier_get(endpoint: str, params: Optional[dict] = None) -> Optional[dict]:
     """Authenticated GET to Tradier API. Returns JSON or None on failure."""
-    if not TRADIER_API_KEY:
+    api_key = _get_tradier_api_key()
+    if not api_key:
         return None
     try:
-        url = f"{TRADIER_BASE_URL}{endpoint}"
+        url = f"{_get_tradier_base_url()}{endpoint}"
         resp = requests.get(
             url,
             headers={
-                "Authorization": f"Bearer {TRADIER_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Accept": "application/json",
             },
             params=params or {},
@@ -342,8 +454,16 @@ def _get_sandbox_accounts() -> list[dict]:
     return accounts
 
 
-_sandbox_accounts = _get_sandbox_accounts()
+_sandbox_accounts: Optional[list[dict]] = None
 _account_id_cache: dict[str, str] = {}
+
+
+def _get_sandbox_accounts_lazy() -> list[dict]:
+    """Lazy-load sandbox accounts so notebook env vars set after import are picked up."""
+    global _sandbox_accounts
+    if _sandbox_accounts is None:
+        _sandbox_accounts = _get_sandbox_accounts()
+    return _sandbox_accounts
 
 
 def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str) -> Optional[dict]:
@@ -391,7 +511,7 @@ def _get_account_id_for_key(api_key: str) -> Optional[str]:
         return _account_id_cache[api_key]
 
     # Check pre-configured account IDs first (like FORTRESS does)
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         if acct["api_key"] == api_key and acct.get("account_id"):
             _account_id_cache[api_key] = acct["account_id"]
             return acct["account_id"]
@@ -446,7 +566,7 @@ def place_ic_order_all_accounts(
     if tag:
         order_body["tag"] = tag[:255]
 
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         try:
             account_id = _get_account_id_for_key(acct["api_key"])
             if not account_id:
@@ -498,7 +618,7 @@ def close_ic_order_all_accounts(
     if tag:
         order_body["tag"] = tag[:255]
 
-    for acct in _sandbox_accounts:
+    for acct in _get_sandbox_accounts_lazy():
         try:
             account_id = _get_account_id_for_key(acct["api_key"])
             if not account_id:
@@ -1350,7 +1470,7 @@ def main() -> None:
     log.info(f"  Catalog: {CATALOG}")
     log.info(f"  Schema: {SCHEMA}")
     log.info(f"  Tradier configured: {is_tradier_configured()}")
-    log.info(f"  Sandbox accounts: {len(_sandbox_accounts)}")
+    log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
     log.info(f"  Scan interval: {SCAN_INTERVAL}s")
 
     while True:
