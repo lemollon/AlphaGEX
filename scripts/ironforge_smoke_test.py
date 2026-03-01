@@ -112,7 +112,7 @@ import requests as _req
 
 def tradier_get(endpoint: str, params: dict = None, base_url: str = None, api_key: str = None) -> Optional[dict]:
     key = api_key or os.getenv("TRADIER_API_KEY", "")
-    url = (base_url or os.getenv("TRADIER_BASE_URL", "https://api.tradier.com/v1")) + endpoint
+    url = (base_url or os.getenv("TRADIER_BASE_URL", "https://sandbox.tradier.com/v1")) + endpoint
     if not key:
         return None
     r = _req.get(url, params=params, headers={
@@ -232,13 +232,13 @@ def step1():
     tradier_key = os.getenv("TRADIER_API_KEY", "")
     if tradier_key:
         ok(f"TRADIER_API_KEY set ({len(tradier_key)} chars)")
-        # Verify it hits production
-        base = os.getenv("TRADIER_BASE_URL", "https://api.tradier.com/v1")
+        # Verify it hits sandbox (IronForge is a paper trading system)
+        base = os.getenv("TRADIER_BASE_URL", "https://sandbox.tradier.com/v1")
         if "sandbox" in base:
-            fail(f"TRADIER_BASE_URL points to SANDBOX: {base}  ← bug #53 regression!")
-            failures += 1
+            ok(f"TRADIER_BASE_URL → {base} (sandbox — correct for paper trading)")
         else:
-            ok(f"TRADIER_BASE_URL → {base} (production)")
+            fail(f"TRADIER_BASE_URL points to PRODUCTION: {base}  ← should use sandbox for paper trading!")
+            failures += 1
         # Live quote test
         try:
             q = get_spy_quote()
@@ -311,11 +311,11 @@ def step2():
     failures = 0
 
     # ── 2.1 SPY price ──
-    section("SPY Price (Production Tradier)")
-    base = os.getenv("TRADIER_BASE_URL", "https://api.tradier.com/v1")
+    section("SPY Price (Sandbox Tradier)")
+    base = os.getenv("TRADIER_BASE_URL", "https://sandbox.tradier.com/v1")
     info(f"Querying: {base}/markets/quotes?symbols=SPY")
-    if "sandbox" in base:
-        fail(f"TRADIER_BASE_URL is sandbox! Bug #53 regression: {base}")
+    if "sandbox" not in base:
+        fail(f"TRADIER_BASE_URL is production! Should use sandbox: {base}")
         failures += 1
     spy = get_spy_quote()
     if not spy or not spy.get("last"):

@@ -9,9 +9,12 @@ Env vars required:
   DATABRICKS_HTTP_PATH     - SQL warehouse HTTP path
   DATABRICKS_TOKEN         - Personal access token
   TRADIER_API_KEY          - Production API key (for live quotes)
-  TRADIER_SANDBOX_KEY_USER - Sandbox key for User account (optional)
-  TRADIER_SANDBOX_KEY_MATT - Sandbox key for Matt account (optional)
+  TRADIER_SANDBOX_KEY_USER  - Sandbox key for User account (optional)
+  TRADIER_SANDBOX_KEY_MATT  - Sandbox key for Matt account (optional)
   TRADIER_SANDBOX_KEY_LOGAN - Sandbox key for Logan account (optional)
+  TRADIER_SANDBOX_ACCOUNT_ID_USER  - Account ID for User (optional, auto-discovers if omitted)
+  TRADIER_SANDBOX_ACCOUNT_ID_MATT  - Account ID for Matt (required if auto-discover fails)
+  TRADIER_SANDBOX_ACCOUNT_ID_LOGAN - Account ID for Logan (required if auto-discover fails)
 """
 
 import os
@@ -148,8 +151,9 @@ def to_int(val: Any) -> int:
 # ---------------------------------------------------------------------------
 
 TRADIER_API_KEY = os.environ.get("TRADIER_API_KEY", "")
-TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", "https://api.tradier.com/v1")
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
+# IronForge is a sandbox-only paper trading system — all API calls use sandbox
+TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
 
 
 def is_tradier_configured() -> bool:
@@ -319,16 +323,22 @@ def get_ic_mark_to_market(
 
 
 def _get_sandbox_accounts() -> list[dict]:
-    """Load sandbox accounts from env vars."""
+    """Load sandbox accounts from env vars.
+
+    Each account needs a key and account ID. Account IDs can be provided
+    explicitly (like FORTRESS does) or auto-discovered via /user/profile.
+    Explicit IDs are preferred — auto-discovery doesn't work with all token types.
+    """
     accounts = []
-    for name, env_key in [
-        ("User", "TRADIER_SANDBOX_KEY_USER"),
-        ("Matt", "TRADIER_SANDBOX_KEY_MATT"),
-        ("Logan", "TRADIER_SANDBOX_KEY_LOGAN"),
+    for name, key_env, acct_env in [
+        ("User", "TRADIER_SANDBOX_KEY_USER", "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
+        ("Matt", "TRADIER_SANDBOX_KEY_MATT", "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
+        ("Logan", "TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
     ]:
-        key = os.environ.get(env_key, "")
+        key = os.environ.get(key_env, "")
+        acct_id = os.environ.get(acct_env, "")
         if key:
-            accounts.append({"name": name, "api_key": key})
+            accounts.append({"name": name, "api_key": key, "account_id": acct_id})
     return accounts
 
 
@@ -376,11 +386,20 @@ def _sandbox_post(endpoint: str, body: dict, api_key: str) -> Optional[dict]:
 
 
 def _get_account_id_for_key(api_key: str) -> Optional[str]:
-    """Auto-discover sandbox account ID from profile."""
+    """Get sandbox account ID — prefer pre-configured, fall back to auto-discover."""
     if api_key in _account_id_cache:
         return _account_id_cache[api_key]
+
+    # Check pre-configured account IDs first (like FORTRESS does)
+    for acct in _sandbox_accounts:
+        if acct["api_key"] == api_key and acct.get("account_id"):
+            _account_id_cache[api_key] = acct["account_id"]
+            return acct["account_id"]
+
+    # Fall back to auto-discovery via /user/profile
     data = _sandbox_get("/user/profile", None, api_key)
     if not data:
+        log.warning("Auto-discover failed for key — set TRADIER_SANDBOX_ACCOUNT_ID_* env var")
         return None
     account = data.get("profile", {}).get("account")
     if isinstance(account, list):

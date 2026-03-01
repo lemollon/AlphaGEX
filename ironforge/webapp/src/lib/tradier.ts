@@ -6,10 +6,9 @@
  */
 
 const TRADIER_API_KEY = process.env.TRADIER_API_KEY || ''
-// Default to production API for quotes (real prices needed even for paper trading).
-// Sandbox orders use the hardcoded SANDBOX_URL below — this URL is quotes only.
+// IronForge is a sandbox paper trading system — all API calls use sandbox URL
 const TRADIER_BASE_URL =
-  process.env.TRADIER_BASE_URL || 'https://api.tradier.com/v1'
+  process.env.TRADIER_BASE_URL || 'https://sandbox.tradier.com/v1'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */

@@ -8,10 +8,13 @@ Env vars required:
   DATABRICKS_HOST          - Databricks workspace hostname
   DATABRICKS_HTTP_PATH     - SQL warehouse HTTP path
   DATABRICKS_TOKEN         - Personal access token
-  TRADIER_API_KEY          - Production API key (for live position monitoring)
+  TRADIER_API_KEY          - Sandbox API key (for market data quotes)
   TRADIER_SANDBOX_KEY_USER - (optional) Sandbox key for User account
   TRADIER_SANDBOX_KEY_MATT - (optional) Sandbox key for Matt account
   TRADIER_SANDBOX_KEY_LOGAN - (optional) Sandbox key for Logan account
+  TRADIER_SANDBOX_ACCOUNT_ID_USER  - (optional) Account ID for User
+  TRADIER_SANDBOX_ACCOUNT_ID_MATT  - (required) Account ID for Matt
+  TRADIER_SANDBOX_ACCOUNT_ID_LOGAN - (required) Account ID for Logan
 
 Run: uvicorn ironforge_api:app --host 0.0.0.0 --port 8000
 """
