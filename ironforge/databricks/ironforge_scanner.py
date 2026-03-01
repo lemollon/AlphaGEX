@@ -148,8 +148,9 @@ def to_int(val: Any) -> int:
 # ---------------------------------------------------------------------------
 
 TRADIER_API_KEY = os.environ.get("TRADIER_API_KEY", "")
-TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", "https://api.tradier.com/v1")
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
+# IronForge is a sandbox-only paper trading system — all API calls use sandbox
+TRADIER_BASE_URL = os.environ.get("TRADIER_BASE_URL", SANDBOX_URL)
 
 
 def is_tradier_configured() -> bool:

@@ -69,8 +69,8 @@ check("TRADIER_API_KEY set", lambda: (
     bool(Config.TRADIER_API_KEY),
     Config.TRADIER_API_KEY[:10] + "..." if Config.TRADIER_API_KEY else "NOT SET"
 ))
-check("TRADIER_BASE_URL", lambda: (
-    "api.tradier.com" in Config.TRADIER_BASE_URL,
+check("TRADIER_BASE_URL (sandbox)", lambda: (
+    "sandbox.tradier.com" in Config.TRADIER_BASE_URL,
     Config.TRADIER_BASE_URL
 ))
 
