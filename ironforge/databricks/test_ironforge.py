@@ -14,8 +14,8 @@ from datetime import datetime
 
 os.environ["TRADIER_API_KEY"] = "HbOM7HNC6Ibs6QAE6hYgr02rpx2K"
 os.environ["TRADIER_SANDBOX_KEY_USER"] = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
-os.environ["TRADIER_SANDBOX_KEY_MATT"] = "AGoNTv6o6GKMKT8uc7ooVN0ct0e0"
-os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "AcDucIMyjeNgFh60LW0b0F5fhXHh"
+os.environ["TRADIER_SANDBOX_KEY_MATT"] = "AGoNTv6o6GKMKT8uc7ooVNOct0e0"
+os.environ["TRADIER_SANDBOX_KEY_LOGAN"] = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
 
 PROD_URL = "https://api.tradier.com/v1"
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
