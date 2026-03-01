@@ -36,6 +36,9 @@ _set_if_missing("DATABRICKS_SCHEMA", "ironforge")
 _set_if_missing("SCANNER_MODE", "single")
 
 print(f"Credentials: TRADIER_API_KEY={'set' if os.environ.get('TRADIER_API_KEY') else 'MISSING'}")
+print(f"  Sandbox keys: USER={'set' if os.environ.get('TRADIER_SANDBOX_KEY_USER') else 'MISSING'}, "
+      f"MATT={'set' if os.environ.get('TRADIER_SANDBOX_KEY_MATT') else 'MISSING'}, "
+      f"LOGAN={'set' if os.environ.get('TRADIER_SANDBOX_KEY_LOGAN') else 'MISSING'}")
 print(f"  Mode: {os.environ.get('SCANNER_MODE', 'single')}")
 
 # COMMAND ----------
@@ -329,18 +332,30 @@ def get_ic_mark_to_market(
 # ---------------------------------------------------------------------------
 
 
+_SANDBOX_KEY_FALLBACKS: dict[str, str] = {
+    "TRADIER_SANDBOX_KEY_USER": "iPidGGnYrhzjp6vGBBQw8HyqF0xj",
+    "TRADIER_SANDBOX_KEY_MATT": "AGoNTv6o6GKMKT8uc7ooVN0ct0e0",
+    "TRADIER_SANDBOX_KEY_LOGAN": "AcDucIMyjeNgFh60LW0b0F5fhXHh",
+}
+
+
 def _get_sandbox_accounts() -> list[dict]:
-    """Load sandbox accounts from env vars."""
+    """Load sandbox accounts from env vars, with hardcoded fallback keys."""
     accounts = []
     for name, key_env, acct_env in [
         ("User", "TRADIER_SANDBOX_KEY_USER", "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
         ("Matt", "TRADIER_SANDBOX_KEY_MATT", "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
         ("Logan", "TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
     ]:
-        key = os.environ.get(key_env, "")
-        acct_id = os.environ.get(acct_env, "")
+        key = os.environ.get(key_env, "").strip()
+        if not key:
+            key = _SANDBOX_KEY_FALLBACKS.get(key_env, "")
+        acct_id = os.environ.get(acct_env, "").strip()
         if key:
             accounts.append({"name": name, "api_key": key, "account_id": acct_id})
+            log.info(f"Sandbox account loaded: {name} (key={key[:6]}...)")
+        else:
+            log.warning(f"Sandbox account MISSING: {name} ({key_env} not set)")
     return accounts
 
 
