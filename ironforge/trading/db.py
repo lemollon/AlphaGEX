@@ -280,6 +280,70 @@ class TradingDatabase:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
             return False
 
+    def update_position_fill(
+        self,
+        position_id: str,
+        actual_credit: float,
+        actual_put_credit: float = 0.0,
+        actual_call_credit: float = 0.0,
+    ) -> bool:
+        """Update a position's credit fields with actual Tradier sandbox fill prices.
+
+        After mirroring to Tradier sandbox, the actual fill price may differ
+        from our bid/ask estimate. This updates the position so the frontend
+        and P&L calculations use the real fill, not the estimate.
+
+        Also recalculates max_profit, max_loss, and collateral_required
+        based on the actual credit.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                # Read current spread_width and contracts to recalculate derived fields
+                c.execute(f"""
+                    SELECT spread_width, contracts
+                    FROM {self._t('positions')}
+                    WHERE position_id = %s AND dte_mode = %s
+                """, [position_id, self.dte_mode])
+                row = c.fetchone()
+                if not row:
+                    logger.warning(f"{self.bot_name}: update_position_fill — {position_id} not found")
+                    return False
+
+                spread_width = float(row[0])
+                contracts = int(row[1])
+                max_profit = round(actual_credit * 100 * contracts, 2)
+                collateral_per = max(0, (spread_width - actual_credit) * 100)
+                collateral_required = round(collateral_per * contracts, 2)
+                max_loss = collateral_required
+
+                c.execute(f"""
+                    UPDATE {self._t('positions')}
+                    SET total_credit = %s,
+                        put_credit = %s,
+                        call_credit = %s,
+                        max_profit = %s,
+                        max_loss = %s,
+                        collateral_required = %s,
+                        updated_at = NOW()
+                    WHERE position_id = %s AND dte_mode = %s
+                """, [
+                    actual_credit,
+                    actual_put_credit if actual_put_credit else actual_credit,
+                    actual_call_credit if actual_call_credit else 0.0,
+                    max_profit, max_loss, collateral_required,
+                    position_id, self.dte_mode,
+                ])
+                logger.info(
+                    f"{self.bot_name}: Updated {position_id} with actual fill "
+                    f"credit=${actual_credit:.4f} (max_profit=${max_profit:.2f}, "
+                    f"collateral=${collateral_required:.2f})"
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to update position fill: {e}")
+            return False
+
     def update_sandbox_order_id(self, position_id: str, sandbox_order_id: str) -> bool:
         """Store the Tradier sandbox order ID on a position."""
         try:

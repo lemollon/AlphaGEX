@@ -307,6 +307,63 @@ class TradierClient:
         )
         return {"order_id": order_id, "status": status}
 
+    def get_order_fill_price(self, order_id: int) -> Optional[float]:
+        """
+        Query a sandbox order and return the average fill price.
+
+        Tries up to 3 times with 1-second delay between attempts,
+        because sandbox market orders may take a moment to fill.
+
+        Returns the net credit received (positive) or None if not filled.
+        """
+        import time as _time
+
+        account_id = self.get_account_id()
+        if not account_id:
+            logger.warning("Cannot get fill price: no account ID")
+            return None
+
+        for attempt in range(3):
+            data = self._get(f"/accounts/{account_id}/orders/{order_id}")
+            if not data:
+                _time.sleep(1)
+                continue
+
+            order = data.get("order", {})
+            status = order.get("status", "")
+
+            if status == "filled":
+                # For multileg orders, avg_fill_price is on the order level
+                avg_fill = order.get("avg_fill_price")
+                if avg_fill is not None:
+                    return abs(float(avg_fill))
+
+                # Fallback: calculate from leg fills
+                legs = order.get("leg", [])
+                if isinstance(legs, dict):
+                    legs = [legs]
+                if legs:
+                    total = 0.0
+                    for leg in legs:
+                        side = leg.get("side", "")
+                        fill = float(leg.get("avg_fill_price") or 0)
+                        if "sell" in side:
+                            total += fill  # credit
+                        else:
+                            total -= fill  # debit
+                    return abs(total) if total != 0 else None
+
+            if status in ("pending", "open", "partially_filled"):
+                _time.sleep(1)
+                continue
+
+            # rejected, canceled, expired — no fill
+            logger.warning(f"Sandbox order {order_id} status={status}, no fill price")
+            return None
+
+        logger.warning(f"Sandbox order {order_id} not filled after 3 attempts")
+        return None
+
     def get_sandbox_positions(self) -> Optional[List[Dict]]:
         """Get all open positions in the sandbox account."""
         account_id = self.get_account_id()

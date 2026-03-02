@@ -128,6 +128,42 @@ class PaperExecutor:
                 )
         return results
 
+    def _get_first_fill_price(self, sandbox_orders: Dict[str, str]) -> Optional[float]:
+        """Read back the actual fill price from the first successful sandbox order.
+
+        Prefers the "User" account if available, otherwise uses the first entry.
+        Returns the net credit (positive) or None if unavailable.
+        """
+        # Prefer User account (primary)
+        order_names = list(sandbox_orders.keys())
+        if "User" in order_names:
+            order_names.remove("User")
+            order_names.insert(0, "User")
+
+        for name in order_names:
+            order_id = sandbox_orders[name]
+            # Find the matching sandbox client
+            client = None
+            for sb in self.sandbox_clients:
+                if sb["name"] == name:
+                    client = sb["client"]
+                    break
+            if not client:
+                continue
+            try:
+                fill_price = client.get_order_fill_price(int(order_id))
+                if fill_price is not None and fill_price > 0:
+                    logger.info(
+                        f"{self.config.bot_name}: Got fill price ${fill_price:.4f} "
+                        f"from sandbox [{name}] order #{order_id}"
+                    )
+                    return fill_price
+            except Exception as e:
+                logger.warning(
+                    f"{self.config.bot_name}: Failed to get fill from [{name}]: {e}"
+                )
+        return None
+
     def _mirror_close_to_all_sandboxes(
         self, position: IronCondorPosition, close_price: float
     ) -> Dict[str, str]:
@@ -296,29 +332,55 @@ class PaperExecutor:
                 f"(collateral: ${total_collateral:.2f})"
             )
 
-            # Mirror to all Tradier sandbox accounts
+            # Mirror to all Tradier sandbox accounts.
+            # After mirroring, read back actual fill price so the DB reflects
+            # what Tradier actually filled at (not our bid/ask estimate).
             sandbox_orders = {}
+            actual_fill_credit = None
             if self.sandbox_clients:
                 sandbox_orders = self._mirror_open_to_all_sandboxes(position)
                 if sandbox_orders:
                     self.db.update_sandbox_order_id(
                         position_id, json.dumps(sandbox_orders)
                     )
+                    actual_fill_credit = self._get_first_fill_price(sandbox_orders)
+
+            # If we got an actual fill, update the position so the frontend
+            # and P&L math use the real Tradier fill, not our bid/ask estimate.
+            credit_used = signal.total_credit
+            if actual_fill_credit is not None and actual_fill_credit > 0:
+                logger.info(
+                    f"{self.config.bot_name}: Actual sandbox fill=${actual_fill_credit:.4f} "
+                    f"(estimated=${signal.total_credit:.4f}, "
+                    f"diff={actual_fill_credit - signal.total_credit:+.4f})"
+                )
+                self.db.update_position_fill(
+                    position_id=position_id,
+                    actual_credit=actual_fill_credit,
+                )
+                credit_used = actual_fill_credit
 
             sandbox_summary = (
                 f" [sandbox:{sandbox_orders}]" if sandbox_orders else ""
+            )
+            fill_note = (
+                f" (actual fill=${actual_fill_credit:.4f})"
+                if actual_fill_credit and actual_fill_credit != signal.total_credit
+                else ""
             )
             self.db.log(
                 "TRADE_OPEN",
                 f"Opened {position_id}: "
                 f"{signal.put_long}/{signal.put_short}P-"
                 f"{signal.call_short}/{signal.call_long}C "
-                f"x{contracts} @ ${signal.total_credit:.2f}"
+                f"x{contracts} @ ${credit_used:.4f}{fill_note}"
                 f"{sandbox_summary}",
                 {
                     "position_id": position_id,
                     "contracts": contracts,
-                    "credit": signal.total_credit,
+                    "credit_estimated": signal.total_credit,
+                    "credit_actual": actual_fill_credit,
+                    "credit": credit_used,
                     "collateral": total_collateral,
                     "wings_adjusted": signal.wings_adjusted,
                     "sandbox_order_ids": sandbox_orders,
