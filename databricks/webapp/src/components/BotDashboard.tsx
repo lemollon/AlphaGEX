@@ -1,14 +1,16 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
+import { isMarketOpen, getCTNow } from '@/lib/pt-tiers'
 import StatusCard from './StatusCard'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
 import PositionTable from './PositionTable'
 import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
+import PTTimeline from './PTTimeline'
 
 const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs'] as const
 type Tab = (typeof TABS)[number]
@@ -32,6 +34,13 @@ export default function BotDashboard({
     `/api/${bot}/status`,
     fetcher,
     { refreshInterval: STATUS_REFRESH },
+  )
+
+  /* ---- Config (always fetched, slow refresh) ---- */
+  const { data: config } = useSWR(
+    `/api/${bot}/config`,
+    fetcher,
+    { refreshInterval: 60_000 },
   )
 
   /* ---- Equity curve (historical, fetched based on period) ---- */
@@ -91,11 +100,48 @@ export default function BotDashboard({
     )
   }
 
+  /* ---- Stale scanner banner ---- */
+  const [staleBanner, setStaleBanner] = useState<'none' | 'yellow' | 'red'>('none')
+  useEffect(() => {
+    function check() {
+      if (!status?.last_scan || !isMarketOpen(getCTNow())) {
+        setStaleBanner('none')
+        return
+      }
+      const ageMs = Date.now() - new Date(status.last_scan).getTime()
+      const ageMin = ageMs / 60_000
+      if (ageMin > 20) setStaleBanner('red')
+      else if (ageMin > 10) setStaleBanner('yellow')
+      else setStaleBanner('none')
+    }
+    check()
+    const timer = setInterval(check, 15_000)
+    return () => clearInterval(timer)
+  }, [status?.last_scan])
+
   const accentActive =
     accent === 'amber' ? 'border-amber-400 text-amber-400' : 'border-blue-400 text-blue-400'
 
+  const scanAgeText = status?.last_scan
+    ? `${Math.round((Date.now() - new Date(status.last_scan).getTime()) / 60_000)} minutes ago`
+    : 'unknown'
+
   return (
     <div className="space-y-6">
+      {/* Stale scanner banner */}
+      {staleBanner === 'red' && (
+        <div className="rounded-lg bg-red-500/15 border border-red-500/30 px-4 py-2 text-sm text-red-400 flex items-center gap-2">
+          <span>&#128680;</span>
+          <span>Scanner may be offline &mdash; last scan {scanAgeText}</span>
+        </div>
+      )}
+      {staleBanner === 'yellow' && (
+        <div className="rounded-lg bg-amber-500/15 border border-amber-500/30 px-4 py-2 text-sm text-amber-400 flex items-center gap-2">
+          <span>&#9888;&#65039;</span>
+          <span>Scanner delayed &mdash; last scan {scanAgeText}</span>
+        </div>
+      )}
+
       {/* Title */}
       <div className="flex items-baseline gap-2">
         <h1
@@ -109,7 +155,10 @@ export default function BotDashboard({
       </div>
 
       {/* Status card */}
-      {status && <StatusCard data={status} accent={accent} />}
+      {status && <StatusCard data={status} accent={accent} config={config} />}
+
+      {/* PT Timeline */}
+      <PTTimeline />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">

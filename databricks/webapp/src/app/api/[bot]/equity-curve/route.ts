@@ -35,7 +35,7 @@ export async function GET(
       `),
     ])
 
-    const startingCapital = num(capitalRows[0]?.starting_capital) || 5000
+    const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
 
     // Build full curve with correct cumulative P&L
     let curve = curveRows.map((row) => {
