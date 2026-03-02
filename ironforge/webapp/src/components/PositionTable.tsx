@@ -1,5 +1,8 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import { getCurrentPTTier, getCTNow, type PTTier } from '@/lib/pt-tiers'
+
 interface Position {
   position_id: string
   expiration: string
@@ -18,6 +21,8 @@ interface Position {
   unrealized_pnl?: number | null
   unrealized_pnl_pct?: number | null
   profit_target_price?: number
+  profit_target_pct?: number
+  profit_target_tier?: string
   stop_loss_price?: number
   distance_to_pt?: number | null
   distance_to_sl?: number | null
@@ -70,20 +75,42 @@ export default function PositionTable({
 /*  Position Card                                                      */
 /* ------------------------------------------------------------------ */
 
+/** Map tier name to Tailwind text color. */
+function tierColor(tier: string | undefined, fallback: PTTier): string {
+  if (!tier) return fallback.color
+  if (tier === 'MORNING') return 'text-emerald-400'
+  if (tier === 'MIDDAY') return 'text-yellow-400'
+  return 'text-orange-400'
+}
+
 function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolean }) {
   const pnl = pos.unrealized_pnl
   const pnlPct = pos.unrealized_pnl_pct
   const pnlColor =
     pnl == null ? 'text-gray-400' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
 
-  // Progress bar: how far between profit target (left) and stop loss (right)
+  // Client-side PT tier (ticks every 1s for live updates when tier changes)
+  const [ptTier, setPtTier] = useState<PTTier>(getCurrentPTTier)
+  useEffect(() => {
+    const timer = setInterval(() => setPtTier(getCurrentPTTier(getCTNow())), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Use API PT data if available, fall back to client-side calculation
+  const ptPct = pos.profit_target_pct ?? ptTier.pct
+  const ptLabel = pos.profit_target_tier ?? ptTier.label
+  const ptClr = tierColor(pos.profit_target_tier, ptTier)
+  const ptPrice = pos.profit_target_price ?? pos.total_credit * (1 - ptPct)
+  const slPrice = pos.stop_loss_price ?? pos.total_credit * 2
+
+  // Progress bar: how far between profit target (left=0%) and stop loss (right=100%)
   let progressPct: number | null = null
-  if (pos.current_cost_to_close != null && pos.profit_target_price && pos.stop_loss_price) {
-    const range = pos.stop_loss_price - pos.profit_target_price
+  if (pos.current_cost_to_close != null) {
+    const range = slPrice - ptPrice
     if (range > 0) {
       progressPct = Math.max(
         0,
-        Math.min(100, ((pos.current_cost_to_close - pos.profit_target_price) / range) * 100),
+        Math.min(100, ((pos.current_cost_to_close - ptPrice) / range) * 100),
       )
     }
   }
@@ -152,35 +179,45 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
             </p>
           </div>
           <div>
-            <p className="text-xs text-forge-muted">PT Target</p>
-            <p className="font-mono text-emerald-400/70">
-              ${pos.profit_target_price?.toFixed(4) ?? '--'}
+            <p className="text-xs text-forge-muted">Profit Target</p>
+            <p className={`font-mono ${ptClr}`}>
+              ${ptPrice.toFixed(4)}{' '}
+              <span className="text-[10px] opacity-75">
+                ({Math.round(ptPct * 100)}% {ptLabel})
+              </span>
             </p>
           </div>
           <div>
-            <p className="text-xs text-forge-muted">SL Trigger</p>
+            <p className="text-xs text-forge-muted">Stop Loss</p>
             <p className="font-mono text-red-400/70">
-              ${pos.stop_loss_price?.toFixed(4) ?? '--'}
+              ${slPrice.toFixed(4)}
             </p>
           </div>
         </div>
       )}
 
-      {/* PT / SL progress bar */}
+      {/* PT / SL progress bar with dollar labels */}
       {progressPct != null && (
         <div className="space-y-1">
-          <div className="flex justify-between text-[10px] text-forge-muted">
-            <span>Profit Target</span>
-            <span>Stop Loss</span>
+          <div className="flex justify-between text-[10px] text-forge-muted font-mono">
+            <span className={ptClr}>PT ${ptPrice.toFixed(2)}</span>
+            {pos.current_cost_to_close != null && (
+              <span className="text-gray-300">
+                ${pos.current_cost_to_close.toFixed(4)}
+              </span>
+            )}
+            <span className="text-red-400">SL ${slPrice.toFixed(2)}</span>
           </div>
-          <div className="h-2 bg-forge-border rounded-full overflow-hidden relative">
+          <div className="h-2.5 bg-forge-border rounded-full overflow-hidden relative">
             {/* Green zone (left 30%) */}
             <div className="absolute inset-y-0 left-0 bg-emerald-500/20" style={{ width: '30%' }} />
+            {/* Yellow zone (middle 40%) */}
+            <div className="absolute inset-y-0 left-[30%] bg-yellow-500/10" style={{ width: '40%' }} />
             {/* Red zone (right 30%) */}
             <div className="absolute inset-y-0 right-0 bg-red-500/20" style={{ width: '30%' }} />
             {/* Marker */}
             <div
-              className={`absolute top-0 h-full w-1 rounded ${
+              className={`absolute top-0 h-full w-1.5 rounded ${
                 progressPct < 30
                   ? 'bg-emerald-400'
                   : progressPct > 70

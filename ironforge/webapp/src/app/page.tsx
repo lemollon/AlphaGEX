@@ -31,7 +31,7 @@ const configRows: Array<{ label: string; value: string; hint?: string }> = [
   { label: 'Risk Per Trade', value: sharedConfig.riskPerTrade, hint: 'Of account' },
   { label: 'Spread Width', value: sharedConfig.spreadWidth, hint: 'Per leg' },
   { label: 'Strike SD', value: sharedConfig.sdMultiplier, hint: 'Expected move multiplier' },
-  { label: 'Profit Target', value: sharedConfig.profitTarget, hint: 'Of entry credit' },
+  { label: 'Profit Target', value: '30/20/15%', hint: 'Sliding (time-based)' },
   { label: 'Stop Loss', value: sharedConfig.stopLoss, hint: 'Of entry credit' },
   { label: 'Max Contracts', value: String(sharedConfig.maxContracts), hint: 'Per trade' },
   { label: 'Max Trades/Day', value: String(sharedConfig.maxTradesPerDay) },
@@ -89,11 +89,13 @@ const bots = [
 /* ── Exit Logic ─────────────────────────────────────────────────────── */
 
 const exitRules = [
-  { trigger: 'Profit Target', action: 'Close', condition: 'Cost ≤ 70% of credit', color: 'text-emerald-400' },
-  { trigger: 'Stop Loss', action: 'Close', condition: 'Cost ≥ 200% of credit', color: 'text-red-400' },
-  { trigger: 'EOD Cutoff', action: 'Force close', condition: 'Time ≥ 2:45 PM CT', color: 'text-amber-400' },
-  { trigger: 'Stale/Expired', action: 'Force close', condition: 'Position from prior day', color: 'text-amber-400' },
-  { trigger: 'Data Failure', action: 'Force close', condition: '10 MTM failures', color: 'text-red-400' },
+  { trigger: 'PT (Morning)', condition: '30%  8:30–10:29 AM CT', color: 'text-emerald-400' },
+  { trigger: 'PT (Midday)', condition: '20%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
+  { trigger: 'PT (Afternoon)', condition: '15%  1:00–2:44 PM CT', color: 'text-orange-400' },
+  { trigger: 'Stop Loss', condition: '100%  Cost ≥ 200% of credit', color: 'text-red-400' },
+  { trigger: 'EOD Cutoff', condition: '2:45 PM CT', color: 'text-amber-400' },
+  { trigger: 'Stale/Expired', condition: 'Position from prior day', color: 'text-amber-400' },
+  { trigger: 'Data Failure', condition: '10 MTM failures', color: 'text-red-400' },
 ]
 
 /* ── Page ────────────────────────────────────────────────────────────── */
@@ -257,7 +259,7 @@ export default function Home() {
               {[
                 { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', diff: true },
                 { param: 'Spread Width', flame: '$5.00', spark: '$5.00', diff: false },
-                { param: 'Profit Target', flame: '30%', spark: '30%', diff: false },
+                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', diff: false },
                 { param: 'Stop Loss', flame: '100%', spark: '100%', diff: false },
                 { param: 'Max Contracts', flame: '10', spark: '10', diff: false },
                 { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', diff: false },
