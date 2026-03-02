@@ -28,6 +28,11 @@ _set_if_missing("TRADIER_SANDBOX_KEY_USER", "iPidGGnYrhzjp6vGBBQw8HyqF0xj")
 _set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVNOct0e0")
 _set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh6OLW0b0F5fhXHh")
 
+# Tradier sandbox account IDs (hardcoded — no auto-discover dependency)
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_USER", "VA39284047")
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_MATT", "VA55391129")
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_LOGAN", "VA59240884")
+
 # Databricks catalog/schema
 _set_if_missing("DATABRICKS_CATALOG", "alpha_prime")
 _set_if_missing("DATABRICKS_SCHEMA", "ironforge")
@@ -1617,6 +1622,10 @@ print("Scanner code loaded")
 
 # Cell 3: Run the scanner
 
+# Reset sandbox cache so new keys/account IDs are picked up
+_sandbox_accounts = None
+_account_id_cache.clear()
+
 
 def main() -> None:
     """Single scan — called by Databricks Job every 5 minutes.
@@ -1627,37 +1636,55 @@ def main() -> None:
     In notebook context (SCANNER_MODE=loop), runs in an infinite loop
     with a 5-minute sleep between cycles.
     """
-    ct = get_central_time()
-    log.info(
-        f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT "
-        f"| Catalog: {CATALOG} | Schema: {SCHEMA} "
-        f"| Tradier: {'OK' if is_tradier_configured() else 'MISSING'}"
-    )
+    try:
+        ct = get_central_time()
+        print(f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT")
+        print(f"  Catalog: {CATALOG} | Schema: {SCHEMA} | Tradier: {'OK' if is_tradier_configured() else 'MISSING'}")
+        accounts = _get_sandbox_accounts_lazy()
+        print(f"  Sandbox accounts: {len(accounts)}")
+        for acct in accounts:
+            acct_id = acct.get("account_id") or "auto-discover"
+            print(f"    {acct['name']}: key={acct['api_key'][:6]}... account={acct_id}")
+        log.info(
+            f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT "
+            f"| Catalog: {CATALOG} | Schema: {SCHEMA} "
+            f"| Tradier: {'OK' if is_tradier_configured() else 'MISSING'}"
+        )
 
-    if not is_market_open(ct):
-        if is_in_warmup_window(ct):
-            # Pre-market warm-up: wait for 8:30 so the cluster stays alive
-            from zoneinfo import ZoneInfo
-            market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
-            wait_secs = max(0, (market_open - ct).total_seconds())
-            log.info(
-                f"Pre-market warm-up window ({ct.strftime('%H:%M')} CT) — "
-                f"cluster warm, waiting {int(wait_secs)}s for market open"
-            )
-            if wait_secs > 0:
-                time.sleep(wait_secs)
-            # Re-check time after sleeping (should now be ~8:30)
-            ct = get_central_time()
-            log.info(f"Warm-up complete — now {ct.strftime('%H:%M:%S')} CT, proceeding to scan")
-        else:
-            log.info(
-                f"Market closed ({ct.strftime('%H:%M')} CT, "
-                f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
-            )
-            return
+        if not is_market_open(ct):
+            if is_in_warmup_window(ct):
+                # Pre-market warm-up: wait for 8:30 so the cluster stays alive
+                from zoneinfo import ZoneInfo
+                market_open = ct.replace(hour=8, minute=30, second=0, microsecond=0)
+                wait_secs = max(0, (market_open - ct).total_seconds())
+                print(f"  Pre-market warm-up — waiting {int(wait_secs)}s for market open")
+                log.info(
+                    f"Pre-market warm-up window ({ct.strftime('%H:%M')} CT) — "
+                    f"cluster warm, waiting {int(wait_secs)}s for market open"
+                )
+                if wait_secs > 0:
+                    time.sleep(wait_secs)
+                # Re-check time after sleeping (should now be ~8:30)
+                ct = get_central_time()
+                print(f"  Warm-up complete — now {ct.strftime('%H:%M:%S')} CT")
+                log.info(f"Warm-up complete — now {ct.strftime('%H:%M:%S')} CT, proceeding to scan")
+            else:
+                print(f"  Market closed ({ct.strftime('%H:%M')} CT) — exiting")
+                log.info(
+                    f"Market closed ({ct.strftime('%H:%M')} CT, "
+                    f"{'weekend' if ct.weekday() >= 5 else 'outside 8:30-15:00'}) — exiting"
+                )
+                return
 
-    run_scan_cycle()
-    log.info("Scan complete — exiting")
+        print("  Running scan cycle...")
+        run_scan_cycle()
+        print("  Scan complete — exiting")
+        log.info("Scan complete — exiting")
+
+    except Exception as e:
+        print(f"  MAIN ERROR: {e}")
+        import traceback as tb
+        tb.print_exc()
 
 
 # Entry point: single-scan (Job) vs loop (notebook testing)
@@ -1665,11 +1692,7 @@ _scanner_mode = os.environ.get("SCANNER_MODE", "single")
 
 if _scanner_mode == "loop":
     # Notebook testing mode — infinite loop with 5-min sleep
-    log.info("Starting in LOOP mode (notebook testing)")
-    log.info(f"  Catalog: {CATALOG} | Schema: {SCHEMA}")
-    log.info(f"  Tradier configured: {is_tradier_configured()}")
-    log.info(f"  Sandbox accounts: {len(_get_sandbox_accounts_lazy())}")
-    log.info(f"  Scan interval: {SCAN_INTERVAL}s")
+    print("Starting in LOOP mode (notebook testing)")
     while True:
         main()
         time.sleep(SCAN_INTERVAL)
