@@ -218,8 +218,8 @@ def get_quote(symbol: str) -> Optional[dict]:
         return None
     return {
         "last": float(quote["last"]),
-        "bid": float(quote.get("bid", 0)),
-        "ask": float(quote.get("ask", 0)),
+        "bid": float(quote["bid"]) if quote.get("bid") is not None else 0.0,
+        "ask": float(quote["ask"]) if quote.get("ask") is not None else 0.0,
         "symbol": quote.get("symbol", symbol),
     }
 
@@ -237,9 +237,9 @@ def get_option_quote(occ_symbol: str) -> Optional[dict]:
     if data.get("quotes", {}).get("unmatched_symbols"):
         return None
     return {
-        "bid": float(quote.get("bid", 0)),
-        "ask": float(quote.get("ask", 0)),
-        "last": float(quote.get("last", 0)),
+        "bid": float(quote["bid"]),
+        "ask": float(quote["ask"]) if quote.get("ask") is not None else 0.0,
+        "last": float(quote["last"]) if quote.get("last") is not None else 0.0,
         "symbol": occ_symbol,
     }
 
