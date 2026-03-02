@@ -548,6 +548,58 @@ def close_ic_order_all_accounts(
     return results
 
 
+def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) -> Optional[float]:
+    """Query a sandbox order and return the average fill price.
+
+    Tries up to 3 times with 1-second delay between attempts,
+    because sandbox orders may take a moment to fill.
+    """
+    for attempt in range(3):
+        data = _sandbox_get(
+            f"/accounts/{account_id}/orders/{order_id}",
+            None,
+            api_key,
+        )
+        if not data:
+            time.sleep(1)
+            continue
+
+        order = data.get("order", {})
+        status = order.get("status", "")
+
+        if status == "filled":
+            # For multileg orders, avg_fill_price is on the order level
+            avg_fill = order.get("avg_fill_price")
+            if avg_fill is not None:
+                return abs(float(avg_fill))
+
+            # Fallback: calculate from leg fills
+            legs = order.get("leg", [])
+            if isinstance(legs, dict):
+                legs = [legs]
+            if legs:
+                total = 0.0
+                for leg in legs:
+                    side = leg.get("side", "")
+                    fill = float(leg.get("avg_fill_price") or 0)
+                    if "sell" in side:
+                        total += fill  # credit
+                    else:
+                        total -= fill  # debit
+                return abs(total) if total != 0 else None
+
+        if status in ("pending", "open", "partially_filled"):
+            time.sleep(1)
+            continue
+
+        # rejected, canceled, expired — no fill
+        log.warning(f"Sandbox order {order_id} status={status}, no fill price")
+        return None
+
+    log.warning(f"Sandbox order {order_id} not filled after 3 attempts")
+    return None
+
+
 # ---------------------------------------------------------------------------
 #  Market Hours (Central Time)
 # ---------------------------------------------------------------------------
@@ -791,12 +843,121 @@ def close_position(
     close_price: Optional[float] = None,
 ) -> None:
     """Close a position: update DB, paper account, PDT, sandbox mirror, logs."""
+    # Start with the provided or calculated close price as fallback
     price = close_price if close_price is not None else 0.0
     if close_price is None and is_tradier_configured():
         mtm = get_ic_mark_to_market(
             ticker, expiration, put_short, put_long, call_short, call_long
         )
         price = mtm["cost_to_close"] if mtm else 0.0
+
+    price_source = "calculated"
+
+    # -------------------------------------------------------------------
+    # For FLAME: place sandbox close FIRST, then use actual fill price.
+    # For SPARK: no sandbox, keep using calculated price.
+    # -------------------------------------------------------------------
+    if bot["name"] == "flame":
+        try:
+            # Place USER close order first to get fill price
+            user_accounts = [a for a in _get_sandbox_accounts_lazy() if a["name"] == "User"]
+            if user_accounts:
+                user_acct = user_accounts[0]
+                user_account_id = _get_account_id_for_key(user_acct["api_key"])
+
+                if user_account_id:
+                    order_body = {
+                        "class": "multileg",
+                        "symbol": ticker,
+                        "type": "market",
+                        "duration": "day",
+                        "option_symbol[0]": build_occ_symbol(ticker, expiration, put_short, "P"),
+                        "side[0]": "buy_to_close",
+                        "quantity[0]": str(contracts),
+                        "option_symbol[1]": build_occ_symbol(ticker, expiration, put_long, "P"),
+                        "side[1]": "sell_to_close",
+                        "quantity[1]": str(contracts),
+                        "option_symbol[2]": build_occ_symbol(ticker, expiration, call_short, "C"),
+                        "side[2]": "buy_to_close",
+                        "quantity[2]": str(contracts),
+                        "option_symbol[3]": build_occ_symbol(ticker, expiration, call_long, "C"),
+                        "side[3]": "sell_to_close",
+                        "quantity[3]": str(contracts),
+                        "tag": position_id[:255],
+                    }
+
+                    result = _sandbox_post(
+                        f"/accounts/{user_account_id}/orders",
+                        order_body,
+                        user_acct["api_key"],
+                    )
+
+                    if result and result.get("order", {}).get("id"):
+                        user_order_id = result["order"]["id"]
+                        log.info(f"USER sandbox close order placed: {user_order_id}")
+
+                        fill_price = _get_sandbox_order_fill_price(
+                            user_acct["api_key"], user_account_id, user_order_id
+                        )
+                        if fill_price is not None and fill_price >= 0:
+                            log.info(
+                                f"Actual close fill from USER sandbox: ${fill_price:.4f} "
+                                f"(calculated was ${price:.4f})"
+                            )
+                            price = fill_price
+                            price_source = "sandbox_fill"
+                    else:
+                        # Retry once after 1s
+                        log.warning("USER sandbox close attempt 1 failed, retrying...")
+                        time.sleep(1)
+                        result = _sandbox_post(
+                            f"/accounts/{user_account_id}/orders",
+                            order_body,
+                            user_acct["api_key"],
+                        )
+                        if result and result.get("order", {}).get("id"):
+                            user_order_id = result["order"]["id"]
+                            fill_price = _get_sandbox_order_fill_price(
+                                user_acct["api_key"], user_account_id, user_order_id
+                            )
+                            if fill_price is not None and fill_price >= 0:
+                                price = fill_price
+                                price_source = "sandbox_fill"
+
+                    # Close on MATT and LOGAN
+                    for other_acct in _get_sandbox_accounts_lazy():
+                        if other_acct["name"] == "User":
+                            continue
+                        try:
+                            other_id = _get_account_id_for_key(other_acct["api_key"])
+                            if not other_id:
+                                continue
+                            r = _sandbox_post(
+                                f"/accounts/{other_id}/orders",
+                                order_body,
+                                other_acct["api_key"],
+                            )
+                            if r and r.get("order", {}).get("id"):
+                                log.info(f"Sandbox IC CLOSE OK [{other_acct['name']}]: order_id={r['order']['id']}")
+                            else:
+                                # Retry once
+                                time.sleep(1)
+                                r = _sandbox_post(
+                                    f"/accounts/{other_id}/orders",
+                                    order_body,
+                                    other_acct["api_key"],
+                                )
+                                if r and r.get("order", {}).get("id"):
+                                    log.info(f"Sandbox IC CLOSE OK [{other_acct['name']}] (retry): order_id={r['order']['id']}")
+                                else:
+                                    log.error(
+                                        f"Sandbox IC close FAILED after 2 attempts [{other_acct['name']}] — "
+                                        f"paper position closed but sandbox may have orphan."
+                                    )
+                        except Exception as e:
+                            log.warning(f"Sandbox close failed [{other_acct['name']}]: {e}")
+        except Exception as e:
+            log.warning(f"Sandbox close failed for {position_id}: {e}")
 
     pnl_per_contract = (entry_credit - price) * 100
     realized_pnl = round(pnl_per_contract * contracts, 2)
@@ -842,18 +1003,10 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
-    if bot["name"] == "flame":
-        try:
-            close_ic_order_all_accounts(
-                ticker, expiration, put_short, put_long, call_short, call_long,
-                contracts, price, position_id,
-            )
-        except Exception as e:
-            log.warning(f"Sandbox close failed for {position_id}: {e}")
-
     details = json.dumps({
         "position_id": position_id,
         "close_price": price,
+        "price_source": price_source,
         "realized_pnl": realized_pnl,
         "close_reason": reason,
         "source": "scanner",
@@ -864,7 +1017,7 @@ def close_position(
         VALUES (
             CURRENT_TIMESTAMP(),
             'TRADE_CLOSE',
-            'AUTO CLOSE: {position_id} @ ${price:.4f} P&L=${realized_pnl:.2f} [{reason}]',
+            'AUTO CLOSE: {position_id} @ ${price:.4f} P&L=${realized_pnl:.2f} [{reason}] ({price_source})',
             '{details.replace(chr(39), chr(39)+chr(39))}',
             '{bot['dte']}'
         )
@@ -885,7 +1038,7 @@ def close_position(
 
     log.info(
         f"{bot['name'].upper()} CLOSED {position_id}: "
-        f"${realized_pnl:.2f} [{reason}]"
+        f"${realized_pnl:.2f} [{reason}] ({price_source})"
     )
 
 
@@ -1070,9 +1223,6 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         return "skip:bad_collateral"
     usable_bp = buying_power * 0.85
     max_contracts = min(10, max(1, math.floor(usable_bp / collateral_per)))
-    total_collateral = collateral_per * max_contracts
-    max_profit = credits["totalCredit"] * 100 * max_contracts
-    max_loss = total_collateral
 
     now = datetime.now()
     date_str = now.strftime("%Y%m%d")
@@ -1083,7 +1233,97 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_date = get_central_time().strftime("%Y-%m-%d")
 
+    # -------------------------------------------------------------------
+    # For FLAME: place USER sandbox order FIRST to get actual fill price.
+    # For SPARK (paper-only): use calculated credit from bid/ask.
+    # -------------------------------------------------------------------
+    actual_credit = credits["totalCredit"]  # fallback for SPARK or if sandbox fails
+    sandbox_order_ids: dict[str, int] = {}
+
+    if bot["name"] == "flame":
+        try:
+            user_accounts = [a for a in _get_sandbox_accounts_lazy() if a["name"] == "User"]
+            if user_accounts:
+                user_acct = user_accounts[0]
+                user_account_id = _get_account_id_for_key(user_acct["api_key"])
+
+                if user_account_id:
+                    order_body = {
+                        "class": "multileg",
+                        "symbol": "SPY",
+                        "type": "market",
+                        "duration": "day",
+                        "option_symbol[0]": build_occ_symbol("SPY", expiration, strikes["putShort"], "P"),
+                        "side[0]": "sell_to_open",
+                        "quantity[0]": str(max_contracts),
+                        "option_symbol[1]": build_occ_symbol("SPY", expiration, strikes["putLong"], "P"),
+                        "side[1]": "buy_to_open",
+                        "quantity[1]": str(max_contracts),
+                        "option_symbol[2]": build_occ_symbol("SPY", expiration, strikes["callShort"], "C"),
+                        "side[2]": "sell_to_open",
+                        "quantity[2]": str(max_contracts),
+                        "option_symbol[3]": build_occ_symbol("SPY", expiration, strikes["callLong"], "C"),
+                        "side[3]": "buy_to_open",
+                        "quantity[3]": str(max_contracts),
+                        "tag": position_id[:255],
+                    }
+
+                    # Place on USER first
+                    result = _sandbox_post(
+                        f"/accounts/{user_account_id}/orders",
+                        order_body,
+                        user_acct["api_key"],
+                    )
+
+                    if result and result.get("order", {}).get("id"):
+                        user_order_id = result["order"]["id"]
+                        sandbox_order_ids["User"] = user_order_id
+                        log.info(f"USER sandbox order placed: {user_order_id}")
+
+                        # Get actual fill price
+                        fill_price = _get_sandbox_order_fill_price(
+                            user_acct["api_key"], user_account_id, user_order_id
+                        )
+                        if fill_price is not None and fill_price > 0:
+                            log.info(
+                                f"Actual fill price from USER sandbox: ${fill_price:.4f} "
+                                f"(calculated was ${credits['totalCredit']:.4f})"
+                            )
+                            actual_credit = fill_price
+                        else:
+                            log.warning(
+                                f"Could not get fill price for order {user_order_id}, "
+                                f"using calculated: ${credits['totalCredit']:.4f}"
+                            )
+
+                    # Place on MATT and LOGAN
+                    for other_acct in _get_sandbox_accounts_lazy():
+                        if other_acct["name"] == "User":
+                            continue
+                        try:
+                            other_id = _get_account_id_for_key(other_acct["api_key"])
+                            if not other_id:
+                                continue
+                            r = _sandbox_post(
+                                f"/accounts/{other_id}/orders",
+                                order_body,
+                                other_acct["api_key"],
+                            )
+                            if r and r.get("order", {}).get("id"):
+                                sandbox_order_ids[other_acct["name"]] = r["order"]["id"]
+                                log.info(f"Sandbox IC OPEN OK [{other_acct['name']}]: order_id={r['order']['id']}")
+                        except Exception as e:
+                            log.warning(f"Sandbox order failed [{other_acct['name']}]: {e}")
+        except Exception as e:
+            log.warning(f"Sandbox open failed for {position_id}: {e}")
+
+    # Recalculate financials with actual credit (matches what Tradier filled)
+    total_collateral = max(0, (spread_width - actual_credit) * 100) * max_contracts
+    max_profit = actual_credit * 100 * max_contracts
+    max_loss = total_collateral
+
     factors_json = json.dumps(adv["topFactors"]).replace("'", "''")
+    sandbox_json = json.dumps(sandbox_order_ids).replace("'", "''") if sandbox_order_ids else ""
 
     db_execute(f"""
         INSERT INTO {bot_table(bot['name'], 'positions')} (
@@ -1100,12 +1340,12 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             wings_adjusted, original_put_width, original_call_width,
             put_order_id, call_order_id,
             status, open_time, open_date, dte_mode,
-            created_at, updated_at
+            {('sandbox_order_id, ' if sandbox_json else '')}created_at, updated_at
         ) VALUES (
             '{position_id}', 'SPY', CAST('{expiration}' AS DATE),
             {strikes['putShort']}, {strikes['putLong']}, {credits['putCredit']},
             {strikes['callShort']}, {strikes['callLong']}, {credits['callCredit']},
-            {max_contracts}, {spread_width}, {credits['totalCredit']}, {max_loss}, {max_profit},
+            {max_contracts}, {spread_width}, {actual_credit}, {max_loss}, {max_profit},
             {total_collateral},
             {spot}, {vix}, {expected_move},
             0, 0, 'UNKNOWN',
@@ -1115,29 +1355,9 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             FALSE, {spread_width}, {spread_width},
             'PAPER', 'PAPER',
             'open', CAST('{now_ts}' AS TIMESTAMP), CAST('{today_date}' AS DATE), '{bot['dte']}',
-            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            {(f"'{sandbox_json}', " if sandbox_json else '')}CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
         )
     """)
-
-    sandbox_order_ids: dict[str, int] = {}
-    if bot["name"] == "flame":
-        try:
-            sandbox_order_ids = place_ic_order_all_accounts(
-                "SPY", expiration,
-                strikes["putShort"], strikes["putLong"],
-                strikes["callShort"], strikes["callLong"],
-                max_contracts, credits["totalCredit"], position_id,
-            )
-            if sandbox_order_ids:
-                sandbox_json = json.dumps(sandbox_order_ids).replace("'", "''")
-                db_execute(f"""
-                    UPDATE {bot_table(bot['name'], 'positions')}
-                    SET sandbox_order_id = '{sandbox_json}',
-                        updated_at = CURRENT_TIMESTAMP()
-                    WHERE position_id = '{position_id}'
-                """)
-        except Exception as e:
-            log.warning(f"Sandbox open failed for {position_id}: {e}")
 
     acct_id = acct["id"]
     db_execute(f"""
@@ -1158,7 +1378,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             CURRENT_TIMESTAMP(), {spot}, {vix}, {expected_move}, 0, 0,
             'UNKNOWN', {strikes['putShort']}, {strikes['putLong']},
             {strikes['callShort']}, {strikes['callLong']},
-            {credits['totalCredit']}, {adv['confidence']}, TRUE,
+            {actual_credit}, {adv['confidence']}, TRUE,
             'Auto scan | {adv['reasoning'].replace(chr(39), chr(39)+chr(39))}',
             FALSE, '{bot['dte']}'
         )
@@ -1167,7 +1387,9 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     trade_details = json.dumps({
         "position_id": position_id,
         "contracts": max_contracts,
-        "credit": credits["totalCredit"],
+        "credit": actual_credit,
+        "calculated_credit": credits["totalCredit"],
+        "credit_source": "sandbox_fill" if actual_credit != credits["totalCredit"] else "calculated",
         "collateral": total_collateral,
         "source": "scanner",
         "sandbox_order_ids": sandbox_order_ids,
@@ -1178,7 +1400,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         VALUES (
             CURRENT_TIMESTAMP(),
             'TRADE_OPEN',
-            'AUTO TRADE: {position_id} {strikes['putLong']}/{strikes['putShort']}P-{strikes['callShort']}/{strikes['callLong']}C x{max_contracts} @ ${credits['totalCredit']:.4f}',
+            'AUTO TRADE: {position_id} {strikes['putLong']}/{strikes['putShort']}P-{strikes['callShort']}/{strikes['callLong']}C x{max_contracts} @ ${actual_credit:.4f}',
             '{trade_details}',
             '{bot['dte']}'
         )
@@ -1190,7 +1412,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             contracts, entry_credit, dte_mode, created_at
         ) VALUES (
             CURRENT_DATE(), 'SPY', '{position_id}', CURRENT_TIMESTAMP(),
-            {max_contracts}, {credits['totalCredit']}, '{bot['dte']}',
+            {max_contracts}, {actual_credit}, '{bot['dte']}',
             CURRENT_TIMESTAMP()
         )
     """)
@@ -1229,7 +1451,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         f"{bot_name} OPENED {position_id} "
         f"{strikes['putLong']}/{strikes['putShort']}P-"
         f"{strikes['callShort']}/{strikes['callLong']}C "
-        f"x{max_contracts} @ ${credits['totalCredit']:.4f} "
+        f"x{max_contracts} @ ${actual_credit:.4f} "
+        f"({'sandbox_fill' if actual_credit != credits['totalCredit'] else 'calculated'}) "
         f"[sandbox:{json.dumps(sandbox_order_ids)}]"
     )
     return f"traded:{position_id}"
