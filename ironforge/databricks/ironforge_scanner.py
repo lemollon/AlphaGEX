@@ -25,8 +25,8 @@ _set_if_missing("TRADIER_API_KEY", "HbOM7HNC6Ibs6QAE6hYgr02rpx2K")
 
 # Tradier sandbox keys (for FLAME order mirroring)
 _set_if_missing("TRADIER_SANDBOX_KEY_USER", "iPidGGnYrhzjp6vGBBQw8HyqF0xj")
-_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVN0ct0e0")
-_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh60LW0b0F5fhXHh")
+_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVNOct0e0")
+_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh6OLW0b0F5fhXHh")
 
 # Databricks catalog/schema
 _set_if_missing("DATABRICKS_CATALOG", "alpha_prime")
@@ -334,8 +334,8 @@ def get_ic_mark_to_market(
 
 _SANDBOX_KEY_FALLBACKS: dict[str, str] = {
     "TRADIER_SANDBOX_KEY_USER": "iPidGGnYrhzjp6vGBBQw8HyqF0xj",
-    "TRADIER_SANDBOX_KEY_MATT": "AGoNTv6o6GKMKT8uc7ooVN0ct0e0",
-    "TRADIER_SANDBOX_KEY_LOGAN": "AcDucIMyjeNgFh60LW0b0F5fhXHh",
+    "TRADIER_SANDBOX_KEY_MATT": "AGoNTv6o6GKMKT8uc7ooVNOct0e0",
+    "TRADIER_SANDBOX_KEY_LOGAN": "AcDucIMyjeNgFh6OLW0b0F5fhXHh",
 }
 
 
