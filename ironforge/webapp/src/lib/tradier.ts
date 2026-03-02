@@ -306,10 +306,35 @@ async function getAccountIdForKey(apiKey: string): Promise<string | null> {
   return accountId || null
 }
 
+/** Get available buying power for a sandbox account. */
+async function getSandboxBuyingPower(
+  apiKey: string,
+  accountId: string,
+): Promise<number | null> {
+  const data = await sandboxGet(
+    `/accounts/${accountId}/balances`,
+    undefined,
+    apiKey,
+  )
+  if (!data) return null
+  const balances = data.balances || {}
+  const bp = balances.option_buying_power ?? balances.buying_power
+  return bp != null ? parseFloat(bp) : null
+}
+
+export interface SandboxOrderInfo {
+  order_id: number
+  contracts: number
+}
+
 /**
  * Place an Iron Condor in ALL configured sandbox accounts.
  *
- * Returns Record<accountName, orderId> for successful placements.
+ * Each account sizes independently based on its OWN buying power:
+ * - Query account balance → compute usable BP (85%)
+ * - max_contracts = floor(usableBP / collateralPer) — NO cap
+ *
+ * Returns Record<accountName, {order_id, contracts}> for successful placements.
  */
 export async function placeIcOrderAllAccounts(
   ticker: string,
@@ -318,57 +343,89 @@ export async function placeIcOrderAllAccounts(
   putLong: number,
   callShort: number,
   callLong: number,
-  contracts: number,
+  _paperContracts: number,
   totalCredit: number,
   tag?: string,
-): Promise<Record<string, number>> {
-  const results: Record<string, number> = {}
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
 
-  const orderBody: Record<string, string> = {
-    class: 'multileg',
-    symbol: ticker,
-    type: 'market',
-    duration: 'day',
-    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
-    'side[0]': 'sell_to_open',
-    'quantity[0]': String(contracts),
-    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
-    'side[1]': 'buy_to_open',
-    'quantity[1]': String(contracts),
-    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
-    'side[2]': 'sell_to_open',
-    'quantity[2]': String(contracts),
-    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
-    'side[3]': 'buy_to_open',
-    'quantity[3]': String(contracts),
-  }
-  if (tag) orderBody.tag = tag.slice(0, 255)
+  // Shared OCC symbols — same strikes for all accounts
+  const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
 
-  await Promise.all(
-    _sandboxAccounts.map(async (acct) => {
-      try {
-        const accountId = await getAccountIdForKey(acct.apiKey)
-        if (!accountId) return
+  // Collateral per contract
+  const spreadWidth = putShort - putLong
+  const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
+  if (collateralPer <= 0) return results
 
-        const result = await sandboxPost(
-          `/accounts/${accountId}/orders`,
-          orderBody,
-          acct.apiKey,
+  // Process User first (for fill price later), then others in parallel
+  const userAccts = _sandboxAccounts.filter((a) => a.name === 'User')
+  const otherAccts = _sandboxAccounts.filter((a) => a.name !== 'User')
+
+  async function placeForAccount(acct: SandboxAccount) {
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey)
+      if (!accountId) return
+
+      // Query this account's own buying power
+      const bp = await getSandboxBuyingPower(acct.apiKey, accountId)
+      if (bp == null || bp < collateralPer) {
+        console.warn(
+          `Sandbox [${acct.name}]: BP=$${bp} insufficient (need $${collateralPer.toFixed(2)}/contract)`,
         )
-        if (result?.order?.id) {
-          results[acct.name] = result.order.id
-        }
-      } catch (err: any) {
-        console.warn(`Sandbox IC order failed [${acct.name}]: ${err.message}`)
+        return
       }
-    }),
-  )
+
+      // Size based on THIS account's BP — NO max cap
+      const usableBP = bp * 0.85
+      const acctContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+
+      console.log(
+        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → usable=$${usableBP.toFixed(0)} → ${acctContracts} contracts`,
+      )
+
+      const orderBody: Record<string, string> = {
+        class: 'multileg',
+        symbol: ticker,
+        type: 'market',
+        duration: 'day',
+        'option_symbol[0]': occPs, 'side[0]': 'sell_to_open', 'quantity[0]': String(acctContracts),
+        'option_symbol[1]': occPl, 'side[1]': 'buy_to_open',  'quantity[1]': String(acctContracts),
+        'option_symbol[2]': occCs, 'side[2]': 'sell_to_open', 'quantity[2]': String(acctContracts),
+        'option_symbol[3]': occCl, 'side[3]': 'buy_to_open',  'quantity[3]': String(acctContracts),
+      }
+      if (tag) orderBody.tag = tag.slice(0, 255)
+
+      const result = await sandboxPost(
+        `/accounts/${accountId}/orders`,
+        orderBody,
+        acct.apiKey,
+      )
+      if (result?.order?.id) {
+        results[acct.name] = {
+          order_id: result.order.id,
+          contracts: acctContracts,
+        }
+      }
+    } catch (err: any) {
+      console.warn(`Sandbox IC order failed [${acct.name}]: ${err.message}`)
+    }
+  }
+
+  // User first (sequential), then others in parallel
+  for (const acct of userAccts) await placeForAccount(acct)
+  await Promise.all(otherAccts.map(placeForAccount))
 
   return results
 }
 
 /**
  * Close an Iron Condor in ALL configured sandbox accounts.
+ *
+ * Reads per-account contract counts from sandboxOpenInfo (stored at open time).
+ * Falls back to the paper position's contracts if legacy format.
  *
  * Returns Record<accountName, orderId> for successful closes.
  */
@@ -379,37 +436,42 @@ export async function closeIcOrderAllAccounts(
   putLong: number,
   callShort: number,
   callLong: number,
-  contracts: number,
+  paperContracts: number,
   closePrice: number,
   tag?: string,
+  sandboxOpenInfo?: Record<string, SandboxOrderInfo | number> | null,
 ): Promise<Record<string, number>> {
   const results: Record<string, number> = {}
 
-  const orderBody: Record<string, string> = {
-    class: 'multileg',
-    symbol: ticker,
-    type: 'market',
-    duration: 'day',
-    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
-    'side[0]': 'buy_to_close',
-    'quantity[0]': String(contracts),
-    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
-    'side[1]': 'sell_to_close',
-    'quantity[1]': String(contracts),
-    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
-    'side[2]': 'buy_to_close',
-    'quantity[2]': String(contracts),
-    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
-    'side[3]': 'sell_to_close',
-    'quantity[3]': String(contracts),
-  }
-  if (tag) orderBody.tag = tag.slice(0, 255)
+  const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
 
   await Promise.all(
     _sandboxAccounts.map(async (acct) => {
       try {
         const accountId = await getAccountIdForKey(acct.apiKey)
         if (!accountId) return
+
+        // Determine how many contracts this account opened
+        let closeQty = paperContracts
+        const acctInfo = sandboxOpenInfo?.[acct.name]
+        if (acctInfo && typeof acctInfo === 'object' && 'contracts' in acctInfo) {
+          closeQty = acctInfo.contracts
+        }
+
+        const orderBody: Record<string, string> = {
+          class: 'multileg',
+          symbol: ticker,
+          type: 'market',
+          duration: 'day',
+          'option_symbol[0]': occPs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
+          'option_symbol[1]': occPl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
+          'option_symbol[2]': occCs, 'side[2]': 'buy_to_close',  'quantity[2]': String(closeQty),
+          'option_symbol[3]': occCl, 'side[3]': 'sell_to_close', 'quantity[3]': String(closeQty),
+        }
+        if (tag) orderBody.tag = tag.slice(0, 255)
 
         const result = await sandboxPost(
           `/accounts/${accountId}/orders`,

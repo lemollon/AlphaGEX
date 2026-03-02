@@ -27,7 +27,9 @@ interface Position {
   distance_to_pt?: number | null
   distance_to_sl?: number | null
   // Tradier sandbox order IDs (FLAME only)
-  sandbox_order_ids?: Record<string, string> | null
+  // New format: {"User": {"order_id": "123", "contracts": 85}}
+  // Legacy format: {"User": "123"}
+  sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
 export default function PositionTable({
@@ -235,12 +237,20 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
         <div className="border-t border-forge-border/50 pt-2 space-y-1">
           <p className="text-[10px] text-forge-muted uppercase tracking-wider">Tradier Sandbox Orders</p>
           <div className="flex flex-wrap gap-3">
-            {Object.entries(pos.sandbox_order_ids).map(([name, orderId]) => (
-              <span key={name} className="text-xs font-mono">
-                <span className="text-forge-muted">{name}:</span>{' '}
-                <span className="text-amber-400">#{orderId}</span>
-              </span>
-            ))}
+            {Object.entries(pos.sandbox_order_ids).map(([name, val]) => {
+              const isNew = typeof val === 'object' && val !== null
+              const orderId = isNew ? val.order_id : val
+              const qty = isNew ? val.contracts : null
+              return (
+                <span key={name} className="text-xs font-mono">
+                  <span className="text-forge-muted">{name}:</span>{' '}
+                  <span className="text-amber-400">#{orderId}</span>
+                  {qty != null && (
+                    <span className="text-forge-muted ml-1">x{qty}</span>
+                  )}
+                </span>
+              )
+            })}
           </div>
         </div>
       )}

@@ -16,7 +16,7 @@ interface Trade {
   realized_pnl: number
   close_time: string
   // Tradier sandbox order IDs (FLAME only)
-  sandbox_order_ids?: Record<string, string> | null
+  sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
 export default function TradeHistory({ trades }: { trades: Trade[] }) {
@@ -54,12 +54,20 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
                   <div>{trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C</div>
                   {hasSandbox && (
                     <div className="flex gap-2 mt-1">
-                      {Object.entries(trade.sandbox_order_ids!).map(([name, orderId]) => (
-                        <span key={name} className="text-[10px] font-mono">
-                          <span className="text-forge-muted">{name}:</span>{' '}
-                          <span className="text-amber-400">#{orderId}</span>
-                        </span>
-                      ))}
+                      {Object.entries(trade.sandbox_order_ids!).map(([name, val]) => {
+                        const isNew = typeof val === 'object' && val !== null
+                        const orderId = isNew ? val.order_id : val
+                        const qty = isNew ? val.contracts : null
+                        return (
+                          <span key={name} className="text-[10px] font-mono">
+                            <span className="text-forge-muted">{name}:</span>{' '}
+                            <span className="text-amber-400">#{orderId}</span>
+                            {qty != null && (
+                              <span className="text-forge-muted ml-0.5">x{qty}</span>
+                            )}
+                          </span>
+                        )
+                      })}
                     </div>
                   )}
                 </td>

@@ -39,7 +39,7 @@ export async function POST(
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
-              collateral_required
+              collateral_required, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open' AND dte_mode = $2
        LIMIT 1`,
@@ -138,7 +138,12 @@ export async function POST(
     )
 
     // 8. Mirror close to all Tradier sandbox accounts (both FLAME and SPARK)
+    //    Read per-account contract counts from sandbox_order_id
     let sandboxCloseIds: Record<string, number> = {}
+    let sandboxOpenInfo: Record<string, any> | null = null
+    if (pos.sandbox_order_id) {
+      try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch {}
+    }
     try {
       sandboxCloseIds = await closeIcOrderAllAccounts(
         pos.ticker,
@@ -150,6 +155,7 @@ export async function POST(
         contracts,
         closePrice,
         position_id,
+        sandboxOpenInfo,
       )
     } catch (sbErr: any) {
       console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
