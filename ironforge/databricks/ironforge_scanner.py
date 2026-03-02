@@ -1503,11 +1503,14 @@ def scan_bot(bot: dict) -> None:
                 spy_quote = get_quote("SPY")
                 vix_quote = get_quote("VIX")
                 spot = spy_quote["last"] if spy_quote else 0.0
-                vix = vix_quote["last"] if vix_quote else 20.0
+                vix = vix_quote["last"] if vix_quote else 0.0
 
                 if spot == 0:
                     action = "skip"
                     reason = "no_spy_quote"
+                elif vix == 0:
+                    action = "skip"
+                    reason = "no_vix_quote"
                 else:
                     trade_result = try_open_trade(bot, spot, vix)
                     if trade_result.startswith("traded:"):
