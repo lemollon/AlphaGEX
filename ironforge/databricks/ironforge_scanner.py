@@ -523,13 +523,25 @@ def close_ic_order_all_accounts(
             account_id = _get_account_id_for_key(acct["api_key"])
             if not account_id:
                 continue
-            result = _sandbox_post(
-                f"/accounts/{account_id}/orders",
-                order_body,
-                acct["api_key"],
-            )
+            endpoint = f"/accounts/{account_id}/orders"
+            # Attempt 1: 4-leg multileg market order
+            result = _sandbox_post(endpoint, order_body, acct["api_key"])
             if result and result.get("order", {}).get("id"):
                 results[acct["name"]] = result["order"]["id"]
+                continue
+            # Attempt 2: retry same 4-leg multileg market order after 1s
+            log.warning(f"Sandbox IC close attempt 1 failed [{acct['name']}], retrying...")
+            time.sleep(1)
+            result = _sandbox_post(endpoint, order_body, acct["api_key"])
+            if result and result.get("order", {}).get("id"):
+                results[acct["name"]] = result["order"]["id"]
+            else:
+                # Do NOT decompose to individual legs — log error and move on
+                log.error(
+                    f"Sandbox IC close FAILED after 2 attempts [{acct['name']}] — "
+                    f"paper position closed but sandbox may have orphan. "
+                    f"DO NOT close individual legs."
+                )
         except Exception as e:
             log.warning(f"Sandbox IC close failed [{acct['name']}]: {e}")
 
