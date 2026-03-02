@@ -65,10 +65,11 @@ class SignalGenerator:
 
             spot = float(quote["last"])
 
-            vix = 20.0
             fetched_vix = self.tradier.get_vix()
-            if fetched_vix and fetched_vix >= 10:
-                vix = fetched_vix
+            if not fetched_vix or fetched_vix < 10:
+                logger.warning(f"{self.config.bot_name}: Could not get VIX quote")
+                return None
+            vix = fetched_vix
 
             # Estimate expected move: SPY daily move ~ VIX / sqrt(252) * spot
             expected_move = (vix / 100 / (252 ** 0.5)) * spot

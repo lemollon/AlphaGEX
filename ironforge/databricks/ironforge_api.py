@@ -895,7 +895,9 @@ async def bot_force_trade(bot: str):
             raise HTTPException(status_code=502, detail="Could not get SPY quote from Tradier")
 
         spot = spy_quote["last"]
-        vix = vix_quote["last"] if vix_quote else 20.0
+        if not vix_quote or not vix_quote.get("last"):
+            raise HTTPException(status_code=502, detail="Could not get VIX quote from Tradier")
+        vix = vix_quote["last"]
         expected_move = (vix / 100 / math.sqrt(252)) * spot
 
         # 3. VIX filter
