@@ -141,7 +141,7 @@ export default function BotDashboard({
           <EquityChart
             data={equity?.curve || []}
             intradayData={intraday?.snapshots}
-            startingCapital={equity?.starting_capital || status?.account?.starting_capital || 5000}
+            startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
             color={accent === 'amber' ? '#f59e0b' : '#3b82f6'}
             title={`${bot.toUpperCase()} Equity Curve`}
             period={equityPeriod}

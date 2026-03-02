@@ -7,7 +7,7 @@ import LaunchCountdown from '@/components/LaunchCountdown'
 
 const sharedConfig = {
   ticker: 'SPY',
-  startingCapital: '$5,000',
+  startingCapital: '$10,000',
   riskPerTrade: '15%',
   spreadWidth: '$5.00',
   sdMultiplier: '1.2x',
@@ -110,7 +110,7 @@ export default function Home() {
           </span>
         </h1>
         <p className="text-forge-muted text-sm">
-          SPY Iron Condor Paper Trading &middot; Render + Tradier
+          SPY Iron Condor Paper Trading &middot; Databricks + Tradier
         </p>
       </div>
 
@@ -287,7 +287,7 @@ export default function Home() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm pb-4">
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Platform</p>
-          <p className="font-medium">Render</p>
+          <p className="font-medium">Databricks</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Data Source</p>
