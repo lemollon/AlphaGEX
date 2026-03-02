@@ -11,7 +11,7 @@ const DEFAULTS: Record<string, Record<string, any>> = {
     max_contracts: 10, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '15:45',
-    pdt_max_day_trades: 3, starting_capital: 5000.0,
+    pdt_max_day_trades: 3, starting_capital: 10000.0,
   },
   spark: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
@@ -19,7 +19,7 @@ const DEFAULTS: Record<string, Record<string, any>> = {
     max_contracts: 10, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '15:45',
-    pdt_max_day_trades: 3, starting_capital: 5000.0,
+    pdt_max_day_trades: 3, starting_capital: 10000.0,
   },
 }
 

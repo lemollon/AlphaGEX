@@ -20,6 +20,7 @@ interface StatusData {
   last_scan: string | null
   last_snapshot: string | null
   scan_count: number
+  scans_today: number
   spot_price: number | null
   vix: number | null
   bot_state: string | null
@@ -212,7 +213,7 @@ export default function StatusCard({
       </div>
 
       {/* Bottom row */}
-      <div className="grid grid-cols-5 gap-4 text-sm">
+      <div className="grid grid-cols-6 gap-4 text-sm">
         <div>
           <p className="text-xs text-forge-muted">Open</p>
           <p className="font-medium">{data.open_positions}</p>
@@ -234,7 +235,11 @@ export default function StatusCard({
           </p>
         </div>
         <div>
-          <p className="text-xs text-forge-muted">Scans</p>
+          <p className="text-xs text-forge-muted">Scans Today</p>
+          <p className="font-medium">{data.scans_today || 0}</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Total Scans</p>
           <p className="font-medium">{data.scan_count}</p>
         </div>
       </div>

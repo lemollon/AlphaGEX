@@ -55,7 +55,7 @@ export async function GET(
 
     const [capitalRows, curveRows] = await Promise.all([capitalQuery, curveQuery])
 
-    const startingCapital = num(capitalRows[0]?.starting_capital) || 5000
+    const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
 
     let curve = curveRows.map((row) => {
       const cumPnl = num(row.cumulative_pnl)

@@ -46,7 +46,7 @@ export async function GET(
 
     const [capitalRows, snapshotRows] = await Promise.all([capitalQuery, snapshotQuery])
 
-    const startingCapital = num(capitalRows[0]?.starting_capital) || 5000
+    const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
 
     const snapshots = snapshotRows.map((r) => ({
       timestamp: r.snapshot_time?.toISOString?.() || r.snapshot_time,
