@@ -15,7 +15,7 @@ export default function ComparePage() {
   const { data: flamePerf } = useSWR('/api/flame/performance', fetcher, { refreshInterval: REFRESH })
   const { data: sparkPerf } = useSWR('/api/spark/performance', fetcher, { refreshInterval: REFRESH })
 
-  const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || 5000
+  const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || 10000
 
   return (
     <div className="space-y-6">

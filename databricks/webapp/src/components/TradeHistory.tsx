@@ -1,5 +1,7 @@
 'use client'
 
+import { formatCloseReason } from '@/lib/pt-tiers'
+
 interface Trade {
   position_id: string
   expiration: string
@@ -14,14 +16,6 @@ interface Trade {
   realized_pnl: number
   close_time: string
   sandbox_order_id?: string | null
-}
-
-const reasonColors: Record<string, string> = {
-  profit_target: 'bg-emerald-500/20 text-emerald-400',
-  stop_loss: 'bg-red-500/20 text-red-400',
-  eod_safety: 'bg-amber-500/20 text-amber-400',
-  EXPIRED: 'bg-blue-500/20 text-blue-400',
-  expired_previous_day: 'bg-blue-500/20 text-blue-400',
 }
 
 function parseSandboxOrders(raw: string | null | undefined): Record<string, string> | null {
@@ -60,6 +54,7 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: '
         <tbody>
           {trades.map((trade) => {
             const positive = trade.realized_pnl >= 0
+            const reason = formatCloseReason(trade.close_reason)
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{trade.close_time?.slice(0, 16)}</td>
@@ -73,8 +68,8 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: '
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>
                 <td className="p-3">
-                  <span className={`text-xs px-2 py-0.5 rounded ${reasonColors[trade.close_reason] || 'bg-stone-600/30 text-gray-400'}`}>
-                    {trade.close_reason}
+                  <span className={`text-xs font-medium ${reason.color}`}>
+                    {reason.text}
                   </span>
                 </td>
                 {bot === 'flame' && (
