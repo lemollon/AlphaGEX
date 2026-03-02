@@ -474,17 +474,23 @@ class Trader:
             self._mtm_failure_counts.pop(position.position_id, None)
             entry_credit = position.total_credit
 
-            # Profit target (30%)
-            profit_target_price = entry_credit * (
-                1 - self.config.profit_target_pct / 100
-            )
+            # Sliding profit target — percentage drops as the day progresses
+            pt_pct, pt_tier = self._get_sliding_profit_target(now)
+            profit_target_price = entry_credit * (1 - pt_pct)
             if close_price <= profit_target_price:
+                reason = f"profit_target_{pt_tier.lower()}"
                 success, pnl = self.executor.close_paper_position(
-                    position, close_price, "profit_target"
+                    position, close_price, reason
                 )
                 if success:
                     managed += 1
                     total_pnl += pnl
+                    logger.info(
+                        f"{self.config.bot_name}: Profit target hit "
+                        f"({pt_tier} {pt_pct:.0%}): "
+                        f"debit=${close_price:.4f} <= "
+                        f"threshold=${profit_target_price:.4f}"
+                    )
                 continue
 
             # Stop loss (100%)
@@ -526,6 +532,29 @@ class Trader:
             return False, "Past EOD cutoff (2:45 PM CT)"
 
         return True, "In trading window"
+
+    @staticmethod
+    def _get_sliding_profit_target(ct_now: datetime) -> Tuple[float, str]:
+        """
+        Return the sliding profit target percentage and tier label based on
+        current Central Time.
+
+        The profit target slides DOWN as the day progresses — based on CURRENT
+        time, not when the trade was opened.
+
+        Schedule (CT):
+            8:30 AM – 10:29 AM  → 30%  (MORNING)
+            10:30 AM – 12:59 PM → 20%  (MIDDAY)
+            1:00 PM – 2:44 PM   → 15%  (AFTERNOON)
+            2:45 PM+            → handled by EOD cutoff (close at any P&L)
+        """
+        time_minutes = ct_now.hour * 60 + ct_now.minute
+        if time_minutes < 630:       # before 10:30 AM CT
+            return 0.30, "MORNING"
+        elif time_minutes < 780:     # before 1:00 PM CT
+            return 0.20, "MIDDAY"
+        else:
+            return 0.15, "AFTERNOON"
 
     def _is_past_eod_cutoff(self, now: datetime) -> bool:
         """Check if past EOD cutoff (3:45 PM ET = 2:45 PM CT)."""
@@ -632,7 +661,11 @@ class Trader:
         )
 
         entry_credit = position.total_credit
-        profit_target_price = entry_credit * (1 - self.config.profit_target_pct / 100)
+
+        # Sliding profit target based on current CT time
+        now_ct = datetime.now(CENTRAL_TZ)
+        pt_pct, pt_tier = self._get_sliding_profit_target(now_ct)
+        profit_target_price = entry_credit * (1 - pt_pct)
         stop_loss_price = entry_credit * (1 + self.config.stop_loss_pct / 100)
 
         pnl_per_contract = 0
@@ -657,6 +690,8 @@ class Trader:
             "entry_credit": entry_credit,
             "current_cost_to_close": current_cost,
             "profit_target_price": round(profit_target_price, 4),
+            "profit_target_pct": round(pt_pct * 100, 1),
+            "profit_target_tier": pt_tier,
             "stop_loss_price": round(stop_loss_price, 4),
             "pnl_per_contract": (
                 round(pnl_per_contract, 2) if current_cost else None

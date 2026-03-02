@@ -598,6 +598,28 @@ def is_after_eod_cutoff(ct: datetime) -> bool:
     return hhmm >= 1445
 
 
+def get_sliding_profit_target(ct: datetime) -> tuple:
+    """
+    Return (profit_target_fraction, tier_label) based on current CT time.
+
+    The profit target slides DOWN as the day progresses — based on CURRENT
+    time, not when the trade was opened.
+
+    Schedule (CT):
+        8:30 AM – 10:29 AM  → 30%  (MORNING)
+        10:30 AM – 12:59 PM → 20%  (MIDDAY)
+        1:00 PM – 2:44 PM   → 15%  (AFTERNOON)
+        2:45 PM+            → handled by EOD cutoff (close at any P&L)
+    """
+    time_minutes = ct.hour * 60 + ct.minute
+    if time_minutes < 630:       # before 10:30 AM CT
+        return 0.30, "MORNING"
+    elif time_minutes < 780:     # before 1:00 PM CT
+        return 0.20, "MIDDAY"
+    else:
+        return 0.15, "AFTERNOON"
+
+
 # ---------------------------------------------------------------------------
 #  Advisor — evaluates trading conditions
 # ---------------------------------------------------------------------------
@@ -892,7 +914,8 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     entry_credit = num(pos["total_credit"])
     contracts = to_int(pos["contracts"])
     collateral = num(pos["collateral_required"])
-    profit_target_price = round(entry_credit * 0.7, 4)
+    pt_pct, pt_tier = get_sliding_profit_target(ct)
+    profit_target_price = round(entry_credit * (1 - pt_pct), 4)
     stop_loss_price = round(entry_credit * 2.0, 4)
     ticker = pos.get("ticker") or "SPY"
     exp_raw = pos.get("expiration")
@@ -928,14 +951,18 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     cost_to_close = mtm["cost_to_close"]
 
     if cost_to_close <= profit_target_price:
+        close_reason = f"profit_target_{pt_tier.lower()}"
         close_position(
             bot, pos["position_id"], ticker, expiration,
             num(pos["put_short_strike"]), num(pos["put_long_strike"]),
             num(pos["call_short_strike"]), num(pos["call_long_strike"]),
-            contracts, entry_credit, collateral, "profit_target", cost_to_close,
+            contracts, entry_credit, collateral, close_reason, cost_to_close,
         )
         return {
-            "status": f"closed:profit_target@{cost_to_close:.4f}",
+            "status": (
+                f"closed:profit_target ({pt_tier} {pt_pct:.0%}): "
+                f"debit=${cost_to_close:.4f} <= threshold=${profit_target_price:.4f}"
+            ),
             "unrealizedPnl": 0,
         }
 
