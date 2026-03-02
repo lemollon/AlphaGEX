@@ -1,5 +1,7 @@
 'use client'
 
+import { formatCloseReason } from '@/lib/pt-tiers'
+
 interface Trade {
   position_id: string
   expiration: string
@@ -15,14 +17,6 @@ interface Trade {
   close_time: string
   // Tradier sandbox order IDs (FLAME only)
   sandbox_order_ids?: Record<string, string> | null
-}
-
-const reasonColors: Record<string, string> = {
-  profit_target: 'bg-emerald-500/20 text-emerald-400',
-  stop_loss: 'bg-red-500/20 text-red-400',
-  eod_safety: 'bg-amber-500/20 text-amber-400',
-  EXPIRED: 'bg-blue-500/20 text-blue-400',
-  expired_previous_day: 'bg-blue-500/20 text-blue-400',
 }
 
 export default function TradeHistory({ trades }: { trades: Trade[] }) {
@@ -52,6 +46,7 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
           {trades.map((trade) => {
             const positive = trade.realized_pnl >= 0
             const hasSandbox = trade.sandbox_order_ids && Object.keys(trade.sandbox_order_ids).length > 0
+            const reason = formatCloseReason(trade.close_reason)
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{trade.close_time?.slice(0, 16)}</td>
@@ -75,8 +70,8 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>
                 <td className="p-3">
-                  <span className={`text-xs px-2 py-0.5 rounded ${reasonColors[trade.close_reason] || 'bg-stone-600/30 text-gray-400'}`}>
-                    {trade.close_reason}
+                  <span className={`text-xs font-medium ${reason.color}`}>
+                    {reason.text}
                   </span>
                 </td>
               </tr>

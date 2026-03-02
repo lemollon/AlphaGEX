@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow } from '@/lib/pt-tiers'
 
 interface StatusData {
   bot_name: string
@@ -54,6 +55,14 @@ function formatCountdown(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+/** How many minutes since last_scan? */
+function scanAgeMinutes(lastScan: string | null): number | null {
+  if (!lastScan) return null
+  const ms = Date.now() - new Date(lastScan).getTime()
+  if (isNaN(ms)) return null
+  return ms / 60_000
+}
+
 export default function StatusCard({
   data,
   accent,
@@ -78,23 +87,62 @@ export default function StatusCard({
     getSecondsUntilNextScan(data.last_scan),
   )
 
+  /* ---- PT tier + next-tier countdown (ticks every 1s) ---- */
+  const [ptState, setPtState] = useState(() => {
+    const tier = getCurrentPTTier()
+    const next = secondsUntilNextTier()
+    const open = isMarketOpen()
+    return { tier, next, open }
+  })
+
   // Re-sync when last_scan changes from parent SWR refresh
   useEffect(() => {
     setCountdown(getSecondsUntilNextScan(data.last_scan))
   }, [data.last_scan])
 
-  // Tick every second
+  // Unified 1-second tick for scan countdown + PT state
   useEffect(() => {
-    if (countdown === null) return
-    if (countdown <= 0) return
-    const timer = setTimeout(() => setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0)), 1000)
-    return () => clearTimeout(timer)
-  }, [countdown])
+    const timer = setInterval(() => {
+      setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0))
+      const ctNow = getCTNow()
+      setPtState({
+        tier: getCurrentPTTier(ctNow),
+        next: secondsUntilNextTier(ctNow),
+        open: isMarketOpen(ctNow),
+      })
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  /* ---- Scanner health ---- */
+  const ageMin = scanAgeMinutes(data.last_scan)
+  let healthDot = 'bg-gray-500'    // market closed default
+  let healthTooltip = 'Market closed'
+  if (ptState.open) {
+    if (ageMin === null) {
+      healthDot = 'bg-red-400'
+      healthTooltip = 'Scanner status unknown'
+    } else if (ageMin <= 7) {
+      healthDot = 'bg-emerald-400'
+      healthTooltip = `Last scan: ${Math.round(ageMin)}m ago`
+    } else if (ageMin <= 15) {
+      healthDot = 'bg-yellow-400'
+      healthTooltip = `Scanner delayed: ${Math.round(ageMin)}m ago`
+    } else {
+      healthDot = 'bg-red-400'
+      healthTooltip = `Scanner offline: ${Math.round(ageMin)}m ago`
+    }
+  }
 
   return (
     <div className={`rounded-xl border ${accentBorder} bg-forge-card/80 p-4`}>
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
+        {/* Scanner health dot */}
+        <span
+          className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`}
+          title={healthTooltip}
+        />
         <h2 className={`text-lg font-bold ${accentText}`}>{data.bot_name}</h2>
         <span className="text-xs text-gray-400 bg-forge-border px-2 py-0.5 rounded">
           {data.strategy}
@@ -122,6 +170,19 @@ export default function StatusCard({
             : data.is_active ? 'ACTIVE' : 'INACTIVE'}
         </span>
 
+        {/* PT tier badge */}
+        {ptState.open ? (
+          <span
+            className={`text-xs font-medium px-2 py-0.5 rounded ${ptState.tier.bgColor} ${ptState.tier.color}`}
+          >
+            PT {Math.round(ptState.tier.pct * 100)}% {ptState.tier.label}
+          </span>
+        ) : (
+          <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-600/20 text-gray-500">
+            PT — Closed
+          </span>
+        )}
+
         {/* Next scan countdown */}
         {data.last_scan && countdown !== null && (
           <span
@@ -142,6 +203,15 @@ export default function StatusCard({
           </span>
         )}
       </div>
+
+      {/* PT next-tier countdown (small text below header) */}
+      {ptState.open && ptState.next && (
+        <p className="text-[11px] text-forge-muted mb-3 -mt-2">
+          {ptState.next.seconds > 0
+            ? `PT drops to ${ptState.next.nextLabel} in ${formatCountdown(ptState.next.seconds)}`
+            : `PT changing to ${ptState.next.nextLabel}...`}
+        </p>
+      )}
 
       {/* Live market data */}
       {(data.spot_price || data.vix) && (
@@ -251,7 +321,7 @@ export default function StatusCard({
           <span className="text-xs font-mono text-gray-400">{config.sd_multiplier ?? 1.2}x SD</span>
           <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
           <span className="text-xs font-mono text-gray-400">{((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP</span>
-          <span className="text-xs font-mono text-gray-400">PT {config.profit_target_pct ?? 30}%</span>
+          <span className="text-xs font-mono text-gray-400">PT 30/20/15%</span>
           <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
           <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
           <span className="text-xs font-mono text-gray-400">max {config.max_contracts ?? 10}x</span>
