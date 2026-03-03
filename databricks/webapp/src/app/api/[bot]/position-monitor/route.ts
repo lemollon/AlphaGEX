@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, botTable, num, int, validateBot } from '@/lib/databricks'
 import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
+import { getCurrentPTTier, getCTNow } from '@/lib/pt-tiers'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,8 +47,10 @@ export async function GET(
         const ticker = r.ticker || 'SPY'
         const expiration = r.expiration || ''
 
-        // Profit target (30%) and stop loss (100%) thresholds
-        const profitTargetPrice = Math.round(entryCredit * 0.7 * 10000) / 10000
+        // Sliding profit target based on current CT time
+        const ptTier = getCurrentPTTier(getCTNow())
+        const profitTargetPct = ptTier.pct
+        const profitTargetPrice = Math.round(entryCredit * (1 - profitTargetPct) * 10000) / 10000
         const stopLossPrice = Math.round(entryCredit * 2.0 * 10000) / 10000
 
         let mtm: number | null = null
@@ -104,6 +107,8 @@ export async function GET(
           unrealized_pnl: unrealizedPnl,
           unrealized_pnl_pct: unrealizedPnlPct,
           profit_target_price: profitTargetPrice,
+          profit_target_pct: profitTargetPct,
+          profit_target_tier: ptTier.label.toUpperCase(),
           stop_loss_price: stopLossPrice,
           distance_to_pt: distanceToPt,
           distance_to_sl: distanceToSl,
