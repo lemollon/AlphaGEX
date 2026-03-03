@@ -605,6 +605,23 @@ def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) 
     return None
 
 
+def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
+    """Get the available buying power from a Tradier sandbox account."""
+    data = _sandbox_get(
+        f"/accounts/{account_id}/balances",
+        None,
+        api_key,
+    )
+    if not data:
+        return None
+    balances = data.get("balances", {})
+    # Try option_buying_power first, fall back to buying_power
+    bp = balances.get("option_buying_power") or balances.get("buying_power")
+    if bp is not None:
+        return float(bp)
+    return None
+
+
 # ---------------------------------------------------------------------------
 #  Market Hours (Central Time)
 # ---------------------------------------------------------------------------
@@ -859,108 +876,111 @@ def close_position(
     price_source = "calculated"
 
     # -------------------------------------------------------------------
-    # For FLAME: place sandbox close FIRST, then use actual fill price.
-    # For SPARK: no sandbox, keep using calculated price.
+    # For FLAME: close each sandbox account with its OWN contract count
+    # (read from sandbox_order_id stored at open).  USER goes first for
+    # actual fill price.  For SPARK: no sandbox.
     # -------------------------------------------------------------------
     if bot["name"] == "flame":
         try:
-            # Place USER close order first to get fill price
-            user_accounts = [a for a in _get_sandbox_accounts_lazy() if a["name"] == "User"]
-            if user_accounts:
-                user_acct = user_accounts[0]
-                user_account_id = _get_account_id_for_key(user_acct["api_key"])
+            # Read per-account open info from the position's sandbox_order_id column
+            sb_rows = db_query(f"""
+                SELECT sandbox_order_id
+                FROM {bot_table(bot['name'], 'positions')}
+                WHERE position_id = '{position_id}' AND dte_mode = '{bot['dte']}'
+            """)
+            sb_json_str = sb_rows[0].get("sandbox_order_id", "") if sb_rows else ""
+            sb_open_info: dict = {}
+            if sb_json_str:
+                try:
+                    sb_open_info = json.loads(sb_json_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
-                if user_account_id:
-                    order_body = {
-                        "class": "multileg",
-                        "symbol": ticker,
-                        "type": "market",
-                        "duration": "day",
-                        "option_symbol[0]": build_occ_symbol(ticker, expiration, put_short, "P"),
-                        "side[0]": "buy_to_close",
-                        "quantity[0]": str(contracts),
-                        "option_symbol[1]": build_occ_symbol(ticker, expiration, put_long, "P"),
-                        "side[1]": "sell_to_close",
-                        "quantity[1]": str(contracts),
-                        "option_symbol[2]": build_occ_symbol(ticker, expiration, call_short, "C"),
-                        "side[2]": "buy_to_close",
-                        "quantity[2]": str(contracts),
-                        "option_symbol[3]": build_occ_symbol(ticker, expiration, call_long, "C"),
-                        "side[3]": "sell_to_close",
-                        "quantity[3]": str(contracts),
-                        "tag": position_id[:255],
-                    }
+            # Build OCC symbols once
+            occ_ps = build_occ_symbol(ticker, expiration, put_short, "P")
+            occ_pl = build_occ_symbol(ticker, expiration, put_long, "P")
+            occ_cs = build_occ_symbol(ticker, expiration, call_short, "C")
+            occ_cl = build_occ_symbol(ticker, expiration, call_long, "C")
 
+            def _build_close_body(qty: int) -> dict:
+                return {
+                    "class": "multileg",
+                    "symbol": ticker,
+                    "type": "market",
+                    "duration": "day",
+                    "option_symbol[0]": occ_ps, "side[0]": "buy_to_close",  "quantity[0]": str(qty),
+                    "option_symbol[1]": occ_pl, "side[1]": "sell_to_close", "quantity[1]": str(qty),
+                    "option_symbol[2]": occ_cs, "side[2]": "buy_to_close",  "quantity[2]": str(qty),
+                    "option_symbol[3]": occ_cl, "side[3]": "sell_to_close", "quantity[3]": str(qty),
+                    "tag": position_id[:255],
+                }
+
+            # Process accounts: User first (for fill price), then others
+            all_accounts = _get_sandbox_accounts_lazy()
+            user_accounts = [a for a in all_accounts if a["name"] == "User"]
+            other_accounts = [a for a in all_accounts if a["name"] != "User"]
+            ordered_accounts = user_accounts + other_accounts
+
+            for acct in ordered_accounts:
+                try:
+                    acct_id = _get_account_id_for_key(acct["api_key"])
+                    if not acct_id:
+                        continue
+
+                    # Determine how many contracts this account opened
+                    acct_info = sb_open_info.get(acct["name"], {})
+                    if isinstance(acct_info, dict):
+                        close_qty = acct_info.get("contracts", contracts)
+                    else:
+                        # Legacy format: {"User": 12345} (just order_id)
+                        close_qty = contracts
+
+                    order_body = _build_close_body(close_qty)
+
+                    # Attempt 1
                     result = _sandbox_post(
-                        f"/accounts/{user_account_id}/orders",
+                        f"/accounts/{acct_id}/orders",
                         order_body,
-                        user_acct["api_key"],
+                        acct["api_key"],
                     )
 
-                    if result and result.get("order", {}).get("id"):
-                        user_order_id = result["order"]["id"]
-                        log.info(f"USER sandbox close order placed: {user_order_id}")
-
-                        fill_price = _get_sandbox_order_fill_price(
-                            user_acct["api_key"], user_account_id, user_order_id
-                        )
-                        if fill_price is not None and fill_price >= 0:
-                            log.info(
-                                f"Actual close fill from USER sandbox: ${fill_price:.4f} "
-                                f"(calculated was ${price:.4f})"
-                            )
-                            price = fill_price
-                            price_source = "sandbox_fill"
-                    else:
+                    if not (result and result.get("order", {}).get("id")):
                         # Retry once after 1s
-                        log.warning("USER sandbox close attempt 1 failed, retrying...")
+                        log.warning(f"Sandbox close attempt 1 failed [{acct['name']}], retrying...")
                         time.sleep(1)
                         result = _sandbox_post(
-                            f"/accounts/{user_account_id}/orders",
+                            f"/accounts/{acct_id}/orders",
                             order_body,
-                            user_acct["api_key"],
+                            acct["api_key"],
                         )
-                        if result and result.get("order", {}).get("id"):
-                            user_order_id = result["order"]["id"]
+
+                    if result and result.get("order", {}).get("id"):
+                        order_id = result["order"]["id"]
+                        log.info(
+                            f"Sandbox IC CLOSE OK [{acct['name']}]: "
+                            f"order_id={order_id} x{close_qty}"
+                        )
+
+                        # Get actual fill price from USER account
+                        if acct["name"] == "User":
                             fill_price = _get_sandbox_order_fill_price(
-                                user_acct["api_key"], user_account_id, user_order_id
+                                acct["api_key"], acct_id, order_id
                             )
                             if fill_price is not None and fill_price >= 0:
+                                log.info(
+                                    f"Actual close fill from USER sandbox: ${fill_price:.4f} "
+                                    f"(calculated was ${price:.4f})"
+                                )
                                 price = fill_price
                                 price_source = "sandbox_fill"
-
-                    # Close on MATT and LOGAN
-                    for other_acct in _get_sandbox_accounts_lazy():
-                        if other_acct["name"] == "User":
-                            continue
-                        try:
-                            other_id = _get_account_id_for_key(other_acct["api_key"])
-                            if not other_id:
-                                continue
-                            r = _sandbox_post(
-                                f"/accounts/{other_id}/orders",
-                                order_body,
-                                other_acct["api_key"],
-                            )
-                            if r and r.get("order", {}).get("id"):
-                                log.info(f"Sandbox IC CLOSE OK [{other_acct['name']}]: order_id={r['order']['id']}")
-                            else:
-                                # Retry once
-                                time.sleep(1)
-                                r = _sandbox_post(
-                                    f"/accounts/{other_id}/orders",
-                                    order_body,
-                                    other_acct["api_key"],
-                                )
-                                if r and r.get("order", {}).get("id"):
-                                    log.info(f"Sandbox IC CLOSE OK [{other_acct['name']}] (retry): order_id={r['order']['id']}")
-                                else:
-                                    log.error(
-                                        f"Sandbox IC close FAILED after 2 attempts [{other_acct['name']}] — "
-                                        f"paper position closed but sandbox may have orphan."
-                                    )
-                        except Exception as e:
-                            log.warning(f"Sandbox close failed [{other_acct['name']}]: {e}")
+                    else:
+                        log.error(
+                            f"Sandbox IC close FAILED after 2 attempts [{acct['name']}] — "
+                            f"paper position closed but sandbox may have orphan. "
+                            f"DO NOT close individual legs."
+                        )
+                except Exception as e:
+                    log.warning(f"Sandbox close failed [{acct['name']}]: {e}")
         except Exception as e:
             log.warning(f"Sandbox close failed for {position_id}: {e}")
 
@@ -1239,90 +1259,111 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     today_date = get_central_time().strftime("%Y-%m-%d")
 
     # -------------------------------------------------------------------
-    # For FLAME: place USER sandbox order FIRST to get actual fill price.
+    # For FLAME: each sandbox account sizes independently based on its
+    # OWN buying power.  USER goes first to get the actual fill price.
     # For SPARK (paper-only): use calculated credit from bid/ask.
     # -------------------------------------------------------------------
     actual_credit = credits["totalCredit"]  # fallback for SPARK or if sandbox fails
-    sandbox_order_ids: dict[str, int] = {}
+    sandbox_order_ids: dict[str, dict] = {}  # {"User": {"order_id": 123, "contracts": 85}, ...}
+
+    # Build OCC symbols once (shared by all accounts — same strikes)
+    _occ_ps = build_occ_symbol("SPY", expiration, strikes["putShort"], "P")
+    _occ_pl = build_occ_symbol("SPY", expiration, strikes["putLong"], "P")
+    _occ_cs = build_occ_symbol("SPY", expiration, strikes["callShort"], "C")
+    _occ_cl = build_occ_symbol("SPY", expiration, strikes["callLong"], "C")
+
+    def _build_ic_open_body(qty: int) -> dict:
+        return {
+            "class": "multileg",
+            "symbol": "SPY",
+            "type": "market",
+            "duration": "day",
+            "option_symbol[0]": _occ_ps, "side[0]": "sell_to_open", "quantity[0]": str(qty),
+            "option_symbol[1]": _occ_pl, "side[1]": "buy_to_open",  "quantity[1]": str(qty),
+            "option_symbol[2]": _occ_cs, "side[2]": "sell_to_open", "quantity[2]": str(qty),
+            "option_symbol[3]": _occ_cl, "side[3]": "buy_to_open",  "quantity[3]": str(qty),
+            "tag": position_id[:255],
+        }
 
     if bot["name"] == "flame":
         try:
-            user_accounts = [a for a in _get_sandbox_accounts_lazy() if a["name"] == "User"]
-            if user_accounts:
-                user_acct = user_accounts[0]
-                user_account_id = _get_account_id_for_key(user_acct["api_key"])
+            # Process accounts in order: User first (for fill price), then others
+            all_accounts = _get_sandbox_accounts_lazy()
+            user_accounts = [a for a in all_accounts if a["name"] == "User"]
+            other_accounts = [a for a in all_accounts if a["name"] != "User"]
+            ordered_accounts = user_accounts + other_accounts
 
-                if user_account_id:
-                    order_body = {
-                        "class": "multileg",
-                        "symbol": "SPY",
-                        "type": "market",
-                        "duration": "day",
-                        "option_symbol[0]": build_occ_symbol("SPY", expiration, strikes["putShort"], "P"),
-                        "side[0]": "sell_to_open",
-                        "quantity[0]": str(max_contracts),
-                        "option_symbol[1]": build_occ_symbol("SPY", expiration, strikes["putLong"], "P"),
-                        "side[1]": "buy_to_open",
-                        "quantity[1]": str(max_contracts),
-                        "option_symbol[2]": build_occ_symbol("SPY", expiration, strikes["callShort"], "C"),
-                        "side[2]": "sell_to_open",
-                        "quantity[2]": str(max_contracts),
-                        "option_symbol[3]": build_occ_symbol("SPY", expiration, strikes["callLong"], "C"),
-                        "side[3]": "buy_to_open",
-                        "quantity[3]": str(max_contracts),
-                        "tag": position_id[:255],
-                    }
+            for acct in ordered_accounts:
+                try:
+                    acct_id = _get_account_id_for_key(acct["api_key"])
+                    if not acct_id:
+                        continue
 
-                    # Place on USER first
+                    # Query this account's own buying power
+                    acct_bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
+                    if acct_bp is None or acct_bp < collateral_per:
+                        log.warning(
+                            f"Sandbox [{acct['name']}]: BP=${acct_bp} insufficient "
+                            f"(need ${collateral_per:.2f}/contract)"
+                        )
+                        continue
+
+                    # Size based on THIS account's buying power — NO max cap
+                    acct_usable = acct_bp * 0.85
+                    acct_contracts = max(1, math.floor(acct_usable / collateral_per))
+
+                    log.info(
+                        f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
+                        f"usable=${acct_usable:,.0f} → {acct_contracts} contracts "
+                        f"(collateral/contract=${collateral_per:.2f})"
+                    )
+
+                    order_body = _build_ic_open_body(acct_contracts)
                     result = _sandbox_post(
-                        f"/accounts/{user_account_id}/orders",
+                        f"/accounts/{acct_id}/orders",
                         order_body,
-                        user_acct["api_key"],
+                        acct["api_key"],
                     )
 
                     if result and result.get("order", {}).get("id"):
-                        user_order_id = result["order"]["id"]
-                        sandbox_order_ids["User"] = user_order_id
-                        log.info(f"USER sandbox order placed: {user_order_id}")
-
-                        # Get actual fill price
-                        fill_price = _get_sandbox_order_fill_price(
-                            user_acct["api_key"], user_account_id, user_order_id
+                        order_id = result["order"]["id"]
+                        sandbox_order_ids[acct["name"]] = {
+                            "order_id": order_id,
+                            "contracts": acct_contracts,
+                        }
+                        log.info(
+                            f"Sandbox IC OPEN OK [{acct['name']}]: "
+                            f"order_id={order_id} x{acct_contracts}"
                         )
-                        if fill_price is not None and fill_price > 0:
-                            log.info(
-                                f"Actual fill price from USER sandbox: ${fill_price:.4f} "
-                                f"(calculated was ${credits['totalCredit']:.4f})"
-                            )
-                            actual_credit = fill_price
-                        else:
-                            log.warning(
-                                f"Could not get fill price for order {user_order_id}, "
-                                f"using calculated: ${credits['totalCredit']:.4f}"
-                            )
 
-                    # Place on MATT and LOGAN
-                    for other_acct in _get_sandbox_accounts_lazy():
-                        if other_acct["name"] == "User":
-                            continue
-                        try:
-                            other_id = _get_account_id_for_key(other_acct["api_key"])
-                            if not other_id:
-                                continue
-                            r = _sandbox_post(
-                                f"/accounts/{other_id}/orders",
-                                order_body,
-                                other_acct["api_key"],
+                        # Get actual fill price from USER (first account)
+                        if acct["name"] == "User":
+                            fill_price = _get_sandbox_order_fill_price(
+                                acct["api_key"], acct_id, order_id
                             )
-                            if r and r.get("order", {}).get("id"):
-                                sandbox_order_ids[other_acct["name"]] = r["order"]["id"]
-                                log.info(f"Sandbox IC OPEN OK [{other_acct['name']}]: order_id={r['order']['id']}")
-                        except Exception as e:
-                            log.warning(f"Sandbox order failed [{other_acct['name']}]: {e}")
+                            if fill_price is not None and fill_price > 0:
+                                log.info(
+                                    f"Actual fill price from USER sandbox: ${fill_price:.4f} "
+                                    f"(calculated was ${credits['totalCredit']:.4f})"
+                                )
+                                actual_credit = fill_price
+                            else:
+                                log.warning(
+                                    f"Could not get fill price for order {order_id}, "
+                                    f"using calculated: ${credits['totalCredit']:.4f}"
+                                )
+                    else:
+                        log.warning(
+                            f"Sandbox IC OPEN FAILED [{acct['name']}]: "
+                            f"no order ID returned"
+                        )
+                except Exception as e:
+                    log.warning(f"Sandbox order failed [{acct['name']}]: {e}")
         except Exception as e:
             log.warning(f"Sandbox open failed for {position_id}: {e}")
 
     # Recalculate financials with actual credit (matches what Tradier filled)
+    # Paper position uses paper max_contracts, not sandbox contract counts
     total_collateral = max(0, (spread_width - actual_credit) * 100) * max_contracts
     max_profit = actual_credit * 100 * max_contracts
     max_loss = total_collateral

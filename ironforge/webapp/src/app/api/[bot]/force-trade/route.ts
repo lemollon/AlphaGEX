@@ -6,6 +6,7 @@ import {
   getIcEntryCredit,
   isConfigured,
   placeIcOrderAllAccounts,
+  type SandboxOrderInfo,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -290,7 +291,7 @@ export async function POST(
     )
 
     // 10b. Mirror to all 3 Tradier sandbox accounts (both FLAME and SPARK)
-    let sandboxOrderIds: Record<string, number> = {}
+    let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,

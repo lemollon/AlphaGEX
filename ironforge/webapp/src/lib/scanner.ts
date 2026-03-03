@@ -19,6 +19,7 @@ import {
   isConfigured,
   placeIcOrderAllAccounts,
   closeIcOrderAllAccounts,
+  type SandboxOrderInfo,
 } from './tradier'
 
 /* ------------------------------------------------------------------ */
@@ -292,11 +293,20 @@ async function closePosition(
     [price, realizedPnl, reason, positionId, bot.dte],
   )
 
-  // Mirror close to sandbox
+  // Mirror close to sandbox — read per-account contract counts from DB
   try {
+    const sbRows = await query(
+      `SELECT sandbox_order_id FROM ${botTable(bot.name, 'positions')}
+       WHERE position_id = $1 AND dte_mode = $2`,
+      [positionId, bot.dte],
+    )
+    let sandboxOpenInfo: Record<string, any> | null = null
+    if (sbRows[0]?.sandbox_order_id) {
+      try { sandboxOpenInfo = JSON.parse(sbRows[0].sandbox_order_id) } catch {}
+    }
     await closeIcOrderAllAccounts(
       ticker, expiration, putShort, putLong, callShort, callLong,
-      contracts, price, positionId,
+      contracts, price, positionId, sandboxOpenInfo,
     )
   } catch (e: any) {
     console.warn(`[scanner] Sandbox close failed for ${positionId}: ${e.message}`)
@@ -442,7 +452,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
 
   // Mirror to sandbox
-  let sandboxOrderIds: Record<string, number> = {}
+  let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
   try {
     sandboxOrderIds = await placeIcOrderAllAccounts(
       'SPY', expiration,
