@@ -14,7 +14,7 @@ export async function GET(
   const botName = heartbeatName(bot)
 
   try {
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows] =
+    const [accountRows, positionCountRows, positionCollateralRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows] =
       await Promise.all([
         query(`
           SELECT starting_capital, current_balance, cumulative_pnl,
@@ -26,6 +26,11 @@ export async function GET(
         `),
         query(`
           SELECT COUNT(*) as cnt
+          FROM ${botTable(bot, 'positions')}
+          WHERE status = 'open' AND dte_mode = '${dte}'
+        `),
+        query(`
+          SELECT COALESCE(SUM(collateral_required), 0) as total_collateral
           FROM ${botTable(bot, 'positions')}
           WHERE status = 'open' AND dte_mode = '${dte}'
         `),
@@ -99,7 +104,7 @@ export async function GET(
         total_pnl: Math.round(totalPnl * 100) / 100,
         return_pct: Math.round(returnPct * 100) / 100,
         total_trades: int(acct?.total_trades),
-        collateral_in_use: num(acct?.collateral_in_use),
+        collateral_in_use: num(acct?.collateral_in_use) || num(positionCollateralRows[0]?.total_collateral),
         buying_power: num(acct?.buying_power),
         high_water_mark: num(acct?.high_water_mark),
         max_drawdown: num(acct?.max_drawdown),

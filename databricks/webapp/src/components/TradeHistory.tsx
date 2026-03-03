@@ -16,6 +16,9 @@ interface Trade {
   realized_pnl: number
   close_time: string
   sandbox_order_id?: string | null
+  scanner_close_price?: number | null
+  sandbox_fill_price?: number | null
+  fill_delta_pct?: number | null
 }
 
 interface SandboxEntry {
@@ -80,7 +83,17 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: '
                 </td>
                 <td className="p-3 text-right">x{trade.contracts}</td>
                 <td className="p-3 text-right">${trade.total_credit.toFixed(2)}</td>
-                <td className="p-3 text-right">${trade.close_price.toFixed(4)}</td>
+                <td className="p-3 text-right">
+                  <span className="font-mono">${trade.close_price.toFixed(4)}</span>
+                  {trade.sandbox_fill_price != null && trade.fill_delta_pct != null && (
+                    <div className="text-[10px] text-forge-muted mt-0.5">
+                      SB: ${trade.sandbox_fill_price.toFixed(4)}{' '}
+                      <span className={trade.fill_delta_pct > 5 ? 'text-amber-400' : 'text-gray-500'}>
+                        ({trade.fill_delta_pct.toFixed(1)}%)
+                      </span>
+                    </div>
+                  )}
+                </td>
                 <td className={`p-3 text-right font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>

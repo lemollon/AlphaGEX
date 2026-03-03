@@ -48,8 +48,11 @@ from ironforge_scanner import (
     evaluate_advisor,
     calculate_strikes,
     get_target_expiration,
-    place_ic_order_all_accounts,
-    close_ic_order_all_accounts,
+    open_ic_sandbox_per_account,
+    close_ic_sandbox_per_account,
+    _get_sandbox_order_fill_price,
+    _get_sandbox_accounts_lazy,
+    _get_account_id_for_key,
     CATALOG,
     SCHEMA,
 )
@@ -1004,14 +1007,15 @@ async def bot_force_trade(bot: str):
             )
         """)
 
-        # 10b. Sandbox mirror
+        # 10b. Sandbox mirror — each account sizes independently
         sandbox_order_ids = {}
+        actual_credit = credits["totalCredit"]
         try:
-            sandbox_order_ids = place_ic_order_all_accounts(
+            sandbox_order_ids = open_ic_sandbox_per_account(
                 "SPY", expiration,
                 strikes["putShort"], strikes["putLong"],
                 strikes["callShort"], strikes["callLong"],
-                max_contracts, credits["totalCredit"], position_id,
+                collateral_per, position_id,
             )
             if sandbox_order_ids:
                 sandbox_json = json.dumps(sandbox_order_ids).replace("'", "''")
@@ -1020,6 +1024,25 @@ async def bot_force_trade(bot: str):
                     SET sandbox_order_id = '{sandbox_json}', updated_at = CURRENT_TIMESTAMP()
                     WHERE position_id = '{position_id}'
                 """)
+
+                # Get actual fill price from User's sandbox order
+                user_info = sandbox_order_ids.get("User", {})
+                if isinstance(user_info, dict) and user_info.get("order_id"):
+                    all_accounts = _get_sandbox_accounts_lazy()
+                    user_accts = [a for a in all_accounts if a["name"] == "User"]
+                    if user_accts:
+                        user_acct_id = _get_account_id_for_key(user_accts[0]["api_key"])
+                        if user_acct_id:
+                            fill = _get_sandbox_order_fill_price(
+                                user_accts[0]["api_key"], user_acct_id,
+                                user_info["order_id"],
+                            )
+                            if fill is not None and fill > 0:
+                                log.info(
+                                    f"Force trade fill from USER sandbox: ${fill:.4f} "
+                                    f"(calculated was ${credits['totalCredit']:.4f})"
+                                )
+                                actual_credit = fill
         except Exception as sb_err:
             log.warning(f"Sandbox mirror failed for {position_id}: {sb_err}")
 
@@ -1145,13 +1168,13 @@ async def bot_force_close(bot: str, request: Request):
         if not position_id:
             raise HTTPException(status_code=400, detail="position_id is required")
 
-        # 1. Look up position
+        # 1. Look up position (include sandbox_order_id for per-account close)
         rows = db_query(f"""
             SELECT position_id, ticker, expiration,
                    put_short_strike, put_long_strike, put_credit,
                    call_short_strike, call_long_strike, call_credit,
                    contracts, spread_width, total_credit, max_loss,
-                   collateral_required
+                   collateral_required, sandbox_order_id
             FROM {bot_table(bot, 'positions')}
             WHERE position_id = '{position_id}' AND status = 'open' AND dte_mode = '{dte}'
             LIMIT 1
@@ -1237,14 +1260,22 @@ async def bot_force_close(bot: str, request: Request):
                     'force_close:{position_id}', '{dte}', CURRENT_TIMESTAMP())
         """)
 
-        # 8. Sandbox mirror
+        # 8. Sandbox mirror — per-account contract counts
         sandbox_close_ids = {}
         try:
-            sandbox_close_ids = close_ic_order_all_accounts(
+            sb_json_str = pos.get("sandbox_order_id", "") or ""
+            sb_open_info = {}
+            if sb_json_str:
+                try:
+                    sb_open_info = json.loads(sb_json_str)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            sandbox_close_ids = close_ic_sandbox_per_account(
                 pos["ticker"], fmt_date(pos["expiration"]) or "",
                 num(pos["put_short_strike"]), num(pos["put_long_strike"]),
                 num(pos["call_short_strike"]), num(pos["call_long_strike"]),
-                contracts, close_price, position_id,
+                contracts, sb_open_info, position_id,
             )
         except Exception as sb_err:
             log.warning(f"Sandbox close mirror failed for {position_id}: {sb_err}")
