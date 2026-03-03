@@ -76,11 +76,28 @@ export default function PositionTable({
 /*  Position Card                                                      */
 /* ------------------------------------------------------------------ */
 
-function parseSandboxOrders(raw: string | null | undefined): Record<string, string> | null {
+interface SandboxEntry {
+  orderId: string
+  contracts?: number
+}
+
+function parseSandboxOrders(raw: string | null | undefined): Record<string, SandboxEntry> | null {
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw)
-    if (typeof parsed === 'object' && parsed !== null) return parsed
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const result: Record<string, SandboxEntry> = {}
+    for (const [name, value] of Object.entries(parsed)) {
+      if (typeof value === 'object' && value !== null && 'order_id' in value) {
+        // New format: {"User": {"order_id": 25827435, "contracts": 189}}
+        const v = value as { order_id: number | string; contracts?: number }
+        result[name] = { orderId: String(v.order_id), contracts: v.contracts }
+      } else {
+        // Old format: {"User": 25827435}
+        result[name] = { orderId: String(value) }
+      }
+    }
+    return Object.keys(result).length > 0 ? result : null
   } catch { /* not valid JSON */ }
   return null
 }
@@ -253,9 +270,9 @@ function PositionCard({ pos, hasLiveData, showSandbox }: { pos: Position; hasLiv
         return (
           <div className="flex items-center gap-3 text-xs border-t border-forge-border/50 pt-2">
             <span className="text-forge-muted">Sandbox:</span>
-            {Object.entries(orders).map(([name, id]) => (
+            {Object.entries(orders).map(([name, entry]) => (
               <span key={name} className="bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded font-mono">
-                {name} #{id}
+                {name} #{entry.orderId}{entry.contracts != null ? ` (${entry.contracts}x)` : ''}
               </span>
             ))}
           </div>
