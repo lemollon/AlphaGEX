@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { getCurrentPTTier, getCTNow, type PTTier } from '@/lib/pt-tiers'
+import PositionDetail from './PositionDetail'
 
 interface Position {
   position_id: string
@@ -32,14 +33,19 @@ interface Position {
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DetailData = any
+
 export default function PositionTable({
   positions,
   spotPrice,
   tradierConnected,
+  detailData,
 }: {
   positions: Position[]
   spotPrice?: number | null
   tradierConnected?: boolean
+  detailData?: { positions: DetailData[] } | null
 }) {
   if (!positions.length) {
     return (
@@ -50,6 +56,14 @@ export default function PositionTable({
   }
 
   const hasLiveData = positions.some((p) => p.current_cost_to_close != null)
+
+  // Build a lookup map from position_id to detail data
+  const detailMap: Record<string, DetailData> = {}
+  if (detailData?.positions) {
+    for (const d of detailData.positions) {
+      if (d?.position_id) detailMap[d.position_id] = d
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -67,7 +81,12 @@ export default function PositionTable({
 
       {/* Position cards */}
       {positions.map((pos) => (
-        <PositionCard key={pos.position_id} pos={pos} hasLiveData={hasLiveData} />
+        <PositionCard
+          key={pos.position_id}
+          pos={pos}
+          hasLiveData={hasLiveData}
+          detail={detailMap[pos.position_id] ?? null}
+        />
       ))}
     </div>
   )
@@ -85,7 +104,17 @@ function tierColor(tier: string | undefined, fallback: PTTier): string {
   return 'text-orange-400'
 }
 
-function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolean }) {
+function PositionCard({
+  pos,
+  hasLiveData,
+  detail,
+}: {
+  pos: Position
+  hasLiveData: boolean
+  detail: DetailData | null
+}) {
+  const [expanded, setExpanded] = useState(true)
+
   const pnl = pos.unrealized_pnl
   const pnlPct = pos.unrealized_pnl_pct
   const pnlColor =
@@ -127,18 +156,30 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
             Exp: {pos.expiration}
           </span>
         </div>
-        {hasLiveData && pnl != null && (
-          <div className="text-right">
-            <span className={`text-lg font-bold font-mono ${pnlColor}`}>
-              {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
-            </span>
-            {pnlPct != null && (
-              <span className={`ml-2 text-xs ${pnlColor}`}>
-                ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+        <div className="flex items-center gap-3">
+          {hasLiveData && pnl != null && (
+            <div className="text-right">
+              <span className={`text-lg font-bold font-mono ${pnlColor}`}>
+                {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
               </span>
-            )}
-          </div>
-        )}
+              {pnlPct != null && (
+                <span className={`ml-2 text-xs ${pnlColor}`}>
+                  ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
+                </span>
+              )}
+            </div>
+          )}
+          {/* Expand/collapse toggle */}
+          {detail && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="text-forge-muted hover:text-gray-300 transition-colors text-xs px-2 py-1 rounded border border-forge-border/50 hover:border-forge-border"
+              title={expanded ? 'Collapse details' : 'Expand details'}
+            >
+              {expanded ? 'Hide detail' : 'Show detail'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Strikes and metrics */}
@@ -232,8 +273,8 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
         </div>
       )}
 
-      {/* Sandbox Order IDs (FLAME only) */}
-      {pos.sandbox_order_ids && Object.keys(pos.sandbox_order_ids).length > 0 && (
+      {/* Sandbox Order IDs (compact, when detail is collapsed) */}
+      {!expanded && pos.sandbox_order_ids && Object.keys(pos.sandbox_order_ids).length > 0 && (
         <div className="border-t border-forge-border/50 pt-2 space-y-1">
           <p className="text-[10px] text-forge-muted uppercase tracking-wider">Tradier Sandbox Orders</p>
           <div className="flex flex-wrap gap-3">
@@ -254,6 +295,9 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
           </div>
         </div>
       )}
+
+      {/* Expanded: full position detail */}
+      {expanded && detail && <PositionDetail data={detail} />}
 
       {/* Footer */}
       <div className="flex gap-4 text-xs text-forge-muted">

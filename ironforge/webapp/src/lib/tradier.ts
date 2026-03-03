@@ -42,7 +42,7 @@ export interface IcMtmResult {
 /* ------------------------------------------------------------------ */
 
 /** Build OCC option symbol: SPY260226P00585000 */
-function buildOccSymbol(
+export function buildOccSymbol(
   ticker: string,
   expiration: string,
   strike: number,
@@ -429,6 +429,116 @@ export async function placeIcOrderAllAccounts(
  *
  * Returns Record<accountName, orderId> for successful closes.
  */
+/* ------------------------------------------------------------------ */
+/*  Detailed leg quotes (for position-detail)                          */
+/* ------------------------------------------------------------------ */
+
+export interface LegQuote {
+  symbol: string
+  bid: number
+  ask: number
+  mid: number
+  last: number
+}
+
+/**
+ * Fetch quotes for multiple OCC symbols in a single API call.
+ * Returns a map of symbol → LegQuote.
+ */
+export async function getBatchOptionQuotes(
+  occSymbols: string[],
+): Promise<Record<string, LegQuote>> {
+  if (!TRADIER_API_KEY || occSymbols.length === 0) return {}
+
+  const data = await tradierGet('/markets/quotes', {
+    symbols: occSymbols.join(','),
+  })
+  if (!data) return {}
+
+  const results: Record<string, LegQuote> = {}
+  let quotes = data.quotes?.quote
+  if (!quotes) return results
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  for (const q of quotes) {
+    if (!q?.symbol || q.bid == null) continue
+    const bid = parseFloat(q.bid || '0')
+    const ask = parseFloat(q.ask || '0')
+    results[q.symbol] = {
+      symbol: q.symbol,
+      bid,
+      ask,
+      mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
+      last: parseFloat(q.last || '0'),
+    }
+  }
+  return results
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sandbox account positions (for per-account P&L)                    */
+/* ------------------------------------------------------------------ */
+
+export interface SandboxPosition {
+  symbol: string
+  quantity: number
+  cost_basis: number
+  market_value: number
+  gain_loss: number
+  gain_loss_percent: number
+}
+
+export interface SandboxAccountDetail {
+  name: string
+  positions: SandboxPosition[]
+  total_cost: number
+  total_market_value: number
+  total_pnl: number
+}
+
+/**
+ * Get the loaded sandbox accounts (name + apiKey pairs).
+ * Used by position-detail route to query each account.
+ */
+export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string }> {
+  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+}
+
+/**
+ * Fetch positions from a sandbox account and filter to the given OCC symbols.
+ */
+export async function getSandboxAccountPositions(
+  apiKey: string,
+  filterSymbols?: string[],
+): Promise<SandboxPosition[]> {
+  const accountId = await getAccountIdForKey(apiKey)
+  if (!accountId) return []
+
+  const data = await sandboxGet(
+    `/accounts/${accountId}/positions`,
+    undefined,
+    apiKey,
+  )
+  if (!data) return []
+
+  let positions = data.positions?.position
+  if (!positions) return []
+  if (!Array.isArray(positions)) positions = [positions]
+
+  const filterSet = filterSymbols ? new Set(filterSymbols) : null
+
+  return positions
+    .filter((p: any) => !filterSet || filterSet.has(p.symbol))
+    .map((p: any) => ({
+      symbol: p.symbol || '',
+      quantity: parseFloat(p.quantity || '0'),
+      cost_basis: parseFloat(p.cost_basis || '0'),
+      market_value: parseFloat(p.market_value || '0'),
+      gain_loss: parseFloat(p.gain_loss || '0'),
+      gain_loss_percent: parseFloat(p.gain_loss_percent || '0'),
+    }))
+}
+
 export async function closeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
