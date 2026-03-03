@@ -324,12 +324,49 @@ def get_ic_mark_to_market(
     cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
     return {
         "cost_to_close": max(0, round(cost, 4)),
+        "put_short_bid": ps_q["bid"],
         "put_short_ask": ps_q["ask"],
         "put_long_bid": pl_q["bid"],
+        "put_long_ask": pl_q["ask"],
+        "call_short_bid": cs_q["bid"],
         "call_short_ask": cs_q["ask"],
         "call_long_bid": cl_q["bid"],
+        "call_long_ask": cl_q["ask"],
         "spot_price": spot_q["last"] if spot_q else None,
     }
+
+
+def validate_mtm(mtm: dict, entry_credit: float) -> tuple:
+    """Validate MTM quotes are sane. Returns (is_valid, reason)."""
+    # Check for zero/negative values on all legs
+    for key in ["put_short_ask", "call_short_ask", "put_long_bid", "call_long_bid"]:
+        val = mtm.get(key, 0)
+        if val is None or val <= 0:
+            return False, f"{key} is zero/negative/None: {val}"
+
+    # Check cost_to_close bounds (should be between 0 and 3x entry)
+    ctc = mtm.get("cost_to_close", 0)
+    if ctc is None or ctc < 0:
+        return False, f"cost_to_close is negative/None: {ctc}"
+    if entry_credit > 0 and ctc > entry_credit * 3:
+        return False, f"cost_to_close ${ctc:.4f} > 3x entry ${entry_credit:.4f}"
+
+    # Check for inverted markets (ask < bid on any leg)
+    for leg in ["put_short", "call_short", "put_long", "call_long"]:
+        bid = mtm.get(f"{leg}_bid", 0) or 0
+        ask = mtm.get(f"{leg}_ask", 0) or 0
+        if ask > 0 and bid > 0 and ask < bid:
+            return False, f"{leg} inverted: bid=${bid} > ask=${ask}"
+
+    # Check for wide spreads (ask-bid > 50% of mid)
+    for leg in ["put_short", "call_short", "put_long", "call_long"]:
+        bid = mtm.get(f"{leg}_bid", 0) or 0
+        ask = mtm.get(f"{leg}_ask", 0) or 0
+        mid = (bid + ask) / 2 if (bid + ask) > 0 else 0
+        if mid > 0.05 and (ask - bid) > mid * 0.5:
+            return False, f"{leg} wide spread: bid=${bid} ask=${ask} mid=${mid:.4f}"
+
+    return True, "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +474,8 @@ def _get_account_id_for_key(api_key: str) -> Optional[str]:
     return account_id or None
 
 
+# DEPRECATED: Use open_ic_sandbox_per_account() instead.
+# Kept for backwards compatibility with ironforge_api.py legacy paths.
 def place_ic_order_all_accounts(
     ticker: str,
     expiration: str,
@@ -489,6 +528,8 @@ def place_ic_order_all_accounts(
     return results
 
 
+# DEPRECATED: Use close_ic_sandbox_per_account() instead.
+# Kept for backwards compatibility with ironforge_api.py legacy paths.
 def close_ic_order_all_accounts(
     ticker: str,
     expiration: str,
@@ -542,6 +583,184 @@ def close_ic_order_all_accounts(
                 results[acct["name"]] = result["order"]["id"]
             else:
                 # Do NOT decompose to individual legs — log error and move on
+                log.error(
+                    f"Sandbox IC close FAILED after 2 attempts [{acct['name']}] — "
+                    f"paper position closed but sandbox may have orphan. "
+                    f"DO NOT close individual legs."
+                )
+        except Exception as e:
+            log.warning(f"Sandbox IC close failed [{acct['name']}]: {e}")
+
+    return results
+
+
+def open_ic_sandbox_per_account(
+    ticker: str,
+    expiration: str,
+    put_short: float,
+    put_long: float,
+    call_short: float,
+    call_long: float,
+    collateral_per_contract: float,
+    tag: Optional[str] = None,
+) -> dict[str, dict]:
+    """Open an IC in each sandbox account, sized independently by buying power.
+
+    Returns: {"User": {"order_id": 123, "contracts": 215}, ...}
+    """
+    results: dict[str, dict] = {}
+    occ_ps = build_occ_symbol(ticker, expiration, put_short, "P")
+    occ_pl = build_occ_symbol(ticker, expiration, put_long, "P")
+    occ_cs = build_occ_symbol(ticker, expiration, call_short, "C")
+    occ_cl = build_occ_symbol(ticker, expiration, call_long, "C")
+
+    for acct in _get_sandbox_accounts_lazy():
+        try:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+
+            # Query this account's own buying power
+            acct_bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
+            if acct_bp is None or acct_bp <= 0:
+                log.warning(f"Sandbox [{acct['name']}]: no buying power (BP={acct_bp})")
+                continue
+            if collateral_per_contract <= 0:
+                log.warning(f"Sandbox [{acct['name']}]: bad collateral_per={collateral_per_contract}")
+                continue
+            if acct_bp < collateral_per_contract:
+                log.warning(
+                    f"Sandbox [{acct['name']}]: BP=${acct_bp:.2f} insufficient "
+                    f"(need ${collateral_per_contract:.2f}/contract)"
+                )
+                continue
+
+            acct_usable = acct_bp * 0.85
+            acct_contracts = max(1, math.floor(acct_usable / collateral_per_contract))
+
+            log.info(
+                f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
+                f"usable=${acct_usable:,.0f} → {acct_contracts} contracts "
+                f"(collateral/contract=${collateral_per_contract:.2f})"
+            )
+
+            order_body = {
+                "class": "multileg",
+                "symbol": ticker,
+                "type": "market",
+                "duration": "day",
+                "option_symbol[0]": occ_ps, "side[0]": "sell_to_open", "quantity[0]": str(acct_contracts),
+                "option_symbol[1]": occ_pl, "side[1]": "buy_to_open",  "quantity[1]": str(acct_contracts),
+                "option_symbol[2]": occ_cs, "side[2]": "sell_to_open", "quantity[2]": str(acct_contracts),
+                "option_symbol[3]": occ_cl, "side[3]": "buy_to_open",  "quantity[3]": str(acct_contracts),
+            }
+            if tag:
+                order_body["tag"] = tag[:255]
+
+            result = _sandbox_post(
+                f"/accounts/{acct_id}/orders",
+                order_body,
+                acct["api_key"],
+            )
+            if result and result.get("order", {}).get("id"):
+                order_id = result["order"]["id"]
+                results[acct["name"]] = {
+                    "order_id": order_id,
+                    "contracts": acct_contracts,
+                }
+                log.info(
+                    f"Sandbox IC OPEN OK [{acct['name']}]: "
+                    f"order_id={order_id} x{acct_contracts}"
+                )
+            else:
+                log.warning(f"Sandbox IC OPEN FAILED [{acct['name']}]: no order ID returned")
+        except Exception as e:
+            log.warning(f"Sandbox IC order failed [{acct['name']}]: {e}")
+
+    return results
+
+
+def close_ic_sandbox_per_account(
+    ticker: str,
+    expiration: str,
+    put_short: float,
+    put_long: float,
+    call_short: float,
+    call_long: float,
+    paper_contracts: int,
+    sb_open_info: dict,
+    tag: Optional[str] = None,
+) -> dict[str, int]:
+    """Close an IC in each sandbox account using per-account contract counts.
+
+    sb_open_info: the parsed sandbox_order_id JSON from the position.
+    Handles both new format {"User": {"order_id": X, "contracts": Y}} and
+    legacy format {"User": 12345}.  Falls back to paper_contracts if missing.
+
+    Returns: {"User": order_id, "Matt": order_id, ...}
+    """
+    results: dict[str, int] = {}
+    occ_ps = build_occ_symbol(ticker, expiration, put_short, "P")
+    occ_pl = build_occ_symbol(ticker, expiration, put_long, "P")
+    occ_cs = build_occ_symbol(ticker, expiration, call_short, "C")
+    occ_cl = build_occ_symbol(ticker, expiration, call_long, "C")
+
+    for acct in _get_sandbox_accounts_lazy():
+        try:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+
+            # Determine how many contracts this account opened
+            acct_info = sb_open_info.get(acct["name"], {})
+            if isinstance(acct_info, dict):
+                close_qty = acct_info.get("contracts", paper_contracts)
+            else:
+                # Legacy format: {"User": 12345} (just order_id)
+                close_qty = paper_contracts
+
+            order_body = {
+                "class": "multileg",
+                "symbol": ticker,
+                "type": "market",
+                "duration": "day",
+                "option_symbol[0]": occ_ps, "side[0]": "buy_to_close",  "quantity[0]": str(close_qty),
+                "option_symbol[1]": occ_pl, "side[1]": "sell_to_close", "quantity[1]": str(close_qty),
+                "option_symbol[2]": occ_cs, "side[2]": "buy_to_close",  "quantity[2]": str(close_qty),
+                "option_symbol[3]": occ_cl, "side[3]": "sell_to_close", "quantity[3]": str(close_qty),
+            }
+            if tag:
+                order_body["tag"] = tag[:255]
+
+            # Attempt 1
+            result = _sandbox_post(
+                f"/accounts/{acct_id}/orders",
+                order_body,
+                acct["api_key"],
+            )
+            if result and result.get("order", {}).get("id"):
+                results[acct["name"]] = result["order"]["id"]
+                log.info(
+                    f"Sandbox IC CLOSE OK [{acct['name']}]: "
+                    f"order_id={result['order']['id']} x{close_qty}"
+                )
+                continue
+
+            # Attempt 2: retry after 1s
+            log.warning(f"Sandbox IC close attempt 1 failed [{acct['name']}], retrying...")
+            time.sleep(1)
+            result = _sandbox_post(
+                f"/accounts/{acct_id}/orders",
+                order_body,
+                acct["api_key"],
+            )
+            if result and result.get("order", {}).get("id"):
+                results[acct["name"]] = result["order"]["id"]
+                log.info(
+                    f"Sandbox IC CLOSE OK [{acct['name']}] (retry): "
+                    f"order_id={result['order']['id']} x{close_qty}"
+                )
+            else:
                 log.error(
                     f"Sandbox IC close FAILED after 2 attempts [{acct['name']}] — "
                     f"paper position closed but sandbox may have orphan. "
@@ -874,6 +1093,7 @@ def close_position(
         price = mtm["cost_to_close"] if mtm else 0.0
 
     price_source = "calculated"
+    sandbox_fill_price = None  # track sandbox fill separately (never overwrites paper price)
 
     # -------------------------------------------------------------------
     # For FLAME: close each sandbox account with its OWN contract count
@@ -961,18 +1181,22 @@ def close_position(
                             f"order_id={order_id} x{close_qty}"
                         )
 
-                        # Get actual fill price from USER account
+                        # Log actual fill price from USER account (do NOT overwrite paper price)
                         if acct["name"] == "User":
                             fill_price = _get_sandbox_order_fill_price(
                                 acct["api_key"], acct_id, order_id
                             )
                             if fill_price is not None and fill_price >= 0:
-                                log.info(
-                                    f"Actual close fill from USER sandbox: ${fill_price:.4f} "
-                                    f"(calculated was ${price:.4f})"
+                                sandbox_fill_price = fill_price
+                                delta_pct = (
+                                    round(abs(fill_price - price) / price * 100, 1)
+                                    if price > 0 else 0
                                 )
-                                price = fill_price
-                                price_source = "sandbox_fill"
+                                log.info(
+                                    f"Sandbox fill: ${fill_price:.4f} vs "
+                                    f"scanner MTM: ${price:.4f} "
+                                    f"(delta: {delta_pct}%)"
+                                )
                     else:
                         log.error(
                             f"Sandbox IC close FAILED after 2 attempts [{acct['name']}] — "
@@ -1028,9 +1252,15 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
+    fill_delta_pct = (
+        round(abs(sandbox_fill_price - price) / price * 100, 1)
+        if sandbox_fill_price is not None and price > 0 else None
+    )
     details = json.dumps({
         "position_id": position_id,
-        "close_price": price,
+        "scanner_close_price": price,
+        "sandbox_fill_price": sandbox_fill_price,
+        "fill_delta_pct": fill_delta_pct,
         "price_source": price_source,
         "realized_pnl": realized_pnl,
         "close_reason": reason,
@@ -1125,6 +1355,14 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
 
     if not mtm:
         return {"status": "monitoring:mtm_failed", "unrealizedPnl": 0}
+
+    is_valid, invalid_reason = validate_mtm(mtm, entry_credit)
+    if not is_valid:
+        log.warning(
+            f"{bot['name'].upper()} MTM validation failed: {invalid_reason} "
+            f"— skipping PT/SL check this cycle"
+        )
+        return {"status": f"monitoring:mtm_invalid({invalid_reason})", "unrealizedPnl": 0}
 
     cost_to_close = mtm["cost_to_close"]
 
