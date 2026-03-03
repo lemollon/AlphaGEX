@@ -421,14 +421,6 @@ export async function placeIcOrderAllAccounts(
   return results
 }
 
-/**
- * Close an Iron Condor in ALL configured sandbox accounts.
- *
- * Reads per-account contract counts from sandboxOpenInfo (stored at open time).
- * Falls back to the paper position's contracts if legacy format.
- *
- * Returns Record<accountName, orderId> for successful closes.
- */
 /* ------------------------------------------------------------------ */
 /*  Detailed leg quotes (for position-detail)                          */
 /* ------------------------------------------------------------------ */
@@ -539,6 +531,14 @@ export async function getSandboxAccountPositions(
     }))
 }
 
+/**
+ * Close an Iron Condor in ALL configured sandbox accounts.
+ *
+ * Reads per-account contract counts from sandboxOpenInfo (stored at open time).
+ * Falls back to the paper position's contracts if legacy format.
+ *
+ * Returns Record<accountName, orderId> for successful closes.
+ */
 export async function closeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
