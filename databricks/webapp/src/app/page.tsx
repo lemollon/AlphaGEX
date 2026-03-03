@@ -52,17 +52,6 @@ const scheduleRows: Array<{ label: string; value: string }> = [
 
 const bots = [
   {
-    name: 'FLAME',
-    href: '/flame',
-    dte: '2DTE',
-    desc: 'Longer-duration Iron Condors with 2 days to expiration. More premium, more time for the trade to work.',
-    border: 'border-amber-500/30 hover:border-amber-400/60',
-    heading: 'text-amber-400',
-    btn: 'border-amber-500/60 text-amber-400 hover:bg-amber-500/10',
-    glow: 'shadow-amber-500/5',
-    badge: 'bg-amber-500/15 text-amber-400',
-  },
-  {
     name: 'SPARK',
     href: '/spark',
     dte: '1DTE',
@@ -72,6 +61,17 @@ const bots = [
     btn: 'border-blue-500/60 text-blue-400 hover:bg-blue-500/10',
     glow: 'shadow-blue-500/5',
     badge: 'bg-blue-500/15 text-blue-400',
+  },
+  {
+    name: 'FLAME',
+    href: '/flame',
+    dte: '2DTE',
+    desc: 'Longer-duration Iron Condors with 2 days to expiration. More premium, more time for the trade to work.',
+    border: 'border-amber-500/30 hover:border-amber-400/60',
+    heading: 'text-amber-400',
+    btn: 'border-amber-500/60 text-amber-400 hover:bg-amber-500/10',
+    glow: 'shadow-amber-500/5',
+    badge: 'bg-amber-500/15 text-amber-400',
   },
   {
     name: 'Compare',

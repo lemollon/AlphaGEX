@@ -67,6 +67,13 @@ export default function BotDashboard({
     { refreshInterval: LIVE_REFRESH },
   )
 
+  /* ---- Position detail (per-leg quotes, sandbox P&L, metrics) ---- */
+  const { data: positionDetail } = useSWR(
+    tab === 'Positions' ? `/api/${bot}/position-detail` : null,
+    fetcher,
+    { refreshInterval: DATA_REFRESH },
+  )
+
   /* ---- Performance ---- */
   const { data: perf } = useSWR(
     tab === 'Performance' ? `/api/${bot}/performance` : null,
@@ -199,6 +206,7 @@ export default function BotDashboard({
             spotPrice={positionMonitor?.spot_price}
             tradierConnected={positionMonitor?.tradier_connected}
             bot={bot}
+            detailData={positionDetail}
           />
         )}
         {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} bot={bot} />}

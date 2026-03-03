@@ -41,7 +41,7 @@ export interface IcMtmResult {
 /* ------------------------------------------------------------------ */
 
 /** Build OCC option symbol: SPY260226P00585000 */
-function buildOccSymbol(
+export function buildOccSymbol(
   ticker: string,
   expiration: string,
   strike: number,
