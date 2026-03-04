@@ -192,32 +192,51 @@ class DailySnapshot:
 class BacktestDB:
     """Database access layer for the monthly IC backtester.
 
-    Uses IC_BACKTEST_DATABASE_URL (preferred) or falls back to
-    ORAT_DATABASE_URL / DATABASE_URL.
+    Uses two databases (matching CHRONICLES pattern):
+      - ORAT_DATABASE_URL → orat_options_eod (options chain data)
+      - DATABASE_URL      → gex_structure_daily, market_data_daily (GEX/price)
+
+    On Render both env vars are pre-set. Locally, put them in .env.
     """
 
     def __init__(self):
-        self.db_url = (
-            os.getenv("DATABASE_URL")
-            or os.getenv("ORAT_DATABASE_URL")
-        )
-        if not self.db_url:
-            raise RuntimeError(
-                "No database URL found. Set DATABASE_URL in .env "
-                "or as an environment variable (auto-set on Render)."
-            )
+        # ORAT options chain data (separate database, like CHRONICLES)
+        self.orat_url = os.getenv("ORAT_DATABASE_URL")
+        # Main AlphaGEX database (GEX structure, market data)
+        self.main_url = os.getenv("DATABASE_URL")
 
-    def get_conn(self):
-        """Return a new read-only connection."""
-        conn = psycopg2.connect(self.db_url, connect_timeout=30)
+        if not self.orat_url and not self.main_url:
+            raise RuntimeError(
+                "No database URL found. Set ORAT_DATABASE_URL (for options chain) "
+                "and/or DATABASE_URL (for GEX data) in .env or environment."
+            )
+        # If only one is set, use it for both (unified DB deployment)
+        if not self.orat_url:
+            self.orat_url = self.main_url
+        if not self.main_url:
+            self.main_url = self.orat_url
+
+    def get_orat_conn(self):
+        """Return a read-only connection to the ORAT options database."""
+        conn = psycopg2.connect(self.orat_url, connect_timeout=30)
         conn.set_session(readonly=True)
         return conn
+
+    def get_main_conn(self):
+        """Return a read-only connection to the main AlphaGEX database."""
+        conn = psycopg2.connect(self.main_url, connect_timeout=30)
+        conn.set_session(readonly=True)
+        return conn
+
+    def get_conn(self):
+        """Return main DB connection (backward compat for audit)."""
+        return self.get_main_conn()
 
     # ── Schema discovery (Phase 1) ────────────────────────────────────────
 
     def audit_tables(self) -> List[Dict]:
-        """List all tables with row counts."""
-        conn = self.get_conn()
+        """List all tables with row counts (main DB)."""
+        conn = self.get_main_conn()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT schemaname, relname AS table_name, n_live_tup AS row_count
@@ -228,9 +247,9 @@ class BacktestDB:
         conn.close()
         return rows
 
-    def audit_columns(self, table_name: str) -> List[Dict]:
+    def audit_columns(self, table_name: str, use_orat: bool = False) -> List[Dict]:
         """Get columns for a table."""
-        conn = self.get_conn()
+        conn = self.get_orat_conn() if use_orat else self.get_main_conn()
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
                 SELECT column_name, data_type, is_nullable, column_default
@@ -243,8 +262,8 @@ class BacktestDB:
         return rows
 
     def audit_orat_data(self) -> Dict:
-        """Audit the orat_options_eod table specifically."""
-        conn = self.get_conn()
+        """Audit the orat_options_eod table specifically (from ORAT database)."""
+        conn = self.get_orat_conn()
         result = {}
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # Date range
@@ -316,8 +335,8 @@ class BacktestDB:
         return result
 
     def audit_gex_data(self) -> Dict:
-        """Audit GEX-related tables."""
-        conn = self.get_conn()
+        """Audit GEX-related tables (main DB)."""
+        conn = self.get_main_conn()
         result = {}
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             for table in ('gex_structure_daily', 'gex_history'):
@@ -337,7 +356,7 @@ class BacktestDB:
 
     def audit_price_data(self) -> Dict:
         """Check for underlying price data in various tables."""
-        conn = self.get_conn()
+        conn = self.get_main_conn()
         result = {}
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             # Check gex_structure_daily for OHLC
@@ -355,9 +374,13 @@ class BacktestDB:
                 conn.rollback()
                 result['gex_structure_daily'] = "NOT AVAILABLE"
 
-            # Check orat for underlying_price
-            try:
-                cur.execute("""
+        conn.close()
+
+        # Check orat DB for underlying_price (separate connection)
+        try:
+            orat_conn = self.get_orat_conn()
+            with orat_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur2:
+                cur2.execute("""
                     SELECT MIN(trade_date) AS min_date, MAX(trade_date) AS max_date,
                            COUNT(DISTINCT trade_date) AS days,
                            COUNT(underlying_price) AS has_price
@@ -365,11 +388,11 @@ class BacktestDB:
                     WHERE ticker IN ('SPX', 'SPXW', 'SPY')
                       AND underlying_price IS NOT NULL;
                 """)
-                result['orat_underlying'] = dict(cur.fetchone())
-            except Exception:
-                conn.rollback()
-                result['orat_underlying'] = "NOT AVAILABLE"
-        conn.close()
+                result['orat_underlying'] = dict(cur2.fetchone())
+            orat_conn.close()
+        except Exception as e:
+            result['orat_underlying'] = f"NOT AVAILABLE ({e})"
+
         return result
 
     # ── Backtest data queries ─────────────────────────────────────────────
@@ -381,7 +404,7 @@ class BacktestDB:
         expiration, with the earliest trade_date per expiration that falls
         within the target DTE window.
         """
-        conn = self.get_conn()
+        conn = self.get_orat_conn()
         # We also accept SPXW for SPX weeklies (which include monthly-like expirations)
         tickers = [ticker]
         if ticker.upper() == "SPX":
@@ -408,7 +431,7 @@ class BacktestDB:
 
         Returns all strikes with bid/ask/mid, greeks, IV.
         """
-        conn = self.get_conn()
+        conn = self.get_orat_conn()
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
@@ -443,7 +466,7 @@ class BacktestDB:
 
         Used to find available expirations on a given entry date.
         """
-        conn = self.get_conn()
+        conn = self.get_orat_conn()
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
@@ -463,8 +486,8 @@ class BacktestDB:
         return rows
 
     def get_trading_days(self, ticker: str, start_date: str, end_date: str) -> List[str]:
-        """Get all distinct trading days with options data."""
-        conn = self.get_conn()
+        """Get all distinct trading days with options data (ORAT DB)."""
+        conn = self.get_orat_conn()
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
@@ -483,8 +506,8 @@ class BacktestDB:
         return days
 
     def get_underlying_price(self, ticker: str, trade_date: str) -> Optional[float]:
-        """Get underlying price for a date from orat data."""
-        conn = self.get_conn()
+        """Get underlying price for a date from ORAT data."""
+        conn = self.get_orat_conn()
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
@@ -503,7 +526,7 @@ class BacktestDB:
 
     def get_vix_for_date(self, trade_date: str) -> Optional[float]:
         """Try to get VIX value from GEX structure or other tables."""
-        conn = self.get_conn()
+        conn = self.get_main_conn()
         vix = None
         with conn.cursor() as cur:
             # Try gex_structure_daily first (might have VIX-like data)
@@ -1471,15 +1494,39 @@ def run_data_audit():
 
     db = BacktestDB()
 
-    # 1A: Tables
-    print("\n  1A. ALL TABLES WITH ROW COUNTS")
+    # 1A: Tables (main DB)
+    print("\n  1A. MAIN DB TABLES (top 50 by row count)")
     print("  " + "-" * 60)
+    print(f"    DATABASE_URL: {'SET' if db.main_url else 'NOT SET'}")
     tables = db.audit_tables()
     for t in tables[:50]:
         print(f"    {t['table_name']:50s} {t['row_count']:>12,} rows")
     if len(tables) > 50:
         print(f"    ... and {len(tables) - 50} more tables")
     print(f"  Total: {len(tables)} tables")
+
+    # 1A2: ORAT DB tables (may be separate)
+    print("\n  1A2. ORAT DB TABLES (options chain database)")
+    print("  " + "-" * 60)
+    print(f"    ORAT_DATABASE_URL: {'SET' if os.getenv('ORAT_DATABASE_URL') else 'NOT SET (using DATABASE_URL)'}")
+    same_db = (db.orat_url == db.main_url)
+    print(f"    Same as main DB: {same_db}")
+    if not same_db:
+        try:
+            orat_conn = db.get_orat_conn()
+            with orat_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT schemaname, relname AS table_name, n_live_tup AS row_count
+                    FROM pg_stat_user_tables
+                    ORDER BY n_live_tup DESC LIMIT 30;
+                """)
+                orat_tables = [dict(r) for r in cur.fetchall()]
+            orat_conn.close()
+            for t in orat_tables:
+                print(f"    {t['table_name']:50s} {t['row_count']:>12,} rows")
+            print(f"  Total shown: {len(orat_tables)} tables")
+        except Exception as e:
+            print(f"    ERROR connecting to ORAT DB: {e}")
 
     # 1B: ORAT options data
     print("\n  1B. ORAT OPTIONS DATA AUDIT")
