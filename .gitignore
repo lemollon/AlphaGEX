@@ -63,6 +63,9 @@ data/prices/
 # Strategy Stats (auto-generated, don't commit)
 .strategy_stats/
 
+# Backtest results (auto-generated)
+backtest/results/
+
 # Logs (runtime artifacts - only root logs directory)
 /logs/
 *.log
