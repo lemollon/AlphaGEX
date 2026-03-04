@@ -1422,6 +1422,16 @@ class MonthlyICBacktester:
             bar = "+" * int(max(0, pct * 5)) + "-" * int(max(0, -pct * 5))
             print(f"  {month}:  ${pnl:>+8,.2f}  ({pct:>+5.2f}%)  {bar[:20]}")
 
+        # Print equity curve as copy-pasteable CSV
+        ec = results.get('equity_curve', [])
+        if ec:
+            print(f"\n  {'─' * 60}")
+            print(f"  EQUITY CURVE (copy/paste as CSV)")
+            print(f"  {'─' * 60}")
+            print("date,trade_num,equity,pnl,cumulative_pnl,return_pct,drawdown_pct,exit_reason")
+            for row in ec:
+                print(f"{row['date']},{row['trade_num']},{row['equity']},{row['pnl']},{row['cumulative_pnl']},{row['return_pct']},{row['drawdown_pct']},{row['exit_reason']}")
+
         print("\n" + "=" * 80)
 
     # ── Export ────────────────────────────────────────────────────────────
