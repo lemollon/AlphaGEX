@@ -199,22 +199,13 @@ class BacktestDB:
     On Render both env vars are pre-set. Locally, put them in .env.
     """
 
-    def __init__(self):
-        # ORAT options chain data (separate database, like CHRONICLES)
-        self.orat_url = os.getenv("ORAT_DATABASE_URL")
-        # Main AlphaGEX database (GEX structure, market data)
-        self.main_url = os.getenv("DATABASE_URL")
+    # Default database URLs — no env var setup needed
+    DEFAULT_ORAT_URL = "postgresql://alphagex_user:e5DSVWnKceA16V5ysssLZCbqNE9ELRKi@dpg-d4quq1u3jp1c739oijb0-a.oregon-postgres.render.com/alphagex_backtest"
+    DEFAULT_MAIN_URL = "postgresql://alphagex_user:ia5KWqhz4wfwsjiQxlPEGMfgftYT6Du1@dpg-d4132pje5dus738rkoug-a.oregon-postgres.render.com/alphagex"
 
-        if not self.orat_url and not self.main_url:
-            raise RuntimeError(
-                "No database URL found. Set ORAT_DATABASE_URL (for options chain) "
-                "and/or DATABASE_URL (for GEX data) in .env or environment."
-            )
-        # If only one is set, use it for both (unified DB deployment)
-        if not self.orat_url:
-            self.orat_url = self.main_url
-        if not self.main_url:
-            self.main_url = self.orat_url
+    def __init__(self):
+        self.orat_url = os.getenv("ORAT_DATABASE_URL") or self.DEFAULT_ORAT_URL
+        self.main_url = os.getenv("DATABASE_URL") or self.DEFAULT_MAIN_URL
 
     def get_orat_conn(self):
         """Return a read-only connection to the ORAT options database."""
