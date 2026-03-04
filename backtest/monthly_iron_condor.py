@@ -1279,12 +1279,21 @@ class MonthlyICBacktester:
         # Equity curve
         equity_curve = []
         running = self.config.initial_capital
-        for t in trades:
+        cumulative = 0.0
+        for i, t in enumerate(trades):
             running += t.net_pnl
+            cumulative += t.net_pnl
+            peak_so_far = max(self.config.initial_capital, max((e['equity'] for e in equity_curve), default=self.config.initial_capital))
+            dd_pct = ((running - peak_so_far) / peak_so_far * 100) if peak_so_far > 0 else 0
             equity_curve.append({
                 'date': t.exit_date,
-                'equity': running,
-                'pnl': t.net_pnl,
+                'trade_num': i + 1,
+                'equity': round(running, 2),
+                'pnl': round(t.net_pnl, 2),
+                'cumulative_pnl': round(cumulative, 2),
+                'return_pct': round(cumulative / self.config.initial_capital * 100, 2),
+                'drawdown_pct': round(dd_pct, 2),
+                'exit_reason': t.exit_reason,
             })
 
         return {
@@ -1467,8 +1476,10 @@ class MonthlyICBacktester:
 
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
+        fieldnames = ['date', 'trade_num', 'equity', 'pnl', 'cumulative_pnl',
+                      'return_pct', 'drawdown_pct', 'exit_reason']
         with open(filepath, 'w', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=['date', 'equity', 'pnl'])
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(results['equity_curve'])
 
@@ -1647,7 +1658,8 @@ Examples:
     parser.add_argument('--dte-min', type=int, default=30, help='Min DTE at entry (default: 30)')
     parser.add_argument('--dte-max', type=int, default=45, help='Max DTE at entry (default: 45)')
     parser.add_argument('--min-credit', type=float, default=0.50, help='Min IC credit to enter (default: $0.50)')
-    parser.add_argument('--export', action='store_true', help='Export trades CSV, results JSON, equity curve')
+    parser.add_argument('--export', action='store_true', default=True, help='Export trades CSV, results JSON, equity curve')
+    parser.add_argument('--no-export', action='store_true', help='Skip CSV/JSON export')
 
     args = parser.parse_args()
 
@@ -1684,11 +1696,20 @@ Examples:
     backtester = MonthlyICBacktester(config)
     results = backtester.run()
 
-    # Export if requested
-    if args.export and backtester.trades:
-        backtester.export_trades_csv()
-        backtester.export_results_json(results)
-        backtester.export_equity_curve_csv(results)
+    # Export (default on, use --no-export to skip)
+    if args.export and not args.no_export and backtester.trades:
+        capital_label = f"{int(args.capital/1000)}k"
+        backtester.export_trades_csv(
+            f"backtest/results/{args.ticker.upper()}_monthly_ic_trades_{capital_label}_{args.start}_{args.end}.csv"
+        )
+        backtester.export_results_json(
+            results,
+            f"backtest/results/{args.ticker.upper()}_monthly_ic_results_{capital_label}_{args.start}_{args.end}.json"
+        )
+        backtester.export_equity_curve_csv(
+            results,
+            f"backtest/results/{args.ticker.upper()}_monthly_ic_equity_{capital_label}_{args.start}_{args.end}.csv"
+        )
 
 
 if __name__ == "__main__":
