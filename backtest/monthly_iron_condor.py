@@ -198,14 +198,13 @@ class BacktestDB:
 
     def __init__(self):
         self.db_url = (
-            os.getenv("IC_BACKTEST_DATABASE_URL")
+            os.getenv("DATABASE_URL")
             or os.getenv("ORAT_DATABASE_URL")
-            or os.getenv("DATABASE_URL")
         )
         if not self.db_url:
             raise RuntimeError(
-                "No database URL found. Set IC_BACKTEST_DATABASE_URL, "
-                "ORAT_DATABASE_URL, or DATABASE_URL in .env"
+                "No database URL found. Set DATABASE_URL in .env "
+                "or as an environment variable (auto-set on Render)."
             )
 
     def get_conn(self):
