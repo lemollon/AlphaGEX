@@ -915,6 +915,8 @@ class MonthlyICBacktester:
 
         for exp_info in expirations:
             exp_date = exp_info['expiration_date']
+            if exp_date is None:
+                continue
             exp_str = exp_date.strftime('%Y-%m-%d') if isinstance(exp_date, date) else str(exp_date)
 
             # Skip if already processed this expiration
