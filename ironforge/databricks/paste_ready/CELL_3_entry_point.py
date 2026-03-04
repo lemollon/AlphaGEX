@@ -1,4 +1,3 @@
-# Cell 3: Run the scanner
 
 # Reset sandbox cache so new keys/account IDs are picked up
 _sandbox_accounts = None

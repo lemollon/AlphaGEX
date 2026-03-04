@@ -1511,6 +1511,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         return "skip:no_paper_account"
 
     acct = account_rows[0]
+    paper_acct_id = acct["id"]  # save BEFORE sandbox loop overwrites 'acct'
     buying_power = num(acct["buying_power"])
     if buying_power < 200:
         return f"skip:low_bp(${buying_power:.0f})"
@@ -1708,13 +1709,12 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         )
     """)
 
-    acct_id = acct["id"]
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'paper_account')}
         SET collateral_in_use = collateral_in_use + {total_collateral},
             buying_power = buying_power - {total_collateral},
             updated_at = CURRENT_TIMESTAMP()
-        WHERE id = {acct_id}
+        WHERE id = {paper_acct_id}
     """)
 
     db_execute(f"""
@@ -1769,7 +1769,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     updated_acct = db_query(f"""
         SELECT current_balance, cumulative_pnl
         FROM {bot_table(bot['name'], 'paper_account')}
-        WHERE id = {acct_id}
+        WHERE id = {paper_acct_id}
     """)
     bal = num(updated_acct[0]["current_balance"]) if updated_acct else 0
     cum_pnl = num(updated_acct[0]["cumulative_pnl"]) if updated_acct else 0
