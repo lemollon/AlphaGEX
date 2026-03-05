@@ -412,15 +412,43 @@ class PaperExecutor:
         """
         Close a paper position and update P&L.
 
+        Mirrors the close to Tradier sandbox accounts first, then reads back
+        the actual fill price so the paper P&L matches Tradier exactly.
+
         P&L = (credit received - debit to close) * 100 * contracts
         """
         try:
-            pnl_per_contract = (position.total_credit - close_price) * 100
+            # Mirror close to Tradier sandbox accounts FIRST so we can read
+            # back the actual fill price before committing paper P&L.
+            sandbox_close_orders = {}
+            actual_close_price = None
+            if self.sandbox_clients:
+                sandbox_close_orders = self._mirror_close_to_all_sandboxes(
+                    position, close_price
+                )
+                if sandbox_close_orders:
+                    actual_close_price = self._get_first_fill_price(
+                        sandbox_close_orders
+                    )
+
+            # Use Tradier's actual fill if available, otherwise fall back to
+            # the paper MTM estimate.
+            effective_close = close_price
+            if actual_close_price is not None and actual_close_price > 0:
+                logger.info(
+                    f"{self.config.bot_name}: Actual sandbox close fill="
+                    f"${actual_close_price:.4f} "
+                    f"(estimated=${close_price:.4f}, "
+                    f"diff={actual_close_price - close_price:+.4f})"
+                )
+                effective_close = actual_close_price
+
+            pnl_per_contract = (position.total_credit - effective_close) * 100
             realized_pnl = round(pnl_per_contract * position.contracts, 2)
 
             if not self.db.close_position(
                 position_id=position.position_id,
-                close_price=close_price,
+                close_price=effective_close,
                 realized_pnl=realized_pnl,
                 close_reason=reason,
             ):
@@ -439,7 +467,7 @@ class PaperExecutor:
             self.db.update_pdt_close(
                 position_id=position.position_id,
                 closed_at=now,
-                exit_cost=close_price,
+                exit_cost=effective_close,
                 pnl=realized_pnl,
                 close_reason=reason,
             )
@@ -452,11 +480,9 @@ class PaperExecutor:
                 note=f"Closed {position.position_id}: {reason}",
             )
 
-            # Mirror close to all Tradier sandbox accounts
-            sandbox_close_orders = {}
-            if self.sandbox_clients:
-                sandbox_close_orders = self._mirror_close_to_all_sandboxes(
-                    position, close_price
+            if sandbox_close_orders:
+                self.db.update_sandbox_close_order_id(
+                    position.position_id, json.dumps(sandbox_close_orders)
                 )
 
             sandbox_summary = (
@@ -464,20 +490,27 @@ class PaperExecutor:
                 if sandbox_close_orders
                 else ""
             )
+            fill_note = (
+                f" (actual fill=${actual_close_price:.4f})"
+                if actual_close_price and actual_close_price != close_price
+                else ""
+            )
             logger.info(
                 f"{self.config.bot_name} PAPER CLOSE: "
-                f"{position.position_id} @ ${close_price:.4f} "
-                f"P&L=${realized_pnl:.2f} [{reason}]"
+                f"{position.position_id} @ ${effective_close:.4f} "
+                f"P&L=${realized_pnl:.2f} [{reason}]{fill_note}"
                 f"{sandbox_summary}"
             )
 
             self.db.log(
                 "TRADE_CLOSE",
                 f"Closed {position.position_id}: ${realized_pnl:.2f} [{reason}]"
-                f"{sandbox_summary}",
+                f"{fill_note}{sandbox_summary}",
                 {
                     "position_id": position.position_id,
-                    "close_price": close_price,
+                    "close_price_estimated": close_price,
+                    "close_price_actual": actual_close_price,
+                    "close_price": effective_close,
                     "realized_pnl": realized_pnl,
                     "close_reason": reason,
                     "entry_credit": position.total_credit,

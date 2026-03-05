@@ -359,6 +359,21 @@ class TradingDatabase:
             logger.warning(f"{self.bot_name}: Failed to store sandbox order ID: {e}")
             return False
 
+    def update_sandbox_close_order_id(self, position_id: str, sandbox_close_order_id: str) -> bool:
+        """Store the Tradier sandbox close order IDs on a position."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    UPDATE {self._t('positions')}
+                    SET sandbox_close_order_id = %s, updated_at = NOW()
+                    WHERE position_id = %s AND dte_mode = %s
+                """, [sandbox_close_order_id, position_id, self.dte_mode])
+                return True
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Failed to store sandbox close order ID: {e}")
+            return False
+
     def expire_position(self, position_id: str, realized_pnl: float,
                         close_price: float = None) -> bool:
         try:
