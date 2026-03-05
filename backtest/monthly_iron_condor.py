@@ -93,7 +93,7 @@ class MonthlyICConfig:
 
     # ── Collateral / Capital Management ───────────────────────────────────
     max_capital_utilization: float = 80.0   # Max % of equity deployable as margin
-    max_concurrent_positions: int = 0       # 0 = no hard cap (capital is the limit)
+    max_concurrent_positions: int = 2       # Max simultaneous open positions (0 = unlimited)
     dynamic_sizing: bool = True             # Size contracts based on available buying power
     max_risk_per_trade_pct: float = 25.0    # Max % of equity at risk in any single trade
 
@@ -103,8 +103,15 @@ class MonthlyICConfig:
 
     # ── Filters ───────────────────────────────────────────────────────────
     min_credit: float = 0.50          # Minimum total IC credit to enter ($)
-    max_vix: float = 50.0             # Skip entry if VIX above this
+    max_vix: float = 25.0             # Skip entry if VIX above this
+    min_vix: float = 13.0             # Skip entry if VIX below this (premium too thin)
+    vix_tighten_sl_above: float = 25.0  # Tighter SL for existing positions when VIX > this
+    vix_tighten_sl_pct: float = 150.0   # Tighter SL % when VIX is elevated
     skip_fomc_week: bool = False      # Skip entries during FOMC week (not implemented)
+
+    # ── Stop-loss gap handling ────────────────────────────────────────────
+    sl_gap_cap: bool = True           # Cap SL exit debit at intended level + gap slippage
+    sl_gap_slippage_pct: float = 10.0 # Extra % beyond SL allowed for gap (10% → 220% on 200% SL)
 
     # ── DTE mode ──────────────────────────────────────────────────────────
     dte_mode: str = "monthly"         # "monthly" (30-45 DTE) or "short" (0-3 DTE)
@@ -216,22 +223,34 @@ class BacktestDB:
     def __init__(self):
         self.orat_url = os.getenv("ORAT_DATABASE_URL") or self.DEFAULT_ORAT_URL
         self.main_url = os.getenv("DATABASE_URL") or self.DEFAULT_MAIN_URL
+        self._orat_conn = None
+        self._main_conn = None
 
     def get_orat_conn(self):
-        """Return a read-only connection to the ORAT options database."""
-        conn = psycopg2.connect(self.orat_url, connect_timeout=30)
-        conn.set_session(readonly=True)
-        return conn
+        """Return a persistent read-only connection to the ORAT options database."""
+        if self._orat_conn is None or self._orat_conn.closed:
+            self._orat_conn = psycopg2.connect(self.orat_url, connect_timeout=30)
+            self._orat_conn.set_session(readonly=True, autocommit=True)
+        return self._orat_conn
 
     def get_main_conn(self):
-        """Return a read-only connection to the main AlphaGEX database."""
-        conn = psycopg2.connect(self.main_url, connect_timeout=30)
-        conn.set_session(readonly=True)
-        return conn
+        """Return a persistent read-only connection to the main AlphaGEX database."""
+        if self._main_conn is None or self._main_conn.closed:
+            self._main_conn = psycopg2.connect(self.main_url, connect_timeout=30)
+            self._main_conn.set_session(readonly=True, autocommit=True)
+        return self._main_conn
 
     def get_conn(self):
         """Return main DB connection (backward compat for audit)."""
         return self.get_main_conn()
+
+    def close(self):
+        """Close persistent connections."""
+        for conn in (self._orat_conn, self._main_conn):
+            if conn and not conn.closed:
+                conn.close()
+        self._orat_conn = None
+        self._main_conn = None
 
     # ── Schema discovery (Phase 1) ────────────────────────────────────────
 
@@ -245,7 +264,6 @@ class BacktestDB:
                 ORDER BY n_live_tup DESC;
             """)
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return rows
 
     def audit_columns(self, table_name: str, use_orat: bool = False) -> List[Dict]:
@@ -259,7 +277,6 @@ class BacktestDB:
                 ORDER BY ordinal_position;
             """, (table_name,))
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return rows
 
     def audit_orat_data(self) -> Dict:
@@ -332,7 +349,6 @@ class BacktestDB:
             """)
             result['sample_monthly'] = [dict(r) for r in cur.fetchall()]
 
-        conn.close()
         return result
 
     def audit_gex_data(self) -> Dict:
@@ -352,7 +368,6 @@ class BacktestDB:
                 except Exception:
                     conn.rollback()
                     result[table] = "TABLE NOT FOUND"
-        conn.close()
         return result
 
     def audit_price_data(self) -> Dict:
@@ -375,9 +390,7 @@ class BacktestDB:
                 conn.rollback()
                 result['gex_structure_daily'] = "NOT AVAILABLE"
 
-        conn.close()
-
-        # Check orat DB for underlying_price (separate connection)
+        # Check orat DB for underlying_price
         try:
             orat_conn = self.get_orat_conn()
             with orat_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur2:
@@ -390,7 +403,6 @@ class BacktestDB:
                       AND underlying_price IS NOT NULL;
                 """)
                 result['orat_underlying'] = dict(cur2.fetchone())
-            orat_conn.close()
         except Exception as e:
             result['orat_underlying'] = f"NOT AVAILABLE ({e})"
 
@@ -422,7 +434,6 @@ class BacktestDB:
                 ORDER BY expiration_date;
             """, (tickers, start_date, end_date))
             expirations = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return expirations
 
     def get_short_dte_entries(
@@ -452,7 +463,6 @@ class BacktestDB:
                 ORDER BY trade_date;
             """, (tickers, start_date, end_date, target_dte))
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
 
         # Deduplicate: one entry per trade_date (pick the first expiration if multiple)
         seen_dates = set()
@@ -490,8 +500,6 @@ class BacktestDB:
             """, (tickers, trade_date, expiration_date))
             rows = [dict(r) for r in cur.fetchall()]
 
-        conn.close()
-
         # Convert Decimal to float
         for row in rows:
             for key in row:
@@ -521,8 +529,6 @@ class BacktestDB:
                 ORDER BY dte;
             """, (tickers, trade_date, dte_min, dte_max))
             rows = [dict(r) for r in cur.fetchall()]
-
-        conn.close()
         return rows
 
     def get_trading_days(self, ticker: str, start_date: str, end_date: str) -> List[str]:
@@ -542,7 +548,6 @@ class BacktestDB:
             """, (tickers, start_date, end_date))
             days = [row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
                     for row in cur.fetchall()]
-        conn.close()
         return days
 
     def get_underlying_price(self, ticker: str, trade_date: str) -> Optional[float]:
@@ -561,28 +566,94 @@ class BacktestDB:
                 LIMIT 1;
             """, (tickers, trade_date))
             row = cur.fetchone()
-        conn.close()
         return float(row[0]) if row else None
 
     def get_vix_for_date(self, trade_date: str) -> Optional[float]:
-        """Try to get VIX value from GEX structure or other tables."""
-        conn = self.get_main_conn()
-        vix = None
-        with conn.cursor() as cur:
-            # Try gex_structure_daily first (might have VIX-like data)
-            try:
+        """Get VIX closing value for a given date (single-date fallback).
+
+        Prefer load_vix_cache() for bulk loading. This is only used if cache misses.
+        """
+        # Source 1: ORAT DB
+        try:
+            conn = self.get_orat_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT underlying_price
+                    FROM orat_options_eod
+                    WHERE ticker IN ('^VIX', 'VIX')
+                      AND trade_date = %s
+                      AND underlying_price IS NOT NULL
+                    LIMIT 1;
+                """, (trade_date,))
+                row = cur.fetchone()
+            if row:
+                return float(row[0])
+        except Exception:
+            pass
+
+        # Source 2: Main DB gex_structure_daily
+        try:
+            conn = self.get_main_conn()
+            with conn.cursor() as cur:
                 cur.execute("""
                     SELECT spot_close
                     FROM gex_structure_daily
                     WHERE symbol = 'VIX' AND trade_date = %s
                     LIMIT 1;
-                """)
-            except Exception:
-                conn.rollback()
+                """, (trade_date,))
+                row = cur.fetchone()
+            if row and row[0]:
+                return float(row[0])
+        except Exception:
+            pass
 
-            # If not available, return None (caller should use yfinance or default)
-        conn.close()
-        return vix
+        return None
+
+    def load_vix_cache(self, start_date: str, end_date: str) -> Dict[str, float]:
+        """Bulk-load all VIX values for the date range into a dict.
+
+        Returns {date_str: vix_value}. Single query instead of per-day lookups.
+        """
+        cache = {}
+
+        # Source 1: ORAT DB — try to get VIX underlying_price
+        try:
+            conn = self.get_orat_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT trade_date, underlying_price
+                    FROM orat_options_eod
+                    WHERE ticker IN ('^VIX', 'VIX')
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND underlying_price IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
+                    cache[d] = float(row[1])
+        except Exception:
+            pass
+
+        # Source 2: Fill gaps from gex_structure_daily
+        try:
+            conn = self.get_main_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT trade_date, spot_close
+                    FROM gex_structure_daily
+                    WHERE symbol = 'VIX'
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND spot_close IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
+                    if d not in cache:  # Don't overwrite ORAT data
+                        cache[d] = float(row[1])
+        except Exception:
+            pass
+
+        return cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -929,6 +1000,7 @@ class MonthlyICBacktester:
         self.open_positions: List[ICTrade] = []  # Positions not yet closed
         self.margin_deployed: float = 0.0
         self.trades_skipped_no_capital: int = 0
+        self.trades_skipped_vix: int = 0
         self.peak_concurrent_positions: int = 0
         self.peak_margin_deployed: float = 0.0
 
@@ -1020,9 +1092,17 @@ class MonthlyICBacktester:
         logger.info(f"Short delta:     {self.config.short_delta}")
         logger.info(f"Wing width:      ${self.config.wing_width}")
         logger.info(f"Profit target:   {self.config.profit_target_pct}% of credit")
-        logger.info(f"Stop loss:       {self.config.stop_loss_pct}% of credit")
+        logger.info(f"Stop loss:       {self.config.stop_loss_pct}% of credit (gap-capped: {self.config.sl_gap_cap})")
+        logger.info(f"VIX filter:      {self.config.min_vix}–{self.config.max_vix} (tighter SL >{self.config.vix_tighten_sl_above}: {self.config.vix_tighten_sl_pct}%)")
+        logger.info(f"Max positions:   {self.config.max_concurrent_positions if self.config.max_concurrent_positions > 0 else 'unlimited'}")
         logger.info(f"DTE exit:        {self.config.dte_exit} DTE")
         logger.info("=" * 80)
+
+        # Step 0: Bulk-load VIX data (one query instead of per-day lookups)
+        self.vix_cache = self.db.load_vix_cache(
+            self.config.start_date, self.config.end_date
+        )
+        logger.info(f"Loaded {len(self.vix_cache)} VIX values into cache")
 
         # Step 1: Get all trading days
         all_trading_days = self.db.get_trading_days(
@@ -1065,6 +1145,9 @@ class MonthlyICBacktester:
         # Step 4: Calculate and return results
         results = self._calculate_results()
         self._print_results(results)
+
+        # Cleanup persistent DB connections
+        self.db.close()
 
         return results
 
@@ -1126,7 +1209,19 @@ class MonthlyICBacktester:
         self, entry_date: str, expiration_date: str,
         all_trading_days: List[str]
     ) -> Optional[ICTrade]:
-        """Execute a single IC cycle with collateral enforcement."""
+        """Execute a single IC cycle with collateral enforcement and VIX filter."""
+
+        # ── VIX filter ───────────────────────────────────────────────────
+        vix = self.vix_cache.get(entry_date)
+        if vix is not None:
+            if vix > self.config.max_vix:
+                self.trades_skipped_vix += 1
+                logger.debug(f"  SKIPPED {entry_date}: VIX {vix:.1f} > {self.config.max_vix} (too high)")
+                return None
+            if vix < self.config.min_vix:
+                self.trades_skipped_vix += 1
+                logger.debug(f"  SKIPPED {entry_date}: VIX {vix:.1f} < {self.config.min_vix} (premium too thin)")
+                return None
 
         # ── Entry ─────────────────────────────────────────────────────────
         chain = self.db.get_options_chain(
@@ -1182,6 +1277,7 @@ class MonthlyICBacktester:
             expiration_date=expiration_date,
             dte_at_entry=dte,
             underlying_at_entry=underlying,
+            vix_at_entry=vix or 0.0,
             put_short_strike=strikes['put_short']['strike'],
             put_long_strike=strikes['put_long']['strike'],
             put_credit=put_credit,
@@ -1202,9 +1298,8 @@ class MonthlyICBacktester:
         )
 
         # ── Daily monitoring ──────────────────────────────────────────────
-        if self.config.hold_to_expiration:
-            # Skip daily monitoring, go straight to settlement
-            return self._settle_at_expiration(trade, all_trading_days)
+        # Even for hold_to_expiration (0DTE), we still check stop-loss.
+        # Without this, 0DTE trades go straight to settlement and SL never fires.
 
         # Find trading days between entry and expiration
         monitoring_days = [
@@ -1217,7 +1312,7 @@ class MonthlyICBacktester:
             current_dte = (exp_dt - monitor_dt).days
 
             # DTE exit check (before we fetch chain to save queries)
-            if current_dte <= self.config.dte_exit and not self.config.hold_to_expiration:
+            if not self.config.hold_to_expiration and current_dte <= self.config.dte_exit:
                 # Try to get current prices for a clean exit
                 monitor_chain = self.db.get_options_chain(
                     self.config.ticker, monitor_date, expiration_date
@@ -1233,7 +1328,31 @@ class MonthlyICBacktester:
                     debit = calculate_settlement_value(trade, price)
                     return self._close_trade(trade, monitor_date, debit, "DTE_EXIT", current_dte)
 
-            # Fetch chain for profit/loss monitoring
+            # ── Determine effective stop-loss % (VIX-adaptive) ────────
+            effective_sl_pct = self.config.stop_loss_pct
+            vix_today = self.vix_cache.get(monitor_date)
+            if vix_today and vix_today > self.config.vix_tighten_sl_above:
+                effective_sl_pct = self.config.vix_tighten_sl_pct  # Tighter SL in high-VIX
+
+            # ── First check: intrinsic-value SL (catches overnight gaps) ──
+            # Before fetching the full chain (expensive), check if the
+            # underlying price alone already breaches the stop. This is
+            # equivalent to "check at market open" — if SPX gapped through
+            # the short strike overnight, intrinsic value reveals it.
+            price = self.db.get_underlying_price(self.config.ticker, monitor_date)
+            if price:
+                intrinsic_debit = calculate_settlement_value(trade, price)
+                sl_debit_threshold = trade.total_credit * (1 + effective_sl_pct / 100)
+                if intrinsic_debit >= sl_debit_threshold:
+                    # Gap detected — cap exit at intended SL level + slippage
+                    if self.config.sl_gap_cap:
+                        gap_slippage = 1 + self.config.sl_gap_slippage_pct / 100
+                        capped_debit = min(intrinsic_debit, sl_debit_threshold * gap_slippage)
+                    else:
+                        capped_debit = intrinsic_debit
+                    return self._close_trade(trade, monitor_date, capped_debit, "STOP_LOSS", current_dte)
+
+            # ── Second check: mid-price based PT/SL (normal intraday) ──
             monitor_chain = self.db.get_options_chain(
                 self.config.ticker, monitor_date, expiration_date
             )
@@ -1250,9 +1369,15 @@ class MonthlyICBacktester:
                 return self._close_trade(trade, monitor_date, debit, "PROFIT_TARGET", current_dte)
 
             # Stop loss: close when loss exceeds X% of credit
-            loss_threshold = trade.total_credit * (self.config.stop_loss_pct / 100)
-            if debit >= trade.total_credit + loss_threshold:
-                return self._close_trade(trade, monitor_date, debit, "STOP_LOSS", current_dte)
+            sl_debit_threshold = trade.total_credit * (1 + effective_sl_pct / 100)
+            if debit >= sl_debit_threshold:
+                # Cap the exit debit if gap blew past the SL level
+                if self.config.sl_gap_cap:
+                    gap_slippage = 1 + self.config.sl_gap_slippage_pct / 100
+                    capped_debit = min(debit, sl_debit_threshold * gap_slippage)
+                else:
+                    capped_debit = debit
+                return self._close_trade(trade, monitor_date, capped_debit, "STOP_LOSS", current_dte)
 
         # ── Expiration settlement ─────────────────────────────────────────
         return self._settle_at_expiration(trade, all_trading_days)
@@ -1483,6 +1608,10 @@ class MonthlyICBacktester:
                 'contracts': self.config.contracts,
                 'hold_to_expiration': self.config.hold_to_expiration,
                 'max_capital_utilization': self.config.max_capital_utilization,
+                'max_vix': self.config.max_vix,
+                'min_vix': self.config.min_vix,
+                'sl_gap_cap': self.config.sl_gap_cap,
+                'max_concurrent_positions': self.config.max_concurrent_positions,
                 'dte_mode': self.config.dte_mode,
                 'short_dte_target': self.config.short_dte_target,
             },
@@ -1518,6 +1647,7 @@ class MonthlyICBacktester:
             'collateral': {
                 'max_capital_utilization_pct': self.config.max_capital_utilization,
                 'trades_skipped_no_capital': self.trades_skipped_no_capital,
+                'trades_skipped_vix': self.trades_skipped_vix,
                 'peak_concurrent_positions': self.peak_concurrent_positions,
                 'peak_margin_deployed': round(self.peak_margin_deployed, 2),
                 'peak_margin_pct_of_capital': round(
@@ -1527,6 +1657,7 @@ class MonthlyICBacktester:
                     sum(t.contracts for t in trades) / n, 2
                 ) if n > 0 else 0,
                 'dynamic_sizing': self.config.dynamic_sizing,
+                'max_concurrent_positions': self.config.max_concurrent_positions,
             },
             'exit_reasons': exit_reasons,
             'monthly_returns': {k: round(v, 2) for k, v in sorted(monthly_returns.items())},
@@ -1560,6 +1691,9 @@ class MonthlyICBacktester:
         print(f"  DTE Mode:            {dte_label}")
         print(f"  Strategy:            {c['short_delta']:.0%} delta IC, ${c['wing_width']:.0f} wings")
         print(f"  Exit rules:          {c['profit_target_pct']}% profit / {c['stop_loss_pct']}% stop / {c['dte_exit']} DTE")
+        print(f"  VIX filter:          {c.get('min_vix', 0)}–{c.get('max_vix', 999)}")
+        print(f"  SL gap cap:          {'ON' if c.get('sl_gap_cap', True) else 'OFF'}")
+        print(f"  Max positions:       {c.get('max_concurrent_positions', 0) or 'unlimited'}")
         print(f"  Collateral:          {c.get('max_capital_utilization', 80)}% max utilization")
 
         print(f"\n  {'─' * 60}")
@@ -1599,7 +1733,9 @@ class MonthlyICBacktester:
             print(f"  COLLATERAL MANAGEMENT")
             print(f"  {'─' * 60}")
             print(f"  Max Utilization:     {col.get('max_capital_utilization_pct', 0):>8.0f}%")
-            print(f"  Trades Skipped:      {col.get('trades_skipped_no_capital', 0):>8} (insufficient capital)")
+            print(f"  Skipped (capital):   {col.get('trades_skipped_no_capital', 0):>8}")
+            print(f"  Skipped (VIX):       {col.get('trades_skipped_vix', 0):>8}")
+            print(f"  Max Positions Cap:   {col.get('max_concurrent_positions', 0):>8}")
             print(f"  Peak Concurrent:     {col.get('peak_concurrent_positions', 0):>8} positions")
             print(f"  Peak Margin:         ${col.get('peak_margin_deployed', 0):>10,.2f}")
             print(f"  Peak Margin %:       {col.get('peak_margin_pct_of_capital', 0):>8.1f}% of capital")
@@ -1742,7 +1878,6 @@ def run_data_audit():
                     ORDER BY n_live_tup DESC LIMIT 30;
                 """)
                 orat_tables = [dict(r) for r in cur.fetchall()]
-            orat_conn.close()
             for t in orat_tables:
                 print(f"    {t['table_name']:50s} {t['row_count']:>12,} rows")
             print(f"  Total shown: {len(orat_tables)} tables")
@@ -1887,8 +2022,22 @@ Examples:
                         help='Dynamically size contracts based on available capital (default: on)')
     parser.add_argument('--no-dynamic-sizing', action='store_true',
                         help='Use fixed contract count (--contracts)')
-    parser.add_argument('--max-positions', type=int, default=0,
-                        help='Max concurrent positions, 0=unlimited (default: 0)')
+    parser.add_argument('--max-positions', type=int, default=2,
+                        help='Max concurrent positions, 0=unlimited (default: 2)')
+
+    # VIX filters
+    parser.add_argument('--max-vix', type=float, default=25.0,
+                        help='Skip entry when VIX above this (default: 25)')
+    parser.add_argument('--min-vix', type=float, default=13.0,
+                        help='Skip entry when VIX below this (default: 13)')
+    parser.add_argument('--no-vix-filter', action='store_true',
+                        help='Disable VIX entry filter')
+
+    # Stop-loss gap handling
+    parser.add_argument('--no-sl-gap-cap', action='store_true',
+                        help='Disable SL gap capping (use raw gapped price)')
+    parser.add_argument('--sl-gap-slippage', type=float, default=10.0,
+                        help='Extra %% slippage on gap SL exits (default: 10)')
 
     # DTE mode
     parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short'],
@@ -1940,6 +2089,10 @@ Examples:
         max_risk_per_trade_pct=args.max_risk_per_trade,
         dynamic_sizing=is_dynamic,
         max_concurrent_positions=args.max_positions,
+        max_vix=args.max_vix if not args.no_vix_filter else 999.0,
+        min_vix=args.min_vix if not args.no_vix_filter else 0.0,
+        sl_gap_cap=not args.no_sl_gap_cap,
+        sl_gap_slippage_pct=args.sl_gap_slippage,
         dte_mode=dte_mode,
         short_dte_target=short_dte,
     )
