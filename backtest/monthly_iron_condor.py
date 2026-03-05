@@ -88,8 +88,14 @@ class MonthlyICConfig:
     hold_to_expiration: bool = False  # If True, ignore profit/stop and hold to exp
 
     # ── Position sizing ───────────────────────────────────────────────────
-    contracts: int = 1                # Fixed lot size
+    contracts: int = 1                # Fixed lot size (ignored if dynamic_sizing=True)
     initial_capital: float = 100_000  # Starting capital (for return calculations)
+
+    # ── Collateral / Capital Management ───────────────────────────────────
+    max_capital_utilization: float = 80.0   # Max % of equity deployable as margin
+    max_concurrent_positions: int = 0       # 0 = no hard cap (capital is the limit)
+    dynamic_sizing: bool = True             # Size contracts based on available buying power
+    max_risk_per_trade_pct: float = 25.0    # Max % of equity at risk in any single trade
 
     # ── Transaction costs ─────────────────────────────────────────────────
     commission_per_contract: float = 1.30  # Per contract per leg (round-trip)
@@ -99,6 +105,10 @@ class MonthlyICConfig:
     min_credit: float = 0.50          # Minimum total IC credit to enter ($)
     max_vix: float = 50.0             # Skip entry if VIX above this
     skip_fomc_week: bool = False      # Skip entries during FOMC week (not implemented)
+
+    # ── DTE mode ──────────────────────────────────────────────────────────
+    dte_mode: str = "monthly"         # "monthly" (30-45 DTE) or "short" (0-3 DTE)
+    short_dte_target: int = 0         # For short mode: 0, 1, 2, or 3 DTE
 
     @property
     def wing_width(self) -> float:
@@ -414,6 +424,45 @@ class BacktestDB:
             expirations = [dict(r) for r in cur.fetchall()]
         conn.close()
         return expirations
+
+    def get_short_dte_entries(
+        self, ticker: str, start_date: str, end_date: str, target_dte: int
+    ) -> List[Dict]:
+        """Find all (trade_date, expiration_date) pairs for short-DTE IC trading.
+
+        For 0DTE: trade_date == expiration_date
+        For 1DTE: expiration_date = trade_date + 1 trading day
+        For 2DTE/3DTE: similar pattern
+
+        Returns list of {trade_date, expiration_date, dte}.
+        """
+        conn = self.get_orat_conn()
+        tickers = [ticker]
+        if ticker.upper() == "SPX":
+            tickers = ["SPX", "SPXW"]
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date, expiration_date, dte
+                FROM orat_options_eod
+                WHERE ticker = ANY(%s)
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                  AND dte = %s
+                ORDER BY trade_date;
+            """, (tickers, start_date, end_date, target_dte))
+            rows = [dict(r) for r in cur.fetchall()]
+        conn.close()
+
+        # Deduplicate: one entry per trade_date (pick the first expiration if multiple)
+        seen_dates = set()
+        unique = []
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            if td not in seen_dates:
+                seen_dates.add(td)
+                unique.append(r)
+        return unique
 
     def get_options_chain(
         self, ticker: str, trade_date: str, expiration_date: str
@@ -876,90 +925,141 @@ class MonthlyICBacktester:
         self.high_water_mark = config.initial_capital
         self.cumulative_pnl = 0.0
 
+        # Collateral tracking
+        self.open_positions: List[ICTrade] = []  # Positions not yet closed
+        self.margin_deployed: float = 0.0
+        self.trades_skipped_no_capital: int = 0
+        self.peak_concurrent_positions: int = 0
+        self.peak_margin_deployed: float = 0.0
+
+    def _available_buying_power(self) -> float:
+        """Return capital available for new positions."""
+        max_deployable = self.equity * (self.config.max_capital_utilization / 100.0)
+        return max(0, max_deployable - self.margin_deployed)
+
+    def _close_expired_before(self, current_date: str, all_trading_days: List[str]):
+        """Close any open positions whose exit would have occurred before current_date.
+
+        For monthly ICs, positions opened in earlier cycles may have closed by now
+        (profit target, stop loss, DTE exit, or expiration). We must process them
+        to free up margin before evaluating new entries.
+        """
+        still_open = []
+        for pos in self.open_positions:
+            if pos.exit_date and pos.exit_date <= current_date:
+                # Already closed — margin is freed
+                self.margin_deployed -= pos.margin_required
+            else:
+                still_open.append(pos)
+        self.open_positions = still_open
+
+    def _calculate_contracts_for_trade(self, wing_width: float, total_credit: float) -> int:
+        """Determine how many contracts we can afford given available capital.
+
+        Returns 0 if we can't afford even 1 contract.
+        """
+        margin_per_contract = wing_width * 100  # Reg-T for IC
+        max_loss_per_contract = (wing_width - total_credit) * 100
+
+        available = self._available_buying_power()
+
+        # Check position count cap
+        if self.config.max_concurrent_positions > 0:
+            if len(self.open_positions) >= self.config.max_concurrent_positions:
+                return 0
+
+        if self.config.dynamic_sizing:
+            # How many contracts can we afford from buying power?
+            max_by_margin = int(available / margin_per_contract) if margin_per_contract > 0 else 0
+
+            # How many contracts stay within per-trade risk limit?
+            max_risk_dollars = self.equity * (self.config.max_risk_per_trade_pct / 100.0)
+            max_by_risk = int(max_risk_dollars / max_loss_per_contract) if max_loss_per_contract > 0 else 0
+
+            contracts = min(max_by_margin, max_by_risk)
+            return max(0, contracts)
+        else:
+            # Fixed sizing — check if we can afford the configured number
+            needed_margin = margin_per_contract * self.config.contracts
+            needed_risk = max_loss_per_contract * self.config.contracts
+            max_risk_dollars = self.equity * (self.config.max_risk_per_trade_pct / 100.0)
+
+            if needed_margin > available:
+                return 0
+            if needed_risk > max_risk_dollars:
+                return 0
+            return self.config.contracts
+
+    def _register_open_position(self, trade: ICTrade):
+        """Track a newly opened position for collateral purposes."""
+        self.open_positions.append(trade)
+        self.margin_deployed += trade.margin_required
+        self.peak_concurrent_positions = max(self.peak_concurrent_positions, len(self.open_positions))
+        self.peak_margin_deployed = max(self.peak_margin_deployed, self.margin_deployed)
+
+    def _release_position_margin(self, trade: ICTrade):
+        """Release margin when a position closes."""
+        self.margin_deployed = max(0, self.margin_deployed - trade.margin_required)
+        self.open_positions = [p for p in self.open_positions if p.trade_id != trade.trade_id]
+
     def run(self) -> Dict:
         """Execute the full backtest."""
+        dte_label = f"{self.config.short_dte_target}DTE" if self.config.dte_mode == "short" else "Monthly (30-45 DTE)"
+        sizing_label = "DYNAMIC" if self.config.dynamic_sizing else f"FIXED ({self.config.contracts} contracts)"
+
         logger.info("=" * 80)
-        logger.info("MONTHLY IRON CONDOR BACKTESTER")
+        logger.info("IRON CONDOR BACKTESTER")
         logger.info("=" * 80)
         logger.info(f"Ticker:          {self.config.ticker}")
         logger.info(f"Period:          {self.config.start_date} → {self.config.end_date}")
+        logger.info(f"DTE mode:        {dte_label}")
         logger.info(f"Capital:         ${self.config.initial_capital:,.0f}")
+        logger.info(f"Collateral:      ENFORCED ({self.config.max_capital_utilization}% max utilization)")
+        logger.info(f"Sizing:          {sizing_label}")
+        logger.info(f"Max risk/trade:  {self.config.max_risk_per_trade_pct}% of equity")
         logger.info(f"Short delta:     {self.config.short_delta}")
         logger.info(f"Wing width:      ${self.config.wing_width}")
         logger.info(f"Profit target:   {self.config.profit_target_pct}% of credit")
         logger.info(f"Stop loss:       {self.config.stop_loss_pct}% of credit")
         logger.info(f"DTE exit:        {self.config.dte_exit} DTE")
-        logger.info(f"Contracts:       {self.config.contracts}")
         logger.info("=" * 80)
 
-        # Step 1: Find all monthly expiration cycles
-        expirations = self.db.get_monthly_expirations(
-            self.config.ticker, self.config.start_date, self.config.end_date
-        )
-        logger.info(f"Found {len(expirations)} potential expiration cycles")
-
-        if not expirations:
-            logger.error("No expirations found. Check ticker and date range.")
-            return {}
-
-        # Step 2: Get all trading days
+        # Step 1: Get all trading days
         all_trading_days = self.db.get_trading_days(
             self.config.ticker, self.config.start_date, self.config.end_date
         )
         logger.info(f"Found {len(all_trading_days)} trading days with data")
 
-        trading_days_set = set(all_trading_days)
+        if not all_trading_days:
+            logger.error("No trading days found. Check ticker and date range.")
+            return {}
 
-        # Step 3: Process each expiration cycle
-        processed_expirations = set()
+        # Step 2: Build entry list based on DTE mode
+        if self.config.dte_mode == "short":
+            entries = self._build_short_dte_entries(all_trading_days)
+        else:
+            entries = self._build_monthly_entries(all_trading_days)
 
-        for exp_info in expirations:
-            exp_date = exp_info['expiration_date']
-            if exp_date is None:
-                continue
-            exp_str = exp_date.strftime('%Y-%m-%d') if isinstance(exp_date, date) else str(exp_date)
+        logger.info(f"Found {len(entries)} potential entry opportunities")
+        if not entries:
+            logger.error("No entry opportunities found.")
+            return {}
 
-            # Skip if already processed this expiration
-            if exp_str in processed_expirations:
-                continue
-            processed_expirations.add(exp_str)
+        # Step 3: Process each entry with collateral enforcement
+        for entry_date, exp_str in entries:
+            # Release margin from positions that closed before this entry
+            self._close_expired_before(entry_date, all_trading_days)
 
-            # Find entry date: first trading day where DTE is in target range
-            exp_dt = datetime.strptime(exp_str, '%Y-%m-%d')
-            ideal_entry_dt = exp_dt - timedelta(days=self.config.target_dte_ideal)
-
-            # Search for best entry date near ideal
-            best_entry = None
-            best_distance = 999
-
-            for day_offset in range(-10, 11):
-                candidate_dt = ideal_entry_dt + timedelta(days=day_offset)
-                candidate_str = candidate_dt.strftime('%Y-%m-%d')
-
-                if candidate_str not in trading_days_set:
-                    continue
-                if candidate_str < self.config.start_date:
-                    continue
-
-                dte = (exp_dt - candidate_dt).days
-                if self.config.target_dte_min <= dte <= self.config.target_dte_max:
-                    distance = abs(dte - self.config.target_dte_ideal)
-                    if distance < best_distance:
-                        best_distance = distance
-                        best_entry = candidate_str
-
-            if not best_entry:
-                continue
-
-            # Execute the trade cycle
-            trade = self._execute_cycle(best_entry, exp_str, all_trading_days)
+            # Execute the trade cycle (collateral check happens inside)
+            trade = self._execute_cycle_with_collateral(entry_date, exp_str, all_trading_days)
             if trade:
                 self.trades.append(trade)
+                self._register_open_position(trade)
                 logger.info(
                     f"  Trade #{trade.trade_id}: {trade.entry_date} → {trade.exit_date} | "
-                    f"Credit: ${trade.total_credit:.2f} | "
-                    f"P&L: ${trade.net_pnl:+,.2f} | "
-                    f"Exit: {trade.exit_reason}"
+                    f"{trade.contracts}x | Credit: ${trade.total_credit:.2f} | "
+                    f"P&L: ${trade.net_pnl:+,.2f} | Exit: {trade.exit_reason} | "
+                    f"Margin: ${self.margin_deployed:,.0f}/{self.equity * self.config.max_capital_utilization / 100:,.0f}"
                 )
 
         # Step 4: Calculate and return results
@@ -968,11 +1068,65 @@ class MonthlyICBacktester:
 
         return results
 
-    def _execute_cycle(
+    def _build_monthly_entries(self, all_trading_days: List[str]) -> List[Tuple[str, str]]:
+        """Build (entry_date, expiration_date) pairs for monthly IC strategy."""
+        expirations = self.db.get_monthly_expirations(
+            self.config.ticker, self.config.start_date, self.config.end_date
+        )
+        trading_days_set = set(all_trading_days)
+        entries = []
+        processed = set()
+
+        for exp_info in expirations:
+            exp_date = exp_info['expiration_date']
+            if exp_date is None:
+                continue
+            exp_str = exp_date.strftime('%Y-%m-%d') if isinstance(exp_date, date) else str(exp_date)
+            if exp_str in processed:
+                continue
+            processed.add(exp_str)
+
+            exp_dt = datetime.strptime(exp_str, '%Y-%m-%d')
+            ideal_entry_dt = exp_dt - timedelta(days=self.config.target_dte_ideal)
+
+            best_entry = None
+            best_distance = 999
+
+            for day_offset in range(-10, 11):
+                candidate_dt = ideal_entry_dt + timedelta(days=day_offset)
+                candidate_str = candidate_dt.strftime('%Y-%m-%d')
+                if candidate_str not in trading_days_set or candidate_str < self.config.start_date:
+                    continue
+                dte = (exp_dt - candidate_dt).days
+                if self.config.target_dte_min <= dte <= self.config.target_dte_max:
+                    distance = abs(dte - self.config.target_dte_ideal)
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_entry = candidate_str
+
+            if best_entry:
+                entries.append((best_entry, exp_str))
+
+        return entries
+
+    def _build_short_dte_entries(self, all_trading_days: List[str]) -> List[Tuple[str, str]]:
+        """Build (entry_date, expiration_date) pairs for short-DTE IC strategy (0-3 DTE)."""
+        rows = self.db.get_short_dte_entries(
+            self.config.ticker, self.config.start_date, self.config.end_date,
+            self.config.short_dte_target
+        )
+        entries = []
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            ed = r['expiration_date'].strftime('%Y-%m-%d') if isinstance(r['expiration_date'], date) else str(r['expiration_date'])
+            entries.append((td, ed))
+        return entries
+
+    def _execute_cycle_with_collateral(
         self, entry_date: str, expiration_date: str,
         all_trading_days: List[str]
     ) -> Optional[ICTrade]:
-        """Execute a single IC cycle: enter, monitor, exit."""
+        """Execute a single IC cycle with collateral enforcement."""
 
         # ── Entry ─────────────────────────────────────────────────────────
         chain = self.db.get_options_chain(
@@ -999,15 +1153,28 @@ class MonthlyICBacktester:
         if total_credit < self.config.min_credit:
             return None
 
-        # Build trade object
+        wing_width = abs(strikes['put_short']['strike'] - strikes['put_long']['strike'])
+
+        # ── Collateral check ─────────────────────────────────────────────
+        contracts = self._calculate_contracts_for_trade(wing_width, total_credit)
+        if contracts <= 0:
+            self.trades_skipped_no_capital += 1
+            logger.debug(
+                f"  SKIPPED {entry_date}: Insufficient capital "
+                f"(available: ${self._available_buying_power():,.0f}, "
+                f"needed: ${wing_width * 100:,.0f}/contract, "
+                f"open positions: {len(self.open_positions)})"
+            )
+            return None
+
+        # Build trade object with collateral-enforced contract count
         self.trade_counter += 1
         entry_dt = datetime.strptime(entry_date, '%Y-%m-%d')
         exp_dt = datetime.strptime(expiration_date, '%Y-%m-%d')
         dte = (exp_dt - entry_dt).days
 
-        wing_width = abs(strikes['put_short']['strike'] - strikes['put_long']['strike'])
         max_loss_per_contract = (wing_width - total_credit) * 100
-        margin = wing_width * 100  # Approximate margin per contract
+        margin = wing_width * 100
 
         trade = ICTrade(
             trade_id=self.trade_counter,
@@ -1026,11 +1193,11 @@ class MonthlyICBacktester:
             call_short_delta=strikes['call_short'].get('delta', 0) or 0,
             call_short_iv=strikes['call_short'].get('call_iv', 0) or 0,
             total_credit=total_credit,
-            max_profit=total_credit * 100 * self.config.contracts,
-            max_loss=max_loss_per_contract * self.config.contracts,
+            max_profit=total_credit * 100 * contracts,
+            max_loss=max_loss_per_contract * contracts,
             wing_width=wing_width,
-            contracts=self.config.contracts,
-            margin_required=margin * self.config.contracts,
+            contracts=contracts,
+            margin_required=margin * contracts,
             strike_selection_method=strikes['method'],
         )
 
@@ -1118,10 +1285,11 @@ class MonthlyICBacktester:
         trade.net_pnl = gross - commissions - slippage
         trade.return_on_risk = (trade.net_pnl / trade.max_loss * 100) if trade.max_loss > 0 else 0
 
-        # Update equity
+        # Update equity and release margin
         self.cumulative_pnl += trade.net_pnl
         self.equity = self.config.initial_capital + self.cumulative_pnl
         self.high_water_mark = max(self.high_water_mark, self.equity)
+        self._release_position_margin(trade)
 
         return trade
 
@@ -1174,10 +1342,11 @@ class MonthlyICBacktester:
         trade.net_pnl = gross - commissions - slippage
         trade.return_on_risk = (trade.net_pnl / trade.max_loss * 100) if trade.max_loss > 0 else 0
 
-        # Update equity
+        # Update equity and release margin
         self.cumulative_pnl += trade.net_pnl
         self.equity = self.config.initial_capital + self.cumulative_pnl
         self.high_water_mark = max(self.high_water_mark, self.equity)
+        self._release_position_margin(trade)
 
         return trade
 
@@ -1229,8 +1398,11 @@ class MonthlyICBacktester:
         returns = [t.net_pnl / self.config.initial_capital for t in trades]
         avg_ret = sum(returns) / len(returns)
         std_ret = (sum((r - avg_ret) ** 2 for r in returns) / len(returns)) ** 0.5
-        # Annualize: assume ~12 trades per year (monthly)
-        trades_per_year = 12
+        # Annualize based on DTE mode
+        if self.config.dte_mode == "short":
+            trades_per_year = 252  # ~252 trading days/year for daily trades
+        else:
+            trades_per_year = 12
         sharpe = (avg_ret / std_ret * math.sqrt(trades_per_year)) if std_ret > 0 else 0
 
         # Sortino ratio (only downside deviation)
@@ -1310,6 +1482,9 @@ class MonthlyICBacktester:
                 'dte_exit': self.config.dte_exit,
                 'contracts': self.config.contracts,
                 'hold_to_expiration': self.config.hold_to_expiration,
+                'max_capital_utilization': self.config.max_capital_utilization,
+                'dte_mode': self.config.dte_mode,
+                'short_dte_target': self.config.short_dte_target,
             },
             'summary': {
                 'total_trades': n,
@@ -1340,6 +1515,19 @@ class MonthlyICBacktester:
                 'max_win_streak': max_win_streak,
                 'max_loss_streak': max_loss_streak,
             },
+            'collateral': {
+                'max_capital_utilization_pct': self.config.max_capital_utilization,
+                'trades_skipped_no_capital': self.trades_skipped_no_capital,
+                'peak_concurrent_positions': self.peak_concurrent_positions,
+                'peak_margin_deployed': round(self.peak_margin_deployed, 2),
+                'peak_margin_pct_of_capital': round(
+                    self.peak_margin_deployed / self.config.initial_capital * 100, 2
+                ) if self.config.initial_capital > 0 else 0,
+                'avg_contracts_per_trade': round(
+                    sum(t.contracts for t in trades) / n, 2
+                ) if n > 0 else 0,
+                'dynamic_sizing': self.config.dynamic_sizing,
+            },
             'exit_reasons': exit_reasons,
             'monthly_returns': {k: round(v, 2) for k, v in sorted(monthly_returns.items())},
             'annual_returns': {k: round(v, 2) for k, v in sorted(annual_returns.items())},
@@ -1358,14 +1546,21 @@ class MonthlyICBacktester:
         st = results['streaks']
         ex = results['exit_reasons']
 
+        col = results.get('collateral', {})
+        dte_label = c.get('dte_mode', 'monthly').upper()
+        if c.get('dte_mode') == 'short':
+            dte_label = f"{c.get('short_dte_target', 0)}DTE"
+
         print("\n" + "=" * 80)
-        print("  MONTHLY IRON CONDOR BACKTEST RESULTS")
+        print(f"  IRON CONDOR BACKTEST RESULTS ({dte_label})")
         print("=" * 80)
 
         print(f"\n  Ticker:              {c['ticker']}")
         print(f"  Period:              {c['start_date']} → {c['end_date']}")
+        print(f"  DTE Mode:            {dte_label}")
         print(f"  Strategy:            {c['short_delta']:.0%} delta IC, ${c['wing_width']:.0f} wings")
         print(f"  Exit rules:          {c['profit_target_pct']}% profit / {c['stop_loss_pct']}% stop / {c['dte_exit']} DTE")
+        print(f"  Collateral:          {c.get('max_capital_utilization', 80)}% max utilization")
 
         print(f"\n  {'─' * 60}")
         print(f"  PERFORMANCE")
@@ -1398,6 +1593,18 @@ class MonthlyICBacktester:
         print(f"  Sortino Ratio:       {r['sortino_ratio']:>10.2f}")
         print(f"  Max Win Streak:      {st['max_win_streak']:>8}")
         print(f"  Max Loss Streak:     {st['max_loss_streak']:>8}")
+
+        if col:
+            print(f"\n  {'─' * 60}")
+            print(f"  COLLATERAL MANAGEMENT")
+            print(f"  {'─' * 60}")
+            print(f"  Max Utilization:     {col.get('max_capital_utilization_pct', 0):>8.0f}%")
+            print(f"  Trades Skipped:      {col.get('trades_skipped_no_capital', 0):>8} (insufficient capital)")
+            print(f"  Peak Concurrent:     {col.get('peak_concurrent_positions', 0):>8} positions")
+            print(f"  Peak Margin:         ${col.get('peak_margin_deployed', 0):>10,.2f}")
+            print(f"  Peak Margin %:       {col.get('peak_margin_pct_of_capital', 0):>8.1f}% of capital")
+            print(f"  Avg Contracts/Trade: {col.get('avg_contracts_per_trade', 0):>8.1f}")
+            print(f"  Dynamic Sizing:      {'ON' if col.get('dynamic_sizing') else 'OFF':>8}")
 
         print(f"\n  {'─' * 60}")
         print(f"  EXIT REASONS")
@@ -1671,6 +1878,24 @@ Examples:
     parser.add_argument('--export', action='store_true', default=True, help='Export trades CSV, results JSON, equity curve')
     parser.add_argument('--no-export', action='store_true', help='Skip CSV/JSON export')
 
+    # Collateral management
+    parser.add_argument('--max-utilization', type=float, default=80.0,
+                        help='Max %% of equity deployable as margin (default: 80)')
+    parser.add_argument('--max-risk-per-trade', type=float, default=25.0,
+                        help='Max %% of equity at risk per trade (default: 25)')
+    parser.add_argument('--dynamic-sizing', action='store_true', default=True,
+                        help='Dynamically size contracts based on available capital (default: on)')
+    parser.add_argument('--no-dynamic-sizing', action='store_true',
+                        help='Use fixed contract count (--contracts)')
+    parser.add_argument('--max-positions', type=int, default=0,
+                        help='Max concurrent positions, 0=unlimited (default: 0)')
+
+    # DTE mode
+    parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short'],
+                        help='DTE strategy: monthly (30-45 DTE) or short (0-3 DTE)')
+    parser.add_argument('--short-dte', type=int, default=0, choices=[0, 1, 2, 3],
+                        help='Target DTE for short mode (default: 0)')
+
     args = parser.parse_args()
 
     if args.audit:
@@ -1678,6 +1903,24 @@ Examples:
         return
 
     # Build config
+    is_dynamic = args.dynamic_sizing and not args.no_dynamic_sizing
+
+    # For short DTE modes, adjust defaults
+    dte_mode = args.dte_mode
+    short_dte = args.short_dte
+    dte_exit = args.dte_exit
+    hold_to_exp = args.hold_to_exp
+    min_credit = args.min_credit
+
+    if dte_mode == "short":
+        # For 0DTE, always hold to expiration (no DTE exit makes sense)
+        if short_dte == 0:
+            hold_to_exp = True
+            dte_exit = 0
+        # For 1-3 DTE, reduce min credit (shorter duration = less premium)
+        if min_credit == 0.50:
+            min_credit = 0.20
+
     config = MonthlyICConfig(
         ticker=args.ticker.upper(),
         start_date=args.start,
@@ -1687,12 +1930,18 @@ Examples:
         pct_otm=args.pct_otm,
         profit_target_pct=args.profit_target,
         stop_loss_pct=args.stop_loss,
-        dte_exit=args.dte_exit,
-        hold_to_expiration=args.hold_to_exp,
+        dte_exit=dte_exit,
+        hold_to_expiration=hold_to_exp,
         contracts=args.contracts,
         target_dte_min=args.dte_min,
         target_dte_max=args.dte_max,
-        min_credit=args.min_credit,
+        min_credit=min_credit,
+        max_capital_utilization=args.max_utilization,
+        max_risk_per_trade_pct=args.max_risk_per_trade,
+        dynamic_sizing=is_dynamic,
+        max_concurrent_positions=args.max_positions,
+        dte_mode=dte_mode,
+        short_dte_target=short_dte,
     )
 
     # Override wing width if specified
@@ -1709,16 +1958,18 @@ Examples:
     # Export (default on, use --no-export to skip)
     if args.export and not args.no_export and backtester.trades:
         capital_label = f"{int(args.capital/1000)}k"
+        dte_label = f"{short_dte}dte" if dte_mode == "short" else "monthly"
+        util_label = f"util{int(args.max_utilization)}"
         backtester.export_trades_csv(
-            f"backtest/results/{args.ticker.upper()}_monthly_ic_trades_{capital_label}_{args.start}_{args.end}.csv"
+            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_trades_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
         )
         backtester.export_results_json(
             results,
-            f"backtest/results/{args.ticker.upper()}_monthly_ic_results_{capital_label}_{args.start}_{args.end}.json"
+            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_results_{capital_label}_{util_label}_{args.start}_{args.end}.json"
         )
         backtester.export_equity_curve_csv(
             results,
-            f"backtest/results/{args.ticker.upper()}_monthly_ic_equity_{capital_label}_{args.start}_{args.end}.csv"
+            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_equity_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
         )
 
 
