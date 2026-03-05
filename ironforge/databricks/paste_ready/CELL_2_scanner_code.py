@@ -898,8 +898,13 @@ def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
     if not data:
         return None
     balances = data.get("balances", {})
-    # Try option_buying_power first, fall back to buying_power
-    bp = balances.get("option_buying_power") or balances.get("buying_power")
+    # PDT accounts nest buying power under "pdt" sub-object
+    pdt = balances.get("pdt", {})
+    bp = (
+        pdt.get("option_buying_power")
+        or balances.get("option_buying_power")
+        or balances.get("buying_power")
+    )
     if bp is not None:
         return float(bp)
     return None
