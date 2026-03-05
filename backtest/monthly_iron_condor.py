@@ -114,8 +114,11 @@ class MonthlyICConfig:
     sl_gap_slippage_pct: float = 10.0 # Extra % beyond SL allowed for gap (10% → 220% on 200% SL)
 
     # ── DTE mode ──────────────────────────────────────────────────────────
-    dte_mode: str = "monthly"         # "monthly" (30-45 DTE) or "short" (0-3 DTE)
+    dte_mode: str = "monthly"         # "monthly" (30-45 DTE), "short" (0-3 DTE), or "weekly" (5-7 DTE)
     short_dte_target: int = 0         # For short mode: 0, 1, 2, or 3 DTE
+    weekly_dte_min: int = 5           # For weekly mode: minimum DTE at entry
+    weekly_dte_max: int = 7           # For weekly mode: maximum DTE at entry
+    day_trade: bool = True            # Day trade: close all positions on entry day using Yahoo OHLC
 
     @property
     def wing_width(self) -> float:
@@ -225,6 +228,7 @@ class BacktestDB:
         self.main_url = os.getenv("DATABASE_URL") or self.DEFAULT_MAIN_URL
         self._orat_conn = None
         self._main_conn = None
+        self._main_conn_rw = None
 
     def get_orat_conn(self):
         """Return a persistent read-only connection to the ORAT options database."""
@@ -240,17 +244,231 @@ class BacktestDB:
             self._main_conn.set_session(readonly=True, autocommit=True)
         return self._main_conn
 
+    def get_main_conn_rw(self):
+        """Return a writable connection to the main AlphaGEX database (for saving results)."""
+        if self._main_conn_rw is None or self._main_conn_rw.closed:
+            self._main_conn_rw = psycopg2.connect(self.main_url, connect_timeout=30)
+            self._main_conn_rw.autocommit = False
+        return self._main_conn_rw
+
     def get_conn(self):
         """Return main DB connection (backward compat for audit)."""
         return self.get_main_conn()
 
     def close(self):
         """Close persistent connections."""
-        for conn in (self._orat_conn, self._main_conn):
+        for conn in (self._orat_conn, self._main_conn, self._main_conn_rw):
             if conn and not conn.closed:
                 conn.close()
         self._orat_conn = None
         self._main_conn = None
+        self._main_conn_rw = None
+
+    # ── Results persistence ────────────────────────────────────────────────
+
+    def _ensure_results_tables(self):
+        """Create backtest results tables if they don't exist."""
+        conn = self.get_main_conn_rw()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ic_backtest_runs (
+                    run_id          SERIAL PRIMARY KEY,
+                    run_key         TEXT UNIQUE NOT NULL,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    ticker          TEXT NOT NULL,
+                    dte_mode        TEXT NOT NULL,
+                    short_dte       INT,
+                    start_date      TEXT NOT NULL,
+                    end_date        TEXT NOT NULL,
+                    initial_capital FLOAT NOT NULL,
+                    max_utilization FLOAT NOT NULL,
+                    max_risk_per_trade FLOAT NOT NULL,
+                    config_json     JSONB NOT NULL,
+                    summary_json    JSONB NOT NULL,
+                    risk_json       JSONB NOT NULL,
+                    collateral_json JSONB NOT NULL,
+                    exit_reasons    JSONB,
+                    monthly_returns JSONB,
+                    annual_returns  JSONB,
+                    streaks_json    JSONB
+                );
+
+                CREATE TABLE IF NOT EXISTS ic_backtest_trades (
+                    id              SERIAL PRIMARY KEY,
+                    run_id          INT NOT NULL REFERENCES ic_backtest_runs(run_id) ON DELETE CASCADE,
+                    trade_id        INT NOT NULL,
+                    entry_date      TEXT,
+                    expiration_date TEXT,
+                    dte_at_entry    INT,
+                    underlying_at_entry  FLOAT,
+                    vix_at_entry    FLOAT,
+                    put_short_strike     FLOAT,
+                    put_long_strike      FLOAT,
+                    put_credit           FLOAT,
+                    put_short_delta      FLOAT,
+                    put_short_iv         FLOAT,
+                    call_short_strike    FLOAT,
+                    call_long_strike     FLOAT,
+                    call_credit          FLOAT,
+                    call_short_delta     FLOAT,
+                    call_short_iv        FLOAT,
+                    total_credit    FLOAT,
+                    max_profit      FLOAT,
+                    max_loss        FLOAT,
+                    wing_width      FLOAT,
+                    contracts       INT,
+                    margin_required FLOAT,
+                    strike_selection_method TEXT,
+                    exit_date       TEXT,
+                    exit_reason     TEXT,
+                    dte_at_exit     INT,
+                    underlying_at_exit FLOAT,
+                    exit_debit      FLOAT,
+                    gross_pnl       FLOAT,
+                    commissions     FLOAT,
+                    slippage_cost   FLOAT,
+                    net_pnl         FLOAT,
+                    return_on_risk  FLOAT,
+                    days_held       INT
+                );
+
+                CREATE TABLE IF NOT EXISTS ic_backtest_equity_curve (
+                    id              SERIAL PRIMARY KEY,
+                    run_id          INT NOT NULL REFERENCES ic_backtest_runs(run_id) ON DELETE CASCADE,
+                    date            TEXT NOT NULL,
+                    trade_num       INT,
+                    equity          FLOAT,
+                    pnl             FLOAT,
+                    cumulative_pnl  FLOAT,
+                    return_pct      FLOAT,
+                    drawdown_pct    FLOAT,
+                    exit_reason     TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_trades_run ON ic_backtest_trades(run_id);
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_equity_run ON ic_backtest_equity_curve(run_id);
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_runs_key ON ic_backtest_runs(run_key);
+            """)
+        conn.commit()
+
+    def save_results(self, config: 'MonthlyICConfig', results: Dict,
+                     trades: List['ICTrade']):
+        """Save a complete backtest run (summary + trades + equity curve) to PostgreSQL."""
+        self._ensure_results_tables()
+
+        # Build a unique key for this run so re-runs overwrite
+        dte_label = config.dte_mode
+        if config.dte_mode == "short":
+            dte_label = f"{config.short_dte_target}dte"
+        elif config.dte_mode == "weekly":
+            dte_label = "weekly"
+
+        run_key = (f"{config.ticker}_{dte_label}_"
+                   f"{int(config.initial_capital)}_{int(config.max_capital_utilization)}_"
+                   f"{int(config.max_risk_per_trade_pct)}_"
+                   f"{config.start_date}_{config.end_date}")
+
+        conn = self.get_main_conn_rw()
+        with conn.cursor() as cur:
+            # Delete any previous run with same key (re-run overwrites)
+            cur.execute("DELETE FROM ic_backtest_runs WHERE run_key = %s", (run_key,))
+
+            # Insert run summary
+            cur.execute("""
+                INSERT INTO ic_backtest_runs (
+                    run_key, ticker, dte_mode, short_dte,
+                    start_date, end_date, initial_capital,
+                    max_utilization, max_risk_per_trade,
+                    config_json, summary_json, risk_json, collateral_json,
+                    exit_reasons, monthly_returns, annual_returns, streaks_json
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb
+                ) RETURNING run_id
+            """, (
+                run_key, config.ticker, config.dte_mode,
+                config.short_dte_target if config.dte_mode == "short" else None,
+                config.start_date, config.end_date, config.initial_capital,
+                config.max_capital_utilization, config.max_risk_per_trade_pct,
+                json.dumps(results.get('config', {}), default=str),
+                json.dumps(results.get('summary', {}), default=str),
+                json.dumps(results.get('risk', {}), default=str),
+                json.dumps(results.get('collateral', {}), default=str),
+                json.dumps(results.get('exit_reasons', {}), default=str),
+                json.dumps(results.get('monthly_returns', {}), default=str),
+                json.dumps(results.get('annual_returns', {}), default=str),
+                json.dumps(results.get('streaks', {}), default=str),
+            ))
+            run_id = cur.fetchone()[0]
+
+            # Bulk insert trades
+            if trades:
+                trade_values = []
+                for t in trades:
+                    d = asdict(t) if hasattr(t, '__dataclass_fields__') else t
+                    trade_values.append((
+                        run_id, d.get('trade_id', 0),
+                        d.get('entry_date', ''), d.get('expiration_date', ''),
+                        d.get('dte_at_entry', 0), d.get('underlying_at_entry', 0),
+                        d.get('vix_at_entry', 0),
+                        d.get('put_short_strike', 0), d.get('put_long_strike', 0),
+                        d.get('put_credit', 0), d.get('put_short_delta', 0),
+                        d.get('put_short_iv', 0),
+                        d.get('call_short_strike', 0), d.get('call_long_strike', 0),
+                        d.get('call_credit', 0), d.get('call_short_delta', 0),
+                        d.get('call_short_iv', 0),
+                        d.get('total_credit', 0), d.get('max_profit', 0),
+                        d.get('max_loss', 0), d.get('wing_width', 0),
+                        d.get('contracts', 1), d.get('margin_required', 0),
+                        d.get('strike_selection_method', ''),
+                        d.get('exit_date', ''), d.get('exit_reason', ''),
+                        d.get('dte_at_exit', 0), d.get('underlying_at_exit', 0),
+                        d.get('exit_debit', 0),
+                        d.get('gross_pnl', 0), d.get('commissions', 0),
+                        d.get('slippage_cost', 0), d.get('net_pnl', 0),
+                        d.get('return_on_risk', 0), d.get('days_held', 0),
+                    ))
+                psycopg2.extras.execute_batch(cur, """
+                    INSERT INTO ic_backtest_trades (
+                        run_id, trade_id, entry_date, expiration_date,
+                        dte_at_entry, underlying_at_entry, vix_at_entry,
+                        put_short_strike, put_long_strike, put_credit,
+                        put_short_delta, put_short_iv,
+                        call_short_strike, call_long_strike, call_credit,
+                        call_short_delta, call_short_iv,
+                        total_credit, max_profit, max_loss, wing_width,
+                        contracts, margin_required, strike_selection_method,
+                        exit_date, exit_reason, dte_at_exit,
+                        underlying_at_exit, exit_debit,
+                        gross_pnl, commissions, slippage_cost, net_pnl,
+                        return_on_risk, days_held
+                    ) VALUES (
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                    )
+                """, trade_values, page_size=100)
+
+            # Bulk insert equity curve
+            eq_curve = results.get('equity_curve', [])
+            if eq_curve:
+                eq_values = [(
+                    run_id, pt.get('date', ''), pt.get('trade_num', 0),
+                    pt.get('equity', 0), pt.get('pnl', 0),
+                    pt.get('cumulative_pnl', 0), pt.get('return_pct', 0),
+                    pt.get('drawdown_pct', 0), pt.get('exit_reason', ''),
+                ) for pt in eq_curve]
+                psycopg2.extras.execute_batch(cur, """
+                    INSERT INTO ic_backtest_equity_curve (
+                        run_id, date, trade_num, equity, pnl,
+                        cumulative_pnl, return_pct, drawdown_pct, exit_reason
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, eq_values, page_size=200)
+
+        conn.commit()
+        logger.info(f"Saved run {run_key} to database: run_id={run_id}, "
+                     f"{len(trades)} trades, {len(eq_curve)} equity points")
+        return run_id
 
     # ── Schema discovery (Phase 1) ────────────────────────────────────────
 
@@ -474,6 +692,45 @@ class BacktestDB:
                 unique.append(r)
         return unique
 
+    def get_weekly_dte_entries(
+        self, ticker: str, start_date: str, end_date: str,
+        dte_min: int, dte_max: int
+    ) -> List[Dict]:
+        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
+
+        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7).
+        For each trade_date, picks the expiration closest to the midpoint of the range.
+
+        Returns list of {trade_date, expiration_date, dte}.
+        """
+        conn = self.get_orat_conn()
+        tickers = [ticker]
+        if ticker.upper() == "SPX":
+            tickers = ["SPX", "SPXW"]
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date, expiration_date, dte
+                FROM orat_options_eod
+                WHERE ticker = ANY(%s)
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                  AND dte BETWEEN %s AND %s
+                ORDER BY trade_date, dte;
+            """, (tickers, start_date, end_date, dte_min, dte_max))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        # Deduplicate: one entry per trade_date, pick expiration closest to midpoint DTE
+        target_dte = (dte_min + dte_max) // 2
+        best_by_date = {}
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            distance = abs(r['dte'] - target_dte)
+            if td not in best_by_date or distance < best_by_date[td][1]:
+                best_by_date[td] = (r, distance)
+
+        return [v[0] for v in sorted(best_by_date.values(), key=lambda x: str(x[0]['trade_date']))]
+
     def get_options_chain(
         self, ticker: str, trade_date: str, expiration_date: str
     ) -> List[Dict]:
@@ -654,6 +911,42 @@ class BacktestDB:
             pass
 
         return cache
+
+    def load_spx_ohlc_cache(self, start_date: str, end_date: str) -> Dict[str, Dict]:
+        """Load SPX daily OHLC from Yahoo Finance for day-trade intraday simulation.
+
+        Uses ^GSPC (S&P 500 index) via yfinance. Returns {date_str: {open, high, low, close}}.
+        Pattern from backtest/zero_dte_bull_put_spread.py.
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.warning("yfinance not installed - day trade OHLC unavailable. pip install yfinance")
+            return {}
+
+        try:
+            ticker = yf.Ticker("^GSPC")
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=5)
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=5)
+            df = ticker.history(start=start_dt, end=end_dt)
+
+            if df.empty:
+                logger.warning("No SPX OHLC data from Yahoo Finance")
+                return {}
+
+            cache = {}
+            for idx, row in df.iterrows():
+                cache[idx.strftime('%Y-%m-%d')] = {
+                    'open': float(row['Open']),
+                    'high': float(row['High']),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                }
+            logger.info(f"Loaded {len(cache)} days of SPX OHLC from Yahoo Finance")
+            return cache
+        except Exception as e:
+            logger.warning(f"Failed to load SPX OHLC from Yahoo: {e}")
+            return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1076,7 +1369,12 @@ class MonthlyICBacktester:
 
     def run(self) -> Dict:
         """Execute the full backtest."""
-        dte_label = f"{self.config.short_dte_target}DTE" if self.config.dte_mode == "short" else "Monthly (30-45 DTE)"
+        if self.config.dte_mode == "short":
+            dte_label = f"{self.config.short_dte_target}DTE"
+        elif self.config.dte_mode == "weekly":
+            dte_label = f"Weekly ({self.config.weekly_dte_min}-{self.config.weekly_dte_max} DTE)"
+        else:
+            dte_label = "Monthly (30-45 DTE)"
         sizing_label = "DYNAMIC" if self.config.dynamic_sizing else f"FIXED ({self.config.contracts} contracts)"
 
         logger.info("=" * 80)
@@ -1104,6 +1402,15 @@ class MonthlyICBacktester:
         )
         logger.info(f"Loaded {len(self.vix_cache)} VIX values into cache")
 
+        # Step 0b: Bulk-load SPX daily OHLC from Yahoo Finance (for day trade mode)
+        if self.config.day_trade:
+            self.ohlc_cache = self.db.load_spx_ohlc_cache(
+                self.config.start_date, self.config.end_date
+            )
+            logger.info(f"Loaded {len(self.ohlc_cache)} days of SPX OHLC for day trade mode")
+        else:
+            self.ohlc_cache = {}
+
         # Step 1: Get all trading days
         all_trading_days = self.db.get_trading_days(
             self.config.ticker, self.config.start_date, self.config.end_date
@@ -1117,6 +1424,8 @@ class MonthlyICBacktester:
         # Step 2: Build entry list based on DTE mode
         if self.config.dte_mode == "short":
             entries = self._build_short_dte_entries(all_trading_days)
+        elif self.config.dte_mode == "weekly":
+            entries = self._build_weekly_dte_entries(all_trading_days)
         else:
             entries = self._build_monthly_entries(all_trading_days)
 
@@ -1145,9 +1454,6 @@ class MonthlyICBacktester:
         # Step 4: Calculate and return results
         results = self._calculate_results()
         self._print_results(results)
-
-        # Cleanup persistent DB connections
-        self.db.close()
 
         return results
 
@@ -1197,6 +1503,19 @@ class MonthlyICBacktester:
         rows = self.db.get_short_dte_entries(
             self.config.ticker, self.config.start_date, self.config.end_date,
             self.config.short_dte_target
+        )
+        entries = []
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            ed = r['expiration_date'].strftime('%Y-%m-%d') if isinstance(r['expiration_date'], date) else str(r['expiration_date'])
+            entries.append((td, ed))
+        return entries
+
+    def _build_weekly_dte_entries(self, all_trading_days: List[str]) -> List[Tuple[str, str]]:
+        """Build (entry_date, expiration_date) pairs for weekly IC strategy (5-7 DTE)."""
+        rows = self.db.get_weekly_dte_entries(
+            self.config.ticker, self.config.start_date, self.config.end_date,
+            self.config.weekly_dte_min, self.config.weekly_dte_max
         )
         entries = []
         for r in rows:
@@ -1297,10 +1616,56 @@ class MonthlyICBacktester:
             strike_selection_method=strikes['method'],
         )
 
-        # ── Daily monitoring ──────────────────────────────────────────────
-        # Even for hold_to_expiration (0DTE), we still check stop-loss.
-        # Without this, 0DTE trades go straight to settlement and SL never fires.
+        # ── Day trade mode: close on entry day ──────────────────────────
+        # All modes are day trades: enter and exit on the same day.
+        # Yahoo Finance daily OHLC gives us High/Low for intraday SL check,
+        # and Close for EOD settlement.  This works for ALL DTE modes because
+        # we always exit on entry day — the expiration only determines which
+        # contract we sold (affecting premium/credit).
+        if self.config.day_trade:
+            ohlc = getattr(self, 'ohlc_cache', {}).get(entry_date)
+            if not ohlc:
+                # Fallback: no Yahoo data for this day — use ORAT underlying price
+                price = self.db.get_underlying_price(self.config.ticker, entry_date)
+                if price:
+                    debit = calculate_settlement_value(trade, price)
+                    return self._close_trade(trade, entry_date, debit, "DAY_TRADE_CLOSE", dte)
+                return None  # Can't price exit
 
+            daily_high = ohlc['high']
+            daily_low = ohlc['low']
+            close_price = ohlc['close']
+
+            effective_sl_pct = self.config.stop_loss_pct
+            sl_debit_threshold = trade.total_credit * (1 + effective_sl_pct / 100)
+
+            # Check INTRADAY stop loss using High/Low
+            # Worst case: put spread breached at daily low, call spread breached at daily high
+            put_intrinsic_at_low = max(0, trade.put_short_strike - daily_low)
+            call_intrinsic_at_high = max(0, daily_high - trade.call_short_strike)
+            put_intrinsic_at_low = min(put_intrinsic_at_low, trade.wing_width)
+            call_intrinsic_at_high = min(call_intrinsic_at_high, trade.wing_width)
+
+            intraday_worst_debit = put_intrinsic_at_low + call_intrinsic_at_high
+            if intraday_worst_debit >= sl_debit_threshold:
+                capped_debit = sl_debit_threshold
+                if self.config.sl_gap_cap:
+                    gap_slippage = 1 + self.config.sl_gap_slippage_pct / 100
+                    capped_debit = min(intraday_worst_debit, sl_debit_threshold * gap_slippage)
+                return self._close_trade(trade, entry_date, capped_debit, "STOP_LOSS", dte)
+
+            # EOD settlement using Close price
+            close_debit = calculate_settlement_value(trade, close_price)
+
+            # Check profit target at close
+            profit_threshold = trade.total_credit * (1 - self.config.profit_target_pct / 100)
+            if close_debit <= profit_threshold:
+                return self._close_trade(trade, entry_date, close_debit, "PROFIT_TARGET", dte)
+
+            # Otherwise close at EOD market value
+            return self._close_trade(trade, entry_date, close_debit, "DAY_TRADE_CLOSE", dte)
+
+        # ── Multi-day monitoring (only when day_trade=False) ─────────────
         # Find trading days between entry and expiration
         monitoring_days = [
             d for d in all_trading_days
@@ -2040,10 +2405,18 @@ Examples:
                         help='Extra %% slippage on gap SL exits (default: 10)')
 
     # DTE mode
-    parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short'],
-                        help='DTE strategy: monthly (30-45 DTE) or short (0-3 DTE)')
+    parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short', 'weekly'],
+                        help='DTE strategy: monthly (30-45 DTE), short (0-3 DTE), or weekly (5-7 DTE)')
     parser.add_argument('--short-dte', type=int, default=0, choices=[0, 1, 2, 3],
                         help='Target DTE for short mode (default: 0)')
+    parser.add_argument('--weekly-dte-min', type=int, default=5,
+                        help='Min DTE for weekly mode (default: 5)')
+    parser.add_argument('--weekly-dte-max', type=int, default=7,
+                        help='Max DTE for weekly mode (default: 7)')
+    parser.add_argument('--day-trade', dest='day_trade', action='store_true', default=True,
+                        help='Day trade mode: enter and exit same day (default: True)')
+    parser.add_argument('--no-day-trade', dest='day_trade', action='store_false',
+                        help='Hold positions until expiration/SL/PT (multi-day monitoring)')
 
     args = parser.parse_args()
 
@@ -2069,6 +2442,12 @@ Examples:
         # For 1-3 DTE, reduce min credit (shorter duration = less premium)
         if min_credit == 0.50:
             min_credit = 0.20
+    elif dte_mode == "weekly":
+        # Weekly ICs (5-7 DTE): reduce min credit, lower DTE exit
+        if min_credit == 0.50:
+            min_credit = 0.30
+        if dte_exit == 5:
+            dte_exit = 1  # Exit at 1 DTE for weeklies
 
     config = MonthlyICConfig(
         ticker=args.ticker.upper(),
@@ -2095,6 +2474,9 @@ Examples:
         sl_gap_slippage_pct=args.sl_gap_slippage,
         dte_mode=dte_mode,
         short_dte_target=short_dte,
+        weekly_dte_min=args.weekly_dte_min,
+        weekly_dte_max=args.weekly_dte_max,
+        day_trade=args.day_trade,
     )
 
     # Override wing width if specified
@@ -2111,19 +2493,29 @@ Examples:
     # Export (default on, use --no-export to skip)
     if args.export and not args.no_export and backtester.trades:
         capital_label = f"{int(args.capital/1000)}k"
-        dte_label = f"{short_dte}dte" if dte_mode == "short" else "monthly"
+        if dte_mode == "short":
+            dte_label = f"{short_dte}dte"
+        elif dte_mode == "weekly":
+            dte_label = "weekly"
+        else:
+            dte_label = "monthly"
         util_label = f"util{int(args.max_utilization)}"
-        backtester.export_trades_csv(
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_trades_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
-        )
-        backtester.export_results_json(
-            results,
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_results_{capital_label}_{util_label}_{args.start}_{args.end}.json"
-        )
-        backtester.export_equity_curve_csv(
-            results,
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_equity_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
-        )
+        risk_label = f"risk{int(args.max_risk_per_trade)}"
+        base = f"backtest/results/{args.ticker.upper()}_{dte_label}_ic"
+        suffix = f"{capital_label}_{util_label}_{risk_label}_{args.start}_{args.end}"
+        backtester.export_trades_csv(f"{base}_trades_{suffix}.csv")
+        backtester.export_results_json(results, f"{base}_results_{suffix}.json")
+        backtester.export_equity_curve_csv(results, f"{base}_equity_{suffix}.csv")
+
+    # Always save to database (persists across deploys)
+    if backtester.trades:
+        try:
+            backtester.db.save_results(backtester.config, results, backtester.trades)
+        except Exception as e:
+            logger.error(f"Failed to save results to database: {e}")
+
+    # Cleanup DB connections after all exports and saves are done
+    backtester.db.close()
 
 
 if __name__ == "__main__":
