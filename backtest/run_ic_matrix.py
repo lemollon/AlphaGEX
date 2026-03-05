@@ -5,9 +5,11 @@ Iron Condor Backtest Matrix Runner (Render Shell Friendly)
 Runs monthly_iron_condor.py across all combinations of:
   - DTE modes: 0DTE, 1DTE, 2DTE, 3DTE, Weekly (5-7 DTE), Monthly (30-45 DTE)
   - Capital utilization: 20%, 30%, 50%, 70%
-  - Capital levels: $5,000 and $100,000
+  - Capital + Risk-per-trade:
+      $5k   @ 100% (forced — one SPX IC needs ~$2,500 margin)
+      $100k @ 10%, 25%, 50%
 
-Total: 6 DTE modes x 4 utilizations x 2 capital levels = 48 backtests
+Total: 6 DTE modes x 4 utilizations x 4 capital/risk combos = 96 backtests
 
 OUTPUT: Prints a tab-separated table at the end that you can
         copy/paste directly into Google Sheets or Excel.
@@ -50,26 +52,31 @@ DTE_MODES = [
 ]
 
 UTILIZATIONS = [20, 30, 50, 70]
-CAPITALS = [5_000, 100_000]
+
+# (capital, risk_per_trade_pct)
+# $5k must use 100% risk — a single SPX IC costs ~$2,500 margin
+# $100k tests 10%, 25%, 50% risk per trade
+CAPITAL_RISK_COMBOS = [
+    (5_000, 100),
+    (100_000, 10),
+    (100_000, 25),
+    (100_000, 50),
+]
 
 # Column headers for the copy/paste table
 HEADERS = [
-    "DTE", "Util%", "Capital", "Status", "Trades", "WR%", "TotalP&L",
+    "DTE", "Util%", "Risk%", "Capital", "Status", "Trades", "WR%", "TotalP&L",
     "Return%", "PF", "MaxDD%", "Sharpe", "Sortino", "Skipped",
     "VIXSkip", "PeakPos", "AvgCtx", "FinalEquity", "Seconds"
 ]
 
 
 def run_single(dte_config: dict, utilization: int, capital: float,
-               ticker: str, start: str, end: str) -> dict:
+               risk_pct: int, ticker: str, start: str, end: str) -> dict:
     """Run one backtest. Returns a flat dict of results."""
 
     label = dte_config["label"]
     capital_k = f"{int(capital/1000)}k"
-
-    # Small accounts ($5k) need 100% risk-per-trade to afford even 1 SPX IC
-    # contract ($2,500 margin). Utilization still caps total concurrent exposure.
-    risk_pct = "100" if capital <= 10_000 else "25"
 
     cmd = [
         sys.executable, str(BACKTEST_SCRIPT),
@@ -78,7 +85,7 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         "--end", end,
         "--capital", str(capital),
         "--max-utilization", str(utilization),
-        "--max-risk-per-trade", risk_pct,
+        "--max-risk-per-trade", str(risk_pct),
         "--dte-mode", dte_config["dte_mode"],
         "--short-dte", str(dte_config["short_dte"]),
         "--dynamic-sizing",
@@ -98,12 +105,12 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         )
         elapsed = time.time() - t0
     except subprocess.TimeoutExpired:
-        return _row(label, utilization, capital, "TIMEOUT", elapsed=900)
+        return _row(label, utilization, risk_pct, capital, "TIMEOUT", elapsed=900)
 
     if proc.returncode != 0:
         # Extract short error
         err = proc.stderr.strip().split("\n")[-1][:80] if proc.stderr else "unknown"
-        return _row(label, utilization, capital, f"FAIL:{err}", elapsed=time.time() - t0)
+        return _row(label, utilization, risk_pct, capital, f"FAIL:{err}", elapsed=time.time() - t0)
 
     # Parse results JSON
     if dte_config["dte_mode"] == "short":
@@ -113,7 +120,8 @@ def run_single(dte_config: dict, utilization: int, capital: float,
     else:
         dte_file = "monthly"
     util_file = f"util{utilization}"
-    json_path = RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{start}_{end}.json"
+    risk_file = f"risk{risk_pct}"
+    json_path = RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{risk_file}_{start}_{end}.json"
 
     if json_path.exists():
         try:
@@ -123,7 +131,7 @@ def run_single(dte_config: dict, utilization: int, capital: float,
             r = data.get("risk", {})
             col = data.get("collateral", {})
             return _row(
-                label, utilization, capital, "OK",
+                label, utilization, risk_pct, capital, "OK",
                 trades=s.get("total_trades", 0),
                 wr=s.get("win_rate", 0),
                 pnl=s.get("total_pnl", 0),
@@ -140,19 +148,20 @@ def run_single(dte_config: dict, utilization: int, capital: float,
                 elapsed=elapsed,
             )
         except Exception as e:
-            return _row(label, utilization, capital, f"JSON_ERR:{e}", elapsed=elapsed)
+            return _row(label, utilization, risk_pct, capital, f"JSON_ERR:{e}", elapsed=elapsed)
 
     # Fallback: no JSON found
-    return _row(label, utilization, capital, "NO_OUTPUT", elapsed=elapsed)
+    return _row(label, utilization, risk_pct, capital, "NO_OUTPUT", elapsed=elapsed)
 
 
-def _row(label, util, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
+def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
          dd=0, sharpe=0, sortino=0, skipped=0, vix_skip=0, peak_pos=0,
          avg_ctx=0, final_eq=0, elapsed=0):
     """Build a result row dict."""
     return {
         "DTE": label,
         "Util%": util,
+        "Risk%": risk_pct,
         "Capital": int(capital),
         "Status": status,
         "Trades": trades,
@@ -173,7 +182,7 @@ def _row(label, util, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
 
 
 def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
-               ticker="SPX", start="2021-01-01", end="2025-12-31"):
+               risk_filter=None, ticker="SPX", start="2021-01-01", end="2025-12-31"):
     """Run the full test matrix and print copy/paste results."""
 
     dtes = DTE_MODES
@@ -185,9 +194,13 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
         else:
             dtes = [d for d in DTE_MODES if d["short_dte"] == dte_filter and d["dte_mode"] == "short"]
     utils = UTILIZATIONS if util_filter is None else [util_filter]
-    caps = CAPITALS if capital_filter is None else [capital_filter]
+    combos = CAPITAL_RISK_COMBOS
+    if capital_filter is not None:
+        combos = [(c, r) for c, r in combos if c == capital_filter]
+    if risk_filter is not None:
+        combos = [(c, r) for c, r in combos if r == risk_filter]
 
-    total = len(dtes) * len(utils) * len(caps)
+    total = len(dtes) * len(utils) * len(combos)
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     print(f"\n{'#'*60}")
@@ -195,7 +208,7 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Started:      {started}")
     print(f"# DTE modes:    {', '.join(d['label'] for d in dtes)}")
     print(f"# Utilizations: {', '.join(str(u)+'%' for u in utils)}")
-    print(f"# Capitals:     {', '.join('$'+f'{c:,.0f}' for c in caps)}")
+    print(f"# Cap/Risk:     {', '.join(f'${c:,.0f}@{r}%' for c,r in combos)}")
     print(f"# Total runs:   {total}")
     print(f"# Timeout:      15 min per run")
     print(f"{'#'*60}")
@@ -209,13 +222,13 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
 
     for dte_config in dtes:
         for util in utils:
-            for cap in caps:
+            for cap, risk_pct in combos:
                 completed += 1
                 label = dte_config["label"]
                 cap_k = f"${int(cap/1000)}k"
-                print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {cap_k} ...", end=" ", flush=True)
+                print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {risk_pct}% risk | {cap_k} ...", end=" ", flush=True)
 
-                result = run_single(dte_config, util, cap, ticker, start, end)
+                result = run_single(dte_config, util, cap, risk_pct, ticker, start, end)
                 all_results.append(result)
 
                 # Instant feedback
@@ -267,11 +280,11 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
             key = r["DTE"]
             if key not in by_dte or r["Return%"] > by_dte[key]["Return%"]:
                 by_dte[key] = r
-        print(f"  {'DTE':<10} {'Best Util':>9} {'Capital':>10} {'Return%':>9} {'WR%':>6} {'MaxDD%':>8} {'Sharpe':>7} {'Trades':>7}")
+        print(f"  {'DTE':<10} {'Util':>5} {'Risk':>5} {'Capital':>10} {'Return%':>9} {'WR%':>6} {'MaxDD%':>8} {'Sharpe':>7} {'Trades':>7}")
         for dte_label in ["0DTE", "1DTE", "2DTE", "3DTE", "Weekly", "Monthly"]:
             if dte_label in by_dte:
                 r = by_dte[dte_label]
-                print(f"  {r['DTE']:<10} {r['Util%']:>8}% ${r['Capital']:>9,} {r['Return%']:>+8.1f}% "
+                print(f"  {r['DTE']:<10} {r['Util%']:>4}% {r['Risk%']:>4}% ${r['Capital']:>9,} {r['Return%']:>+8.1f}% "
                       f"{r['WR%']:>5.1f}% {r['MaxDD%']:>7.1f}% {r['Sharpe']:>6.2f} {r['Trades']:>7}")
     else:
         print("  No successful runs.")
@@ -280,7 +293,7 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     if failed:
         print(f"\nFAILED RUNS ({len(failed)}):")
         for r in failed:
-            print(f"  {r['DTE']} | {r['Util%']}% | ${r['Capital']:,} -> {r['Status']}")
+            print(f"  {r['DTE']} | {r['Util%']}% util | {r['Risk%']}% risk | ${r['Capital']:,} -> {r['Status']}")
 
     print(f"\n{'#'*60}")
     print(f"# MATRIX COMPLETE - {finished}")
@@ -296,13 +309,14 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python backtest/run_ic_matrix.py                       # Full 48-run matrix
-  python backtest/run_ic_matrix.py --capital 100000      # Just $100k (24 runs)
+  python backtest/run_ic_matrix.py                       # Full 96-run matrix
+  python backtest/run_ic_matrix.py --capital 100000      # Just $100k (72 runs)
   python backtest/run_ic_matrix.py --capital 5000        # Just $5k (24 runs)
-  python backtest/run_ic_matrix.py --dte 0               # Just 0DTE (8 runs)
-  python backtest/run_ic_matrix.py --dte -1              # Just Monthly (8 runs)
-  python backtest/run_ic_matrix.py --dte -2              # Just Weekly (8 runs)
-  python backtest/run_ic_matrix.py --utilization 50      # Just 50% util (12 runs)
+  python backtest/run_ic_matrix.py --dte 0               # Just 0DTE (16 runs)
+  python backtest/run_ic_matrix.py --dte -1              # Just Monthly (16 runs)
+  python backtest/run_ic_matrix.py --dte -2              # Just Weekly (16 runs)
+  python backtest/run_ic_matrix.py --utilization 50      # Just 50% util (24 runs)
+  python backtest/run_ic_matrix.py --risk 25             # Just 25% risk (24 runs)
         """
     )
     parser.add_argument("--dte", type=int, default=None, choices=[0, 1, 2, 3, -1, -2],
@@ -311,6 +325,8 @@ Examples:
                         help="Single utilization level")
     parser.add_argument("--capital", type=float, default=None,
                         help="Single capital level (e.g. 5000 or 100000)")
+    parser.add_argument("--risk", type=int, default=None, choices=[10, 25, 50, 100],
+                        help="Single risk-per-trade %% (10, 25, 50, or 100)")
     parser.add_argument("--ticker", default="SPX", help="Underlying (default: SPX)")
     parser.add_argument("--start", default="2021-01-01", help="Start date")
     parser.add_argument("--end", default="2025-12-31", help="End date")
@@ -320,6 +336,7 @@ Examples:
         dte_filter=args.dte,
         util_filter=args.utilization,
         capital_filter=args.capital,
+        risk_filter=args.risk,
         ticker=args.ticker,
         start=args.start,
         end=args.end,

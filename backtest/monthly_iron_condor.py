@@ -2288,17 +2288,12 @@ Examples:
         else:
             dte_label = "monthly"
         util_label = f"util{int(args.max_utilization)}"
-        backtester.export_trades_csv(
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_trades_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
-        )
-        backtester.export_results_json(
-            results,
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_results_{capital_label}_{util_label}_{args.start}_{args.end}.json"
-        )
-        backtester.export_equity_curve_csv(
-            results,
-            f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_equity_{capital_label}_{util_label}_{args.start}_{args.end}.csv"
-        )
+        risk_label = f"risk{int(args.max_risk_per_trade)}"
+        base = f"backtest/results/{args.ticker.upper()}_{dte_label}_ic"
+        suffix = f"{capital_label}_{util_label}_{risk_label}_{args.start}_{args.end}"
+        backtester.export_trades_csv(f"{base}_trades_{suffix}.csv")
+        backtester.export_results_json(results, f"{base}_results_{suffix}.json")
+        backtester.export_equity_curve_csv(results, f"{base}_equity_{suffix}.csv")
 
 
 if __name__ == "__main__":
