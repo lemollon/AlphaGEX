@@ -1082,12 +1082,14 @@ pytest -m "not slow"
 4. Use SWR for data fetching from API
 
 ### Running Backtests
-```bash
-# Run specific backtest
-python scripts/run_spx_backtest.sh
 
-# Run all backtests
-python scripts/run_all_backtests.py
+**IMPORTANT**: Always pipe long-running scripts through `| tee` to save output. Render's web shell has no scrollback — output that scrolls off screen is lost forever.
+
+```bash
+# ALWAYS use | tee for backtests and long-running scripts
+python backtest/run_ic_matrix.py 2>&1 | tee /tmp/ic_matrix_results.txt
+python scripts/run_spx_backtest.sh 2>&1 | tee /tmp/backtest_results.txt
+python scripts/run_all_backtests.py 2>&1 | tee /tmp/all_backtests.txt
 ```
 
 ### Training ML Models
@@ -1500,6 +1502,9 @@ These are real, recurring bugs from our codebase history. Every single item belo
 - **Use the correct database URL** — ORAT_DATABASE_URL for backtest data, DATABASE_URL for production; mixing them up gives wrong historical data
 - **Verify code against production before running** — 8 corrections were needed on the FORTRESS backtest prompt before it was accurate
 - **Add GO/NO-GO gates** — backtest results should have explicit pass/fail criteria before going live
+
+### 26. Long-Running Script Output Lost (1 fix)
+- **ALWAYS pipe backtests and long-running scripts through `| tee /tmp/output.txt`** — Render's web shell has zero scrollback; once output scrolls off screen it's gone forever; re-running an 8-hour backtest because you forgot `| tee` is painful
 
 ---
 
