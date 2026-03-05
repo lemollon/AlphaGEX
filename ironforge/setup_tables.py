@@ -64,6 +64,7 @@ def _position_table_ddl(bot: str) -> str:
         put_order_id TEXT DEFAULT 'PAPER',
         call_order_id TEXT DEFAULT 'PAPER',
         sandbox_order_id TEXT,
+        sandbox_close_order_id TEXT,
 
         status TEXT NOT NULL DEFAULT 'open',
         open_time TIMESTAMPTZ NOT NULL,
@@ -269,6 +270,10 @@ def setup_all_tables():
             cursor.execute(f"""
                 ALTER TABLE {bot}_positions
                 ADD COLUMN IF NOT EXISTS sandbox_order_id TEXT
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS sandbox_close_order_id TEXT
             """)
         logger.info("  sandbox_order_id migration OK")
 
