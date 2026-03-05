@@ -611,3 +611,205 @@ async def export_backtest_results(format: str = Query("csv", description="Export
     except Exception as e:
         logger.error(f"Error exporting backtest results: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IC MATRIX RESULTS (persisted from run_ic_matrix.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/ic-matrix/runs")
+async def get_ic_matrix_runs(
+    ticker: Optional[str] = None,
+    dte_mode: Optional[str] = None,
+    capital: Optional[float] = None,
+):
+    """List all IC backtest runs with summary stats. Filterable."""
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                SELECT run_id, run_key, created_at, ticker, dte_mode, short_dte,
+                       start_date, end_date, initial_capital,
+                       max_utilization, max_risk_per_trade,
+                       summary_json, risk_json, collateral_json,
+                       streaks_json, exit_reasons
+                FROM ic_backtest_runs
+                WHERE (%s IS NULL OR ticker = %s)
+                  AND (%s IS NULL OR dte_mode = %s)
+                  AND (%s IS NULL OR initial_capital = %s)
+                ORDER BY created_at DESC
+            """, (ticker, ticker, dte_mode, dte_mode, capital, capital))
+            rows = cur.fetchall()
+
+        cols = [d[0] for d in cur.description]
+        runs = []
+        for row in rows:
+            r = dict(zip(cols, row))
+            for k in ('summary_json', 'risk_json', 'collateral_json',
+                       'streaks_json', 'exit_reasons'):
+                if isinstance(r.get(k), str):
+                    import json as _json
+                    r[k] = _json.loads(r[k])
+            runs.append(r)
+
+        return {"status": "success", "count": len(runs), "runs": runs}
+    except Exception as e:
+        if "does not exist" in str(e):
+            return {"status": "success", "count": 0, "runs": [],
+                    "note": "No backtest runs saved yet. Run the matrix first."}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic-matrix/runs/{run_id}/trades")
+async def get_ic_matrix_trades(run_id: int):
+    """Get all trades for a specific backtest run."""
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                SELECT * FROM ic_backtest_trades
+                WHERE run_id = %s ORDER BY trade_id
+            """, (run_id,))
+            rows = cur.fetchall()
+
+        cols = [d[0] for d in cur.description]
+        trades = [dict(zip(cols, row)) for row in rows]
+        return {"status": "success", "run_id": run_id, "count": len(trades), "trades": trades}
+    except Exception as e:
+        if "does not exist" in str(e):
+            return {"status": "success", "run_id": run_id, "count": 0, "trades": []}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic-matrix/runs/{run_id}/equity-curve")
+async def get_ic_matrix_equity_curve(run_id: int):
+    """Get the equity curve for a specific backtest run."""
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                SELECT * FROM ic_backtest_equity_curve
+                WHERE run_id = %s ORDER BY trade_num
+            """, (run_id,))
+            rows = cur.fetchall()
+
+        cols = [d[0] for d in cur.description]
+        points = [dict(zip(cols, row)) for row in rows]
+        return {"status": "success", "run_id": run_id, "count": len(points), "equity_curve": points}
+    except Exception as e:
+        if "does not exist" in str(e):
+            return {"status": "success", "run_id": run_id, "count": 0, "equity_curve": []}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic-matrix/runs/{run_id}/trades/csv")
+async def export_ic_matrix_trades_csv(run_id: int):
+    """Download trades for a run as CSV."""
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                SELECT r.run_key, t.*
+                FROM ic_backtest_trades t
+                JOIN ic_backtest_runs r ON r.run_id = t.run_id
+                WHERE t.run_id = %s ORDER BY t.trade_id
+            """, (run_id,))
+            rows = cur.fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No trades found for this run")
+
+        cols = [d[0] for d in cur.description]
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=cols)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(zip(cols, row)))
+
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=ic_backtest_trades_run{run_id}.csv"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic-matrix/compare")
+async def compare_ic_matrix_runs(
+    sort_by: str = Query("return_pct", description="Sort by: return_pct, win_rate, sharpe, max_dd, profit_factor"),
+    limit: int = Query(20, description="Top N results"),
+    ticker: Optional[str] = None,
+):
+    """Compare all runs side-by-side, sorted by chosen metric. The leaderboard."""
+    try:
+        with get_connection() as conn:
+            cur = conn.execute("""
+                SELECT run_id, run_key, ticker, dte_mode, short_dte,
+                       initial_capital, max_utilization, max_risk_per_trade,
+                       summary_json, risk_json, collateral_json
+                FROM ic_backtest_runs
+                WHERE (%s IS NULL OR ticker = %s)
+                ORDER BY created_at DESC
+            """, (ticker, ticker))
+            rows = cur.fetchall()
+
+        cols = [d[0] for d in cur.description]
+        results = []
+        for row in rows:
+            r = dict(zip(cols, row))
+            s = r.pop('summary_json', {}) or {}
+            risk = r.pop('risk_json', {}) or {}
+            coll = r.pop('collateral_json', {}) or {}
+            if isinstance(s, str):
+                import json as _json
+                s = _json.loads(s)
+            if isinstance(risk, str):
+                import json as _json
+                risk = _json.loads(risk)
+            if isinstance(coll, str):
+                import json as _json
+                coll = _json.loads(coll)
+            r.update({
+                'total_trades': s.get('total_trades', 0),
+                'win_rate': s.get('win_rate', 0),
+                'total_pnl': s.get('total_pnl', 0),
+                'return_pct': s.get('total_return_pct', 0),
+                'profit_factor': risk.get('profit_factor', 0) if 'profit_factor' in risk else s.get('profit_factor', 0),
+                'sharpe': risk.get('sharpe_ratio', 0),
+                'sortino': risk.get('sortino_ratio', 0),
+                'max_dd': risk.get('max_drawdown_pct', 0),
+                'final_equity': s.get('final_equity', 0),
+                'avg_pnl': s.get('avg_pnl_per_trade', 0),
+                'skipped_capital': coll.get('trades_skipped_no_capital', 0),
+                'skipped_vix': coll.get('trades_skipped_vix', 0),
+                'peak_positions': coll.get('peak_concurrent_positions', 0),
+            })
+            results.append(r)
+
+        # Sort
+        sort_map = {
+            'return_pct': ('return_pct', True),
+            'win_rate': ('win_rate', True),
+            'sharpe': ('sharpe', True),
+            'max_dd': ('max_dd', False),  # Lower is better
+            'profit_factor': ('profit_factor', True),
+        }
+        key, reverse = sort_map.get(sort_by, ('return_pct', True))
+        results.sort(key=lambda x: x.get(key, 0), reverse=reverse)
+
+        return {
+            "status": "success",
+            "sort_by": sort_by,
+            "count": len(results[:limit]),
+            "total_runs": len(results),
+            "results": results[:limit],
+        }
+    except Exception as e:
+        if "does not exist" in str(e):
+            return {"status": "success", "count": 0, "results": [],
+                    "note": "No backtest runs saved yet."}
+        raise HTTPException(status_code=500, detail=str(e))

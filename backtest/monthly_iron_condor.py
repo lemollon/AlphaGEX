@@ -228,6 +228,7 @@ class BacktestDB:
         self.main_url = os.getenv("DATABASE_URL") or self.DEFAULT_MAIN_URL
         self._orat_conn = None
         self._main_conn = None
+        self._main_conn_rw = None
 
     def get_orat_conn(self):
         """Return a persistent read-only connection to the ORAT options database."""
@@ -243,17 +244,231 @@ class BacktestDB:
             self._main_conn.set_session(readonly=True, autocommit=True)
         return self._main_conn
 
+    def get_main_conn_rw(self):
+        """Return a writable connection to the main AlphaGEX database (for saving results)."""
+        if self._main_conn_rw is None or self._main_conn_rw.closed:
+            self._main_conn_rw = psycopg2.connect(self.main_url, connect_timeout=30)
+            self._main_conn_rw.autocommit = False
+        return self._main_conn_rw
+
     def get_conn(self):
         """Return main DB connection (backward compat for audit)."""
         return self.get_main_conn()
 
     def close(self):
         """Close persistent connections."""
-        for conn in (self._orat_conn, self._main_conn):
+        for conn in (self._orat_conn, self._main_conn, self._main_conn_rw):
             if conn and not conn.closed:
                 conn.close()
         self._orat_conn = None
         self._main_conn = None
+        self._main_conn_rw = None
+
+    # ── Results persistence ────────────────────────────────────────────────
+
+    def _ensure_results_tables(self):
+        """Create backtest results tables if they don't exist."""
+        conn = self.get_main_conn_rw()
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS ic_backtest_runs (
+                    run_id          SERIAL PRIMARY KEY,
+                    run_key         TEXT UNIQUE NOT NULL,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    ticker          TEXT NOT NULL,
+                    dte_mode        TEXT NOT NULL,
+                    short_dte       INT,
+                    start_date      TEXT NOT NULL,
+                    end_date        TEXT NOT NULL,
+                    initial_capital FLOAT NOT NULL,
+                    max_utilization FLOAT NOT NULL,
+                    max_risk_per_trade FLOAT NOT NULL,
+                    config_json     JSONB NOT NULL,
+                    summary_json    JSONB NOT NULL,
+                    risk_json       JSONB NOT NULL,
+                    collateral_json JSONB NOT NULL,
+                    exit_reasons    JSONB,
+                    monthly_returns JSONB,
+                    annual_returns  JSONB,
+                    streaks_json    JSONB
+                );
+
+                CREATE TABLE IF NOT EXISTS ic_backtest_trades (
+                    id              SERIAL PRIMARY KEY,
+                    run_id          INT NOT NULL REFERENCES ic_backtest_runs(run_id) ON DELETE CASCADE,
+                    trade_id        INT NOT NULL,
+                    entry_date      TEXT,
+                    expiration_date TEXT,
+                    dte_at_entry    INT,
+                    underlying_at_entry  FLOAT,
+                    vix_at_entry    FLOAT,
+                    put_short_strike     FLOAT,
+                    put_long_strike      FLOAT,
+                    put_credit           FLOAT,
+                    put_short_delta      FLOAT,
+                    put_short_iv         FLOAT,
+                    call_short_strike    FLOAT,
+                    call_long_strike     FLOAT,
+                    call_credit          FLOAT,
+                    call_short_delta     FLOAT,
+                    call_short_iv        FLOAT,
+                    total_credit    FLOAT,
+                    max_profit      FLOAT,
+                    max_loss        FLOAT,
+                    wing_width      FLOAT,
+                    contracts       INT,
+                    margin_required FLOAT,
+                    strike_selection_method TEXT,
+                    exit_date       TEXT,
+                    exit_reason     TEXT,
+                    dte_at_exit     INT,
+                    underlying_at_exit FLOAT,
+                    exit_debit      FLOAT,
+                    gross_pnl       FLOAT,
+                    commissions     FLOAT,
+                    slippage_cost   FLOAT,
+                    net_pnl         FLOAT,
+                    return_on_risk  FLOAT,
+                    days_held       INT
+                );
+
+                CREATE TABLE IF NOT EXISTS ic_backtest_equity_curve (
+                    id              SERIAL PRIMARY KEY,
+                    run_id          INT NOT NULL REFERENCES ic_backtest_runs(run_id) ON DELETE CASCADE,
+                    date            TEXT NOT NULL,
+                    trade_num       INT,
+                    equity          FLOAT,
+                    pnl             FLOAT,
+                    cumulative_pnl  FLOAT,
+                    return_pct      FLOAT,
+                    drawdown_pct    FLOAT,
+                    exit_reason     TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_trades_run ON ic_backtest_trades(run_id);
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_equity_run ON ic_backtest_equity_curve(run_id);
+                CREATE INDEX IF NOT EXISTS idx_ic_bt_runs_key ON ic_backtest_runs(run_key);
+            """)
+        conn.commit()
+
+    def save_results(self, config: 'MonthlyICConfig', results: Dict,
+                     trades: List['ICTrade']):
+        """Save a complete backtest run (summary + trades + equity curve) to PostgreSQL."""
+        self._ensure_results_tables()
+
+        # Build a unique key for this run so re-runs overwrite
+        dte_label = config.dte_mode
+        if config.dte_mode == "short":
+            dte_label = f"{config.short_dte_target}dte"
+        elif config.dte_mode == "weekly":
+            dte_label = "weekly"
+
+        run_key = (f"{config.ticker}_{dte_label}_"
+                   f"{int(config.initial_capital)}_{int(config.max_capital_utilization)}_"
+                   f"{int(config.max_risk_per_trade_pct)}_"
+                   f"{config.start_date}_{config.end_date}")
+
+        conn = self.get_main_conn_rw()
+        with conn.cursor() as cur:
+            # Delete any previous run with same key (re-run overwrites)
+            cur.execute("DELETE FROM ic_backtest_runs WHERE run_key = %s", (run_key,))
+
+            # Insert run summary
+            cur.execute("""
+                INSERT INTO ic_backtest_runs (
+                    run_key, ticker, dte_mode, short_dte,
+                    start_date, end_date, initial_capital,
+                    max_utilization, max_risk_per_trade,
+                    config_json, summary_json, risk_json, collateral_json,
+                    exit_reasons, monthly_returns, annual_returns, streaks_json
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
+                    %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb
+                ) RETURNING run_id
+            """, (
+                run_key, config.ticker, config.dte_mode,
+                config.short_dte_target if config.dte_mode == "short" else None,
+                config.start_date, config.end_date, config.initial_capital,
+                config.max_capital_utilization, config.max_risk_per_trade_pct,
+                json.dumps(results.get('config', {}), default=str),
+                json.dumps(results.get('summary', {}), default=str),
+                json.dumps(results.get('risk', {}), default=str),
+                json.dumps(results.get('collateral', {}), default=str),
+                json.dumps(results.get('exit_reasons', {}), default=str),
+                json.dumps(results.get('monthly_returns', {}), default=str),
+                json.dumps(results.get('annual_returns', {}), default=str),
+                json.dumps(results.get('streaks', {}), default=str),
+            ))
+            run_id = cur.fetchone()[0]
+
+            # Bulk insert trades
+            if trades:
+                trade_values = []
+                for t in trades:
+                    d = asdict(t) if hasattr(t, '__dataclass_fields__') else t
+                    trade_values.append((
+                        run_id, d.get('trade_id', 0),
+                        d.get('entry_date', ''), d.get('expiration_date', ''),
+                        d.get('dte_at_entry', 0), d.get('underlying_at_entry', 0),
+                        d.get('vix_at_entry', 0),
+                        d.get('put_short_strike', 0), d.get('put_long_strike', 0),
+                        d.get('put_credit', 0), d.get('put_short_delta', 0),
+                        d.get('put_short_iv', 0),
+                        d.get('call_short_strike', 0), d.get('call_long_strike', 0),
+                        d.get('call_credit', 0), d.get('call_short_delta', 0),
+                        d.get('call_short_iv', 0),
+                        d.get('total_credit', 0), d.get('max_profit', 0),
+                        d.get('max_loss', 0), d.get('wing_width', 0),
+                        d.get('contracts', 1), d.get('margin_required', 0),
+                        d.get('strike_selection_method', ''),
+                        d.get('exit_date', ''), d.get('exit_reason', ''),
+                        d.get('dte_at_exit', 0), d.get('underlying_at_exit', 0),
+                        d.get('exit_debit', 0),
+                        d.get('gross_pnl', 0), d.get('commissions', 0),
+                        d.get('slippage_cost', 0), d.get('net_pnl', 0),
+                        d.get('return_on_risk', 0), d.get('days_held', 0),
+                    ))
+                psycopg2.extras.execute_batch(cur, """
+                    INSERT INTO ic_backtest_trades (
+                        run_id, trade_id, entry_date, expiration_date,
+                        dte_at_entry, underlying_at_entry, vix_at_entry,
+                        put_short_strike, put_long_strike, put_credit,
+                        put_short_delta, put_short_iv,
+                        call_short_strike, call_long_strike, call_credit,
+                        call_short_delta, call_short_iv,
+                        total_credit, max_profit, max_loss, wing_width,
+                        contracts, margin_required, strike_selection_method,
+                        exit_date, exit_reason, dte_at_exit,
+                        underlying_at_exit, exit_debit,
+                        gross_pnl, commissions, slippage_cost, net_pnl,
+                        return_on_risk, days_held
+                    ) VALUES (
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                    )
+                """, trade_values, page_size=100)
+
+            # Bulk insert equity curve
+            eq_curve = results.get('equity_curve', [])
+            if eq_curve:
+                eq_values = [(
+                    run_id, pt.get('date', ''), pt.get('trade_num', 0),
+                    pt.get('equity', 0), pt.get('pnl', 0),
+                    pt.get('cumulative_pnl', 0), pt.get('return_pct', 0),
+                    pt.get('drawdown_pct', 0), pt.get('exit_reason', ''),
+                ) for pt in eq_curve]
+                psycopg2.extras.execute_batch(cur, """
+                    INSERT INTO ic_backtest_equity_curve (
+                        run_id, date, trade_num, equity, pnl,
+                        cumulative_pnl, return_pct, drawdown_pct, exit_reason
+                    ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, eq_values, page_size=200)
+
+        conn.commit()
+        logger.info(f"Saved run {run_key} to database: run_id={run_id}, "
+                     f"{len(trades)} trades, {len(eq_curve)} equity points")
+        return run_id
 
     # ── Schema discovery (Phase 1) ────────────────────────────────────────
 
@@ -2294,6 +2509,13 @@ Examples:
         backtester.export_trades_csv(f"{base}_trades_{suffix}.csv")
         backtester.export_results_json(results, f"{base}_results_{suffix}.json")
         backtester.export_equity_curve_csv(results, f"{base}_equity_{suffix}.csv")
+
+    # Always save to database (persists across deploys)
+    if backtester.trades:
+        try:
+            backtester.db.save_results(backtester.config, results, backtester.trades)
+        except Exception as e:
+            logger.error(f"Failed to save results to database: {e}")
 
 
 if __name__ == "__main__":
