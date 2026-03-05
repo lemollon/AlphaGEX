@@ -114,8 +114,10 @@ class MonthlyICConfig:
     sl_gap_slippage_pct: float = 10.0 # Extra % beyond SL allowed for gap (10% → 220% on 200% SL)
 
     # ── DTE mode ──────────────────────────────────────────────────────────
-    dte_mode: str = "monthly"         # "monthly" (30-45 DTE) or "short" (0-3 DTE)
+    dte_mode: str = "monthly"         # "monthly" (30-45 DTE), "short" (0-3 DTE), or "weekly" (5-7 DTE)
     short_dte_target: int = 0         # For short mode: 0, 1, 2, or 3 DTE
+    weekly_dte_min: int = 5           # For weekly mode: minimum DTE at entry
+    weekly_dte_max: int = 7           # For weekly mode: maximum DTE at entry
 
     @property
     def wing_width(self) -> float:
@@ -473,6 +475,45 @@ class BacktestDB:
                 seen_dates.add(td)
                 unique.append(r)
         return unique
+
+    def get_weekly_dte_entries(
+        self, ticker: str, start_date: str, end_date: str,
+        dte_min: int, dte_max: int
+    ) -> List[Dict]:
+        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
+
+        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7).
+        For each trade_date, picks the expiration closest to the midpoint of the range.
+
+        Returns list of {trade_date, expiration_date, dte}.
+        """
+        conn = self.get_orat_conn()
+        tickers = [ticker]
+        if ticker.upper() == "SPX":
+            tickers = ["SPX", "SPXW"]
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date, expiration_date, dte
+                FROM orat_options_eod
+                WHERE ticker = ANY(%s)
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                  AND dte BETWEEN %s AND %s
+                ORDER BY trade_date, dte;
+            """, (tickers, start_date, end_date, dte_min, dte_max))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        # Deduplicate: one entry per trade_date, pick expiration closest to midpoint DTE
+        target_dte = (dte_min + dte_max) // 2
+        best_by_date = {}
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            distance = abs(r['dte'] - target_dte)
+            if td not in best_by_date or distance < best_by_date[td][1]:
+                best_by_date[td] = (r, distance)
+
+        return [v[0] for v in sorted(best_by_date.values(), key=lambda x: str(x[0]['trade_date']))]
 
     def get_options_chain(
         self, ticker: str, trade_date: str, expiration_date: str
@@ -1076,7 +1117,12 @@ class MonthlyICBacktester:
 
     def run(self) -> Dict:
         """Execute the full backtest."""
-        dte_label = f"{self.config.short_dte_target}DTE" if self.config.dte_mode == "short" else "Monthly (30-45 DTE)"
+        if self.config.dte_mode == "short":
+            dte_label = f"{self.config.short_dte_target}DTE"
+        elif self.config.dte_mode == "weekly":
+            dte_label = f"Weekly ({self.config.weekly_dte_min}-{self.config.weekly_dte_max} DTE)"
+        else:
+            dte_label = "Monthly (30-45 DTE)"
         sizing_label = "DYNAMIC" if self.config.dynamic_sizing else f"FIXED ({self.config.contracts} contracts)"
 
         logger.info("=" * 80)
@@ -1117,6 +1163,8 @@ class MonthlyICBacktester:
         # Step 2: Build entry list based on DTE mode
         if self.config.dte_mode == "short":
             entries = self._build_short_dte_entries(all_trading_days)
+        elif self.config.dte_mode == "weekly":
+            entries = self._build_weekly_dte_entries(all_trading_days)
         else:
             entries = self._build_monthly_entries(all_trading_days)
 
@@ -1197,6 +1245,19 @@ class MonthlyICBacktester:
         rows = self.db.get_short_dte_entries(
             self.config.ticker, self.config.start_date, self.config.end_date,
             self.config.short_dte_target
+        )
+        entries = []
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            ed = r['expiration_date'].strftime('%Y-%m-%d') if isinstance(r['expiration_date'], date) else str(r['expiration_date'])
+            entries.append((td, ed))
+        return entries
+
+    def _build_weekly_dte_entries(self, all_trading_days: List[str]) -> List[Tuple[str, str]]:
+        """Build (entry_date, expiration_date) pairs for weekly IC strategy (5-7 DTE)."""
+        rows = self.db.get_weekly_dte_entries(
+            self.config.ticker, self.config.start_date, self.config.end_date,
+            self.config.weekly_dte_min, self.config.weekly_dte_max
         )
         entries = []
         for r in rows:
@@ -2040,10 +2101,14 @@ Examples:
                         help='Extra %% slippage on gap SL exits (default: 10)')
 
     # DTE mode
-    parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short'],
-                        help='DTE strategy: monthly (30-45 DTE) or short (0-3 DTE)')
+    parser.add_argument('--dte-mode', default='monthly', choices=['monthly', 'short', 'weekly'],
+                        help='DTE strategy: monthly (30-45 DTE), short (0-3 DTE), or weekly (5-7 DTE)')
     parser.add_argument('--short-dte', type=int, default=0, choices=[0, 1, 2, 3],
                         help='Target DTE for short mode (default: 0)')
+    parser.add_argument('--weekly-dte-min', type=int, default=5,
+                        help='Min DTE for weekly mode (default: 5)')
+    parser.add_argument('--weekly-dte-max', type=int, default=7,
+                        help='Max DTE for weekly mode (default: 7)')
 
     args = parser.parse_args()
 
@@ -2069,6 +2134,12 @@ Examples:
         # For 1-3 DTE, reduce min credit (shorter duration = less premium)
         if min_credit == 0.50:
             min_credit = 0.20
+    elif dte_mode == "weekly":
+        # Weekly ICs (5-7 DTE): reduce min credit, lower DTE exit
+        if min_credit == 0.50:
+            min_credit = 0.30
+        if dte_exit == 5:
+            dte_exit = 1  # Exit at 1 DTE for weeklies
 
     config = MonthlyICConfig(
         ticker=args.ticker.upper(),
@@ -2095,6 +2166,8 @@ Examples:
         sl_gap_slippage_pct=args.sl_gap_slippage,
         dte_mode=dte_mode,
         short_dte_target=short_dte,
+        weekly_dte_min=args.weekly_dte_min,
+        weekly_dte_max=args.weekly_dte_max,
     )
 
     # Override wing width if specified
@@ -2111,7 +2184,12 @@ Examples:
     # Export (default on, use --no-export to skip)
     if args.export and not args.no_export and backtester.trades:
         capital_label = f"{int(args.capital/1000)}k"
-        dte_label = f"{short_dte}dte" if dte_mode == "short" else "monthly"
+        if dte_mode == "short":
+            dte_label = f"{short_dte}dte"
+        elif dte_mode == "weekly":
+            dte_label = "weekly"
+        else:
+            dte_label = "monthly"
         util_label = f"util{int(args.max_utilization)}"
         backtester.export_trades_csv(
             f"backtest/results/{args.ticker.upper()}_{dte_label}_ic_trades_{capital_label}_{util_label}_{args.start}_{args.end}.csv"

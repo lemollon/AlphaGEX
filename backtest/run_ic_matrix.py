@@ -3,11 +3,11 @@
 Iron Condor Backtest Matrix Runner (Render Shell Friendly)
 
 Runs monthly_iron_condor.py across all combinations of:
-  - DTE modes: 0DTE, 1DTE, 2DTE, 3DTE, Monthly (30-45 DTE)
+  - DTE modes: 0DTE, 1DTE, 2DTE, 3DTE, Weekly (5-7 DTE), Monthly (30-45 DTE)
   - Capital utilization: 20%, 30%, 50%, 70%
   - Capital levels: $5,000 and $100,000
 
-Total: 5 DTE modes x 4 utilizations x 2 capital levels = 40 backtests
+Total: 6 DTE modes x 4 utilizations x 2 capital levels = 48 backtests
 
 OUTPUT: Prints a tab-separated table at the end that you can
         copy/paste directly into Google Sheets or Excel.
@@ -45,6 +45,7 @@ DTE_MODES = [
     {"dte_mode": "short", "short_dte": 1, "label": "1DTE"},
     {"dte_mode": "short", "short_dte": 2, "label": "2DTE"},
     {"dte_mode": "short", "short_dte": 3, "label": "3DTE"},
+    {"dte_mode": "weekly", "short_dte": 0, "label": "Weekly", "weekly_dte_min": 5, "weekly_dte_max": 7},
     {"dte_mode": "monthly", "short_dte": 0, "label": "Monthly"},
 ]
 
@@ -84,6 +85,11 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         "--export",
     ]
 
+    # Add weekly DTE range args if in weekly mode
+    if dte_config["dte_mode"] == "weekly":
+        cmd.extend(["--weekly-dte-min", str(dte_config["weekly_dte_min"])])
+        cmd.extend(["--weekly-dte-max", str(dte_config["weekly_dte_max"])])
+
     t0 = time.time()
     try:
         proc = subprocess.run(
@@ -100,7 +106,12 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         return _row(label, utilization, capital, f"FAIL:{err}", elapsed=time.time() - t0)
 
     # Parse results JSON
-    dte_file = f"{dte_config['short_dte']}dte" if dte_config["dte_mode"] == "short" else "monthly"
+    if dte_config["dte_mode"] == "short":
+        dte_file = f"{dte_config['short_dte']}dte"
+    elif dte_config["dte_mode"] == "weekly":
+        dte_file = "weekly"
+    else:
+        dte_file = "monthly"
     util_file = f"util{utilization}"
     json_path = RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{start}_{end}.json"
 
@@ -169,6 +180,8 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     if dte_filter is not None:
         if dte_filter == -1:
             dtes = [d for d in DTE_MODES if d["dte_mode"] == "monthly"]
+        elif dte_filter == -2:
+            dtes = [d for d in DTE_MODES if d["dte_mode"] == "weekly"]
         else:
             dtes = [d for d in DTE_MODES if d["short_dte"] == dte_filter and d["dte_mode"] == "short"]
     utils = UTILIZATIONS if util_filter is None else [util_filter]
@@ -255,7 +268,7 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
             if key not in by_dte or r["Return%"] > by_dte[key]["Return%"]:
                 by_dte[key] = r
         print(f"  {'DTE':<10} {'Best Util':>9} {'Capital':>10} {'Return%':>9} {'WR%':>6} {'MaxDD%':>8} {'Sharpe':>7} {'Trades':>7}")
-        for dte_label in ["0DTE", "1DTE", "2DTE", "3DTE", "Monthly"]:
+        for dte_label in ["0DTE", "1DTE", "2DTE", "3DTE", "Weekly", "Monthly"]:
             if dte_label in by_dte:
                 r = by_dte[dte_label]
                 print(f"  {r['DTE']:<10} {r['Util%']:>8}% ${r['Capital']:>9,} {r['Return%']:>+8.1f}% "
@@ -283,16 +296,17 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python backtest/run_ic_matrix.py                       # Full 40-run matrix
-  python backtest/run_ic_matrix.py --capital 100000      # Just $100k (20 runs)
-  python backtest/run_ic_matrix.py --capital 5000        # Just $5k (20 runs)
+  python backtest/run_ic_matrix.py                       # Full 48-run matrix
+  python backtest/run_ic_matrix.py --capital 100000      # Just $100k (24 runs)
+  python backtest/run_ic_matrix.py --capital 5000        # Just $5k (24 runs)
   python backtest/run_ic_matrix.py --dte 0               # Just 0DTE (8 runs)
   python backtest/run_ic_matrix.py --dte -1              # Just Monthly (8 runs)
-  python backtest/run_ic_matrix.py --utilization 50      # Just 50% util (10 runs)
+  python backtest/run_ic_matrix.py --dte -2              # Just Weekly (8 runs)
+  python backtest/run_ic_matrix.py --utilization 50      # Just 50% util (12 runs)
         """
     )
-    parser.add_argument("--dte", type=int, default=None, choices=[0, 1, 2, 3, -1],
-                        help="Single DTE (0-3) or -1 for monthly only")
+    parser.add_argument("--dte", type=int, default=None, choices=[0, 1, 2, 3, -1, -2],
+                        help="Single DTE (0-3), -1 for monthly, -2 for weekly")
     parser.add_argument("--utilization", type=int, default=None, choices=[20, 30, 50, 70],
                         help="Single utilization level")
     parser.add_argument("--capital", type=float, default=None,
