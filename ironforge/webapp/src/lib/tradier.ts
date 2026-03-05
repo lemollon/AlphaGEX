@@ -325,6 +325,67 @@ async function getSandboxBuyingPower(
 export interface SandboxOrderInfo {
   order_id: number
   contracts: number
+  fill_price?: number | null
+}
+
+export interface SandboxCloseInfo {
+  order_id: number
+  contracts: number
+  fill_price?: number | null
+}
+
+/**
+ * Query a sandbox order and return the average fill price.
+ * Retries up to 3 times with 1s delay for pending orders.
+ */
+async function getOrderFillPrice(
+  apiKey: string,
+  accountId: string,
+  orderId: number,
+): Promise<number | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const data = await sandboxGet(
+      `/accounts/${accountId}/orders/${orderId}`,
+      undefined,
+      apiKey,
+    )
+    if (!data) {
+      await new Promise((r) => setTimeout(r, 1000))
+      continue
+    }
+
+    const order = data.order || {}
+    const status = order.status || ''
+
+    if (status === 'filled') {
+      // avg_fill_price on order level for multileg
+      if (order.avg_fill_price != null) {
+        return Math.abs(parseFloat(order.avg_fill_price))
+      }
+      // Fallback: calculate from leg fills
+      let legs = order.leg || []
+      if (!Array.isArray(legs)) legs = [legs]
+      if (legs.length > 0) {
+        let total = 0
+        for (const leg of legs) {
+          const side = leg.side || ''
+          const fill = parseFloat(leg.avg_fill_price || '0')
+          if (side.includes('sell')) total += fill
+          else total -= fill
+        }
+        return total !== 0 ? Math.abs(total) : null
+      }
+    }
+
+    if (['pending', 'open', 'partially_filled'].includes(status)) {
+      await new Promise((r) => setTimeout(r, 1000))
+      continue
+    }
+
+    // rejected, canceled, expired
+    return null
+  }
+  return null
 }
 
 /**
@@ -404,9 +465,17 @@ export async function placeIcOrderAllAccounts(
         acct.apiKey,
       )
       if (result?.order?.id) {
+        // Read back actual fill price
+        let fillPrice: number | null = null
+        try {
+          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id)
+        } catch {
+          // Non-fatal
+        }
         results[acct.name] = {
           order_id: result.order.id,
           contracts: acctContracts,
+          fill_price: fillPrice,
         }
       }
     } catch (err: any) {
@@ -550,8 +619,8 @@ export async function closeIcOrderAllAccounts(
   closePrice: number,
   tag?: string,
   sandboxOpenInfo?: Record<string, SandboxOrderInfo | number> | null,
-): Promise<Record<string, number>> {
-  const results: Record<string, number> = {}
+): Promise<Record<string, SandboxCloseInfo>> {
+  const results: Record<string, SandboxCloseInfo> = {}
 
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
   const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
@@ -589,7 +658,18 @@ export async function closeIcOrderAllAccounts(
           acct.apiKey,
         )
         if (result?.order?.id) {
-          results[acct.name] = result.order.id
+          // Read back actual fill price
+          let fillPrice: number | null = null
+          try {
+            fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id)
+          } catch {
+            // Non-fatal
+          }
+          results[acct.name] = {
+            order_id: result.order.id,
+            contracts: closeQty,
+            fill_price: fillPrice,
+          }
         }
       } catch (err: any) {
         console.warn(`Sandbox IC close failed [${acct.name}]: ${err.message}`)

@@ -86,11 +86,12 @@ class PaperExecutor:
 
     def _mirror_open_to_all_sandboxes(
         self, position: IronCondorPosition
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         Mirror a paper open to all 3 Tradier sandbox accounts.
 
-        Returns dict of {account_name: order_id} for successful mirrors.
+        Returns dict of {account_name: {order_id, fill_price}} for successful mirrors.
+        Reads back actual fill prices from each account so P&L can match Tradier.
         Non-fatal: failures are logged but don't block paper trading.
         """
         results = {}
@@ -111,10 +112,21 @@ class PaperExecutor:
                 )
                 if result and result.get("order_id"):
                     order_id = str(result["order_id"])
-                    results[name] = order_id
+                    info = {"order_id": order_id, "fill_price": None}
+                    # Read back actual fill price
+                    try:
+                        fill = client.get_order_fill_price(int(order_id))
+                        if fill is not None and fill > 0:
+                            info["fill_price"] = fill
+                    except Exception as fe:
+                        logger.warning(
+                            f"{self.config.bot_name}: Fill readback failed [{name}]: {fe}"
+                        )
+                    results[name] = info
                     logger.info(
                         f"{self.config.bot_name} SANDBOX MIRROR [{name}]: "
-                        f"{position.position_id} → order {order_id}"
+                        f"{position.position_id} → order {order_id} "
+                        f"fill=${info['fill_price']}"
                     )
                 else:
                     logger.warning(
@@ -128,49 +140,32 @@ class PaperExecutor:
                 )
         return results
 
-    def _get_first_fill_price(self, sandbox_orders: Dict[str, str]) -> Optional[float]:
-        """Read back the actual fill price from the first successful sandbox order.
+    def _get_user_fill_price(self, sandbox_info: Dict[str, Dict]) -> Optional[float]:
+        """Extract the User account's fill price from sandbox info dict.
 
-        Prefers the "User" account if available, otherwise uses the first entry.
-        Returns the net credit (positive) or None if unavailable.
+        Returns the fill price (positive) or None if unavailable.
         """
-        # Prefer User account (primary)
-        order_names = list(sandbox_orders.keys())
-        if "User" in order_names:
-            order_names.remove("User")
-            order_names.insert(0, "User")
-
-        for name in order_names:
-            order_id = sandbox_orders[name]
-            # Find the matching sandbox client
-            client = None
-            for sb in self.sandbox_clients:
-                if sb["name"] == name:
-                    client = sb["client"]
-                    break
-            if not client:
-                continue
-            try:
-                fill_price = client.get_order_fill_price(int(order_id))
-                if fill_price is not None and fill_price > 0:
-                    logger.info(
-                        f"{self.config.bot_name}: Got fill price ${fill_price:.4f} "
-                        f"from sandbox [{name}] order #{order_id}"
-                    )
-                    return fill_price
-            except Exception as e:
-                logger.warning(
-                    f"{self.config.bot_name}: Failed to get fill from [{name}]: {e}"
+        user_info = sandbox_info.get("User")
+        if user_info and user_info.get("fill_price") is not None:
+            return user_info["fill_price"]
+        # Fallback: try any account
+        for name, info in sandbox_info.items():
+            if info.get("fill_price") is not None and info["fill_price"] > 0:
+                logger.info(
+                    f"{self.config.bot_name}: Using [{name}] fill as fallback "
+                    f"(User fill unavailable)"
                 )
+                return info["fill_price"]
         return None
 
     def _mirror_close_to_all_sandboxes(
         self, position: IronCondorPosition, close_price: float
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Dict]:
         """
         Mirror a paper close to all 3 Tradier sandbox accounts.
 
-        Returns dict of {account_name: order_id} for successful closes.
+        Returns dict of {account_name: {order_id, fill_price}} for successful closes.
+        Reads back actual fill prices from each account so P&L can match Tradier.
         Non-fatal: failures are logged but don't block paper trading.
         """
         results = {}
@@ -191,10 +186,21 @@ class PaperExecutor:
                 )
                 if result and result.get("order_id"):
                     order_id = str(result["order_id"])
-                    results[name] = order_id
+                    info = {"order_id": order_id, "fill_price": None}
+                    # Read back actual fill price
+                    try:
+                        fill = client.get_order_fill_price(int(order_id))
+                        if fill is not None and fill > 0:
+                            info["fill_price"] = fill
+                    except Exception as fe:
+                        logger.warning(
+                            f"{self.config.bot_name}: Close fill readback failed [{name}]: {fe}"
+                        )
+                    results[name] = info
                     logger.info(
                         f"{self.config.bot_name} SANDBOX CLOSE [{name}]: "
-                        f"{position.position_id} → order {order_id}"
+                        f"{position.position_id} → order {order_id} "
+                        f"fill=${info['fill_price']}"
                     )
                 else:
                     logger.warning(
@@ -333,17 +339,17 @@ class PaperExecutor:
             )
 
             # Mirror to all Tradier sandbox accounts.
-            # After mirroring, read back actual fill price so the DB reflects
-            # what Tradier actually filled at (not our bid/ask estimate).
-            sandbox_orders = {}
+            # After mirroring, read back actual fill prices per account so the
+            # DB reflects what Tradier actually filled at (not our bid/ask estimate).
+            sandbox_info = {}
             actual_fill_credit = None
             if self.sandbox_clients:
-                sandbox_orders = self._mirror_open_to_all_sandboxes(position)
-                if sandbox_orders:
+                sandbox_info = self._mirror_open_to_all_sandboxes(position)
+                if sandbox_info:
                     self.db.update_sandbox_order_id(
-                        position_id, json.dumps(sandbox_orders)
+                        position_id, json.dumps(sandbox_info)
                     )
-                    actual_fill_credit = self._get_first_fill_price(sandbox_orders)
+                    actual_fill_credit = self._get_user_fill_price(sandbox_info)
 
             # If we got an actual fill, update the position so the frontend
             # and P&L math use the real Tradier fill, not our bid/ask estimate.
@@ -361,7 +367,7 @@ class PaperExecutor:
                 credit_used = actual_fill_credit
 
             sandbox_summary = (
-                f" [sandbox:{sandbox_orders}]" if sandbox_orders else ""
+                f" [sandbox:{sandbox_info}]" if sandbox_info else ""
             )
             fill_note = (
                 f" (actual fill=${actual_fill_credit:.4f})"
@@ -383,7 +389,7 @@ class PaperExecutor:
                     "credit": credit_used,
                     "collateral": total_collateral,
                     "wings_adjusted": signal.wings_adjusted,
-                    "sandbox_order_ids": sandbox_orders,
+                    "sandbox_order_ids": sandbox_info,
                 },
             )
 
@@ -420,15 +426,15 @@ class PaperExecutor:
         try:
             # Mirror close to Tradier sandbox accounts FIRST so we can read
             # back the actual fill price before committing paper P&L.
-            sandbox_close_orders = {}
+            sandbox_close_info = {}
             actual_close_price = None
             if self.sandbox_clients:
-                sandbox_close_orders = self._mirror_close_to_all_sandboxes(
+                sandbox_close_info = self._mirror_close_to_all_sandboxes(
                     position, close_price
                 )
-                if sandbox_close_orders:
-                    actual_close_price = self._get_first_fill_price(
-                        sandbox_close_orders
+                if sandbox_close_info:
+                    actual_close_price = self._get_user_fill_price(
+                        sandbox_close_info
                     )
 
             # Use Tradier's actual fill if available, otherwise fall back to
@@ -480,14 +486,14 @@ class PaperExecutor:
                 note=f"Closed {position.position_id}: {reason}",
             )
 
-            if sandbox_close_orders:
+            if sandbox_close_info:
                 self.db.update_sandbox_close_order_id(
-                    position.position_id, json.dumps(sandbox_close_orders)
+                    position.position_id, json.dumps(sandbox_close_info)
                 )
 
             sandbox_summary = (
-                f" [sandbox:{sandbox_close_orders}]"
-                if sandbox_close_orders
+                f" [sandbox:{sandbox_close_info}]"
+                if sandbox_close_info
                 else ""
             )
             fill_note = (
@@ -514,7 +520,7 @@ class PaperExecutor:
                     "realized_pnl": realized_pnl,
                     "close_reason": reason,
                     "entry_credit": position.total_credit,
-                    "sandbox_close_order_ids": sandbox_close_orders,
+                    "sandbox_close_order_ids": sandbox_close_info,
                 },
             )
 

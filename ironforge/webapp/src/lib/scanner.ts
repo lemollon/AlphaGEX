@@ -20,6 +20,7 @@ import {
   placeIcOrderAllAccounts,
   closeIcOrderAllAccounts,
   type SandboxOrderInfo,
+  type SandboxCloseInfo,
 } from './tradier'
 
 /* ------------------------------------------------------------------ */
@@ -247,14 +248,45 @@ async function closePosition(
   reason: string,
   closePrice?: number,
 ): Promise<void> {
-  // Determine close price if not provided
-  let price = closePrice ?? 0
+  // Determine estimated close price if not provided
+  let estimatedPrice = closePrice ?? 0
   if (closePrice === undefined && isConfigured()) {
     const mtm = await getIcMarkToMarket(ticker, expiration, putShort, putLong, callShort, callLong)
-    price = mtm?.cost_to_close ?? 0
+    estimatedPrice = mtm?.cost_to_close ?? 0
   }
 
-  const pnlPerContract = (entryCredit - price) * 100
+  // Mirror close to sandbox FIRST so we can read back actual fill prices
+  let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
+  try {
+    const sbRows = await query(
+      `SELECT sandbox_order_id FROM ${botTable(bot.name, 'positions')}
+       WHERE position_id = $1 AND dte_mode = $2`,
+      [positionId, bot.dte],
+    )
+    let sandboxOpenInfo: Record<string, any> | null = null
+    if (sbRows[0]?.sandbox_order_id) {
+      try { sandboxOpenInfo = JSON.parse(sbRows[0].sandbox_order_id) } catch {}
+    }
+    sandboxCloseInfo = await closeIcOrderAllAccounts(
+      ticker, expiration, putShort, putLong, callShort, callLong,
+      contracts, estimatedPrice, positionId, sandboxOpenInfo,
+    )
+  } catch (e: any) {
+    console.warn(`[scanner] Sandbox close failed for ${positionId}: ${e.message}`)
+  }
+
+  // Use User's actual fill price if available, otherwise fall back to estimate
+  let effectivePrice = estimatedPrice
+  const userClose = sandboxCloseInfo['User']
+  if (userClose?.fill_price != null && userClose.fill_price > 0) {
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()}: Actual close fill=$${userClose.fill_price.toFixed(4)} ` +
+      `(estimated=$${estimatedPrice.toFixed(4)}, diff=${(userClose.fill_price - estimatedPrice).toFixed(4)})`,
+    )
+    effectivePrice = userClose.fill_price
+  }
+
+  const pnlPerContract = (entryCredit - effectivePrice) * 100
   const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
 
   // Close position
@@ -262,9 +294,12 @@ async function closePosition(
     `UPDATE ${botTable(bot.name, 'positions')}
      SET status = 'closed', close_time = NOW(),
          close_price = $1, realized_pnl = $2,
-         close_reason = $3, updated_at = NOW()
-     WHERE position_id = $4 AND status = 'open' AND dte_mode = $5`,
-    [price, realizedPnl, reason, positionId, bot.dte],
+         close_reason = $3, sandbox_close_order_id = $4,
+         updated_at = NOW()
+     WHERE position_id = $5 AND status = 'open' AND dte_mode = $6`,
+    [effectivePrice, realizedPnl, reason,
+     Object.keys(sandboxCloseInfo).length > 0 ? JSON.stringify(sandboxCloseInfo) : null,
+     positionId, bot.dte],
   )
 
   // Update paper account
@@ -290,36 +325,29 @@ async function closePosition(
          close_reason = $3,
          is_day_trade = (opened_at::date = CURRENT_DATE)
      WHERE position_id = $4 AND dte_mode = $5`,
-    [price, realizedPnl, reason, positionId, bot.dte],
+    [effectivePrice, realizedPnl, reason, positionId, bot.dte],
   )
 
-  // Mirror close to sandbox — read per-account contract counts from DB
-  try {
-    const sbRows = await query(
-      `SELECT sandbox_order_id FROM ${botTable(bot.name, 'positions')}
-       WHERE position_id = $1 AND dte_mode = $2`,
-      [positionId, bot.dte],
-    )
-    let sandboxOpenInfo: Record<string, any> | null = null
-    if (sbRows[0]?.sandbox_order_id) {
-      try { sandboxOpenInfo = JSON.parse(sbRows[0].sandbox_order_id) } catch {}
-    }
-    await closeIcOrderAllAccounts(
-      ticker, expiration, putShort, putLong, callShort, callLong,
-      contracts, price, positionId, sandboxOpenInfo,
-    )
-  } catch (e: any) {
-    console.warn(`[scanner] Sandbox close failed for ${positionId}: ${e.message}`)
-  }
-
   // Log
+  const fillNote = userClose?.fill_price != null && userClose.fill_price !== estimatedPrice
+    ? ` (actual fill=$${userClose.fill_price.toFixed(4)})`
+    : ''
   await query(
     `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
      VALUES ($1, $2, $3, $4)`,
     [
       'TRADE_CLOSE',
-      `AUTO CLOSE: ${positionId} @ $${price.toFixed(4)} P&L=$${realizedPnl.toFixed(2)} [${reason}]`,
-      JSON.stringify({ position_id: positionId, close_price: price, realized_pnl: realizedPnl, close_reason: reason, source: 'scanner' }),
+      `AUTO CLOSE: ${positionId} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)} [${reason}]${fillNote}`,
+      JSON.stringify({
+        position_id: positionId,
+        close_price_estimated: estimatedPrice,
+        close_price_actual: userClose?.fill_price ?? null,
+        close_price: effectivePrice,
+        realized_pnl: realizedPnl,
+        close_reason: reason,
+        source: 'scanner',
+        sandbox_close_info: sandboxCloseInfo,
+      }),
       bot.dte,
     ],
   )
@@ -334,7 +362,7 @@ async function closePosition(
     [realizedPnl],
   )
 
-  console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]`)
+  console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, botTable, num, validateBot } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, SandboxCloseInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,21 +77,54 @@ export async function POST(
       closePrice = 0
     }
 
-    // 3. Calculate P&L
-    const pnlPerContract = (totalCredit - closePrice) * 100
+    // 3. Mirror close to all Tradier sandbox accounts FIRST
+    //    so we can read back the actual fill price before computing P&L.
+    let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
+    let sandboxOpenInfo: Record<string, any> | null = null
+    if (pos.sandbox_order_id) {
+      try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch {}
+    }
+    try {
+      sandboxCloseInfo = await closeIcOrderAllAccounts(
+        pos.ticker,
+        String(pos.expiration).slice(0, 10),
+        num(pos.put_short_strike),
+        num(pos.put_long_strike),
+        num(pos.call_short_strike),
+        num(pos.call_long_strike),
+        contracts,
+        closePrice,
+        position_id,
+        sandboxOpenInfo,
+      )
+    } catch (sbErr: any) {
+      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
+    }
+
+    // 4. Use User's actual fill price if available (1:1 match with Tradier)
+    let effectivePrice = closePrice
+    const userClose = sandboxCloseInfo['User']
+    if (userClose?.fill_price != null && userClose.fill_price > 0) {
+      effectivePrice = userClose.fill_price
+    }
+
+    // 5. Calculate P&L using effective (actual) close price
+    const pnlPerContract = (totalCredit - effectivePrice) * 100
     const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
 
-    // 4. Close the position
+    // 6. Close the position
     await query(
       `UPDATE ${botTable(bot, 'positions')}
        SET status = 'closed', close_time = NOW(),
            close_price = $1, realized_pnl = $2,
-           close_reason = 'manual_close', updated_at = NOW()
+           close_reason = 'manual_close', updated_at = NOW(),
+           sandbox_close_order_id = $5
        WHERE position_id = $3 AND status = 'open' AND dte_mode = $4`,
-      [closePrice, realizedPnl, position_id, dte],
+      [effectivePrice, realizedPnl, position_id, dte,
+       Object.keys(sandboxCloseInfo).length > 0 ? JSON.stringify(sandboxCloseInfo) : null],
     )
 
-    // 5. Update paper account (add realized P&L, refund collateral)
+    // 7. Update paper account (add realized P&L, refund collateral)
     await query(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET current_balance = current_balance + $1,
@@ -107,17 +140,17 @@ export async function POST(
       [realizedPnl, collateral, dte],
     )
 
-    // 6. Update PDT log
+    // 8. Update PDT log
     await query(
       `UPDATE ${botTable(bot, 'pdt_log')}
        SET closed_at = NOW(), exit_cost = $1, pnl = $2,
            close_reason = 'manual_close',
            is_day_trade = (opened_at::date = CURRENT_DATE)
        WHERE position_id = $3 AND dte_mode = $4`,
-      [closePrice, realizedPnl, position_id, dte],
+      [effectivePrice, realizedPnl, position_id, dte],
     )
 
-    // 7. Save equity snapshot
+    // 9. Save equity snapshot
     const acctRows = await query(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
        WHERE dte_mode = $1 ORDER BY id DESC LIMIT 1`,
@@ -137,51 +170,28 @@ export async function POST(
       [bal, cumPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
     )
 
-    // 8. Mirror close to all Tradier sandbox accounts (both FLAME and SPARK)
-    //    Read per-account contract counts from sandbox_order_id
-    let sandboxCloseIds: Record<string, number> = {}
-    let sandboxOpenInfo: Record<string, any> | null = null
-    if (pos.sandbox_order_id) {
-      try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch {}
-    }
-    try {
-      sandboxCloseIds = await closeIcOrderAllAccounts(
-        pos.ticker,
-        String(pos.expiration).slice(0, 10),
-        num(pos.put_short_strike),
-        num(pos.put_long_strike),
-        num(pos.call_short_strike),
-        num(pos.call_long_strike),
-        contracts,
-        closePrice,
-        position_id,
-        sandboxOpenInfo,
-      )
-    } catch (sbErr: any) {
-      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
-    }
-
-    // 9. Log
+    // 10. Log
     await query(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
       [
         'TRADE_CLOSE',
-        `FORCE CLOSE: ${position_id} @ $${closePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`,
+        `FORCE CLOSE: ${position_id} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`,
         JSON.stringify({
           position_id,
-          close_price: closePrice,
+          close_price_estimated: closePrice,
+          close_price_actual: effectivePrice,
           realized_pnl: realizedPnl,
           close_reason: 'manual_close',
           entry_credit: totalCredit,
           source: 'force_close_api',
-          sandbox_close_ids: sandboxCloseIds,
+          sandbox_close_info: sandboxCloseInfo,
         }),
         dte,
       ],
     )
 
-    // 10. Update daily_perf
+    // 11. Update daily_perf
     await query(
       `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
        VALUES (CURRENT_DATE, 0, 1, $1)
@@ -194,11 +204,12 @@ export async function POST(
     return NextResponse.json({
       success: true,
       position_id,
-      close_price: closePrice,
+      close_price: effectivePrice,
+      close_price_estimated: closePrice,
       realized_pnl: realizedPnl,
       entry_credit: totalCredit,
       contracts,
-      sandbox_close_ids: sandboxCloseIds,
+      sandbox_close_info: sandboxCloseInfo,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
