@@ -66,6 +66,10 @@ def run_single(dte_config: dict, utilization: int, capital: float,
     label = dte_config["label"]
     capital_k = f"{int(capital/1000)}k"
 
+    # Small accounts ($5k) need 100% risk-per-trade to afford even 1 SPX IC
+    # contract ($2,500 margin). Utilization still caps total concurrent exposure.
+    risk_pct = "100" if capital <= 10_000 else "25"
+
     cmd = [
         sys.executable, str(BACKTEST_SCRIPT),
         "--ticker", ticker,
@@ -73,6 +77,7 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         "--end", end,
         "--capital", str(capital),
         "--max-utilization", str(utilization),
+        "--max-risk-per-trade", risk_pct,
         "--dte-mode", dte_config["dte_mode"],
         "--short-dte", str(dte_config["short_dte"]),
         "--dynamic-sizing",
