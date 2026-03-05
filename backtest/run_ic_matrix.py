@@ -55,7 +55,7 @@ CAPITALS = [5_000, 100_000]
 HEADERS = [
     "DTE", "Util%", "Capital", "Status", "Trades", "WR%", "TotalP&L",
     "Return%", "PF", "MaxDD%", "Sharpe", "Sortino", "Skipped",
-    "PeakPos", "AvgCtx", "FinalEquity", "Seconds"
+    "VIXSkip", "PeakPos", "AvgCtx", "FinalEquity", "Seconds"
 ]
 
 
@@ -117,6 +117,7 @@ def run_single(dte_config: dict, utilization: int, capital: float,
                 sharpe=r.get("sharpe_ratio", 0),
                 sortino=r.get("sortino_ratio", 0),
                 skipped=col.get("trades_skipped_no_capital", 0),
+                vix_skip=col.get("trades_skipped_vix", 0),
                 peak_pos=col.get("peak_concurrent_positions", 0),
                 avg_ctx=col.get("avg_contracts_per_trade", 0),
                 final_eq=s.get("final_equity", 0),
@@ -130,8 +131,8 @@ def run_single(dte_config: dict, utilization: int, capital: float,
 
 
 def _row(label, util, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
-         dd=0, sharpe=0, sortino=0, skipped=0, peak_pos=0, avg_ctx=0,
-         final_eq=0, elapsed=0):
+         dd=0, sharpe=0, sortino=0, skipped=0, vix_skip=0, peak_pos=0,
+         avg_ctx=0, final_eq=0, elapsed=0):
     """Build a result row dict."""
     return {
         "DTE": label,
@@ -147,6 +148,7 @@ def _row(label, util, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
         "Sharpe": round(sharpe, 2),
         "Sortino": round(sortino, 2),
         "Skipped": skipped,
+        "VIXSkip": vix_skip,
         "PeakPos": peak_pos,
         "AvgCtx": round(avg_ctx, 1),
         "FinalEquity": round(final_eq, 2),
