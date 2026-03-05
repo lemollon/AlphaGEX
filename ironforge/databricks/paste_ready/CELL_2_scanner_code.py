@@ -362,29 +362,42 @@ def _get_sandbox_accounts_lazy() -> list[dict]:
     return _sandbox_accounts
 
 
-def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str) -> Optional[dict]:
+def _sandbox_get(endpoint: str, params: Optional[dict], api_key: str, retries: int = 2) -> Optional[dict]:
     if not api_key:
         return None
-    try:
-        resp = requests.get(
-            f"{SANDBOX_URL}{endpoint}",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Accept": "application/json",
-            },
-            params=params or {},
-            timeout=15,
-        )
-        if resp.ok:
-            return resp.json()
-        log.warning(
-            f"Sandbox GET {endpoint} failed: HTTP {resp.status_code} — "
-            f"{resp.text[:300]}"
-        )
-        return None
-    except Exception as e:
-        log.warning(f"Sandbox GET {endpoint} exception: {e}")
-        return None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(
+                f"{SANDBOX_URL}{endpoint}",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                },
+                params=params or {},
+                timeout=30,
+            )
+            if resp.ok:
+                return resp.json()
+            if resp.status_code in (502, 503, 504) and attempt < retries:
+                log.warning(f"Sandbox GET {endpoint} HTTP {resp.status_code}, retry {attempt}/{retries}...")
+                time.sleep(2 * attempt)
+                continue
+            log.warning(
+                f"Sandbox GET {endpoint} failed: HTTP {resp.status_code} — "
+                f"{resp.text[:300]}"
+            )
+            return None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            if attempt < retries:
+                log.warning(f"Sandbox GET {endpoint} {type(e).__name__}, retry {attempt}/{retries}...")
+                time.sleep(2 * attempt)
+                continue
+            log.warning(f"Sandbox GET {endpoint} {type(e).__name__} after {retries} attempts: {e}")
+            return None
+        except Exception as e:
+            log.warning(f"Sandbox GET {endpoint} exception: {e}")
+            return None
+    return None
 
 
 def _sandbox_post(endpoint: str, body: dict, api_key: str) -> Optional[dict]:
