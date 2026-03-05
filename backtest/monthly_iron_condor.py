@@ -1455,9 +1455,6 @@ class MonthlyICBacktester:
         results = self._calculate_results()
         self._print_results(results)
 
-        # Cleanup persistent DB connections
-        self.db.close()
-
         return results
 
     def _build_monthly_entries(self, all_trading_days: List[str]) -> List[Tuple[str, str]]:
@@ -2516,6 +2513,9 @@ Examples:
             backtester.db.save_results(backtester.config, results, backtester.trades)
         except Exception as e:
             logger.error(f"Failed to save results to database: {e}")
+
+    # Cleanup DB connections after all exports and saves are done
+    backtester.db.close()
 
 
 if __name__ == "__main__":
