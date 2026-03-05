@@ -118,6 +118,7 @@ class MonthlyICConfig:
     short_dte_target: int = 0         # For short mode: 0, 1, 2, or 3 DTE
     weekly_dte_min: int = 5           # For weekly mode: minimum DTE at entry
     weekly_dte_max: int = 7           # For weekly mode: maximum DTE at entry
+    day_trade: bool = True            # Day trade: close all positions on entry day using Yahoo OHLC
 
     @property
     def wing_width(self) -> float:
@@ -696,6 +697,42 @@ class BacktestDB:
 
         return cache
 
+    def load_spx_ohlc_cache(self, start_date: str, end_date: str) -> Dict[str, Dict]:
+        """Load SPX daily OHLC from Yahoo Finance for day-trade intraday simulation.
+
+        Uses ^GSPC (S&P 500 index) via yfinance. Returns {date_str: {open, high, low, close}}.
+        Pattern from backtest/zero_dte_bull_put_spread.py.
+        """
+        try:
+            import yfinance as yf
+        except ImportError:
+            logger.warning("yfinance not installed - day trade OHLC unavailable. pip install yfinance")
+            return {}
+
+        try:
+            ticker = yf.Ticker("^GSPC")
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d') - timedelta(days=5)
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=5)
+            df = ticker.history(start=start_dt, end=end_dt)
+
+            if df.empty:
+                logger.warning("No SPX OHLC data from Yahoo Finance")
+                return {}
+
+            cache = {}
+            for idx, row in df.iterrows():
+                cache[idx.strftime('%Y-%m-%d')] = {
+                    'open': float(row['Open']),
+                    'high': float(row['High']),
+                    'low': float(row['Low']),
+                    'close': float(row['Close']),
+                }
+            logger.info(f"Loaded {len(cache)} days of SPX OHLC from Yahoo Finance")
+            return cache
+        except Exception as e:
+            logger.warning(f"Failed to load SPX OHLC from Yahoo: {e}")
+            return {}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # STRIKE SELECTION
@@ -1150,6 +1187,15 @@ class MonthlyICBacktester:
         )
         logger.info(f"Loaded {len(self.vix_cache)} VIX values into cache")
 
+        # Step 0b: Bulk-load SPX daily OHLC from Yahoo Finance (for day trade mode)
+        if self.config.day_trade:
+            self.ohlc_cache = self.db.load_spx_ohlc_cache(
+                self.config.start_date, self.config.end_date
+            )
+            logger.info(f"Loaded {len(self.ohlc_cache)} days of SPX OHLC for day trade mode")
+        else:
+            self.ohlc_cache = {}
+
         # Step 1: Get all trading days
         all_trading_days = self.db.get_trading_days(
             self.config.ticker, self.config.start_date, self.config.end_date
@@ -1358,10 +1404,56 @@ class MonthlyICBacktester:
             strike_selection_method=strikes['method'],
         )
 
-        # ── Daily monitoring ──────────────────────────────────────────────
-        # Even for hold_to_expiration (0DTE), we still check stop-loss.
-        # Without this, 0DTE trades go straight to settlement and SL never fires.
+        # ── Day trade mode: close on entry day ──────────────────────────
+        # All modes are day trades: enter and exit on the same day.
+        # Yahoo Finance daily OHLC gives us High/Low for intraday SL check,
+        # and Close for EOD settlement.  This works for ALL DTE modes because
+        # we always exit on entry day — the expiration only determines which
+        # contract we sold (affecting premium/credit).
+        if self.config.day_trade:
+            ohlc = getattr(self, 'ohlc_cache', {}).get(entry_date)
+            if not ohlc:
+                # Fallback: no Yahoo data for this day — use ORAT underlying price
+                price = self.db.get_underlying_price(self.config.ticker, entry_date)
+                if price:
+                    debit = calculate_settlement_value(trade, price)
+                    return self._close_trade(trade, entry_date, debit, "DAY_TRADE_CLOSE", dte)
+                return None  # Can't price exit
 
+            daily_high = ohlc['high']
+            daily_low = ohlc['low']
+            close_price = ohlc['close']
+
+            effective_sl_pct = self.config.stop_loss_pct
+            sl_debit_threshold = trade.total_credit * (1 + effective_sl_pct / 100)
+
+            # Check INTRADAY stop loss using High/Low
+            # Worst case: put spread breached at daily low, call spread breached at daily high
+            put_intrinsic_at_low = max(0, trade.put_short_strike - daily_low)
+            call_intrinsic_at_high = max(0, daily_high - trade.call_short_strike)
+            put_intrinsic_at_low = min(put_intrinsic_at_low, trade.wing_width)
+            call_intrinsic_at_high = min(call_intrinsic_at_high, trade.wing_width)
+
+            intraday_worst_debit = put_intrinsic_at_low + call_intrinsic_at_high
+            if intraday_worst_debit >= sl_debit_threshold:
+                capped_debit = sl_debit_threshold
+                if self.config.sl_gap_cap:
+                    gap_slippage = 1 + self.config.sl_gap_slippage_pct / 100
+                    capped_debit = min(intraday_worst_debit, sl_debit_threshold * gap_slippage)
+                return self._close_trade(trade, entry_date, capped_debit, "STOP_LOSS", dte)
+
+            # EOD settlement using Close price
+            close_debit = calculate_settlement_value(trade, close_price)
+
+            # Check profit target at close
+            profit_threshold = trade.total_credit * (1 - self.config.profit_target_pct / 100)
+            if close_debit <= profit_threshold:
+                return self._close_trade(trade, entry_date, close_debit, "PROFIT_TARGET", dte)
+
+            # Otherwise close at EOD market value
+            return self._close_trade(trade, entry_date, close_debit, "DAY_TRADE_CLOSE", dte)
+
+        # ── Multi-day monitoring (only when day_trade=False) ─────────────
         # Find trading days between entry and expiration
         monitoring_days = [
             d for d in all_trading_days
@@ -2109,6 +2201,10 @@ Examples:
                         help='Min DTE for weekly mode (default: 5)')
     parser.add_argument('--weekly-dte-max', type=int, default=7,
                         help='Max DTE for weekly mode (default: 7)')
+    parser.add_argument('--day-trade', dest='day_trade', action='store_true', default=True,
+                        help='Day trade mode: enter and exit same day (default: True)')
+    parser.add_argument('--no-day-trade', dest='day_trade', action='store_false',
+                        help='Hold positions until expiration/SL/PT (multi-day monitoring)')
 
     args = parser.parse_args()
 
@@ -2168,6 +2264,7 @@ Examples:
         short_dte_target=short_dte,
         weekly_dte_min=args.weekly_dte_min,
         weekly_dte_max=args.weekly_dte_max,
+        day_trade=args.day_trade,
     )
 
     # Override wing width if specified
