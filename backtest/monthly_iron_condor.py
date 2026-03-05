@@ -223,22 +223,34 @@ class BacktestDB:
     def __init__(self):
         self.orat_url = os.getenv("ORAT_DATABASE_URL") or self.DEFAULT_ORAT_URL
         self.main_url = os.getenv("DATABASE_URL") or self.DEFAULT_MAIN_URL
+        self._orat_conn = None
+        self._main_conn = None
 
     def get_orat_conn(self):
-        """Return a read-only connection to the ORAT options database."""
-        conn = psycopg2.connect(self.orat_url, connect_timeout=30)
-        conn.set_session(readonly=True)
-        return conn
+        """Return a persistent read-only connection to the ORAT options database."""
+        if self._orat_conn is None or self._orat_conn.closed:
+            self._orat_conn = psycopg2.connect(self.orat_url, connect_timeout=30)
+            self._orat_conn.set_session(readonly=True, autocommit=True)
+        return self._orat_conn
 
     def get_main_conn(self):
-        """Return a read-only connection to the main AlphaGEX database."""
-        conn = psycopg2.connect(self.main_url, connect_timeout=30)
-        conn.set_session(readonly=True)
-        return conn
+        """Return a persistent read-only connection to the main AlphaGEX database."""
+        if self._main_conn is None or self._main_conn.closed:
+            self._main_conn = psycopg2.connect(self.main_url, connect_timeout=30)
+            self._main_conn.set_session(readonly=True, autocommit=True)
+        return self._main_conn
 
     def get_conn(self):
         """Return main DB connection (backward compat for audit)."""
         return self.get_main_conn()
+
+    def close(self):
+        """Close persistent connections."""
+        for conn in (self._orat_conn, self._main_conn):
+            if conn and not conn.closed:
+                conn.close()
+        self._orat_conn = None
+        self._main_conn = None
 
     # ── Schema discovery (Phase 1) ────────────────────────────────────────
 
@@ -252,7 +264,6 @@ class BacktestDB:
                 ORDER BY n_live_tup DESC;
             """)
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return rows
 
     def audit_columns(self, table_name: str, use_orat: bool = False) -> List[Dict]:
@@ -266,7 +277,6 @@ class BacktestDB:
                 ORDER BY ordinal_position;
             """, (table_name,))
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return rows
 
     def audit_orat_data(self) -> Dict:
@@ -339,7 +349,6 @@ class BacktestDB:
             """)
             result['sample_monthly'] = [dict(r) for r in cur.fetchall()]
 
-        conn.close()
         return result
 
     def audit_gex_data(self) -> Dict:
@@ -359,7 +368,6 @@ class BacktestDB:
                 except Exception:
                     conn.rollback()
                     result[table] = "TABLE NOT FOUND"
-        conn.close()
         return result
 
     def audit_price_data(self) -> Dict:
@@ -382,9 +390,7 @@ class BacktestDB:
                 conn.rollback()
                 result['gex_structure_daily'] = "NOT AVAILABLE"
 
-        conn.close()
-
-        # Check orat DB for underlying_price (separate connection)
+        # Check orat DB for underlying_price
         try:
             orat_conn = self.get_orat_conn()
             with orat_conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur2:
@@ -397,7 +403,6 @@ class BacktestDB:
                       AND underlying_price IS NOT NULL;
                 """)
                 result['orat_underlying'] = dict(cur2.fetchone())
-            orat_conn.close()
         except Exception as e:
             result['orat_underlying'] = f"NOT AVAILABLE ({e})"
 
@@ -429,7 +434,6 @@ class BacktestDB:
                 ORDER BY expiration_date;
             """, (tickers, start_date, end_date))
             expirations = [dict(r) for r in cur.fetchall()]
-        conn.close()
         return expirations
 
     def get_short_dte_entries(
@@ -459,7 +463,6 @@ class BacktestDB:
                 ORDER BY trade_date;
             """, (tickers, start_date, end_date, target_dte))
             rows = [dict(r) for r in cur.fetchall()]
-        conn.close()
 
         # Deduplicate: one entry per trade_date (pick the first expiration if multiple)
         seen_dates = set()
@@ -497,8 +500,6 @@ class BacktestDB:
             """, (tickers, trade_date, expiration_date))
             rows = [dict(r) for r in cur.fetchall()]
 
-        conn.close()
-
         # Convert Decimal to float
         for row in rows:
             for key in row:
@@ -528,8 +529,6 @@ class BacktestDB:
                 ORDER BY dte;
             """, (tickers, trade_date, dte_min, dte_max))
             rows = [dict(r) for r in cur.fetchall()]
-
-        conn.close()
         return rows
 
     def get_trading_days(self, ticker: str, start_date: str, end_date: str) -> List[str]:
@@ -549,7 +548,6 @@ class BacktestDB:
             """, (tickers, start_date, end_date))
             days = [row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
                     for row in cur.fetchall()]
-        conn.close()
         return days
 
     def get_underlying_price(self, ticker: str, trade_date: str) -> Optional[float]:
@@ -568,17 +566,14 @@ class BacktestDB:
                 LIMIT 1;
             """, (tickers, trade_date))
             row = cur.fetchone()
-        conn.close()
         return float(row[0]) if row else None
 
     def get_vix_for_date(self, trade_date: str) -> Optional[float]:
-        """Get VIX closing value for a given date.
+        """Get VIX closing value for a given date (single-date fallback).
 
-        Tries multiple sources:
-          1. ORAT options data — underlying_price where ticker = '^VIX' or 'VIX'
-          2. gex_structure_daily — spot_close where symbol = 'VIX'
+        Prefer load_vix_cache() for bulk loading. This is only used if cache misses.
         """
-        # Source 1: ORAT DB (most reliable, has same date range as options data)
+        # Source 1: ORAT DB
         try:
             conn = self.get_orat_conn()
             with conn.cursor() as cur:
@@ -591,7 +586,6 @@ class BacktestDB:
                     LIMIT 1;
                 """, (trade_date,))
                 row = cur.fetchone()
-            conn.close()
             if row:
                 return float(row[0])
         except Exception:
@@ -608,13 +602,58 @@ class BacktestDB:
                     LIMIT 1;
                 """, (trade_date,))
                 row = cur.fetchone()
-            conn.close()
             if row and row[0]:
                 return float(row[0])
         except Exception:
             pass
 
         return None
+
+    def load_vix_cache(self, start_date: str, end_date: str) -> Dict[str, float]:
+        """Bulk-load all VIX values for the date range into a dict.
+
+        Returns {date_str: vix_value}. Single query instead of per-day lookups.
+        """
+        cache = {}
+
+        # Source 1: ORAT DB — try to get VIX underlying_price
+        try:
+            conn = self.get_orat_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT trade_date, underlying_price
+                    FROM orat_options_eod
+                    WHERE ticker IN ('^VIX', 'VIX')
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND underlying_price IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
+                    cache[d] = float(row[1])
+        except Exception:
+            pass
+
+        # Source 2: Fill gaps from gex_structure_daily
+        try:
+            conn = self.get_main_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT trade_date, spot_close
+                    FROM gex_structure_daily
+                    WHERE symbol = 'VIX'
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND spot_close IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
+                    if d not in cache:  # Don't overwrite ORAT data
+                        cache[d] = float(row[1])
+        except Exception:
+            pass
+
+        return cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1059,6 +1098,12 @@ class MonthlyICBacktester:
         logger.info(f"DTE exit:        {self.config.dte_exit} DTE")
         logger.info("=" * 80)
 
+        # Step 0: Bulk-load VIX data (one query instead of per-day lookups)
+        self.vix_cache = self.db.load_vix_cache(
+            self.config.start_date, self.config.end_date
+        )
+        logger.info(f"Loaded {len(self.vix_cache)} VIX values into cache")
+
         # Step 1: Get all trading days
         all_trading_days = self.db.get_trading_days(
             self.config.ticker, self.config.start_date, self.config.end_date
@@ -1100,6 +1145,9 @@ class MonthlyICBacktester:
         # Step 4: Calculate and return results
         results = self._calculate_results()
         self._print_results(results)
+
+        # Cleanup persistent DB connections
+        self.db.close()
 
         return results
 
@@ -1164,7 +1212,7 @@ class MonthlyICBacktester:
         """Execute a single IC cycle with collateral enforcement and VIX filter."""
 
         # ── VIX filter ───────────────────────────────────────────────────
-        vix = self.db.get_vix_for_date(entry_date)
+        vix = self.vix_cache.get(entry_date)
         if vix is not None:
             if vix > self.config.max_vix:
                 self.trades_skipped_vix += 1
@@ -1282,7 +1330,7 @@ class MonthlyICBacktester:
 
             # ── Determine effective stop-loss % (VIX-adaptive) ────────
             effective_sl_pct = self.config.stop_loss_pct
-            vix_today = self.db.get_vix_for_date(monitor_date)
+            vix_today = self.vix_cache.get(monitor_date)
             if vix_today and vix_today > self.config.vix_tighten_sl_above:
                 effective_sl_pct = self.config.vix_tighten_sl_pct  # Tighter SL in high-VIX
 
@@ -1830,7 +1878,6 @@ def run_data_audit():
                     ORDER BY n_live_tup DESC LIMIT 30;
                 """)
                 orat_tables = [dict(r) for r in cur.fetchall()]
-            orat_conn.close()
             for t in orat_tables:
                 print(f"    {t['table_name']:50s} {t['row_count']:>12,} rows")
             print(f"  Total shown: {len(orat_tables)} tables")

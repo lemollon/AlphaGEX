@@ -82,12 +82,12 @@ def run_single(dte_config: dict, utilization: int, capital: float,
     t0 = time.time()
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600,
+            cmd, capture_output=True, text=True, timeout=900,
             cwd=str(PROJECT_ROOT)
         )
         elapsed = time.time() - t0
     except subprocess.TimeoutExpired:
-        return _row(label, utilization, capital, "TIMEOUT", elapsed=600)
+        return _row(label, utilization, capital, "TIMEOUT", elapsed=900)
 
     if proc.returncode != 0:
         # Extract short error
@@ -179,7 +179,7 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Utilizations: {', '.join(str(u)+'%' for u in utils)}")
     print(f"# Capitals:     {', '.join('$'+f'{c:,.0f}' for c in caps)}")
     print(f"# Total runs:   {total}")
-    print(f"# Timeout:      10 min per run")
+    print(f"# Timeout:      15 min per run")
     print(f"{'#'*60}")
     sys.stdout.flush()
 
