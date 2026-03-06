@@ -1573,7 +1573,7 @@ class MonthlyICBacktester:
         contracts = self._calculate_contracts_for_trade(wing_width, total_credit)
         if contracts <= 0:
             self.trades_skipped_no_capital += 1
-            logger.debug(
+            logger.warning(
                 f"  SKIPPED {entry_date}: Insufficient capital "
                 f"(available: ${self._available_buying_power():,.0f}, "
                 f"needed: ${wing_width * 100:,.0f}/contract, "
@@ -1845,7 +1845,32 @@ class MonthlyICBacktester:
     def _calculate_results(self) -> Dict:
         """Calculate comprehensive backtest metrics."""
         if not self.trades:
-            return {'error': 'No trades executed'}
+            return {
+                'summary': {
+                    'total_trades': 0, 'win_rate': 0, 'total_pnl': 0,
+                    'total_return_pct': 0, 'profit_factor': 0,
+                    'avg_pnl': 0, 'avg_win': 0, 'avg_loss': 0,
+                    'best_trade_pnl': 0, 'worst_trade_pnl': 0,
+                    'final_equity': self.equity,
+                    'initial_capital': self.config.initial_capital,
+                },
+                'risk': {
+                    'max_drawdown_pct': 0, 'max_drawdown_dollar': 0,
+                    'sharpe_ratio': 0, 'sortino_ratio': 0,
+                    'calmar_ratio': 0,
+                },
+                'collateral': {
+                    'trades_skipped_no_capital': self.trades_skipped_no_capital,
+                    'trades_skipped_vix': getattr(self, 'trades_skipped_vix', 0),
+                    'peak_concurrent_positions': 0,
+                    'avg_contracts_per_trade': 0,
+                    'peak_margin_deployed': 0,
+                },
+                'note': f'No trades executed — capital ${self.config.initial_capital:,.0f} '
+                        f'at {self.config.max_capital_utilization}% utilization '
+                        f'= ${self.config.initial_capital * self.config.max_capital_utilization / 100:,.0f} '
+                        f'available (SPX IC margin ~$2,500/contract)',
+            }
 
         trades = self.trades
         n = len(trades)
@@ -2491,7 +2516,7 @@ Examples:
     results = backtester.run()
 
     # Export (default on, use --no-export to skip)
-    if args.export and not args.no_export and backtester.trades:
+    if args.export and not args.no_export:
         capital_label = f"{int(args.capital/1000)}k"
         if dte_mode == "short":
             dte_label = f"{short_dte}dte"
