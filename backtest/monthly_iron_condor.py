@@ -96,6 +96,7 @@ class MonthlyICConfig:
     max_concurrent_positions: int = 2       # Max simultaneous open positions (0 = unlimited)
     dynamic_sizing: bool = True             # Size contracts based on available buying power
     max_risk_per_trade_pct: float = 25.0    # Max % of equity at risk in any single trade
+    max_contracts_per_trade: int = 100       # Liquidity cap — matches live config & zero_dte_realistic
 
     # ── Transaction costs ─────────────────────────────────────────────────
     commission_per_contract: float = 1.30  # Per contract per leg (round-trip)
@@ -1343,6 +1344,9 @@ class MonthlyICBacktester:
 
             contracts = min(max_by_margin, max_by_risk)
 
+            # Liquidity cap — SPX fills degrade past ~100 contracts per IC
+            contracts = min(contracts, self.config.max_contracts_per_trade)
+
             # Minimum 1-contract floor: if total equity can cover at least 1 IC,
             # always allow it. This ensures small accounts ($5k) can trade even
             # at low utilization — the utilization cap is aspirational, not blocking.
@@ -2054,6 +2058,7 @@ class MonthlyICBacktester:
                     sum(t.contracts for t in trades) / n, 2
                 ) if n > 0 else 0,
                 'dynamic_sizing': self.config.dynamic_sizing,
+                'max_contracts_per_trade': self.config.max_contracts_per_trade,
                 'max_concurrent_positions': self.config.max_concurrent_positions,
             },
             'exit_reasons': exit_reasons,
@@ -2138,6 +2143,7 @@ class MonthlyICBacktester:
             print(f"  Peak Margin %:       {col.get('peak_margin_pct_of_capital', 0):>8.1f}% of capital")
             print(f"  Avg Contracts/Trade: {col.get('avg_contracts_per_trade', 0):>8.1f}")
             print(f"  Dynamic Sizing:      {'ON' if col.get('dynamic_sizing') else 'OFF':>8}")
+            print(f"  Max Contracts/Trade: {col.get('max_contracts_per_trade', 100):>8} (liquidity cap)")
 
         print(f"\n  {'─' * 60}")
         print(f"  EXIT REASONS")
@@ -2421,6 +2427,8 @@ Examples:
                         help='Use fixed contract count (--contracts)')
     parser.add_argument('--max-positions', type=int, default=2,
                         help='Max concurrent positions, 0=unlimited (default: 2)')
+    parser.add_argument('--max-contracts', type=int, default=100,
+                        help='Max contracts per trade — liquidity cap (default: 100)')
 
     # VIX filters
     parser.add_argument('--max-vix', type=float, default=25.0,
@@ -2500,6 +2508,7 @@ Examples:
         max_risk_per_trade_pct=args.max_risk_per_trade,
         dynamic_sizing=is_dynamic,
         max_concurrent_positions=args.max_positions,
+        max_contracts_per_trade=args.max_contracts,
         max_vix=args.max_vix if not args.no_vix_filter else 999.0,
         min_vix=args.min_vix if not args.no_vix_filter else 0.0,
         sl_gap_cap=not args.no_sl_gap_cap,
