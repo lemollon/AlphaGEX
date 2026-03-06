@@ -67,10 +67,12 @@ export default function StatusCard({
   data,
   accent,
   config,
+  bot,
 }: {
   data: StatusData
   accent: 'amber' | 'blue'
   config?: ConfigData | null
+  bot: 'flame' | 'spark'
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
@@ -81,6 +83,28 @@ export default function StatusCard({
 
   const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
   const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
+
+  /* ---- Toggle bot active state ---- */
+  const [toggling, setToggling] = useState(false)
+  const [confirmToggle, setConfirmToggle] = useState(false)
+
+  async function handleToggle(active: boolean) {
+    setToggling(true)
+    setConfirmToggle(false)
+    try {
+      const res = await fetch(`/api/${bot}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // Status will update on next SWR refresh
+    } catch (e: any) {
+      console.error('Toggle failed:', e)
+    } finally {
+      setToggling(false)
+    }
+  }
 
   /* ---- Next-scan countdown timer ---- */
   const [countdown, setCountdown] = useState<number | null>(
@@ -136,6 +160,40 @@ export default function StatusCard({
 
   return (
     <div className={`rounded-xl border ${accentBorder} bg-forge-card/80 p-4`}>
+      {/* Toggle confirmation dialog */}
+      {confirmToggle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-forge-card border border-forge-border rounded-xl p-6 max-w-md mx-4 shadow-xl">
+            <h3 className="text-lg font-bold text-white mb-3">
+              {data.is_active ? 'Disable Bot?' : 'Enable Bot?'}
+            </h3>
+            <p className="text-sm text-gray-300 mb-5">
+              {data.is_active
+                ? `Disabling ${data.bot_name} will stop it from scanning and opening new trades. Existing positions will NOT be closed.`
+                : `Enable ${data.bot_name} to resume scanning for Iron Condor opportunities.`}
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmToggle(false)}
+                className="px-4 py-2 text-sm rounded-lg border border-forge-border text-gray-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleToggle(!data.is_active)}
+                className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${
+                  data.is_active
+                    ? 'bg-red-600 hover:bg-red-500 text-white'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                }`}
+              >
+                {data.is_active ? 'Disable' : 'Enable'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         {/* Scanner health dot */}
@@ -182,6 +240,19 @@ export default function StatusCard({
             PT — Closed
           </span>
         )}
+
+        {/* Toggle bot active */}
+        <button
+          onClick={() => setConfirmToggle(true)}
+          disabled={toggling}
+          className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-colors ${
+            data.is_active
+              ? 'border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10'
+              : 'border-red-500/30 text-red-400 hover:bg-red-500/10'
+          } ${toggling ? 'opacity-50' : ''}`}
+        >
+          {toggling ? '...' : data.is_active ? 'ON' : 'OFF'}
+        </button>
 
         {/* Next scan countdown */}
         {data.last_scan && countdown !== null && (

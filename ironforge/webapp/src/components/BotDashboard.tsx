@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { isMarketOpen, getCTNow } from '@/lib/pt-tiers'
@@ -12,6 +12,30 @@ import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
 import PTTimeline from './PTTimeline'
 import PdtCard from './PdtCard'
+
+/* Error boundary to catch component crashes without breaking the whole page */
+class ComponentErrorBoundary extends React.Component<
+  { fallback: string; children: React.ReactNode },
+  { hasError: boolean; error: string | null }
+> {
+  constructor(props: { fallback: string; children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message }
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+          {this.props.fallback}: {this.state.error}
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs'] as const
 type Tab = (typeof TABS)[number]
@@ -163,10 +187,12 @@ export default function BotDashboard({
       </div>
 
       {/* Status card */}
-      {status && <StatusCard data={status} accent={accent} config={config} />}
+      {status && <StatusCard data={status} accent={accent} config={config} bot={bot} />}
 
       {/* PDT Management */}
-      <PdtCard bot={bot} accent={accent} />
+      <ComponentErrorBoundary fallback="PDT card error">
+        <PdtCard bot={bot} accent={accent} />
+      </ComponentErrorBoundary>
 
       {/* PT Timeline */}
       <PTTimeline />
@@ -210,6 +236,7 @@ export default function BotDashboard({
             spotPrice={positionMonitor?.spot_price}
             tradierConnected={positionMonitor?.tradier_connected}
             detailData={positionDetail}
+            bot={bot}
           />
         )}
         {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} />}
