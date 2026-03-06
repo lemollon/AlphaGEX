@@ -28,6 +28,7 @@ Usage:
     python backtest/run_ic_matrix.py --dte -1              # Just Monthly (8 runs)
 """
 
+import gc
 import os
 import sys
 import json
@@ -71,12 +72,63 @@ HEADERS = [
 ]
 
 
+def _json_path_for(dte_config: dict, utilization: int, capital: float,
+                    risk_pct: int, ticker: str, start: str, end: str) -> Path:
+    """Build the expected JSON result path for a given parameter combo."""
+    capital_k = f"{int(capital/1000)}k"
+    if dte_config["dte_mode"] == "short":
+        dte_file = f"{dte_config['short_dte']}dte"
+    elif dte_config["dte_mode"] == "weekly":
+        dte_file = "weekly"
+    else:
+        dte_file = "monthly"
+    util_file = f"util{utilization}"
+    risk_file = f"risk{risk_pct}"
+    return RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{risk_file}_{start}_{end}.json"
+
+
+def _parse_json_result(json_path: Path, label: str, utilization: int,
+                       risk_pct: int, capital: float, elapsed: float) -> dict:
+    """Read a completed JSON result file into a row dict."""
+    with open(json_path) as f:
+        data = json.load(f)
+    s = data.get("summary", {})
+    r = data.get("risk", {})
+    col = data.get("collateral", {})
+    return _row(
+        label, utilization, risk_pct, capital, "OK",
+        trades=s.get("total_trades", 0),
+        wr=s.get("win_rate", 0),
+        pnl=s.get("total_pnl", 0),
+        ret=s.get("total_return_pct", 0),
+        pf=s.get("profit_factor", 0),
+        dd=r.get("max_drawdown_pct", 0),
+        sharpe=r.get("sharpe_ratio", 0),
+        sortino=r.get("sortino_ratio", 0),
+        skipped=col.get("trades_skipped_no_capital", 0),
+        vix_skip=col.get("trades_skipped_vix", 0),
+        peak_pos=col.get("peak_concurrent_positions", 0),
+        avg_ctx=col.get("avg_contracts_per_trade", 0),
+        final_eq=s.get("final_equity", 0),
+        elapsed=elapsed,
+    )
+
+
 def run_single(dte_config: dict, utilization: int, capital: float,
-               risk_pct: int, ticker: str, start: str, end: str) -> dict:
+               risk_pct: int, ticker: str, start: str, end: str,
+               resume: bool = False) -> dict:
     """Run one backtest. Returns a flat dict of results."""
 
     label = dte_config["label"]
-    capital_k = f"{int(capital/1000)}k"
+
+    json_path = _json_path_for(dte_config, utilization, capital, risk_pct, ticker, start, end)
+
+    # Resume: if JSON already exists from a previous run, skip re-running
+    if resume and json_path.exists():
+        try:
+            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed=0)
+        except Exception:
+            pass  # Re-run if JSON is corrupted
 
     cmd = [
         sys.executable, str(BACKTEST_SCRIPT),
@@ -99,54 +151,32 @@ def run_single(dte_config: dict, utilization: int, capital: float,
 
     t0 = time.time()
     try:
+        # Don't capture output — it eats memory across 96 runs.
+        # We only need the JSON result file that --export writes.
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=900,
-            cwd=str(PROJECT_ROOT)
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            text=True, timeout=900, cwd=str(PROJECT_ROOT)
         )
         elapsed = time.time() - t0
     except subprocess.TimeoutExpired:
         return _row(label, utilization, risk_pct, capital, "TIMEOUT", elapsed=900)
 
     if proc.returncode != 0:
-        # Extract short error
+        # Detect OOM kill (SIGKILL = -9 on Linux)
+        if proc.returncode == -9:
+            return _row(label, utilization, risk_pct, capital, "OOM_KILLED", elapsed=time.time() - t0)
+        # Other failure — grab last line of stderr only (not full output)
         err = proc.stderr.strip().split("\n")[-1][:80] if proc.stderr else "unknown"
         return _row(label, utilization, risk_pct, capital, f"FAIL:{err}", elapsed=time.time() - t0)
 
-    # Parse results JSON
-    if dte_config["dte_mode"] == "short":
-        dte_file = f"{dte_config['short_dte']}dte"
-    elif dte_config["dte_mode"] == "weekly":
-        dte_file = "weekly"
-    else:
-        dte_file = "monthly"
-    util_file = f"util{utilization}"
-    risk_file = f"risk{risk_pct}"
-    json_path = RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{risk_file}_{start}_{end}.json"
+    # Free stderr string immediately
+    del proc
+    gc.collect()
 
+    # Parse results JSON
     if json_path.exists():
         try:
-            with open(json_path) as f:
-                data = json.load(f)
-            s = data.get("summary", {})
-            r = data.get("risk", {})
-            col = data.get("collateral", {})
-            return _row(
-                label, utilization, risk_pct, capital, "OK",
-                trades=s.get("total_trades", 0),
-                wr=s.get("win_rate", 0),
-                pnl=s.get("total_pnl", 0),
-                ret=s.get("total_return_pct", 0),
-                pf=s.get("profit_factor", 0),
-                dd=r.get("max_drawdown_pct", 0),
-                sharpe=r.get("sharpe_ratio", 0),
-                sortino=r.get("sortino_ratio", 0),
-                skipped=col.get("trades_skipped_no_capital", 0),
-                vix_skip=col.get("trades_skipped_vix", 0),
-                peak_pos=col.get("peak_concurrent_positions", 0),
-                avg_ctx=col.get("avg_contracts_per_trade", 0),
-                final_eq=s.get("final_equity", 0),
-                elapsed=elapsed,
-            )
+            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed)
         except Exception as e:
             return _row(label, utilization, risk_pct, capital, f"JSON_ERR:{e}", elapsed=elapsed)
 
@@ -182,7 +212,8 @@ def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, p
 
 
 def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
-               risk_filter=None, ticker="SPX", start="2021-01-01", end="2025-12-31"):
+               risk_filter=None, ticker="SPX", start="2021-01-01", end="2025-12-31",
+               resume=False):
     """Run the full test matrix and print copy/paste results."""
 
     dtes = DTE_MODES
@@ -210,14 +241,17 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Utilizations: {', '.join(str(u)+'%' for u in utils)}")
     print(f"# Cap/Risk:     {', '.join(f'${c:,.0f}@{r}%' for c,r in combos)}")
     print(f"# Total runs:   {total}")
+    print(f"# Resume mode:  {'ON' if resume else 'OFF'}")
     print(f"# Timeout:      15 min per run")
     print(f"{'#'*60}")
     sys.stdout.flush()
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    partial_results_path = RESULTS_DIR / "_matrix_partial_results.json"
 
     all_results = []
     completed = 0
+    skipped = 0
     matrix_start = time.time()
 
     for dte_config in dtes:
@@ -228,17 +262,32 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
                 cap_k = f"${int(cap/1000)}k"
                 print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {risk_pct}% risk | {cap_k} ...", end=" ", flush=True)
 
-                result = run_single(dte_config, util, cap, risk_pct, ticker, start, end)
+                result = run_single(dte_config, util, cap, risk_pct, ticker, start, end, resume=resume)
                 all_results.append(result)
 
                 # Instant feedback
-                if result["Status"] == "OK":
+                if result["Status"] == "OK" and result["Seconds"] == 0:
+                    skipped += 1
+                    print(f"CACHED | {result['Trades']} trades | "
+                          f"WR {result['WR%']}% | P&L ${result['TotalP&L']:+,.2f} | "
+                          f"Return {result['Return%']:+.1f}%")
+                elif result["Status"] == "OK":
                     print(f"OK ({result['Seconds']:.0f}s) | {result['Trades']} trades | "
                           f"WR {result['WR%']}% | P&L ${result['TotalP&L']:+,.2f} | "
                           f"Return {result['Return%']:+.1f}%")
                 else:
                     print(f"{result['Status']} ({result['Seconds']:.0f}s)")
                 sys.stdout.flush()
+
+                # Save partial results after each run so nothing is lost
+                try:
+                    with open(partial_results_path, 'w') as f:
+                        json.dump(all_results, f, indent=2)
+                except Exception:
+                    pass
+
+                # Free memory between runs
+                gc.collect()
 
     total_elapsed = time.time() - matrix_start
     finished = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -249,6 +298,8 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Finished:     {finished}")
     print(f"# Total time:   {total_elapsed/60:.1f} minutes")
     print(f"# Successful:   {sum(1 for r in all_results if r['Status']=='OK')}/{total}")
+    if skipped:
+        print(f"# Cached:       {skipped} (from previous run)")
     print(f"{'#'*60}")
 
     # TSV table — copy everything between the START/END markers
@@ -317,6 +368,7 @@ Examples:
   python backtest/run_ic_matrix.py --dte -2              # Just Weekly (16 runs)
   python backtest/run_ic_matrix.py --utilization 50      # Just 50% util (24 runs)
   python backtest/run_ic_matrix.py --risk 25             # Just 25% risk (24 runs)
+  python backtest/run_ic_matrix.py --resume               # Resume after crash (skip completed)
         """
     )
     parser.add_argument("--dte", type=int, default=None, choices=[0, 1, 2, 3, -1, -2],
@@ -330,6 +382,8 @@ Examples:
     parser.add_argument("--ticker", default="SPX", help="Underlying (default: SPX)")
     parser.add_argument("--start", default="2021-01-01", help="Start date")
     parser.add_argument("--end", default="2025-12-31", help="End date")
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip runs that already have JSON results (resume after crash)")
     args = parser.parse_args()
 
     run_matrix(
@@ -340,6 +394,7 @@ Examples:
         ticker=args.ticker,
         start=args.start,
         end=args.end,
+        resume=args.resume,
     )
 
 
