@@ -1335,6 +1335,48 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
+    # Post-close: if same-day open+close = day trade, increment PDT counter
+    try:
+        pos_row = db_query(f"""
+            SELECT open_time
+            FROM {bot_table(bot['name'], 'positions')}
+            WHERE position_id = '{position_id}' AND dte_mode = '{bot['dte']}'
+            LIMIT 1
+        """)
+        open_date_str = str(pos_row[0]["open_time"])[:10] if pos_row else None
+        if open_date_str == today_str:
+            bot_upper = bot["name"].upper()
+            pdt_row = db_query(f"""
+                SELECT day_trade_count
+                FROM {bot_table(bot['name'], 'pdt_config')}
+                WHERE bot_name = '{bot_upper}'
+                LIMIT 1
+            """)
+            old_count = to_int(pdt_row[0]["day_trade_count"]) if pdt_row else 0
+            new_count = old_count + 1
+            db_execute(f"""
+                UPDATE {bot_table(bot['name'], 'pdt_config')}
+                SET day_trade_count = {new_count},
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE bot_name = '{bot_upper}'
+            """)
+            old_json = json.dumps({"day_trade_count": old_count}).replace("'", "''")
+            new_json = json.dumps({"day_trade_count": new_count}).replace("'", "''")
+            reason_txt = f"Day trade: {position_id} opened+closed on {today_str}".replace("'", "''")
+            db_execute(f"""
+                INSERT INTO {bot_table(bot['name'], 'pdt_audit_log')}
+                    (bot_name, action, old_value, new_value, reason, performed_by, created_at)
+                VALUES (
+                    '{bot_upper}', 'day_trade_recorded',
+                    '{old_json}', '{new_json}',
+                    '{reason_txt}', 'scanner',
+                    CURRENT_TIMESTAMP()
+                )
+            """)
+            log.info(f"{bot_upper} PDT: day trade recorded, count {old_count}→{new_count}")
+    except Exception as pdt_err:
+        log.warning(f"PDT counter update failed: {pdt_err}")
+
     fill_delta_pct = (
         round(abs(sandbox_fill_price - price) / price * 100, 1)
         if sandbox_fill_price is not None and price > 0 else None
@@ -1494,29 +1536,33 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     if vix > 32:
         return f"skip:vix_too_high({vix:.1f})"
 
-    # Check 1: Already traded today? (max 1 trade/day)
+    # PDT config check — read enforcement state from pdt_config table
+    bot_upper = bot["name"].upper()
+    pdt_cfg_rows = db_query(f"""
+        SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
+        FROM {bot_table(bot['name'], 'pdt_config')}
+        WHERE bot_name = '{bot_upper}'
+        LIMIT 1
+    """)
+    pdt_cfg = pdt_cfg_rows[0] if pdt_cfg_rows else {}
+    pdt_enabled = pdt_cfg.get("pdt_enabled", True) not in (False, 0, "false")
+    pdt_count = to_int(pdt_cfg.get("day_trade_count", 0))
+    max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3)) or 3
+    max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1)) or 1
+
+    # Check 1: Already traded today? (max per-day limit from config)
     today_trades = db_query(f"""
         SELECT COUNT(*) as cnt
         FROM {bot_table(bot['name'], 'pdt_log')}
         WHERE trade_date = CURRENT_DATE() AND dte_mode = '{bot['dte']}'
     """)
-    if to_int(today_trades[0].get("cnt") if today_trades else 0) >= 1:
+    if to_int(today_trades[0].get("cnt") if today_trades else 0) >= max_trades_per_day:
         return "skip:already_traded_today"
 
-    # Check 2: PDT rolling 5-day window (3 day trades in 5 business days = blocked)
-    # Paper accounts ARE subject to PDT. If PDT blocked, skip BOTH paper AND sandbox.
-    pdt_rows = db_query(f"""
-        SELECT COUNT(*) as cnt
-        FROM {bot_table(bot['name'], 'pdt_log')}
-        WHERE is_day_trade = TRUE
-        AND dte_mode = '{bot['dte']}'
-        AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
-        AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
-    """)
-    pdt_count = to_int(pdt_rows[0].get("cnt") if pdt_rows else 0)
-    if pdt_count >= 3:
-        log.info(f"{bot['name'].upper()} PDT BLOCKED: {pdt_count}/3 day trades in rolling 5 biz days")
-        return f"skip:pdt_blocked({pdt_count}/3)"
+    # Check 2: PDT rolling window (only if enforcement is ON)
+    if pdt_enabled and pdt_count >= max_day_trades:
+        log.info(f"{bot_upper} PDT BLOCKED: {pdt_count}/{max_day_trades} day trades in rolling window")
+        return f"skip:pdt_blocked({pdt_count}/{max_day_trades})"
 
     account_rows = db_query(f"""
         SELECT id, current_balance, buying_power
@@ -1841,6 +1887,40 @@ def scan_bot(bot: dict) -> None:
     unrealized_pnl = 0.0
 
     try:
+        # Auto-decrement PDT counter: recount actual day trades in rolling window
+        try:
+            pdt_actual = db_query(f"""
+                SELECT COUNT(*) as cnt FROM {bot_table(bot['name'], 'pdt_log')}
+                WHERE is_day_trade = TRUE AND dte_mode = '{bot['dte']}'
+                  AND trade_date >= DATE_ADD(CURRENT_DATE(), -8)
+                  AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+            """)
+            actual_count = to_int(pdt_actual[0]["cnt"]) if pdt_actual else 0
+            pdt_cfg_row = db_query(f"""
+                SELECT day_trade_count FROM {bot_table(bot['name'], 'pdt_config')}
+                WHERE bot_name = '{bot_name}'
+                LIMIT 1
+            """)
+            stored_count = to_int(pdt_cfg_row[0]["day_trade_count"]) if pdt_cfg_row else 0
+            if stored_count != actual_count:
+                db_execute(f"""
+                    UPDATE {bot_table(bot['name'], 'pdt_config')}
+                    SET day_trade_count = {actual_count}, updated_at = CURRENT_TIMESTAMP()
+                    WHERE bot_name = '{bot_name}'
+                """)
+                if actual_count < stored_count:
+                    old_val = json.dumps({"day_trade_count": stored_count}).replace("'", "''")
+                    new_val = json.dumps({"day_trade_count": actual_count}).replace("'", "''")
+                    reason_str = f"Rolling window update: old trades dropped off ({stored_count}->{actual_count})"
+                    db_execute(f"""
+                        INSERT INTO {bot_table(bot['name'], 'pdt_audit_log')}
+                            (bot_name, action, old_value, new_value, reason, performed_by)
+                        VALUES ('{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
+                                '{reason_str}', 'scanner')
+                    """)
+        except Exception as pdt_sync_err:
+            log.warning(f"{bot_name} PDT sync error: {pdt_sync_err}")
+
         open_rows = db_query(f"""
             SELECT position_id
             FROM {bot_table(bot['name'], 'positions')}

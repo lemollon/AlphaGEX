@@ -11,6 +11,7 @@ import PositionTable from './PositionTable'
 import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
 import PTTimeline from './PTTimeline'
+import PdtCard from './PdtCard'
 
 const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs'] as const
 type Tab = (typeof TABS)[number]
@@ -163,6 +164,9 @@ export default function BotDashboard({
 
       {/* Status card */}
       {status && <StatusCard data={status} accent={accent} config={config} />}
+
+      {/* PDT Management */}
+      <PdtCard bot={bot} accent={accent} />
 
       {/* PT Timeline */}
       <PTTimeline />
