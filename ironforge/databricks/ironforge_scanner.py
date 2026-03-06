@@ -2166,6 +2166,68 @@ def _run_sandbox_orphan_cleanup() -> None:
     print("=" * 60)
 
 
+_pdt_tables_ready = False
+
+
+def _ensure_pdt_tables() -> None:
+    """Create pdt_config and pdt_audit_log tables if they don't exist.
+
+    Runs once per scanner process. Safe to call repeatedly.
+    """
+    global _pdt_tables_ready
+    if _pdt_tables_ready:
+        return
+    try:
+        for bot in BOTS:
+            prefix = bot["name"]
+            bot_upper = bot["name"].upper()
+            db_execute(f"""
+                CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.{prefix}_pdt_config (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY,
+                    bot_name STRING NOT NULL,
+                    pdt_enabled BOOLEAN,
+                    day_trade_count INT,
+                    max_day_trades INT,
+                    window_days INT,
+                    max_trades_per_day INT,
+                    last_reset_at TIMESTAMP,
+                    last_reset_by STRING,
+                    updated_at TIMESTAMP,
+                    created_at TIMESTAMP
+                )
+            """)
+            db_execute(f"""
+                CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.{prefix}_pdt_audit_log (
+                    id BIGINT GENERATED ALWAYS AS IDENTITY,
+                    bot_name STRING NOT NULL,
+                    action STRING NOT NULL,
+                    old_value STRING,
+                    new_value STRING,
+                    reason STRING,
+                    performed_by STRING,
+                    created_at TIMESTAMP
+                )
+            """)
+            # Seed PDT config if empty
+            existing = db_query(f"""
+                SELECT id FROM {bot_table(prefix, 'pdt_config')}
+                WHERE bot_name = '{bot_upper}' LIMIT 1
+            """)
+            if not existing:
+                db_execute(f"""
+                    INSERT INTO {bot_table(prefix, 'pdt_config')}
+                        (bot_name, pdt_enabled, day_trade_count, max_day_trades,
+                         window_days, max_trades_per_day, created_at, updated_at)
+                    VALUES ('{bot_upper}', TRUE, 0, 3, 5, 1,
+                            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+                """)
+                log.info(f"Seeded {prefix}_pdt_config for {bot_upper}")
+        _pdt_tables_ready = True
+        log.info("PDT tables verified/created")
+    except Exception as e:
+        log.warning(f"PDT table auto-creation failed (non-fatal): {e}")
+
+
 def main() -> None:
     """Single scan — called by Databricks Job every 5 minutes.
 
@@ -2176,6 +2238,9 @@ def main() -> None:
     with a 5-minute sleep between cycles.
     """
     try:
+        # Ensure PDT tables exist (auto-create if 01_setup_tables.sql hasn't been re-run)
+        _ensure_pdt_tables()
+
         ct = get_central_time()
         print(f"IronForge scan starting at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT")
         print(f"  Catalog: {CATALOG} | Schema: {SCHEMA} | Tradier: {'OK' if is_tradier_configured() else 'MISSING'}")

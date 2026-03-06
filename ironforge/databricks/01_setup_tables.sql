@@ -181,6 +181,33 @@ CREATE TABLE IF NOT EXISTS flame_pdt_log (
   CONSTRAINT flame_pdt_log_pk PRIMARY KEY (id)
 );
 
+CREATE TABLE IF NOT EXISTS flame_pdt_config (
+  id BIGINT GENERATED ALWAYS AS IDENTITY,
+  bot_name STRING NOT NULL,
+  pdt_enabled BOOLEAN,
+  day_trade_count INT,
+  max_day_trades INT,
+  window_days INT,
+  max_trades_per_day INT,
+  last_reset_at TIMESTAMP,
+  last_reset_by STRING,
+  updated_at TIMESTAMP,
+  created_at TIMESTAMP,
+  CONSTRAINT flame_pdt_config_pk PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS flame_pdt_audit_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY,
+  bot_name STRING NOT NULL,
+  action STRING NOT NULL,
+  old_value STRING,
+  new_value STRING,
+  reason STRING,
+  performed_by STRING,
+  created_at TIMESTAMP,
+  CONSTRAINT flame_pdt_audit_log_pk PRIMARY KEY (id)
+);
+
 CREATE TABLE IF NOT EXISTS flame_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY,
   dte_mode STRING NOT NULL,
@@ -353,6 +380,33 @@ CREATE TABLE IF NOT EXISTS spark_pdt_log (
   CONSTRAINT spark_pdt_log_pk PRIMARY KEY (id)
 );
 
+CREATE TABLE IF NOT EXISTS spark_pdt_config (
+  id BIGINT GENERATED ALWAYS AS IDENTITY,
+  bot_name STRING NOT NULL,
+  pdt_enabled BOOLEAN,
+  day_trade_count INT,
+  max_day_trades INT,
+  window_days INT,
+  max_trades_per_day INT,
+  last_reset_at TIMESTAMP,
+  last_reset_by STRING,
+  updated_at TIMESTAMP,
+  created_at TIMESTAMP,
+  CONSTRAINT spark_pdt_config_pk PRIMARY KEY (id)
+);
+
+CREATE TABLE IF NOT EXISTS spark_pdt_audit_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY,
+  bot_name STRING NOT NULL,
+  action STRING NOT NULL,
+  old_value STRING,
+  new_value STRING,
+  reason STRING,
+  performed_by STRING,
+  created_at TIMESTAMP,
+  CONSTRAINT spark_pdt_audit_log_pk PRIMARY KEY (id)
+);
+
 CREATE TABLE IF NOT EXISTS spark_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY,
   dte_mode STRING NOT NULL,
@@ -404,6 +458,32 @@ WHEN NOT MATCHED THEN INSERT (
 ) VALUES (
   10000, 10000, 0, 0, 0, 10000, 10000, 0,
   TRUE, '1DTE', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+);
+
+-- =============================================================================
+-- Seed PDT Config (one row per bot)
+-- =============================================================================
+
+MERGE INTO flame_pdt_config AS t
+USING (SELECT 'FLAME' AS bot_name) AS s
+ON t.bot_name = s.bot_name
+WHEN NOT MATCHED THEN INSERT (
+  bot_name, pdt_enabled, day_trade_count, max_day_trades,
+  window_days, max_trades_per_day, created_at, updated_at
+) VALUES (
+  'FLAME', TRUE, 0, 3, 5, 1,
+  CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+);
+
+MERGE INTO spark_pdt_config AS t
+USING (SELECT 'SPARK' AS bot_name) AS s
+ON t.bot_name = s.bot_name
+WHEN NOT MATCHED THEN INSERT (
+  bot_name, pdt_enabled, day_trade_count, max_day_trades,
+  window_days, max_trades_per_day, created_at, updated_at
+) VALUES (
+  'SPARK', TRUE, 0, 3, 5, 1,
+  CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
 );
 
 -- =============================================================================
