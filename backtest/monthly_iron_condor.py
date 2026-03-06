@@ -96,6 +96,7 @@ class MonthlyICConfig:
     max_concurrent_positions: int = 2       # Max simultaneous open positions (0 = unlimited)
     dynamic_sizing: bool = True             # Size contracts based on available buying power
     max_risk_per_trade_pct: float = 25.0    # Max % of equity at risk in any single trade
+    max_contracts_cap: int = 500             # Hard cap on contracts per trade (0 = no cap)
 
     # ── Transaction costs ─────────────────────────────────────────────────
     commission_per_contract: float = 1.30  # Per contract per leg (round-trip)
@@ -1349,6 +1350,10 @@ class MonthlyICBacktester:
             if contracts == 0 and self.equity >= margin_per_contract and len(self.open_positions) == 0:
                 contracts = 1
 
+            # Hard cap to prevent unrealistic compounding (no one trades 10,000 SPX ICs)
+            if self.config.max_contracts_cap > 0:
+                contracts = min(contracts, self.config.max_contracts_cap)
+
             return max(0, contracts)
         else:
             # Fixed sizing — check if we can afford the configured number
@@ -1394,6 +1399,7 @@ class MonthlyICBacktester:
         logger.info(f"Collateral:      ENFORCED ({self.config.max_capital_utilization}% max utilization)")
         logger.info(f"Sizing:          {sizing_label}")
         logger.info(f"Max risk/trade:  {self.config.max_risk_per_trade_pct}% of equity")
+        logger.info(f"Contract cap:    {self.config.max_contracts_cap} per trade")
         logger.info(f"Short delta:     {self.config.short_delta}")
         logger.info(f"Wing width:      ${self.config.wing_width}")
         logger.info(f"Profit target:   {self.config.profit_target_pct}% of credit")
@@ -2421,6 +2427,8 @@ Examples:
                         help='Use fixed contract count (--contracts)')
     parser.add_argument('--max-positions', type=int, default=2,
                         help='Max concurrent positions, 0=unlimited (default: 2)')
+    parser.add_argument('--max-contracts', type=int, default=500,
+                        help='Hard cap on contracts per trade, 0=no cap (default: 500)')
 
     # VIX filters
     parser.add_argument('--max-vix', type=float, default=25.0,
@@ -2500,6 +2508,7 @@ Examples:
         max_risk_per_trade_pct=args.max_risk_per_trade,
         dynamic_sizing=is_dynamic,
         max_concurrent_positions=args.max_positions,
+        max_contracts_cap=args.max_contracts,
         max_vix=args.max_vix if not args.no_vix_filter else 999.0,
         min_vix=args.min_vix if not args.no_vix_filter else 0.0,
         sl_gap_cap=not args.no_sl_gap_cap,
