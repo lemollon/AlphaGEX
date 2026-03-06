@@ -9,7 +9,7 @@ Runs monthly_iron_condor.py across all combinations of:
       $5k   @ 100% (forced — one SPX IC needs ~$2,500 margin)
       $100k @ 10%, 25%, 50%
 
-Total: 6 DTE modes x 4 utilizations x 4 capital/risk combos = 96 backtests
+Total: 6 DTE modes x 4 utilizations x 5 capital/risk combos = 120 backtests
 
 OUTPUT: Prints a tab-separated table at the end that you can
         copy/paste directly into Google Sheets or Excel.
@@ -54,26 +54,29 @@ DTE_MODES = [
 
 UTILIZATIONS = [20, 30, 50, 70]
 
-# (capital, risk_per_trade_pct)
+# (capital, risk_per_trade_pct, pdt_enabled)
 # $5k must use 100% risk — a single SPX IC costs ~$2,500 margin
-# $100k tests 10%, 25%, 50% risk per trade
+# $5k+PDT tests the realistic scenario where PDT rule limits to 3 day trades per 5 business days
+# $100k tests 10%, 25%, 50% risk per trade (no PDT — above $25k threshold)
 CAPITAL_RISK_COMBOS = [
-    (5_000, 100),
-    (100_000, 10),
-    (100_000, 25),
-    (100_000, 50),
+    (5_000, 100, False),
+    (5_000, 100, True),    # PDT-constrained: 3 day trades per 5 business days
+    (100_000, 10, False),
+    (100_000, 25, False),
+    (100_000, 50, False),
 ]
 
 # Column headers for the copy/paste table
 HEADERS = [
-    "DTE", "Util%", "Risk%", "Capital", "Status", "Trades", "WR%", "TotalP&L",
+    "DTE", "Util%", "Risk%", "Capital", "PDT", "Status", "Trades", "WR%", "TotalP&L",
     "Return%", "PF", "MaxDD%", "Sharpe", "Sortino", "Skipped",
-    "VIXSkip", "PeakPos", "AvgCtx", "FinalEquity", "Seconds"
+    "VIXSkip", "PDTSkip", "PeakPos", "AvgCtx", "FinalEquity", "Seconds"
 ]
 
 
 def _json_path_for(dte_config: dict, utilization: int, capital: float,
-                    risk_pct: int, ticker: str, start: str, end: str) -> Path:
+                    risk_pct: int, ticker: str, start: str, end: str,
+                    pdt: bool = False) -> Path:
     """Build the expected JSON result path for a given parameter combo."""
     capital_k = f"{int(capital/1000)}k"
     if dte_config["dte_mode"] == "short":
@@ -84,11 +87,13 @@ def _json_path_for(dte_config: dict, utilization: int, capital: float,
         dte_file = "monthly"
     util_file = f"util{utilization}"
     risk_file = f"risk{risk_pct}"
-    return RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{risk_file}_{start}_{end}.json"
+    pdt_file = "_pdt" if pdt else ""
+    return RESULTS_DIR / f"{ticker}_{dte_file}_ic_results_{capital_k}_{util_file}_{risk_file}{pdt_file}_{start}_{end}.json"
 
 
 def _parse_json_result(json_path: Path, label: str, utilization: int,
-                       risk_pct: int, capital: float, elapsed: float) -> dict:
+                       risk_pct: int, capital: float, elapsed: float,
+                       pdt: bool = False) -> dict:
     """Read a completed JSON result file into a row dict."""
     with open(json_path) as f:
         data = json.load(f)
@@ -97,6 +102,7 @@ def _parse_json_result(json_path: Path, label: str, utilization: int,
     col = data.get("collateral", {})
     return _row(
         label, utilization, risk_pct, capital, "OK",
+        pdt=pdt,
         trades=s.get("total_trades", 0),
         wr=s.get("win_rate", 0),
         pnl=s.get("total_pnl", 0),
@@ -107,6 +113,7 @@ def _parse_json_result(json_path: Path, label: str, utilization: int,
         sortino=r.get("sortino_ratio", 0),
         skipped=col.get("trades_skipped_no_capital", 0),
         vix_skip=col.get("trades_skipped_vix", 0),
+        pdt_skip=col.get("trades_skipped_pdt", 0),
         peak_pos=col.get("peak_concurrent_positions", 0),
         avg_ctx=col.get("avg_contracts_per_trade", 0),
         final_eq=s.get("final_equity", 0),
@@ -133,17 +140,18 @@ def _default_max_contracts(capital: float) -> int:
 
 def run_single(dte_config: dict, utilization: int, capital: float,
                risk_pct: int, ticker: str, start: str, end: str,
-               resume: bool = False, max_contracts: int = 0) -> dict:
+               resume: bool = False, max_contracts: int = 0,
+               pdt: bool = False) -> dict:
     """Run one backtest. Returns a flat dict of results."""
 
     label = dte_config["label"]
 
-    json_path = _json_path_for(dte_config, utilization, capital, risk_pct, ticker, start, end)
+    json_path = _json_path_for(dte_config, utilization, capital, risk_pct, ticker, start, end, pdt=pdt)
 
     # Resume: if JSON already exists from a previous run, skip re-running
     if resume and json_path.exists():
         try:
-            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed=0)
+            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed=0, pdt=pdt)
         except Exception:
             pass  # Re-run if JSON is corrupted
 
@@ -170,6 +178,10 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         cmd.extend(["--weekly-dte-min", str(dte_config["weekly_dte_min"])])
         cmd.extend(["--weekly-dte-max", str(dte_config["weekly_dte_max"])])
 
+    # Add PDT flag if enabled
+    if pdt:
+        cmd.append("--pdt")
+
     t0 = time.time()
     try:
         # Don't capture output — it eats memory across 96 runs.
@@ -180,15 +192,15 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         )
         elapsed = time.time() - t0
     except subprocess.TimeoutExpired:
-        return _row(label, utilization, risk_pct, capital, "TIMEOUT", elapsed=900)
+        return _row(label, utilization, risk_pct, capital, "TIMEOUT", pdt=pdt, elapsed=900)
 
     if proc.returncode != 0:
         # Detect OOM kill (SIGKILL = -9 on Linux)
         if proc.returncode == -9:
-            return _row(label, utilization, risk_pct, capital, "OOM_KILLED", elapsed=time.time() - t0)
+            return _row(label, utilization, risk_pct, capital, "OOM_KILLED", pdt=pdt, elapsed=time.time() - t0)
         # Other failure — grab last line of stderr only (not full output)
         err = proc.stderr.strip().split("\n")[-1][:80] if proc.stderr else "unknown"
-        return _row(label, utilization, risk_pct, capital, f"FAIL:{err}", elapsed=time.time() - t0)
+        return _row(label, utilization, risk_pct, capital, f"FAIL:{err}", pdt=pdt, elapsed=time.time() - t0)
 
     # Free stderr string immediately
     del proc
@@ -197,16 +209,16 @@ def run_single(dte_config: dict, utilization: int, capital: float,
     # Parse results JSON
     if json_path.exists():
         try:
-            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed)
+            return _parse_json_result(json_path, label, utilization, risk_pct, capital, elapsed, pdt=pdt)
         except Exception as e:
-            return _row(label, utilization, risk_pct, capital, f"JSON_ERR:{e}", elapsed=elapsed)
+            return _row(label, utilization, risk_pct, capital, f"JSON_ERR:{e}", pdt=pdt, elapsed=elapsed)
 
     # Fallback: no JSON found
-    return _row(label, utilization, risk_pct, capital, "NO_OUTPUT", elapsed=elapsed)
+    return _row(label, utilization, risk_pct, capital, "NO_OUTPUT", pdt=pdt, elapsed=elapsed)
 
 
-def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, pf=0,
-         dd=0, sharpe=0, sortino=0, skipped=0, vix_skip=0, peak_pos=0,
+def _row(label, util, risk_pct, capital, status, pdt=False, trades=0, wr=0, pnl=0, ret=0, pf=0,
+         dd=0, sharpe=0, sortino=0, skipped=0, vix_skip=0, pdt_skip=0, peak_pos=0,
          avg_ctx=0, final_eq=0, elapsed=0):
     """Build a result row dict."""
     return {
@@ -214,6 +226,7 @@ def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, p
         "Util%": util,
         "Risk%": risk_pct,
         "Capital": int(capital),
+        "PDT": "YES" if pdt else "NO",
         "Status": status,
         "Trades": trades,
         "WR%": round(wr, 1),
@@ -225,6 +238,7 @@ def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, p
         "Sortino": round(sortino, 2),
         "Skipped": skipped,
         "VIXSkip": vix_skip,
+        "PDTSkip": pdt_skip,
         "PeakPos": peak_pos,
         "AvgCtx": round(avg_ctx, 1),
         "FinalEquity": round(final_eq, 2),
@@ -254,9 +268,9 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     utils = UTILIZATIONS if util_filter is None else [util_filter]
     combos = CAPITAL_RISK_COMBOS
     if capital_filter is not None:
-        combos = [(c, r) for c, r in combos if c == capital_filter]
+        combos = [(c, r, p) for c, r, p in combos if c == capital_filter]
     if risk_filter is not None:
-        combos = [(c, r) for c, r in combos if r == risk_filter]
+        combos = [(c, r, p) for c, r, p in combos if r == risk_filter]
 
     total = len(dtes) * len(utils) * len(combos)
     started = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -266,7 +280,8 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Started:      {started}")
     print(f"# DTE modes:    {', '.join(d['label'] for d in dtes)}")
     print(f"# Utilizations: {', '.join(str(u)+'%' for u in utils)}")
-    print(f"# Cap/Risk:     {', '.join(f'${c:,.0f}@{r}%' for c,r in combos)}")
+    combo_labels = [f"${c:,.0f}@{r}%" + ("+PDT" if p else "") for c, r, p in combos]
+    print(f"# Cap/Risk:     {', '.join(combo_labels)}")
     print(f"# Total runs:   {total}")
     print(f"# Contract cap: {max_contracts if max_contracts > 0 else 'auto (capital-based)'}")
     print(f"# Resume mode:  {'ON' if resume else 'OFF'}")
@@ -284,22 +299,23 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
 
     for dte_config in dtes:
         for util in utils:
-            for cap, risk_pct in combos:
+            for cap, risk_pct, pdt_flag in combos:
                 completed += 1
                 label = dte_config["label"]
                 cap_k = f"${int(cap/1000)}k"
-                print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {risk_pct}% risk | {cap_k} ...", end=" ", flush=True)
+                pdt_tag = "+PDT" if pdt_flag else ""
+                print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {risk_pct}% risk | {cap_k}{pdt_tag} ...", end=" ", flush=True)
 
                 # Skip known-problematic configs
                 if (label, util, risk_pct, int(cap)) in SKIP_LIST:
-                    result = _row(label, util, risk_pct, cap, "SKIPPED")
+                    result = _row(label, util, risk_pct, cap, "SKIPPED", pdt=pdt_flag)
                     all_results.append(result)
                     print("SKIPPED (in skip list)")
                     sys.stdout.flush()
                     continue
 
                 result = run_single(dte_config, util, cap, risk_pct, ticker, start, end,
-                                    resume=resume, max_contracts=max_contracts)
+                                    resume=resume, max_contracts=max_contracts, pdt=pdt_flag)
                 all_results.append(result)
 
                 # Instant feedback
@@ -362,18 +378,20 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"{'─'*90}")
     ok = [r for r in all_results if r["Status"] == "OK"]
     if ok:
-        # Group by DTE and find best return
+        # Group by DTE+PDT and find best return
         by_dte = {}
         for r in ok:
-            key = r["DTE"]
+            key = f"{r['DTE']}{'_PDT' if r['PDT'] == 'YES' else ''}"
             if key not in by_dte or r["Return%"] > by_dte[key]["Return%"]:
                 by_dte[key] = r
-        print(f"  {'DTE':<10} {'Util':>5} {'Risk':>5} {'Capital':>10} {'Return%':>9} {'WR%':>6} {'MaxDD%':>8} {'Sharpe':>7} {'Trades':>7}")
+        print(f"  {'DTE':<10} {'PDT':>4} {'Util':>5} {'Risk':>5} {'Capital':>10} {'Return%':>9} {'WR%':>6} {'MaxDD%':>8} {'Sharpe':>7} {'Trades':>7}")
         for dte_label in ["0DTE", "1DTE", "2DTE", "3DTE", "Weekly", "Monthly"]:
-            if dte_label in by_dte:
-                r = by_dte[dte_label]
-                print(f"  {r['DTE']:<10} {r['Util%']:>4}% {r['Risk%']:>4}% ${r['Capital']:>9,} {r['Return%']:>+8.1f}% "
-                      f"{r['WR%']:>5.1f}% {r['MaxDD%']:>7.1f}% {r['Sharpe']:>6.2f} {r['Trades']:>7}")
+            for pdt_suffix in ["", "_PDT"]:
+                key = dte_label + pdt_suffix
+                if key in by_dte:
+                    r = by_dte[key]
+                    print(f"  {r['DTE']:<10} {r['PDT']:>4} {r['Util%']:>4}% {r['Risk%']:>4}% ${r['Capital']:>9,} {r['Return%']:>+8.1f}% "
+                          f"{r['WR%']:>5.1f}% {r['MaxDD%']:>7.1f}% {r['Sharpe']:>6.2f} {r['Trades']:>7}")
     else:
         print("  No successful runs.")
 

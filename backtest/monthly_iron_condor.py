@@ -121,6 +121,10 @@ class MonthlyICConfig:
     weekly_dte_max: int = 7           # For weekly mode: maximum DTE at entry
     day_trade: bool = True            # Day trade: close all positions on entry day using Yahoo OHLC
 
+    # ── PDT (Pattern Day Trader) rule ────────────────────────────────
+    pdt_enabled: bool = False         # Enforce PDT rule (3 day trades per 5 rolling business days)
+    pdt_threshold: float = 25_000.0   # PDT rule applies when equity < this threshold
+
     @property
     def wing_width(self) -> float:
         """Return wing width based on ticker."""
@@ -1249,6 +1253,48 @@ def _mid(bid, ask) -> float:
     return 0.0
 
 
+def calculate_ic_exit_debit_with_extrinsic(
+    chain: List[Dict], trade: ICTrade, close_price: float
+) -> float:
+    """Calculate exit debit for a day-trade close when DTE > 0.
+
+    Problem: calculate_settlement_value() only computes intrinsic, ignoring extrinsic
+    value that still exists when closing a 1DTE+ contract before expiration.
+    This phantom profit inflated 1DTE returns by ~80x vs 0DTE.
+
+    Solution: Compute intrinsic at the Yahoo close price (which reflects the actual
+    underlying move), then ADD the extrinsic component observed in the EOD option chain.
+    Extrinsic is relatively stable intraday, so using the chain's extrinsic is a good proxy.
+
+    Returns debit per contract (positive = cost to close).
+    """
+    # Step 1: Get intrinsic at the actual close price (this captures the underlying move)
+    intrinsic_debit = calculate_settlement_value(trade, close_price)
+
+    # Step 2: Get the full market value from the option chain (intrinsic + extrinsic)
+    chain_debit = calculate_ic_debit(chain, trade)
+    if chain_debit is None:
+        # Can't find strikes in chain — fall back to intrinsic only (conservative)
+        return intrinsic_debit
+
+    # Step 3: Get intrinsic from the chain's underlying price (to isolate extrinsic)
+    chain_underlying = None
+    for opt in chain:
+        if opt.get('underlying_price'):
+            chain_underlying = float(opt['underlying_price'])
+            break
+    if not chain_underlying:
+        return intrinsic_debit
+
+    chain_intrinsic = calculate_settlement_value(trade, chain_underlying)
+
+    # Extrinsic = chain market value - chain intrinsic
+    extrinsic = max(0, chain_debit - chain_intrinsic)
+
+    # Exit debit = intrinsic at close price + extrinsic from chain
+    return intrinsic_debit + extrinsic
+
+
 def _find_strike(chain: List[Dict], strike: float) -> Optional[Dict]:
     """Find option in chain closest to a given strike."""
     if not chain:
@@ -1295,13 +1341,39 @@ class MonthlyICBacktester:
         self.margin_deployed: float = 0.0
         self.trades_skipped_no_capital: int = 0
         self.trades_skipped_vix: int = 0
+        self.trades_skipped_pdt: int = 0
         self.peak_concurrent_positions: int = 0
         self.peak_margin_deployed: float = 0.0
+
+        # PDT tracking: list of dates on which day trades were executed
+        self.day_trade_dates: List[str] = []
 
     def _available_buying_power(self) -> float:
         """Return capital available for new positions."""
         max_deployable = self.equity * (self.config.max_capital_utilization / 100.0)
         return max(0, max_deployable - self.margin_deployed)
+
+    def _pdt_would_exceed(self, entry_date: str, all_trading_days: List[str]) -> bool:
+        """Check if opening a day trade on entry_date would violate PDT rule.
+
+        PDT rule: accounts under $25K cannot make more than 3 day trades
+        in any rolling 5-business-day window.
+        """
+        # Find the 5-business-day window ending on entry_date
+        try:
+            idx = all_trading_days.index(entry_date)
+        except ValueError:
+            return False
+        window_start_idx = max(0, idx - 4)  # 5 business days including today
+        window_dates = set(all_trading_days[window_start_idx:idx + 1])
+
+        # Count day trades in this window
+        count = sum(1 for d in self.day_trade_dates if d in window_dates)
+        return count >= 3
+
+    def _record_day_trade(self, trade_date: str):
+        """Record that a day trade was executed on this date."""
+        self.day_trade_dates.append(trade_date)
 
     def _close_expired_before(self, current_date: str, all_trading_days: List[str]):
         """Close any open positions whose exit would have occurred before current_date.
@@ -1457,6 +1529,9 @@ class MonthlyICBacktester:
             if trade:
                 self.trades.append(trade)
                 self._register_open_position(trade)
+                # Record day trade for PDT tracking
+                if self.config.day_trade and trade.entry_date == trade.exit_date:
+                    self._record_day_trade(trade.entry_date)
                 logger.info(
                     f"  Trade #{trade.trade_id}: {trade.entry_date} → {trade.exit_date} | "
                     f"{trade.contracts}x | Credit: ${trade.total_credit:.2f} | "
@@ -1555,6 +1630,13 @@ class MonthlyICBacktester:
                 logger.debug(f"  SKIPPED {entry_date}: VIX {vix:.1f} < {self.config.min_vix} (premium too thin)")
                 return None
 
+        # ── PDT rule check ──────────────────────────────────────────────
+        if self.config.pdt_enabled and self.config.day_trade and self.equity < self.config.pdt_threshold:
+            if self._pdt_would_exceed(entry_date, all_trading_days):
+                self.trades_skipped_pdt += 1
+                logger.debug(f"  SKIPPED {entry_date}: PDT rule (3 day trades in 5 business days, equity ${self.equity:,.0f} < ${self.config.pdt_threshold:,.0f})")
+                return None
+
         # ── Entry ─────────────────────────────────────────────────────────
         chain = self.db.get_options_chain(
             self.config.ticker, entry_date, expiration_date
@@ -1632,16 +1714,24 @@ class MonthlyICBacktester:
         # ── Day trade mode: close on entry day ──────────────────────────
         # All modes are day trades: enter and exit on the same day.
         # Yahoo Finance daily OHLC gives us High/Low for intraday SL check,
-        # and Close for EOD settlement.  This works for ALL DTE modes because
-        # we always exit on entry day — the expiration only determines which
-        # contract we sold (affecting premium/credit).
+        # and Close for EOD settlement.
+        #
+        # CRITICAL FIX (2026-03-06): For DTE > 0, calculate_settlement_value()
+        # only returns intrinsic, ignoring extrinsic value that must be paid
+        # to close the position. This caused 1DTE returns to be ~80x inflated
+        # vs 0DTE because the extrinsic was "free money" in the backtest.
+        # Now we use calculate_ic_exit_debit_with_extrinsic() for DTE > 0
+        # which adds back the extrinsic component from the option chain.
         if self.config.day_trade:
             ohlc = getattr(self, 'ohlc_cache', {}).get(entry_date)
             if not ohlc:
                 # Fallback: no Yahoo data for this day — use ORAT underlying price
                 price = self.db.get_underlying_price(self.config.ticker, entry_date)
                 if price:
-                    debit = calculate_settlement_value(trade, price)
+                    if dte > 0:
+                        debit = calculate_ic_exit_debit_with_extrinsic(chain, trade, price)
+                    else:
+                        debit = calculate_settlement_value(trade, price)
                     return self._close_trade(trade, entry_date, debit, "DAY_TRADE_CLOSE", dte)
                 return None  # Can't price exit
 
@@ -1667,8 +1757,11 @@ class MonthlyICBacktester:
                     capped_debit = min(intraday_worst_debit, sl_debit_threshold * gap_slippage)
                 return self._close_trade(trade, entry_date, capped_debit, "STOP_LOSS", dte)
 
-            # EOD settlement using Close price
-            close_debit = calculate_settlement_value(trade, close_price)
+            # EOD exit: for DTE > 0, include extrinsic from chain; for 0DTE, intrinsic only
+            if dte > 0:
+                close_debit = calculate_ic_exit_debit_with_extrinsic(chain, trade, close_price)
+            else:
+                close_debit = calculate_settlement_value(trade, close_price)
 
             # Check profit target at close
             profit_threshold = trade.total_credit * (1 - self.config.profit_target_pct / 100)
@@ -1875,6 +1968,7 @@ class MonthlyICBacktester:
                 'collateral': {
                     'trades_skipped_no_capital': self.trades_skipped_no_capital,
                     'trades_skipped_vix': getattr(self, 'trades_skipped_vix', 0),
+                    'trades_skipped_pdt': getattr(self, 'trades_skipped_pdt', 0),
                     'peak_concurrent_positions': 0,
                     'avg_contracts_per_trade': 0,
                     'peak_margin_deployed': 0,
@@ -2051,6 +2145,7 @@ class MonthlyICBacktester:
                 'max_capital_utilization_pct': self.config.max_capital_utilization,
                 'trades_skipped_no_capital': self.trades_skipped_no_capital,
                 'trades_skipped_vix': self.trades_skipped_vix,
+                'trades_skipped_pdt': self.trades_skipped_pdt,
                 'peak_concurrent_positions': self.peak_concurrent_positions,
                 'peak_margin_deployed': round(self.peak_margin_deployed, 2),
                 'peak_margin_pct_of_capital': round(
@@ -2138,6 +2233,8 @@ class MonthlyICBacktester:
             print(f"  Max Utilization:     {col.get('max_capital_utilization_pct', 0):>8.0f}%")
             print(f"  Skipped (capital):   {col.get('trades_skipped_no_capital', 0):>8}")
             print(f"  Skipped (VIX):       {col.get('trades_skipped_vix', 0):>8}")
+            if col.get('trades_skipped_pdt', 0) > 0:
+                print(f"  Skipped (PDT):       {col.get('trades_skipped_pdt', 0):>8}")
             print(f"  Max Positions Cap:   {col.get('max_concurrent_positions', 0):>8}")
             print(f"  Peak Concurrent:     {col.get('peak_concurrent_positions', 0):>8} positions")
             print(f"  Peak Margin:         ${col.get('peak_margin_deployed', 0):>10,.2f}")
@@ -2458,6 +2555,10 @@ Examples:
     parser.add_argument('--no-day-trade', dest='day_trade', action='store_false',
                         help='Hold positions until expiration/SL/PT (multi-day monitoring)')
 
+    # PDT rule
+    parser.add_argument('--pdt', dest='pdt_enabled', action='store_true', default=False,
+                        help='Enforce PDT rule (3 day trades per 5 rolling business days for accounts <$25K)')
+
     args = parser.parse_args()
 
     if args.audit:
@@ -2518,6 +2619,7 @@ Examples:
         weekly_dte_min=args.weekly_dte_min,
         weekly_dte_max=args.weekly_dte_max,
         day_trade=args.day_trade,
+        pdt_enabled=args.pdt_enabled,
     )
 
     # Override wing width if specified
@@ -2542,8 +2644,9 @@ Examples:
             dte_label = "monthly"
         util_label = f"util{int(args.max_utilization)}"
         risk_label = f"risk{int(args.max_risk_per_trade)}"
+        pdt_label = "_pdt" if args.pdt_enabled else ""
         base = f"backtest/results/{args.ticker.upper()}_{dte_label}_ic"
-        suffix = f"{capital_label}_{util_label}_{risk_label}_{args.start}_{args.end}"
+        suffix = f"{capital_label}_{util_label}_{risk_label}{pdt_label}_{args.start}_{args.end}"
         backtester.export_trades_csv(f"{base}_trades_{suffix}.csv")
         backtester.export_results_json(results, f"{base}_results_{suffix}.json")
         backtester.export_equity_curve_csv(results, f"{base}_equity_{suffix}.csv")
