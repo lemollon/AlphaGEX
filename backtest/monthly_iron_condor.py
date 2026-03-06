@@ -1342,6 +1342,13 @@ class MonthlyICBacktester:
             max_by_risk = int(max_risk_dollars / max_loss_per_contract) if max_loss_per_contract > 0 else 0
 
             contracts = min(max_by_margin, max_by_risk)
+
+            # Minimum 1-contract floor: if total equity can cover at least 1 IC,
+            # always allow it. This ensures small accounts ($5k) can trade even
+            # at low utilization — the utilization cap is aspirational, not blocking.
+            if contracts == 0 and self.equity >= margin_per_contract and len(self.open_positions) == 0:
+                contracts = 1
+
             return max(0, contracts)
         else:
             # Fixed sizing — check if we can afford the configured number
