@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS ${bot}_positions (
   original_call_width NUMERIC(10,2),
   put_order_id TEXT DEFAULT 'PAPER',
   call_order_id TEXT DEFAULT 'PAPER',
+  sandbox_order_id TEXT,
+  sandbox_close_order_id TEXT,
   status TEXT NOT NULL DEFAULT 'open',
   open_time TIMESTAMPTZ NOT NULL,
   open_date DATE,
@@ -249,6 +251,16 @@ async function ensureTables(): Promise<void> {
   const client = await getPool().connect()
   try {
     await client.query(INIT_DDL)
+
+    // Add missing columns to existing positions tables (safe to run repeatedly)
+    for (const bot of ['flame', 'spark']) {
+      for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT']) {
+        try {
+          await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
+        } catch { /* column already exists or table doesn't exist yet */ }
+      }
+    }
+
     // Seed paper accounts if empty
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
       const res = await client.query(

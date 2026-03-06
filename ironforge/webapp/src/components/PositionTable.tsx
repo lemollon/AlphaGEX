@@ -41,11 +41,13 @@ export default function PositionTable({
   spotPrice,
   tradierConnected,
   detailData,
+  bot,
 }: {
   positions: Position[]
   spotPrice?: number | null
   tradierConnected?: boolean
   detailData?: { positions: DetailData[] } | null
+  bot: 'flame' | 'spark'
 }) {
   if (!positions.length) {
     return (
@@ -86,6 +88,7 @@ export default function PositionTable({
           pos={pos}
           hasLiveData={hasLiveData}
           detail={detailMap[pos.position_id] ?? null}
+          bot={bot}
         />
       ))}
     </div>
@@ -108,12 +111,37 @@ function PositionCard({
   pos,
   hasLiveData,
   detail,
+  bot,
 }: {
   pos: Position
   hasLiveData: boolean
   detail: DetailData | null
+  bot: 'flame' | 'spark'
 }) {
   const [expanded, setExpanded] = useState(true)
+  const [closing, setClosing] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const [closeResult, setCloseResult] = useState<{ pnl: number; price: number } | null>(null)
+
+  async function handleForceClose() {
+    setClosing(true)
+    setConfirmClose(false)
+    try {
+      const res = await fetch(`/api/${bot}/force-close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position_id: pos.position_id }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setCloseResult({ pnl: data.realized_pnl, price: data.close_price })
+    } catch (e: any) {
+      console.error('Force close failed:', e)
+      alert(`Force close failed: ${e.message}`)
+    } finally {
+      setClosing(false)
+    }
+  }
 
   const pnl = pos.unrealized_pnl
   const pnlPct = pos.unrealized_pnl_pct
@@ -146,8 +174,53 @@ function PositionCard({
     }
   }
 
+  if (closeResult) {
+    return (
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
+        <span className="text-emerald-400 font-medium">Position closed</span>
+        <span className="ml-2 text-gray-300">
+          @ ${closeResult.price.toFixed(4)} | P&L: {closeResult.pnl >= 0 ? '+' : ''}${closeResult.pnl.toFixed(2)}
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4 space-y-3">
+      {/* Force close confirmation dialog */}
+      {confirmClose && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-forge-card border border-forge-border rounded-xl p-6 max-w-md mx-4 shadow-xl">
+            <h3 className="text-lg font-bold text-white mb-3">Force Close Position?</h3>
+            <p className="text-sm text-gray-300 mb-2">
+              Close <span className="font-mono text-amber-400">{pos.position_id}</span> at current market price.
+            </p>
+            {pos.current_cost_to_close != null && (
+              <p className="text-sm text-gray-400 mb-4">
+                Estimated close: ${pos.current_cost_to_close.toFixed(4)} | Est P&L:{' '}
+                <span className={pos.unrealized_pnl != null && pos.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                  {pos.unrealized_pnl != null ? `$${pos.unrealized_pnl.toFixed(2)}` : 'unknown'}
+                </span>
+              </p>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmClose(false)}
+                className="px-4 py-2 text-sm rounded-lg border border-forge-border text-gray-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleForceClose}
+                className="px-4 py-2 text-sm rounded-lg font-medium bg-red-600 hover:bg-red-500 text-white transition-colors"
+              >
+                Close Position
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -300,9 +373,16 @@ function PositionCard({
       {expanded && detail && <PositionDetail data={detail} />}
 
       {/* Footer */}
-      <div className="flex gap-4 text-xs text-forge-muted">
+      <div className="flex items-center gap-4 text-xs text-forge-muted">
         <span>Entry: ${pos.underlying_at_entry.toFixed(2)}</span>
         <span>Opened: {pos.open_time?.slice(0, 16)}</span>
+        <button
+          onClick={() => setConfirmClose(true)}
+          disabled={closing}
+          className="ml-auto px-3 py-1 text-xs font-medium rounded-lg border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+        >
+          {closing ? 'Closing...' : 'Force Close'}
+        </button>
       </div>
     </div>
   )
