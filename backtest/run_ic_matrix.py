@@ -114,9 +114,26 @@ def _parse_json_result(json_path: Path, label: str, utilization: int,
     )
 
 
+def _default_max_contracts(capital: float) -> int:
+    """Realistic contract cap based on capital.
+
+    Prevents exponential compounding from producing fantasy returns.
+    Based on SPX IC margin (~$2,500/contract) and practical liquidity.
+    Hard-capped at 500 regardless of capital.
+    """
+    if capital <= 10_000:
+        return 10
+    elif capital <= 50_000:
+        return 50
+    elif capital <= 100_000:
+        return 100
+    else:
+        return 500
+
+
 def run_single(dte_config: dict, utilization: int, capital: float,
                risk_pct: int, ticker: str, start: str, end: str,
-               resume: bool = False) -> dict:
+               resume: bool = False, max_contracts: int = 0) -> dict:
     """Run one backtest. Returns a flat dict of results."""
 
     label = dte_config["label"]
@@ -130,6 +147,9 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         except Exception:
             pass  # Re-run if JSON is corrupted
 
+    # Auto-calculate contract cap if not specified
+    effective_cap = max_contracts if max_contracts > 0 else _default_max_contracts(capital)
+
     cmd = [
         sys.executable, str(BACKTEST_SCRIPT),
         "--ticker", ticker,
@@ -141,6 +161,7 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         "--dte-mode", dte_config["dte_mode"],
         "--short-dte", str(dte_config["short_dte"]),
         "--dynamic-sizing",
+        "--max-contracts", str(effective_cap),
         "--export",
     ]
 
@@ -211,9 +232,15 @@ def _row(label, util, risk_pct, capital, status, trades=0, wr=0, pnl=0, ret=0, p
     }
 
 
+# Skip list: (dte_label, utilization, risk_pct, capital) tuples to skip.
+# Add configs here that are known to be problematic (hang, OOM, etc.).
+SKIP_LIST: set = set()
+# Example: SKIP_LIST.add(("1DTE", 70, 100, 5000))
+
+
 def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
                risk_filter=None, ticker="SPX", start="2021-01-01", end="2025-12-31",
-               resume=False):
+               resume=False, max_contracts=0):
     """Run the full test matrix and print copy/paste results."""
 
     dtes = DTE_MODES
@@ -241,6 +268,7 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
     print(f"# Utilizations: {', '.join(str(u)+'%' for u in utils)}")
     print(f"# Cap/Risk:     {', '.join(f'${c:,.0f}@{r}%' for c,r in combos)}")
     print(f"# Total runs:   {total}")
+    print(f"# Contract cap: {max_contracts if max_contracts > 0 else 'auto (capital-based)'}")
     print(f"# Resume mode:  {'ON' if resume else 'OFF'}")
     print(f"# Timeout:      15 min per run")
     print(f"{'#'*60}")
@@ -262,7 +290,16 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
                 cap_k = f"${int(cap/1000)}k"
                 print(f"\n>>> [{completed}/{total}] {label} | {util}% util | {risk_pct}% risk | {cap_k} ...", end=" ", flush=True)
 
-                result = run_single(dte_config, util, cap, risk_pct, ticker, start, end, resume=resume)
+                # Skip known-problematic configs
+                if (label, util, risk_pct, int(cap)) in SKIP_LIST:
+                    result = _row(label, util, risk_pct, cap, "SKIPPED")
+                    all_results.append(result)
+                    print("SKIPPED (in skip list)")
+                    sys.stdout.flush()
+                    continue
+
+                result = run_single(dte_config, util, cap, risk_pct, ticker, start, end,
+                                    resume=resume, max_contracts=max_contracts)
                 all_results.append(result)
 
                 # Instant feedback
@@ -384,7 +421,22 @@ Examples:
     parser.add_argument("--end", default="2025-12-31", help="End date")
     parser.add_argument("--resume", action="store_true",
                         help="Skip runs that already have JSON results (resume after crash)")
+    parser.add_argument("--max-contracts", type=int, default=0,
+                        help="Hard cap on contracts per trade (0 = auto-calculate from capital)")
+    parser.add_argument("--clean", action="store_true",
+                        help="Delete all cached result JSONs before running (fresh start)")
     args = parser.parse_args()
+
+    if args.clean:
+        import glob as globmod
+        cached = list(RESULTS_DIR.glob("SPX_*.json")) + list(RESULTS_DIR.glob("SPY_*.json"))
+        cached += list(RESULTS_DIR.glob("_matrix_partial_results.json"))
+        if cached:
+            print(f"Cleaning {len(cached)} cached result files...")
+            for f in cached:
+                f.unlink()
+        else:
+            print("No cached results to clean.")
 
     run_matrix(
         dte_filter=args.dte,
@@ -395,6 +447,7 @@ Examples:
         start=args.start,
         end=args.end,
         resume=args.resume,
+        max_contracts=args.max_contracts,
     )
 
 
