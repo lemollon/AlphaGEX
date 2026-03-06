@@ -363,6 +363,49 @@ async function closePosition(
   )
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
+
+  // Post-close: if same-day open+close = day trade, increment PDT counter
+  try {
+    const posRow = await query(
+      `SELECT open_time FROM ${botTable(bot.name, 'positions')}
+       WHERE position_id = $1 AND dte_mode = $2 LIMIT 1`,
+      [positionId, bot.dte],
+    )
+    const openDate = posRow[0]?.open_time ? new Date(posRow[0].open_time).toISOString().slice(0, 10) : null
+    const closeDate = new Date().toISOString().slice(0, 10)
+    if (openDate === closeDate) {
+      // Same-day round trip = day trade
+      const pdtRow = await query(
+        `SELECT day_trade_count FROM ${botTable(bot.name, 'pdt_config')}
+         WHERE bot_name = $1 LIMIT 1`,
+        [bot.name.toUpperCase()],
+      )
+      const oldCount = int(pdtRow[0]?.day_trade_count)
+      const newCount = oldCount + 1
+      await query(
+        `UPDATE ${botTable(bot.name, 'pdt_config')}
+         SET day_trade_count = $1, updated_at = NOW()
+         WHERE bot_name = $2`,
+        [newCount, bot.name.toUpperCase()],
+      )
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'pdt_audit_log')}
+           (bot_name, action, old_value, new_value, reason, performed_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          bot.name.toUpperCase(),
+          'day_trade_recorded',
+          JSON.stringify({ day_trade_count: oldCount }),
+          JSON.stringify({ day_trade_count: newCount }),
+          `Day trade: ${positionId} opened+closed on ${closeDate}`,
+          'scanner',
+        ],
+      )
+      console.log(`[scanner] ${bot.name.toUpperCase()} PDT: day trade recorded, count ${oldCount}→${newCount}`)
+    }
+  } catch (pdtErr: any) {
+    console.warn(`[scanner] PDT counter update failed: ${pdtErr.message}`)
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,13 +416,31 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
+  // PDT config check — read enforcement state from pdt_config table
+  const pdtConfigRows = await query(
+    `SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
+     FROM ${botTable(bot.name, 'pdt_config')}
+     WHERE bot_name = $1 LIMIT 1`,
+    [bot.name.toUpperCase()],
+  )
+  const pdtCfg = pdtConfigRows[0]
+  const pdtEnabled = pdtCfg ? pdtCfg.pdt_enabled !== false : true
+  const pdtCount = int(pdtCfg?.day_trade_count)
+  const maxDayTrades = int(pdtCfg?.max_day_trades) || 3
+  const maxTradesPerDay = int(pdtCfg?.max_trades_per_day) || 1
+
   // Already traded today?
   const todayTrades = await query(
     `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
      WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
     [bot.dte],
   )
-  if (int(todayTrades[0]?.cnt) >= 1) return 'skip:already_traded_today'
+  if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
+
+  // PDT rolling window check (only if enforcement is ON)
+  if (pdtEnabled && pdtCount >= maxDayTrades) {
+    return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
+  }
 
   // Get account
   const accountRows = await query(
@@ -596,6 +657,50 @@ async function scanBot(bot: BotDef): Promise<void> {
     // If config doesn't exist, bot is active by default
 
     // Step 1: Always monitor open positions first
+    // Auto-decrement PDT counter: recount actual day trades in rolling window
+    // Runs every scan but is cheap (single COUNT query)
+    try {
+      const pdtActual = await query(
+        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+         WHERE is_day_trade = TRUE AND dte_mode = $1
+           AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+           AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+        [bot.dte],
+      )
+      const actualCount = int(pdtActual[0]?.cnt)
+      const pdtCfgRow = await query(
+        `SELECT day_trade_count FROM ${botTable(bot.name, 'pdt_config')}
+         WHERE bot_name = $1 LIMIT 1`,
+        [bot.name.toUpperCase()],
+      )
+      const storedCount = int(pdtCfgRow[0]?.day_trade_count)
+      if (storedCount !== actualCount) {
+        await query(
+          `UPDATE ${botTable(bot.name, 'pdt_config')}
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [actualCount, bot.name.toUpperCase()],
+        )
+        if (actualCount < storedCount) {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'pdt_audit_log')}
+               (bot_name, action, old_value, new_value, reason, performed_by)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              bot.name.toUpperCase(),
+              'auto_decrement',
+              JSON.stringify({ day_trade_count: storedCount }),
+              JSON.stringify({ day_trade_count: actualCount }),
+              `Rolling window update: old trades dropped off (${storedCount}→${actualCount})`,
+              'scanner',
+            ],
+          )
+        }
+      }
+    } catch (pdtSyncErr: any) {
+      console.warn(`[scanner] ${bot.name.toUpperCase()} PDT sync error: ${pdtSyncErr.message}`)
+    }
+
     const openRows = await query(
       `SELECT position_id FROM ${botTable(bot.name, 'positions')}
        WHERE status = 'open' AND dte_mode = $1 LIMIT 1`, [bot.dte],

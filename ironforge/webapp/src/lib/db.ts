@@ -193,6 +193,29 @@ CREATE TABLE IF NOT EXISTS ${bot}_pdt_log (
   dte_mode TEXT DEFAULT '2DTE',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ${bot}_pdt_config (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  bot_name TEXT NOT NULL,
+  pdt_enabled BOOLEAN DEFAULT TRUE,
+  day_trade_count INT DEFAULT 0,
+  max_day_trades INT DEFAULT 3,
+  window_days INT DEFAULT 5,
+  max_trades_per_day INT DEFAULT 1,
+  last_reset_at TIMESTAMPTZ,
+  last_reset_by TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ${bot}_pdt_audit_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  bot_name TEXT NOT NULL,
+  action TEXT NOT NULL,
+  old_value TEXT,
+  new_value TEXT,
+  reason TEXT,
+  performed_by TEXT DEFAULT 'user',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
 CREATE TABLE IF NOT EXISTS ${bot}_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   dte_mode TEXT NOT NULL UNIQUE,
@@ -241,6 +264,21 @@ async function ensureTables(): Promise<void> {
         )
       }
     }
+    // Seed PDT config if empty
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+      const pdtRes = await client.query(
+        `SELECT id FROM ${bot}_pdt_config WHERE bot_name = $1 LIMIT 1`,
+        [bot.toUpperCase()],
+      )
+      if (pdtRes.rows.length === 0) {
+        await client.query(
+          `INSERT INTO ${bot}_pdt_config (bot_name, pdt_enabled, day_trade_count, max_day_trades, window_days, max_trades_per_day)
+           VALUES ($1, TRUE, 0, 3, 5, 1)`,
+          [bot.toUpperCase()],
+        )
+      }
+    }
+
     tablesReady = true
 
     // Start the scan loop in THIS process (same as API routes).
