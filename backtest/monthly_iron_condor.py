@@ -665,46 +665,12 @@ class BacktestDB:
         """Find all (trade_date, expiration_date) pairs for short-DTE IC trading.
 
         For 0DTE: trade_date == expiration_date
-        For 1DTE: expiration_date = trade_date + 1 trading day
+        For 1DTE: expiration_date ≈ trade_date + 1 trading day
         For 2DTE/3DTE: similar pattern
 
-        Returns list of {trade_date, expiration_date, dte}.
-        """
-        conn = self.get_orat_conn()
-        tickers = [ticker]
-        if ticker.upper() == "SPX":
-            tickers = ["SPX", "SPXW"]
-
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT DISTINCT trade_date, expiration_date, dte
-                FROM orat_options_eod
-                WHERE ticker = ANY(%s)
-                  AND trade_date >= %s
-                  AND trade_date <= %s
-                  AND dte = %s
-                ORDER BY trade_date;
-            """, (tickers, start_date, end_date, target_dte))
-            rows = [dict(r) for r in cur.fetchall()]
-
-        # Deduplicate: one entry per trade_date (pick the first expiration if multiple)
-        seen_dates = set()
-        unique = []
-        for r in rows:
-            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
-            if td not in seen_dates:
-                seen_dates.add(td)
-                unique.append(r)
-        return unique
-
-    def get_weekly_dte_entries(
-        self, ticker: str, start_date: str, end_date: str,
-        dte_min: int, dte_max: int
-    ) -> List[Dict]:
-        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
-
-        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7).
-        For each trade_date, picks the expiration closest to the midpoint of the range.
+        Uses a DTE range to handle weekends/holidays. E.g., on Friday with
+        target_dte=1, the nearest expiration is Monday (dte=3 calendar days).
+        For each trading day, picks the expiration closest to target_dte.
 
         Returns list of {trade_date, expiration_date, dte}.
         """
@@ -712,6 +678,15 @@ class BacktestDB:
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
+
+        # Use a range to catch weekend/holiday gaps.
+        # Max gap: Friday→Monday = 3 calendar days for 1 trading day.
+        # For 0DTE, exact match only (must be same-day expiration).
+        if target_dte == 0:
+            dte_min, dte_max = 0, 0
+        else:
+            dte_min = max(target_dte - 1, 1)
+            dte_max = target_dte + 3  # covers 3-day weekend gaps
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
@@ -723,6 +698,49 @@ class BacktestDB:
                   AND dte BETWEEN %s AND %s
                 ORDER BY trade_date, dte;
             """, (tickers, start_date, end_date, dte_min, dte_max))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        # Deduplicate: one entry per trade_date, pick expiration closest to target_dte
+        best_by_date = {}
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            distance = abs(r['dte'] - target_dte)
+            if td not in best_by_date or distance < best_by_date[td][1]:
+                best_by_date[td] = (r, distance)
+
+        return [v[0] for v in sorted(best_by_date.values(), key=lambda x: str(x[0]['trade_date']))]
+
+    def get_weekly_dte_entries(
+        self, ticker: str, start_date: str, end_date: str,
+        dte_min: int, dte_max: int
+    ) -> List[Dict]:
+        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
+
+        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7),
+        widened by ±3 days to handle weekends/holidays. For each trade_date, picks
+        the expiration closest to the midpoint of the original range.
+
+        Returns list of {trade_date, expiration_date, dte}.
+        """
+        conn = self.get_orat_conn()
+        tickers = [ticker]
+        if ticker.upper() == "SPX":
+            tickers = ["SPX", "SPXW"]
+
+        # Widen search range by 3 days to handle weekend/holiday gaps
+        search_min = max(dte_min - 3, 1)
+        search_max = dte_max + 3
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date, expiration_date, dte
+                FROM orat_options_eod
+                WHERE ticker = ANY(%s)
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                  AND dte BETWEEN %s AND %s
+                ORDER BY trade_date, dte;
+            """, (tickers, start_date, end_date, search_min, search_max))
             rows = [dict(r) for r in cur.fetchall()]
 
         # Deduplicate: one entry per trade_date, pick expiration closest to midpoint DTE
