@@ -178,14 +178,6 @@ def run_single(dte_config: dict, utilization: int, capital: float,
         cmd.extend(["--weekly-dte-min", str(dte_config["weekly_dte_min"])])
         cmd.extend(["--weekly-dte-max", str(dte_config["weekly_dte_max"])])
 
-    # 0DTE should day-trade (open+close same day). All other DTEs must hold
-    # positions across multiple days until profit target / stop loss / DTE exit /
-    # expiration. Without this, 1DTE+ ICs get closed same-day before theta
-    # decays, guaranteeing a loss on every trade.
-    is_0dte = dte_config["dte_mode"] == "short" and dte_config["short_dte"] == 0
-    if not is_0dte:
-        cmd.append("--no-day-trade")
-
     # Add PDT flag if enabled
     if pdt:
         cmd.append("--pdt")
