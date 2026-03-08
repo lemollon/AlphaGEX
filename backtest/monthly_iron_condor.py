@@ -828,6 +828,29 @@ class BacktestDB:
             """, (tickers, start_date, end_date))
             days = [row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
                     for row in cur.fetchall()]
+
+        # Diagnostic: if no days found, report what tickers/dates exist
+        if not days:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT ticker, COUNT(DISTINCT trade_date) as days,
+                               MIN(trade_date)::text, MAX(trade_date)::text
+                        FROM orat_options_eod
+                        GROUP BY ticker
+                        ORDER BY ticker;
+                    """)
+                    rows = cur.fetchall()
+                    if rows:
+                        logger.warning("No trading days found for tickers %s in %s–%s. "
+                                       "Available tickers in ORAT DB:", tickers, start_date, end_date)
+                        for r in rows:
+                            logger.warning("  %s: %d days (%s → %s)", r[0], r[1], r[2], r[3])
+                    else:
+                        logger.error("orat_options_eod table appears empty!")
+            except Exception as e:
+                logger.warning("Diagnostic query failed: %s", e)
+
         return days
 
     def get_underlying_price(self, ticker: str, trade_date: str) -> Optional[float]:
@@ -893,28 +916,54 @@ class BacktestDB:
         """Bulk-load all VIX values for the date range into a dict.
 
         Returns {date_str: vix_value}. Single query instead of per-day lookups.
+
+        Sources (in priority order):
+          1. vix_history table (ORAT DB) — populated by populate_vix_and_prices.py
+          2. orat_options_eod VIX ticker rows (ORAT DB)
+          3. gex_structure_daily (main DB) — fallback for gaps
         """
         cache = {}
 
-        # Source 1: ORAT DB — try to get VIX underlying_price
+        # Source 1 (primary): vix_history table in ORAT DB
+        # This is the most reliable source — populated by populate_vix_and_prices.py
+        # from Yahoo Finance ^VIX data covering the full ORAT date range.
         try:
             conn = self.get_orat_conn()
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT DISTINCT trade_date, underlying_price
-                    FROM orat_options_eod
-                    WHERE ticker IN ('^VIX', 'VIX')
-                      AND trade_date >= %s AND trade_date <= %s
-                      AND underlying_price IS NOT NULL
+                    SELECT trade_date, close
+                    FROM vix_history
+                    WHERE trade_date >= %s AND trade_date <= %s
+                      AND close IS NOT NULL
                     ORDER BY trade_date;
                 """, (start_date, end_date))
                 for row in cur.fetchall():
                     d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
                     cache[d] = float(row[1])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"vix_history query failed (table may not exist): {e}")
 
-        # Source 2: Fill gaps from gex_structure_daily
+        # Source 2: ORAT DB — try to get VIX underlying_price from options data
+        if not cache:
+            try:
+                conn = self.get_orat_conn()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT DISTINCT trade_date, underlying_price
+                        FROM orat_options_eod
+                        WHERE ticker IN ('^VIX', 'VIX')
+                          AND trade_date >= %s AND trade_date <= %s
+                          AND underlying_price IS NOT NULL
+                        ORDER BY trade_date;
+                    """, (start_date, end_date))
+                    for row in cur.fetchall():
+                        d = row[0].strftime('%Y-%m-%d') if isinstance(row[0], date) else str(row[0])
+                        if d not in cache:
+                            cache[d] = float(row[1])
+            except Exception:
+                pass
+
+        # Source 3: Fill gaps from gex_structure_daily (main DB)
         try:
             conn = self.get_main_conn()
             with conn.cursor() as cur:
