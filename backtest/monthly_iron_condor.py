@@ -665,46 +665,12 @@ class BacktestDB:
         """Find all (trade_date, expiration_date) pairs for short-DTE IC trading.
 
         For 0DTE: trade_date == expiration_date
-        For 1DTE: expiration_date = trade_date + 1 trading day
+        For 1DTE: expiration_date ≈ trade_date + 1 trading day
         For 2DTE/3DTE: similar pattern
 
-        Returns list of {trade_date, expiration_date, dte}.
-        """
-        conn = self.get_orat_conn()
-        tickers = [ticker]
-        if ticker.upper() == "SPX":
-            tickers = ["SPX", "SPXW"]
-
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-                SELECT DISTINCT trade_date, expiration_date, dte
-                FROM orat_options_eod
-                WHERE ticker = ANY(%s)
-                  AND trade_date >= %s
-                  AND trade_date <= %s
-                  AND dte = %s
-                ORDER BY trade_date;
-            """, (tickers, start_date, end_date, target_dte))
-            rows = [dict(r) for r in cur.fetchall()]
-
-        # Deduplicate: one entry per trade_date (pick the first expiration if multiple)
-        seen_dates = set()
-        unique = []
-        for r in rows:
-            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
-            if td not in seen_dates:
-                seen_dates.add(td)
-                unique.append(r)
-        return unique
-
-    def get_weekly_dte_entries(
-        self, ticker: str, start_date: str, end_date: str,
-        dte_min: int, dte_max: int
-    ) -> List[Dict]:
-        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
-
-        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7).
-        For each trade_date, picks the expiration closest to the midpoint of the range.
+        Uses a DTE range to handle weekends/holidays. E.g., on Friday with
+        target_dte=1, the nearest expiration is Monday (dte=3 calendar days).
+        For each trading day, picks the expiration closest to target_dte.
 
         Returns list of {trade_date, expiration_date, dte}.
         """
@@ -712,6 +678,15 @@ class BacktestDB:
         tickers = [ticker]
         if ticker.upper() == "SPX":
             tickers = ["SPX", "SPXW"]
+
+        # Use a range to catch weekend/holiday gaps.
+        # Max gap: Friday→Monday = 3 calendar days for 1 trading day.
+        # For 0DTE, exact match only (must be same-day expiration).
+        if target_dte == 0:
+            dte_min, dte_max = 0, 0
+        else:
+            dte_min = max(target_dte - 1, 1)
+            dte_max = target_dte + 3  # covers 3-day weekend gaps
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
@@ -723,6 +698,49 @@ class BacktestDB:
                   AND dte BETWEEN %s AND %s
                 ORDER BY trade_date, dte;
             """, (tickers, start_date, end_date, dte_min, dte_max))
+            rows = [dict(r) for r in cur.fetchall()]
+
+        # Deduplicate: one entry per trade_date, pick expiration closest to target_dte
+        best_by_date = {}
+        for r in rows:
+            td = r['trade_date'].strftime('%Y-%m-%d') if isinstance(r['trade_date'], date) else str(r['trade_date'])
+            distance = abs(r['dte'] - target_dte)
+            if td not in best_by_date or distance < best_by_date[td][1]:
+                best_by_date[td] = (r, distance)
+
+        return [v[0] for v in sorted(best_by_date.values(), key=lambda x: str(x[0]['trade_date']))]
+
+    def get_weekly_dte_entries(
+        self, ticker: str, start_date: str, end_date: str,
+        dte_min: int, dte_max: int
+    ) -> List[Dict]:
+        """Find all (trade_date, expiration_date) pairs for weekly IC trading.
+
+        Queries expirations where DTE is between dte_min and dte_max (e.g., 5-7),
+        widened by ±3 days to handle weekends/holidays. For each trade_date, picks
+        the expiration closest to the midpoint of the original range.
+
+        Returns list of {trade_date, expiration_date, dte}.
+        """
+        conn = self.get_orat_conn()
+        tickers = [ticker]
+        if ticker.upper() == "SPX":
+            tickers = ["SPX", "SPXW"]
+
+        # Widen search range by 3 days to handle weekend/holiday gaps
+        search_min = max(dte_min - 3, 1)
+        search_max = dte_max + 3
+
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                SELECT DISTINCT trade_date, expiration_date, dte
+                FROM orat_options_eod
+                WHERE ticker = ANY(%s)
+                  AND trade_date >= %s
+                  AND trade_date <= %s
+                  AND dte BETWEEN %s AND %s
+                ORDER BY trade_date, dte;
+            """, (tickers, start_date, end_date, search_min, search_max))
             rows = [dict(r) for r in cur.fetchall()]
 
         # Deduplicate: one entry per trade_date, pick expiration closest to midpoint DTE
@@ -1253,46 +1271,98 @@ def _mid(bid, ask) -> float:
     return 0.0
 
 
-def calculate_ic_exit_debit_with_extrinsic(
-    chain: List[Dict], trade: ICTrade, close_price: float
-) -> float:
-    """Calculate exit debit for a day-trade close when DTE > 0.
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF using the Abramowitz & Stegun approximation.
 
-    Problem: calculate_settlement_value() only computes intrinsic, ignoring extrinsic
-    value that still exists when closing a 1DTE+ contract before expiration.
-    This phantom profit inflated 1DTE returns by ~80x vs 0DTE.
-
-    Solution: Compute intrinsic at the Yahoo close price (which reflects the actual
-    underlying move), then ADD the extrinsic component observed in the EOD option chain.
-    Extrinsic is relatively stable intraday, so using the chain's extrinsic is a good proxy.
-
-    Returns debit per contract (positive = cost to close).
+    Accurate to ~1e-7, no scipy dependency required.
     """
-    # Step 1: Get intrinsic at the actual close price (this captures the underlying move)
-    intrinsic_debit = calculate_settlement_value(trade, close_price)
+    from math import exp, sqrt, pi
+    if x < -10:
+        return 0.0
+    if x > 10:
+        return 1.0
+    # Constants for the approximation
+    a1, a2, a3, a4, a5 = 0.254829592, -0.284496736, 1.421413741, -1.453152027, 1.061405429
+    p = 0.3275911
+    sign = 1 if x >= 0 else -1
+    x_abs = abs(x)
+    t = 1.0 / (1.0 + p * x_abs)
+    y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * exp(-x_abs * x_abs / 2.0)
+    return 0.5 * (1.0 + sign * y)
 
-    # Step 2: Get the full market value from the option chain (intrinsic + extrinsic)
-    chain_debit = calculate_ic_debit(chain, trade)
-    if chain_debit is None:
-        # Can't find strikes in chain — fall back to intrinsic only (conservative)
-        return intrinsic_debit
 
-    # Step 3: Get intrinsic from the chain's underlying price (to isolate extrinsic)
-    chain_underlying = None
-    for opt in chain:
-        if opt.get('underlying_price'):
-            chain_underlying = float(opt['underlying_price'])
-            break
-    if not chain_underlying:
-        return intrinsic_debit
+def _bs_option_price(S: float, K: float, T: float, r: float, sigma: float,
+                     option_type: str = 'call') -> float:
+    """Black-Scholes European option price.
 
-    chain_intrinsic = calculate_settlement_value(trade, chain_underlying)
+    Args:
+        S: Underlying price
+        K: Strike price
+        T: Time to expiration in years
+        r: Risk-free rate (e.g. 0.05 for 5%)
+        sigma: Implied volatility (e.g. 0.20 for 20%)
+        option_type: 'call' or 'put'
+    """
+    from math import log, sqrt, exp
 
-    # Extrinsic = chain market value - chain intrinsic
-    extrinsic = max(0, chain_debit - chain_intrinsic)
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        if option_type == 'call':
+            return max(0, S - K)
+        return max(0, K - S)
 
-    # Exit debit = intrinsic at close price + extrinsic from chain
-    return intrinsic_debit + extrinsic
+    d1 = (log(S / K) + (r + sigma**2 / 2) * T) / (sigma * sqrt(T))
+    d2 = d1 - sigma * sqrt(T)
+
+    if option_type == 'call':
+        return S * _norm_cdf(d1) - K * exp(-r * T) * _norm_cdf(d2)
+    else:
+        return K * exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
+
+def reprice_ic_credit_at_open(
+    chain: List[Dict], trade: ICTrade, open_price: float, dte: int,
+    risk_free_rate: float = 0.05
+) -> Optional[Tuple[float, float, float]]:
+    """Re-price IC entry credit at a different underlying price using Black-Scholes.
+
+    ORAT only has EOD snapshots. For day trades, we need to estimate what the IC
+    would have cost at market open (Yahoo open price). We use each strike's IV from
+    the EOD chain with the Yahoo open underlying to compute BSM prices.
+
+    Returns (put_credit, call_credit, total_credit) at the open price, or None if
+    any strike is missing IV data.
+    """
+    ps = _find_strike(chain, trade.put_short_strike)
+    pl = _find_strike(chain, trade.put_long_strike)
+    cs = _find_strike(chain, trade.call_short_strike)
+    cl = _find_strike(chain, trade.call_long_strike)
+
+    if not all([ps, pl, cs, cl]):
+        return None
+
+    T = max(dte, 0.5) / 365.0  # At least half a day for BSM stability
+
+    def _get_iv(opt: Dict, opt_type: str) -> float:
+        """Get IV for a strike, falling back to counterpart or default."""
+        iv = opt.get(f'{opt_type}_iv')
+        if iv and float(iv) > 0:
+            return float(iv)
+        other = 'call_iv' if opt_type == 'put' else 'put_iv'
+        iv = opt.get(other)
+        if iv and float(iv) > 0:
+            return float(iv)
+        return 0.20  # Fallback: 20% IV
+
+    # Price each leg at the open underlying price
+    put_short_price = _bs_option_price(open_price, trade.put_short_strike, T, risk_free_rate, _get_iv(ps, 'put'), 'put')
+    put_long_price = _bs_option_price(open_price, trade.put_long_strike, T, risk_free_rate, _get_iv(pl, 'put'), 'put')
+    call_short_price = _bs_option_price(open_price, trade.call_short_strike, T, risk_free_rate, _get_iv(cs, 'call'), 'call')
+    call_long_price = _bs_option_price(open_price, trade.call_long_strike, T, risk_free_rate, _get_iv(cl, 'call'), 'call')
+
+    put_credit = max(0, put_short_price - put_long_price)
+    call_credit = max(0, call_short_price - call_long_price)
+
+    return put_credit, call_credit, put_credit + call_credit
 
 
 def _find_strike(chain: List[Dict], strike: float) -> Optional[Dict]:
@@ -1713,31 +1783,46 @@ class MonthlyICBacktester:
 
         # ── Day trade mode: close on entry day ──────────────────────────
         # All modes are day trades: enter and exit on the same day.
-        # Yahoo Finance daily OHLC gives us High/Low for intraday SL check,
-        # and Close for EOD settlement.
         #
-        # CRITICAL FIX (2026-03-06): For DTE > 0, calculate_settlement_value()
-        # only returns intrinsic, ignoring extrinsic value that must be paid
-        # to close the position. This caused 1DTE returns to be ~80x inflated
-        # vs 0DTE because the extrinsic was "free money" in the backtest.
-        # Now we use calculate_ic_exit_debit_with_extrinsic() for DTE > 0
-        # which adds back the extrinsic component from the option chain.
+        # PRICING MODEL (2026-03-07):
+        # ORAT has only EOD snapshots. Using the same chain for both entry and
+        # exit gives P&L ≈ $0 for DTE > 0 (exit_debit ≈ entry_credit).
+        #
+        # Solution: Use Black-Scholes to re-price entry at Yahoo open price.
+        #   Entry credit = BSM(S=yahoo_open, K=strikes, T=dte, sigma=chain_IV)
+        #   Exit debit   = chain mid-prices (EOD, for DTE>0) or settlement (0DTE)
+        # This captures the real open→close underlying movement.
         if self.config.day_trade:
             ohlc = getattr(self, 'ohlc_cache', {}).get(entry_date)
             if not ohlc:
-                # Fallback: no Yahoo data for this day — use ORAT underlying price
+                # Fallback: no Yahoo data — can't distinguish open from close
                 price = self.db.get_underlying_price(self.config.ticker, entry_date)
                 if price:
-                    if dte > 0:
-                        debit = calculate_ic_exit_debit_with_extrinsic(chain, trade, price)
-                    else:
+                    if dte == 0:
                         debit = calculate_settlement_value(trade, price)
+                    else:
+                        debit = calculate_ic_debit(chain, trade)
+                        if debit is None:
+                            debit = calculate_settlement_value(trade, price)
                     return self._close_trade(trade, entry_date, debit, "DAY_TRADE_CLOSE", dte)
                 return None  # Can't price exit
 
+            open_price = ohlc['open']
             daily_high = ohlc['high']
             daily_low = ohlc['low']
             close_price = ohlc['close']
+
+            # For DTE > 0: re-price entry at Yahoo open using BSM
+            # This gives a different credit than the EOD chain, creating real P&L
+            if dte > 0:
+                repriced = reprice_ic_credit_at_open(chain, trade, open_price, dte)
+                if repriced:
+                    trade.put_credit = repriced[0]
+                    trade.call_credit = repriced[1]
+                    trade.total_credit = repriced[2]
+                    trade.max_profit = trade.total_credit * 100 * trade.contracts
+                    max_loss_per_contract = (trade.wing_width - trade.total_credit) * 100
+                    trade.max_loss = max_loss_per_contract * trade.contracts
 
             effective_sl_pct = self.config.stop_loss_pct
             sl_debit_threshold = trade.total_credit * (1 + effective_sl_pct / 100)
@@ -1757,10 +1842,14 @@ class MonthlyICBacktester:
                     capped_debit = min(intraday_worst_debit, sl_debit_threshold * gap_slippage)
                 return self._close_trade(trade, entry_date, capped_debit, "STOP_LOSS", dte)
 
-            # EOD exit: for DTE > 0, include extrinsic from chain; for 0DTE, intrinsic only
+            # EOD exit debit
             if dte > 0:
-                close_debit = calculate_ic_exit_debit_with_extrinsic(chain, trade, close_price)
+                # Use EOD chain mid-prices (real market data at close)
+                close_debit = calculate_ic_debit(chain, trade)
+                if close_debit is None:
+                    close_debit = calculate_settlement_value(trade, close_price)
             else:
+                # 0DTE: intrinsic only (extrinsic = 0 at expiration)
                 close_debit = calculate_settlement_value(trade, close_price)
 
             # Check profit target at close
