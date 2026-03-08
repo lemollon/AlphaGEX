@@ -5,9 +5,12 @@ Double Diagonal & Calendar Spread Analyzer powered by AlphaGEX GEX data.
 ## Architecture
 
 ```
-frontend/          Vite + React (StrategyPanel, App)
-backend/           FastAPI (spread calc, GEX proxy, alerts)
-bot/               Discord.js bot (/spread command)
+spreadworks/
+  frontend/        Vite + React (StrategyPanel, App)
+  backend/         FastAPI (spread calc, GEX proxy, alerts)
+  bot/             Discord.js bot (/spread command)
+  render.yaml      Render blueprint (3 services)
+  .env.example     Environment template
 ```
 
 Three Render services: `spreadworks-frontend` (static), `spreadworks-backend` (Python), `spreadworks-bot` (Node worker).
@@ -25,6 +28,7 @@ Three Render services: `spreadworks-frontend` (static), `spreadworks-backend` (P
 
 ```bash
 # 1. Copy environment file
+cd spreadworks
 cp .env.example .env
 # Fill in: TRADIER_TOKEN, TRADIER_ACCOUNT_ID, ALPHAGEX_BASE_URL,
 #          DISCORD_TOKEN, DISCORD_CLIENT_ID, DISCORD_GUILD_ID,
@@ -63,7 +67,7 @@ node src/index.js
 ## Render Deploy
 
 1. Connect your repo to Render
-2. Use `render-spreadworks.yaml` as the blueprint
+2. Use `spreadworks/render.yaml` as the blueprint
 3. Set all env vars listed above in the Render dashboard
 4. Deploy - Render builds all 3 services automatically
 

@@ -1,0 +1,13 @@
+{
+  "name": "spreadworks-bot",
+  "private": true,
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "register": "node src/register.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  }
+}
