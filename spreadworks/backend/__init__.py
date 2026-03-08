@@ -54,38 +54,49 @@ async def health():
 
 
 # --- Serve frontend static files ---
-# Always register the SPA catch-all: if dist exists, serve files; otherwise
-# return a helpful diagnostic page so we know what went wrong on deploy.
-
-_has_frontend = FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists()
-
-if _has_frontend:
-    # Mount assets with proper caching
-    assets_dir = FRONTEND_DIST / "assets"
-    if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="static")
+# Mount /assets if directory exists at startup
+if FRONTEND_DIST.exists() and (FRONTEND_DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="static")
 
 
-@app.get("/{full_path:path}")
+def _frontend_index() -> Path | None:
+    """Return path to index.html if it exists (checked at request time)."""
+    index = FRONTEND_DIST / "index.html"
+    if index.is_file():
+        return index
+    return None
+
+
+@app.get("/", include_in_schema=False)
+async def serve_root():
+    """Explicit root route — serves index.html or diagnostic page."""
+    index = _frontend_index()
+    if index:
+        return FileResponse(index, media_type="text/html")
+    return HTMLResponse(
+        "<h1>SpreadWorks</h1>"
+        "<p>Backend is running. Frontend dist not found.</p>"
+        f"<p>Expected path: <code>{FRONTEND_DIST}</code></p>"
+        f"<p>Path exists: <code>{FRONTEND_DIST.exists()}</code></p>"
+        "<p><a href='/health'>/health</a> | "
+        "<a href='/api/spreadworks/expirations?symbol=SPY'>/api/spreadworks/expirations?symbol=SPY</a></p>",
+        status_code=200,
+    )
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
 async def serve_frontend(full_path: str):
-    """Serve frontend SPA — all non-API routes return index.html."""
-    if _has_frontend:
-        file_path = FRONTEND_DIST / full_path
-        # Security: don't allow path traversal
-        try:
-            file_path = file_path.resolve()
-            if file_path.is_file() and str(file_path).startswith(str(FRONTEND_DIST.resolve())):
-                return FileResponse(file_path)
-        except (ValueError, OSError):
-            pass
-        return FileResponse(FRONTEND_DIST / "index.html")
-    else:
-        return HTMLResponse(
-            f"<h1>SpreadWorks</h1>"
-            f"<p>Backend is running. Frontend dist not found.</p>"
-            f"<p>Expected path: <code>{FRONTEND_DIST}</code></p>"
-            f"<p>Path exists: <code>{FRONTEND_DIST.exists()}</code></p>"
-            f"<p><a href='/health'>/health</a> | "
-            f"<a href='/api/spreadworks/expirations?symbol=SPY'>/api/spreadworks/expirations?symbol=SPY</a></p>",
-            status_code=200,
-        )
+    """SPA catch-all — serve matching file or fall back to index.html."""
+    index = _frontend_index()
+    if not index:
+        return HTMLResponse("<h1>SpreadWorks</h1><p>Frontend not found.</p>", status_code=200)
+
+    # Try serving the exact file requested (e.g. favicon.ico, robots.txt)
+    if full_path:
+        file_path = (FRONTEND_DIST / full_path).resolve()
+        # Security: only serve files inside FRONTEND_DIST
+        if file_path.is_file() and str(file_path).startswith(str(FRONTEND_DIST.resolve())):
+            return FileResponse(file_path)
+
+    # SPA fallback — return index.html for all other routes
+    return FileResponse(index, media_type="text/html")
