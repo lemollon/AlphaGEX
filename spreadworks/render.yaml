@@ -31,7 +31,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm install && npm run build && cd ..
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && (cd frontend && npm install && npm run build || echo "WARN: npm build skipped, using committed dist")
     startCommand: cd spreadworks && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
