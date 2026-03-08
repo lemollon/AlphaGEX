@@ -62,8 +62,8 @@ class MonthlyICConfig:
     ticker: str = "SPX"
 
     # ── Date range ────────────────────────────────────────────────────────
-    start_date: str = "2021-01-01"
-    end_date: str = "2025-12-31"
+    start_date: str = "2020-01-02"   # ORAT data starts here (2021 missing)
+    end_date: str = "2025-12-05"     # ORAT data ends here
 
     # ── Entry rules ───────────────────────────────────────────────────────
     target_dte_min: int = 30          # Minimum DTE at entry
@@ -2634,8 +2634,8 @@ Examples:
 
     parser.add_argument('--audit', action='store_true', help='Run Phase 1 data audit')
     parser.add_argument('--ticker', default='SPX', help='Underlying: SPX or SPY (default: SPX)')
-    parser.add_argument('--start', default='2021-01-01', help='Start date YYYY-MM-DD')
-    parser.add_argument('--end', default='2025-12-31', help='End date YYYY-MM-DD')
+    parser.add_argument('--start', default='2020-01-02', help='Start date YYYY-MM-DD (ORAT: 2021 missing)')
+    parser.add_argument('--end', default='2025-12-05', help='End date YYYY-MM-DD (ORAT data ends here)')
     parser.add_argument('--capital', type=float, default=100_000, help='Initial capital (default: $100,000)')
     parser.add_argument('--delta', type=float, default=0.10, help='Short strike delta (default: 0.10)')
     parser.add_argument('--pct-otm', type=float, default=5.0, help='Pct OTM fallback (default: 5.0)')
