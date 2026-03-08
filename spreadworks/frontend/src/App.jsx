@@ -1,9 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import StrategyPanel from './components/StrategyPanel';
+import CandleChart from './components/CandleChart';
+import PayoffDiagram from './components/PayoffDiagram';
+import AlertPanel from './components/AlertPanel';
+import PositionTracker, { savePosition } from './components/PositionTracker';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const ALERT_POLL_INTERVAL = 15_000; // 15 seconds
-const CANDLE_REFRESH_INTERVAL = 60_000; // 1 minute
+const ALERT_POLL_INTERVAL = 15_000;
+const CANDLE_REFRESH_INTERVAL = 60_000;
 
 export default function App() {
   const [symbol] = useState('SPY');
@@ -15,8 +19,11 @@ export default function App() {
   const [calcResult, setCalcResult] = useState(null);
   const [calcLoading, setCalcLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [saveStatus, setSaveStatus] = useState(null);
+  const [lastCalcPayload, setLastCalcPayload] = useState(null);
   const alertTimerRef = useRef(null);
   const candleTimerRef = useRef(null);
+  const positionTrackerRef = useRef(null);
 
   // --- Data Loaders ---
 
@@ -66,14 +73,13 @@ export default function App() {
 
     if (newlyTriggered.length > 0) {
       setTriggeredAlerts((prev) => [...prev, ...newlyTriggered]);
-      // Notify backend
       for (const alert of newlyTriggered) {
         try {
           await fetch(`${API_URL}/api/spreadworks/alerts/${alert.id}/trigger`, {
             method: 'POST',
           });
         } catch {
-          // Best-effort notification
+          // Best-effort
         }
       }
     }
@@ -108,6 +114,8 @@ export default function App() {
     setCalcLoading(true);
     setCalcResult(null);
     setError(null);
+    setSaveStatus(null);
+    setLastCalcPayload(payload);
     try {
       const res = await fetch(`${API_URL}/api/spreadworks/calculate`, {
         method: 'POST',
@@ -124,6 +132,26 @@ export default function App() {
       setError(err.message);
     } finally {
       setCalcLoading(false);
+    }
+  };
+
+  // --- Save Position ---
+
+  const handleSavePosition = async () => {
+    if (!calcResult || !lastCalcPayload) return;
+    setSaveStatus('saving');
+    try {
+      await savePosition({
+        symbol: calcResult.symbol,
+        strategy: calcResult.strategy,
+        contracts: calcResult.contracts,
+        legs: lastCalcPayload.legs,
+        net_debit: calcResult.net_debit,
+        spot_price: spotPrice || 0,
+      });
+      setSaveStatus('saved');
+    } catch {
+      setSaveStatus('error');
     }
   };
 
@@ -170,23 +198,23 @@ export default function App() {
             gexData={gexData}
             onCalculate={handleCalculate}
           />
+
+          {/* Alert Panel */}
+          <AlertPanel alerts={alerts} onRefresh={fetchAlerts} />
         </section>
 
-        {/* Right Column: Results & Market Data */}
+        {/* Right Column: Charts, Results, Positions */}
         <section className="column right-column">
-          {/* Candle Chart Placeholder */}
+          {/* Candlestick Chart */}
           <div className="panel candle-panel">
             <h3>Price Chart</h3>
             {candles.length > 0 ? (
-              <div className="candle-summary">
-                <span>Candles loaded: {candles.length}</span>
-                <span>
-                  Range: ${Math.min(...candles.map((c) => c.low)).toFixed(2)} &ndash; $
-                  {Math.max(...candles.map((c) => c.high)).toFixed(2)}
-                </span>
-              </div>
+              <CandleChart candles={candles} gexData={gexData} height={300} />
             ) : (
-              <p className="placeholder-text">Loading candle data...</p>
+              <div className="candle-summary">
+                <span>{spotPrice ? `${symbol} $${spotPrice.toFixed(2)}` : 'Loading...'}</span>
+                <span className="placeholder-text">Waiting for intraday candles</span>
+              </div>
             )}
           </div>
 
@@ -227,54 +255,122 @@ export default function App() {
             )}
           </div>
 
+          {/* Payoff Diagram */}
+          <div className="panel payoff-panel">
+            <h3>Payoff Diagram</h3>
+            <PayoffDiagram
+              pnlCurve={calcResult?.pnl_curve}
+              spotPrice={spotPrice}
+              breakevens={{
+                lower: calcResult?.lower_breakeven,
+                upper: calcResult?.upper_breakeven,
+              }}
+            />
+          </div>
+
           {/* Calculation Result */}
           <div className="panel result-panel">
             <h3>Spread Analysis</h3>
             {calcLoading && <p className="placeholder-text">Calculating...</p>}
             {error && <div className="error-banner">{error}</div>}
             {calcResult && (
-              <div className="calc-result">
-                <div className="result-row">
-                  <span className="label">Max Profit</span>
-                  <span className="value positive">
-                    ${calcResult.max_profit?.toFixed(2) ?? '--'}
-                  </span>
-                </div>
-                <div className="result-row">
-                  <span className="label">Max Loss</span>
-                  <span className="value negative">
-                    ${calcResult.max_loss?.toFixed(2) ?? '--'}
-                  </span>
-                </div>
-                <div className="result-row">
-                  <span className="label">Net Debit</span>
-                  <span className="value">
-                    ${calcResult.net_debit?.toFixed(2) ?? '--'}
-                  </span>
-                </div>
-                <div className="result-row">
-                  <span className="label">Breakevens</span>
-                  <span className="value">
-                    {calcResult.lower_breakeven?.toFixed(2) ?? '--'} / {calcResult.upper_breakeven?.toFixed(2) ?? '--'}
-                  </span>
-                </div>
-                {calcResult.probability_of_profit != null && (
+              <>
+                <div className="calc-result">
                   <div className="result-row">
-                    <span className="label">P(Profit)</span>
-                    <span className="value">
-                      {(calcResult.probability_of_profit * 100).toFixed(1)}%
+                    <span className="label">Max Profit</span>
+                    <span className="value positive">
+                      ${calcResult.max_profit?.toFixed(2) ?? '--'}
                     </span>
                   </div>
-                )}
-                {calcResult.greeks && (
-                  <div className="greeks-grid">
-                    <span>Delta: {calcResult.greeks.delta?.toFixed(3) ?? '--'}</span>
-                    <span>Gamma: {calcResult.greeks.gamma?.toFixed(4) ?? '--'}</span>
-                    <span>Theta: {calcResult.greeks.theta?.toFixed(3) ?? '--'}</span>
-                    <span>Vega: {calcResult.greeks.vega?.toFixed(3) ?? '--'}</span>
+                  <div className="result-row">
+                    <span className="label">Max Loss</span>
+                    <span className="value negative">
+                      ${calcResult.max_loss?.toFixed(2) ?? '--'}
+                    </span>
+                  </div>
+                  <div className="result-row">
+                    <span className="label">Net Debit</span>
+                    <span className="value">
+                      ${calcResult.net_debit?.toFixed(2) ?? '--'}
+                    </span>
+                  </div>
+                  <div className="result-row">
+                    <span className="label">Breakevens</span>
+                    <span className="value">
+                      {calcResult.lower_breakeven?.toFixed(2) ?? '--'} /{' '}
+                      {calcResult.upper_breakeven?.toFixed(2) ?? '--'}
+                    </span>
+                  </div>
+                  {calcResult.probability_of_profit != null && (
+                    <div className="result-row">
+                      <span className="label">P(Profit)</span>
+                      <span className="value">
+                        {(calcResult.probability_of_profit * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {calcResult.pricing_mode && (
+                    <div className="result-row">
+                      <span className="label">Pricing</span>
+                      <span className="value pricing-mode">
+                        {calcResult.pricing_mode === 'chain' ? 'Live Chain' : 'Black-Scholes'}
+                      </span>
+                    </div>
+                  )}
+                  {calcResult.greeks && (
+                    <div className="greeks-grid">
+                      <span>Delta: {calcResult.greeks.delta?.toFixed(3) ?? '--'}</span>
+                      <span>Gamma: {calcResult.greeks.gamma?.toFixed(4) ?? '--'}</span>
+                      <span>Theta: {calcResult.greeks.theta?.toFixed(3) ?? '--'}</span>
+                      <span>Vega: {calcResult.greeks.vega?.toFixed(3) ?? '--'}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Per-leg breakdown */}
+                {calcResult.legs && (
+                  <div className="leg-detail">
+                    <h4>Leg Detail</h4>
+                    <table className="leg-table">
+                      <thead>
+                        <tr>
+                          <th>Leg</th>
+                          <th>Strike</th>
+                          <th>Exp</th>
+                          <th>Price</th>
+                          <th>IV</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {calcResult.legs.map((leg, i) => (
+                          <tr key={i}>
+                            <td>{leg.leg}</td>
+                            <td>${leg.strike}</td>
+                            <td>{leg.exp}</td>
+                            <td>${leg.price.toFixed(2)}</td>
+                            <td>{(leg.iv * 100).toFixed(1)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
-              </div>
+
+                {/* Save Position Button */}
+                <button
+                  className="save-position-btn"
+                  onClick={handleSavePosition}
+                  disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+                >
+                  {saveStatus === 'saving'
+                    ? 'Saving...'
+                    : saveStatus === 'saved'
+                      ? 'Saved'
+                      : saveStatus === 'error'
+                        ? 'Retry Save'
+                        : 'Save Position'}
+                </button>
+              </>
             )}
             {!calcResult && !calcLoading && !error && (
               <p className="placeholder-text">
@@ -282,6 +378,9 @@ export default function App() {
               </p>
             )}
           </div>
+
+          {/* Position Tracker */}
+          <PositionTracker ref={positionTrackerRef} />
         </section>
       </main>
     </div>
