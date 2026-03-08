@@ -75,12 +75,19 @@ async def _get_quote(request: Request, symbol: str) -> dict:
 
 @router.get("/candles")
 async def get_candles(request: Request, symbol: str = "SPY"):
-    """Return intraday 5-min candles for the current session."""
-    today = date.today().isoformat()
+    """Return intraday 5-min candles.
+
+    During market hours, returns today's candles.  When the market is closed
+    (after hours, weekends, holidays) and today has no data, falls back to
+    Tradier ``timesales`` for the last 5 trading days of 5-minute bars so the
+    chart is never blank.
+    """
+    today = date.today()
+    today_str = today.isoformat()
     data = await _tradier_get(
         request,
         "/markets/history",
-        {"symbol": symbol, "interval": "5min", "start": today, "end": today},
+        {"symbol": symbol, "interval": "5min", "start": today_str, "end": today_str},
     )
 
     raw = data.get("history", {})
@@ -105,10 +112,50 @@ async def get_candles(request: Request, symbol: str = "SPY"):
         )
         last_price = d.get("close")
 
-    # If no intraday history yet, fetch last quote for spot price
+    # ------------------------------------------------------------------
+    # Fallback: market closed / no intraday data → fetch last 5 trading
+    # days of 5-min bars via Tradier timesales so the chart is populated.
+    # ------------------------------------------------------------------
     if not candles:
-        q = await _get_quote(request, symbol)
-        last_price = q.get("last")
+        start_date = (today - timedelta(days=8)).isoformat()  # 8 cal days ≈ 5 trading days
+        try:
+            ts_data = await _tradier_get(
+                request,
+                "/markets/timesales",
+                {
+                    "symbol": symbol,
+                    "interval": "5min",
+                    "start": start_date,
+                    "end": today_str,
+                    "session_filter": "open",
+                },
+            )
+            series = ts_data.get("series", {})
+            if series is None:
+                series = {}
+            bars = series.get("data", [])
+            if isinstance(bars, dict):
+                bars = [bars]
+            for bar in bars:
+                candles.append(
+                    {
+                        "time": bar.get("time"),
+                        "open": bar.get("open"),
+                        "high": bar.get("high"),
+                        "low": bar.get("low"),
+                        "close": bar.get("close"),
+                        "volume": bar.get("volume"),
+                    }
+                )
+            if candles:
+                last_price = candles[-1]["close"]
+        except Exception:
+            pass  # fall through to quote fallback below
+
+        # Last resort: quote for spot price
+        if not candles:
+            q = await _get_quote(request, symbol)
+            last_price = q.get("last")
 
     return {"symbol": symbol, "candles": candles, "last_price": last_price}
 
@@ -120,14 +167,22 @@ async def get_candles(request: Request, symbol: str = "SPY"):
 
 @router.get("/gex")
 async def get_gex(request: Request, symbol: str = "SPY"):
-    """Proxy GEX levels from the main AlphaGEX backend."""
+    """Proxy GEX levels from the main AlphaGEX backend.
+
+    Uses a 5-second timeout so the request doesn't hang when
+    AlphaGEX is in a cold start or unreachable.
+    """
+    import httpx
+
     http = request.app.state.http
+    _timeout = 5.0  # seconds
 
     # Try WATCHTOWER first
     try:
         resp = await http.get(
             f"{ALPHAGEX_BASE_URL}/api/watchtower/gamma",
             params={"symbol": symbol, "expiration": "today"},
+            timeout=_timeout,
         )
         if resp.status_code == 200:
             body = resp.json()
@@ -144,12 +199,17 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "watchtower",
             }
+    except httpx.TimeoutException:
+        pass  # fall through to next source
     except Exception:
         pass
 
     # Fallback to simple GEX endpoint
     try:
-        resp = await http.get(f"{ALPHAGEX_BASE_URL}/api/gex/{symbol}")
+        resp = await http.get(
+            f"{ALPHAGEX_BASE_URL}/api/gex/{symbol}",
+            timeout=_timeout,
+        )
         if resp.status_code == 200:
             body = resp.json()
             d = body.get("data", body)
@@ -162,10 +222,12 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "gex",
             }
+    except httpx.TimeoutException:
+        return {"error": "GEX data unavailable", "detail": "AlphaGEX backend timed out"}
     except Exception:
         pass
 
-    raise HTTPException(502, "Could not fetch GEX data from AlphaGEX")
+    return {"error": "GEX data unavailable", "detail": "Could not reach AlphaGEX backend"}
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +330,8 @@ async def gex_suggest(
 ):
     """Auto-generate strike suggestions from GEX levels."""
     gex = await get_gex(request, symbol)
+    if "error" in gex:
+        raise HTTPException(502, gex["error"])
     flip = gex.get("flip_point")
     call_wall = gex.get("call_wall")
     put_wall = gex.get("put_wall")
@@ -532,6 +596,8 @@ async def calculate_spread(request: Request, body: CalcRequest):
     S = body.spot_price
     if not S:
         gex = await get_gex(request, body.symbol)
+        if "error" in gex:
+            raise HTTPException(502, "GEX data unavailable — cannot determine spot price")
         S = gex.get("spot_price")
         if not S:
             raise HTTPException(422, "spot_price required")
