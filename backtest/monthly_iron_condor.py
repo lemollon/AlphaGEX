@@ -985,16 +985,47 @@ class BacktestDB:
         return cache
 
     def load_spx_ohlc_cache(self, start_date: str, end_date: str) -> Dict[str, Dict]:
-        """Load SPX daily OHLC from Yahoo Finance for day-trade intraday simulation.
+        """Load SPX daily OHLC for day-trade intraday simulation.
 
-        Uses ^GSPC (S&P 500 index) via yfinance. Returns {date_str: {open, high, low, close}}.
-        Pattern from backtest/zero_dte_bull_put_spread.py.
+        Source 1 (primary): underlying_prices table in ORAT DB (populated by populate_vix_and_prices.py)
+        Source 2 (fallback): Yahoo Finance ^GSPC via yfinance
+
+        Returns {date_str: {open, high, low, close}}.
         """
+        cache: Dict[str, Dict] = {}
+
+        # Source 1: underlying_prices table (ORAT DB) — fast, no rate limits
+        try:
+            conn = self.get_orat_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT trade_date, open, high, low, close
+                    FROM underlying_prices
+                    WHERE symbol = 'SPX'
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND open IS NOT NULL AND close IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
+                    cache[d] = {
+                        'open': float(row[1]),
+                        'high': float(row[2]),
+                        'low': float(row[3]),
+                        'close': float(row[4]),
+                    }
+            if cache:
+                logger.info(f"Loaded {len(cache)} days of SPX OHLC from underlying_prices table")
+                return cache
+        except Exception as e:
+            logger.debug(f"underlying_prices query failed: {e}")
+
+        # Source 2: Yahoo Finance (fallback — may be rate-limited on Render)
         try:
             import yfinance as yf
         except ImportError:
             logger.warning("yfinance not installed - day trade OHLC unavailable. pip install yfinance")
-            return {}
+            return cache
 
         try:
             ticker = yf.Ticker("^GSPC")
@@ -1004,9 +1035,8 @@ class BacktestDB:
 
             if df.empty:
                 logger.warning("No SPX OHLC data from Yahoo Finance")
-                return {}
+                return cache
 
-            cache = {}
             for idx, row in df.iterrows():
                 cache[idx.strftime('%Y-%m-%d')] = {
                     'open': float(row['Open']),
@@ -1018,7 +1048,7 @@ class BacktestDB:
             return cache
         except Exception as e:
             logger.warning(f"Failed to load SPX OHLC from Yahoo: {e}")
-            return {}
+            return cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
