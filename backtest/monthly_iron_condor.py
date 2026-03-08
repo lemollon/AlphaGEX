@@ -62,8 +62,8 @@ class MonthlyICConfig:
     ticker: str = "SPX"
 
     # ── Date range ────────────────────────────────────────────────────────
-    start_date: str = "2021-01-01"
-    end_date: str = "2025-12-31"
+    start_date: str = "2020-01-02"   # ORAT data starts here (2021 missing)
+    end_date: str = "2025-12-05"     # ORAT data ends here
 
     # ── Entry rules ───────────────────────────────────────────────────────
     target_dte_min: int = 30          # Minimum DTE at entry
@@ -985,16 +985,47 @@ class BacktestDB:
         return cache
 
     def load_spx_ohlc_cache(self, start_date: str, end_date: str) -> Dict[str, Dict]:
-        """Load SPX daily OHLC from Yahoo Finance for day-trade intraday simulation.
+        """Load SPX daily OHLC for day-trade intraday simulation.
 
-        Uses ^GSPC (S&P 500 index) via yfinance. Returns {date_str: {open, high, low, close}}.
-        Pattern from backtest/zero_dte_bull_put_spread.py.
+        Source 1 (primary): underlying_prices table in ORAT DB (populated by populate_vix_and_prices.py)
+        Source 2 (fallback): Yahoo Finance ^GSPC via yfinance
+
+        Returns {date_str: {open, high, low, close}}.
         """
+        cache: Dict[str, Dict] = {}
+
+        # Source 1: underlying_prices table (ORAT DB) — fast, no rate limits
+        try:
+            conn = self.get_orat_conn()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT trade_date, open, high, low, close
+                    FROM underlying_prices
+                    WHERE symbol = 'SPX'
+                      AND trade_date >= %s AND trade_date <= %s
+                      AND open IS NOT NULL AND close IS NOT NULL
+                    ORDER BY trade_date;
+                """, (start_date, end_date))
+                for row in cur.fetchall():
+                    d = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
+                    cache[d] = {
+                        'open': float(row[1]),
+                        'high': float(row[2]),
+                        'low': float(row[3]),
+                        'close': float(row[4]),
+                    }
+            if cache:
+                logger.info(f"Loaded {len(cache)} days of SPX OHLC from underlying_prices table")
+                return cache
+        except Exception as e:
+            logger.debug(f"underlying_prices query failed: {e}")
+
+        # Source 2: Yahoo Finance (fallback — may be rate-limited on Render)
         try:
             import yfinance as yf
         except ImportError:
             logger.warning("yfinance not installed - day trade OHLC unavailable. pip install yfinance")
-            return {}
+            return cache
 
         try:
             ticker = yf.Ticker("^GSPC")
@@ -1004,9 +1035,8 @@ class BacktestDB:
 
             if df.empty:
                 logger.warning("No SPX OHLC data from Yahoo Finance")
-                return {}
+                return cache
 
-            cache = {}
             for idx, row in df.iterrows():
                 cache[idx.strftime('%Y-%m-%d')] = {
                     'open': float(row['Open']),
@@ -1018,7 +1048,7 @@ class BacktestDB:
             return cache
         except Exception as e:
             logger.warning(f"Failed to load SPX OHLC from Yahoo: {e}")
-            return {}
+            return cache
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2634,8 +2664,8 @@ Examples:
 
     parser.add_argument('--audit', action='store_true', help='Run Phase 1 data audit')
     parser.add_argument('--ticker', default='SPX', help='Underlying: SPX or SPY (default: SPX)')
-    parser.add_argument('--start', default='2021-01-01', help='Start date YYYY-MM-DD')
-    parser.add_argument('--end', default='2025-12-31', help='End date YYYY-MM-DD')
+    parser.add_argument('--start', default='2020-01-02', help='Start date YYYY-MM-DD (ORAT: 2021 missing)')
+    parser.add_argument('--end', default='2025-12-05', help='End date YYYY-MM-DD (ORAT data ends here)')
     parser.add_argument('--capital', type=float, default=100_000, help='Initial capital (default: $100,000)')
     parser.add_argument('--delta', type=float, default=0.10, help='Short strike delta (default: 0.10)')
     parser.add_argument('--pct-otm', type=float, default=5.0, help='Pct OTM fallback (default: 5.0)')

@@ -262,7 +262,7 @@ SKIP_LIST: set = set()
 
 
 def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
-               risk_filter=None, ticker="SPX", start="2021-01-01", end="2025-12-31",
+               risk_filter=None, ticker="SPX", start="2020-01-02", end="2025-12-05",
                resume=False, max_contracts=0):
     """Run the full test matrix and print copy/paste results."""
 
@@ -472,8 +472,8 @@ Examples:
     parser.add_argument("--risk", type=int, default=None, choices=[10, 25, 50, 100],
                         help="Single risk-per-trade %% (10, 25, 50, or 100)")
     parser.add_argument("--ticker", default="SPX", help="Underlying (default: SPX)")
-    parser.add_argument("--start", default="2021-01-01", help="Start date")
-    parser.add_argument("--end", default="2025-12-31", help="End date")
+    parser.add_argument("--start", default="2020-01-02", help="Start date (ORAT data starts 2020-01-02, 2021 missing)")
+    parser.add_argument("--end", default="2025-12-05", help="End date (ORAT data ends 2025-12-05)")
     parser.add_argument("--resume", action="store_true",
                         help="Skip runs that already have JSON results (resume after crash)")
     parser.add_argument("--max-contracts", type=int, default=0,
