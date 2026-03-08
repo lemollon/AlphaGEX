@@ -73,89 +73,83 @@ async def _get_quote(request: Request, symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _aggregate_to_4h(bars: list[dict]) -> list[dict]:
+    """Aggregate 15-min bars into 4-hour candles (16 bars per bucket)."""
+    candles: list[dict] = []
+    bucket: list[dict] = []
+    for bar in bars:
+        bucket.append(bar)
+        if len(bucket) == 16:
+            candles.append(
+                {
+                    "time": bucket[0].get("time"),
+                    "open": bucket[0].get("open"),
+                    "high": max(b.get("high", 0) or 0 for b in bucket),
+                    "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
+                    "close": bucket[-1].get("close"),
+                    "volume": sum(b.get("volume", 0) or 0 for b in bucket),
+                }
+            )
+            bucket = []
+    # Flush remaining bars as a partial 4H candle
+    if bucket:
+        candles.append(
+            {
+                "time": bucket[0].get("time"),
+                "open": bucket[0].get("open"),
+                "high": max(b.get("high", 0) or 0 for b in bucket),
+                "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
+                "close": bucket[-1].get("close"),
+                "volume": sum(b.get("volume", 0) or 0 for b in bucket),
+            }
+        )
+    return candles
+
+
 @router.get("/candles")
 async def get_candles(request: Request, symbol: str = "SPY"):
-    """Return intraday 5-min candles.
+    """Return 4-hour candles over a rolling 2-week window.
 
-    During market hours, returns today's candles.  When the market is closed
-    (after hours, weekends, holidays) and today has no data, falls back to
-    Tradier ``timesales`` for the last 5 trading days of 5-minute bars so the
-    chart is never blank.
+    Fetches 14 calendar days of 15-minute bars from Tradier timesales,
+    then aggregates them into 4-hour candles (16 × 15 min = 4 hrs).
+    Works identically whether the market is open or closed.
     """
     today = date.today()
     today_str = today.isoformat()
-    data = await _tradier_get(
-        request,
-        "/markets/history",
-        {"symbol": symbol, "interval": "5min", "start": today_str, "end": today_str},
-    )
+    start_date = (today - timedelta(days=14)).isoformat()
 
-    raw = data.get("history", {})
-    if raw is None:
-        raw = {}
-    days = raw.get("day", [])
-    if isinstance(days, dict):
-        days = [days]
-
-    candles = []
+    candles: list[dict] = []
     last_price = None
-    for d in days:
-        candles.append(
+
+    try:
+        ts_data = await _tradier_get(
+            request,
+            "/markets/timesales",
             {
-                "time": d.get("date"),
-                "open": d.get("open"),
-                "high": d.get("high"),
-                "low": d.get("low"),
-                "close": d.get("close"),
-                "volume": d.get("volume"),
-            }
+                "symbol": symbol,
+                "interval": "15min",
+                "start": start_date,
+                "end": today_str,
+                "session_filter": "open",
+            },
         )
-        last_price = d.get("close")
+        series = ts_data.get("series", {})
+        if series is None:
+            series = {}
+        bars = series.get("data", [])
+        if isinstance(bars, dict):
+            bars = [bars]
 
-    # ------------------------------------------------------------------
-    # Fallback: market closed / no intraday data → fetch last 5 trading
-    # days of 5-min bars via Tradier timesales so the chart is populated.
-    # ------------------------------------------------------------------
+        candles = _aggregate_to_4h(bars)
+        if candles:
+            last_price = candles[-1]["close"]
+    except Exception:
+        pass
+
+    # Fallback: if timesales returned nothing, fetch a quote for spot price
     if not candles:
-        start_date = (today - timedelta(days=8)).isoformat()  # 8 cal days ≈ 5 trading days
-        try:
-            ts_data = await _tradier_get(
-                request,
-                "/markets/timesales",
-                {
-                    "symbol": symbol,
-                    "interval": "5min",
-                    "start": start_date,
-                    "end": today_str,
-                    "session_filter": "open",
-                },
-            )
-            series = ts_data.get("series", {})
-            if series is None:
-                series = {}
-            bars = series.get("data", [])
-            if isinstance(bars, dict):
-                bars = [bars]
-            for bar in bars:
-                candles.append(
-                    {
-                        "time": bar.get("time"),
-                        "open": bar.get("open"),
-                        "high": bar.get("high"),
-                        "low": bar.get("low"),
-                        "close": bar.get("close"),
-                        "volume": bar.get("volume"),
-                    }
-                )
-            if candles:
-                last_price = candles[-1]["close"]
-        except Exception:
-            pass  # fall through to quote fallback below
-
-        # Last resort: quote for spot price
-        if not candles:
-            q = await _get_quote(request, symbol)
-            last_price = q.get("last")
+        q = await _get_quote(request, symbol)
+        last_price = q.get("last")
 
     return {"symbol": symbol, "candles": candles, "last_price": last_price}
 
