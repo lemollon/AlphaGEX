@@ -182,13 +182,22 @@ def run_single(dte_config: dict, utilization: int, capital: float,
     if pdt:
         cmd.append("--pdt")
 
+    # Build env for subprocess — pass ORAT_DATABASE_URL explicitly
+    # This ensures the child process uses ORAT DB, not production DB
+    subprocess_env = os.environ.copy()
+    subprocess_env["ORAT_DATABASE_URL"] = os.getenv(
+        "ORAT_DATABASE_URL",
+        "postgresql://alphagex_user:e5DSVWnKceA16V5ysssLZCbqNE9ELRKi@dpg-d4quq1u3jp1c739oijb0-a.oregon-postgres.render.com/alphagex_backtest"
+    )
+
     t0 = time.time()
     try:
         # Don't capture output — it eats memory across 96 runs.
         # We only need the JSON result file that --export writes.
         proc = subprocess.run(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, timeout=900, cwd=str(PROJECT_ROOT)
+            text=True, timeout=900, cwd=str(PROJECT_ROOT),
+            env=subprocess_env
         )
         elapsed = time.time() - t0
     except subprocess.TimeoutExpired:
@@ -410,6 +419,34 @@ def run_matrix(dte_filter=None, util_filter=None, capital_filter=None,
 
 
 def main():
+    # === CACHE SAFETY GUARD ===
+    # Prevent accidentally reusing cached DNS-failure results
+    CACHE_FILE = RESULTS_DIR / "_matrix_partial_results.json"
+    clean_flag = "--clean" in sys.argv
+    resume_flag = "--resume" in sys.argv
+
+    if CACHE_FILE.exists() and not clean_flag and not resume_flag:
+        try:
+            cached = json.load(open(CACHE_FILE))
+            cached_count = len(cached)
+        except Exception:
+            cached_count = "unknown"
+        print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║  ⚠️  CACHED RESULTS FOUND ({cached_count} entries)                     ║
+║                                                              ║
+║  Without --clean, the matrix will REUSE these cached         ║
+║  results instead of re-running backtests.                    ║
+║                                                              ║
+║  If these are from the failed DNS run, your output will      ║
+║  contain failures, not real results.                         ║
+║                                                              ║
+║  To start fresh:  python run_ic_matrix.py --clean            ║
+║  To resume:       python run_ic_matrix.py --resume           ║
+╚══════════════════════════════════════════════════════════════╝
+""")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="Run IC backtest matrix across DTE/utilization/capital combinations",
         formatter_class=argparse.RawDescriptionHelpFormatter,
