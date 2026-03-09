@@ -4,7 +4,7 @@
 
 # MAGIC %md
 # MAGIC # IronForge Scanner
-# MAGIC Scans every 5 minutes for FLAME (2DTE) and SPARK (1DTE) Iron Condor opportunities on SPY.
+# MAGIC Scans every 1 minute for FLAME (2DTE) and SPARK (1DTE) Iron Condor opportunities on SPY.
 # MAGIC
 # MAGIC **Just click Run All** — credentials are in Cell 1 below, everything else is automatic.
 
@@ -77,7 +77,7 @@ log = logging.getLogger("ironforge")
 #  Constants
 # ---------------------------------------------------------------------------
 
-SCAN_INTERVAL = 300  # 5 minutes
+SCAN_INTERVAL = 60  # 1 minute
 CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 
@@ -2229,13 +2229,13 @@ def _ensure_pdt_tables() -> None:
 
 
 def main() -> None:
-    """Single scan — called by Databricks Job every 5 minutes.
+    """Single scan — called by Databricks Job every 1 minute.
 
     In Job context (SCANNER_MODE=single), runs one scan cycle and exits.
-    The Databricks Job scheduler handles the 5-minute repeat.
+    The Databricks Job scheduler handles the 1-minute repeat.
 
     In notebook context (SCANNER_MODE=loop), runs in an infinite loop
-    with a 5-minute sleep between cycles.
+    with a 1-minute sleep between cycles.
     """
     try:
         # Ensure PDT tables exist (auto-create if 01_setup_tables.sql hasn't been re-run)

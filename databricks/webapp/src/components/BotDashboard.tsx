@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { isMarketOpen, getCTNow } from '@/lib/pt-tiers'
 import StatusCard from './StatusCard'
+import PdtStatusCard from './PdtStatusCard'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
 import PositionTable from './PositionTable'
@@ -117,8 +118,8 @@ export default function BotDashboard({
       }
       const ageMs = Date.now() - new Date(status.last_scan).getTime()
       const ageMin = ageMs / 60_000
-      if (ageMin > 20) setStaleBanner('red')
-      else if (ageMin > 10) setStaleBanner('yellow')
+      if (ageMin > 5) setStaleBanner('red')
+      else if (ageMin > 3) setStaleBanner('yellow')
       else setStaleBanner('none')
     }
     check()
@@ -163,6 +164,9 @@ export default function BotDashboard({
 
       {/* Status card */}
       {status && <StatusCard data={status} accent={accent} config={config} />}
+
+      {/* PDT Status */}
+      <PdtStatusCard bot={bot} accent={accent} />
 
       {/* PT Timeline */}
       <PTTimeline />
