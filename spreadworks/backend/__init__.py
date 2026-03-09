@@ -74,6 +74,20 @@ def _start_scheduler(app: FastAPI):
     return scheduler
 
 
+def _run_migrations(eng):
+    """Add columns to existing tables that create_all won't handle."""
+    from sqlalchemy import text as sa_text, inspect
+    try:
+        inspector = inspect(eng)
+        existing = {c["name"] for c in inspector.get_columns("positions")}
+        with eng.begin() as conn:
+            if "label" not in existing:
+                conn.execute(sa_text("ALTER TABLE positions ADD COLUMN label VARCHAR(100)"))
+                print("[SpreadWorks] Migration: added 'label' column to positions")
+    except Exception as e:
+        print(f"[SpreadWorks] Migration check (non-fatal): {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create DB tables if engine is configured
@@ -81,6 +95,8 @@ async def lifespan(app: FastAPI):
         try:
             Base.metadata.create_all(bind=engine)
             print("[SpreadWorks] Database tables created/verified")
+            # Migrate: add columns that create_all won't add to existing tables
+            _run_migrations(engine)
         except Exception as e:
             print(f"[SpreadWorks] DB table creation failed (non-fatal): {e}")
     else:
