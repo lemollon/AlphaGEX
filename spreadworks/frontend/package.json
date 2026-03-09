@@ -11,7 +11,8 @@
   "dependencies": {
     "lightweight-charts": "^4.2.3",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.13.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",

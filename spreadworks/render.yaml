@@ -31,7 +31,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm install && npm run build && cd ..
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt
     startCommand: cd spreadworks && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
@@ -46,6 +46,10 @@ services:
       - key: ALPHAGEX_BASE_URL
         sync: false
       - key: FRONTEND_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
         sync: false
       - key: DATABASE_URL
         fromDatabase:

@@ -26,8 +26,12 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from .db import get_db
+from .models import Position, DailyMark
 
 router = APIRouter(prefix="/api/spreadworks", tags=["SpreadWorks"])
 
@@ -73,39 +77,80 @@ async def _get_quote(request: Request, symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/candles")
-async def get_candles(request: Request, symbol: str = "SPY"):
-    """Return intraday 5-min candles for the current session."""
-    today = date.today().isoformat()
-    data = await _tradier_get(
-        request,
-        "/markets/history",
-        {"symbol": symbol, "interval": "5min", "start": today, "end": today},
-    )
-
-    raw = data.get("history", {})
-    if raw is None:
-        raw = {}
-    days = raw.get("day", [])
-    if isinstance(days, dict):
-        days = [days]
-
-    candles = []
-    last_price = None
-    for d in days:
+def _aggregate_to_4h(bars: list[dict]) -> list[dict]:
+    """Aggregate 15-min bars into 4-hour candles (16 bars per bucket)."""
+    candles: list[dict] = []
+    bucket: list[dict] = []
+    for bar in bars:
+        bucket.append(bar)
+        if len(bucket) == 16:
+            candles.append(
+                {
+                    "time": bucket[0].get("time"),
+                    "open": bucket[0].get("open"),
+                    "high": max(b.get("high", 0) or 0 for b in bucket),
+                    "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
+                    "close": bucket[-1].get("close"),
+                    "volume": sum(b.get("volume", 0) or 0 for b in bucket),
+                }
+            )
+            bucket = []
+    # Flush remaining bars as a partial 4H candle
+    if bucket:
         candles.append(
             {
-                "time": d.get("date"),
-                "open": d.get("open"),
-                "high": d.get("high"),
-                "low": d.get("low"),
-                "close": d.get("close"),
-                "volume": d.get("volume"),
+                "time": bucket[0].get("time"),
+                "open": bucket[0].get("open"),
+                "high": max(b.get("high", 0) or 0 for b in bucket),
+                "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
+                "close": bucket[-1].get("close"),
+                "volume": sum(b.get("volume", 0) or 0 for b in bucket),
             }
         )
-        last_price = d.get("close")
+    return candles
 
-    # If no intraday history yet, fetch last quote for spot price
+
+@router.get("/candles")
+async def get_candles(request: Request, symbol: str = "SPY"):
+    """Return 4-hour candles over a rolling 2-week window.
+
+    Fetches 14 calendar days of 15-minute bars from Tradier timesales,
+    then aggregates them into 4-hour candles (16 × 15 min = 4 hrs).
+    Works identically whether the market is open or closed.
+    """
+    today = date.today()
+    today_str = today.isoformat()
+    start_date = (today - timedelta(days=14)).isoformat()
+
+    candles: list[dict] = []
+    last_price = None
+
+    try:
+        ts_data = await _tradier_get(
+            request,
+            "/markets/timesales",
+            {
+                "symbol": symbol,
+                "interval": "15min",
+                "start": start_date,
+                "end": today_str,
+                "session_filter": "open",
+            },
+        )
+        series = ts_data.get("series", {})
+        if series is None:
+            series = {}
+        bars = series.get("data", [])
+        if isinstance(bars, dict):
+            bars = [bars]
+
+        candles = _aggregate_to_4h(bars)
+        if candles:
+            last_price = candles[-1]["close"]
+    except Exception:
+        pass
+
+    # Fallback: if timesales returned nothing, fetch a quote for spot price
     if not candles:
         q = await _get_quote(request, symbol)
         last_price = q.get("last")
@@ -120,14 +165,22 @@ async def get_candles(request: Request, symbol: str = "SPY"):
 
 @router.get("/gex")
 async def get_gex(request: Request, symbol: str = "SPY"):
-    """Proxy GEX levels from the main AlphaGEX backend."""
+    """Proxy GEX levels from the main AlphaGEX backend.
+
+    Uses a 5-second timeout so the request doesn't hang when
+    AlphaGEX is in a cold start or unreachable.
+    """
+    import httpx
+
     http = request.app.state.http
+    _timeout = 5.0  # seconds
 
     # Try WATCHTOWER first
     try:
         resp = await http.get(
             f"{ALPHAGEX_BASE_URL}/api/watchtower/gamma",
             params={"symbol": symbol, "expiration": "today"},
+            timeout=_timeout,
         )
         if resp.status_code == 200:
             body = resp.json()
@@ -144,12 +197,17 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "watchtower",
             }
+    except httpx.TimeoutException:
+        pass  # fall through to next source
     except Exception:
         pass
 
     # Fallback to simple GEX endpoint
     try:
-        resp = await http.get(f"{ALPHAGEX_BASE_URL}/api/gex/{symbol}")
+        resp = await http.get(
+            f"{ALPHAGEX_BASE_URL}/api/gex/{symbol}",
+            timeout=_timeout,
+        )
         if resp.status_code == 200:
             body = resp.json()
             d = body.get("data", body)
@@ -162,10 +220,12 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "gex",
             }
+    except httpx.TimeoutException:
+        return {"error": "GEX data unavailable", "detail": "AlphaGEX backend timed out"}
     except Exception:
         pass
 
-    raise HTTPException(502, "Could not fetch GEX data from AlphaGEX")
+    return {"error": "GEX data unavailable", "detail": "Could not reach AlphaGEX backend"}
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +328,8 @@ async def gex_suggest(
 ):
     """Auto-generate strike suggestions from GEX levels."""
     gex = await get_gex(request, symbol)
+    if "error" in gex:
+        raise HTTPException(502, gex["error"])
     flip = gex.get("flip_point")
     call_wall = gex.get("call_wall")
     put_wall = gex.get("put_wall")
@@ -532,6 +594,8 @@ async def calculate_spread(request: Request, body: CalcRequest):
     S = body.spot_price
     if not S:
         gex = await get_gex(request, body.symbol)
+        if "error" in gex:
+            raise HTTPException(502, "GEX data unavailable — cannot determine spot price")
         S = gex.get("spot_price")
         if not S:
             raise HTTPException(422, "spot_price required")
@@ -736,92 +800,68 @@ async def delete_alert(alert_id: int):
 
 
 # ---------------------------------------------------------------------------
-# 8. Positions — save calculated spreads, track live P&L
+# 8. Positions — Postgres-backed spread position tracker
 # ---------------------------------------------------------------------------
 
-_positions: list[dict] = []
-_position_id_seq = 0
+MAX_OPEN_POSITIONS = 10
+
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 
-class PositionCreate(BaseModel):
-    symbol: str = "SPY"
-    strategy: str
-    contracts: int = 1
-    legs: dict[str, Any]
-    net_debit: float
-    spot_at_entry: float
-    notes: str = ""
-
-
-@router.get("/positions")
-async def get_positions():
-    return {"positions": _positions}
-
-
-@router.post("/positions")
-async def create_position(body: PositionCreate):
-    global _position_id_seq
-    _position_id_seq += 1
-    pos = {
-        "id": _position_id_seq,
-        "symbol": body.symbol,
-        "strategy": body.strategy,
-        "contracts": body.contracts,
-        "legs": body.legs,
-        "net_debit": body.net_debit,
-        "spot_at_entry": body.spot_at_entry,
-        "notes": body.notes,
-        "opened_at": datetime.now().isoformat(),
-        "status": "open",
+def _pos_to_dict(pos: Position) -> dict:
+    """Serialize a Position ORM object to a JSON-friendly dict."""
+    return {
+        "id": pos.id,
+        "symbol": pos.symbol,
+        "strategy": pos.strategy,
+        "contracts": pos.contracts,
+        "legs": pos.legs,
+        "net_debit": pos.net_debit,
+        "spot_at_entry": pos.spot_at_entry,
+        "label": pos.label or "",
+        "notes": pos.notes or "",
+        "status": pos.status,
+        "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
+        "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
+        "close_price": pos.close_price,
+        "realized_pnl": pos.realized_pnl,
     }
-    _positions.append(pos)
-    return pos
 
 
-@router.delete("/positions/{position_id}")
-async def delete_position(position_id: int):
-    global _positions
-    before = len(_positions)
-    _positions = [p for p in _positions if p["id"] != position_id]
-    if len(_positions) == before:
-        raise HTTPException(404, "Position not found")
-    return {"ok": True}
+def _mark_to_dict(m: DailyMark) -> dict:
+    return {
+        "id": m.id,
+        "position_id": m.position_id,
+        "mark_date": m.mark_date.isoformat() if m.mark_date else None,
+        "spot_price": m.spot_price,
+        "mark_value": m.mark_value,
+        "unrealised_pnl": m.unrealised_pnl,
+        "pnl_pct": m.pnl_pct,
+    }
 
 
-@router.get("/positions/{position_id}/pnl")
-async def position_live_pnl(request: Request, position_id: int):
-    """Estimate current unrealised P&L for a saved position."""
-    pos = next((p for p in _positions if p["id"] == position_id), None)
-    if not pos:
-        raise HTTPException(404, "Position not found")
-
-    q = await _get_quote(request, pos["symbol"])
-    current_price = q.get("last")
-    if not current_price:
-        raise HTTPException(502, "Could not fetch current price")
-
-    # Re-price spread at current spot using Black-Scholes
+def _reprice_position(pos_dict: dict, current_price: float) -> dict:
+    """Re-price a spread at current spot using Black-Scholes. Returns value info."""
     r = 0.05
     sigma = 0.20
     today_date = date.today()
-    legs = pos["legs"]
-    n = pos["contracts"]
+    legs = pos_dict["legs"]
+    n = pos_dict["contracts"]
 
     def _tte(d: str) -> float:
         exp = datetime.strptime(d, "%Y-%m-%d").date()
         return max((exp - today_date).days, 0) / 365.0
 
-    if pos["strategy"] == "double_diagonal":
+    if pos_dict["strategy"] == "double_diagonal":
         lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
         sp = float(legs.get("shortPutStrike") or legs.get("short_put_strike", 0))
         sc = float(legs.get("shortCallStrike") or legs.get("short_call_strike", 0))
         lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
         short_exp = str(legs.get("shortExpiration") or legs.get("short_expiration", ""))
         long_exp = str(legs.get("longExpiration") or legs.get("long_expiration", ""))
-
         T_short = _tte(short_exp)
         T_long = _tte(long_exp)
-
         current_value = (
             _bs_price(current_price, lp, T_long, r, sigma, False)
             + _bs_price(current_price, lc, T_long, r, sigma, True)
@@ -833,10 +873,8 @@ async def position_live_pnl(request: Request, position_id: int):
         cs = float(legs.get("callStrike") or legs.get("call_strike", 0))
         front_exp = str(legs.get("frontExpiration") or legs.get("front_expiration", ""))
         back_exp = str(legs.get("backExpiration") or legs.get("back_expiration", ""))
-
         T_front = _tte(front_exp)
         T_back = _tte(back_exp)
-
         current_value = (
             _bs_price(current_price, ps, T_back, r, sigma, False)
             + _bs_price(current_price, cs, T_back, r, sigma, True)
@@ -844,13 +882,361 @@ async def position_live_pnl(request: Request, position_id: int):
             - _bs_price(current_price, cs, T_front, r, sigma, True)
         ) * 100 * n
 
-    unrealised_pnl = current_value - pos["net_debit"]
+    net_debit = pos_dict["net_debit"]
+    unrealised_pnl = current_value - net_debit
+    pnl_pct = round(unrealised_pnl / abs(net_debit) * 100, 2) if net_debit else 0.0
+    return {
+        "current_value": round(current_value, 2),
+        "unrealised_pnl": round(unrealised_pnl, 2),
+        "pnl_pct": pnl_pct,
+    }
 
+
+class PositionCreate(BaseModel):
+    symbol: str = "SPY"
+    strategy: str
+    contracts: int = 1
+    legs: dict[str, Any]
+    net_debit: float
+    spot_at_entry: float
+    label: str = ""
+    notes: str = ""
+
+
+class PositionUpdate(BaseModel):
+    label: str | None = None
+    notes: str | None = None
+    contracts: int | None = None
+
+
+class PositionClose(BaseModel):
+    close_price: float
+
+
+# --- GET /positions?status=open|closed|all ---
+@router.get("/positions")
+async def get_positions(status: str = "open", db: Session = Depends(get_db)):
+    q = db.query(Position)
+    if status in ("open", "closed"):
+        q = q.filter(Position.status == status)
+    positions = q.order_by(Position.opened_at.desc()).all()
+    return {"positions": [_pos_to_dict(p) for p in positions]}
+
+
+# --- POST /positions (10-slot enforcement) ---
+@router.post("/positions")
+async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
+    open_count = db.query(Position).filter(Position.status == "open").count()
+    if open_count >= MAX_OPEN_POSITIONS:
+        raise HTTPException(
+            409,
+            f"Maximum {MAX_OPEN_POSITIONS} open positions. Close one first.",
+        )
+    pos = Position(
+        symbol=body.symbol,
+        strategy=body.strategy,
+        contracts=body.contracts,
+        legs=body.legs,
+        net_debit=body.net_debit,
+        spot_at_entry=body.spot_at_entry,
+        label=body.label,
+        notes=body.notes,
+        status="open",
+    )
+    db.add(pos)
+    db.commit()
+    db.refresh(pos)
+    return _pos_to_dict(pos)
+
+
+# --- GET /positions/{id} (with mark history) ---
+@router.get("/positions/{position_id}")
+async def get_position(position_id: int, db: Session = Depends(get_db)):
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+    result = _pos_to_dict(pos)
+    result["marks"] = [_mark_to_dict(m) for m in pos.marks]
+    return result
+
+
+# --- PATCH /positions/{id} (update label/notes/contracts) ---
+@router.patch("/positions/{position_id}")
+async def update_position(
+    position_id: int, body: PositionUpdate, db: Session = Depends(get_db)
+):
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+    if body.label is not None:
+        pos.label = body.label
+    if body.notes is not None:
+        pos.notes = body.notes
+    if body.contracts is not None:
+        pos.contracts = body.contracts
+    db.commit()
+    db.refresh(pos)
+    return _pos_to_dict(pos)
+
+
+# --- POST /positions/{id}/close ---
+@router.post("/positions/{position_id}/close")
+async def close_position(
+    position_id: int, body: PositionClose, db: Session = Depends(get_db)
+):
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+    if pos.status == "closed":
+        raise HTTPException(409, "Position already closed")
+
+    pos.status = "closed"
+    pos.closed_at = datetime.utcnow()
+    pos.close_price = body.close_price
+    pos.realized_pnl = round(body.close_price - pos.net_debit, 2)
+    db.commit()
+    db.refresh(pos)
+    return _pos_to_dict(pos)
+
+
+# --- DELETE /positions/{id} ---
+@router.delete("/positions/{position_id}")
+async def delete_position(position_id: int, db: Session = Depends(get_db)):
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+    db.delete(pos)
+    db.commit()
+    return {"ok": True}
+
+
+# --- GET /positions/{id}/pnl (live unrealised P&L) ---
+@router.get("/positions/{position_id}/pnl")
+async def position_live_pnl(
+    request: Request, position_id: int, db: Session = Depends(get_db)
+):
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+
+    q = await _get_quote(request, pos.symbol)
+    current_price = q.get("last")
+    if not current_price:
+        raise HTTPException(502, "Could not fetch current price")
+
+    pnl_info = _reprice_position(_pos_to_dict(pos), current_price)
     return {
         "position_id": position_id,
         "current_price": current_price,
-        "current_value": round(current_value, 2),
-        "net_debit": pos["net_debit"],
-        "unrealised_pnl": round(unrealised_pnl, 2),
-        "pnl_pct": round(unrealised_pnl / abs(pos["net_debit"]) * 100, 2) if pos["net_debit"] else 0,
+        **pnl_info,
+        "net_debit": pos.net_debit,
     }
+
+
+# --- GET /positions/summary (portfolio roll-up) ---
+@router.get("/positions/summary")
+async def positions_summary(request: Request, db: Session = Depends(get_db)):
+    open_positions = db.query(Position).filter(Position.status == "open").all()
+    closed_positions = db.query(Position).filter(Position.status == "closed").all()
+
+    total_invested = sum(abs(p.net_debit) for p in open_positions)
+    total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
+    slots_used = len(open_positions)
+
+    # Try to get live unrealised P&L for open positions
+    total_unrealised = 0.0
+    try:
+        if open_positions:
+            q = await _get_quote(request, "SPY")
+            current_price = q.get("last")
+            if current_price:
+                for p in open_positions:
+                    pnl_info = _reprice_position(_pos_to_dict(p), current_price)
+                    total_unrealised += pnl_info["unrealised_pnl"]
+    except Exception:
+        pass  # live pricing unavailable — unrealised stays 0
+
+    return {
+        "slots_used": slots_used,
+        "slots_total": MAX_OPEN_POSITIONS,
+        "total_invested": round(total_invested, 2),
+        "total_unrealised": round(total_unrealised, 2),
+        "total_realized": round(total_realized, 2),
+        "open_count": slots_used,
+        "closed_count": len(closed_positions),
+    }
+
+
+# --- POST /positions/mark (EOD mark all open positions) ---
+@router.post("/positions/mark")
+async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
+    open_positions = db.query(Position).filter(Position.status == "open").all()
+    if not open_positions:
+        return {"marked": 0}
+
+    q = await _get_quote(request, "SPY")
+    current_price = q.get("last")
+    if not current_price:
+        raise HTTPException(502, "Could not fetch current price for marking")
+
+    marked = 0
+    for pos in open_positions:
+        pnl_info = _reprice_position(_pos_to_dict(pos), current_price)
+        mark = DailyMark(
+            position_id=pos.id,
+            spot_price=current_price,
+            mark_value=pnl_info["current_value"],
+            unrealised_pnl=pnl_info["unrealised_pnl"],
+            pnl_pct=pnl_info["pnl_pct"],
+        )
+        db.add(mark)
+        marked += 1
+
+    db.commit()
+    return {"marked": marked, "spot_price": current_price}
+
+
+# ---------------------------------------------------------------------------
+# 9. Discord webhook posting for positions
+# ---------------------------------------------------------------------------
+
+def _send_discord_embed(embed: dict) -> bool:
+    """Send an embed to Discord webhook. Returns True on success."""
+    import requests as req
+
+    if not DISCORD_WEBHOOK_URL:
+        return False
+    try:
+        resp = req.post(
+            DISCORD_WEBHOOK_URL,
+            json={"embeds": [embed]},
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        return resp.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def _format_legs_text(legs: dict, strategy: str) -> str:
+    """Format leg details for Discord embed."""
+    if strategy == "double_diagonal":
+        lp = legs.get("longPutStrike") or legs.get("long_put_strike", "?")
+        sp = legs.get("shortPutStrike") or legs.get("short_put_strike", "?")
+        sc = legs.get("shortCallStrike") or legs.get("short_call_strike", "?")
+        lc = legs.get("longCallStrike") or legs.get("long_call_strike", "?")
+        s_exp = legs.get("shortExpiration") or legs.get("short_expiration", "?")
+        l_exp = legs.get("longExpiration") or legs.get("long_expiration", "?")
+        return (
+            f"**Put Side:** {lp}L / {sp}S\n"
+            f"**Call Side:** {sc}S / {lc}L\n"
+            f"**Short Exp:** {s_exp}  |  **Long Exp:** {l_exp}"
+        )
+    else:
+        ps = legs.get("putStrike") or legs.get("put_strike", "?")
+        cs = legs.get("callStrike") or legs.get("call_strike", "?")
+        f_exp = legs.get("frontExpiration") or legs.get("front_expiration", "?")
+        b_exp = legs.get("backExpiration") or legs.get("back_expiration", "?")
+        return (
+            f"**Put:** {ps}  |  **Call:** {cs}\n"
+            f"**Front Exp:** {f_exp}  |  **Back Exp:** {b_exp}"
+        )
+
+
+@router.post("/discord/post-open")
+async def discord_post_open(position_id: int, db: Session = Depends(get_db)):
+    """Post a position-opened embed to Discord."""
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+
+    strategy_label = "Double Diagonal" if pos.strategy == "double_diagonal" else "Double Calendar"
+    embed = {
+        "title": f"\U0001f4c8 NEW POSITION OPENED",
+        "color": 0x00E676,
+        "fields": [
+            {"name": "Strategy", "value": strategy_label, "inline": True},
+            {"name": "Symbol", "value": pos.symbol, "inline": True},
+            {"name": "Contracts", "value": str(pos.contracts), "inline": True},
+            {"name": "Legs", "value": _format_legs_text(pos.legs, pos.strategy), "inline": False},
+            {"name": "Net Debit", "value": f"${pos.net_debit:,.2f}", "inline": True},
+            {"name": "Spot at Entry", "value": f"${pos.spot_at_entry:,.2f}", "inline": True},
+        ],
+        "footer": {"text": f"SpreadWorks \u2022 {pos.label or 'Position #' + str(pos.id)}"},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    if pos.notes:
+        embed["fields"].append({"name": "Notes", "value": pos.notes, "inline": False})
+
+    ok = _send_discord_embed(embed)
+    return {"posted": ok}
+
+
+@router.post("/discord/post-eod")
+async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
+    """Post end-of-day summary to Discord with optional Claude commentary."""
+    open_positions = db.query(Position).filter(Position.status == "open").all()
+    if not open_positions:
+        return {"posted": False, "reason": "No open positions"}
+
+    # Get current price
+    q = await _get_quote(request, "SPY")
+    current_price = q.get("last", 0)
+
+    # Build position summaries
+    lines = []
+    total_unrealised = 0.0
+    for pos in open_positions:
+        pnl_info = _reprice_position(_pos_to_dict(pos), current_price) if current_price else {
+            "unrealised_pnl": 0, "pnl_pct": 0
+        }
+        pnl = pnl_info["unrealised_pnl"]
+        pct = pnl_info["pnl_pct"]
+        total_unrealised += pnl
+        arrow = "\u2705" if pnl >= 0 else "\u274c"
+        label = pos.label or f"#{pos.id}"
+        strat = "DD" if pos.strategy == "double_diagonal" else "DC"
+        lines.append(f"{arrow} **{label}** ({strat}) — ${pnl:+,.2f} ({pct:+.1f}%)")
+
+    positions_text = "\n".join(lines)
+
+    # Optional Claude commentary
+    commentary = ""
+    if ANTHROPIC_API_KEY:
+        try:
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            prompt = (
+                f"You are a concise options trading analyst. SPY closed at ${current_price:.2f}. "
+                f"The trader has {len(open_positions)} open spread positions with total unrealized P&L "
+                f"of ${total_unrealised:+,.2f}. Give a 2-3 sentence end-of-day commentary — "
+                f"mention market context, position health, and one actionable thought for tomorrow. "
+                f"Keep it professional and encouraging."
+            )
+            msg = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            commentary = msg.content[0].text
+        except Exception:
+            commentary = ""
+
+    embed = {
+        "title": "\U0001f4ca END OF DAY — POSITION SUMMARY",
+        "color": 0x448AFF,
+        "fields": [
+            {"name": f"Open Positions ({len(open_positions)}/{MAX_OPEN_POSITIONS})",
+             "value": positions_text, "inline": False},
+            {"name": "Total Unrealised", "value": f"${total_unrealised:+,.2f}", "inline": True},
+            {"name": "SPY Close", "value": f"${current_price:,.2f}" if current_price else "N/A", "inline": True},
+        ],
+        "footer": {"text": "SpreadWorks \u2022 End of Day"},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    if commentary:
+        embed["fields"].append({"name": "\U0001f4ac Market Commentary", "value": commentary, "inline": False})
+
+    ok = _send_discord_embed(embed)
+    return {"posted": ok, "positions": len(open_positions), "total_unrealised": round(total_unrealised, 2)}

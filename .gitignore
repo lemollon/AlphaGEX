@@ -9,6 +9,7 @@ venv/
 ENV/
 build/
 dist/
+!spreadworks/frontend/dist/
 *.egg-info/
 
 # Streamlit (NOT USED - AlphaGEX uses React/Next.js frontend)
