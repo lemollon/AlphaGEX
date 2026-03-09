@@ -101,11 +101,14 @@ export default function CandleChart({
   if (!chartData) {
     return (
       <div style={{
-        flex: 3, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flex: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
         color: '#555', fontFamily: "'Courier New', monospace", fontSize: 12,
-        background: '#080810',
+        background: '#080810', gap: 6,
       }}>
-        No candle data available
+        <span>No candle data available</span>
+        <span style={{ fontSize: 10, color: '#444' }}>
+          Load SpreadWorks during market hours to populate the cache for offline use.
+        </span>
       </div>
     );
   }

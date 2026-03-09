@@ -36,10 +36,12 @@ export default function MetricsBar({ calcResult }) {
   const isCredit = netCredit != null && netCredit > 0;
   const creditLabel = isCredit ? 'NET CREDIT' : 'NET DEBIT';
   const creditColor = isCredit ? '#00e676' : '#ff5252';
-  const creditVal = netCredit != null ? `${isCredit ? '+' : ''}$${Math.abs(netCredit).toFixed(0)}` : '--';
+  const isTheoretical = r.pricing_mode === 'black_scholes';
+  const tilde = isTheoretical ? '~' : '';
+  const creditVal = netCredit != null ? `${tilde}${isCredit ? '+' : ''}$${Math.abs(netCredit).toFixed(0)}` : '--';
 
-  const maxProfit = r.max_profit != null ? `$${r.max_profit.toFixed(0)}` : '--';
-  const maxLoss = r.max_loss != null ? `-$${Math.abs(r.max_loss).toFixed(0)}` : '--';
+  const maxProfit = r.max_profit != null ? `${tilde}$${r.max_profit.toFixed(0)}` : '--';
+  const maxLoss = r.max_loss != null ? `${tilde}-$${Math.abs(r.max_loss).toFixed(0)}` : '--';
   const cop = r.probability_of_profit != null
     ? `${(r.probability_of_profit * 100).toFixed(1)}%`
     : r.chance_of_profit != null
