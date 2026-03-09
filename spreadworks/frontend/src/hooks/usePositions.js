@@ -27,11 +27,8 @@ export default function usePositions(statusFilter = 'open') {
     try {
       const res = await fetch(`${API_URL}/api/spreadworks/positions/summary`);
       if (!res.ok) return;
-      const data = await res.json();
-      setSummary(data);
-    } catch {
-      // silent
-    }
+      setSummary(await res.json());
+    } catch { /* silent */ }
   }, []);
 
   useEffect(() => {
@@ -45,14 +42,11 @@ export default function usePositions(statusFilter = 'open') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.detail || 'Failed to create position');
-    }
-    const pos = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || 'Failed to create position');
     await fetchPositions();
     await fetchSummary();
-    return pos;
+    return data;
   };
 
   const closePosition = async (id, closePrice) => {
@@ -67,9 +61,7 @@ export default function usePositions(statusFilter = 'open') {
   };
 
   const deletePosition = async (id) => {
-    const res = await fetch(`${API_URL}/api/spreadworks/positions/${id}`, {
-      method: 'DELETE',
-    });
+    const res = await fetch(`${API_URL}/api/spreadworks/positions/${id}`, { method: 'DELETE' });
     if (!res.ok) throw new Error('Failed to delete position');
     await fetchPositions();
     await fetchSummary();
@@ -85,31 +77,18 @@ export default function usePositions(statusFilter = 'open') {
     await fetchPositions();
   };
 
-  const fetchPnl = async (id) => {
-    const res = await fetch(`${API_URL}/api/spreadworks/positions/${id}/pnl`);
-    if (!res.ok) throw new Error('Failed to fetch P&L');
-    return await res.json();
+  const postDiscordOpen = async () => {
+    await fetch(`${API_URL}/api/spreadworks/discord/post-open`, { method: 'POST' });
   };
 
-  const postDiscordOpen = async (id) => {
-    const res = await fetch(`${API_URL}/api/spreadworks/discord/post-open?position_id=${id}`, {
-      method: 'POST',
-    });
-    return res.ok;
+  const postDiscordEod = async () => {
+    await fetch(`${API_URL}/api/spreadworks/discord/post-eod`, { method: 'POST' });
   };
 
   return {
-    positions,
-    summary,
-    loading,
-    error,
-    refetch: fetchPositions,
-    refetchSummary: fetchSummary,
-    createPosition,
-    closePosition,
-    deletePosition,
-    updatePosition,
-    fetchPnl,
-    postDiscordOpen,
+    positions, summary, loading, error,
+    refetch: fetchPositions, refetchSummary: fetchSummary,
+    createPosition, closePosition, deletePosition, updatePosition,
+    postDiscordOpen, postDiscordEod,
   };
 }

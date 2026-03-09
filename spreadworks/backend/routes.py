@@ -808,24 +808,43 @@ MAX_OPEN_POSITIONS = 10
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+STRATEGY_LABELS = {
+    "double_diagonal": "Double Diagonal",
+    "double_calendar": "Double Calendar",
+    "iron_condor": "Iron Condor",
+}
+
 
 def _pos_to_dict(pos: Position) -> dict:
     """Serialize a Position ORM object to a JSON-friendly dict."""
+    today = date.today()
+    dte = (pos.short_exp - today).days if pos.short_exp else None
     return {
         "id": pos.id,
         "symbol": pos.symbol,
         "strategy": pos.strategy,
-        "contracts": pos.contracts,
-        "legs": pos.legs,
-        "net_debit": pos.net_debit,
-        "spot_at_entry": pos.spot_at_entry,
         "label": pos.label or "",
+        "long_put": pos.long_put,
+        "short_put": pos.short_put,
+        "short_call": pos.short_call,
+        "long_call": pos.long_call,
+        "short_exp": pos.short_exp.isoformat() if pos.short_exp else None,
+        "long_exp": pos.long_exp.isoformat() if pos.long_exp else None,
+        "contracts": pos.contracts,
+        "entry_credit": pos.entry_credit,
+        "entry_price": pos.entry_price,
+        "entry_date": pos.entry_date.isoformat() if pos.entry_date else None,
+        "entry_spot": pos.entry_spot,
+        "max_profit": pos.max_profit,
+        "max_loss": pos.max_loss,
+        "breakeven_low": pos.breakeven_low,
+        "breakeven_high": pos.breakeven_high,
         "notes": pos.notes or "",
         "status": pos.status,
-        "opened_at": pos.opened_at.isoformat() if pos.opened_at else None,
-        "closed_at": pos.closed_at.isoformat() if pos.closed_at else None,
+        "close_date": pos.close_date.isoformat() if pos.close_date else None,
         "close_price": pos.close_price,
         "realized_pnl": pos.realized_pnl,
+        "dte": dte,
     }
 
 
@@ -834,72 +853,37 @@ def _mark_to_dict(m: DailyMark) -> dict:
         "id": m.id,
         "position_id": m.position_id,
         "mark_date": m.mark_date.isoformat() if m.mark_date else None,
+        "current_value": m.current_value,
+        "unrealized_pnl": m.unrealized_pnl,
         "spot_price": m.spot_price,
-        "mark_value": m.mark_value,
-        "unrealised_pnl": m.unrealised_pnl,
-        "pnl_pct": m.pnl_pct,
+        "dte": m.dte,
+        "iv": m.iv,
     }
 
 
-def _reprice_position(pos_dict: dict, current_price: float) -> dict:
-    """Re-price a spread at current spot using Black-Scholes. Returns value info."""
-    r = 0.05
-    sigma = 0.20
-    today_date = date.today()
-    legs = pos_dict["legs"]
-    n = pos_dict["contracts"]
-
-    def _tte(d: str) -> float:
-        exp = datetime.strptime(d, "%Y-%m-%d").date()
-        return max((exp - today_date).days, 0) / 365.0
-
-    if pos_dict["strategy"] == "double_diagonal":
-        lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
-        sp = float(legs.get("shortPutStrike") or legs.get("short_put_strike", 0))
-        sc = float(legs.get("shortCallStrike") or legs.get("short_call_strike", 0))
-        lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
-        short_exp = str(legs.get("shortExpiration") or legs.get("short_expiration", ""))
-        long_exp = str(legs.get("longExpiration") or legs.get("long_expiration", ""))
-        T_short = _tte(short_exp)
-        T_long = _tte(long_exp)
-        current_value = (
-            _bs_price(current_price, lp, T_long, r, sigma, False)
-            + _bs_price(current_price, lc, T_long, r, sigma, True)
-            - _bs_price(current_price, sp, T_short, r, sigma, False)
-            - _bs_price(current_price, sc, T_short, r, sigma, True)
-        ) * 100 * n
-    else:
-        ps = float(legs.get("putStrike") or legs.get("put_strike", 0))
-        cs = float(legs.get("callStrike") or legs.get("call_strike", 0))
-        front_exp = str(legs.get("frontExpiration") or legs.get("front_expiration", ""))
-        back_exp = str(legs.get("backExpiration") or legs.get("back_expiration", ""))
-        T_front = _tte(front_exp)
-        T_back = _tte(back_exp)
-        current_value = (
-            _bs_price(current_price, ps, T_back, r, sigma, False)
-            + _bs_price(current_price, cs, T_back, r, sigma, True)
-            - _bs_price(current_price, ps, T_front, r, sigma, False)
-            - _bs_price(current_price, cs, T_front, r, sigma, True)
-        ) * 100 * n
-
-    net_debit = pos_dict["net_debit"]
-    unrealised_pnl = current_value - net_debit
-    pnl_pct = round(unrealised_pnl / abs(net_debit) * 100, 2) if net_debit else 0.0
-    return {
-        "current_value": round(current_value, 2),
-        "unrealised_pnl": round(unrealised_pnl, 2),
-        "pnl_pct": pnl_pct,
-    }
+def _strikes_str(pos: Position) -> str:
+    """Format strikes as '550/555/580/585'."""
+    return f"{pos.long_put}/{pos.short_put}/{pos.short_call}/{pos.long_call}"
 
 
 class PositionCreate(BaseModel):
     symbol: str = "SPY"
     strategy: str
-    contracts: int = 1
-    legs: dict[str, Any]
-    net_debit: float
-    spot_at_entry: float
     label: str = ""
+    long_put: float
+    short_put: float
+    short_call: float
+    long_call: float
+    short_exp: str  # YYYY-MM-DD
+    long_exp: str | None = None
+    contracts: int = 1
+    entry_credit: float  # total credit ($)
+    entry_price: float  # per-contract credit
+    entry_spot: float | None = None
+    max_profit: float | None = None
+    max_loss: float | None = None
+    breakeven_low: float | None = None
+    breakeven_high: float | None = None
     notes: str = ""
 
 
@@ -909,8 +893,8 @@ class PositionUpdate(BaseModel):
     contracts: int | None = None
 
 
-class PositionClose(BaseModel):
-    close_price: float
+class PositionCloseBody(BaseModel):
+    close_price: float  # per-contract debit to close
 
 
 # --- GET /positions?status=open|closed|all ---
@@ -919,7 +903,7 @@ async def get_positions(status: str = "open", db: Session = Depends(get_db)):
     q = db.query(Position)
     if status in ("open", "closed"):
         q = q.filter(Position.status == status)
-    positions = q.order_by(Position.opened_at.desc()).all()
+    positions = q.order_by(Position.entry_date.desc()).all()
     return {"positions": [_pos_to_dict(p) for p in positions]}
 
 
@@ -928,18 +912,29 @@ async def get_positions(status: str = "open", db: Session = Depends(get_db)):
 async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
     open_count = db.query(Position).filter(Position.status == "open").count()
     if open_count >= MAX_OPEN_POSITIONS:
-        raise HTTPException(
-            409,
-            f"Maximum {MAX_OPEN_POSITIONS} open positions. Close one first.",
-        )
+        raise HTTPException(400, "Maximum 10 open positions reached.")
+
+    short_exp_date = datetime.strptime(body.short_exp, "%Y-%m-%d").date()
+    long_exp_date = datetime.strptime(body.long_exp, "%Y-%m-%d").date() if body.long_exp else None
+
     pos = Position(
         symbol=body.symbol,
         strategy=body.strategy,
-        contracts=body.contracts,
-        legs=body.legs,
-        net_debit=body.net_debit,
-        spot_at_entry=body.spot_at_entry,
         label=body.label,
+        long_put=body.long_put,
+        short_put=body.short_put,
+        short_call=body.short_call,
+        long_call=body.long_call,
+        short_exp=short_exp_date,
+        long_exp=long_exp_date,
+        contracts=body.contracts,
+        entry_credit=body.entry_credit,
+        entry_price=body.entry_price,
+        entry_spot=body.entry_spot,
+        max_profit=body.max_profit,
+        max_loss=body.max_loss,
+        breakeven_low=body.breakeven_low,
+        breakeven_high=body.breakeven_high,
         notes=body.notes,
         status="open",
     )
@@ -947,6 +942,40 @@ async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(pos)
     return _pos_to_dict(pos)
+
+
+# --- GET /positions/summary (portfolio roll-up) ---
+# NOTE: must be defined BEFORE /positions/{position_id} to avoid path conflict
+@router.get("/positions/summary")
+async def positions_summary(request: Request, db: Session = Depends(get_db)):
+    open_positions = db.query(Position).filter(Position.status == "open").all()
+    closed_positions = db.query(Position).filter(Position.status == "closed").all()
+
+    total_credit = sum(p.entry_credit for p in open_positions)
+    total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
+    slots_used = len(open_positions)
+
+    # Try to get live unrealised P&L for open positions via last marks
+    total_unrealized = 0.0
+    for p in open_positions:
+        latest_mark = (
+            db.query(DailyMark)
+            .filter(DailyMark.position_id == p.id)
+            .order_by(DailyMark.mark_date.desc())
+            .first()
+        )
+        if latest_mark and latest_mark.unrealized_pnl is not None:
+            total_unrealized += latest_mark.unrealized_pnl
+
+    return {
+        "slots_used": slots_used,
+        "slots_total": MAX_OPEN_POSITIONS,
+        "total_credit": round(total_credit, 2),
+        "total_unrealized": round(total_unrealized, 2),
+        "total_realized": round(total_realized, 2),
+        "open_count": slots_used,
+        "closed_count": len(closed_positions),
+    }
 
 
 # --- GET /positions/{id} (with mark history) ---
@@ -982,7 +1011,7 @@ async def update_position(
 # --- POST /positions/{id}/close ---
 @router.post("/positions/{position_id}/close")
 async def close_position(
-    position_id: int, body: PositionClose, db: Session = Depends(get_db)
+    position_id: int, body: PositionCloseBody, db: Session = Depends(get_db)
 ):
     pos = db.query(Position).filter(Position.id == position_id).first()
     if not pos:
@@ -990,12 +1019,18 @@ async def close_position(
     if pos.status == "closed":
         raise HTTPException(409, "Position already closed")
 
+    realized = round((pos.entry_price - body.close_price) * 100 * pos.contracts, 2)
+
     pos.status = "closed"
-    pos.closed_at = datetime.utcnow()
+    pos.close_date = date.today()
     pos.close_price = body.close_price
-    pos.realized_pnl = round(body.close_price - pos.net_debit, 2)
+    pos.realized_pnl = realized
     db.commit()
     db.refresh(pos)
+
+    # Trigger Discord closed-position post
+    _discord_post_closed(pos)
+
     return _pos_to_dict(pos)
 
 
@@ -1019,51 +1054,72 @@ async def position_live_pnl(
     if not pos:
         raise HTTPException(404, "Position not found")
 
+    # Get current spot price
     q = await _get_quote(request, pos.symbol)
     current_price = q.get("last")
-    if not current_price:
-        raise HTTPException(502, "Could not fetch current price")
 
-    pnl_info = _reprice_position(_pos_to_dict(pos), current_price)
+    # Try to get current spread value via BS repricing
+    current_value = None
+    unrealized_pnl = None
+    pnl_pct = None
+
+    if current_price:
+        r, sigma = 0.05, 0.20
+        today_date = date.today()
+
+        def tte(d):
+            return max((d - today_date).days, 0) / 365.0 if d else 0
+
+        if pos.strategy == "double_diagonal" and pos.long_exp:
+            T_short = tte(pos.short_exp)
+            T_long = tte(pos.long_exp)
+            val = (
+                _bs_price(current_price, pos.short_put, T_short, r, sigma, False)
+                + _bs_price(current_price, pos.short_call, T_short, r, sigma, True)
+                - _bs_price(current_price, pos.long_put, T_long, r, sigma, False)
+                - _bs_price(current_price, pos.long_call, T_long, r, sigma, True)
+            )
+        elif pos.strategy == "double_calendar" and pos.long_exp:
+            T_front = tte(pos.short_exp)
+            T_back = tte(pos.long_exp)
+            val = (
+                _bs_price(current_price, pos.short_put, T_front, r, sigma, False)
+                + _bs_price(current_price, pos.short_call, T_front, r, sigma, True)
+                - _bs_price(current_price, pos.long_put, T_back, r, sigma, False)
+                - _bs_price(current_price, pos.long_call, T_back, r, sigma, True)
+            )
+        else:  # iron_condor — single expiration
+            T = tte(pos.short_exp)
+            val = (
+                _bs_price(current_price, pos.short_put, T, r, sigma, False)
+                + _bs_price(current_price, pos.short_call, T, r, sigma, True)
+                - _bs_price(current_price, pos.long_put, T, r, sigma, False)
+                - _bs_price(current_price, pos.long_call, T, r, sigma, True)
+            )
+
+        current_value = round(val, 4)  # per-contract value to close
+        unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+        if pos.max_profit and pos.max_profit != 0:
+            pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 2)
+
+    # Also include latest mark as fallback
+    latest_mark = (
+        db.query(DailyMark)
+        .filter(DailyMark.position_id == pos.id)
+        .order_by(DailyMark.mark_date.desc())
+        .first()
+    )
+
     return {
         "position_id": position_id,
         "current_price": current_price,
-        **pnl_info,
-        "net_debit": pos.net_debit,
-    }
-
-
-# --- GET /positions/summary (portfolio roll-up) ---
-@router.get("/positions/summary")
-async def positions_summary(request: Request, db: Session = Depends(get_db)):
-    open_positions = db.query(Position).filter(Position.status == "open").all()
-    closed_positions = db.query(Position).filter(Position.status == "closed").all()
-
-    total_invested = sum(abs(p.net_debit) for p in open_positions)
-    total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
-    slots_used = len(open_positions)
-
-    # Try to get live unrealised P&L for open positions
-    total_unrealised = 0.0
-    try:
-        if open_positions:
-            q = await _get_quote(request, "SPY")
-            current_price = q.get("last")
-            if current_price:
-                for p in open_positions:
-                    pnl_info = _reprice_position(_pos_to_dict(p), current_price)
-                    total_unrealised += pnl_info["unrealised_pnl"]
-    except Exception:
-        pass  # live pricing unavailable — unrealised stays 0
-
-    return {
-        "slots_used": slots_used,
-        "slots_total": MAX_OPEN_POSITIONS,
-        "total_invested": round(total_invested, 2),
-        "total_unrealised": round(total_unrealised, 2),
-        "total_realized": round(total_realized, 2),
-        "open_count": slots_used,
-        "closed_count": len(closed_positions),
+        "current_value": current_value,
+        "unrealized_pnl": unrealized_pnl,
+        "pnl_pct": pnl_pct,
+        "entry_credit": pos.entry_credit,
+        "entry_price": pos.entry_price,
+        "max_profit": pos.max_profit,
+        "last_mark": _mark_to_dict(latest_mark) if latest_mark else None,
     }
 
 
@@ -1079,18 +1135,63 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
     if not current_price:
         raise HTTPException(502, "Could not fetch current price for marking")
 
+    today_date = date.today()
+    r, sigma = 0.05, 0.20
     marked = 0
+
     for pos in open_positions:
-        pnl_info = _reprice_position(_pos_to_dict(pos), current_price)
-        mark = DailyMark(
-            position_id=pos.id,
-            spot_price=current_price,
-            mark_value=pnl_info["current_value"],
-            unrealised_pnl=pnl_info["unrealised_pnl"],
-            pnl_pct=pnl_info["pnl_pct"],
-        )
-        db.add(mark)
-        marked += 1
+        try:
+            def tte(d):
+                return max((d - today_date).days, 0) / 365.0 if d else 0
+
+            if pos.strategy == "double_diagonal" and pos.long_exp:
+                T_short = tte(pos.short_exp)
+                T_long = tte(pos.long_exp)
+                val = (
+                    _bs_price(current_price, pos.short_put, T_short, r, sigma, False)
+                    + _bs_price(current_price, pos.short_call, T_short, r, sigma, True)
+                    - _bs_price(current_price, pos.long_put, T_long, r, sigma, False)
+                    - _bs_price(current_price, pos.long_call, T_long, r, sigma, True)
+                )
+            elif pos.strategy == "double_calendar" and pos.long_exp:
+                T_front = tte(pos.short_exp)
+                T_back = tte(pos.long_exp)
+                val = (
+                    _bs_price(current_price, pos.short_put, T_front, r, sigma, False)
+                    + _bs_price(current_price, pos.short_call, T_front, r, sigma, True)
+                    - _bs_price(current_price, pos.long_put, T_back, r, sigma, False)
+                    - _bs_price(current_price, pos.long_call, T_back, r, sigma, True)
+                )
+            else:
+                T = tte(pos.short_exp)
+                val = (
+                    _bs_price(current_price, pos.short_put, T, r, sigma, False)
+                    + _bs_price(current_price, pos.short_call, T, r, sigma, True)
+                    - _bs_price(current_price, pos.long_put, T, r, sigma, False)
+                    - _bs_price(current_price, pos.long_call, T, r, sigma, True)
+                )
+
+            dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
+            unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+
+            mark = DailyMark(
+                position_id=pos.id,
+                mark_date=today_date,
+                current_value=round(val, 4),
+                unrealized_pnl=unrealized,
+                spot_price=current_price,
+                dte=dte_val,
+            )
+            db.merge(mark)  # upsert — UNIQUE(position_id, mark_date)
+            marked += 1
+        except Exception:
+            # Mark with NULL values if pricing fails
+            mark = DailyMark(
+                position_id=pos.id,
+                mark_date=today_date,
+                spot_price=current_price,
+            )
+            db.merge(mark)
 
     db.commit()
     return {"marked": marked, "spot_price": current_price}
@@ -1118,63 +1219,79 @@ def _send_discord_embed(embed: dict) -> bool:
         return False
 
 
-def _format_legs_text(legs: dict, strategy: str) -> str:
-    """Format leg details for Discord embed."""
-    if strategy == "double_diagonal":
-        lp = legs.get("longPutStrike") or legs.get("long_put_strike", "?")
-        sp = legs.get("shortPutStrike") or legs.get("short_put_strike", "?")
-        sc = legs.get("shortCallStrike") or legs.get("short_call_strike", "?")
-        lc = legs.get("longCallStrike") or legs.get("long_call_strike", "?")
-        s_exp = legs.get("shortExpiration") or legs.get("short_expiration", "?")
-        l_exp = legs.get("longExpiration") or legs.get("long_expiration", "?")
-        return (
-            f"**Put Side:** {lp}L / {sp}S\n"
-            f"**Call Side:** {sc}S / {lc}L\n"
-            f"**Short Exp:** {s_exp}  |  **Long Exp:** {l_exp}"
-        )
+def _discord_post_closed(pos: Position):
+    """Post closed-position embed to Discord. Called automatically on close."""
+    strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
+    pnl = pos.realized_pnl or 0
+    days_held = (pos.close_date - pos.entry_date).days if pos.close_date and pos.entry_date else 0
+    pct_of_max = round(pnl / abs(pos.max_profit) * 100, 1) if pos.max_profit else 0
+
+    if pnl >= 0:
+        color = 0x00E676
+        footer_msg = "Well done. Protect the gains."
     else:
-        ps = legs.get("putStrike") or legs.get("put_strike", "?")
-        cs = legs.get("callStrike") or legs.get("call_strike", "?")
-        f_exp = legs.get("frontExpiration") or legs.get("front_expiration", "?")
-        b_exp = legs.get("backExpiration") or legs.get("back_expiration", "?")
-        return (
-            f"**Put:** {ps}  |  **Call:** {cs}\n"
-            f"**Front Exp:** {f_exp}  |  **Back Exp:** {b_exp}"
-        )
+        color = 0xFF1744
+        footer_msg = "Cut clean. Next setup is coming. Stay the course."
+
+    embed = {
+        "title": f"\u2705 POSITION CLOSED \u00b7 {pos.symbol} {strat_label}",
+        "color": color,
+        "fields": [
+            {"name": "Entry", "value": f"+${pos.entry_credit:,.2f}", "inline": True},
+            {"name": "Exit", "value": f"-${(pos.close_price or 0) * 100 * pos.contracts:,.2f}", "inline": True},
+            {"name": "Realized P&L", "value": f"${pnl:+,.2f} ({pct_of_max:+.1f}% of max profit)", "inline": False},
+            {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
+        ],
+        "footer": {"text": footer_msg},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    _send_discord_embed(embed)
 
 
 @router.post("/discord/post-open")
-async def discord_post_open(position_id: int, db: Session = Depends(get_db)):
-    """Post a position-opened embed to Discord."""
-    pos = db.query(Position).filter(Position.id == position_id).first()
-    if not pos:
-        raise HTTPException(404, "Position not found")
+async def discord_post_open(db: Session = Depends(get_db)):
+    """Post open positions summary to Discord (like morning post)."""
+    open_positions = db.query(Position).filter(Position.status == "open").all()
+    if not open_positions:
+        return {"posted": False, "reason": "No open positions"}
 
-    strategy_label = "Double Diagonal" if pos.strategy == "double_diagonal" else "Double Calendar"
+    today_str = date.today().strftime("%B %d, %Y")
+    total_credit = sum(p.entry_credit for p in open_positions)
+
+    lines = []
+    for pos in open_positions:
+        strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
+        dte = (pos.short_exp - date.today()).days if pos.short_exp else "?"
+        lines.append(
+            f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
+            f"Entry: +${pos.entry_credit:,.2f}\n"
+            f"Max Profit: ${pos.max_profit:,.2f} | Max Loss: ${pos.max_loss:,.2f} | {dte}DTE"
+            if pos.max_profit is not None and pos.max_loss is not None
+            else f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
+                 f"Entry: +${pos.entry_credit:,.2f} | {dte}DTE"
+        )
+
+    positions_text = "\n\n".join(lines)
+
     embed = {
-        "title": f"\U0001f4c8 NEW POSITION OPENED",
-        "color": 0x00E676,
+        "title": f"\U0001f4cb TODAY'S OPEN SPREADS \u00b7 {today_str}",
+        "color": 0x448AFF,
+        "description": positions_text,
         "fields": [
-            {"name": "Strategy", "value": strategy_label, "inline": True},
-            {"name": "Symbol", "value": pos.symbol, "inline": True},
-            {"name": "Contracts", "value": str(pos.contracts), "inline": True},
-            {"name": "Legs", "value": _format_legs_text(pos.legs, pos.strategy), "inline": False},
-            {"name": "Net Debit", "value": f"${pos.net_debit:,.2f}", "inline": True},
-            {"name": "Spot at Entry", "value": f"${pos.spot_at_entry:,.2f}", "inline": True},
+            {"name": "Total Credit", "value": f"+${total_credit:,.2f}", "inline": True},
+            {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
-        "footer": {"text": f"SpreadWorks \u2022 {pos.label or 'Position #' + str(pos.id)}"},
+        "footer": {"text": "Trade with discipline \U0001f64f"},
         "timestamp": datetime.utcnow().isoformat(),
     }
-    if pos.notes:
-        embed["fields"].append({"name": "Notes", "value": pos.notes, "inline": False})
 
     ok = _send_discord_embed(embed)
-    return {"posted": ok}
+    return {"posted": ok, "positions": len(open_positions)}
 
 
 @router.post("/discord/post-eod")
 async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
-    """Post end-of-day summary to Discord with optional Claude commentary."""
+    """Post end-of-day summary to Discord with Claude AI commentary."""
     open_positions = db.query(Position).filter(Position.status == "open").all()
     if not open_positions:
         return {"posted": False, "reason": "No open positions"}
@@ -1182,25 +1299,61 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
     # Get current price
     q = await _get_quote(request, "SPY")
     current_price = q.get("last", 0)
+    today_str = date.today().strftime("%B %d, %Y")
+    today_date = date.today()
 
-    # Build position summaries
+    # Build per-position P&L lines using latest marks
     lines = []
-    total_unrealised = 0.0
+    total_unrealized = 0.0
+    positions_for_ai = []
+
     for pos in open_positions:
-        pnl_info = _reprice_position(_pos_to_dict(pos), current_price) if current_price else {
-            "unrealised_pnl": 0, "pnl_pct": 0
-        }
-        pnl = pnl_info["unrealised_pnl"]
-        pct = pnl_info["pnl_pct"]
-        total_unrealised += pnl
-        arrow = "\u2705" if pnl >= 0 else "\u274c"
-        label = pos.label or f"#{pos.id}"
-        strat = "DD" if pos.strategy == "double_diagonal" else "DC"
-        lines.append(f"{arrow} **{label}** ({strat}) — ${pnl:+,.2f} ({pct:+.1f}%)")
+        latest = (
+            db.query(DailyMark)
+            .filter(DailyMark.position_id == pos.id)
+            .order_by(DailyMark.mark_date.desc())
+            .first()
+        )
+        pnl = latest.unrealized_pnl if latest and latest.unrealized_pnl is not None else 0
+        cur_val = latest.current_value if latest else None
+        total_unrealized += pnl
+        pct = round(pnl / abs(pos.max_profit) * 100, 1) if pos.max_profit else 0
 
-    positions_text = "\n".join(lines)
+        strat = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
+        arrow = "\u25b2" if pnl >= 0 else "\u25bc"
+        sign = "+" if pnl >= 0 else ""
 
-    # Optional Claude commentary
+        lines.append(
+            f"{pos.symbol} {strat}\n"
+            f"P&L: {sign}${pnl:,.2f} ({arrow}{sign}{pct:.1f}%)\n"
+            f"Current value: ${cur_val:,.4f} | Entry: ${pos.entry_price:,.2f}"
+            if cur_val is not None
+            else f"{pos.symbol} {strat}\n"
+                 f"P&L: {sign}${pnl:,.2f} ({arrow}{sign}{pct:.1f}%)"
+        )
+
+        dte = (pos.short_exp - today_date).days if pos.short_exp else None
+        positions_for_ai.append({
+            "symbol": pos.symbol,
+            "strategy": strat,
+            "strikes": _strikes_str(pos),
+            "entry_credit": pos.entry_credit,
+            "unrealized_pnl": pnl,
+            "dte": dte,
+            "max_profit": pos.max_profit,
+            "max_loss": pos.max_loss,
+        })
+
+    # Closed today
+    closed_today = db.query(Position).filter(
+        Position.status == "closed",
+        Position.close_date == today_date,
+    ).count()
+
+    total_credit = sum(p.entry_credit for p in open_positions)
+    pnl_pct = round(total_unrealized / total_credit * 100, 1) if total_credit else 0
+
+    # Claude AI commentary
     commentary = ""
     if ANTHROPIC_API_KEY:
         try:
@@ -1208,35 +1361,67 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
 
             client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
             prompt = (
-                f"You are a concise options trading analyst. SPY closed at ${current_price:.2f}. "
-                f"The trader has {len(open_positions)} open spread positions with total unrealized P&L "
-                f"of ${total_unrealised:+,.2f}. Give a 2-3 sentence end-of-day commentary — "
-                f"mention market context, position health, and one actionable thought for tomorrow. "
-                f"Keep it professional and encouraging."
+                f"You are an options trading analyst reviewing end-of-day positions for a spread trader.\n\n"
+                f"Today's date: {today_str}\n"
+                f"SPY closed at: ${current_price:.2f}\n\n"
+                f"Open positions:\n"
+            )
+            for p in positions_for_ai:
+                prompt += (
+                    f"- {p['symbol']} {p['strategy']} {p['strikes']}: "
+                    f"entry +${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
+                    f"{p['dte']}DTE, max profit ${p['max_profit']}, max loss ${p['max_loss']}\n"
+                )
+            prompt += (
+                f"\nFor each position provide:\n"
+                f"1. One sentence on how today's price action affected it\n"
+                f"2. One actionable recommendation (close, hold, watch level, roll)\n"
+                f"3. Any risk to watch (upcoming events, IV change, DTE pressure)\n\n"
+                f"Keep it concise \u2014 2-3 sentences per position max. "
+                f"End with a 1-sentence overall portfolio summary. "
+                f"Tone: professional, direct, faith-informed (brief encouragement okay, not preachy)."
             )
             msg = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=200,
+                model="claude-opus-4-6",
+                max_tokens=600,
                 messages=[{"role": "user", "content": prompt}],
             )
             commentary = msg.content[0].text
         except Exception:
-            commentary = ""
+            commentary = "AI commentary unavailable"
+
+    positions_text = "\n\n".join(lines)
+
+    pnl_color = 0x00E676 if total_unrealized >= 0 else 0xFF1744
 
     embed = {
-        "title": "\U0001f4ca END OF DAY — POSITION SUMMARY",
-        "color": 0x448AFF,
+        "title": f"\U0001f514 END OF DAY UPDATE \u00b7 {today_str}",
+        "color": pnl_color,
+        "description": positions_text,
         "fields": [
-            {"name": f"Open Positions ({len(open_positions)}/{MAX_OPEN_POSITIONS})",
-             "value": positions_text, "inline": False},
-            {"name": "Total Unrealised", "value": f"${total_unrealised:+,.2f}", "inline": True},
-            {"name": "SPY Close", "value": f"${current_price:,.2f}" if current_price else "N/A", "inline": True},
+            {"name": "\u2501" * 20, "value": "\u200b", "inline": False},
+            {
+                "name": "Portfolio P&L Today",
+                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of total credit)",
+                "inline": True,
+            },
+            {"name": "Open", "value": str(len(open_positions)), "inline": True},
+            {"name": "Closed Today", "value": str(closed_today), "inline": True},
         ],
         "footer": {"text": "SpreadWorks \u2022 End of Day"},
         "timestamp": datetime.utcnow().isoformat(),
     }
     if commentary:
-        embed["fields"].append({"name": "\U0001f4ac Market Commentary", "value": commentary, "inline": False})
+        embed["fields"].append({
+            "name": "\U0001f916 AI RECAP",
+            "value": commentary[:1024],  # Discord field limit
+            "inline": False,
+        })
 
     ok = _send_discord_embed(embed)
-    return {"posted": ok, "positions": len(open_positions), "total_unrealised": round(total_unrealised, 2)}
+    return {
+        "posted": ok,
+        "positions": len(open_positions),
+        "total_unrealized": round(total_unrealized, 2),
+        "commentary_available": bool(commentary and commentary != "AI commentary unavailable"),
+    }

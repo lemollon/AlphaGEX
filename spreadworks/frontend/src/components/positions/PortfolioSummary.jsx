@@ -1,9 +1,9 @@
 const s = {
-  container: {
+  strip: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   card: {
     background: '#0d0d18',
@@ -30,31 +30,31 @@ const s = {
 export default function PortfolioSummary({ summary }) {
   if (!summary) return null;
 
-  const unrealColor = summary.total_unrealised >= 0 ? '#00e676' : '#ff5252';
-  const realizedColor = summary.total_realized >= 0 ? '#00e676' : '#ff5252';
+  const unrealColor = summary.total_unrealized >= 0 ? '#00e676' : '#ff5252';
+  const realColor = summary.total_realized >= 0 ? '#00e676' : '#ff5252';
 
   return (
-    <div style={s.container}>
+    <div style={s.strip}>
       <div style={s.card}>
-        <div style={s.label}>Slots Used</div>
+        <div style={s.label}>Slots</div>
         <div style={s.value('#448aff')}>
           {summary.slots_used}/{summary.slots_total}
         </div>
       </div>
       <div style={s.card}>
-        <div style={s.label}>Invested</div>
-        <div style={s.value()}>${summary.total_invested?.toFixed(2)}</div>
+        <div style={s.label}>Total Credit</div>
+        <div style={s.value('#00e676')}>+${summary.total_credit?.toFixed(2)}</div>
       </div>
       <div style={s.card}>
-        <div style={s.label}>Unrealised</div>
+        <div style={s.label}>Unrealized</div>
         <div style={s.value(unrealColor)}>
-          ${summary.total_unrealised >= 0 ? '+' : ''}{summary.total_unrealised?.toFixed(2)}
+          {summary.total_unrealized >= 0 ? '+' : ''}${summary.total_unrealized?.toFixed(2)}
         </div>
       </div>
       <div style={s.card}>
         <div style={s.label}>Realized</div>
-        <div style={s.value(realizedColor)}>
-          ${summary.total_realized >= 0 ? '+' : ''}{summary.total_realized?.toFixed(2)}
+        <div style={s.value(realColor)}>
+          {summary.total_realized >= 0 ? '+' : ''}${summary.total_realized?.toFixed(2)}
         </div>
       </div>
       <div style={s.card}>
