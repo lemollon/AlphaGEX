@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
+import PasswordGate from '@/components/PasswordGate'
 
 interface Account {
   account_id: string
@@ -18,6 +19,14 @@ interface Account {
 const BOT_OPTIONS = ['FLAME', 'SPARK', 'BOTH'] as const
 
 export default function AccountsPage() {
+  return (
+    <PasswordGate>
+      <AccountsContent />
+    </PasswordGate>
+  )
+}
+
+function AccountsContent() {
   const { data, mutate } = useSWR<{ accounts: Account[] }>('/api/accounts', fetcher, {
     refreshInterval: 30_000,
   })
