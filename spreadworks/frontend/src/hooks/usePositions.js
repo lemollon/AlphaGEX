@@ -85,10 +85,16 @@ export default function usePositions(statusFilter = 'open') {
     await fetch(`${API_URL}/api/spreadworks/discord/post-eod`, { method: 'POST' });
   };
 
+  const pushPositionToDiscord = async (id) => {
+    const res = await fetch(`${API_URL}/api/spreadworks/discord/push-position/${id}`, { method: 'POST' });
+    if (!res.ok) throw new Error('Failed to push to Discord');
+    return res.json();
+  };
+
   return {
     positions, summary, loading, error,
     refetch: fetchPositions, refetchSummary: fetchSummary,
     createPosition, closePosition, deletePosition, updatePosition,
-    postDiscordOpen, postDiscordEod,
+    postDiscordOpen, postDiscordEod, pushPositionToDiscord,
   };
 }
