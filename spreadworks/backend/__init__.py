@@ -75,77 +75,51 @@ def _start_scheduler(app: FastAPI):
 
 
 def _run_migrations(eng):
-    """Add columns to existing tables that create_all won't handle.
+    """Ensure positions/daily_marks tables match the current SQLAlchemy model.
 
-    The positions table was originally created with a different schema
-    (legs JSON, net_debit, spot_at_entry, opened_at).  The model was
-    rewritten to use explicit strike columns.  create_all() only creates
-    NEW tables — it never alters existing ones — so we must add every
-    missing column here.
+    The tables were originally created with a completely different schema
+    (JSON legs, net_debit, opened_at, etc.).  The model was rewritten to
+    use explicit strike columns.  create_all() only creates NEW tables —
+    it never alters existing ones.
+
+    Strategy: check if a key new-schema column exists.  If not, drop the
+    old-schema tables entirely and let create_all() rebuild them fresh.
+    Old data (JSON legs format) is incompatible with the new schema anyway.
     """
     from sqlalchemy import text as sa_text, inspect
 
-    # Map of column_name -> SQL type definition (all nullable so existing rows survive)
-    POSITION_COLUMNS = {
-        "label":         "VARCHAR(100)",
-        "long_put":      "DOUBLE PRECISION",
-        "short_put":     "DOUBLE PRECISION",
-        "short_call":    "DOUBLE PRECISION",
-        "long_call":     "DOUBLE PRECISION",
-        "short_exp":     "DATE",
-        "long_exp":      "DATE",
-        "entry_credit":  "DOUBLE PRECISION",
-        "entry_price":   "DOUBLE PRECISION",
-        "entry_date":    "DATE DEFAULT CURRENT_DATE",
-        "entry_spot":    "DOUBLE PRECISION",
-        "max_profit":    "DOUBLE PRECISION",
-        "max_loss":      "DOUBLE PRECISION",
-        "breakeven_low": "DOUBLE PRECISION",
-        "breakeven_high":"DOUBLE PRECISION",
-        "close_date":    "DATE",
-        "created_at":    "TIMESTAMPTZ DEFAULT now()",
-        "updated_at":    "TIMESTAMPTZ DEFAULT now()",
-    }
-
-    # daily_marks also had a schema rewrite (mark_value → current_value, etc.)
-    DAILY_MARKS_COLUMNS = {
-        "current_value":   "DOUBLE PRECISION",
-        "unrealized_pnl":  "DOUBLE PRECISION",
-        "dte":             "INTEGER",
-        "iv":              "DOUBLE PRECISION",
-        "created_at":      "TIMESTAMPTZ DEFAULT now()",
-    }
-
     try:
         inspector = inspect(eng)
+        tables = set(inspector.get_table_names())
 
-        # --- positions table ---
-        existing = {c["name"] for c in inspector.get_columns("positions")}
-        added = []
+        if "positions" not in tables:
+            # Table doesn't exist yet — create_all will handle it
+            print("[SpreadWorks] Migration: positions table not found, create_all will create it")
+            return
+
+        existing_cols = {c["name"] for c in inspector.get_columns("positions")}
+
+        # If 'long_put' exists, the table already has the new schema
+        if "long_put" in existing_cols:
+            print("[SpreadWorks] Migration: positions table already has new schema")
+            return
+
+        # Old schema detected — drop and let create_all rebuild
+        print("[SpreadWorks] Migration: old positions schema detected, rebuilding tables...")
         with eng.begin() as conn:
-            for col, col_type in POSITION_COLUMNS.items():
-                if col not in existing:
-                    conn.execute(sa_text(f"ALTER TABLE positions ADD COLUMN {col} {col_type}"))
-                    added.append(col)
-        if added:
-            print(f"[SpreadWorks] Migration: added {len(added)} columns to positions: {', '.join(added)}")
+            # daily_marks has FK to positions, must drop first
+            if "daily_marks" in tables:
+                conn.execute(sa_text("DROP TABLE daily_marks CASCADE"))
+                print("[SpreadWorks] Migration: dropped old daily_marks table")
+            conn.execute(sa_text("DROP TABLE positions CASCADE"))
+            print("[SpreadWorks] Migration: dropped old positions table")
 
-        # --- daily_marks table ---
-        if "daily_marks" in inspector.get_table_names():
-            dm_existing = {c["name"] for c in inspector.get_columns("daily_marks")}
-            dm_added = []
-            with eng.begin() as conn:
-                for col, col_type in DAILY_MARKS_COLUMNS.items():
-                    if col not in dm_existing:
-                        conn.execute(sa_text(f"ALTER TABLE daily_marks ADD COLUMN {col} {col_type}"))
-                        dm_added.append(col)
-            if dm_added:
-                print(f"[SpreadWorks] Migration: added {len(dm_added)} columns to daily_marks: {', '.join(dm_added)}")
+        # Now create_all will build both tables with the correct schema
+        Base.metadata.create_all(bind=eng)
+        print("[SpreadWorks] Migration: rebuilt positions + daily_marks with new schema")
 
-        if not added:
-            print("[SpreadWorks] Migration: all tables up-to-date")
     except Exception as e:
-        print(f"[SpreadWorks] Migration check (non-fatal): {e}")
+        print(f"[SpreadWorks] Migration (non-fatal): {e}")
 
 
 @asynccontextmanager
