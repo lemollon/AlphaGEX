@@ -240,6 +240,96 @@ const s = {
   },
 };
 
+function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
+  const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
+  const optionType = label.toLowerCase().includes('put') ? 'put' : 'call';
+  // Live Chain mode: dropdown with delta info
+  if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
+    return (
+      <div style={s.fieldCol}>
+        <span style={s.fieldLabel(color)}>{label}</span>
+        <select
+          style={s.select(borderColor)}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">--</option>
+          {chainStrikes.map((sk) => {
+            const opt = chainOptions[sk]?.[optionType];
+            const delta = opt?.delta;
+            const displayDelta = delta != null ? ` (\u0394${Math.abs(delta).toFixed(2)})` : '';
+            return (
+              <option key={sk} value={sk}>${sk}{displayDelta}</option>
+            );
+          })}
+        </select>
+      </div>
+    );
+  }
+  // Manual and GEX Suggest: plain text input (no spinners)
+  return (
+    <div style={s.fieldCol}>
+      <span style={s.fieldLabel(color)}>{label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9.]*"
+        placeholder={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        style={{
+          width: '100%',
+          background: '#111120',
+          border: `1px solid ${borderColor || '#1e1e32'}`,
+          color: '#ccc',
+          padding: '6px 8px',
+          fontSize: '11px',
+          borderRadius: '3px',
+          fontFamily: 'inherit',
+          outline: 'none',
+          boxSizing: 'border-box',
+        }}
+      />
+    </div>
+  );
+}
+
+function ExpirationInput({ label, value, inputMode, expirations, onChange, onFetchStrikes, disabled }) {
+  if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
+    return (
+      <div style={s.fieldCol}>
+        <span style={s.fieldLabel()}>{label}</span>
+        <select
+          style={s.select()}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            if (onFetchStrikes) onFetchStrikes(e.target.value);
+          }}
+        >
+          <option value="">--</option>
+          {expirations.map((exp) => (
+            <option key={exp} value={exp}>{exp}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+  return (
+    <div style={s.fieldCol}>
+      <span style={s.fieldLabel()}>{label}</span>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        style={s.input()}
+      />
+    </div>
+  );
+}
+
 export default function StrategyPanel({
   symbol = 'SPY',
   spotPrice,
@@ -459,96 +549,6 @@ export default function StrategyPanel({
     }
   };
 
-  const StrikeInput = ({ label, field, value, color, optionType }) => {
-    const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
-    // Live Chain mode: dropdown with delta info
-    if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
-      return (
-        <div style={s.fieldCol}>
-          <span style={s.fieldLabel(color)}>{label}</span>
-          <select
-            style={s.select(borderColor)}
-            value={value}
-            onChange={(e) => updateLeg(field, e.target.value)}
-          >
-            <option value="">--</option>
-            {chainStrikes.map((sk) => {
-              const ot = optionType || (field.toLowerCase().includes('put') ? 'put' : 'call');
-              const opt = chainOptions[sk]?.[ot];
-              const delta = opt?.delta;
-              const displayDelta = delta != null ? ` (\u0394${Math.abs(delta).toFixed(2)})` : '';
-              return (
-                <option key={sk} value={sk}>${sk}{displayDelta}</option>
-              );
-            })}
-          </select>
-        </div>
-      );
-    }
-    // Manual and GEX Suggest: plain text input (no spinners)
-    return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel(color)}>{label}</span>
-        <input
-          type="text"
-          inputMode="numeric"
-          pattern="[0-9.]*"
-          placeholder={label}
-          value={value}
-          onChange={(e) => updateLeg(field, e.target.value)}
-          disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={{
-            width: '100%',
-            background: '#111120',
-            border: `1px solid ${borderColor || '#1e1e32'}`,
-            color: '#ccc',
-            padding: '6px 8px',
-            fontSize: '11px',
-            borderRadius: '3px',
-            fontFamily: 'inherit',
-            outline: 'none',
-            boxSizing: 'border-box',
-          }}
-        />
-      </div>
-    );
-  };
-
-  const ExpirationInput = ({ label, field, value }) => {
-    if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
-      return (
-        <div style={s.fieldCol}>
-          <span style={s.fieldLabel()}>{label}</span>
-          <select
-            style={s.select()}
-            value={value}
-            onChange={(e) => {
-              updateLeg(field, e.target.value);
-              fetchStrikes(e.target.value);
-            }}
-          >
-            <option value="">--</option>
-            {expirations.map((exp) => (
-              <option key={exp} value={exp}>{exp}</option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-    return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel()}>{label}</span>
-        <input
-          type="date"
-          value={value}
-          onChange={(e) => updateLeg(field, e.target.value)}
-          disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={s.input()}
-        />
-      </div>
-    );
-  };
-
   return (
     <div style={s.panel}>
       {/* Logo */}
@@ -609,29 +609,29 @@ export default function StrategyPanel({
         <>
           <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Long Put" field="longPutStrike" value={legs.longPutStrike} color="#00e676" />
-            <StrikeInput label="Short Put" field="shortPutStrike" value={legs.shortPutStrike} color="#ff5252" />
+            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Short Call" field="shortCallStrike" value={legs.shortCallStrike} color="#ff5252" />
-            <StrikeInput label="Long Call" field="longCallStrike" value={legs.longCallStrike} color="#00e676" />
+            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           <div style={s.fieldRow}>
-            <ExpirationInput label="Short Exp" field="shortExpiration" value={legs.shortExpiration} />
-            <ExpirationInput label="Long Exp" field="longExpiration" value={legs.longExpiration} />
+            <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
         </>
       ) : (
         <>
           <div style={s.sideLabel('#448aff')}>-- STRIKES --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Put Strike" field="putStrike" value={legs.putStrike} color="#ff5252" />
-            <StrikeInput label="Call Strike" field="callStrike" value={legs.callStrike} color="#00e676" />
+            <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           <div style={s.fieldRow}>
-            <ExpirationInput label="Front Exp" field="frontExpiration" value={legs.frontExpiration} />
-            <ExpirationInput label="Back Exp" field="backExpiration" value={legs.backExpiration} />
+            <ExpirationInput label="Front Exp" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <ExpirationInput label="Back Exp" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
         </>
       )}
