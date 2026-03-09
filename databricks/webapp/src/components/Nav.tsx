@@ -7,6 +7,7 @@ const links = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
+  { href: '/inferno', label: 'INFERNO', className: 'text-red-400 hover:text-red-300' },
   { href: '/compare', label: 'Compare' },
   { href: '/accounts', label: 'Accounts' },
 ]
