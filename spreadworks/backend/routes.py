@@ -1084,8 +1084,11 @@ async def delete_alert(alert_id: int):
 
 MAX_OPEN_POSITIONS = 10
 
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+def _discord_url() -> str:
+    return os.getenv("DISCORD_WEBHOOK_URL", "")
+
+def _anthropic_key() -> str:
+    return os.getenv("ANTHROPIC_API_KEY", "")
 
 STRATEGY_LABELS = {
     "double_diagonal": "Double Diagonal",
@@ -1506,12 +1509,13 @@ def _send_discord_embed(embed: dict) -> bool:
     """Send an embed to Discord webhook. Returns True on success."""
     import requests as req
 
-    if not DISCORD_WEBHOOK_URL:
+    url = _discord_url()
+    if not url:
         logger.warning("[Discord] DISCORD_WEBHOOK_URL not set — skipping post")
         return False
     try:
         resp = req.post(
-            DISCORD_WEBHOOK_URL,
+            url,
             json={"embeds": [embed]},
             headers={"Content-Type": "application/json"},
             timeout=10,
@@ -1576,7 +1580,7 @@ class DiscordPushSpread(BaseModel):
 @router.post("/discord/push-spread")
 async def discord_push_spread(body: DiscordPushSpread):
     """Push current spread analysis to Discord as a rich embed."""
-    if not DISCORD_WEBHOOK_URL:
+    if not _discord_url():
         raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
 
     strat_label = STRATEGY_LABELS.get(body.strategy, body.strategy or "Spread")
@@ -1734,11 +1738,11 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
 
     # Claude AI commentary
     commentary = ""
-    if ANTHROPIC_API_KEY:
+    if _anthropic_key():
         try:
             import anthropic
 
-            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            client = anthropic.Anthropic(api_key=_anthropic_key())
             prompt = (
                 f"You are an options trading analyst reviewing end-of-day positions for a spread trader.\n\n"
                 f"Today's date: {today_str}\n"
@@ -1811,7 +1815,7 @@ async def discord_push_position(
     request: Request, position_id: int, db: Session = Depends(get_db)
 ):
     """Push a single position's current status snapshot to Discord."""
-    if not DISCORD_WEBHOOK_URL:
+    if not _discord_url():
         raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
 
     pos = db.query(Position).filter(Position.id == position_id).first()
