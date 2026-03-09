@@ -68,7 +68,7 @@ export default function StatusCard({
   config,
 }: {
   data: StatusData
-  accent: 'amber' | 'blue'
+  accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
 }) {
   const { account } = data
@@ -78,8 +78,9 @@ export default function StatusCard({
   const totalPnl = account.total_pnl || account.cumulative_pnl + unrealized
   const totalPositive = totalPnl >= 0
 
-  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
-  const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
+  const accentMap = { amber: { border: 'border-amber-500/30', text: 'text-amber-400' }, blue: { border: 'border-blue-500/30', text: 'text-blue-400' }, red: { border: 'border-red-500/30', text: 'text-red-400' } }
+  const accentBorder = accentMap[accent].border
+  const accentText = accentMap[accent].text
 
   const stateLabel = data.bot_state === 'market_closed' ? 'MARKET CLOSED'
     : data.bot_state ? data.bot_state.toUpperCase()

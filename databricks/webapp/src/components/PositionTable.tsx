@@ -43,7 +43,7 @@ export default function PositionTable({
   positions: Position[]
   spotPrice?: number | null
   tradierConnected?: boolean
-  bot?: 'flame' | 'spark'
+  bot?: 'flame' | 'spark' | 'inferno'
   detailData?: { positions: DetailData[] } | null
 }) {
   if (!positions.length) {

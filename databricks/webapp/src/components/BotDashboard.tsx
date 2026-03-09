@@ -24,8 +24,8 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark'
-  accent: 'amber' | 'blue'
+  bot: 'flame' | 'spark' | 'inferno'
+  accent: 'amber' | 'blue' | 'red'
 }) {
   const [tab, setTab] = useState<Tab>('Equity Curve')
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')
@@ -127,8 +127,13 @@ export default function BotDashboard({
     return () => clearInterval(timer)
   }, [status?.last_scan])
 
-  const accentActive =
-    accent === 'amber' ? 'border-amber-400 text-amber-400' : 'border-blue-400 text-blue-400'
+  const accentColors = {
+    amber: { active: 'border-amber-400 text-amber-400', text: 'text-amber-400', hex: '#f59e0b' },
+    blue:  { active: 'border-blue-400 text-blue-400',   text: 'text-blue-400',  hex: '#3b82f6' },
+    red:   { active: 'border-red-400 text-red-400',     text: 'text-red-400',   hex: '#ef4444' },
+  }
+  const ac = accentColors[accent]
+  const accentActive = ac.active
 
   const scanAgeText = status?.last_scan
     ? `${Math.round((Date.now() - new Date(status.last_scan).getTime()) / 60_000)} minutes ago`
@@ -153,12 +158,12 @@ export default function BotDashboard({
       {/* Title */}
       <div className="flex items-baseline gap-2">
         <h1
-          className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : 'text-blue-400'}`}
+          className={`text-2xl font-bold ${ac.text}`}
         >
           {bot.toUpperCase()}
         </h1>
         <span className="text-forge-muted">
-          {bot === 'flame' ? '2DTE' : '1DTE'} Iron Condor
+          {bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'} Iron Condor
         </span>
       </div>
 
@@ -195,7 +200,7 @@ export default function BotDashboard({
             data={equity?.curve || []}
             intradayData={intraday?.snapshots}
             startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-            color={accent === 'amber' ? '#f59e0b' : '#3b82f6'}
+            color={ac.hex}
             title={`${bot.toUpperCase()} Equity Curve`}
             period={equityPeriod}
             onPeriodChange={onPeriodChange}
