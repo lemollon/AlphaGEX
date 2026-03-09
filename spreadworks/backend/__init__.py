@@ -75,15 +75,75 @@ def _start_scheduler(app: FastAPI):
 
 
 def _run_migrations(eng):
-    """Add columns to existing tables that create_all won't handle."""
+    """Add columns to existing tables that create_all won't handle.
+
+    The positions table was originally created with a different schema
+    (legs JSON, net_debit, spot_at_entry, opened_at).  The model was
+    rewritten to use explicit strike columns.  create_all() only creates
+    NEW tables — it never alters existing ones — so we must add every
+    missing column here.
+    """
     from sqlalchemy import text as sa_text, inspect
+
+    # Map of column_name -> SQL type definition (all nullable so existing rows survive)
+    POSITION_COLUMNS = {
+        "label":         "VARCHAR(100)",
+        "long_put":      "DOUBLE PRECISION",
+        "short_put":     "DOUBLE PRECISION",
+        "short_call":    "DOUBLE PRECISION",
+        "long_call":     "DOUBLE PRECISION",
+        "short_exp":     "DATE",
+        "long_exp":      "DATE",
+        "entry_credit":  "DOUBLE PRECISION",
+        "entry_price":   "DOUBLE PRECISION",
+        "entry_date":    "DATE DEFAULT CURRENT_DATE",
+        "entry_spot":    "DOUBLE PRECISION",
+        "max_profit":    "DOUBLE PRECISION",
+        "max_loss":      "DOUBLE PRECISION",
+        "breakeven_low": "DOUBLE PRECISION",
+        "breakeven_high":"DOUBLE PRECISION",
+        "close_date":    "DATE",
+        "created_at":    "TIMESTAMPTZ DEFAULT now()",
+        "updated_at":    "TIMESTAMPTZ DEFAULT now()",
+    }
+
+    # daily_marks also had a schema rewrite (mark_value → current_value, etc.)
+    DAILY_MARKS_COLUMNS = {
+        "current_value":   "DOUBLE PRECISION",
+        "unrealized_pnl":  "DOUBLE PRECISION",
+        "dte":             "INTEGER",
+        "iv":              "DOUBLE PRECISION",
+        "created_at":      "TIMESTAMPTZ DEFAULT now()",
+    }
+
     try:
         inspector = inspect(eng)
+
+        # --- positions table ---
         existing = {c["name"] for c in inspector.get_columns("positions")}
+        added = []
         with eng.begin() as conn:
-            if "label" not in existing:
-                conn.execute(sa_text("ALTER TABLE positions ADD COLUMN label VARCHAR(100)"))
-                print("[SpreadWorks] Migration: added 'label' column to positions")
+            for col, col_type in POSITION_COLUMNS.items():
+                if col not in existing:
+                    conn.execute(sa_text(f"ALTER TABLE positions ADD COLUMN {col} {col_type}"))
+                    added.append(col)
+        if added:
+            print(f"[SpreadWorks] Migration: added {len(added)} columns to positions: {', '.join(added)}")
+
+        # --- daily_marks table ---
+        if "daily_marks" in inspector.get_table_names():
+            dm_existing = {c["name"] for c in inspector.get_columns("daily_marks")}
+            dm_added = []
+            with eng.begin() as conn:
+                for col, col_type in DAILY_MARKS_COLUMNS.items():
+                    if col not in dm_existing:
+                        conn.execute(sa_text(f"ALTER TABLE daily_marks ADD COLUMN {col} {col_type}"))
+                        dm_added.append(col)
+            if dm_added:
+                print(f"[SpreadWorks] Migration: added {len(dm_added)} columns to daily_marks: {', '.join(dm_added)}")
+
+        if not added:
+            print("[SpreadWorks] Migration: all tables up-to-date")
     except Exception as e:
         print(f"[SpreadWorks] Migration check (non-fatal): {e}")
 
