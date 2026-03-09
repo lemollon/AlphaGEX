@@ -472,6 +472,7 @@ export default function StrategyPanel({
           contracts,
           gex_suggestion: gexSuggestion?.rationale || '',
           pricing_mode: calcResult.pricing_mode || '',
+          pnl_curve: calcResult.pnl_curve || [],
         }),
       });
       const data = await res.json().catch(() => ({}));
