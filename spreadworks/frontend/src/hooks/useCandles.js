@@ -8,6 +8,7 @@ export default function useCandles(symbol, interval = '15min') {
   const [candles, setCandles] = useState([]);
   const [spotPrice, setSpotPrice] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [dataAsOf, setDataAsOf] = useState(null);
   const timerRef = useRef(null);
 
   const fetchCandles = useCallback(async () => {
@@ -17,6 +18,7 @@ export default function useCandles(symbol, interval = '15min') {
       const data = await res.json();
       setCandles(data.candles || []);
       if (data.last_price) setSpotPrice(data.last_price);
+      if (data.data_as_of) setDataAsOf(data.data_as_of);
       setLoading(false);
     } catch (err) {
       console.error('Candle fetch error:', err.message);
@@ -43,5 +45,5 @@ export default function useCandles(symbol, interval = '15min') {
     return () => clearInterval(timerRef.current);
   }, [fetchCandles]);
 
-  return { candles, spotPrice, loading, refetch: fetchCandles };
+  return { candles, spotPrice, loading, dataAsOf, refetch: fetchCandles };
 }

@@ -2,10 +2,11 @@
 
 Endpoints
 ---------
-GET  /api/spreadworks/candles              OHLCV candle data from Tradier
-GET  /api/spreadworks/gex                  GEX levels (proxied from AlphaGEX)
+GET  /api/spreadworks/market-status        Market open/closed + last data timestamp
+GET  /api/spreadworks/candles              OHLCV candle data (live or cached)
+GET  /api/spreadworks/gex                  GEX levels (live or cached)
 GET  /api/spreadworks/expirations          Available option expirations
-GET  /api/spreadworks/chain                Option chain with greeks per leg
+GET  /api/spreadworks/chain                Option chain with greeks (live or cached)
 GET  /api/spreadworks/gex-suggest          Auto-suggest strikes from GEX levels
 POST /api/spreadworks/calculate            Spread P&L / Greeks (BS or chain-aware)
 GET  /api/spreadworks/alerts               Active price alerts
@@ -20,18 +21,22 @@ GET  /api/spreadworks/positions/{id}/pnl   Live unrealised P&L for a position
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import os
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from .db import get_db
-from .models import Position, DailyMark
+from .db import get_db, SessionLocal
+from .models import Position, DailyMark, QuoteCache, CandleCache, GexCache, ChainCache
+
+logger = logging.getLogger("spreadworks")
 
 router = APIRouter(prefix="/api/spreadworks", tags=["SpreadWorks"])
 
@@ -39,6 +44,7 @@ TRADIER_TOKEN = os.getenv("TRADIER_TOKEN", "")
 TRADIER_ACCOUNT_ID = os.getenv("TRADIER_ACCOUNT_ID", "")
 TRADIER_BASE = "https://api.tradier.com/v1"
 ALPHAGEX_BASE_URL = os.getenv("ALPHAGEX_BASE_URL", "http://localhost:8000")
+RISK_FREE_RATE = float(os.getenv("RISK_FREE_RATE", "0.05"))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,17 +79,259 @@ async def _get_quote(request: Request, symbol: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 1. Candles
+# Cache helpers — non-blocking write-through on every successful live fetch
+# ---------------------------------------------------------------------------
+
+
+def _cache_write(fn):
+    """Fire-and-forget DB cache write. Never slow down the response."""
+    if SessionLocal is None:
+        return
+    try:
+        db = SessionLocal()
+        try:
+            fn(db)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.debug("Cache write failed: %s", e)
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+
+def _cache_candles(symbol: str, interval: str, candles: list, last_price: float | None):
+    def _write(db: Session):
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(CandleCache).values(
+            symbol=symbol, interval=interval,
+            candles_json=json.dumps(candles),
+            last_price=last_price,
+            fetched_at=datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["symbol", "interval"],
+            set_=dict(
+                candles_json=json.dumps(candles),
+                last_price=last_price,
+                fetched_at=datetime.now(timezone.utc),
+            ),
+        )
+        db.execute(stmt)
+    _cache_write(_write)
+
+
+def _cache_quote(symbol: str, last: float | None):
+    def _write(db: Session):
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(QuoteCache).values(
+            symbol=symbol, last=last,
+            fetched_at=datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["symbol"],
+            set_=dict(last=last, fetched_at=datetime.now(timezone.utc)),
+        )
+        db.execute(stmt)
+    _cache_write(_write)
+
+
+def _cache_gex(symbol: str, data: dict):
+    def _write(db: Session):
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(GexCache).values(
+            symbol=symbol,
+            flip_point=data.get("flip_point"),
+            call_wall=data.get("call_wall"),
+            put_wall=data.get("put_wall"),
+            gamma_regime=data.get("gamma_regime"),
+            spot_price=data.get("spot_price"),
+            vix=data.get("vix"),
+            source=data.get("source"),
+            fetched_at=datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["symbol"],
+            set_=dict(
+                flip_point=data.get("flip_point"),
+                call_wall=data.get("call_wall"),
+                put_wall=data.get("put_wall"),
+                gamma_regime=data.get("gamma_regime"),
+                spot_price=data.get("spot_price"),
+                vix=data.get("vix"),
+                source=data.get("source"),
+                fetched_at=datetime.now(timezone.utc),
+            ),
+        )
+        db.execute(stmt)
+    _cache_write(_write)
+
+
+def _cache_chain(symbol: str, expiration: str, chain_data: dict):
+    def _write(db: Session):
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(ChainCache).values(
+            symbol=symbol, expiration=expiration,
+            chain_json=json.dumps(chain_data),
+            fetched_at=datetime.now(timezone.utc),
+        ).on_conflict_do_update(
+            index_elements=["symbol", "expiration"],
+            set_=dict(
+                chain_json=json.dumps(chain_data),
+                fetched_at=datetime.now(timezone.utc),
+            ),
+        )
+        db.execute(stmt)
+    _cache_write(_write)
+
+
+def _read_cached_candles(symbol: str, interval: str = "15min") -> dict | None:
+    if SessionLocal is None:
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(CandleCache).filter(
+                CandleCache.symbol == symbol,
+                CandleCache.interval == interval,
+            ).first()
+            if row and row.candles_json:
+                return {
+                    "candles": json.loads(row.candles_json),
+                    "last_price": row.last_price,
+                    "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+                }
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def _read_cached_gex(symbol: str) -> dict | None:
+    if SessionLocal is None:
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(GexCache).filter(GexCache.symbol == symbol).first()
+            if row:
+                return {
+                    "flip_point": row.flip_point,
+                    "call_wall": row.call_wall,
+                    "put_wall": row.put_wall,
+                    "gamma_regime": row.gamma_regime,
+                    "spot_price": row.spot_price,
+                    "vix": row.vix,
+                    "source": f"{row.source}_cached",
+                    "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+                }
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def _read_cached_chain(symbol: str, expiration: str) -> dict | None:
+    if SessionLocal is None:
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(ChainCache).filter(
+                ChainCache.symbol == symbol,
+                ChainCache.expiration == expiration,
+            ).first()
+            if row and row.chain_json:
+                data = json.loads(row.chain_json)
+                data["fetched_at"] = row.fetched_at.isoformat() if row.fetched_at else None
+                return data
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def _read_cached_quote(symbol: str) -> dict | None:
+    if SessionLocal is None:
+        return None
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(QuoteCache).filter(QuoteCache.symbol == symbol).first()
+            if row:
+                return {
+                    "last": row.last,
+                    "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+                }
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return None
+
+
+def _is_market_open_now() -> bool:
+    """Check if US equity market is currently open (Mon-Fri 9:30-16:00 ET)."""
+    from zoneinfo import ZoneInfo
+    et = datetime.now(ZoneInfo("America/New_York"))
+    if et.weekday() >= 5:  # Sat/Sun
+        return False
+    mins = et.hour * 60 + et.minute
+    return 570 <= mins < 960  # 9:30 - 16:00
+
+
+def _last_market_close() -> str:
+    """Return ISO datetime of the most recent market close (4:00 PM ET)."""
+    from zoneinfo import ZoneInfo
+    et = datetime.now(ZoneInfo("America/New_York"))
+    # Walk back to the most recent weekday at 16:00
+    close_time = et.replace(hour=16, minute=0, second=0, microsecond=0)
+    if et.hour < 16 or et.weekday() >= 5:
+        close_time -= timedelta(days=1)
+    while close_time.weekday() >= 5:
+        close_time -= timedelta(days=1)
+    return close_time.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# 0. Market status
+# ---------------------------------------------------------------------------
+
+
+@router.get("/market-status")
+async def market_status():
+    """Return whether the market is open and the last close timestamp."""
+    is_open = _is_market_open_now()
+    last_close = _last_market_close()
+
+    # Check what's in cache
+    cached_quote = _read_cached_quote("SPY")
+    data_as_of = None
+    if cached_quote and cached_quote.get("fetched_at"):
+        data_as_of = cached_quote["fetched_at"]
+
+    return {
+        "is_open": is_open,
+        "last_close": last_close,
+        "data_as_of": data_as_of,
+        "message": "Market is open" if is_open else f"Market closed · Data as of {data_as_of or last_close}",
+    }
+
+
+# ---------------------------------------------------------------------------
+# 1. Candles — live fetch with write-through cache + fallback
 # ---------------------------------------------------------------------------
 
 
 @router.get("/candles")
-async def get_candles(request: Request, symbol: str = "SPY"):
-    """Return raw 15-min candles over a rolling 2-week window from Tradier."""
+async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15min"):
+    """Return 15-min candles. Live from Tradier during market hours, cached otherwise."""
     start_date = (date.today() - timedelta(days=14)).isoformat()
 
     candles: list[dict] = []
     last_price = None
+    data_as_of = None
 
     try:
         ts_data = await _tradier_get(
@@ -101,18 +349,47 @@ async def get_candles(request: Request, symbol: str = "SPY"):
         if isinstance(bars, dict):
             bars = [bars]
 
-        candles = bars  # Return raw — no aggregation
+        candles = bars
         if candles:
             last_price = candles[-1].get("close")
+            # Write-through cache
+            _cache_candles(symbol, interval, candles, last_price)
+            if last_price:
+                _cache_quote(symbol, last_price)
     except Exception:
         pass
 
-    # Fallback: if timesales returned nothing, fetch a quote for spot price
+    # Fallback: if timesales returned nothing, try quote then cache
     if not candles:
-        q = await _get_quote(request, symbol)
-        last_price = q.get("last")
+        try:
+            q = await _get_quote(request, symbol)
+            last_price = q.get("last")
+            if last_price:
+                _cache_quote(symbol, last_price)
+        except Exception:
+            pass
 
-    return {"symbol": symbol, "candles": candles, "last_price": last_price}
+    # If still no candles (market closed, API down, etc.), read from cache
+    if not candles:
+        cached = _read_cached_candles(symbol, interval)
+        if cached:
+            candles = cached["candles"]
+            last_price = last_price or cached["last_price"]
+            data_as_of = cached.get("fetched_at")
+
+    # If we have no spot price at all, try cached quote
+    if not last_price:
+        cached_q = _read_cached_quote(symbol)
+        if cached_q:
+            last_price = cached_q["last"]
+            data_as_of = data_as_of or cached_q.get("fetched_at")
+
+    return {
+        "symbol": symbol,
+        "candles": candles,
+        "last_price": last_price,
+        "data_as_of": data_as_of,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -122,15 +399,11 @@ async def get_candles(request: Request, symbol: str = "SPY"):
 
 @router.get("/gex")
 async def get_gex(request: Request, symbol: str = "SPY"):
-    """Proxy GEX levels from the main AlphaGEX backend.
-
-    Uses a 5-second timeout so the request doesn't hang when
-    AlphaGEX is in a cold start or unreachable.
-    """
+    """Proxy GEX levels from AlphaGEX. Falls back to cache when unavailable."""
     import httpx
 
     http = request.app.state.http
-    _timeout = 5.0  # seconds
+    _timeout = 5.0
 
     # Try WATCHTOWER first
     try:
@@ -145,7 +418,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
             ms = d.get("market_structure", {})
             fp_obj = ms.get("flip_point", {})
             gw = ms.get("gamma_walls", {})
-            return {
+            result = {
                 "flip_point": fp_obj.get("current") if isinstance(fp_obj, dict) else fp_obj,
                 "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
                 "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
@@ -154,8 +427,10 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "watchtower",
             }
+            _cache_gex(symbol, result)
+            return result
     except httpx.TimeoutException:
-        pass  # fall through to next source
+        pass
     except Exception:
         pass
 
@@ -168,7 +443,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
         if resp.status_code == 200:
             body = resp.json()
             d = body.get("data", body)
-            return {
+            result = {
                 "flip_point": d.get("flip_point"),
                 "call_wall": d.get("call_wall"),
                 "put_wall": d.get("put_wall"),
@@ -177,10 +452,17 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "vix": d.get("vix"),
                 "source": "gex",
             }
+            _cache_gex(symbol, result)
+            return result
     except httpx.TimeoutException:
-        return {"error": "GEX data unavailable", "detail": "AlphaGEX backend timed out"}
+        pass
     except Exception:
         pass
+
+    # All live sources failed — try cache
+    cached = _read_cached_gex(symbol)
+    if cached:
+        return cached
 
     return {"error": "GEX data unavailable", "detail": "Could not reach AlphaGEX backend"}
 
@@ -230,46 +512,79 @@ async def _fetch_chain_raw(request: Request, symbol: str, expiration: str) -> li
 
 @router.get("/chain")
 async def get_chain(request: Request, symbol: str = "SPY", expiration: str = ""):
-    """Return strikes and full option data for a given expiration."""
+    """Return strikes and full option data. Falls back to cache when unavailable."""
     if not expiration:
         raise HTTPException(400, "expiration query param is required")
 
-    option_list = await _fetch_chain_raw(request, symbol, expiration)
+    option_list = None
+    try:
+        option_list = await _fetch_chain_raw(request, symbol, expiration)
+    except Exception:
+        pass
 
-    # Build per-strike data with greeks
-    strikes_set: set[float] = set()
-    options_by_strike: dict[float, dict] = {}
-    for o in option_list:
-        strike = o.get("strike")
-        if strike is None:
-            continue
-        strikes_set.add(strike)
-        otype = o.get("option_type", "").lower()  # "call" or "put"
-        greeks = o.get("greeks", {}) or {}
-        entry = {
-            "bid": o.get("bid"),
-            "ask": o.get("ask"),
-            "mid": round((o.get("bid", 0) + o.get("ask", 0)) / 2, 4) if o.get("bid") is not None else None,
-            "last": o.get("last"),
-            "volume": o.get("volume"),
-            "open_interest": o.get("open_interest"),
-            "iv": greeks.get("mid_iv") or greeks.get("smv_vol"),
-            "delta": greeks.get("delta"),
-            "gamma": greeks.get("gamma"),
-            "theta": greeks.get("theta"),
-            "vega": greeks.get("vega"),
+    if option_list:
+        # Build per-strike data with greeks
+        strikes_set: set[float] = set()
+        options_by_strike: dict[float, dict] = {}
+        for o in option_list:
+            strike = o.get("strike")
+            if strike is None:
+                continue
+            strikes_set.add(strike)
+            otype = o.get("option_type", "").lower()
+            greeks = o.get("greeks", {}) or {}
+            entry = {
+                "bid": o.get("bid"),
+                "ask": o.get("ask"),
+                "mid": round((o.get("bid", 0) + o.get("ask", 0)) / 2, 4) if o.get("bid") is not None else None,
+                "last": o.get("last"),
+                "volume": o.get("volume"),
+                "open_interest": o.get("open_interest"),
+                "iv": greeks.get("mid_iv") or greeks.get("smv_vol"),
+                "delta": greeks.get("delta"),
+                "gamma": greeks.get("gamma"),
+                "theta": greeks.get("theta"),
+                "vega": greeks.get("vega"),
+            }
+            if strike not in options_by_strike:
+                options_by_strike[strike] = {}
+            options_by_strike[strike][otype] = entry
+
+        strikes = sorted(strikes_set)
+        result = {
+            "symbol": symbol,
+            "expiration": expiration,
+            "strikes": strikes,
+            "options": options_by_strike,
         }
-        if strike not in options_by_strike:
-            options_by_strike[strike] = {}
-        options_by_strike[strike][otype] = entry
+        # Write-through cache (convert float keys to str for JSON)
+        cache_data = {
+            "strikes": strikes,
+            "options": {str(k): v for k, v in options_by_strike.items()},
+        }
+        _cache_chain(symbol, expiration, cache_data)
+        return result
 
-    strikes = sorted(strikes_set)
-    return {
-        "symbol": symbol,
-        "expiration": expiration,
-        "strikes": strikes,
-        "options": options_by_strike,
-    }
+    # Live fetch failed — try cache
+    cached = _read_cached_chain(symbol, expiration)
+    if cached:
+        # Reconstruct with float keys
+        raw_options = cached.get("options", {})
+        options_by_strike = {}
+        for k, v in raw_options.items():
+            try:
+                options_by_strike[float(k)] = v
+            except (ValueError, TypeError):
+                options_by_strike[k] = v
+        return {
+            "symbol": symbol,
+            "expiration": expiration,
+            "strikes": cached.get("strikes", []),
+            "options": options_by_strike,
+            "data_as_of": cached.get("fetched_at"),
+        }
+
+    raise HTTPException(502, "Option chain unavailable and no cached data")
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +872,7 @@ async def calculate_spread(request: Request, body: CalcRequest):
         if not S:
             raise HTTPException(422, "spot_price required")
 
-    r = 0.05
+    r = RISK_FREE_RATE
     default_sigma = 0.20
     legs = body.legs
     n = body.contracts
@@ -685,6 +1000,12 @@ async def calculate_spread(request: Request, body: CalcRequest):
     else:
         raise HTTPException(400, f"Unknown strategy: {body.strategy}")
 
+    # Compute average IV across legs
+    avg_iv = None
+    if leg_detail:
+        ivs = [leg["iv"] for leg in leg_detail if leg.get("iv") and leg["iv"] > 0]
+        avg_iv = round(sum(ivs) / len(ivs), 4) if ivs else None
+
     return {
         "symbol": body.symbol,
         "strategy": body.strategy,
@@ -698,7 +1019,9 @@ async def calculate_spread(request: Request, body: CalcRequest):
         "greeks": greeks,
         "pnl_curve": profile["pnl_curve"],
         "legs": leg_detail,
+        "implied_vol": avg_iv,
         "pricing_mode": "chain" if body.use_chain_prices and chain_opts else "black_scholes",
+        "risk_free_rate": r,
     }
 
 
@@ -1024,7 +1347,7 @@ async def position_live_pnl(
     pnl_pct = None
 
     if current_price:
-        r, sigma = 0.05, 0.20
+        r, sigma = RISK_FREE_RATE, 0.20
         today_date = date.today()
 
         def tte(d):
