@@ -5,7 +5,25 @@ import { priceToY } from '../utils/priceScale';
  * Pure SVG candlestick chart. Renders OHLCV bars, volume histogram,
  * strike lines, GEX lines, and current price marker.
  * Shares the same price scale with PayoffPanel via minPrice/maxPrice props.
+ *
+ * Layout constants:
+ *   CHART_LEFT_MARGIN (50px) — price axis labels
+ *   CHART_RIGHT_MARGIN (80px) — always empty, separates candles from payoff panel
+ *   CANDLE_SPACING (9px) — center-to-center distance between candles
+ *
+ * If more candles than fit, older ones are clipped on the LEFT — never the right.
+ * The 80px right margin zone is always clean: no candle body, wick, volume bar,
+ * or date label enters it. Only the current-price dashed vertical line and
+ * $XXX.XX badge sit in that zone.
  */
+
+const CHART_LEFT_MARGIN = 50;
+const CHART_RIGHT_MARGIN = 80; // always empty — separates candles from payoff panel
+const CANDLE_SPACING = 9;
+const BAR_WIDTH = 6;
+const TOP_PAD = 10;
+const BOTTOM_PAD = 28;
+
 export default function CandleChart({
   candles,
   minPrice,
@@ -15,27 +33,28 @@ export default function CandleChart({
   gexData,
   spotPrice,
 }) {
-  const barCount = 80;
-  const barWidth = 6;
-  const barGap = 3;
-  const leftPad = 52;
-  const rightPad = 10;
-  const topPad = 10;
-  const bottomPad = 28;
-
   const chartData = useMemo(() => {
     if (!candles || candles.length === 0) return null;
 
-    const visibleCandles = candles.slice(-barCount);
-    const plotH = height - topPad - bottomPad;
-    const plotW = visibleCandles.length * (barWidth + barGap);
-    const totalW = leftPad + plotW + rightPad;
+    // Fixed SVG width — viewBox controls scaling
+    const svgWidth = 900;
+    const availableWidth = svgWidth - CHART_LEFT_MARGIN - CHART_RIGHT_MARGIN;
+    const maxCandles = Math.floor(availableWidth / CANDLE_SPACING);
+
+    // Clip older candles on the left if there are more than fit
+    const visibleCandles = candles.slice(-maxCandles);
+
+    const plotH = height - TOP_PAD - BOTTOM_PAD;
     const maxVol = Math.max(...visibleCandles.map(c => c.volume || 0), 1);
 
-    const pToY = (p) => topPad + priceToY(p, minPrice, maxPrice, plotH);
+    const pToY = (p) => TOP_PAD + priceToY(p, minPrice, maxPrice, plotH);
+
+    // Last candle X — this is where the candle zone ends
+    const lastCandleX = CHART_LEFT_MARGIN + (visibleCandles.length - 1) * CANDLE_SPACING;
 
     const bars = visibleCandles.map((c, i) => {
-      const x = leftPad + i * (barWidth + barGap);
+      const x = CHART_LEFT_MARGIN + i * CANDLE_SPACING - BAR_WIDTH / 2;
+      const centerX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
       const isUp = c.close >= c.open;
       const color = isUp ? '#26a69a' : '#ef5350';
       const bodyTop = pToY(Math.max(c.open, c.close));
@@ -43,27 +62,27 @@ export default function CandleChart({
       const bodyHeight = Math.max(bodyBottom - bodyTop, 1);
       const wickTop = pToY(c.high);
       const wickBottom = pToY(c.low);
-      const wickX = x + barWidth / 2;
 
       // Volume bar
       const volH = ((c.volume || 0) / maxVol) * 40;
-      const volY = height - bottomPad - volH;
+      const volY = height - BOTTOM_PAD - volH;
 
       return {
-        x, bodyTop, bodyHeight, wickTop, wickBottom, wickX,
+        x, centerX, bodyTop, bodyHeight, wickTop, wickBottom,
         color, volH, volY, volColor: isUp ? '#26a69a44' : '#ef535044',
         time: c.time,
       };
     });
 
-    // Date labels (every ~20 bars)
+    // Date labels (every ~20 bars) — must not enter the right margin zone
     const dateLabels = [];
     for (let i = 0; i < visibleCandles.length; i += 20) {
       const c = visibleCandles[i];
-      if (c && c.time) {
+      const labelX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
+      if (c && c.time && labelX < svgWidth - CHART_RIGHT_MARGIN) {
         const d = new Date(c.time);
-        const label = `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        dateLabels.push({ x: leftPad + i * (barWidth + barGap), label });
+        const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dateLabels.push({ x: labelX, label });
       }
     }
 
@@ -76,7 +95,7 @@ export default function CandleChart({
       priceTicks.push({ price: p, y: pToY(p) });
     }
 
-    return { bars, totalW, plotH, pToY, dateLabels, priceTicks };
+    return { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX };
   }, [candles, minPrice, maxPrice, height]);
 
   if (!chartData) {
@@ -91,7 +110,10 @@ export default function CandleChart({
     );
   }
 
-  const { bars, totalW, plotH, pToY, dateLabels, priceTicks } = chartData;
+  const { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX } = chartData;
+
+  // Candle zone boundary — strike/GEX lines extend to here, not into right margin
+  const candleZoneRight = svgWidth - CHART_RIGHT_MARGIN;
 
   // Strike overlay lines
   const strikeLines = [];
@@ -124,7 +146,6 @@ export default function CandleChart({
     }
   }
 
-  const lastBarX = bars.length > 0 ? bars[bars.length - 1].x + barWidth / 2 : null;
   const spotY = spotPrice ? pToY(spotPrice) : null;
 
   return (
@@ -132,25 +153,25 @@ export default function CandleChart({
       <svg
         width="100%"
         height={height}
-        viewBox={`0 0 ${totalW} ${height}`}
+        viewBox={`0 0 ${svgWidth} ${height}`}
         preserveAspectRatio="none"
         style={{ display: 'block' }}
       >
-        {/* Grid lines */}
+        {/* Grid lines — span full width including right margin for visual continuity */}
         {priceTicks.map((t, i) => (
           <g key={i}>
-            <line x1={leftPad} y1={t.y} x2={totalW} y2={t.y} stroke="#1a1a2e" strokeWidth="0.5" />
-            <text x={leftPad - 6} y={t.y + 3} textAnchor="end" fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
+            <line x1={CHART_LEFT_MARGIN} y1={t.y} x2={svgWidth} y2={t.y} stroke="#1a1a2e" strokeWidth="0.5" />
+            <text x={CHART_LEFT_MARGIN - 6} y={t.y + 3} textAnchor="end" fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
               ${t.price}
             </text>
           </g>
         ))}
 
-        {/* Strike lines (full width, dashed) */}
+        {/* Strike lines — span to candle zone edge, then through right margin */}
         {strikeLines.map((sl, i) => (
           <g key={`strike-${i}`}>
-            <line x1={leftPad} y1={sl.y} x2={totalW} y2={sl.y} stroke={sl.color} strokeWidth="1" strokeDasharray={sl.dash} opacity="0.7" />
-            <text x={leftPad + 4} y={sl.y - 3} fill={sl.color} fontSize="10" fontWeight="600" fontFamily="'Courier New', monospace">
+            <line x1={CHART_LEFT_MARGIN} y1={sl.y} x2={svgWidth} y2={sl.y} stroke={sl.color} strokeWidth="1" strokeDasharray={sl.dash} opacity="0.7" />
+            <text x={CHART_LEFT_MARGIN + 4} y={sl.y - 3} fill={sl.color} fontSize="10" fontWeight="600" fontFamily="'Courier New', monospace">
               {sl.label}
             </text>
           </g>
@@ -159,38 +180,39 @@ export default function CandleChart({
         {/* GEX lines */}
         {gexLines.map((gl, i) => (
           <g key={`gex-${i}`}>
-            <line x1={leftPad} y1={gl.y} x2={totalW} y2={gl.y} stroke={gl.color} strokeWidth="1" strokeDasharray={gl.dash} opacity="0.5" />
-            <text x={leftPad + 4} y={gl.y + 12} fill={gl.color} fontSize="9" fontFamily="'Courier New', monospace" opacity="0.7">
+            <line x1={CHART_LEFT_MARGIN} y1={gl.y} x2={svgWidth} y2={gl.y} stroke={gl.color} strokeWidth="1" strokeDasharray={gl.dash} opacity="0.5" />
+            <text x={CHART_LEFT_MARGIN + 4} y={gl.y + 12} fill={gl.color} fontSize="9" fontFamily="'Courier New', monospace" opacity="0.7">
               {gl.label}
             </text>
           </g>
         ))}
 
-        {/* Volume bars */}
+        {/* Volume bars — within candle zone only */}
         {bars.map((b, i) => (
-          <rect key={`vol-${i}`} x={b.x} y={b.volY} width={barWidth} height={b.volH} fill={b.volColor} />
+          <rect key={`vol-${i}`} x={b.x} y={b.volY} width={BAR_WIDTH} height={b.volH} fill={b.volColor} />
         ))}
 
-        {/* Candlestick bars */}
+        {/* Candlestick bars — within candle zone only */}
         {bars.map((b, i) => (
           <g key={`candle-${i}`}>
-            <line x1={b.wickX} y1={b.wickTop} x2={b.wickX} y2={b.wickBottom} stroke={b.color} strokeWidth="1" />
-            <rect x={b.x} y={b.bodyTop} width={barWidth} height={b.bodyHeight} fill={b.color} />
+            <line x1={b.centerX} y1={b.wickTop} x2={b.centerX} y2={b.wickBottom} stroke={b.color} strokeWidth="1" />
+            <rect x={b.x} y={b.bodyTop} width={BAR_WIDTH} height={b.bodyHeight} fill={b.color} />
           </g>
         ))}
 
-        {/* Current price vertical dashed line at last candle */}
-        {lastBarX != null && spotY != null && (
+        {/* Current price dashed vertical line — sits at lastCandleX in the margin zone */}
+        {lastCandleX != null && spotY != null && (
           <>
-            <line x1={lastBarX} y1={topPad} x2={lastBarX} y2={height - bottomPad} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
-            <rect x={totalW - rightPad - 56} y={spotY - 8} width={54} height={16} rx={3} fill="#448aff" />
-            <text x={totalW - rightPad - 54 + 27} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
+            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
+            {/* Price badge — positioned in the right margin zone */}
+            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#448aff" />
+            <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
               ${spotPrice?.toFixed(2)}
             </text>
           </>
         )}
 
-        {/* Date labels */}
+        {/* Date labels — within candle zone only */}
         {dateLabels.map((dl, i) => (
           <text key={`date-${i}`} x={dl.x} y={height - 6} fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
             {dl.label}
