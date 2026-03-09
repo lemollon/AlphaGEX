@@ -12,7 +12,7 @@ const STORAGE_KEY = 'ironforge_accounts_unlocked'
  * If the env var is not set, the gate is disabled (always shows content).
  */
 export default function PasswordGate({ children }: { children: ReactNode }) {
-  const requiredPassword = process.env.NEXT_PUBLIC_ACCOUNTS_PASSWORD || ''
+  const requiredPassword = 'thisiswhywetest'
   const [unlocked, setUnlocked] = useState(false)
   const [input, setInput] = useState('')
   const [error, setError] = useState(false)
