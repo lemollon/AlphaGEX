@@ -352,6 +352,8 @@ export default function StrategyPanel({
   const [gexSuggestion, setGexSuggestion] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const [pushing, setPushing] = useState(false);
+  const [pushMsg, setPushMsg] = useState('');
 
   // Alert form state
   const [alertPrice, setAlertPrice] = useState('');
@@ -418,6 +420,68 @@ export default function StrategyPanel({
       setSaveMsg(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePushDiscord = async () => {
+    if (!calcResult || !spotPrice) return;
+    setPushing(true);
+    setPushMsg('');
+    try {
+      let legPayload, shortExp, longExp;
+      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
+        legPayload = {
+          long_put: parseFloat(legs.longPutStrike) || 0,
+          short_put: parseFloat(legs.shortPutStrike) || 0,
+          short_call: parseFloat(legs.shortCallStrike) || 0,
+          long_call: parseFloat(legs.longCallStrike) || 0,
+        };
+        shortExp = legs.shortExpiration;
+        longExp = legs.longExpiration;
+      } else {
+        legPayload = {
+          long_put: parseFloat(legs.putStrike) || 0,
+          short_put: parseFloat(legs.putStrike) || 0,
+          short_call: parseFloat(legs.callStrike) || 0,
+          long_call: parseFloat(legs.callStrike) || 0,
+        };
+        shortExp = legs.frontExpiration;
+        longExp = legs.backExpiration;
+      }
+
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-spread`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          strategy: strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'Dbl Diagonal' : 'Dbl Calendar',
+          spot: spotPrice,
+          legs: legPayload,
+          short_exp: shortExp,
+          long_exp: longExp,
+          net_credit: calcResult.net_debit ? -calcResult.net_debit : null,
+          max_profit: calcResult.max_profit || null,
+          max_loss: calcResult.max_loss || null,
+          breakevens: [calcResult.lower_breakeven, calcResult.upper_breakeven].filter(Boolean),
+          chance_of_profit: calcResult.probability_of_profit != null
+            ? calcResult.probability_of_profit * 100
+            : calcResult.chance_of_profit != null
+              ? calcResult.chance_of_profit * 100
+              : null,
+          implied_vol: calcResult.implied_vol != null ? calcResult.implied_vol * 100 : null,
+          contracts,
+          gex_suggestion: gexSuggestion?.rationale || '',
+          pricing_mode: calcResult.pricing_mode || '',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to post');
+      setPushMsg('Posted!');
+      setTimeout(() => setPushMsg(''), 3000);
+    } catch (err) {
+      setPushMsg(err.message);
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -683,6 +747,34 @@ export default function StrategyPanel({
           marginTop: 2,
         }}>
           {saveMsg}
+        </div>
+      )}
+
+      {/* Push to Discord */}
+      {calcResult && (
+        <button
+          style={{
+            ...s.calcBtn,
+            background: '#5865F222',
+            color: '#5865F2',
+            border: '1px solid #5865F2',
+            marginTop: 2,
+            ...(pushing ? s.calcBtnDisabled : {}),
+          }}
+          onClick={handlePushDiscord}
+          disabled={pushing}
+        >
+          {pushing ? 'Posting...' : '\uD83D\uDCE3 PUSH TO DISCORD'}
+        </button>
+      )}
+      {pushMsg && (
+        <div style={{
+          fontSize: 10,
+          color: pushMsg === 'Posted!' ? '#5865F2' : '#ff5252',
+          textAlign: 'center',
+          marginTop: 2,
+        }}>
+          {pushMsg}
         </div>
       )}
 

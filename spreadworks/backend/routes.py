@@ -1192,37 +1192,55 @@ async def get_positions(status: str = "open", db: Session = Depends(get_db)):
 # --- POST /positions (10-slot enforcement) ---
 @router.post("/positions")
 async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
-    open_count = db.query(Position).filter(Position.status == "open").count()
+    try:
+        open_count = db.query(Position).filter(Position.status == "open").count()
+    except Exception as e:
+        logger.error(f"DB query failed in create_position: {e}")
+        raise HTTPException(500, f"Database error: {e}")
+
     if open_count >= MAX_OPEN_POSITIONS:
         raise HTTPException(400, "Maximum 10 open positions reached.")
 
-    short_exp_date = datetime.strptime(body.short_exp, "%Y-%m-%d").date()
-    long_exp_date = datetime.strptime(body.long_exp, "%Y-%m-%d").date() if body.long_exp else None
+    try:
+        short_exp_date = datetime.strptime(body.short_exp, "%Y-%m-%d").date()
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, f"Invalid short_exp date '{body.short_exp}': {e}")
+    long_exp_date = None
+    if body.long_exp:
+        try:
+            long_exp_date = datetime.strptime(body.long_exp, "%Y-%m-%d").date()
+        except (ValueError, TypeError) as e:
+            raise HTTPException(422, f"Invalid long_exp date '{body.long_exp}': {e}")
 
-    pos = Position(
-        symbol=body.symbol,
-        strategy=body.strategy,
-        label=body.label,
-        long_put=body.long_put,
-        short_put=body.short_put,
-        short_call=body.short_call,
-        long_call=body.long_call,
-        short_exp=short_exp_date,
-        long_exp=long_exp_date,
-        contracts=body.contracts,
-        entry_credit=body.entry_credit,
-        entry_price=body.entry_price,
-        entry_spot=body.entry_spot,
-        max_profit=body.max_profit,
-        max_loss=body.max_loss,
-        breakeven_low=body.breakeven_low,
-        breakeven_high=body.breakeven_high,
-        notes=body.notes,
-        status="open",
-    )
-    db.add(pos)
-    db.commit()
-    db.refresh(pos)
+    try:
+        pos = Position(
+            symbol=body.symbol,
+            strategy=body.strategy,
+            label=body.label,
+            long_put=body.long_put,
+            short_put=body.short_put,
+            short_call=body.short_call,
+            long_call=body.long_call,
+            short_exp=short_exp_date,
+            long_exp=long_exp_date,
+            contracts=body.contracts,
+            entry_credit=body.entry_credit,
+            entry_price=body.entry_price,
+            entry_spot=body.entry_spot,
+            max_profit=body.max_profit,
+            max_loss=body.max_loss,
+            breakeven_low=body.breakeven_low,
+            breakeven_high=body.breakeven_high,
+            notes=body.notes,
+            status="open",
+        )
+        db.add(pos)
+        db.commit()
+        db.refresh(pos)
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save position: {e}")
+        raise HTTPException(500, f"Failed to save position: {e}")
     return _pos_to_dict(pos)
 
 
@@ -1488,6 +1506,7 @@ def _send_discord_embed(embed: dict) -> bool:
     import requests as req
 
     if not DISCORD_WEBHOOK_URL:
+        logger.warning("[Discord] DISCORD_WEBHOOK_URL not set — skipping post")
         return False
     try:
         resp = req.post(
@@ -1496,8 +1515,13 @@ def _send_discord_embed(embed: dict) -> bool:
             headers={"Content-Type": "application/json"},
             timeout=10,
         )
-        return resp.status_code in (200, 204)
-    except Exception:
+        if resp.status_code in (200, 204):
+            logger.info(f"[Discord] Embed posted successfully: {embed.get('title', '?')}")
+            return True
+        logger.error(f"[Discord] Post failed: {resp.status_code} {resp.text[:200]}")
+        return False
+    except Exception as e:
+        logger.error(f"[Discord] Post exception: {e}")
         return False
 
 
@@ -1528,6 +1552,78 @@ def _discord_post_closed(pos: Position):
         "timestamp": datetime.utcnow().isoformat(),
     }
     _send_discord_embed(embed)
+
+
+class DiscordPushSpread(BaseModel):
+    symbol: str = "SPY"
+    strategy: str = ""
+    spot: float | None = None
+    legs: dict = {}
+    short_exp: str = ""
+    long_exp: str = ""
+    net_credit: float | None = None
+    max_profit: float | None = None
+    max_loss: float | None = None
+    breakevens: list[float] = []
+    chance_of_profit: float | None = None
+    implied_vol: float | None = None
+    contracts: int = 1
+    gex_suggestion: str = ""
+    pricing_mode: str = ""
+
+
+@router.post("/discord/push-spread")
+async def discord_push_spread(body: DiscordPushSpread):
+    """Push current spread analysis to Discord as a rich embed."""
+    if not DISCORD_WEBHOOK_URL:
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    strat_label = STRATEGY_LABELS.get(body.strategy, body.strategy or "Spread")
+    is_credit = body.net_credit is not None and body.net_credit > 0
+    color = 0x00E676 if is_credit else 0xFF1744
+
+    legs = body.legs
+    legs_str = (
+        f"LP {legs.get('long_put', '?')} / SP {legs.get('short_put', '?')} / "
+        f"SC {legs.get('short_call', '?')} / LC {legs.get('long_call', '?')}"
+    )
+
+    be_str = " / ".join(f"${b:.2f}" for b in body.breakevens) if body.breakevens else "--"
+    iv_str = f"{body.implied_vol:.1f}%" if body.implied_vol else "--"
+    cop_str = f"{body.chance_of_profit:.1f}%" if body.chance_of_profit else "--"
+    credit_str = f"+${body.net_credit:,.0f}" if body.net_credit and body.net_credit > 0 else f"-${abs(body.net_credit or 0):,.0f}"
+    pricing_note = " (theoretical)" if body.pricing_mode == "black_scholes" else ""
+
+    footer_source = "GEX Suggest" if body.gex_suggestion else "Manual"
+
+    fields = [
+        {"name": "Legs", "value": legs_str, "inline": False},
+        {"name": "Short Exp", "value": body.short_exp or "--", "inline": True},
+        {"name": "Long Exp", "value": body.long_exp or "--", "inline": True},
+        {"name": "Net Credit", "value": f"{credit_str}{pricing_note}", "inline": True},
+        {"name": "Max Profit", "value": f"${body.max_profit:,.0f}" if body.max_profit else "--", "inline": True},
+        {"name": "Max Loss", "value": f"${body.max_loss:,.0f}" if body.max_loss else "--", "inline": True},
+        {"name": "COP", "value": cop_str, "inline": True},
+        {"name": "Breakevens", "value": be_str, "inline": True},
+        {"name": "IV", "value": iv_str, "inline": True},
+        {"name": "Contracts", "value": str(body.contracts), "inline": True},
+    ]
+
+    if body.gex_suggestion:
+        fields.append({"name": "GEX Signal", "value": body.gex_suggestion[:1024], "inline": False})
+
+    embed = {
+        "title": f"\U0001f4ca {body.symbol} {strat_label} \u00b7 Spot ${body.spot:,.2f}" if body.spot else f"\U0001f4ca {body.symbol} {strat_label}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"SpreadWorks \u00b7 {footer_source}"},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
 
 
 @router.post("/discord/post-open")
