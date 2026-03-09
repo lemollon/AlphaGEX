@@ -883,18 +883,17 @@ async def calculate_spread(request: Request, body: CalcRequest):
         exp = datetime.strptime(d, "%Y-%m-%d").date()
         return max((exp - today_date).days, 0) / 365.0
 
-    def _price_or_bs(strike: float, T: float, is_call: bool, exp_str: str) -> tuple[float, float]:
-        """Return (price, iv) using chain if available, else Black-Scholes."""
+    def _price_or_bs(strike: float, T: float, is_call: bool, exp_str: str) -> tuple[float, float, bool]:
+        """Return (price, iv, is_theoretical) using chain if available, else Black-Scholes."""
         otype = "call" if is_call else "put"
         # Try chain-aware pricing
         if body.use_chain_prices and chain_opts:
-            # chain_options may be keyed by expiration
             exp_opts = chain_opts.get(exp_str, chain_opts)
             mid = _lookup_chain_mid(exp_opts, strike, otype)
             iv = _lookup_chain_iv(exp_opts, strike, otype)
             if mid is not None and mid > 0:
                 sigma_used = iv if iv and iv > 0 else default_sigma
-                return mid, sigma_used
+                return mid, sigma_used, False
         # Fallback: use per-leg IV from chain if available
         sigma = default_sigma
         if chain_opts:
@@ -902,7 +901,7 @@ async def calculate_spread(request: Request, body: CalcRequest):
             iv = _lookup_chain_iv(exp_opts, strike, otype)
             if iv and iv > 0:
                 sigma = iv
-        return _bs_price(S, strike, T, r, sigma, is_call), sigma
+        return _bs_price(S, strike, T, r, sigma, is_call), sigma, True
 
     if body.strategy == "double_diagonal":
         lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
@@ -918,10 +917,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         T_short = _tte(short_exp)
         T_long = _tte(long_exp)
 
-        p_lp, iv_lp = _price_or_bs(lp, T_long, False, long_exp)
-        p_sp, iv_sp = _price_or_bs(sp, T_short, False, short_exp)
-        p_sc, iv_sc = _price_or_bs(sc, T_short, True, short_exp)
-        p_lc, iv_lc = _price_or_bs(lc, T_long, True, long_exp)
+        p_lp, iv_lp, theo_lp = _price_or_bs(lp, T_long, False, long_exp)
+        p_sp, iv_sp, theo_sp = _price_or_bs(sp, T_short, False, short_exp)
+        p_sc, iv_sc, theo_sc = _price_or_bs(sc, T_short, True, short_exp)
+        p_lc, iv_lc, theo_lc = _price_or_bs(lc, T_long, True, long_exp)
 
         entry_cost = p_lp + p_lc - p_sp - p_sc
         net_debit = entry_cost * 100 * n
@@ -947,10 +946,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         )
 
         leg_detail = [
-            {"leg": "Long Put", "strike": lp, "exp": long_exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4)},
-            {"leg": "Short Put", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4)},
-            {"leg": "Short Call", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4)},
-            {"leg": "Long Call", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4)},
+            {"leg": "Long Put", "strike": lp, "exp": long_exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp},
+            {"leg": "Short Put", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
+            {"leg": "Short Call", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
+            {"leg": "Long Call", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
         ]
 
     elif body.strategy == "double_calendar":
@@ -965,10 +964,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         T_front = _tte(front_exp)
         T_back = _tte(back_exp)
 
-        p_fp, iv_fp = _price_or_bs(ps, T_front, False, front_exp)
-        p_bp, iv_bp = _price_or_bs(ps, T_back, False, back_exp)
-        p_fc, iv_fc = _price_or_bs(cs, T_front, True, front_exp)
-        p_bc, iv_bc = _price_or_bs(cs, T_back, True, back_exp)
+        p_fp, iv_fp, theo_fp = _price_or_bs(ps, T_front, False, front_exp)
+        p_bp, iv_bp, theo_bp = _price_or_bs(ps, T_back, False, back_exp)
+        p_fc, iv_fc, theo_fc = _price_or_bs(cs, T_front, True, front_exp)
+        p_bc, iv_bc, theo_bc = _price_or_bs(cs, T_back, True, back_exp)
 
         entry_cost = p_bp + p_bc - p_fp - p_fc
         net_debit = entry_cost * 100 * n
@@ -992,10 +991,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         )
 
         leg_detail = [
-            {"leg": "Short Front Put", "strike": ps, "exp": front_exp, "price": round(p_fp, 4), "iv": round(iv_fp, 4)},
-            {"leg": "Long Back Put", "strike": ps, "exp": back_exp, "price": round(p_bp, 4), "iv": round(iv_bp, 4)},
-            {"leg": "Short Front Call", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4)},
-            {"leg": "Long Back Call", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4)},
+            {"leg": "Short Front Put", "strike": ps, "exp": front_exp, "price": round(p_fp, 4), "iv": round(iv_fp, 4), "theoretical": theo_fp},
+            {"leg": "Long Back Put", "strike": ps, "exp": back_exp, "price": round(p_bp, 4), "iv": round(iv_bp, 4), "theoretical": theo_bp},
+            {"leg": "Short Front Call", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4), "theoretical": theo_fc},
+            {"leg": "Long Back Call", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4), "theoretical": theo_bc},
         ]
     else:
         raise HTTPException(400, f"Unknown strategy: {body.strategy}")
