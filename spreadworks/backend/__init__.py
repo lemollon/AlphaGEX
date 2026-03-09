@@ -5,6 +5,11 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env from the spreadworks/ root (one level up from backend/)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
