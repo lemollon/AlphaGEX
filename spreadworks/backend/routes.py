@@ -1505,8 +1505,98 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
 # 9. Discord webhook posting for positions
 # ---------------------------------------------------------------------------
 
-def _send_discord_embed(embed: dict) -> bool:
-    """Send an embed to Discord webhook. Returns True on success."""
+def _generate_payoff_chart(
+    curve: list[dict],
+    spot_price: float | None = None,
+    breakevens: dict | None = None,
+    max_profit: float | None = None,
+    max_loss: float | None = None,
+    title: str = "",
+) -> bytes | None:
+    """Generate a payoff chart PNG and return as bytes."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.ticker as ticker
+
+        if not curve or len(curve) < 2:
+            return None
+
+        prices = [p["price"] for p in curve]
+        pnls = [p["pnl"] for p in curve]
+
+        fig, ax = plt.subplots(figsize=(7, 3.5), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax.set_facecolor("#0d0d18")
+
+        # Fill profit/loss zones
+        ax.fill_between(prices, pnls, 0, where=[p >= 0 for p in pnls],
+                         color="#00e676", alpha=0.15, interpolate=True)
+        ax.fill_between(prices, pnls, 0, where=[p <= 0 for p in pnls],
+                         color="#ff1744", alpha=0.12, interpolate=True)
+
+        # Main P&L line
+        ax.plot(prices, pnls, color="#3b82f6", linewidth=2, zorder=5)
+
+        # Zero line
+        ax.axhline(y=0, color="#475569", linewidth=0.7, linestyle="--", zorder=3)
+
+        # Spot price
+        if spot_price and min(prices) <= spot_price <= max(prices):
+            ax.axvline(x=spot_price, color="#facc15", linewidth=1, linestyle="--",
+                       alpha=0.8, zorder=4)
+            ax.text(spot_price, max(pnls) * 0.92, f" Spot ${spot_price:.0f}",
+                    color="#facc15", fontsize=8, fontfamily="monospace", zorder=6)
+
+        # Breakevens
+        if breakevens:
+            for be_val in [breakevens.get("lower"), breakevens.get("upper")]:
+                if be_val and min(prices) <= be_val <= max(prices):
+                    ax.axvline(x=be_val, color="#a78bfa", linewidth=1,
+                               linestyle=":", alpha=0.7, zorder=4)
+                    ax.text(be_val, min(pnls) * 0.85, f" BE ${be_val:.0f}",
+                            color="#a78bfa", fontsize=7, fontfamily="monospace", zorder=6)
+
+        # Max profit / loss annotations
+        if max_profit is not None:
+            ax.text(0.98, 0.95, f"Max Profit: +${max_profit:,.0f}",
+                    transform=ax.transAxes, color="#00e676", fontsize=8,
+                    fontfamily="monospace", ha="right", va="top", zorder=6)
+        if max_loss is not None:
+            ax.text(0.98, 0.05, f"Max Loss: ${max_loss:,.0f}",
+                    transform=ax.transAxes, color="#ff5252", fontsize=8,
+                    fontfamily="monospace", ha="right", va="bottom", zorder=6)
+
+        # Styling
+        ax.set_xlabel("Underlying Price", color="#888", fontsize=9, fontfamily="monospace")
+        ax.set_ylabel("P&L ($)", color="#888", fontsize=9, fontfamily="monospace")
+        if title:
+            ax.set_title(title, color="#fff", fontsize=11, fontfamily="monospace",
+                         fontweight="bold", pad=10)
+        ax.tick_params(colors="#555", labelsize=8)
+        ax.xaxis.set_major_formatter(ticker.FormatStrFormatter("$%.0f"))
+        ax.yaxis.set_major_formatter(ticker.FormatStrFormatter("$%.0f"))
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_color("#1a1a2e")
+        ax.spines["left"].set_color("#1a1a2e")
+        ax.grid(axis="y", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Chart generation failed: {e}")
+        return None
+
+
+def _send_discord_embed(embed: dict, image_bytes: bytes | None = None) -> bool:
+    """Send an embed to Discord webhook, optionally with an attached chart image."""
     import requests as req
 
     url = _discord_url()
@@ -1514,12 +1604,23 @@ def _send_discord_embed(embed: dict) -> bool:
         logger.warning("[Discord] DISCORD_WEBHOOK_URL not set — skipping post")
         return False
     try:
-        resp = req.post(
-            url,
-            json={"embeds": [embed]},
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
+        if image_bytes:
+            # Multipart upload: embed as JSON payload + image as file
+            embed["image"] = {"url": "attachment://payoff.png"}
+            payload = json.dumps({"embeds": [embed]})
+            resp = req.post(
+                url,
+                data={"payload_json": payload},
+                files={"file": ("payoff.png", image_bytes, "image/png")},
+                timeout=15,
+            )
+        else:
+            resp = req.post(
+                url,
+                json={"embeds": [embed]},
+                headers={"Content-Type": "application/json"},
+                timeout=10,
+            )
         if resp.status_code in (200, 204):
             logger.info(f"[Discord] Embed posted successfully: {embed.get('title', '?')}")
             return True
@@ -1575,6 +1676,7 @@ class DiscordPushSpread(BaseModel):
     contracts: int = 1
     gex_suggestion: str = ""
     pricing_mode: str = ""
+    pnl_curve: list[dict] = []
 
 
 @router.post("/discord/push-spread")
@@ -1625,7 +1727,28 @@ async def discord_push_spread(body: DiscordPushSpread):
         "timestamp": datetime.utcnow().isoformat(),
     }
 
-    ok = _send_discord_embed(embed)
+    # Generate payoff chart if curve data provided
+    chart_bytes = None
+    if body.pnl_curve:
+        be_dict = None
+        if body.breakevens:
+            be_dict = {
+                "lower": body.breakevens[0] if len(body.breakevens) > 0 else None,
+                "upper": body.breakevens[1] if len(body.breakevens) > 1 else None,
+            }
+        chart_title = f"{body.symbol} {strat_label}"
+        if body.spot:
+            chart_title += f" \u00b7 Spot ${body.spot:,.2f}"
+        chart_bytes = _generate_payoff_chart(
+            curve=body.pnl_curve,
+            spot_price=body.spot,
+            breakevens=be_dict,
+            max_profit=body.max_profit,
+            max_loss=body.max_loss,
+            title=chart_title,
+        )
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
     if not ok:
         raise HTTPException(502, "Failed to post to Discord")
     return {"posted": True}
@@ -1947,18 +2070,99 @@ async def discord_push_position(
     })
 
     title_label = pos.label or f"#{pos.id}"
+    chart_title = f"{pos.symbol} {strat_label} \u00b7 {title_label}"
     embed = {
-        "title": f"{status_emoji} {pos.symbol} {strat_label} \u00b7 {title_label}",
+        "title": f"{status_emoji} {chart_title}",
         "color": color,
         "fields": fields,
         "footer": {"text": f"SpreadWorks \u00b7 Opened {pos.entry_date}"},
         "timestamp": datetime.utcnow().isoformat(),
     }
 
-    ok = _send_discord_embed(embed)
+    # Generate payoff chart image
+    chart_bytes = _generate_position_payoff_chart(pos, spot, chart_title)
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
     if not ok:
         raise HTTPException(502, "Failed to post to Discord")
     return {"posted": True, "position_id": position_id}
+
+
+def _generate_position_payoff_chart(pos: Position, spot: float | None, title: str) -> bytes | None:
+    """Build payoff curve data from a Position and render chart PNG."""
+    lp, sp = pos.long_put, pos.short_put
+    sc, lc = pos.short_call, pos.long_call
+    entry = pos.entry_price
+    n = pos.contracts
+    sigma = 0.20
+    r = RISK_FREE_RATE
+    today_date = date.today()
+
+    if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
+        if pos.strategy == "double_diagonal":
+            profile = _scan_pnl_profile(
+                "double_diagonal", spot or ((sp + sc) / 2),
+                {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+                {"short": str(pos.short_exp), "long": str(pos.long_exp)},
+                r, sigma, entry, n,
+            )
+        else:
+            profile = _scan_pnl_profile(
+                "double_calendar", spot or ((sp + sc) / 2),
+                {"ps": sp, "cs": sc},
+                {"front": str(pos.short_exp), "back": str(pos.long_exp)},
+                r, sigma, entry, n,
+            )
+        return _generate_payoff_chart(
+            curve=profile["pnl_curve"],
+            spot_price=spot,
+            breakevens={"lower": profile["lower_breakeven"], "upper": profile["upper_breakeven"]},
+            max_profit=profile["max_profit"],
+            max_loss=profile["max_loss"],
+            title=title,
+        )
+
+    # Iron Condor at-expiration
+    scan_lo = lp - 10
+    scan_hi = lc + 10
+    curve = []
+    max_profit_val = 0.0
+    max_loss_val = 0.0
+    lower_be = None
+    upper_be = None
+    prev_pnl = None
+
+    for px_int in range(int(scan_lo * 10), int(scan_hi * 10) + 1):
+        px = px_int / 10.0
+        pnl_per_contract = (
+            -max(0, sp - px) + max(0, lp - px)
+            - max(0, px - sc) + max(0, px - lc)
+            + entry
+        )
+        pnl = round(pnl_per_contract * 100 * n, 2)
+        if px_int % 10 == 0:
+            curve.append({"price": px, "pnl": pnl})
+        if pnl > max_profit_val:
+            max_profit_val = pnl
+        if pnl < max_loss_val:
+            max_loss_val = pnl
+        if prev_pnl is not None:
+            if prev_pnl < 0 <= pnl or prev_pnl >= 0 > pnl:
+                if lower_be is None:
+                    lower_be = px
+                else:
+                    upper_be = px
+        prev_pnl = pnl
+
+    return _generate_payoff_chart(
+        curve=curve,
+        spot_price=spot,
+        breakevens={"lower": round(lower_be, 2) if lower_be else None,
+                    "upper": round(upper_be, 2) if upper_be else None},
+        max_profit=round(max_profit_val, 2),
+        max_loss=round(max_loss_val, 2),
+        title=title,
+    )
 
 
 # ---------------------------------------------------------------------------
