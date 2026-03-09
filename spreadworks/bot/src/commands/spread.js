@@ -19,7 +19,8 @@ module.exports = {
         .setRequired(false)
         .addChoices(
           { name: 'Double Diagonal', value: 'double_diagonal' },
-          { name: 'Double Calendar', value: 'double_calendar' }
+          { name: 'Double Calendar', value: 'double_calendar' },
+          { name: 'Iron Condor', value: 'iron_condor' }
         )
     ),
 
@@ -60,6 +61,12 @@ module.exports = {
           strikeLines.push(`Long Call: $${legs.long_call_strike}`);
           strikeLines.push(`Short Exp: ${legs.short_expiration}`);
           strikeLines.push(`Long Exp: ${legs.long_expiration}`);
+        } else if (strategy === 'iron_condor') {
+          strikeLines.push(`Long Put: $${legs.long_put_strike}`);
+          strikeLines.push(`Short Put: $${legs.short_put_strike}`);
+          strikeLines.push(`Short Call: $${legs.short_call_strike}`);
+          strikeLines.push(`Long Call: $${legs.long_call_strike}`);
+          strikeLines.push(`Expiration: ${legs.expiration}`);
         } else {
           strikeLines.push(`Put Strike: $${legs.put_strike}`);
           strikeLines.push(`Call Strike: $${legs.call_strike}`);
@@ -68,8 +75,12 @@ module.exports = {
         }
       }
 
-      const strategyLabel =
-        strategy === 'double_diagonal' ? 'Double Diagonal' : 'Double Calendar';
+      const strategyLabels = {
+        double_diagonal: 'Double Diagonal',
+        double_calendar: 'Double Calendar',
+        iron_condor: 'Iron Condor',
+      };
+      const strategyLabel = strategyLabels[strategy] || strategy;
 
       const embed = new EmbedBuilder()
         .setTitle(`SpreadWorks: ${symbol} ${strategyLabel}`)

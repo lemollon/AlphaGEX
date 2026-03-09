@@ -664,7 +664,27 @@ async def gex_suggest(
             f"Front exp {front_exp}, back exp {back_exp}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
-    else:
+    elif strategy == "iron_condor":
+        short_put = _round_strike(put_wall)
+        short_call = _round_strike(call_wall)
+        long_put = _round_strike(short_put - wing_offset)
+        long_call = _round_strike(short_call + wing_offset)
+
+        legs = {
+            "long_put_strike": long_put,
+            "short_put_strike": short_put,
+            "short_call_strike": short_call,
+            "long_call_strike": long_call,
+            "expiration": front_exp,
+        }
+        rationale = (
+            f"Iron Condor: short strikes at GEX walls "
+            f"(put wall ${short_put}, call wall ${short_call}). "
+            f"Long wings ${wing_offset} wide. "
+            f"Single exp {front_exp}. "
+            f"Regime: {regime or 'UNKNOWN'}."
+        )
+    else:  # double_calendar
         put_strike = _round_strike(put_wall)
         call_strike = _round_strike(call_wall)
 
@@ -768,6 +788,12 @@ def _scan_pnl_profile(
         T_remaining = max(T_long - T_short, 1 / 365.0)
         scan_lo = min(lp, sp, sc, lc) - 20
         scan_hi = max(lp, sp, sc, lc) + 20
+    elif strategy == "iron_condor":
+        lp, sp = strikes["lp"], strikes["sp"]
+        sc, lc = strikes["sc"], strikes["lc"]
+        T_exp = _tte(expirations["exp"])
+        scan_lo = min(lp, sp, sc, lc) - 20
+        scan_hi = max(lp, sp, sc, lc) + 20
     else:
         ps, cs = strikes["ps"], strikes["cs"]
         T_front = _tte(expirations["front"])
@@ -795,6 +821,15 @@ def _scan_pnl_profile(
                 - max(0, px - sc)
                 + _bs_price(px, lc, T_remaining, r, sigma, True)
                 - entry_cost
+            ) * 100 * n
+        elif strategy == "iron_condor":
+            # Iron Condor at expiration: all intrinsic
+            pnl = (
+                max(0, lp - px)   # long put payoff
+                - max(0, sp - px)  # short put payoff
+                - max(0, px - sc)  # short call payoff
+                + max(0, px - lc)  # long call payoff
+                + entry_cost       # credit received (entry_cost is negative for credit)
             ) * 100 * n
         else:
             pnl = (
@@ -860,7 +895,7 @@ def _lookup_chain_iv(options: dict, strike: float, otype: str) -> float | None:
 
 class CalcRequest(BaseModel):
     symbol: str = "SPY"
-    strategy: str  # double_diagonal | double_calendar
+    strategy: str  # double_diagonal | double_calendar | iron_condor
     contracts: int = 1
     legs: dict[str, Any]
     spot_price: float | None = None
@@ -963,6 +998,52 @@ async def calculate_spread(request: Request, body: CalcRequest):
             {"leg": "Short Put", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
             {"leg": "Short Call", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
             {"leg": "Long Call", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
+        ]
+
+    elif body.strategy == "iron_condor":
+        lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
+        sp = float(legs.get("shortPutStrike") or legs.get("short_put_strike", 0))
+        sc = float(legs.get("shortCallStrike") or legs.get("short_call_strike", 0))
+        lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
+        exp = str(legs.get("expiration") or "")
+
+        if not all([lp, sp, sc, lc, exp]):
+            raise HTTPException(422, "All 4 strikes and expiration required for Iron Condor")
+
+        T_exp = _tte(exp)
+
+        p_lp, iv_lp, theo_lp = _price_or_bs(lp, T_exp, False, exp)
+        p_sp, iv_sp, theo_sp = _price_or_bs(sp, T_exp, False, exp)
+        p_sc, iv_sc, theo_sc = _price_or_bs(sc, T_exp, True, exp)
+        p_lc, iv_lc, theo_lc = _price_or_bs(lc, T_exp, True, exp)
+
+        # IC is a credit strategy: sell short legs, buy long wings
+        entry_cost = p_lp + p_lc - p_sp - p_sc  # negative = net credit
+        net_debit = entry_cost * 100 * n
+
+        g_lp = _bs_greeks(S, lp, T_exp, r, iv_lp, False)
+        g_sp = _bs_greeks(S, sp, T_exp, r, iv_sp, False)
+        g_sc = _bs_greeks(S, sc, T_exp, r, iv_sc, True)
+        g_lc = _bs_greeks(S, lc, T_exp, r, iv_lc, True)
+
+        greeks = {
+            k: round((g_lp[k] - g_sp[k] - g_sc[k] + g_lc[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lp, iv_sp, iv_sc, iv_lc]) / 4
+        profile = _scan_pnl_profile(
+            "iron_condor", S,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        leg_detail = [
+            {"leg": "Long Put", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp},
+            {"leg": "Short Put", "strike": sp, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
+            {"leg": "Short Call", "strike": sc, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
+            {"leg": "Long Call", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
         ]
 
     elif body.strategy == "double_calendar":
