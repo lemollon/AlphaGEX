@@ -1688,6 +1688,33 @@ class DiscordPushSpread(BaseModel):
     pnl_curve: list[dict] = []
 
 
+@router.post("/discord/test")
+async def discord_test():
+    """Test Discord webhook connectivity — posts a minimal embed, no chart."""
+    url = _discord_url()
+    webhook_set = bool(url)
+    if not webhook_set:
+        return {"webhook_set": False, "status_code": None, "success": False,
+                "detail": "DISCORD_WEBHOOK_URL not set"}
+
+    import requests as req
+    embed = {
+        "title": "SpreadWorks — Webhook Test",
+        "description": "If you see this, the webhook is working.",
+        "color": 0x3B82F6,
+        "footer": {"text": "SpreadWorks · Test Ping"},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    try:
+        resp = req.post(url, json={"embeds": [embed]},
+                        headers={"Content-Type": "application/json"}, timeout=10)
+        return {"webhook_set": True, "status_code": resp.status_code,
+                "success": resp.status_code in (200, 204)}
+    except Exception as e:
+        return {"webhook_set": True, "status_code": None, "success": False,
+                "detail": str(e)}
+
+
 @router.post("/discord/push-spread")
 async def discord_push_spread(body: DiscordPushSpread):
     """Push current spread analysis to Discord as a rich embed."""
