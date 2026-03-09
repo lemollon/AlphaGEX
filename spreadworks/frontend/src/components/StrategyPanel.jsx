@@ -247,6 +247,7 @@ export default function StrategyPanel({
   onCalculate,
   calcLoading,
   calcError,
+  calcResult,
   alerts,
   onRefreshAlerts,
 }) {
@@ -259,11 +260,50 @@ export default function StrategyPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [gexSuggestion, setGexSuggestion] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
 
   // Alert form state
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
+
+  const handleSavePosition = async () => {
+    if (!calcResult || !spotPrice) return;
+    setSaving(true);
+    setSaveMsg('');
+    try {
+      const res = await fetch(`${API_URL}/api/spreadworks/positions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          strategy,
+          contracts,
+          legs,
+          net_debit: calcResult.net_debit,
+          spot_at_entry: spotPrice,
+          notes: '',
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to save');
+      }
+      setSaveMsg('Saved!');
+      // Also post to Discord
+      if (data.id) {
+        fetch(`${API_URL}/api/spreadworks/discord/post-open?position_id=${data.id}`, {
+          method: 'POST',
+        }).catch(() => {});
+      }
+      setTimeout(() => setSaveMsg(''), 3000);
+    } catch (err) {
+      setSaveMsg(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   useEffect(() => {
     setLegs(DEFAULT_LEGS[strategy]);
@@ -567,6 +607,34 @@ export default function StrategyPanel({
       >
         {calcLoading || loading ? 'Loading...' : '\u26A1 CALCULATE'}
       </button>
+
+      {/* Save Position — only visible after calculate */}
+      {calcResult && (
+        <button
+          style={{
+            ...s.calcBtn,
+            background: '#00e67622',
+            color: '#00e676',
+            border: '1px solid #00e676',
+            marginTop: 2,
+            ...(saving ? s.calcBtnDisabled : {}),
+          }}
+          onClick={handleSavePosition}
+          disabled={saving}
+        >
+          {saving ? 'Saving...' : '\uD83D\uDCBE SAVE POSITION'}
+        </button>
+      )}
+      {saveMsg && (
+        <div style={{
+          fontSize: 10,
+          color: saveMsg === 'Saved!' ? '#00e676' : '#ff5252',
+          textAlign: 'center',
+          marginTop: 2,
+        }}>
+          {saveMsg}
+        </div>
+      )}
 
       {/* Price Alerts */}
       <div style={s.alertSection}>

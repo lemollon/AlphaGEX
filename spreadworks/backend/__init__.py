@@ -11,6 +11,8 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routes import router
+from .db import engine, Base
+from . import models  # noqa: F401 — register models with Base
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -25,6 +27,16 @@ if FRONTEND_DIST.exists():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Create DB tables if engine is configured
+    if engine is not None:
+        try:
+            Base.metadata.create_all(bind=engine)
+            print("[SpreadWorks] Database tables created/verified")
+        except Exception as e:
+            print(f"[SpreadWorks] DB table creation failed (non-fatal): {e}")
+    else:
+        print("[SpreadWorks] DATABASE_URL not set — running without database")
+
     app.state.http = httpx.AsyncClient(timeout=15.0)
     yield
     await app.state.http.aclose()

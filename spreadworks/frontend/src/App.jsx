@@ -1,18 +1,67 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
 import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
+import PositionsPage from './components/PositionsPage';
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
 const CHART_HEIGHT = 500;
 
-export default function App() {
+const navStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 0,
+  background: '#080810',
+  borderBottom: '1px solid #1a1a2e',
+  fontFamily: "'Courier New', monospace",
+  fontSize: 12,
+  padding: '0 12px',
+};
+
+const navLinkStyle = (isActive) => ({
+  padding: '8px 16px',
+  color: isActive ? '#448aff' : '#555',
+  borderBottom: isActive ? '2px solid #448aff' : '2px solid transparent',
+  textDecoration: 'none',
+  fontWeight: isActive ? 700 : 400,
+  fontSize: 12,
+  fontFamily: "'Courier New', monospace",
+  transition: 'all 0.15s',
+});
+
+const logoStyle = {
+  display: 'flex',
+  alignItems: 'baseline',
+  gap: 0,
+  padding: '8px 12px 8px 0',
+  marginRight: 12,
+  borderRight: '1px solid #1a1a2e',
+};
+
+function NavBar() {
+  return (
+    <nav style={navStyle}>
+      <div style={logoStyle}>
+        <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>Spread</span>
+        <span style={{ color: '#448aff', fontWeight: 700, fontSize: 14 }}>Works</span>
+      </div>
+      <NavLink to="/" style={({ isActive }) => navLinkStyle(isActive)} end>
+        Builder
+      </NavLink>
+      <NavLink to="/positions" style={({ isActive }) => navLinkStyle(isActive)}>
+        Positions
+      </NavLink>
+    </nav>
+  );
+}
+
+function BuilderPage() {
   const [symbol] = useState('SPY');
   const [interval, setInterval_] = useState('15min');
   const [alerts, setAlerts] = useState([]);
@@ -22,16 +71,15 @@ export default function App() {
   const [viewMode, setViewMode] = useState('graph');
   const [lastPayload, setLastPayload] = useState(null);
 
-  // Hooks
+  const API_URL = import.meta.env.VITE_API_URL || '';
+
   const { candles, spotPrice, loading: candlesLoading, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
   const { calcResult, calcLoading, calcError, calculate } = useCalculate();
   const { isOpen, secondsAgo, markRefreshed, statusText } = useMarketHours();
 
-  // Extract strikes from last payload for chart overlay
   const strikes = lastPayload?.legs || null;
 
-  // Fetch alerts
   const fetchAlerts = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/api/spreadworks/alerts`);
@@ -41,13 +89,12 @@ export default function App() {
     } catch {
       // silent
     }
-  }, []);
+  }, [API_URL]);
 
   useEffect(() => {
     fetchAlerts();
   }, [fetchAlerts]);
 
-  // Live refresh timer — mark refreshed when candles update
   const prevCandlesLen = useRef(0);
   useEffect(() => {
     if (candles.length !== prevCandlesLen.current) {
@@ -56,18 +103,15 @@ export default function App() {
     }
   }, [candles, markRefreshed]);
 
-  // Handle calculate
   const handleCalculate = async (payload) => {
     setLastPayload(payload);
     await calculate(payload);
   };
 
-  // Interval change
   const handleIntervalChange = (newInterval) => {
     setInterval_(newInterval);
   };
 
-  // Header bar
   const headerStyle = {
     display: 'flex',
     alignItems: 'center',
@@ -82,12 +126,10 @@ export default function App() {
   return (
     <div style={{
       display: 'flex',
-      height: '100vh',
-      width: '100%',
-      background: '#080810',
+      flex: 1,
       overflow: 'hidden',
     }}>
-      {/* LEFT PANEL — Strategy Builder (260px fixed) */}
+      {/* LEFT PANEL */}
       <StrategyPanel
         symbol={symbol}
         spotPrice={spotPrice}
@@ -95,11 +137,12 @@ export default function App() {
         onCalculate={handleCalculate}
         calcLoading={calcLoading}
         calcError={calcError}
+        calcResult={calcResult}
         alerts={alerts}
         onRefreshAlerts={fetchAlerts}
       />
 
-      {/* RIGHT PANEL — Chart + Controls + Metrics */}
+      {/* RIGHT PANEL */}
       <div style={{
         flex: 1,
         display: 'flex',
@@ -107,7 +150,6 @@ export default function App() {
         minWidth: 0,
         overflow: 'hidden',
       }}>
-        {/* Header bar */}
         <div style={headerStyle}>
           <span style={{ color: '#fff', fontWeight: 700 }}>{symbol}</span>
           <span style={{ color: '#555' }}>
@@ -120,8 +162,6 @@ export default function App() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
-
-          {/* Market status */}
           <div style={{
             marginLeft: 'auto',
             display: 'flex',
@@ -141,7 +181,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Chart area — candles + payoff side by side */}
         <div style={{ flex: 1, minHeight: 0 }}>
           <ChartArea
             candles={candles}
@@ -154,7 +193,6 @@ export default function App() {
           />
         </div>
 
-        {/* Controls bar */}
         <ControlsBar
           dteSlider={dteSlider}
           onDteChange={setDteSlider}
@@ -172,12 +210,30 @@ export default function App() {
           onViewModeChange={setViewMode}
         />
 
-        {/* Metrics bar */}
         <MetricsBar calcResult={calcResult} />
-
-        {/* Legend */}
         <Legend interval={interval} barCount={Math.min(candles.length, 80)} />
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        width: '100%',
+        background: '#080810',
+        overflow: 'hidden',
+      }}>
+        <NavBar />
+        <Routes>
+          <Route path="/" element={<BuilderPage />} />
+          <Route path="/positions" element={<PositionsPage />} />
+        </Routes>
+      </div>
+    </BrowserRouter>
   );
 }
