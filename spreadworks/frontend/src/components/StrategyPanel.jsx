@@ -273,6 +273,28 @@ export default function StrategyPanel({
     setSaving(true);
     setSaveMsg('');
     try {
+      // Map legs to individual strike fields based on strategy
+      let long_put, short_put, short_call, long_call, short_exp, long_exp;
+      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
+        long_put = parseFloat(legs.longPutStrike) || 0;
+        short_put = parseFloat(legs.shortPutStrike) || 0;
+        short_call = parseFloat(legs.shortCallStrike) || 0;
+        long_call = parseFloat(legs.longCallStrike) || 0;
+        short_exp = legs.shortExpiration;
+        long_exp = legs.longExpiration;
+      } else {
+        long_put = parseFloat(legs.putStrike) || 0;
+        short_put = parseFloat(legs.putStrike) || 0;
+        short_call = parseFloat(legs.callStrike) || 0;
+        long_call = parseFloat(legs.callStrike) || 0;
+        short_exp = legs.frontExpiration;
+        long_exp = legs.backExpiration;
+      }
+
+      // entry_credit is the absolute value of net_debit (credit received)
+      const entryCredit = Math.abs(calcResult.net_debit);
+      const entryPrice = entryCredit / (contracts * 100);
+
       const res = await fetch(`${API_URL}/api/spreadworks/positions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -280,9 +302,19 @@ export default function StrategyPanel({
           symbol,
           strategy,
           contracts,
-          legs,
-          net_debit: calcResult.net_debit,
-          spot_at_entry: spotPrice,
+          long_put,
+          short_put,
+          short_call,
+          long_call,
+          short_exp,
+          long_exp,
+          entry_credit: entryCredit,
+          entry_price: entryPrice,
+          entry_spot: spotPrice,
+          max_profit: calcResult.max_profit || null,
+          max_loss: calcResult.max_loss || null,
+          breakeven_low: calcResult.lower_breakeven || null,
+          breakeven_high: calcResult.upper_breakeven || null,
           notes: '',
         }),
       });
@@ -291,12 +323,6 @@ export default function StrategyPanel({
         throw new Error(data.detail || 'Failed to save');
       }
       setSaveMsg('Saved!');
-      // Also post to Discord
-      if (data.id) {
-        fetch(`${API_URL}/api/spreadworks/discord/post-open?position_id=${data.id}`, {
-          method: 'POST',
-        }).catch(() => {});
-      }
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
       setSaveMsg(err.message);
@@ -325,6 +351,8 @@ export default function StrategyPanel({
     fetchExpirations();
   }, [inputMode, symbol]);
 
+  const [chainOptions, setChainOptions] = useState({});
+
   const fetchStrikes = useCallback(async (expiration) => {
     if (!expiration) return;
     try {
@@ -334,6 +362,7 @@ export default function StrategyPanel({
       if (!res.ok) throw new Error('Failed to fetch chain');
       const data = await res.json();
       setChainStrikes(data.strikes || []);
+      setChainOptions(data.options || {});
     } catch (err) {
       setError(`Chain: ${err.message}`);
     }
@@ -430,24 +459,33 @@ export default function StrategyPanel({
     }
   };
 
-  const StrikeInput = ({ label, field, value, color }) => {
+  const StrikeInput = ({ label, field, value, color, optionType }) => {
+    const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
+    // Live Chain mode: dropdown with delta info
     if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
       return (
         <div style={s.fieldCol}>
           <span style={s.fieldLabel(color)}>{label}</span>
           <select
-            style={s.select(color === '#00e676' ? '#00e67644' : '#ff525244')}
+            style={s.select(borderColor)}
             value={value}
             onChange={(e) => updateLeg(field, e.target.value)}
           >
             <option value="">--</option>
-            {chainStrikes.map((sk) => (
-              <option key={sk} value={sk}>{sk}</option>
-            ))}
+            {chainStrikes.map((sk) => {
+              const ot = optionType || (field.toLowerCase().includes('put') ? 'put' : 'call');
+              const opt = chainOptions[sk]?.[ot];
+              const delta = opt?.delta;
+              const displayDelta = delta != null ? ` (\u0394${Math.abs(delta).toFixed(2)})` : '';
+              return (
+                <option key={sk} value={sk}>${sk}{displayDelta}</option>
+              );
+            })}
           </select>
         </div>
       );
     }
+    // Manual and GEX Suggest: plain number input
     return (
       <div style={s.fieldCol}>
         <span style={s.fieldLabel(color)}>{label}</span>
@@ -458,7 +496,7 @@ export default function StrategyPanel({
           value={value}
           onChange={(e) => updateLeg(field, e.target.value)}
           disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={s.input(color === '#00e676' ? '#00e67644' : '#ff525244')}
+          style={s.input(borderColor)}
         />
       </div>
     );

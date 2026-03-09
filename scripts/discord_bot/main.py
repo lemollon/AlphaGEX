@@ -50,6 +50,7 @@ from economic_events import (
 # ---------------------------------------------------------------------------
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+BACKEND_URL = os.environ.get("BACKEND_URL", "https://spreadworks-backend.onrender.com")
 
 CT = pytz.timezone("America/Chicago")
 
@@ -244,6 +245,54 @@ def post_economic_countdown():
         log.info("No economic events within 7 days — skipping countdown post")
 
 
+def post_open_positions_summary():
+    """8:25 AM CT — Post open positions summary if any exist."""
+    if not is_trading_day():
+        return
+    try:
+        resp = requests.post(f"{BACKEND_URL}/api/spreadworks/discord/post-open", timeout=15)
+        if resp.ok:
+            data = resp.json()
+            log.info(f"Open positions summary posted ({data.get('positions', 0)} positions)")
+        else:
+            log.info("No open positions or post failed")
+    except Exception as e:
+        log.error(f"Failed to post open positions summary: {e}")
+
+
+def mark_all_positions():
+    """3:00 PM CT — EOD mark all open positions."""
+    if not is_trading_day():
+        return
+    try:
+        resp = requests.post(f"{BACKEND_URL}/api/spreadworks/positions/mark", timeout=30)
+        if resp.ok:
+            data = resp.json()
+            log.info(f"Marked {data.get('marked', 0)} positions at ${data.get('spot_price', '?')}")
+        else:
+            log.warning(f"Position mark failed: {resp.status_code}")
+    except Exception as e:
+        log.error(f"Failed to mark positions: {e}")
+
+
+def post_eod_update():
+    """3:05 PM CT — Post EOD summary with AI commentary."""
+    if not is_trading_day():
+        return
+    try:
+        resp = requests.post(f"{BACKEND_URL}/api/spreadworks/discord/post-eod", timeout=60)
+        if resp.ok:
+            data = resp.json()
+            log.info(
+                f"EOD update posted ({data.get('positions', 0)} positions, "
+                f"unrealized: ${data.get('total_unrealized', 0):+,.2f})"
+            )
+        else:
+            log.info("No open positions or EOD post failed")
+    except Exception as e:
+        log.error(f"Failed to post EOD update: {e}")
+
+
 def post_market_close():
     """3:00 PM CT — Market close reflection."""
     if not is_trading_day():
@@ -296,9 +345,12 @@ def setup_schedule():
     This makes schedule times automatically DST-aware.
     """
     schedule.every().day.at("08:25").do(post_market_open)
+    schedule.every().day.at("08:25").do(post_open_positions_summary)
     schedule.every().day.at("08:30").do(post_economic_countdown)
+    schedule.every().day.at("15:00").do(mark_all_positions)
     schedule.every().day.at("15:00").do(post_market_close)
-    log.info("Schedule configured: 08:25 (open), 08:30 (events), 15:00 (close) CT")
+    schedule.every().day.at("15:05").do(post_eod_update)
+    log.info("Schedule configured: 08:25 (open+positions), 08:30 (events), 15:00 (close+mark), 15:05 (EOD) CT")
 
 
 def run_test():

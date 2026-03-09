@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
 import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
-import PositionsPage from './components/PositionsPage';
+import PositionsPage from './pages/PositionsPage';
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
@@ -44,6 +44,64 @@ const logoStyle = {
   borderRight: '1px solid #1a1a2e',
 };
 
+function MarketStatusBadge() {
+  const { isOpen, statusText } = useMarketHours();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+      <span style={{
+        display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+        background: isOpen ? '#00e676' : '#ef5350',
+      }} />
+      <span style={{ color: isOpen ? '#00e676' : '#ef5350', fontSize: 10 }}>
+        {isOpen ? 'Open' : statusText}
+      </span>
+    </div>
+  );
+}
+
+function NextPostCountdown() {
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      // Next scheduled posts: 8:25 CT open, 15:00 CT mark, 15:05 CT EOD
+      const targets = [
+        { h: 8, m: 25, label: 'Open Post' },
+        { h: 15, m: 0, label: 'EOD Mark' },
+        { h: 15, m: 5, label: 'EOD Post' },
+      ];
+
+      // Get current CT time
+      const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+      const ctMins = ct.getHours() * 60 + ct.getMinutes();
+
+      let next = null;
+      for (const t of targets) {
+        const tMins = t.h * 60 + t.m;
+        if (tMins > ctMins) {
+          const diff = tMins - ctMins;
+          const hrs = Math.floor(diff / 60);
+          const mins = diff % 60;
+          next = `${t.label} in ${hrs > 0 ? hrs + 'h ' : ''}${mins}m`;
+          break;
+        }
+      }
+      setText(next || '');
+    };
+    update();
+    const iv = setInterval(update, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (!text) return null;
+  return (
+    <span style={{ color: '#444', fontSize: 10, fontFamily: "'Courier New', monospace" }}>
+      {text}
+    </span>
+  );
+}
+
 function NavBar() {
   return (
     <nav style={navStyle}>
@@ -57,6 +115,10 @@ function NavBar() {
       <NavLink to="/positions" style={({ isActive }) => navLinkStyle(isActive)}>
         Positions
       </NavLink>
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <NextPostCountdown />
+        <MarketStatusBadge />
+      </div>
     </nav>
   );
 }
@@ -86,14 +148,10 @@ function BuilderPage() {
       if (!res.ok) return;
       const data = await res.json();
       setAlerts(data.alerts || []);
-    } catch {
-      // silent
-    }
+    } catch { /* silent */ }
   }, [API_URL]);
 
-  useEffect(() => {
-    fetchAlerts();
-  }, [fetchAlerts]);
+  useEffect(() => { fetchAlerts(); }, [fetchAlerts]);
 
   const prevCandlesLen = useRef(0);
   useEffect(() => {
@@ -108,28 +166,15 @@ function BuilderPage() {
     await calculate(payload);
   };
 
-  const handleIntervalChange = (newInterval) => {
-    setInterval_(newInterval);
-  };
-
   const headerStyle = {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    padding: '6px 12px',
-    background: '#0d0d18',
+    display: 'flex', alignItems: 'center', gap: 12,
+    padding: '6px 12px', background: '#0d0d18',
     borderBottom: '1px solid #1a1a2e',
-    fontFamily: "'Courier New', monospace",
-    fontSize: 12,
+    fontFamily: "'Courier New', monospace", fontSize: 12,
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      flex: 1,
-      overflow: 'hidden',
-    }}>
-      {/* LEFT PANEL */}
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <StrategyPanel
         symbol={symbol}
         spotPrice={spotPrice}
@@ -141,15 +186,7 @@ function BuilderPage() {
         alerts={alerts}
         onRefreshAlerts={fetchAlerts}
       />
-
-      {/* RIGHT PANEL */}
-      <div style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        minWidth: 0,
-        overflow: 'hidden',
-      }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         <div style={headerStyle}>
           <span style={{ color: '#fff', fontWeight: 700 }}>{symbol}</span>
           <span style={{ color: '#555' }}>
@@ -162,54 +199,17 @@ function BuilderPage() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
-          <div style={{
-            marginLeft: 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-          }}>
-            <span style={{
-              display: 'inline-block',
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              background: isOpen ? '#00e676' : '#ef5350',
-            }} />
-            <span style={{ color: isOpen ? '#00e676' : '#ef5350', fontSize: 10 }}>
-              {isOpen ? 'Market Open' : `Market Closed \u00b7 ${statusText}`}
-            </span>
-          </div>
         </div>
-
         <div style={{ flex: 1, minHeight: 0 }}>
-          <ChartArea
-            candles={candles}
-            spotPrice={spotPrice}
-            gexData={gexData}
-            strikes={strikes}
-            calcResult={calcResult}
-            height={CHART_HEIGHT}
-            rangePct={rangePct}
-          />
+          <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
+            strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
         </div>
-
-        <ControlsBar
-          dteSlider={dteSlider}
-          onDteChange={setDteSlider}
-          rangePct={rangePct}
-          onRangeChange={setRangePct}
-          ivMultiplier={ivMultiplier}
-          onIvMultiplierChange={setIvMultiplier}
-          isMarketOpen={isOpen}
-          secondsAgo={secondsAgo}
-          statusText={statusText}
-          interval={interval}
-          onIntervalChange={handleIntervalChange}
-          onRefreshIv={refetchGex}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-        />
-
+        <ControlsBar dteSlider={dteSlider} onDteChange={setDteSlider}
+          rangePct={rangePct} onRangeChange={setRangePct}
+          ivMultiplier={ivMultiplier} onIvMultiplierChange={setIvMultiplier}
+          isMarketOpen={isOpen} secondsAgo={secondsAgo} statusText={statusText}
+          interval={interval} onIntervalChange={setInterval_}
+          onRefreshIv={refetchGex} viewMode={viewMode} onViewModeChange={setViewMode} />
         <MetricsBar calcResult={calcResult} />
         <Legend interval={interval} barCount={Math.min(candles.length, 80)} />
       </div>
@@ -221,12 +221,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <div style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        width: '100%',
-        background: '#080810',
-        overflow: 'hidden',
+        display: 'flex', flexDirection: 'column',
+        height: '100vh', width: '100%',
+        background: '#080810', overflow: 'hidden',
       }}>
         <NavBar />
         <Routes>
