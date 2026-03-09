@@ -1185,8 +1185,9 @@ async def get_positions(status: str = "open", db: Session = Depends(get_db)):
             q = q.filter(Position.status == status)
         positions = q.order_by(Position.entry_date.desc()).all()
         return {"positions": [_pos_to_dict(p) for p in positions]}
-    except Exception:
-        return {"positions": [], "error": "Database unavailable"}
+    except Exception as e:
+        logger.error(f"get_positions DB error: {e}")
+        return {"positions": [], "error": f"Database unavailable: {e}"}
 
 
 # --- POST /positions (10-slot enforcement) ---

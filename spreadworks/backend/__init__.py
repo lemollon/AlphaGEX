@@ -114,9 +114,20 @@ app.include_router(router)
 
 @app.get("/health")
 async def health():
+    from sqlalchemy import text as sa_text
+    db_status = "no engine"
+    if engine is not None:
+        try:
+            with engine.connect() as conn:
+                conn.execute(sa_text("SELECT 1"))
+            db_status = "connected"
+        except Exception as e:
+            db_status = f"error: {e}"
     return {
         "status": "ok",
         "service": "spreadworks",
+        "db_status": db_status,
+        "db_url_set": bool(os.getenv("DATABASE_URL")),
         "frontend_dist": str(FRONTEND_DIST),
         "frontend_exists": FRONTEND_DIST.exists(),
         "frontend_contents": [str(p.name) for p in FRONTEND_DIST.iterdir()] if FRONTEND_DIST.exists() else [],
