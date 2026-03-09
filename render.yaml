@@ -138,6 +138,25 @@ services:
           name: alphagex-db
           property: connectionString
 
+  # SERVICE: SpreadWorks Discord Daily Bot
+  # Posts daily Bible verse + trading tip at market open, economic countdowns,
+  # and closing reflections to Discord.
+  - type: worker
+    name: spreadworks-daily-bot
+    runtime: python
+    plan: starter
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -r scripts/discord_bot/requirements.txt
+    startCommand: cd /opt/render/project/src/scripts/discord_bot && python main.py
+    envVars:
+      - key: TZ
+        value: America/New_York
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+
   # SERVICE 4: Backtest Worker (Background Worker)
   # Processes long-running backtests without HTTP timeouts
   # Jobs are queued via API and processed asynchronously
