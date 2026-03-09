@@ -1804,3 +1804,260 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
         "total_unrealized": round(total_unrealized, 2),
         "commentary_available": bool(commentary and commentary != "AI commentary unavailable"),
     }
+
+
+@router.post("/discord/push-position/{position_id}")
+async def discord_push_position(
+    request: Request, position_id: int, db: Session = Depends(get_db)
+):
+    """Push a single position's current status snapshot to Discord."""
+    if not DISCORD_WEBHOOK_URL:
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+
+    strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
+    strikes_str = _strikes_str(pos)
+    dte = (pos.short_exp - date.today()).days if pos.short_exp else None
+    is_open = pos.status == "open"
+
+    # Get live P&L for open positions
+    unrealized_pnl = 0.0
+    current_value = None
+    pnl_pct = 0.0
+    spot = None
+
+    if is_open:
+        try:
+            q = await _get_quote(request, pos.symbol)
+            spot = q.get("last")
+            if spot:
+                r, sigma = RISK_FREE_RATE, 0.20
+                today_date = date.today()
+
+                def tte(d):
+                    return max((d - today_date).days, 0) / 365.0 if d else 0
+
+                if pos.strategy == "double_diagonal" and pos.long_exp:
+                    T_short = tte(pos.short_exp)
+                    T_long = tte(pos.long_exp)
+                    val = (
+                        _bs_price(spot, pos.short_put, T_short, r, sigma, False)
+                        + _bs_price(spot, pos.short_call, T_short, r, sigma, True)
+                        - _bs_price(spot, pos.long_put, T_long, r, sigma, False)
+                        - _bs_price(spot, pos.long_call, T_long, r, sigma, True)
+                    )
+                elif pos.strategy == "double_calendar" and pos.long_exp:
+                    T_front = tte(pos.short_exp)
+                    T_back = tte(pos.long_exp)
+                    val = (
+                        _bs_price(spot, pos.short_put, T_front, r, sigma, False)
+                        + _bs_price(spot, pos.short_call, T_front, r, sigma, True)
+                        - _bs_price(spot, pos.long_put, T_back, r, sigma, False)
+                        - _bs_price(spot, pos.long_call, T_back, r, sigma, True)
+                    )
+                else:
+                    T = tte(pos.short_exp)
+                    val = (
+                        _bs_price(spot, pos.short_put, T, r, sigma, False)
+                        + _bs_price(spot, pos.short_call, T, r, sigma, True)
+                        - _bs_price(spot, pos.long_put, T, r, sigma, False)
+                        - _bs_price(spot, pos.long_call, T, r, sigma, True)
+                    )
+                current_value = round(val, 4)
+                unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+                if pos.max_profit and pos.max_profit != 0:
+                    pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 1)
+        except Exception:
+            pass
+
+    # Determine P&L values for the embed
+    if is_open:
+        pnl_val = unrealized_pnl
+        pnl_label = "Unrealized P&L"
+    else:
+        pnl_val = pos.realized_pnl or 0
+        pnl_label = "Realized P&L"
+        if pos.max_profit and pos.max_profit != 0:
+            pnl_pct = round(pnl_val / abs(pos.max_profit) * 100, 1)
+
+    color = 0x00E676 if pnl_val >= 0 else 0xFF1744
+    status_emoji = "\U0001f7e2" if is_open else "\U0001f534"
+    pnl_sign = "+" if pnl_val >= 0 else ""
+
+    fields = [
+        {
+            "name": "Strikes",
+            "value": f"LP `{pos.long_put}` \u00b7 SP `{pos.short_put}` \u00b7 SC `{pos.short_call}` \u00b7 LC `{pos.long_call}`",
+            "inline": False,
+        },
+        {
+            "name": "Short Exp",
+            "value": str(pos.short_exp) if pos.short_exp else "--",
+            "inline": True,
+        },
+    ]
+    if pos.long_exp:
+        fields.append({
+            "name": "Long Exp",
+            "value": str(pos.long_exp),
+            "inline": True,
+        })
+    if dte is not None:
+        fields.append({"name": "DTE", "value": str(dte), "inline": True})
+
+    fields.append({
+        "name": "Entry Credit",
+        "value": f"+${pos.entry_credit:,.2f}",
+        "inline": True,
+    })
+    if current_value is not None:
+        fields.append({
+            "name": "Current Value",
+            "value": f"${current_value:,.4f}",
+            "inline": True,
+        })
+    fields.append({
+        "name": pnl_label,
+        "value": f"{pnl_sign}${pnl_val:,.2f} ({pnl_sign}{pnl_pct:.1f}%)",
+        "inline": True,
+    })
+    if pos.max_profit is not None:
+        fields.append({
+            "name": "Max Profit",
+            "value": f"${pos.max_profit:,.2f}",
+            "inline": True,
+        })
+    if pos.max_loss is not None:
+        fields.append({
+            "name": "Max Loss",
+            "value": f"${pos.max_loss:,.2f}",
+            "inline": True,
+        })
+    fields.append({
+        "name": "Contracts",
+        "value": str(pos.contracts),
+        "inline": True,
+    })
+
+    title_label = pos.label or f"#{pos.id}"
+    embed = {
+        "title": f"{status_emoji} {pos.symbol} {strat_label} \u00b7 {title_label}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"SpreadWorks \u00b7 Opened {pos.entry_date}"},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True, "position_id": position_id}
+
+
+# ---------------------------------------------------------------------------
+# 10. Position payoff curve endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/positions/{position_id}/payoff")
+async def position_payoff(
+    request: Request, position_id: int, db: Session = Depends(get_db)
+):
+    """Generate at-expiration payoff curve for a saved position."""
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        raise HTTPException(404, "Position not found")
+
+    lp, sp = pos.long_put, pos.short_put
+    sc, lc = pos.short_call, pos.long_call
+    entry = pos.entry_price  # per-contract net credit/debit
+    n = pos.contracts
+    sigma = 0.20
+    r = RISK_FREE_RATE
+    today_date = date.today()
+
+    # Get spot price for the marker
+    spot = None
+    try:
+        q = await _get_quote(request, pos.symbol)
+        spot = q.get("last")
+    except Exception:
+        pass
+
+    # For DD/DC with remaining time value, use _scan_pnl_profile
+    if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
+        if pos.strategy == "double_diagonal":
+            profile = _scan_pnl_profile(
+                "double_diagonal", spot or ((sp + sc) / 2),
+                {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+                {"short": str(pos.short_exp), "long": str(pos.long_exp)},
+                r, sigma, entry, n,
+            )
+        else:
+            profile = _scan_pnl_profile(
+                "double_calendar", spot or ((sp + sc) / 2),
+                {"ps": sp, "cs": sc},
+                {"front": str(pos.short_exp), "back": str(pos.long_exp)},
+                r, sigma, entry, n,
+            )
+        return {
+            "position_id": position_id,
+            "spot_price": spot,
+            "pnl_curve": profile["pnl_curve"],
+            "max_profit": profile["max_profit"],
+            "max_loss": profile["max_loss"],
+            "breakevens": {
+                "lower": profile["lower_breakeven"],
+                "upper": profile["upper_breakeven"],
+            },
+        }
+
+    # Iron Condor: at-expiration payoff (intrinsic value)
+    scan_lo = lp - 10
+    scan_hi = lc + 10
+    curve = []
+    max_profit = 0.0
+    max_loss = 0.0
+    lower_be = None
+    upper_be = None
+    prev_pnl = None
+
+    for px_int in range(int(scan_lo * 10), int(scan_hi * 10) + 1):
+        px = px_int / 10.0
+        # IC at expiration: short put + short call - long put - long call
+        pnl_per_contract = (
+            -max(0, sp - px) + max(0, lp - px)   # put side
+            - max(0, px - sc) + max(0, px - lc)   # call side
+            + entry                                 # net credit received
+        )
+        pnl = round(pnl_per_contract * 100 * n, 2)
+
+        if px_int % 10 == 0:
+            curve.append({"price": px, "pnl": pnl})
+
+        if pnl > max_profit:
+            max_profit = pnl
+        if pnl < max_loss:
+            max_loss = pnl
+
+        if prev_pnl is not None:
+            if prev_pnl < 0 <= pnl or prev_pnl >= 0 > pnl:
+                if lower_be is None:
+                    lower_be = px
+                else:
+                    upper_be = px
+        prev_pnl = pnl
+
+    return {
+        "position_id": position_id,
+        "spot_price": spot,
+        "pnl_curve": curve,
+        "max_profit": round(max_profit, 2),
+        "max_loss": round(max_loss, 2),
+        "breakevens": {
+            "lower": round(lower_be, 2) if lower_be else None,
+            "upper": round(upper_be, 2) if upper_be else None,
+        },
+    }
