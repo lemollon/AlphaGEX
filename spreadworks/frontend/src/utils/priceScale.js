@@ -23,7 +23,8 @@ export function computePriceRange(candles, strikes, gexData, bufferPct = 0.005) 
 
   if (strikes) {
     for (const s of Object.values(strikes)) {
-      if (s) prices.push(Number(s));
+      const n = Number(s);
+      if (s && !isNaN(n) && isFinite(n)) prices.push(n);
     }
   }
 
