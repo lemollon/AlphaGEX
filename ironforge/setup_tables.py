@@ -242,7 +242,7 @@ def setup_all_tables():
     with db_connection() as conn:
         cursor = conn.cursor()
 
-        for bot in ['flame', 'spark']:
+        for bot in ['flame', 'spark', 'inferno']:
             logger.info(f"Creating tables for {bot.upper()}...")
 
             ddl_funcs = [
@@ -266,7 +266,7 @@ def setup_all_tables():
         logger.info("  bot_heartbeats OK")
 
         # Migrations: add columns that may not exist on older deployments
-        for bot in ['flame', 'spark']:
+        for bot in ['flame', 'spark', 'inferno']:
             cursor.execute(f"""
                 ALTER TABLE {bot}_positions
                 ADD COLUMN IF NOT EXISTS sandbox_order_id TEXT

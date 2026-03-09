@@ -2,7 +2,7 @@
 Trading Models
 ==============
 
-Shared data models for FLAME (2DTE) and SPARK (1DTE) Iron Condor bots.
+Shared data models for FLAME (2DTE), SPARK (1DTE), and INFERNO (0DTE) Iron Condor bots.
 Part of the IronForge trading system.
 """
 
@@ -87,8 +87,8 @@ class BotConfig:
             return False, "Stop loss must be positive"
         if self.max_trades_per_day < 1:
             return False, "Max trades per day must be at least 1"
-        if self.min_dte < 1:
-            return False, "Min DTE must be at least 1"
+        if self.min_dte < 0:
+            return False, "Min DTE must be at least 0"
         return True, "OK"
 
 
@@ -100,6 +100,20 @@ def flame_config() -> BotConfig:
 def spark_config() -> BotConfig:
     """Default SPARK configuration (1DTE)."""
     return BotConfig(bot_name="SPARK", min_dte=1, dte_mode="1DTE")
+
+
+def inferno_config() -> BotConfig:
+    """Default INFERNO configuration (0DTE, multi-trade like FORTRESS)."""
+    return BotConfig(
+        bot_name="INFERNO",
+        min_dte=0,
+        dte_mode="0DTE",
+        max_trades_per_day=3,
+        profit_target_pct=50.0,
+        stop_loss_pct=200.0,
+        sd_multiplier=1.0,
+        entry_end="14:30",
+    )
 
 
 @dataclass

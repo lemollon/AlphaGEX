@@ -4,7 +4,7 @@
 
 IronForge is a **standalone SPY Iron Condor paper trading system** that runs independently from the main AlphaGEX platform. It was originally built for Databricks, then migrated to **Render + PostgreSQL** for simpler deployment and lower cost.
 
-It runs two bots — **FLAME** (2DTE) and **SPARK** (1DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution.
+It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution. INFERNO is a FORTRESS-style aggressive bot that allows up to 3 trades/day with multiple simultaneous positions.
 
 ## Architecture
 
@@ -26,7 +26,8 @@ ironforge/
 │
 ├── jobs/                      # Entry points for Render workers
 │   ├── run_flame.py           # FLAME (2DTE) — runs every 5 min
-│   └── run_spark.py           # SPARK (1DTE) — runs every 5 min
+│   ├── run_spark.py           # SPARK (1DTE) — runs every 5 min
+│   └── run_inferno.py         # INFERNO (0DTE) — runs every 5 min
 │
 └── webapp/                    # Next.js 14 dashboard (App Router)
     ├── package.json           # next 14.2, pg, react 18, recharts, swr, tailwind
@@ -48,10 +49,11 @@ ironforge/
     │       ├── page.tsx            # Home: bot cards, strategy config, signal flow, FLAME vs SPARK
     │       ├── flame/page.tsx      # FLAME dashboard (BotDashboard bot="flame")
     │       ├── spark/page.tsx      # SPARK dashboard (BotDashboard bot="spark")
+    │       ├── inferno/page.tsx    # INFERNO dashboard (BotDashboard bot="inferno")
     │       ├── compare/page.tsx    # Side-by-side FLAME vs SPARK comparison
     │       ├── layout.tsx          # Root layout with Nav
     │       ├── globals.css         # Dark theme (forge-bg, forge-card, fire-divider)
-    │       └── api/[bot]/          # Dynamic API routes (bot = flame | spark)
+    │       └── api/[bot]/          # Dynamic API routes (bot = flame | spark | inferno)
     │           ├── status/route.ts
     │           ├── positions/route.ts
     │           ├── position-monitor/route.ts
@@ -69,18 +71,20 @@ ironforge/
 |-----|-----|-------------|
 | **FLAME** | 2DTE | Longer-duration Iron Condors. More premium, more time to work. |
 | **SPARK** | 1DTE | Shorter-duration Iron Condors. Faster theta decay, quicker resolution. |
+| **INFERNO** | 0DTE | FORTRESS-style aggressive Iron Condors. Up to 3 trades/day, multiple simultaneous positions. |
 
-Both share identical config except `min_dte`. Key parameters:
+FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-style aggressive parameters. Key parameters:
 - Ticker: SPY
-- Starting capital: $5,000 (paper)
+- Starting capital: $10,000 (paper)
 - Spread width: $5
-- SD multiplier: 1.2x
-- Profit target: 30% of credit
-- Stop loss: 100% of credit
-- Max 1 trade/day, 10 max contracts
+- SD multiplier: 1.2x (FLAME/SPARK), 1.0x (INFERNO)
+- Profit target: 30% of credit (FLAME/SPARK), 50% (INFERNO)
+- Stop loss: 100% of credit (FLAME/SPARK), 200% (INFERNO)
+- Max 1 trade/day (FLAME/SPARK), 3 trades/day (INFERNO)
+- 10 max contracts
 - VIX skip: > 32
 - PDT limit: 3 day trades / 5 rolling days
-- Entry window: 8:30 AM - 2:00 PM CT
+- Entry window: 8:30 AM - 2:00 PM CT (FLAME/SPARK), 8:30 AM - 2:30 PM CT (INFERNO)
 - EOD cutoff: 2:45 PM CT (3:45 PM ET)
 - Scan frequency: every 5 minutes
 
@@ -158,12 +162,13 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame` or `spark`.
 | `/` | Home — bot cards, shared strategy config, signal flow diagram, FLAME vs SPARK comparison |
 | `/flame` | FLAME dashboard (StatusCard + tabbed: Equity Curve, Performance, Positions, Trade History, Logs) |
 | `/spark` | SPARK dashboard (same layout, blue accent) |
+| `/inferno` | INFERNO dashboard (same layout, red accent — 0DTE FORTRESS-style) |
 | `/compare` | Side-by-side comparison of both bots |
 
 ## Key Design Decisions
 
 1. **Fully standalone** — no imports from the main AlphaGEX codebase. Has its own Tradier client, config, DB layer
-2. **Unified code for both bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (only `min_dte` and `bot_name` differ)
+2. **Unified code for all bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (FLAME/SPARK differ only by `min_dte`; INFERNO adds `max_trades_per_day=3` and FORTRESS-style parameters)
 3. **Real market data, paper execution** — Tradier production/sandbox API for quotes and option chains, but no actual orders placed
 4. **Conservative fills** — sells at bid, buys at ask (worst-case paper fills)
 5. **PostgreSQL on Render** — migrated from Databricks Delta Lake. Uses psycopg2 (Python) and node-pg (Next.js API routes)

@@ -29,8 +29,9 @@ import {
 
 const SCAN_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 const BOTS = [
-  { name: 'flame', dte: '2DTE', minDte: 2 },
-  { name: 'spark', dte: '1DTE', minDte: 1 },
+  { name: 'flame', dte: '2DTE', minDte: 2, maxTradesPerDay: 1 },
+  { name: 'spark', dte: '1DTE', minDte: 1, maxTradesPerDay: 1 },
+  { name: 'inferno', dte: '0DTE', minDte: 0, maxTradesPerDay: 3 },
 ] as const
 
 type BotDef = (typeof BOTS)[number]
@@ -90,6 +91,7 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   else { const a = -0.08; winProb += a; factors.push(['EM_WIDE', a]) }
 
   if (dteMode === '2DTE') { const a = 0.03; winProb += a; factors.push(['DTE_2DAY_DECAY', a]) }
+  else if (dteMode === '0DTE') { const a = -0.05; winProb += a; factors.push(['DTE_0DAY_AGGRESSIVE', a]) }
   else { const a = -0.02; winProb += a; factors.push(['DTE_1DAY_TIGHT', a]) }
 
   winProb = Math.max(0.10, Math.min(0.95, winProb))
@@ -172,7 +174,20 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
 
   if (positions.length === 0) return { status: 'no_position', unrealizedPnl: 0 }
 
-  const pos = positions[0]
+  // Monitor ALL positions (multi-position for INFERNO)
+  let totalUnrealized = 0
+  let anyAction = 'monitoring'
+  for (const pos of positions) {
+    const monResult = await monitorSinglePosition(bot, ct, pos)
+    totalUnrealized += monResult.unrealizedPnl
+    if (monResult.status.startsWith('closed:')) anyAction = monResult.status
+  }
+  return { status: anyAction, unrealizedPnl: totalUnrealized }
+}
+
+async function monitorSinglePosition(
+  bot: BotDef, ct: Date, pos: Record<string, any>,
+): Promise<{ status: string; unrealizedPnl: number }> {
   const entryCredit = num(pos.total_credit)
   const contracts = int(pos.contracts)
   const collateral = num(pos.collateral_required)

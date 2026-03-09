@@ -104,6 +104,9 @@ def evaluate(
     if dte_mode == "2DTE":
         adj = 0.03
         factors.append(("DTE_2DAY_DECAY", adj))
+    elif dte_mode == "0DTE":
+        adj = -0.05
+        factors.append(("DTE_0DAY_AGGRESSIVE", adj))
     else:
         adj = -0.02
         factors.append(("DTE_1DAY_TIGHT", adj))

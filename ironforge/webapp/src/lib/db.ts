@@ -25,12 +25,14 @@ function getPool(): Pool {
 const DB_PREFIX: Record<string, string> = {
   flame: 'flame',
   spark: 'spark',
+  inferno: 'inferno',
 }
 
 /** Map display names to heartbeat bot_name values in bot_heartbeats table. */
 const HEARTBEAT_MAP: Record<string, string> = {
   flame: 'FLAME',
   spark: 'SPARK',
+  inferno: 'INFERNO',
 }
 
 /** Bot-specific table name: {prefix}_{suffix}. */
@@ -51,6 +53,7 @@ export function heartbeatName(bot: string): string {
 export function dteMode(bot: string): string | null {
   if (bot === 'flame') return '2DTE'
   if (bot === 'spark') return '1DTE'
+  if (bot === 'inferno') return '0DTE'
   return null
 }
 
@@ -253,7 +256,7 @@ async function ensureTables(): Promise<void> {
     await client.query(INIT_DDL)
 
     // Add missing columns to existing positions tables (safe to run repeatedly)
-    for (const bot of ['flame', 'spark']) {
+    for (const bot of ['flame', 'spark', 'inferno']) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
@@ -262,7 +265,7 @@ async function ensureTables(): Promise<void> {
     }
 
     // Seed paper accounts if empty
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
       const res = await client.query(
         `SELECT id FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1 LIMIT 1`,
         [dte],
@@ -277,7 +280,7 @@ async function ensureTables(): Promise<void> {
       }
     }
     // Seed PDT config if empty
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
       const pdtRes = await client.query(
         `SELECT id FROM ${bot}_pdt_config WHERE bot_name = $1 LIMIT 1`,
         [bot.toUpperCase()],
@@ -340,6 +343,6 @@ export function int(val: any): number {
 /** Validate bot name parameter — only flame or spark allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
   return b
 }
