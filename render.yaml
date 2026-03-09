@@ -151,7 +151,7 @@ services:
     startCommand: cd /opt/render/project/src/scripts/discord_bot && python main.py
     envVars:
       - key: TZ
-        value: America/New_York
+        value: America/Chicago
       - key: PYTHON_VERSION
         value: "3.11.0"
       - key: DISCORD_WEBHOOK_URL

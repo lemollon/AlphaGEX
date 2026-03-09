@@ -2,10 +2,10 @@
 SpreadWorks Discord Daily Bot
 Posts daily market open/close messages + economic event countdowns to Discord.
 
-Schedule (US Eastern, DST-aware via TZ=America/New_York):
-  9:25 AM ET  — Market Open message (Bible verse + spread trading tip)
-  9:30 AM ET  — Economic event countdown
-  4:00 PM ET  — Market Close message
+Schedule (US Central, DST-aware via TZ=America/Chicago):
+  8:25 AM CT  — Market Open message (Bible verse + spread trading tip)
+  8:30 AM CT  — Economic event countdown
+  3:00 PM CT  — Market Close message
 
 Usage:
   python main.py           # Run scheduler (production)
@@ -13,7 +13,7 @@ Usage:
 
 Environment:
   DISCORD_WEBHOOK_URL  — Discord webhook URL (required)
-  TZ                   — Must be set to America/New_York on Render
+  TZ                   — Must be set to America/Chicago on Render
 """
 
 import os
@@ -36,7 +36,7 @@ from close_messages import CLOSE_MESSAGES
 from economic_events import (
     ECONOMIC_EVENTS_2026,
     MARKET_HOLIDAYS_2026,
-    get_eastern_now,
+    get_central_now,
     get_todays_events,
     get_next_event,
     get_upcoming_events,
@@ -51,7 +51,7 @@ from economic_events import (
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 
-ET = pytz.timezone("America/New_York")
+CT = pytz.timezone("America/Chicago")
 
 # Embed colors
 COLOR_GREEN = 0x00E676   # Market open
@@ -74,13 +74,13 @@ log = logging.getLogger("spreadworks-bot")
 # ---------------------------------------------------------------------------
 
 def is_weekday():
-    """True if today is Mon-Fri in Eastern time."""
-    return get_eastern_now().weekday() < 5
+    """True if today is Mon-Fri in Central time."""
+    return get_central_now().weekday() < 5
 
 
 def is_trading_day():
     """True if today is a weekday and not a market holiday."""
-    now = get_eastern_now()
+    now = get_central_now()
     return now.weekday() < 5 and not is_market_holiday(now.date())
 
 
@@ -90,7 +90,7 @@ def get_rotation_index(items, offset=0):
     Same day always returns the same index. Cycles through all items
     before repeating (modulo len).
     """
-    day_of_year = get_eastern_now().timetuple().tm_yday
+    day_of_year = get_central_now().timetuple().tm_yday
     return (day_of_year + offset) % len(items)
 
 
@@ -140,12 +140,12 @@ def impact_color(impact: str) -> int:
 # ---------------------------------------------------------------------------
 
 def post_market_open():
-    """9:25 AM ET — Bible verse + spread trading tip."""
+    """8:25 AM CT — Bible verse + spread trading tip."""
     if not is_trading_day():
         log.info("Not a trading day — skipping market open post")
         return
 
-    now = get_eastern_now()
+    now = get_central_now()
     verse = VERSES[get_rotation_index(VERSES)]
     tip = TIPS[get_rotation_index(TIPS, offset=37)]
 
@@ -174,12 +174,12 @@ def post_market_open():
 
 
 def post_economic_countdown():
-    """9:30 AM ET — Economic event countdown."""
+    """8:30 AM CT — Economic event countdown."""
     if not is_trading_day():
         log.info("Not a trading day — skipping economic countdown post")
         return
 
-    now = get_eastern_now()
+    now = get_central_now()
     today_date = now.date()
 
     # Check for events TODAY
@@ -245,12 +245,12 @@ def post_economic_countdown():
 
 
 def post_market_close():
-    """4:00 PM ET — Market close reflection."""
+    """3:00 PM CT — Market close reflection."""
     if not is_trading_day():
         log.info("Not a trading day — skipping market close post")
         return
 
-    now = get_eastern_now()
+    now = get_central_now()
     close_msg = CLOSE_MESSAGES[get_rotation_index(CLOSE_MESSAGES, offset=71)]
 
     embed = {
@@ -292,19 +292,19 @@ def setup_schedule():
     Configure the daily schedule.
 
     IMPORTANT: The `schedule` library uses local system time.
-    On Render, set TZ=America/New_York so system clock = Eastern Time.
+    On Render, set TZ=America/Chicago so system clock = Central Time.
     This makes schedule times automatically DST-aware.
     """
-    schedule.every().day.at("09:25").do(post_market_open)
-    schedule.every().day.at("09:30").do(post_economic_countdown)
-    schedule.every().day.at("16:00").do(post_market_close)
-    log.info("Schedule configured: 09:25 (open), 09:30 (events), 16:00 (close) ET")
+    schedule.every().day.at("08:25").do(post_market_open)
+    schedule.every().day.at("08:30").do(post_economic_countdown)
+    schedule.every().day.at("15:00").do(post_market_close)
+    log.info("Schedule configured: 08:25 (open), 08:30 (events), 15:00 (close) CT")
 
 
 def run_test():
     """Fire all 3 posts immediately for testing."""
     log.info("=== TEST MODE: Firing all posts now ===")
-    log.info(f"Current Eastern time: {get_eastern_now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    log.info(f"Current Central time: {get_central_now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     log.info(f"Verses loaded: {len(VERSES)}")
     log.info(f"Tips loaded: {len(TIPS)}")
     log.info(f"Close messages loaded: {len(CLOSE_MESSAGES)}")
@@ -340,7 +340,7 @@ def main():
         sys.exit(1)
 
     log.info(f"SpreadWorks Discord Bot starting...")
-    log.info(f"  Timezone: {get_eastern_now().strftime('%Z')} (America/New_York)")
+    log.info(f"  Timezone: {get_central_now().strftime('%Z')} (America/Chicago)")
     log.info(f"  Verses:   {len(VERSES)}")
     log.info(f"  Tips:     {len(TIPS)}")
     log.info(f"  Close:    {len(CLOSE_MESSAGES)}")
