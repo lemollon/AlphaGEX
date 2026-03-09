@@ -1,6 +1,6 @@
 # IronForge on Render
 # ====================
-# FLAME + SPARK Iron Condor paper trading bots.
+# FLAME (2DTE) + SPARK (1DTE) + INFERNO (0DTE) Iron Condor paper trading bots.
 # The scan loop runs INSIDE the Next.js webapp (no separate workers).
 
 databases:

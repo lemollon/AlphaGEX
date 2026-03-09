@@ -2,7 +2,7 @@
 Trader Orchestrator
 ====================
 
-Unified trader for both SPARK (1DTE) and FLAME (2DTE) Iron Condor bots.
+Unified trader for SPARK (1DTE), FLAME (2DTE), and INFERNO (0DTE) Iron Condor bots.
 Handles the complete trading lifecycle per scan cycle:
 
 1. Check if market is in trading window
@@ -23,6 +23,7 @@ from .models import (
     PaperAccount,
     flame_config,
     spark_config,
+    inferno_config,
     CENTRAL_TZ,
     EASTERN_TZ,
 )
@@ -37,7 +38,7 @@ class Trader:
     """
     Paper-trading Iron Condor bot.
 
-    Works for both SPARK (1DTE) and FLAME (2DTE) — the config.min_dte
+    Works for SPARK (1DTE), FLAME (2DTE), and INFERNO (0DTE) — the config.min_dte
     and config.bot_name control the behavior.
     """
 
@@ -186,23 +187,37 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 5: Check for open positions
-            open_positions = self.db.get_open_positions()
-            if open_positions:
-                result["action"] = "monitoring"
-                result["details"]["reason"] = f"{len(open_positions)} position(s) open"
-                self.db.update_heartbeat("active", "monitoring")
-                self.last_scan_result = result
-                return result
-
-            # Step 6: Already traded today?
+            # Step 5: Check trade count for today (multi-trade aware)
             today_str = now.strftime("%Y-%m-%d")
-            if self.db.has_traded_today(today_str):
+            trades_today = self.db.get_trades_today_count(today_str)
+            max_trades = self.config.max_trades_per_day
+
+            if trades_today >= max_trades:
+                # Already used all trade slots for today
+                open_positions = self.db.get_open_positions()
                 result["action"] = "max_trades"
-                result["details"]["reason"] = "Already traded today (max 1/day)"
+                result["details"]["reason"] = (
+                    f"Already traded {trades_today}/{max_trades} today"
+                )
+                if open_positions:
+                    result["details"]["reason"] += (
+                        f" — monitoring {len(open_positions)} position(s)"
+                    )
                 self.db.update_heartbeat("active", "max_trades_reached")
                 self.last_scan_result = result
                 return result
+
+            # For single-trade bots: block if any position is still open
+            if max_trades <= 1:
+                open_positions = self.db.get_open_positions()
+                if open_positions:
+                    result["action"] = "monitoring"
+                    result["details"]["reason"] = (
+                        f"{len(open_positions)} position(s) open"
+                    )
+                    self.db.update_heartbeat("active", "monitoring")
+                    self.last_scan_result = result
+                    return result
 
             # Step 7: PDT check
             # PDT applies to paper accounts. When paper is blocked,
@@ -290,8 +305,16 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 11: Race condition guard
-            if self.db.get_open_positions():
+            # Step 11: Race condition guard (multi-trade aware)
+            current_open = len(self.db.get_open_positions())
+            current_today = self.db.get_trades_today_count(today_str)
+            if current_today >= self.config.max_trades_per_day:
+                result["action"] = "skipped"
+                result["details"]["reason"] = "Max trades reached (race guard)"
+                self.db.log("SKIP", "Max trades reached — aborting")
+                self.last_scan_result = result
+                return result
+            if self.config.max_trades_per_day <= 1 and current_open > 0:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Position already exists (race guard)"
                 self.db.log("SKIP", "Position already open — aborting")
@@ -570,12 +593,14 @@ class Trader:
         return False
 
     def can_trade_today(self) -> Tuple[bool, int, str]:
-        """Pre-trade PDT + frequency check."""
+        """Pre-trade PDT + frequency check (multi-trade aware)."""
         now = datetime.now(CENTRAL_TZ)
         today_str = now.strftime("%Y-%m-%d")
 
-        if self.db.has_traded_today(today_str):
-            return False, -1, "Already traded today (max 1/day)"
+        trades_today = self.db.get_trades_today_count(today_str)
+        max_trades = self.config.max_trades_per_day
+        if trades_today >= max_trades:
+            return False, -1, f"Already traded {trades_today}/{max_trades} today"
 
         count = self.db.get_day_trade_count_rolling_5_days()
         if count >= self.config.pdt_max_day_trades:
@@ -725,3 +750,8 @@ def create_flame_trader() -> Trader:
 def create_spark_trader() -> Trader:
     """Create a SPARK (1DTE) trader instance."""
     return Trader(config=spark_config())
+
+
+def create_inferno_trader() -> Trader:
+    """Create an INFERNO (0DTE) trader instance."""
+    return Trader(config=inferno_config())

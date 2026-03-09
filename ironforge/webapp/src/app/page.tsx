@@ -74,6 +74,17 @@ const bots = [
     badge: 'bg-amber-500/15 text-amber-400',
   },
   {
+    name: 'INFERNO',
+    href: '/inferno',
+    dte: '0DTE',
+    desc: 'FORTRESS-style 0DTE Iron Condors. Up to 3 trades per day with multiple simultaneous positions.',
+    border: 'border-red-500/30 hover:border-red-400/60',
+    heading: 'text-red-400',
+    btn: 'border-red-500/60 text-red-400 hover:bg-red-500/10',
+    glow: 'shadow-red-500/5',
+    badge: 'bg-red-500/15 text-red-400',
+  },
+  {
     name: 'Compare',
     href: '/compare',
     dte: 'Head to Head',
@@ -120,7 +131,7 @@ export default function Home() {
       <LaunchCountdown />
 
       {/* Bot Cards */}
-      <div className="grid md:grid-cols-3 gap-5">
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
         {bots.map((bot) => (
           <Link key={bot.name} href={bot.href}>
             <div
@@ -264,6 +275,7 @@ export default function Home() {
                 { param: 'Max Contracts', flame: '10', spark: '10', diff: false },
                 { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', diff: false },
                 { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', diff: true },
+                { param: 'Max Trades/Day', flame: '1', spark: '1', diff: false },
                 { param: 'Premium', flame: 'Higher', spark: 'Lower', diff: true },
                 { param: 'Resolution', flame: '~2 days', spark: '~1 day', diff: true },
               ].map((row) => (
