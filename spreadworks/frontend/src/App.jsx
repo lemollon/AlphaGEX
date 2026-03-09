@@ -135,7 +135,7 @@ function BuilderPage() {
 
   const API_URL = import.meta.env.VITE_API_URL || '';
 
-  const { candles, spotPrice, loading: candlesLoading, refetch: refetchCandles } = useCandles(symbol, interval);
+  const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
   const { calcResult, calcLoading, calcError, calculate } = useCalculate();
   const { isOpen, secondsAgo, markRefreshed, statusText } = useMarketHours();
@@ -199,6 +199,28 @@ function BuilderPage() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
+          {!isOpen && dataAsOf && (
+            <span style={{
+              marginLeft: 'auto',
+              padding: '2px 8px',
+              background: '#ffd60022',
+              border: '1px solid #ffd60044',
+              borderRadius: 3,
+              color: '#ffd600',
+              fontSize: 10,
+              fontWeight: 600,
+            }}>
+              Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              })} ET
+            </span>
+          )}
         </div>
         <div style={{ flex: 1, minHeight: 0 }}>
           <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
@@ -208,6 +230,7 @@ function BuilderPage() {
           rangePct={rangePct} onRangeChange={setRangePct}
           ivMultiplier={ivMultiplier} onIvMultiplierChange={setIvMultiplier}
           isMarketOpen={isOpen} secondsAgo={secondsAgo} statusText={statusText}
+          dataAsOf={dataAsOf}
           interval={interval} onIntervalChange={setInterval_}
           onRefreshIv={refetchGex} viewMode={viewMode} onViewModeChange={setViewMode} />
         <MetricsBar calcResult={calcResult} />

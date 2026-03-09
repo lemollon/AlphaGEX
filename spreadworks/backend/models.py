@@ -1,4 +1,4 @@
-"""SpreadWorks SQLAlchemy models — positions + daily_marks tables."""
+"""SpreadWorks SQLAlchemy models — positions + daily_marks + cache tables."""
 
 from sqlalchemy import (
     Column, Integer, String, Float, Text, Date, DateTime, ForeignKey,
@@ -8,6 +8,64 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from .db import Base
+
+
+# ---------------------------------------------------------------------------
+# Cache tables — written on every successful live fetch, read as fallback
+# ---------------------------------------------------------------------------
+
+class QuoteCache(Base):
+    """Last known quote per symbol. Updated on every candle/quote fetch."""
+    __tablename__ = "quote_cache"
+
+    symbol = Column(String(10), primary_key=True)
+    last = Column(Float, nullable=True)
+    bid = Column(Float, nullable=True)
+    ask = Column(Float, nullable=True)
+    volume = Column(Integer, nullable=True)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CandleCache(Base):
+    """Last known candle array per symbol+interval. Stored as JSON text."""
+    __tablename__ = "candle_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(10), nullable=False)
+    interval = Column(String(10), nullable=False, default="15min")
+    candles_json = Column(Text, nullable=True)  # JSON array of candle dicts
+    last_price = Column(Float, nullable=True)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("symbol", "interval"),)
+
+
+class GexCache(Base):
+    """Last known GEX snapshot per symbol."""
+    __tablename__ = "gex_cache"
+
+    symbol = Column(String(10), primary_key=True)
+    flip_point = Column(Float, nullable=True)
+    call_wall = Column(Float, nullable=True)
+    put_wall = Column(Float, nullable=True)
+    gamma_regime = Column(String(30), nullable=True)
+    spot_price = Column(Float, nullable=True)
+    vix = Column(Float, nullable=True)
+    source = Column(String(30), nullable=True)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChainCache(Base):
+    """Last known option chain per symbol+expiration. Stored as JSON text."""
+    __tablename__ = "chain_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(10), nullable=False)
+    expiration = Column(String(12), nullable=False)
+    chain_json = Column(Text, nullable=True)  # JSON: {strikes, options}
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("symbol", "expiration"),)
 
 
 class Position(Base):

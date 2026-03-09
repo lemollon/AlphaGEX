@@ -102,6 +102,7 @@ export default function ControlsBar({
   isMarketOpen,
   secondsAgo,
   statusText,
+  dataAsOf,
   interval,
   onIntervalChange,
   onRefreshIv,
@@ -145,7 +146,11 @@ export default function ControlsBar({
           {isMarketOpen ? 'LIVE' : 'CLOSED'}
         </div>
         <span style={{ color: '#444', fontSize: 10 }}>
-          {isMarketOpen ? `Updated ${secondsAgo}s ago` : `Market Closed \u00b7 ${statusText}`}
+          {isMarketOpen
+            ? `Updated ${secondsAgo}s ago`
+            : dataAsOf
+              ? `Cached data \u00b7 ${statusText}`
+              : `Market Closed \u00b7 ${statusText}`}
         </span>
 
         {/* Timeframe buttons */}
