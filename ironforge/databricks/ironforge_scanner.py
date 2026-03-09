@@ -4,7 +4,7 @@
 
 # MAGIC %md
 # MAGIC # IronForge Scanner
-# MAGIC Scans every 1 minute for FLAME (2DTE) and SPARK (1DTE) Iron Condor opportunities on SPY.
+# MAGIC Scans every 1 minute for FLAME (2DTE), SPARK (1DTE), and INFERNO (0DTE) Iron Condor opportunities on SPY.
 # MAGIC
 # MAGIC **Just click Run All** — credentials are in Cell 1 below, everything else is automatic.
 
@@ -81,9 +81,17 @@ SCAN_INTERVAL = 60  # 1 minute
 CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 
+# Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM)
+BOT_CONFIG = {
+    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 1.0, "entry_end": 1400, "max_trades": 1},
+    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 1.0, "entry_end": 1400, "max_trades": 1},
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 2.0, "entry_end": 1430, "max_trades": 3},
+}
+
 BOTS = [
-    {"name": "flame", "dte": "2DTE", "min_dte": 2},
-    {"name": "spark", "dte": "1DTE", "min_dte": 1},
+    {"name": "flame",   "dte": "2DTE", "min_dte": 2},
+    {"name": "spark",   "dte": "1DTE", "min_dte": 1},
+    {"name": "inferno", "dte": "0DTE", "min_dte": 0},
 ]
 
 # ---------------------------------------------------------------------------
@@ -1013,13 +1021,13 @@ def is_in_warmup_window(ct: datetime) -> bool:
     return WARMUP_START <= hhmm <= WARMUP_END
 
 
-def is_in_entry_window(ct: datetime) -> bool:
-    """Check if within entry window: weekday, 8:30 AM - 2:00 PM CT."""
+def is_in_entry_window(ct: datetime, entry_end: int = 1400) -> bool:
+    """Check if within entry window: weekday, 8:30 AM - entry_end CT."""
     dow = ct.weekday()
     if dow >= 5:
         return False
     hhmm = ct.hour * 100 + ct.minute
-    return 830 <= hhmm <= 1400
+    return 830 <= hhmm <= entry_end
 
 
 def is_after_eod_cutoff(ct: datetime) -> bool:
@@ -1028,26 +1036,32 @@ def is_after_eod_cutoff(ct: datetime) -> bool:
     return hhmm >= 1445
 
 
-def get_sliding_profit_target(ct: datetime) -> tuple:
+def get_sliding_profit_target(ct: datetime, base_pt: float = 0.30) -> tuple:
     """
     Return (profit_target_fraction, tier_label) based on current CT time.
 
     The profit target slides DOWN as the day progresses — based on CURRENT
     time, not when the trade was opened.
 
-    Schedule (CT):
+    For FLAME/SPARK (base_pt=0.30):
         8:30 AM – 10:29 AM  → 30%  (MORNING)
         10:30 AM – 12:59 PM → 20%  (MIDDAY)
         1:00 PM – 2:44 PM   → 15%  (AFTERNOON)
-        2:45 PM+            → handled by EOD cutoff (close at any P&L)
+
+    For INFERNO (base_pt=0.50):
+        8:30 AM – 10:29 AM  → 50%  (MORNING)
+        10:30 AM – 12:59 PM → 35%  (MIDDAY)
+        1:00 PM – 2:44 PM   → 25%  (AFTERNOON)
+
+    2:45 PM+ → handled by EOD cutoff (close at any P&L)
     """
     time_minutes = ct.hour * 60 + ct.minute
     if time_minutes < 630:       # before 10:30 AM CT
-        return 0.30, "MORNING"
+        return base_pt, "MORNING"
     elif time_minutes < 780:     # before 1:00 PM CT
-        return 0.20, "MIDDAY"
+        return max(0.10, base_pt - 0.10), "MIDDAY"
     else:
-        return 0.15, "AFTERNOON"
+        return max(0.10, base_pt - 0.15), "AFTERNOON"
 
 
 # ---------------------------------------------------------------------------
@@ -1119,6 +1133,10 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
         a = 0.03
         win_prob += a
         factors.append(("DTE_2DAY_DECAY", a))
+    elif dte_mode == "0DTE":
+        a = -0.05
+        win_prob += a
+        factors.append(("DTE_0DAY_AGGRESSIVE", a))
     else:
         a = -0.02
         win_prob += a
@@ -1162,9 +1180,9 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
 # ---------------------------------------------------------------------------
 
 
-def calculate_strikes(spot: float, expected_move: float) -> dict:
-    """Calculate IC strikes using 1.2x SD, $5 width."""
-    SD = 1.2
+def calculate_strikes(spot: float, expected_move: float, sd_mult: float = 1.2) -> dict:
+    """Calculate IC strikes using SD multiplier, $5 width."""
+    SD = sd_mult
     WIDTH = 5
 
     min_em = spot * 0.005
@@ -1432,29 +1450,15 @@ def close_position(
 # ---------------------------------------------------------------------------
 
 
-def monitor_position(bot: dict, ct: datetime) -> dict:
-    """Monitor open position for PT/SL/EOD/stale holdover close."""
-    positions = db_query(f"""
-        SELECT position_id, ticker, expiration,
-               put_short_strike, put_long_strike,
-               call_short_strike, call_long_strike,
-               contracts, total_credit, max_loss,
-               collateral_required, open_time
-        FROM {bot_table(bot['name'], 'positions')}
-        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
-        ORDER BY open_time DESC
-    """)
-
-    if not positions:
-        return {"status": "no_position", "unrealizedPnl": 0}
-
-    pos = positions[0]
+def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
+    """Monitor a single open position for PT/SL/EOD/stale holdover close."""
+    cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
     entry_credit = num(pos["total_credit"])
     contracts = to_int(pos["contracts"])
     collateral = num(pos["collateral_required"])
-    pt_pct, pt_tier = get_sliding_profit_target(ct)
+    pt_pct, pt_tier = get_sliding_profit_target(ct, cfg["pt_pct"])
     profit_target_price = round(entry_credit * (1 - pt_pct), 4)
-    stop_loss_price = round(entry_credit * 2.0, 4)
+    stop_loss_price = round(entry_credit * cfg["sl_mult"], 4)
     ticker = pos.get("ticker") or "SPY"
     exp_raw = pos.get("expiration")
     expiration = str(exp_raw)[:10] if exp_raw else ""
@@ -1531,6 +1535,41 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     }
 
 
+def monitor_position(bot: dict, ct: datetime) -> dict:
+    """Monitor ALL open positions for PT/SL/EOD/stale holdover close.
+
+    For multi-trade bots (INFERNO), iterates through every open position.
+    For single-trade bots (FLAME/SPARK), behaves the same as before.
+    """
+    positions = db_query(f"""
+        SELECT position_id, ticker, expiration,
+               put_short_strike, put_long_strike,
+               call_short_strike, call_long_strike,
+               contracts, total_credit, max_loss,
+               collateral_required, open_time
+        FROM {bot_table(bot['name'], 'positions')}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+        ORDER BY open_time DESC
+    """)
+
+    if not positions:
+        return {"status": "no_position", "unrealizedPnl": 0}
+
+    total_unrealized = 0.0
+    statuses: list[str] = []
+
+    for pos in positions:
+        result = _monitor_single_position(bot, pos, ct)
+        statuses.append(result["status"])
+        total_unrealized += result["unrealizedPnl"]
+
+    # Summarize: if any closed, report it; otherwise report monitoring
+    closed = [s for s in statuses if s.startswith("closed:")]
+    if closed:
+        return {"status": closed[0], "unrealizedPnl": total_unrealized}
+    return {"status": statuses[0], "unrealizedPnl": total_unrealized}
+
+
 # ---------------------------------------------------------------------------
 #  Try Open Trade
 # ---------------------------------------------------------------------------
@@ -1605,7 +1644,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                 nearest = exp
         expiration = nearest
 
-    strikes = calculate_strikes(spot, expected_move)
+    cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
+    strikes = calculate_strikes(spot, expected_move, sd_mult=cfg["sd"])
     credits = get_ic_entry_credit(
         "SPY", expiration,
         strikes["putShort"], strikes["putLong"],
@@ -1926,14 +1966,19 @@ def scan_bot(bot: dict) -> None:
         except Exception as pdt_sync_err:
             log.warning(f"{bot_name} PDT sync error: {pdt_sync_err}")
 
+        cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
+        max_trades = cfg["max_trades"]
+        entry_end = cfg["entry_end"]
+
         open_rows = db_query(f"""
             SELECT position_id
             FROM {bot_table(bot['name'], 'positions')}
             WHERE status = 'open' AND dte_mode = '{bot['dte']}'
-            LIMIT 1
         """)
-        has_open_position = len(open_rows) > 0
+        open_count = len(open_rows)
+        has_open_position = open_count > 0
 
+        # Always monitor ALL open positions first
         if has_open_position:
             monitor_result = monitor_position(bot, ct)
             if monitor_result["status"].startswith("closed:"):
@@ -1943,11 +1988,15 @@ def scan_bot(bot: dict) -> None:
             reason = monitor_result["status"]
             unrealized_pnl = monitor_result["unrealizedPnl"]
 
+        # For multi-trade bots, check if we can open more positions
+        # For single-trade bots, only open if no position is open
+        can_open_more = (max_trades > 1 and open_count < max_trades) or (max_trades <= 1 and not has_open_position)
+
         if not is_market_open(ct):
             if not has_open_position:
                 action = "outside_window"
                 reason = f"Market closed ({ct.hour}:{ct.minute:02d} CT)"
-        elif not has_open_position and is_in_entry_window(ct):
+        elif can_open_more and is_in_entry_window(ct, entry_end):
             if not is_tradier_configured():
                 action = "skip"
                 reason = "tradier_not_configured"
@@ -1972,7 +2021,7 @@ def scan_bot(bot: dict) -> None:
                     reason = trade_result
         elif not has_open_position:
             action = "outside_entry_window"
-            reason = f"Past entry cutoff ({ct.hour}:{ct.minute:02d} CT, cutoff 14:00)"
+            reason = f"Past entry cutoff ({ct.hour}:{ct.minute:02d} CT, cutoff {entry_end})"
 
         # Equity snapshot every cycle
         try:
@@ -2216,6 +2265,8 @@ def _ensure_pdt_tables() -> None:
         # Seed PDT config for each bot if missing
         for bot in BOTS:
             bot_upper = bot["name"].upper()
+            cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
+            max_tpd = cfg["max_trades"]
             existing = db_query(f"""
                 SELECT bot_name FROM {pdt_config_tbl}
                 WHERE bot_name = '{bot_upper}' LIMIT 1
@@ -2225,10 +2276,10 @@ def _ensure_pdt_tables() -> None:
                     INSERT INTO {pdt_config_tbl}
                         (bot_name, pdt_enabled, day_trade_count, max_day_trades,
                          window_days, max_trades_per_day, created_at, updated_at)
-                    VALUES ('{bot_upper}', TRUE, 0, 3, 5, 1,
+                    VALUES ('{bot_upper}', TRUE, 0, 3, 5, {max_tpd},
                             CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
                 """)
-                log.info(f"Seeded ironforge_pdt_config for {bot_upper}")
+                log.info(f"Seeded ironforge_pdt_config for {bot_upper} (max_trades_per_day={max_tpd})")
         _pdt_tables_ready = True
         log.info("PDT tables verified/created (ironforge_pdt_config, ironforge_pdt_log)")
     except Exception as e:
