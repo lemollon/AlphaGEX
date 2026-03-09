@@ -82,17 +82,12 @@ def _start_scheduler(app: FastAPI):
 def _ensure_schema(eng):
     """Ensure positions/daily_marks tables match the current SQLAlchemy model.
 
-    The tables were originally created with a completely different schema
-    (JSON legs, net_debit, opened_at, etc.).  The model was rewritten to
-    use explicit strike columns.  create_all() only creates NEW tables —
-    it never alters existing ones.
-
-    Strategy: drop old-schema tables so create_all() can rebuild them.
+    Uses ALTER TABLE ADD COLUMN IF NOT EXISTS so existing data is never lost.
+    Also creates tables from scratch if they don't exist yet.
     """
     from sqlalchemy import text as sa_text
 
     try:
-        # Check if positions table exists and has old schema
         with eng.connect() as conn:
             result = conn.execute(sa_text(
                 "SELECT column_name FROM information_schema.columns "
@@ -101,24 +96,62 @@ def _ensure_schema(eng):
             existing_cols = {row[0] for row in result}
 
         if not existing_cols:
-            print("[SpreadWorks] Schema: positions table not found, will be created")
+            print("[SpreadWorks] Schema: positions table not found, will be created by create_all()")
             return
 
-        print(f"[SpreadWorks] Schema: positions has columns: {sorted(existing_cols)}")
+        print(f"[SpreadWorks] Schema: positions has {len(existing_cols)} columns: {sorted(existing_cols)}")
 
-        if "long_put" in existing_cols and "contracts" in existing_cols:
-            print("[SpreadWorks] Schema: positions table has correct schema")
+        # Define every column the model expects with its SQL type and default
+        expected_cols = {
+            "id":             None,  # PK, always exists
+            "symbol":         "VARCHAR(10) NOT NULL DEFAULT 'SPY'",
+            "strategy":       "VARCHAR(30) NOT NULL DEFAULT 'double_diagonal'",
+            "label":          "VARCHAR(100)",
+            "long_put":       "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "short_put":      "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "short_call":     "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "long_call":      "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "short_exp":      "DATE NOT NULL DEFAULT CURRENT_DATE",
+            "long_exp":       "DATE",
+            "contracts":      "INTEGER NOT NULL DEFAULT 1",
+            "entry_credit":   "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "entry_price":    "DOUBLE PRECISION NOT NULL DEFAULT 0",
+            "entry_date":     "DATE NOT NULL DEFAULT CURRENT_DATE",
+            "entry_spot":     "DOUBLE PRECISION",
+            "max_profit":     "DOUBLE PRECISION",
+            "max_loss":       "DOUBLE PRECISION",
+            "breakeven_low":  "DOUBLE PRECISION",
+            "breakeven_high": "DOUBLE PRECISION",
+            "notes":          "TEXT",
+            "status":         "VARCHAR(10) NOT NULL DEFAULT 'open'",
+            "close_date":     "DATE",
+            "close_price":    "DOUBLE PRECISION",
+            "realized_pnl":   "DOUBLE PRECISION",
+            "created_at":     "TIMESTAMPTZ DEFAULT NOW()",
+            "updated_at":     "TIMESTAMPTZ DEFAULT NOW()",
+        }
+
+        missing = []
+        for col_name, col_def in expected_cols.items():
+            if col_name not in existing_cols and col_def is not None:
+                missing.append((col_name, col_def))
+
+        if not missing:
+            print("[SpreadWorks] Schema: positions table has all expected columns ✓")
             return
 
-        # Wrong schema — drop and recreate
-        print("[SpreadWorks] Schema: wrong columns detected, dropping tables for rebuild...")
+        print(f"[SpreadWorks] Schema: adding {len(missing)} missing columns: {[m[0] for m in missing]}")
         with eng.begin() as conn:
-            conn.execute(sa_text("DROP TABLE IF EXISTS daily_marks CASCADE"))
-            conn.execute(sa_text("DROP TABLE IF EXISTS positions CASCADE"))
-            print("[SpreadWorks] Schema: dropped old tables")
+            for col_name, col_def in missing:
+                sql = f"ALTER TABLE positions ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                print(f"[SpreadWorks] Schema:   {sql}")
+                conn.execute(sa_text(sql))
+        print(f"[SpreadWorks] Schema: all {len(missing)} columns added successfully ✓")
 
     except Exception as e:
-        print(f"[SpreadWorks] Schema check (non-fatal): {e}")
+        print(f"[SpreadWorks] Schema migration error: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @asynccontextmanager
@@ -126,7 +159,7 @@ async def lifespan(app: FastAPI):
     # Create DB tables if engine is configured
     if engine is not None:
         try:
-            # Drop old-schema tables BEFORE create_all so they get rebuilt correctly
+            # Ensure existing tables have all expected columns (non-destructive)
             _ensure_schema(engine)
             Base.metadata.create_all(bind=engine)
             print("[SpreadWorks] Database tables created/verified")
