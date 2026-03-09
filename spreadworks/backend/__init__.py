@@ -33,6 +33,34 @@ if FRONTEND_DIST.exists():
     print(f"[SpreadWorks] dist contents: {list(FRONTEND_DIST.iterdir())}")
 
 
+def _send_webhook_sync(embed: dict) -> bool:
+    """Send a single embed to Discord webhook (sync, for scheduler use)."""
+    import requests as req
+
+    url = os.getenv("DISCORD_WEBHOOK_URL", "")
+    if not url:
+        logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
+        return False
+
+    import time as _time
+    for attempt in range(3):
+        try:
+            resp = req.post(url, json={"embeds": [embed]},
+                            headers={"Content-Type": "application/json"}, timeout=15)
+            if resp.status_code == 429:
+                retry_after = resp.json().get("retry_after", 5)
+                logger.warning(f"[SpreadWorks] Rate limited, waiting {retry_after}s")
+                _time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            return True
+        except Exception as e:
+            logger.error(f"[SpreadWorks] Webhook attempt {attempt+1}/3 failed: {e}")
+            if attempt < 2:
+                _time.sleep(2 ** (attempt + 1))
+    return False
+
+
 def _start_scheduler(app: FastAPI):
     """Start APScheduler for market open/close Discord posts (UTC times)."""
     try:
@@ -41,7 +69,143 @@ def _start_scheduler(app: FastAPI):
         logger.warning("[SpreadWorks] apscheduler not installed — Discord scheduler disabled")
         return None
 
+    # Import content modules
+    try:
+        from .verses import VERSES
+        from .tips import TIPS
+        from .close_messages import CLOSE_MESSAGES
+        from .economic_events import (
+            get_central_now, is_market_holiday,
+            get_todays_events, get_upcoming_events,
+            format_countdown, format_event_time,
+        )
+        content_loaded = True
+        logger.info(f"[SpreadWorks] Content loaded: {len(VERSES)} verses, {len(TIPS)} tips, {len(CLOSE_MESSAGES)} close messages")
+    except ImportError as e:
+        logger.warning(f"[SpreadWorks] Content modules not found — rich posts disabled: {e}")
+        content_loaded = False
+
     scheduler = AsyncIOScheduler(timezone="UTC")
+
+    def _is_trading_day() -> bool:
+        """Check if today is a trading day (weekday + not holiday)."""
+        if not content_loaded:
+            from datetime import datetime as _dt
+            return _dt.utcnow().weekday() < 5
+        now = get_central_now()
+        return now.weekday() < 5 and not is_market_holiday(now.date())
+
+    def _rotation_index(items, offset=0) -> int:
+        """Deterministic daily rotation based on day-of-year."""
+        if content_loaded:
+            day_of_year = get_central_now().timetuple().tm_yday
+        else:
+            from datetime import datetime as _dt
+            day_of_year = _dt.utcnow().timetuple().tm_yday
+        return (day_of_year + offset) % len(items)
+
+    def _impact_color(impact: str) -> int:
+        return {"HIGH": 0xFF1744, "MEDIUM": 0xFFD600, "LOW": 0x448AFF}.get(impact, 0x448AFF)
+
+    async def _fire_market_open_message():
+        """8:25 AM CT — Bible verse + spread trading tip."""
+        if not content_loaded or not _is_trading_day():
+            logger.info("[SpreadWorks] Skipping market open message (not trading day or no content)")
+            return
+
+        import asyncio
+        now = get_central_now()
+        verse = VERSES[_rotation_index(VERSES)]
+        tip = TIPS[_rotation_index(TIPS, offset=37)]
+
+        embed = {
+            "title": "\U0001f305 MARKET OPENS IN 5 MINUTES",
+            "color": 0x00E676,
+            "fields": [
+                {
+                    "name": f"\U0001f4d6 {verse['reference']}",
+                    "value": f"*\"{verse['text']}\"*",
+                    "inline": False,
+                },
+                {
+                    "name": "\U0001f4ca SPREAD TRADER TIP",
+                    "value": tip,
+                    "inline": False,
+                },
+            ],
+            "footer": {
+                "text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Good luck today. Trade with discipline."
+            },
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Market open message {'sent' if ok else 'FAILED'}")
+
+    async def _fire_economic_countdown():
+        """8:30 AM CT — Economic event countdown."""
+        if not content_loaded or not _is_trading_day():
+            logger.info("[SpreadWorks] Skipping economic countdown (not trading day or no content)")
+            return
+
+        import asyncio
+        now = get_central_now()
+        today_date = now.date()
+
+        # Check for events TODAY
+        todays_events = get_todays_events(today_date)
+        if todays_events:
+            for event in todays_events:
+                event_time = format_event_time(event["datetime"])
+                embed = {
+                    "title": "\u26a1 ECONOMIC EVENT TODAY",
+                    "color": _impact_color(event["impact"]),
+                    "fields": [
+                        {
+                            "name": f"\U0001f4c5 {event['name']}",
+                            "value": f"**{event_time}**\n{event['description']}",
+                            "inline": False,
+                        },
+                        {
+                            "name": f"Impact: **{event['impact']}**",
+                            "value": "\U0001f4a1 Consider closing or hedging positions before this event.\nIV often spikes 30 min before major releases.",
+                            "inline": False,
+                        },
+                    ],
+                    "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                    "timestamp": now.isoformat(),
+                }
+                await asyncio.to_thread(_send_webhook_sync, embed)
+            logger.info(f"[SpreadWorks] Posted {len(todays_events)} today's economic event(s)")
+            return
+
+        # Check for events within next 7 days
+        upcoming = get_upcoming_events(days=7, count=3)
+        if upcoming:
+            fields = []
+            for event in upcoming:
+                countdown = format_countdown(event["datetime"])
+                event_time = format_event_time(event["datetime"])
+                fields.append({
+                    "name": f"\U0001f4c5 {event['name']}",
+                    "value": (
+                        f"\U0001f4c6 {event['datetime'].strftime('%A, %b %-d')} at {event_time}\n"
+                        f"\u23f3 **{countdown}**\n"
+                        f"Impact: **{event['impact']}**"
+                    ),
+                    "inline": False,
+                })
+
+            embed = {
+                "title": "\U0001f4c5 NEXT MAJOR ECONOMIC EVENTS",
+                "color": _impact_color(upcoming[0]["impact"]),
+                "fields": fields,
+                "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                "timestamp": now.isoformat(),
+            }
+            await asyncio.to_thread(_send_webhook_sync, embed)
+            logger.info(f"[SpreadWorks] Posted upcoming events countdown ({len(upcoming)} events)")
+        else:
+            logger.info("[SpreadWorks] No economic events within 7 days — skipping")
 
     async def _fire_open_post():
         """Market open post — 8:25 AM CT = 13:25 or 14:25 UTC depending on DST."""
@@ -53,6 +217,45 @@ def _start_scheduler(app: FastAPI):
                 logger.info(f"[SpreadWorks] Open post response: {resp.status_code} {resp.text[:200]}")
         except Exception as e:
             logger.error(f"[SpreadWorks] Market open Discord post failed: {e}")
+
+    async def _fire_market_close_message():
+        """3:00 PM CT — Market close reflection."""
+        if not content_loaded or not _is_trading_day():
+            logger.info("[SpreadWorks] Skipping market close message (not trading day or no content)")
+            return
+
+        import asyncio
+        now = get_central_now()
+        close_msg = CLOSE_MESSAGES[_rotation_index(CLOSE_MESSAGES, offset=71)]
+
+        embed = {
+            "title": "\U0001f514 MARKET CLOSED",
+            "color": 0x448AFF,
+            "fields": [
+                {
+                    "name": "\U0001f4ad Closing Thought",
+                    "value": close_msg,
+                    "inline": False,
+                },
+                {
+                    "name": "\U0001f4cb End of Day Checklist",
+                    "value": (
+                        "\u2022 Review your positions and open orders\n"
+                        "\u2022 Log your trades in your journal\n"
+                        "\u2022 Check tomorrow's economic calendar\n"
+                        "\u2022 Set alerts for key levels\n"
+                        "\u2022 Rest well \u2014 tomorrow is a new day"
+                    ),
+                    "inline": False,
+                },
+            ],
+            "footer": {
+                "text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Rest up. Trade tomorrow."
+            },
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Market close message {'sent' if ok else 'FAILED'}")
 
     async def _fire_eod_post():
         """Market close post — 3:05 PM CT = 20:05 or 21:05 UTC depending on DST."""
@@ -67,15 +270,29 @@ def _start_scheduler(app: FastAPI):
 
     # Schedule using CT-equivalent UTC cron times
     # CT is UTC-6 (CST) or UTC-5 (CDT). Use both possible hours.
-    # 8:25 CT = 13:25 UTC (CDT) or 14:25 UTC (CST)
-    scheduler.add_job(_fire_open_post, "cron", hour="13,14", minute=25,
+
+    # 8:25 CT — Bible verse + tip
+    scheduler.add_job(_fire_market_open_message, "cron", hour="13,14", minute=25,
+                      day_of_week="mon-fri", id="discord_market_open_msg")
+    # 8:25 CT — Open positions summary (existing)
+    scheduler.add_job(_fire_open_post, "cron", hour="13,14", minute=25, second=30,
                       day_of_week="mon-fri", id="discord_open")
-    # 15:05 CT = 20:05 UTC (CDT) or 21:05 UTC (CST)
+    # 8:30 CT — Economic event countdown
+    scheduler.add_job(_fire_economic_countdown, "cron", hour="13,14", minute=30,
+                      day_of_week="mon-fri", id="discord_economic")
+    # 15:00 CT — Market close reflection
+    scheduler.add_job(_fire_market_close_message, "cron", hour="20,21", minute=0,
+                      day_of_week="mon-fri", id="discord_market_close_msg")
+    # 15:05 CT — EOD summary with AI commentary (existing)
     scheduler.add_job(_fire_eod_post, "cron", hour="20,21", minute=5,
                       day_of_week="mon-fri", id="discord_eod")
 
     scheduler.start()
-    logger.info("[SpreadWorks] APScheduler started — discord_open and discord_eod jobs registered")
+    logger.info(
+        "[SpreadWorks] APScheduler started — 5 jobs: "
+        "market_open_msg (8:25), open_positions (8:25:30), "
+        "economic (8:30), market_close_msg (15:00), eod (15:05) CT"
+    )
     return scheduler
 
 

@@ -1715,6 +1715,107 @@ async def discord_test():
                 "detail": str(e)}
 
 
+@router.post("/discord/test-daily")
+async def discord_test_daily():
+    """Fire all 3 rich daily posts (market open, economic, market close) immediately for testing."""
+    import time as _time
+
+    try:
+        from .verses import VERSES
+        from .tips import TIPS
+        from .close_messages import CLOSE_MESSAGES
+        from .economic_events import (
+            get_central_now, get_todays_events, get_upcoming_events,
+            format_countdown, format_event_time,
+        )
+    except ImportError as e:
+        raise HTTPException(500, f"Content modules not loaded: {e}")
+
+    results = {}
+    now = get_central_now()
+
+    def _impact_color(impact: str) -> int:
+        return {"HIGH": 0xFF1744, "MEDIUM": 0xFFD600, "LOW": 0x448AFF}.get(impact, 0x448AFF)
+
+    def _rotation_index(items, offset=0) -> int:
+        day_of_year = now.timetuple().tm_yday
+        return (day_of_year + offset) % len(items)
+
+    # 1) Market Open — Bible verse + tip
+    verse = VERSES[_rotation_index(VERSES)]
+    tip = TIPS[_rotation_index(TIPS, offset=37)]
+    embed_open = {
+        "title": "\U0001f305 MARKET OPENS IN 5 MINUTES",
+        "color": 0x00E676,
+        "fields": [
+            {"name": f"\U0001f4d6 {verse['reference']}", "value": f"*\"{verse['text']}\"*", "inline": False},
+            {"name": "\U0001f4ca SPREAD TRADER TIP", "value": tip, "inline": False},
+        ],
+        "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Good luck today. Trade with discipline."},
+        "timestamp": now.isoformat(),
+    }
+    results["market_open"] = _send_discord_embed(embed_open)
+    _time.sleep(1)
+
+    # 2) Economic countdown
+    today_date = now.date()
+    todays_events = get_todays_events(today_date)
+    if todays_events:
+        for event in todays_events:
+            event_time = format_event_time(event["datetime"])
+            embed_econ = {
+                "title": "\u26a1 ECONOMIC EVENT TODAY",
+                "color": _impact_color(event["impact"]),
+                "fields": [
+                    {"name": f"\U0001f4c5 {event['name']}", "value": f"**{event_time}**\n{event['description']}", "inline": False},
+                    {"name": f"Impact: **{event['impact']}**", "value": "\U0001f4a1 Consider closing or hedging positions before this event.", "inline": False},
+                ],
+                "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                "timestamp": now.isoformat(),
+            }
+            _send_discord_embed(embed_econ)
+        results["economic"] = True
+    else:
+        upcoming = get_upcoming_events(days=7, count=3)
+        if upcoming:
+            fields = []
+            for event in upcoming:
+                countdown = format_countdown(event["datetime"])
+                event_time = format_event_time(event["datetime"])
+                fields.append({
+                    "name": f"\U0001f4c5 {event['name']}",
+                    "value": f"\U0001f4c6 {event['datetime'].strftime('%A, %b %-d')} at {event_time}\n\u23f3 **{countdown}**\nImpact: **{event['impact']}**",
+                    "inline": False,
+                })
+            embed_econ = {
+                "title": "\U0001f4c5 NEXT MAJOR ECONOMIC EVENTS",
+                "color": _impact_color(upcoming[0]["impact"]),
+                "fields": fields,
+                "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                "timestamp": now.isoformat(),
+            }
+            results["economic"] = _send_discord_embed(embed_econ)
+        else:
+            results["economic"] = "no_events_within_7_days"
+    _time.sleep(1)
+
+    # 3) Market Close — reflection
+    close_msg = CLOSE_MESSAGES[_rotation_index(CLOSE_MESSAGES, offset=71)]
+    embed_close = {
+        "title": "\U0001f514 MARKET CLOSED",
+        "color": 0x448AFF,
+        "fields": [
+            {"name": "\U0001f4ad Closing Thought", "value": close_msg, "inline": False},
+            {"name": "\U0001f4cb End of Day Checklist", "value": "\u2022 Review your positions and open orders\n\u2022 Log your trades in your journal\n\u2022 Check tomorrow's economic calendar\n\u2022 Set alerts for key levels\n\u2022 Rest well \u2014 tomorrow is a new day", "inline": False},
+        ],
+        "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Rest up. Trade tomorrow."},
+        "timestamp": now.isoformat(),
+    }
+    results["market_close"] = _send_discord_embed(embed_close)
+
+    return {"posted": results, "verse": verse["reference"], "tip_index": _rotation_index(TIPS, offset=37)}
+
+
 @router.post("/discord/push-spread")
 async def discord_push_spread(body: DiscordPushSpread):
     """Push current spread analysis to Discord as a rich embed."""
