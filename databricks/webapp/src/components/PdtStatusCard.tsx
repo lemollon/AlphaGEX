@@ -24,8 +24,8 @@ export default function PdtStatusCard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark'
-  accent: 'amber' | 'blue'
+  bot: 'flame' | 'spark' | 'inferno'
+  accent: 'amber' | 'blue' | 'red'
 }) {
   const { data, mutate } = useSWR<PdtStatus>(`/api/${bot}/pdt`, fetcher, {
     refreshInterval: 15_000,
@@ -103,14 +103,16 @@ export default function PdtStatusCard({
     }
   }
 
-  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
+  const accentMap = { amber: { border: 'border-amber-500/30', text: 'text-amber-400', bg: 'bg-amber-600 text-white', bgHover: 'bg-amber-600 hover:bg-amber-500' }, blue: { border: 'border-blue-500/30', text: 'text-blue-400', bg: 'bg-blue-600 text-white', bgHover: 'bg-blue-600 hover:bg-blue-500' }, red: { border: 'border-red-500/30', text: 'text-red-400', bg: 'bg-red-600 text-white', bgHover: 'bg-red-600 hover:bg-red-500' } }
+  const am = accentMap[accent]
+  const accentBorder = am.border
 
   return (
     <div className={`rounded-xl border ${accentBorder} bg-forge-card p-4 space-y-3`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-white">PDT Status</span>
-        <span className={`text-xs ${accent === 'amber' ? 'text-amber-400' : 'text-blue-400'}`}>
+        <span className={`text-xs ${am.text}`}>
           {data.bot_name}
         </span>
       </div>
@@ -124,7 +126,7 @@ export default function PdtStatusCard({
             disabled={busy || data.pdt_enabled}
             className={`px-3 py-1 text-xs rounded-l font-medium transition-colors ${
               data.pdt_enabled
-                ? `${accent === 'amber' ? 'bg-amber-600 text-white' : 'bg-blue-600 text-white'}`
+                ? `${am.bg}`
                 : 'bg-forge-border text-forge-muted hover:text-white'
             }`}
           >
@@ -232,7 +234,7 @@ export default function PdtStatusCard({
             </button>
             <button
               onClick={handleReset}
-              className={`px-3 py-1 rounded text-white ${accent === 'amber' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-blue-600 hover:bg-blue-500'}`}
+              className={`px-3 py-1 rounded text-white ${am.bgHover}`}
             >
               Reset
             </button>

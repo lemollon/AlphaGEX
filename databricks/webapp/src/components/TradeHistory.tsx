@@ -47,7 +47,7 @@ function parseSandboxOrders(raw: string | null | undefined): Record<string, Sand
   return null
 }
 
-export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: 'flame' | 'spark' }) {
+export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: 'flame' | 'spark' | 'inferno' }) {
   if (!trades.length) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">

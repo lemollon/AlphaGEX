@@ -88,7 +88,7 @@ const bots = [
     name: 'Compare',
     href: '/compare',
     dte: 'Head to Head',
-    desc: 'Side-by-side comparison of FLAME and SPARK. Equity curves, win rates, P&L, and all metrics.',
+    desc: 'Side-by-side comparison of FLAME, SPARK, and INFERNO. Equity curves, win rates, P&L, and all metrics.',
     border: 'border-stone-600/30 hover:border-stone-500/60',
     heading: 'text-white',
     btn: 'border-stone-500/60 text-gray-300 hover:bg-stone-700/30',
