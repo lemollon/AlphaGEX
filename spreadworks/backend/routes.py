@@ -77,50 +77,10 @@ async def _get_quote(request: Request, symbol: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _aggregate_to_4h(bars: list[dict]) -> list[dict]:
-    """Aggregate 15-min bars into 4-hour candles (16 bars per bucket)."""
-    candles: list[dict] = []
-    bucket: list[dict] = []
-    for bar in bars:
-        bucket.append(bar)
-        if len(bucket) == 16:
-            candles.append(
-                {
-                    "time": bucket[0].get("time"),
-                    "open": bucket[0].get("open"),
-                    "high": max(b.get("high", 0) or 0 for b in bucket),
-                    "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
-                    "close": bucket[-1].get("close"),
-                    "volume": sum(b.get("volume", 0) or 0 for b in bucket),
-                }
-            )
-            bucket = []
-    # Flush remaining bars as a partial 4H candle
-    if bucket:
-        candles.append(
-            {
-                "time": bucket[0].get("time"),
-                "open": bucket[0].get("open"),
-                "high": max(b.get("high", 0) or 0 for b in bucket),
-                "low": min(b.get("low", float("inf")) or float("inf") for b in bucket),
-                "close": bucket[-1].get("close"),
-                "volume": sum(b.get("volume", 0) or 0 for b in bucket),
-            }
-        )
-    return candles
-
-
 @router.get("/candles")
 async def get_candles(request: Request, symbol: str = "SPY"):
-    """Return 4-hour candles over a rolling 2-week window.
-
-    Fetches 14 calendar days of 15-minute bars from Tradier timesales,
-    then aggregates them into 4-hour candles (16 × 15 min = 4 hrs).
-    Works identically whether the market is open or closed.
-    """
-    today = date.today()
-    today_str = today.isoformat()
-    start_date = (today - timedelta(days=14)).isoformat()
+    """Return raw 15-min candles over a rolling 2-week window from Tradier."""
+    start_date = (date.today() - timedelta(days=14)).isoformat()
 
     candles: list[dict] = []
     last_price = None
@@ -133,20 +93,17 @@ async def get_candles(request: Request, symbol: str = "SPY"):
                 "symbol": symbol,
                 "interval": "15min",
                 "start": start_date,
-                "end": today_str,
                 "session_filter": "open",
             },
         )
-        series = ts_data.get("series", {})
-        if series is None:
-            series = {}
-        bars = series.get("data", [])
+        series = ts_data.get("series") or {}
+        bars = series.get("data") or []
         if isinstance(bars, dict):
             bars = [bars]
 
-        candles = _aggregate_to_4h(bars)
+        candles = bars  # Return raw — no aggregation
         if candles:
-            last_price = candles[-1]["close"]
+            last_price = candles[-1].get("close")
     except Exception:
         pass
 
@@ -900,11 +857,14 @@ class PositionCloseBody(BaseModel):
 # --- GET /positions?status=open|closed|all ---
 @router.get("/positions")
 async def get_positions(status: str = "open", db: Session = Depends(get_db)):
-    q = db.query(Position)
-    if status in ("open", "closed"):
-        q = q.filter(Position.status == status)
-    positions = q.order_by(Position.entry_date.desc()).all()
-    return {"positions": [_pos_to_dict(p) for p in positions]}
+    try:
+        q = db.query(Position)
+        if status in ("open", "closed"):
+            q = q.filter(Position.status == status)
+        positions = q.order_by(Position.entry_date.desc()).all()
+        return {"positions": [_pos_to_dict(p) for p in positions]}
+    except Exception:
+        return {"positions": [], "error": "Database unavailable"}
 
 
 # --- POST /positions (10-slot enforcement) ---
