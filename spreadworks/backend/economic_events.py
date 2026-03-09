@@ -1,19 +1,19 @@
 """
 Full 2026 US economic calendar — major events only.
-All times are US Central (America/Chicago). DST handled via pytz.
+All times are US Central (America/Chicago). DST handled via zoneinfo (stdlib).
 Dates are best estimates based on typical BLS/Fed scheduling patterns.
 Update annually when official schedules are published.
 """
 
 from datetime import datetime, date, timedelta
-import pytz
+from zoneinfo import ZoneInfo
 
-CT = pytz.timezone('America/Chicago')
+CT = ZoneInfo('America/Chicago')
 
 
 def _ct(year, month, day, hour, minute):
-    """Helper to create CT-localized datetime."""
-    return CT.localize(datetime(year, month, day, hour, minute))
+    """Helper to create CT-aware datetime."""
+    return datetime(year, month, day, hour, minute, tzinfo=CT)
 
 
 ECONOMIC_EVENTS_2026 = [
@@ -205,7 +205,7 @@ def get_next_event(from_date=None):
     if from_date is None:
         from_date = get_central_now()
     elif isinstance(from_date, date) and not isinstance(from_date, datetime):
-        from_date = CT.localize(datetime.combine(from_date, datetime.min.time()))
+        from_date = datetime.combine(from_date, datetime.min.time(), tzinfo=CT)
 
     for event in ECONOMIC_EVENTS_2026:
         if event["datetime"] > from_date:
@@ -218,7 +218,7 @@ def get_upcoming_events(from_date=None, days=7, count=5):
     if from_date is None:
         now = get_central_now()
     elif isinstance(from_date, date) and not isinstance(from_date, datetime):
-        now = CT.localize(datetime.combine(from_date, datetime.min.time()))
+        now = datetime.combine(from_date, datetime.min.time(), tzinfo=CT)
     else:
         now = from_date
 
