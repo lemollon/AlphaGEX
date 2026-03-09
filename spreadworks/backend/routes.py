@@ -1605,15 +1605,24 @@ def _send_discord_embed(embed: dict, image_bytes: bytes | None = None) -> bool:
         return False
     try:
         if image_bytes:
-            # Multipart upload: embed as JSON payload + image as file
-            embed["image"] = {"url": "attachment://payoff.png"}
-            payload = json.dumps({"embeds": [embed]})
+            # Multipart upload: embed as JSON payload + image as file attachment
+            embed_copy = {**embed, "image": {"url": "attachment://payoff.png"}}
+            payload = json.dumps({"embeds": [embed_copy]})
             resp = req.post(
                 url,
                 data={"payload_json": payload},
-                files={"file": ("payoff.png", image_bytes, "image/png")},
+                files=[("files[0]", ("payoff.png", image_bytes, "image/png"))],
                 timeout=15,
             )
+            # If multipart fails, fall back to embed-only (no chart)
+            if resp.status_code not in (200, 204):
+                logger.warning(f"[Discord] Multipart failed ({resp.status_code}), retrying embed-only")
+                resp = req.post(
+                    url,
+                    json={"embeds": [embed]},
+                    headers={"Content-Type": "application/json"},
+                    timeout=10,
+                )
         else:
             resp = req.post(
                 url,
@@ -1624,7 +1633,7 @@ def _send_discord_embed(embed: dict, image_bytes: bytes | None = None) -> bool:
         if resp.status_code in (200, 204):
             logger.info(f"[Discord] Embed posted successfully: {embed.get('title', '?')}")
             return True
-        logger.error(f"[Discord] Post failed: {resp.status_code} {resp.text[:200]}")
+        logger.error(f"[Discord] Post failed: {resp.status_code} {resp.text[:300]}")
         return False
     except Exception as e:
         logger.error(f"[Discord] Post exception: {e}")
@@ -2079,8 +2088,12 @@ async def discord_push_position(
         "timestamp": datetime.utcnow().isoformat(),
     }
 
-    # Generate payoff chart image
-    chart_bytes = _generate_position_payoff_chart(pos, spot, chart_title)
+    # Generate payoff chart image (non-fatal if it fails)
+    chart_bytes = None
+    try:
+        chart_bytes = _generate_position_payoff_chart(pos, spot, chart_title)
+    except Exception as e:
+        logger.warning(f"[Discord] Chart generation failed for position {position_id}: {e}")
 
     ok = _send_discord_embed(embed, image_bytes=chart_bytes)
     if not ok:
