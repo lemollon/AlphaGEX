@@ -74,6 +74,17 @@ const bots = [
     badge: 'bg-amber-500/15 text-amber-400',
   },
   {
+    name: 'INFERNO',
+    href: '/inferno',
+    dte: '0DTE',
+    desc: 'FORTRESS-style 0DTE Iron Condors. Up to 3 trades per day with multiple simultaneous positions.',
+    border: 'border-red-500/30 hover:border-red-400/60',
+    heading: 'text-red-400',
+    btn: 'border-red-500/60 text-red-400 hover:bg-red-500/10',
+    glow: 'shadow-red-500/5',
+    badge: 'bg-red-500/15 text-red-400',
+  },
+  {
     name: 'Compare',
     href: '/compare',
     dte: 'Head to Head',
@@ -120,7 +131,7 @@ export default function Home() {
       <LaunchCountdown />
 
       {/* Bot Cards */}
-      <div className="grid md:grid-cols-3 gap-5">
+      <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">
         {bots.map((bot) => (
           <Link key={bot.name} href={bot.href}>
             <div
@@ -152,7 +163,7 @@ export default function Home() {
           <span className="text-amber-400">Strategy</span> Configuration
         </h2>
         <p className="text-xs text-forge-muted mb-5">
-          Shared parameters for both FLAME and SPARK &mdash; only DTE differs
+          Shared parameters for FLAME, SPARK &amp; INFERNO &mdash; DTE and aggressiveness differ
         </p>
 
         <div className="grid md:grid-cols-2 gap-5">
@@ -244,7 +255,7 @@ export default function Home() {
       {/* DTE Comparison */}
       <section>
         <h2 className="text-xl font-bold mb-4">
-          <span className="text-amber-400">FLAME</span> vs <span className="text-blue-400">SPARK</span>
+          <span className="text-amber-400">FLAME</span> vs <span className="text-blue-400">SPARK</span> vs <span className="text-red-400">INFERNO</span>
         </h2>
         <div className="rounded-xl border border-forge-border bg-forge-card/60 overflow-hidden">
           <table className="w-full text-sm">
@@ -253,30 +264,40 @@ export default function Home() {
                 <th className="text-left py-3 px-4 text-forge-muted font-medium">Parameter</th>
                 <th className="text-center py-3 px-4 text-amber-400 font-semibold">FLAME</th>
                 <th className="text-center py-3 px-4 text-blue-400 font-semibold">SPARK</th>
+                <th className="text-center py-3 px-4 text-red-400 font-semibold">INFERNO</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-forge-border/50">
               {[
-                { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', diff: true },
-                { param: 'Spread Width', flame: '$5.00', spark: '$5.00', diff: false },
-                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', diff: false },
-                { param: 'Stop Loss', flame: '100%', spark: '100%', diff: false },
-                { param: 'Max Contracts', flame: '10', spark: '10', diff: false },
-                { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', diff: false },
-                { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', diff: true },
-                { param: 'Premium', flame: 'Higher', spark: 'Lower', diff: true },
-                { param: 'Resolution', flame: '~2 days', spark: '~1 day', diff: true },
-              ].map((row) => (
-                <tr key={row.param}>
-                  <td className="py-2.5 px-4 text-gray-400">{row.param}</td>
-                  <td className={`py-2.5 px-4 text-center font-medium ${row.diff ? 'text-amber-400' : 'text-gray-300'}`}>
-                    {row.flame}
-                  </td>
-                  <td className={`py-2.5 px-4 text-center font-medium ${row.diff ? 'text-blue-400' : 'text-gray-300'}`}>
-                    {row.spark}
-                  </td>
-                </tr>
-              ))}
+                { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', inferno: '0 DTE' },
+                { param: 'Spread Width', flame: '$5.00', spark: '$5.00', inferno: '$5.00' },
+                { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', inferno: '1.0x' },
+                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', inferno: '50%' },
+                { param: 'Stop Loss', flame: '100%', spark: '100%', inferno: '200%' },
+                { param: 'Max Contracts', flame: '10', spark: '10', inferno: '10' },
+                { param: 'Max Trades/Day', flame: '1', spark: '1', inferno: '3' },
+                { param: 'Entry Window', flame: '8:30–2:00', spark: '8:30–2:00', inferno: '8:30–2:30' },
+                { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', inferno: 'Maximum' },
+                { param: 'Premium', flame: 'Higher', spark: 'Lower', inferno: 'Lowest' },
+                { param: 'Resolution', flame: '~2 days', spark: '~1 day', inferno: 'Same day' },
+                { param: 'Style', flame: 'Conservative', spark: 'Conservative', inferno: 'Aggressive' },
+              ].map((row) => {
+                const allSame = row.flame === row.spark && row.spark === row.inferno
+                return (
+                  <tr key={row.param}>
+                    <td className="py-2.5 px-4 text-gray-400">{row.param}</td>
+                    <td className={`py-2.5 px-4 text-center font-medium ${allSame ? 'text-gray-300' : 'text-amber-400'}`}>
+                      {row.flame}
+                    </td>
+                    <td className={`py-2.5 px-4 text-center font-medium ${allSame ? 'text-gray-300' : 'text-blue-400'}`}>
+                      {row.spark}
+                    </td>
+                    <td className={`py-2.5 px-4 text-center font-medium ${allSame ? 'text-gray-300' : 'text-red-400'}`}>
+                      {row.inferno}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

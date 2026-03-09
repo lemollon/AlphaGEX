@@ -103,16 +103,18 @@ export function int(val: string | null | undefined): number {
   return isNaN(n) ? 0 : n
 }
 
-/** Validate bot name parameter — only flame or spark allowed. */
+/** Validate bot name parameter — flame, spark, or inferno allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
   return b
 }
 
 /** Get DTE mode string for a bot. */
 export function dteMode(bot: string): string {
-  return bot === 'flame' ? '2DTE' : '1DTE'
+  if (bot === 'flame') return '2DTE'
+  if (bot === 'inferno') return '0DTE'
+  return '1DTE'
 }
 
 /** Get heartbeat bot name (uppercase). */
