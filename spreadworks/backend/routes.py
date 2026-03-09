@@ -1758,7 +1758,7 @@ async def discord_test_daily():
     verse = VERSES[_rotation_index(VERSES)]
     tip = TIPS[_rotation_index(TIPS, offset=37)]
     embed_open = {
-        "title": "\U0001f305 MARKET OPENS IN 5 MINUTES",
+        "title": "\U0001f305 MARKET OPENS IN 30 MINUTES",
         "color": 0x00E676,
         "fields": [
             {"name": f"\U0001f4d6 {verse['reference']}", "value": f"*\"{verse['text']}\"*", "inline": False},

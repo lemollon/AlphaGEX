@@ -110,7 +110,7 @@ def _start_scheduler(app: FastAPI):
         return {"HIGH": 0xFF1744, "MEDIUM": 0xFFD600, "LOW": 0x448AFF}.get(impact, 0x448AFF)
 
     async def _fire_market_open_message():
-        """8:25 AM CT — Bible verse + spread trading tip."""
+        """8:00 AM CT — Bible verse + spread trading tip (30 min before open)."""
         if not content_loaded or not _is_trading_day():
             logger.info("[SpreadWorks] Skipping market open message (not trading day or no content)")
             return
@@ -121,7 +121,7 @@ def _start_scheduler(app: FastAPI):
         tip = TIPS[_rotation_index(TIPS, offset=37)]
 
         embed = {
-            "title": "\U0001f305 MARKET OPENS IN 5 MINUTES",
+            "title": "\U0001f305 MARKET OPENS IN 30 MINUTES",
             "color": 0x00E676,
             "fields": [
                 {
@@ -144,7 +144,7 @@ def _start_scheduler(app: FastAPI):
         logger.info(f"[SpreadWorks] Market open message {'sent' if ok else 'FAILED'}")
 
     async def _fire_economic_countdown():
-        """8:30 AM CT — Economic event countdown."""
+        """8:05 AM CT — Economic event countdown."""
         if not content_loaded or not _is_trading_day():
             logger.info("[SpreadWorks] Skipping economic countdown (not trading day or no content)")
             return
@@ -210,7 +210,7 @@ def _start_scheduler(app: FastAPI):
             logger.info("[SpreadWorks] No economic events within 7 days — skipping")
 
     async def _fire_open_post():
-        """Market open post — 8:25 AM CT = 13:25 or 14:25 UTC depending on DST."""
+        """Market open post — 8:00 AM CT = 13:00 or 14:00 UTC depending on DST."""
         logger.info("[SpreadWorks] Scheduler firing market open Discord post")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -260,7 +260,7 @@ def _start_scheduler(app: FastAPI):
         logger.info(f"[SpreadWorks] Market close message {'sent' if ok else 'FAILED'}")
 
     async def _fire_eod_post():
-        """Market close post — 3:05 PM CT = 20:05 or 21:05 UTC depending on DST."""
+        """Market close post — 3:00 PM CT = 20:00 or 21:00 UTC depending on DST."""
         logger.info("[SpreadWorks] Scheduler firing EOD Discord post")
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -273,27 +273,27 @@ def _start_scheduler(app: FastAPI):
     # Schedule using CT-equivalent UTC cron times
     # CT is UTC-6 (CST) or UTC-5 (CDT). Use both possible hours.
 
-    # 8:25 CT — Bible verse + tip
-    scheduler.add_job(_fire_market_open_message, "cron", hour="13,14", minute=25,
+    # 8:00 CT — Bible verse + tip (30 min before open)
+    scheduler.add_job(_fire_market_open_message, "cron", hour="13,14", minute=0,
                       day_of_week="mon-fri", id="discord_market_open_msg")
-    # 8:25 CT — Open positions summary (existing)
-    scheduler.add_job(_fire_open_post, "cron", hour="13,14", minute=25, second=30,
+    # 8:00:30 CT — Open positions summary
+    scheduler.add_job(_fire_open_post, "cron", hour="13,14", minute=0, second=30,
                       day_of_week="mon-fri", id="discord_open")
-    # 8:30 CT — Economic event countdown
-    scheduler.add_job(_fire_economic_countdown, "cron", hour="13,14", minute=30,
+    # 8:05 CT — Economic event countdown
+    scheduler.add_job(_fire_economic_countdown, "cron", hour="13,14", minute=5,
                       day_of_week="mon-fri", id="discord_economic")
     # 15:00 CT — Market close reflection
     scheduler.add_job(_fire_market_close_message, "cron", hour="20,21", minute=0,
                       day_of_week="mon-fri", id="discord_market_close_msg")
-    # 15:05 CT — EOD summary with AI commentary (existing)
-    scheduler.add_job(_fire_eod_post, "cron", hour="20,21", minute=5,
+    # 15:00:30 CT — EOD summary with AI commentary (right at close)
+    scheduler.add_job(_fire_eod_post, "cron", hour="20,21", minute=0, second=30,
                       day_of_week="mon-fri", id="discord_eod")
 
     scheduler.start()
     logger.info(
         "[SpreadWorks] APScheduler started — 5 jobs: "
-        "market_open_msg (8:25), open_positions (8:25:30), "
-        "economic (8:30), market_close_msg (15:00), eod (15:05) CT"
+        "market_open_msg (8:00), open_positions (8:00:30), "
+        "economic (8:05), market_close_msg (15:00), eod (15:00:30) CT"
     )
     return scheduler
 
