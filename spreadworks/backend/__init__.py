@@ -74,7 +74,7 @@ def _start_scheduler(app: FastAPI):
     return scheduler
 
 
-def _run_migrations(eng):
+def _ensure_schema(eng):
     """Ensure positions/daily_marks tables match the current SQLAlchemy model.
 
     The tables were originally created with a completely different schema
@@ -82,44 +82,38 @@ def _run_migrations(eng):
     use explicit strike columns.  create_all() only creates NEW tables —
     it never alters existing ones.
 
-    Strategy: check if a key new-schema column exists.  If not, drop the
-    old-schema tables entirely and let create_all() rebuild them fresh.
-    Old data (JSON legs format) is incompatible with the new schema anyway.
+    Strategy: drop old-schema tables so create_all() can rebuild them.
     """
-    from sqlalchemy import text as sa_text, inspect
+    from sqlalchemy import text as sa_text
 
     try:
-        inspector = inspect(eng)
-        tables = set(inspector.get_table_names())
+        # Check if positions table exists and has old schema
+        with eng.connect() as conn:
+            result = conn.execute(sa_text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'positions' AND table_schema = 'public'"
+            ))
+            existing_cols = {row[0] for row in result}
 
-        if "positions" not in tables:
-            # Table doesn't exist yet — create_all will handle it
-            print("[SpreadWorks] Migration: positions table not found, create_all will create it")
+        if not existing_cols:
+            print("[SpreadWorks] Schema: positions table not found, will be created")
             return
 
-        existing_cols = {c["name"] for c in inspector.get_columns("positions")}
+        print(f"[SpreadWorks] Schema: positions has columns: {sorted(existing_cols)}")
 
-        # If 'long_put' exists, the table already has the new schema
-        if "long_put" in existing_cols:
-            print("[SpreadWorks] Migration: positions table already has new schema")
+        if "long_put" in existing_cols and "contracts" in existing_cols:
+            print("[SpreadWorks] Schema: positions table has correct schema")
             return
 
-        # Old schema detected — drop and let create_all rebuild
-        print("[SpreadWorks] Migration: old positions schema detected, rebuilding tables...")
+        # Wrong schema — drop and recreate
+        print("[SpreadWorks] Schema: wrong columns detected, dropping tables for rebuild...")
         with eng.begin() as conn:
-            # daily_marks has FK to positions, must drop first
-            if "daily_marks" in tables:
-                conn.execute(sa_text("DROP TABLE daily_marks CASCADE"))
-                print("[SpreadWorks] Migration: dropped old daily_marks table")
-            conn.execute(sa_text("DROP TABLE positions CASCADE"))
-            print("[SpreadWorks] Migration: dropped old positions table")
-
-        # Now create_all will build both tables with the correct schema
-        Base.metadata.create_all(bind=eng)
-        print("[SpreadWorks] Migration: rebuilt positions + daily_marks with new schema")
+            conn.execute(sa_text("DROP TABLE IF EXISTS daily_marks CASCADE"))
+            conn.execute(sa_text("DROP TABLE IF EXISTS positions CASCADE"))
+            print("[SpreadWorks] Schema: dropped old tables")
 
     except Exception as e:
-        print(f"[SpreadWorks] Migration (non-fatal): {e}")
+        print(f"[SpreadWorks] Schema check (non-fatal): {e}")
 
 
 @asynccontextmanager
@@ -127,10 +121,10 @@ async def lifespan(app: FastAPI):
     # Create DB tables if engine is configured
     if engine is not None:
         try:
+            # Drop old-schema tables BEFORE create_all so they get rebuilt correctly
+            _ensure_schema(engine)
             Base.metadata.create_all(bind=engine)
             print("[SpreadWorks] Database tables created/verified")
-            # Migrate: add columns that create_all won't add to existing tables
-            _run_migrations(engine)
         except Exception as e:
             print(f"[SpreadWorks] DB table creation failed (non-fatal): {e}")
     else:
