@@ -485,18 +485,30 @@ export default function StrategyPanel({
         </div>
       );
     }
-    // Manual and GEX Suggest: plain number input
+    // Manual and GEX Suggest: plain text input (no spinners)
     return (
       <div style={s.fieldCol}>
         <span style={s.fieldLabel(color)}>{label}</span>
         <input
-          type="number"
-          step="0.5"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9.]*"
           placeholder={label}
           value={value}
           onChange={(e) => updateLeg(field, e.target.value)}
           disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={s.input(borderColor)}
+          style={{
+            width: '100%',
+            background: '#111120',
+            border: `1px solid ${borderColor || '#1e1e32'}`,
+            color: '#ccc',
+            padding: '6px 8px',
+            fontSize: '11px',
+            borderRadius: '3px',
+            fontFamily: 'inherit',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
         />
       </div>
     );
