@@ -28,6 +28,19 @@ import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_CT = ZoneInfo("America/Chicago")
+
+
+def _now_ct() -> datetime:
+    """Current time in Central Time (America/Chicago)."""
+    return datetime.now(_CT)
+
+
+def _today_ct() -> date:
+    """Today's date in Central Time."""
+    return _now_ct().date()
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -327,7 +340,7 @@ async def market_status():
 @router.get("/candles")
 async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15min"):
     """Return 15-min candles. Live from Tradier during market hours, cached otherwise."""
-    start_date = (date.today() - timedelta(days=14)).isoformat()
+    start_date = (_today_ct() - timedelta(days=14)).isoformat()
 
     candles: list[dict] = []
     last_price = None
@@ -622,7 +635,7 @@ async def gex_suggest(
     def _round_strike(v: float) -> float:
         return round(v * 2) / 2
 
-    today = date.today()
+    today = _today_ct()
     days_until_friday = (4 - today.weekday()) % 7
     if days_until_friday == 0:
         days_until_friday = 7
@@ -741,7 +754,7 @@ def _scan_pnl_profile(
     n: int,
 ) -> dict:
     """Scan underlying prices to build P&L curve, breakevens, max profit/loss."""
-    today_date = date.today()
+    today_date = _today_ct()
 
     def _tte(d: str) -> float:
         exp = datetime.strptime(d, "%Y-%m-%d").date()
@@ -876,7 +889,7 @@ async def calculate_spread(request: Request, body: CalcRequest):
     default_sigma = 0.20
     legs = body.legs
     n = body.contracts
-    today_date = date.today()
+    today_date = _today_ct()
     chain_opts = body.chain_options or {}
 
     def _tte(d: str) -> float:
@@ -1053,7 +1066,7 @@ async def create_alert(body: AlertCreate):
         "condition": body.condition,
         "label": body.label or f"Price {body.condition} {body.price}",
         "triggered": False,
-        "created_at": datetime.now().isoformat(),
+        "created_at": _now_ct().isoformat(),
     }
     _alerts.append(alert)
     return alert
@@ -1099,7 +1112,7 @@ STRATEGY_LABELS = {
 
 def _pos_to_dict(pos: Position) -> dict:
     """Serialize a Position ORM object to a JSON-friendly dict."""
-    today = date.today()
+    today = _today_ct()
     dte = (pos.short_exp - today).days if pos.short_exp else None
     return {
         "id": pos.id,
@@ -1326,7 +1339,7 @@ async def close_position(
     realized = round((pos.entry_price - body.close_price) * 100 * pos.contracts, 2)
 
     pos.status = "closed"
-    pos.close_date = date.today()
+    pos.close_date = _today_ct()
     pos.close_price = body.close_price
     pos.realized_pnl = realized
     db.commit()
@@ -1369,7 +1382,7 @@ async def position_live_pnl(
 
     if current_price:
         r, sigma = RISK_FREE_RATE, 0.20
-        today_date = date.today()
+        today_date = _today_ct()
 
         def tte(d):
             return max((d - today_date).days, 0) / 365.0 if d else 0
@@ -1439,7 +1452,7 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
     if not current_price:
         raise HTTPException(502, "Could not fetch current price for marking")
 
-    today_date = date.today()
+    today_date = _today_ct()
     r, sigma = 0.05, 0.20
     marked = 0
 
@@ -1664,7 +1677,7 @@ def _discord_post_closed(pos: Position):
             {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
         ],
         "footer": {"text": footer_msg},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     _send_discord_embed(embed)
 
@@ -1703,7 +1716,7 @@ async def discord_test():
         "description": "If you see this, the webhook is working.",
         "color": 0x3B82F6,
         "footer": {"text": "SpreadWorks · Test Ping"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     try:
         resp = req.post(url, json={"embeds": [embed]},
@@ -1861,7 +1874,7 @@ async def discord_push_spread(body: DiscordPushSpread):
         "color": color,
         "fields": fields,
         "footer": {"text": f"SpreadWorks \u00b7 {footer_source}"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     # Generate payoff chart if curve data provided
@@ -1898,13 +1911,13 @@ async def discord_post_open(db: Session = Depends(get_db)):
     if not open_positions:
         return {"posted": False, "reason": "No open positions"}
 
-    today_str = date.today().strftime("%B %d, %Y")
+    today_str = _today_ct().strftime("%B %d, %Y")
     total_credit = sum(p.entry_credit for p in open_positions)
 
     lines = []
     for pos in open_positions:
         strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
-        dte = (pos.short_exp - date.today()).days if pos.short_exp else "?"
+        dte = (pos.short_exp - _today_ct()).days if pos.short_exp else "?"
         lines.append(
             f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
             f"Entry: +${pos.entry_credit:,.2f}\n"
@@ -1925,7 +1938,7 @@ async def discord_post_open(db: Session = Depends(get_db)):
             {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
         "footer": {"text": "Trade with discipline \U0001f64f"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     ok = _send_discord_embed(embed)
@@ -1942,8 +1955,8 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
     # Get current price
     q = await _get_quote(request, "SPY")
     current_price = q.get("last", 0)
-    today_str = date.today().strftime("%B %d, %Y")
-    today_date = date.today()
+    today_str = _today_ct().strftime("%B %d, %Y")
+    today_date = _today_ct()
 
     # Build per-position P&L lines using latest marks
     lines = []
@@ -2052,7 +2065,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             {"name": "Closed Today", "value": str(closed_today), "inline": True},
         ],
         "footer": {"text": "SpreadWorks \u2022 End of Day"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     if commentary:
         embed["fields"].append({
@@ -2084,7 +2097,7 @@ async def discord_push_position(
 
     strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
     strikes_str = _strikes_str(pos)
-    dte = (pos.short_exp - date.today()).days if pos.short_exp else None
+    dte = (pos.short_exp - _today_ct()).days if pos.short_exp else None
     is_open = pos.status == "open"
 
     # Get live P&L for open positions
@@ -2099,7 +2112,7 @@ async def discord_push_position(
             spot = q.get("last")
             if spot:
                 r, sigma = RISK_FREE_RATE, 0.20
-                today_date = date.today()
+                today_date = _today_ct()
 
                 def tte(d):
                     return max((d - today_date).days, 0) / 365.0 if d else 0
@@ -2213,7 +2226,7 @@ async def discord_push_position(
         "color": color,
         "fields": fields,
         "footer": {"text": f"SpreadWorks \u00b7 Opened {pos.entry_date}"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     # Generate payoff chart image (non-fatal if it fails)
@@ -2237,7 +2250,7 @@ def _generate_position_payoff_chart(pos: Position, spot: float | None, title: st
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = date.today()
+    today_date = _today_ct()
 
     if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
         if pos.strategy == "double_diagonal":
@@ -2325,7 +2338,7 @@ async def position_payoff(
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = date.today()
+    today_date = _today_ct()
 
     # Get spot price for the marker
     spot = None

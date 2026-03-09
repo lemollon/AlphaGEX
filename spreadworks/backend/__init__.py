@@ -91,7 +91,8 @@ def _start_scheduler(app: FastAPI):
         """Check if today is a trading day (weekday + not holiday)."""
         if not content_loaded:
             from datetime import datetime as _dt
-            return _dt.utcnow().weekday() < 5
+            from zoneinfo import ZoneInfo as _ZI
+            return _dt.now(_ZI("America/Chicago")).weekday() < 5
         now = get_central_now()
         return now.weekday() < 5 and not is_market_holiday(now.date())
 
@@ -101,7 +102,8 @@ def _start_scheduler(app: FastAPI):
             day_of_year = get_central_now().timetuple().tm_yday
         else:
             from datetime import datetime as _dt
-            day_of_year = _dt.utcnow().timetuple().tm_yday
+            from zoneinfo import ZoneInfo as _ZI
+            day_of_year = _dt.now(_ZI("America/Chicago")).timetuple().tm_yday
         return (day_of_year + offset) % len(items)
 
     def _impact_color(impact: str) -> int:
