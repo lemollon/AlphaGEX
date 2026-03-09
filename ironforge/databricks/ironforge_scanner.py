@@ -136,6 +136,11 @@ def bot_table(bot_name: str, suffix: str) -> str:
     return f"{CATALOG}.{SCHEMA}.{bot_name}_{suffix}"
 
 
+def shared_table(name: str) -> str:
+    """Build fully-qualified shared table name: alpha_prime.ironforge.{name}."""
+    return f"{CATALOG}.{SCHEMA}.{name}"
+
+
 def num(val: Any) -> float:
     """Parse a value as float, defaulting to 0."""
     if val is None or val == "":
@@ -1348,14 +1353,14 @@ def close_position(
             bot_upper = bot["name"].upper()
             pdt_row = db_query(f"""
                 SELECT day_trade_count
-                FROM {bot_table(bot['name'], 'pdt_config')}
+                FROM {shared_table('ironforge_pdt_config')}
                 WHERE bot_name = '{bot_upper}'
                 LIMIT 1
             """)
             old_count = to_int(pdt_row[0]["day_trade_count"]) if pdt_row else 0
             new_count = old_count + 1
             db_execute(f"""
-                UPDATE {bot_table(bot['name'], 'pdt_config')}
+                UPDATE {shared_table('ironforge_pdt_config')}
                 SET day_trade_count = {new_count},
                     updated_at = CURRENT_TIMESTAMP()
                 WHERE bot_name = '{bot_upper}'
@@ -1364,10 +1369,10 @@ def close_position(
             new_json = json.dumps({"day_trade_count": new_count}).replace("'", "''")
             reason_txt = f"Day trade: {position_id} opened+closed on {today_str}".replace("'", "''")
             db_execute(f"""
-                INSERT INTO {bot_table(bot['name'], 'pdt_audit_log')}
-                    (bot_name, action, old_value, new_value, reason, performed_by, created_at)
+                INSERT INTO {shared_table('ironforge_pdt_log')}
+                    (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
                 VALUES (
-                    '{bot_upper}', 'day_trade_recorded',
+                    UUID(), '{bot_upper}', 'day_trade_recorded',
                     '{old_json}', '{new_json}',
                     '{reason_txt}', 'scanner',
                     CURRENT_TIMESTAMP()
@@ -1540,7 +1545,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     bot_upper = bot["name"].upper()
     pdt_cfg_rows = db_query(f"""
         SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
-        FROM {bot_table(bot['name'], 'pdt_config')}
+        FROM {shared_table('ironforge_pdt_config')}
         WHERE bot_name = '{bot_upper}'
         LIMIT 1
     """)
@@ -1897,14 +1902,14 @@ def scan_bot(bot: dict) -> None:
             """)
             actual_count = to_int(pdt_actual[0]["cnt"]) if pdt_actual else 0
             pdt_cfg_row = db_query(f"""
-                SELECT day_trade_count FROM {bot_table(bot['name'], 'pdt_config')}
+                SELECT day_trade_count FROM {shared_table('ironforge_pdt_config')}
                 WHERE bot_name = '{bot_name}'
                 LIMIT 1
             """)
             stored_count = to_int(pdt_cfg_row[0]["day_trade_count"]) if pdt_cfg_row else 0
             if stored_count != actual_count:
                 db_execute(f"""
-                    UPDATE {bot_table(bot['name'], 'pdt_config')}
+                    UPDATE {shared_table('ironforge_pdt_config')}
                     SET day_trade_count = {actual_count}, updated_at = CURRENT_TIMESTAMP()
                     WHERE bot_name = '{bot_name}'
                 """)
@@ -1913,10 +1918,10 @@ def scan_bot(bot: dict) -> None:
                     new_val = json.dumps({"day_trade_count": actual_count}).replace("'", "''")
                     reason_str = f"Rolling window update: old trades dropped off ({stored_count}->{actual_count})"
                     db_execute(f"""
-                        INSERT INTO {bot_table(bot['name'], 'pdt_audit_log')}
-                            (bot_name, action, old_value, new_value, reason, performed_by)
-                        VALUES ('{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
-                                '{reason_str}', 'scanner')
+                        INSERT INTO {shared_table('ironforge_pdt_log')}
+                            (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
+                        VALUES (UUID(), '{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
+                                '{reason_str}', 'scanner', CURRENT_TIMESTAMP())
                     """)
         except Exception as pdt_sync_err:
             log.warning(f"{bot_name} PDT sync error: {pdt_sync_err}")
@@ -2170,7 +2175,7 @@ _pdt_tables_ready = False
 
 
 def _ensure_pdt_tables() -> None:
-    """Create pdt_config and pdt_audit_log tables if they don't exist.
+    """Create shared ironforge_pdt_config and ironforge_pdt_log tables if they don't exist.
 
     Runs once per scanner process. Safe to call repeatedly.
     """
@@ -2178,52 +2183,54 @@ def _ensure_pdt_tables() -> None:
     if _pdt_tables_ready:
         return
     try:
+        pdt_config_tbl = shared_table('ironforge_pdt_config')
+        pdt_log_tbl = shared_table('ironforge_pdt_log')
+
+        db_execute(f"""
+            CREATE TABLE IF NOT EXISTS {pdt_config_tbl} (
+                bot_name STRING NOT NULL,
+                pdt_enabled BOOLEAN,
+                day_trade_count INT,
+                max_day_trades INT,
+                window_days INT,
+                max_trades_per_day INT,
+                last_reset_at TIMESTAMP,
+                last_reset_by STRING,
+                updated_at TIMESTAMP,
+                created_at TIMESTAMP
+            ) USING DELTA
+        """)
+        db_execute(f"""
+            CREATE TABLE IF NOT EXISTS {pdt_log_tbl} (
+                log_id STRING NOT NULL,
+                bot_name STRING NOT NULL,
+                action STRING NOT NULL,
+                old_value STRING,
+                new_value STRING,
+                reason STRING,
+                performed_by STRING,
+                created_at TIMESTAMP
+            ) USING DELTA
+        """)
+
+        # Seed PDT config for each bot if missing
         for bot in BOTS:
-            prefix = bot["name"]
             bot_upper = bot["name"].upper()
-            db_execute(f"""
-                CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.{prefix}_pdt_config (
-                    id BIGINT GENERATED ALWAYS AS IDENTITY,
-                    bot_name STRING NOT NULL,
-                    pdt_enabled BOOLEAN,
-                    day_trade_count INT,
-                    max_day_trades INT,
-                    window_days INT,
-                    max_trades_per_day INT,
-                    last_reset_at TIMESTAMP,
-                    last_reset_by STRING,
-                    updated_at TIMESTAMP,
-                    created_at TIMESTAMP
-                )
-            """)
-            db_execute(f"""
-                CREATE TABLE IF NOT EXISTS {CATALOG}.{SCHEMA}.{prefix}_pdt_audit_log (
-                    id BIGINT GENERATED ALWAYS AS IDENTITY,
-                    bot_name STRING NOT NULL,
-                    action STRING NOT NULL,
-                    old_value STRING,
-                    new_value STRING,
-                    reason STRING,
-                    performed_by STRING,
-                    created_at TIMESTAMP
-                )
-            """)
-            # Seed PDT config if empty
             existing = db_query(f"""
-                SELECT id FROM {bot_table(prefix, 'pdt_config')}
+                SELECT bot_name FROM {pdt_config_tbl}
                 WHERE bot_name = '{bot_upper}' LIMIT 1
             """)
             if not existing:
                 db_execute(f"""
-                    INSERT INTO {bot_table(prefix, 'pdt_config')}
+                    INSERT INTO {pdt_config_tbl}
                         (bot_name, pdt_enabled, day_trade_count, max_day_trades,
                          window_days, max_trades_per_day, created_at, updated_at)
                     VALUES ('{bot_upper}', TRUE, 0, 3, 5, 1,
                             CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
                 """)
-                log.info(f"Seeded {prefix}_pdt_config for {bot_upper}")
+                log.info(f"Seeded ironforge_pdt_config for {bot_upper}")
         _pdt_tables_ready = True
-        log.info("PDT tables verified/created")
+        log.info("PDT tables verified/created (ironforge_pdt_config, ironforge_pdt_log)")
     except Exception as e:
         log.warning(f"PDT table auto-creation failed (non-fatal): {e}")
 
