@@ -38,7 +38,7 @@ interface ConfigData {
   max_contracts?: number
 }
 
-const SCAN_INTERVAL_SEC = 300 // 5 minutes
+const SCAN_INTERVAL_SEC = 60 // 1 minute
 
 function getSecondsUntilNextScan(lastScan: string | null): number | null {
   if (!lastScan) return null
@@ -62,14 +62,28 @@ function scanAgeMinutes(lastScan: string | null): number | null {
   return ms / 60_000
 }
 
+/** Get the next weekday (Mon-Fri) from today in CT. */
+function getNextTradingDay(): string {
+  const now = getCTNow()
+  const next = new Date(now)
+  next.setDate(next.getDate() + 1)
+  // Skip Saturday → Monday, Sunday → Monday
+  while (next.getDay() === 0 || next.getDay() === 6) {
+    next.setDate(next.getDate() + 1)
+  }
+  return next.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
 export default function StatusCard({
   data,
   accent,
   config,
+  bot,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
+  bot?: 'flame' | 'spark' | 'inferno'
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
@@ -82,7 +96,13 @@ export default function StatusCard({
   const accentBorder = accentMap[accent].border
   const accentText = accentMap[accent].text
 
-  const stateLabel = data.bot_state === 'market_closed' ? 'MARKET CLOSED'
+  const nextDay = getNextTradingDay()
+  const isZeroDte = bot === 'inferno'
+  const showNextDay = data.bot_state === 'market_closed' || (data.bot_state === 'traded' && data.open_positions === 0 && isZeroDte)
+  const stateLabel = data.bot_state === 'market_closed' && isZeroDte ? `NEXT: ${nextDay}`
+    : data.bot_state === 'market_closed' ? 'MARKET CLOSED'
+    : data.bot_state === 'traded' && data.open_positions === 0 && isZeroDte ? `DONE — NEXT: ${nextDay}`
+    : data.bot_state === 'traded' && data.open_positions === 0 && account.total_trades === 0 ? 'WAITING'
     : data.bot_state ? data.bot_state.toUpperCase()
     : null
 
@@ -130,10 +150,10 @@ export default function StatusCard({
     if (ageMin === null) {
       healthDot = 'bg-red-400'
       healthTooltip = 'Scanner status unknown'
-    } else if (ageMin <= 7) {
+    } else if (ageMin <= 3) {
       healthDot = 'bg-emerald-400'
       healthTooltip = `Last scan: ${Math.round(ageMin)}m ago`
-    } else if (ageMin <= 15) {
+    } else if (ageMin <= 7) {
       healthDot = 'bg-yellow-400'
       healthTooltip = `Scanner delayed: ${Math.round(ageMin)}m ago`
     } else {

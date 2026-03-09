@@ -92,8 +92,8 @@ export async function GET(
 
     return NextResponse.json({
       bot_name: botName,
-      strategy: bot === 'flame' ? '2DTE Paper Iron Condor' : '1DTE Paper Iron Condor',
-      dte: bot === 'flame' ? 2 : 1,
+      strategy: bot === 'flame' ? '2DTE Paper Iron Condor' : bot === 'inferno' ? '0DTE Paper Iron Condor' : '1DTE Paper Iron Condor',
+      dte: bot === 'flame' ? 2 : bot === 'inferno' ? 0 : 1,
       ticker: 'SPY',
       is_active: acct?.is_active === 'true' || acct?.is_active === '1',
       account: {
