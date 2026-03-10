@@ -842,12 +842,22 @@ async function scanBot(bot: BotDef): Promise<void> {
 let _intervalId: ReturnType<typeof setInterval> | null = null
 let _started = false
 let _scanCount = 0
+let _running = false
 
-/** Fire-and-forget wrapper — errors are logged, never thrown, so the interval never dies. */
+/** Fire-and-forget wrapper — skips if previous cycle still running. */
 function safeRunAllScans(): void {
-  runAllScans().catch(err => {
-    console.error('[scanner] scan cycle error (interval continues):', err)
-  })
+  if (_running) {
+    console.log('[scanner] previous cycle still running, skipping this tick')
+    return
+  }
+  _running = true
+  runAllScans()
+    .catch(err => {
+      console.error('[scanner] scan cycle error (interval continues):', err)
+    })
+    .finally(() => {
+      _running = false
+    })
 }
 
 export function startScanner(): void {
@@ -872,13 +882,16 @@ export function ensureScannerStarted(): void {
 
 async function runAllScans(): Promise<void> {
   _scanCount++
+  const start = Date.now()
   console.log(`[scanner] === scan cycle #${_scanCount} starting ===`)
-  for (const bot of BOTS) {
-    try {
-      await scanBot(bot)
-    } catch (err: any) {
-      console.error(`[scanner] ${bot.name.toUpperCase()} fatal error:`, err)
-    }
-  }
-  console.log(`[scanner] === scan cycle #${_scanCount} complete ===`)
+  // Run all bots in parallel so slow API calls don't block each other
+  await Promise.allSettled(
+    BOTS.map(bot =>
+      scanBot(bot).catch(err => {
+        console.error(`[scanner] ${bot.name.toUpperCase()} fatal error:`, err)
+      }),
+    ),
+  )
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+  console.log(`[scanner] === scan cycle #${_scanCount} complete (${elapsed}s) ===`)
 }
