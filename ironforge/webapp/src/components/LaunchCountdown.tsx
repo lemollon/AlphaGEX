@@ -132,6 +132,13 @@ export default function LaunchCountdown() {
             THE FORGE IS LIVE
           </p>
           <p className="text-sm text-amber-500/60 mt-1">Iron has been tempered. Trading has begun.</p>
+          <p className="text-xs text-forge-muted mt-4 italic max-w-lg mx-auto">
+            &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
+          </p>
+          <p className="text-[10px] text-amber-500/50 mt-2 max-w-md mx-auto leading-relaxed">
+            John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
+            On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, now alive.
+          </p>
         </div>
       </div>
     )
@@ -194,6 +201,15 @@ export default function LaunchCountdown() {
             </div>
           </div>
         </div>
+
+        {/* Scripture */}
+        <p className="text-center text-xs text-forge-muted mt-5 italic max-w-lg mx-auto">
+          &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
+        </p>
+        <p className="text-center text-[10px] text-amber-500/50 mt-2 max-w-md mx-auto leading-relaxed">
+          John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
+          On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, ready to live.
+        </p>
 
         {/* Launch date footer */}
         <p className="text-center text-[10px] text-forge-muted mt-3">
