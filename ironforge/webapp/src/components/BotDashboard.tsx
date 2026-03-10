@@ -175,15 +175,20 @@ export default function BotDashboard({
       )}
 
       {/* Title */}
-      <div className="flex items-baseline gap-2">
-        <h1
-          className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : 'text-blue-400'}`}
-        >
-          {bot.toUpperCase()}
-        </h1>
-        <span className="text-forge-muted">
-          {bot === 'flame' ? '2DTE' : '1DTE'} Iron Condor
-        </span>
+      <div>
+        <div className="flex items-baseline gap-2">
+          <h1
+            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : 'text-blue-400'}`}
+          >
+            {bot.toUpperCase()}
+          </h1>
+          <span className="text-forge-muted">
+            {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
+          </span>
+        </div>
+        <p className="text-xs text-forge-muted mt-1 italic">
+          &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
+        </p>
       </div>
 
       {/* Status card */}
