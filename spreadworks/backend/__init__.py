@@ -23,14 +23,30 @@ from . import models  # noqa: F401 — register models with Base
 logger = logging.getLogger("spreadworks")
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+# Resolve frontend dist — try relative to __file__ first, then CWD fallback
+_dist_candidates = [
+    Path(__file__).resolve().parent.parent / "frontend" / "dist",
+    Path.cwd() / "frontend" / "dist",
+    Path("/opt/render/project/src/spreadworks/frontend/dist"),
+]
+FRONTEND_DIST = next((p for p in _dist_candidates if p.exists()), _dist_candidates[0])
 
 # Log at import time so we can see in Render logs
 print(f"[SpreadWorks] __file__ = {__file__}")
+print(f"[SpreadWorks] CWD = {Path.cwd()}")
 print(f"[SpreadWorks] FRONTEND_DIST = {FRONTEND_DIST}")
 print(f"[SpreadWorks] FRONTEND_DIST.exists() = {FRONTEND_DIST.exists()}")
 if FRONTEND_DIST.exists():
-    print(f"[SpreadWorks] dist contents: {list(FRONTEND_DIST.iterdir())}")
+    contents = list(FRONTEND_DIST.iterdir())
+    print(f"[SpreadWorks] dist contents: {contents}")
+    assets = FRONTEND_DIST / "assets"
+    if assets.exists():
+        print(f"[SpreadWorks] assets contents: {list(assets.iterdir())}")
+else:
+    print(f"[SpreadWorks] WARNING: dist NOT found at any candidate path:")
+    for p in _dist_candidates:
+        print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
 def _send_webhook_sync(embed: dict) -> bool:
