@@ -173,8 +173,8 @@ export default function BotDashboard({
       {/* PDT Status — not applicable for 0DTE (INFERNO) */}
       {bot !== 'inferno' && <PdtStatusCard bot={bot} accent={accent} />}
 
-      {/* PT Timeline */}
-      <PTTimeline />
+      {/* PT Timeline — INFERNO uses 50/30/10% tiers instead of 30/20/15% */}
+      <PTTimeline variant={bot === 'inferno' ? 'inferno' : 'default'} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">

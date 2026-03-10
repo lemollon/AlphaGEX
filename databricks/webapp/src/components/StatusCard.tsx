@@ -36,6 +36,7 @@ interface ConfigData {
   stop_loss_pct?: number
   vix_skip?: number
   max_contracts?: number
+  max_trades_per_day?: number
 }
 
 const SCAN_INTERVAL_SEC = 60 // 1 minute
@@ -347,10 +348,17 @@ export default function StatusCard({
           <span className="text-xs font-mono text-gray-400">{config.sd_multiplier ?? 1.2}x SD</span>
           <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
           <span className="text-xs font-mono text-gray-400">{((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP</span>
-          <span className="text-xs font-mono text-gray-400">PT 30/20/15%</span>
+          <span className="text-xs font-mono text-gray-400">
+            PT {isZeroDte ? '50/30/10%' : '30/20/15%'}
+          </span>
           <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
           <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
-          <span className="text-xs font-mono text-gray-400">max {config.max_contracts ?? 10}x</span>
+          <span className="text-xs font-mono text-gray-400">
+            {(config.max_contracts ?? 10) === 0 ? 'no contract limit' : `max ${config.max_contracts ?? 10}x`}
+          </span>
+          {(config.max_trades_per_day ?? 1) > 1 && (
+            <span className="text-xs font-mono text-gray-400">{config.max_trades_per_day}/day</span>
+          )}
         </div>
       )}
 

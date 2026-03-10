@@ -4,14 +4,19 @@ import { useState, useEffect } from 'react'
 import { getCTNow, getCTMinutes, isMarketOpen } from '@/lib/pt-tiers'
 
 /**
- * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
+ * Horizontal timeline showing PT zones with a real-time "you are here" marker.
  *
- * Zones (CT):
+ * Default (SPARK/FLAME):
  *   Morning  30%  8:30 – 10:30   (120 min)
  *   Midday   20%  10:30 – 1:00   (150 min)
  *   Afternoon 15%  1:00 – 2:45   (105 min)
  *   EOD           2:45 – 3:00    (15 min)
- *   Total = 390 min
+ *
+ * INFERNO (0DTE):
+ *   Morning  50%  8:30 – 10:30   (120 min)
+ *   Midday   30%  10:30 – 1:00   (150 min)
+ *   Afternoon 10%  1:00 – 2:45   (105 min)
+ *   EOD           2:45 – 3:00    (15 min)
  */
 
 const MARKET_OPEN = 510   // 8:30 AM
@@ -29,7 +34,29 @@ function widthPct(startMin: number, endMin: number): string {
   return `${((endMin - startMin) / TOTAL) * 100}%`
 }
 
-export default function PTTimeline() {
+interface PTZone {
+  label: string
+  color: string
+  barColor: string
+  start: number
+  end: number
+}
+
+const DEFAULT_ZONES: PTZone[] = [
+  { label: 'Morning 30%', color: 'text-emerald-400', barColor: 'bg-emerald-500/30', start: MARKET_OPEN, end: MIDDAY_START },
+  { label: 'Midday 20%', color: 'text-yellow-400', barColor: 'bg-yellow-500/25', start: MIDDAY_START, end: AFTERNOON_START },
+  { label: 'PM 15%', color: 'text-orange-400', barColor: 'bg-orange-500/25', start: AFTERNOON_START, end: EOD_START },
+  { label: 'EOD', color: 'text-red-400', barColor: 'bg-red-500/30', start: EOD_START, end: MARKET_CLOSE },
+]
+
+const INFERNO_ZONES: PTZone[] = [
+  { label: 'Morning 50%', color: 'text-emerald-400', barColor: 'bg-emerald-500/30', start: MARKET_OPEN, end: MIDDAY_START },
+  { label: 'Midday 30%', color: 'text-yellow-400', barColor: 'bg-yellow-500/25', start: MIDDAY_START, end: AFTERNOON_START },
+  { label: 'PM 10%', color: 'text-orange-400', barColor: 'bg-orange-500/25', start: AFTERNOON_START, end: EOD_START },
+  { label: 'EOD', color: 'text-red-400', barColor: 'bg-red-500/30', start: EOD_START, end: MARKET_CLOSE },
+]
+
+export default function PTTimeline({ variant = 'default' }: { variant?: 'default' | 'inferno' }) {
   const [ctMins, setCtMins] = useState(getCTMinutes)
   const [open, setOpen] = useState(isMarketOpen)
 
@@ -41,6 +68,8 @@ export default function PTTimeline() {
     }, 1000)
     return () => clearInterval(timer)
   }, [])
+
+  const zones = variant === 'inferno' ? INFERNO_ZONES : DEFAULT_ZONES
 
   // Marker position (clamped to bar range)
   const markerMin = Math.max(MARKET_OPEN, Math.min(MARKET_CLOSE, ctMins))
@@ -60,54 +89,26 @@ export default function PTTimeline() {
     <div className={`rounded-xl border border-forge-border bg-forge-card/60 px-4 py-3 ${grayed ? 'opacity-40' : ''}`}>
       {/* Zone labels above bar */}
       <div className="relative h-4 text-[10px] font-medium mb-0.5" style={{ marginLeft: '0', marginRight: '0' }}>
-        <span
-          className="absolute text-emerald-400"
-          style={{ left: pct(MARKET_OPEN), width: widthPct(MARKET_OPEN, MIDDAY_START), textAlign: 'center', display: 'inline-block' }}
-        >
-          Morning 30%
-        </span>
-        <span
-          className="absolute text-yellow-400"
-          style={{ left: pct(MIDDAY_START), width: widthPct(MIDDAY_START, AFTERNOON_START), textAlign: 'center', display: 'inline-block' }}
-        >
-          Midday 20%
-        </span>
-        <span
-          className="absolute text-orange-400"
-          style={{ left: pct(AFTERNOON_START), width: widthPct(AFTERNOON_START, EOD_START), textAlign: 'center', display: 'inline-block' }}
-        >
-          PM 15%
-        </span>
-        <span
-          className="absolute text-red-400"
-          style={{ left: pct(EOD_START), width: widthPct(EOD_START, MARKET_CLOSE), textAlign: 'center', display: 'inline-block' }}
-        >
-          EOD
-        </span>
+        {zones.map((zone) => (
+          <span
+            key={zone.label}
+            className={`absolute ${zone.color}`}
+            style={{ left: pct(zone.start), width: widthPct(zone.start, zone.end), textAlign: 'center', display: 'inline-block' }}
+          >
+            {zone.label}
+          </span>
+        ))}
       </div>
 
       {/* Bar */}
       <div className="relative h-3 rounded-full overflow-hidden bg-forge-border">
-        {/* Morning zone */}
-        <div
-          className="absolute inset-y-0 bg-emerald-500/30 rounded-l-full"
-          style={{ left: '0%', width: widthPct(MARKET_OPEN, MIDDAY_START) }}
-        />
-        {/* Midday zone */}
-        <div
-          className="absolute inset-y-0 bg-yellow-500/25"
-          style={{ left: pct(MIDDAY_START), width: widthPct(MIDDAY_START, AFTERNOON_START) }}
-        />
-        {/* Afternoon zone */}
-        <div
-          className="absolute inset-y-0 bg-orange-500/25"
-          style={{ left: pct(AFTERNOON_START), width: widthPct(AFTERNOON_START, EOD_START) }}
-        />
-        {/* EOD zone */}
-        <div
-          className="absolute inset-y-0 bg-red-500/30 rounded-r-full"
-          style={{ left: pct(EOD_START), width: widthPct(EOD_START, MARKET_CLOSE) }}
-        />
+        {zones.map((zone, i) => (
+          <div
+            key={zone.label}
+            className={`absolute inset-y-0 ${zone.barColor} ${i === 0 ? 'rounded-l-full' : ''} ${i === zones.length - 1 ? 'rounded-r-full' : ''}`}
+            style={{ left: pct(zone.start), width: widthPct(zone.start, zone.end) }}
+          />
+        ))}
 
         {/* "You are here" marker */}
         {open && (
