@@ -26,18 +26,18 @@ export default function Nav() {
           </Link>
           <span
             style={{
-              color: '#92400E',
+              color: '#FBBF24',
               fontSize: '0.5rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
               fontStyle: 'italic',
-              letterSpacing: '0.12em',
+              letterSpacing: '0.08em',
               lineHeight: 1,
               marginTop: '-1px',
               paddingLeft: '1.15rem',
-              textShadow: '0 0 8px rgba(245,158,11,0.25)',
+              textShadow: '0 0 6px rgba(251,191,36,0.6), 0 0 14px rgba(245,158,11,0.4)',
             }}
           >
-            &ldquo;As iron sharpens iron&rdquo; &mdash; Proverbs 27:17
+            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
           </span>
         </div>
         <div className="flex gap-6">

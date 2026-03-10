@@ -126,20 +126,19 @@ export default function Home() {
           SPY Iron Condor Paper Trading &middot; Databricks + Tradier
         </p>
         <p style={{
-          color: '#D97706',
+          color: '#FBBF24',
           fontStyle: 'italic',
-          fontSize: '0.8rem',
+          fontSize: '0.85rem',
           fontFamily: "Georgia, 'Times New Roman', serif",
           letterSpacing: '0.04em',
           textAlign: 'center',
           maxWidth: '420px',
           margin: '0 auto',
-          opacity: 1,
-          textShadow: '0 0 12px rgba(245,158,11,0.3), 0 0 24px rgba(245,158,11,0.1)',
+          textShadow: '0 0 10px rgba(251,191,36,0.5), 0 0 24px rgba(245,158,11,0.3), 0 0 40px rgba(217,119,6,0.15)',
         }}>
           &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo;
           <br />
-          <span style={{ fontSize: '0.65rem', letterSpacing: '0.15em', color: '#92400E' }}>
+          <span style={{ fontSize: '0.7rem', letterSpacing: '0.15em', color: '#F59E0B', textShadow: '0 0 8px rgba(245,158,11,0.5)' }}>
             &mdash; PROVERBS 27:17
           </span>
         </p>
