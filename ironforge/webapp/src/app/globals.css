@@ -50,3 +50,9 @@ body {
 .countdown-ember:nth-child(3n)   { --drift: -6px; }
 .countdown-ember:nth-child(5n)   { --drift: 15px; }
 .countdown-ember:nth-child(7n)   { --drift: -18px; }
+
+/* ── Heated-metal glow utilities ─────────────────────────────── */
+.glow-amber   { text-shadow: 0 0 8px #F59E0B66, 0 0 20px #F59E0B33; }
+.glow-flame   { text-shadow: 0 0 6px #F59E0B99, 0 0 16px #F59E0B44; }
+.glow-spark   { text-shadow: 0 0 6px #3B82F699, 0 0 16px #3B82F644; }
+.glow-inferno { text-shadow: 0 0 6px #EF444499, 0 0 16px #EF444444; }

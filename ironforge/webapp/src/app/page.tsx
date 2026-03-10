@@ -3,6 +3,70 @@
 import Link from 'next/link'
 import LaunchCountdown from '@/components/LaunchCountdown'
 
+/* ── Inline SVG Icons (no external deps) ───────────────────────── */
+
+function AnvilIcon({ size = 40 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block align-middle">
+      <path
+        d="M2 18h20v2H2v-2zm3-2h14l1-3H10l-1-3h8V7H9L7 4H4v6l-2 3v1h3v2zm0 0"
+        fill="#F59E0B"
+      />
+      <path
+        d="M4 4h3l2 3h8v3H9l1 3h10l-1 3H5"
+        stroke="#D97706"
+        strokeWidth="0.5"
+        fill="none"
+      />
+    </svg>
+  )
+}
+
+function FlameIcon() {
+  return (
+    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
+      <path
+        d="M8 1C8 1 3 6.5 3 10a5 5 0 0 0 10 0C13 6.5 8 1 8 1zm0 12.5a2.5 2.5 0 0 1-2.5-2.5c0-1.5 2.5-4.5 2.5-4.5s2.5 3 2.5 4.5A2.5 2.5 0 0 1 8 13.5z"
+        fill="#F59E0B"
+      />
+    </svg>
+  )
+}
+
+function SparkIcon() {
+  return (
+    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
+      <path
+        d="M9.5 1L4 9h4l-1.5 6L13 7H9l.5-6z"
+        fill="#3B82F6"
+      />
+    </svg>
+  )
+}
+
+function InfernoIcon() {
+  return (
+    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
+      <path
+        d="M8 0l2 5h-1.5l2.5 4h-2l2 5H5l2-5H5l2.5-4H6L8 0z"
+        fill="#EF4444"
+      />
+    </svg>
+  )
+}
+
+const botIcons: Record<string, React.ReactNode> = {
+  FLAME: <FlameIcon />,
+  SPARK: <SparkIcon />,
+  INFERNO: <InfernoIcon />,
+}
+
+const botGlow: Record<string, string> = {
+  FLAME: 'glow-flame',
+  SPARK: 'glow-spark',
+  INFERNO: 'glow-inferno',
+}
+
 /* ── Strategy Configuration (from BotConfig) ───────────────────────── */
 
 const sharedConfig = {
@@ -116,14 +180,24 @@ export default function Home() {
     <div className="space-y-10">
       {/* Hero */}
       <div className="text-center mt-2">
-        <h1 className="text-5xl font-extrabold tracking-tight mb-2">
+        <h1 className="text-5xl font-extrabold tracking-tight mb-2 glow-amber">
+          <AnvilIcon size={40} />{' '}
           <span className="text-white">Iron</span>
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500">
             Forge
           </span>
         </h1>
-        <p className="text-forge-muted text-sm">
+        <p className="text-forge-muted text-sm mb-3">
           SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+        </p>
+        <p
+          className="mx-auto max-w-[420px] text-[0.75rem] italic tracking-[0.05em]"
+          style={{ color: '#92400E', fontFamily: "Georgia, 'Times New Roman', serif" }}
+        >
+          &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo;
+          <span className="block mt-0.5 not-italic text-[0.65rem] tracking-wider opacity-70">
+            &mdash; Proverbs 27:17
+          </span>
         </p>
       </div>
 
@@ -138,7 +212,9 @@ export default function Home() {
               className={`rounded-xl border bg-forge-card/80 p-6 h-full transition-all duration-200 hover:translate-y-[-2px] ${bot.border} ${bot.glow}`}
             >
               <div className="flex items-center justify-between mb-3">
-                <h2 className={`text-2xl font-bold ${bot.heading}`}>{bot.name}</h2>
+                <h2 className={`text-2xl font-bold ${bot.heading} ${botGlow[bot.name] || ''}`}>
+                  {botIcons[bot.name]}{bot.name}
+                </h2>
                 <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${bot.badge}`}>
                   {bot.dte}
                 </span>
