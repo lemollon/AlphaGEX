@@ -1654,6 +1654,14 @@ async def position_live_pnl(
 
         current_value = round(val, 4)  # per-contract value to close
         unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+
+        # Clamp P&L to theoretical bounds — BS with flat vol can overshoot
+        # mid-life on calendar/diagonal spreads where front/back vol diverges
+        if pos.max_profit is not None and unrealized_pnl > pos.max_profit:
+            unrealized_pnl = round(pos.max_profit, 2)
+        if pos.max_loss is not None and unrealized_pnl < pos.max_loss:
+            unrealized_pnl = round(pos.max_loss, 2)
+
         if pos.max_profit and pos.max_profit != 0:
             pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 2)
 
@@ -1728,6 +1736,12 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
 
             dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
             unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+
+            # Clamp to theoretical bounds
+            if pos.max_profit is not None and unrealized > pos.max_profit:
+                unrealized = round(pos.max_profit, 2)
+            if pos.max_loss is not None and unrealized < pos.max_loss:
+                unrealized = round(pos.max_loss, 2)
 
             mark = DailyMark(
                 position_id=pos.id,
@@ -2383,6 +2397,13 @@ async def discord_push_position(
                     )
                 current_value = round(val, 4)
                 unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+
+                # Clamp to theoretical bounds
+                if pos.max_profit is not None and unrealized_pnl > pos.max_profit:
+                    unrealized_pnl = round(pos.max_profit, 2)
+                if pos.max_loss is not None and unrealized_pnl < pos.max_loss:
+                    unrealized_pnl = round(pos.max_loss, 2)
+
                 if pos.max_profit and pos.max_profit != 0:
                     pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 1)
         except Exception:
