@@ -122,8 +122,26 @@ export default function Home() {
             Forge
           </span>
         </h1>
-        <p className="text-forge-muted text-sm">
+        <p className="text-forge-muted text-sm mb-3">
           SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+        </p>
+        <p style={{
+          color: '#F59E0B',
+          fontStyle: 'italic',
+          fontSize: '0.75rem',
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          letterSpacing: '0.05em',
+          textAlign: 'center',
+          maxWidth: '400px',
+          margin: '4px auto 0 auto',
+          opacity: 1,
+          border: '2px solid red',
+          padding: '4px',
+          backgroundColor: 'rgba(255,0,0,0.1)',
+          zIndex: 9999,
+          position: 'relative',
+        }}>
+          &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
         </p>
       </div>
 
