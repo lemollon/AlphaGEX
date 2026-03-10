@@ -873,6 +873,141 @@ def _scan_pnl_profile(
     }
 
 
+def _build_pnl_grid(
+    strategy: str,
+    S: float,
+    strikes: dict[str, float],
+    expirations: dict[str, str],
+    r: float,
+    sigma: float,
+    entry_cost: float,
+    n: int,
+) -> dict:
+    """Build a 2D P&L grid: rows = price levels, columns = time slices.
+
+    Returns { time_slices: [...], price_levels: [...], rows: [[cell, ...], ...] }
+    Each cell: { pnl, pnl_pct, contract_value }
+    """
+    today_date = _today_ct()
+
+    def _parse_exp(d: str):
+        return datetime.strptime(d, "%Y-%m-%d").date()
+
+    # Determine the front (nearest) expiration for time slices
+    if strategy == "double_diagonal":
+        front_exp = _parse_exp(expirations["short"])
+        back_exp = _parse_exp(expirations["long"])
+    elif strategy == "iron_condor":
+        front_exp = _parse_exp(expirations["exp"])
+        back_exp = front_exp
+    else:  # double_calendar
+        front_exp = _parse_exp(expirations["front"])
+        back_exp = _parse_exp(expirations["back"])
+
+    # Build time slices: daily from today to front_exp, plus intraday on exp day
+    time_slices = []  # list of { label, dte_frac }
+    days_to_front = max((front_exp - today_date).days, 0)
+
+    if days_to_front == 0:
+        # Already expiration day — intraday slices
+        for hour in [9, 11, 13, 15, 16]:
+            frac = max((16 - hour), 0) / (365.0 * 6.5)  # rough fraction of trading day
+            label = f"{front_exp.strftime('%b %d')} {hour}:00"
+            time_slices.append({"label": label, "dte_frac": frac, "is_expiry": hour == 16})
+    else:
+        for d in range(days_to_front + 1):
+            dt = today_date + timedelta(days=d)
+            dte = max((front_exp - dt).days, 0) / 365.0
+            is_exp = dt == front_exp
+            label = dt.strftime("%b %d")
+            if is_exp:
+                label += " EXP"
+            if d == 0:
+                label = "Now"
+            time_slices.append({"label": label, "dte_frac": dte, "is_expiry": is_exp})
+
+    # Build price levels: 20 prices centered on spot
+    all_strikes = list(strikes.values())
+    strike_spread = max(all_strikes) - min(all_strikes) if all_strikes else 10
+    step = 2.0 if strike_spread > 20 else 1.0
+    n_levels = 10  # 10 above + 10 below + spot = 21 rows
+    center = round(S / step) * step
+    price_levels = [center + (i - n_levels) * step for i in range(2 * n_levels + 1)]
+
+    # Max risk for percentage calculations
+    max_risk = abs(entry_cost * 100 * n) if entry_cost != 0 else 1.0
+
+    # Build grid
+    rows = []
+    for px in price_levels:
+        row = []
+        for ts in time_slices:
+            T = ts["dte_frac"]
+            # Back-expiration time remaining at this slice
+            if strategy == "double_diagonal":
+                T_back = max((back_exp - today_date).days / 365.0 - (days_to_front / 365.0 - T), T + 1 / 365.0)
+                pnl = (
+                    _bs_price(px, strikes["lp"], T_back, r, sigma, False)
+                    - (max(0, strikes["sp"] - px) if T <= 0 else _bs_price(px, strikes["sp"], T, r, sigma, False))
+                    - (max(0, px - strikes["sc"]) if T <= 0 else _bs_price(px, strikes["sc"], T, r, sigma, True))
+                    + _bs_price(px, strikes["lc"], T_back, r, sigma, True)
+                    - entry_cost
+                ) * 100 * n
+            elif strategy == "iron_condor":
+                if T <= 0:
+                    # At expiration — intrinsic only
+                    pnl = (
+                        max(0, strikes["lp"] - px)
+                        - max(0, strikes["sp"] - px)
+                        - max(0, px - strikes["sc"])
+                        + max(0, px - strikes["lc"])
+                        - entry_cost
+                    ) * 100 * n
+                else:
+                    pnl = (
+                        _bs_price(px, strikes["lp"], T, r, sigma, False)
+                        - _bs_price(px, strikes["sp"], T, r, sigma, False)
+                        - _bs_price(px, strikes["sc"], T, r, sigma, True)
+                        + _bs_price(px, strikes["lc"], T, r, sigma, True)
+                        - entry_cost
+                    ) * 100 * n
+            else:  # double_calendar
+                T_back_remaining = max((back_exp - today_date).days / 365.0 - (days_to_front / 365.0 - T), T + 1 / 365.0)
+                if T <= 0:
+                    pnl = (
+                        - max(0, strikes["ps"] - px)
+                        + _bs_price(px, strikes["ps"], T_back_remaining, r, sigma, False)
+                        - max(0, px - strikes["cs"])
+                        + _bs_price(px, strikes["cs"], T_back_remaining, r, sigma, True)
+                        - entry_cost
+                    ) * 100 * n
+                else:
+                    pnl = (
+                        - _bs_price(px, strikes["ps"], T, r, sigma, False)
+                        + _bs_price(px, strikes["ps"], T_back_remaining, r, sigma, False)
+                        - _bs_price(px, strikes["cs"], T, r, sigma, True)
+                        + _bs_price(px, strikes["cs"], T_back_remaining, r, sigma, True)
+                        - entry_cost
+                    ) * 100 * n
+
+            contract_value = round(pnl + entry_cost * 100 * n, 2)
+            row.append({
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl / max_risk * 100, 1) if max_risk else 0,
+                "contract_value": contract_value,
+            })
+        rows.append(row)
+
+    return {
+        "time_slices": [{"label": ts["label"], "is_expiry": ts["is_expiry"]} for ts in time_slices],
+        "price_levels": [round(px, 2) for px in price_levels],
+        "rows": rows,
+        "spot_price": S,
+        "max_profit": max(cell["pnl"] for row in rows for cell in row) if rows else 0,
+        "max_loss": min(cell["pnl"] for row in rows for cell in row) if rows else 0,
+    }
+
+
 def _lookup_chain_mid(options: dict, strike: float, otype: str) -> float | None:
     """Look up mid price from chain options dict."""
     strike_data = options.get(str(strike)) or options.get(strike)
@@ -996,10 +1131,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         )
 
         leg_detail = [
-            {"leg": "Long Put", "strike": lp, "exp": long_exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp},
-            {"leg": "Short Put", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
-            {"leg": "Short Call", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
-            {"leg": "Long Call", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
+            {"leg": "Long Put", "type": "long", "strike": lp, "exp": long_exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp, "greeks": {k: round(v, 6) for k, v in g_lp.items()}},
+            {"leg": "Short Put", "type": "short", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp, "greeks": {k: round(v, 6) for k, v in g_sp.items()}},
+            {"leg": "Short Call", "type": "short", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc, "greeks": {k: round(v, 6) for k, v in g_sc.items()}},
+            {"leg": "Long Call", "type": "long", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc, "greeks": {k: round(v, 6) for k, v in g_lc.items()}},
         ]
 
     elif body.strategy == "iron_condor":
@@ -1042,10 +1177,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         )
 
         leg_detail = [
-            {"leg": "Long Put", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp},
-            {"leg": "Short Put", "strike": sp, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
-            {"leg": "Short Call", "strike": sc, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
-            {"leg": "Long Call", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
+            {"leg": "Long Put", "type": "long", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp, "greeks": {k: round(v, 6) for k, v in g_lp.items()}},
+            {"leg": "Short Put", "type": "short", "strike": sp, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp, "greeks": {k: round(v, 6) for k, v in g_sp.items()}},
+            {"leg": "Short Call", "type": "short", "strike": sc, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc, "greeks": {k: round(v, 6) for k, v in g_sc.items()}},
+            {"leg": "Long Call", "type": "long", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc, "greeks": {k: round(v, 6) for k, v in g_lc.items()}},
         ]
 
     elif body.strategy == "double_calendar":
@@ -1087,10 +1222,10 @@ async def calculate_spread(request: Request, body: CalcRequest):
         )
 
         leg_detail = [
-            {"leg": "Short Front Put", "strike": ps, "exp": front_exp, "price": round(p_fp, 4), "iv": round(iv_fp, 4), "theoretical": theo_fp},
-            {"leg": "Long Back Put", "strike": ps, "exp": back_exp, "price": round(p_bp, 4), "iv": round(iv_bp, 4), "theoretical": theo_bp},
-            {"leg": "Short Front Call", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4), "theoretical": theo_fc},
-            {"leg": "Long Back Call", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4), "theoretical": theo_bc},
+            {"leg": "Short Front Put", "type": "short", "strike": ps, "exp": front_exp, "price": round(p_fp, 4), "iv": round(iv_fp, 4), "theoretical": theo_fp, "greeks": {k: round(v, 6) for k, v in g_fp.items()}},
+            {"leg": "Long Back Put", "type": "long", "strike": ps, "exp": back_exp, "price": round(p_bp, 4), "iv": round(iv_bp, 4), "theoretical": theo_bp, "greeks": {k: round(v, 6) for k, v in g_bp.items()}},
+            {"leg": "Short Front Call", "type": "short", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4), "theoretical": theo_fc, "greeks": {k: round(v, 6) for k, v in g_fc.items()}},
+            {"leg": "Long Back Call", "type": "long", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4), "theoretical": theo_bc, "greeks": {k: round(v, 6) for k, v in g_bc.items()}},
         ]
     else:
         raise HTTPException(400, f"Unknown strategy: {body.strategy}")
@@ -1100,6 +1235,22 @@ async def calculate_spread(request: Request, body: CalcRequest):
     if leg_detail:
         ivs = [leg["iv"] for leg in leg_detail if leg.get("iv") and leg["iv"] > 0]
         avg_iv = round(sum(ivs) / len(ivs), 4) if ivs else None
+
+    # Build P&L heatmap grid
+    if body.strategy == "double_diagonal":
+        grid_strikes = {"lp": lp, "sp": sp, "sc": sc, "lc": lc}
+        grid_exps = {"short": short_exp, "long": long_exp}
+    elif body.strategy == "iron_condor":
+        grid_strikes = {"lp": lp, "sp": sp, "sc": sc, "lc": lc}
+        grid_exps = {"exp": exp}
+    else:
+        grid_strikes = {"ps": ps, "cs": cs}
+        grid_exps = {"front": front_exp, "back": back_exp}
+
+    pnl_grid = _build_pnl_grid(
+        body.strategy, S, grid_strikes, grid_exps,
+        r, avg_sigma, entry_cost, n,
+    )
 
     # net_debit < 0 means net credit (IC, credit spreads)
     rounded_debit = round(net_debit, 2)
@@ -1116,6 +1267,7 @@ async def calculate_spread(request: Request, body: CalcRequest):
         "probability_of_profit": profile["probability_of_profit"],
         "greeks": greeks,
         "pnl_curve": profile["pnl_curve"],
+        "pnl_grid": pnl_grid,
         "legs": leg_detail,
         "implied_vol": avg_iv,
         "pricing_mode": "chain" if body.use_chain_prices and chain_opts else "black_scholes",
