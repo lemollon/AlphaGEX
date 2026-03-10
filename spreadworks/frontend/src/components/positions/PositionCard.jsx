@@ -230,6 +230,31 @@ export default function PositionCard({ position, onClose, onDelete }) {
         </div>
       </div>
 
+      {/* Pricing source — so users know where the numbers come from */}
+      {isOpen && pnl?.pricing_source && (
+        <div style={{
+          fontSize: 9,
+          color: pnl.pricing_source === 'live_quotes' ? '#00e676' : '#888',
+          marginBottom: 6,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}>
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%',
+            background: pnl.pricing_source === 'live_quotes' ? '#00e676'
+              : pnl.pricing_source === 'black_scholes_live_iv' ? '#ffb300'
+              : '#ff5252',
+            display: 'inline-block',
+          }} />
+          {pnl.pricing_source === 'live_quotes'
+            ? 'P&L from live Tradier bid/ask'
+            : pnl.pricing_source === 'black_scholes_live_iv'
+              ? 'P&L estimated (BS + live IV)'
+              : 'P&L estimated (BS model — market closed)'}
+        </div>
+      )}
+
       {/* Notes */}
       {position.notes && (
         <div style={{ fontSize: 10, color: '#666', fontStyle: 'italic', marginBottom: 6 }}>
