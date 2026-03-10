@@ -61,6 +61,46 @@ export function dteMode(bot: string): string | null {
 
 let tablesReady = false
 
+// ---- ironforge_accounts table DDL ----
+
+const ACCOUNTS_DDL = `
+CREATE TABLE IF NOT EXISTS ironforge_accounts (
+  id            SERIAL PRIMARY KEY,
+  person        VARCHAR(100) NOT NULL,
+  account_id    VARCHAR(50)  NOT NULL UNIQUE,
+  api_key       TEXT         NOT NULL,
+  bot           VARCHAR(20)  NOT NULL CHECK (bot IN ('FLAME', 'SPARK', 'INFERNO', 'BOTH')),
+  type          VARCHAR(20)  NOT NULL CHECK (type IN ('production', 'sandbox')),
+  is_active     BOOLEAN      NOT NULL DEFAULT true,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_one_active_sandbox
+  ON ironforge_accounts (type) WHERE type = 'sandbox' AND is_active = true;
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'update_ironforge_accounts_updated_at'
+  ) THEN
+    CREATE TRIGGER update_ironforge_accounts_updated_at
+      BEFORE UPDATE ON ironforge_accounts
+      FOR EACH ROW
+      EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END;
+$$;
+`
+
 const INIT_DDL = `
 CREATE TABLE IF NOT EXISTS bot_heartbeats (
   bot_name TEXT NOT NULL PRIMARY KEY,
@@ -255,6 +295,10 @@ async function ensureTables(): Promise<void> {
   try {
     await client.query(INIT_DDL)
 
+    // ---- ironforge_accounts table + seed from env vars ----
+    await client.query(ACCOUNTS_DDL)
+    await seedAccountsFromEnv(client)
+
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ['flame', 'spark', 'inferno']) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT']) {
@@ -337,6 +381,68 @@ async function ensureTables(): Promise<void> {
     console.error('ensureTables failed:', err)
   } finally {
     client.release()
+  }
+}
+
+/**
+ * Discover a Tradier sandbox account ID by calling /user/profile.
+ * Returns null if the API is unreachable or the key is invalid.
+ */
+async function discoverAccountId(apiKey: string): Promise<string | null> {
+  try {
+    const res = await fetch('https://sandbox.tradier.com/v1/user/profile', {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    const data = await res.json()
+    let account = data.profile?.account
+    if (Array.isArray(account)) account = account[0]
+    return account?.account_number?.toString() || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One-time bootstrap: seed ironforge_accounts from env vars if the table is empty.
+ * After this runs, the DB is the source of truth for account management.
+ */
+async function seedAccountsFromEnv(client: any): Promise<void> {
+  try {
+    const existing = await client.query('SELECT id FROM ironforge_accounts LIMIT 1')
+    if (existing.rows.length > 0) return // Already seeded
+
+    const envAccounts = [
+      { name: 'User',  keyEnv: 'TRADIER_SANDBOX_KEY_USER' },
+      { name: 'Matt',  keyEnv: 'TRADIER_SANDBOX_KEY_MATT' },
+      { name: 'Logan', keyEnv: 'TRADIER_SANDBOX_KEY_LOGAN' },
+    ]
+
+    for (const acct of envAccounts) {
+      const apiKey = process.env[acct.keyEnv] || ''
+      if (!apiKey) continue
+
+      const accountId = await discoverAccountId(apiKey)
+      if (!accountId) {
+        console.warn(`[accounts] Could not discover account ID for ${acct.name} — skipping seed`)
+        continue
+      }
+
+      await client.query(
+        `INSERT INTO ironforge_accounts (person, account_id, api_key, bot, type)
+         VALUES ($1, $2, $3, 'BOTH', 'production')
+         ON CONFLICT (account_id) DO NOTHING`,
+        [acct.name, accountId, apiKey],
+      )
+      console.log(`[accounts] Seeded ${acct.name} → ${accountId} (production)`)
+    }
+  } catch (err) {
+    console.error('[accounts] Seed failed:', err)
   }
 }
 
