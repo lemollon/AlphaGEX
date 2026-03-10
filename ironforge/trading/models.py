@@ -66,7 +66,7 @@ class BotConfig:
     vix_skip: float = 32.0
 
     # PDT
-    pdt_max_day_trades: int = 3
+    pdt_max_day_trades: int = 4
     pdt_rolling_window_days: int = 5
 
     # Position sizing

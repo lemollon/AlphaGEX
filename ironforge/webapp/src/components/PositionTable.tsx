@@ -47,7 +47,7 @@ export default function PositionTable({
   spotPrice?: number | null
   tradierConnected?: boolean
   detailData?: { positions: DetailData[] } | null
-  bot: 'flame' | 'spark'
+  bot: 'flame' | 'spark' | 'inferno'
 }) {
   if (!positions.length) {
     return (
@@ -116,7 +116,7 @@ function PositionCard({
   pos: Position
   hasLiveData: boolean
   detail: DetailData | null
-  bot: 'flame' | 'spark'
+  bot: 'flame' | 'spark' | 'inferno'
 }) {
   const [expanded, setExpanded] = useState(true)
   const [closing, setClosing] = useState(false)

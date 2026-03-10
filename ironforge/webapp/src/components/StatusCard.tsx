@@ -70,9 +70,9 @@ export default function StatusCard({
   bot,
 }: {
   data: StatusData
-  accent: 'amber' | 'blue'
+  accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
-  bot: 'flame' | 'spark'
+  bot: 'flame' | 'spark' | 'inferno'
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
