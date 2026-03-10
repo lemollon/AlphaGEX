@@ -483,6 +483,9 @@ class TradingDatabase:
             return False
 
     def get_day_trade_count_rolling_5_days(self) -> int:
+        """Count day trades in rolling 5 business day window.
+        6 calendar days back = exactly 5 business days for any weekday.
+        """
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -490,7 +493,7 @@ class TradingDatabase:
                     SELECT COUNT(*) FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
-                    AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
                     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                 """, [self.dte_mode])
                 result = c.fetchone()
@@ -498,6 +501,42 @@ class TradingDatabase:
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to get PDT count: {e}")
             return 0
+
+    def get_pdt_trigger_trades(self) -> List[Dict[str, Any]]:
+        """Return the actual day trades in the rolling 5 biz day window with their dates
+        and when each falls off (trade_date + 7 calendar days = exits the window)."""
+        trades = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT DISTINCT trade_date FROM {self._t('pdt_log')}
+                    WHERE is_day_trade = TRUE
+                    AND dte_mode = %s
+                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+                    AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
+                    ORDER BY trade_date ASC
+                """, [self.dte_mode])
+                for row in c.fetchall():
+                    td = row[0]
+                    if isinstance(td, str):
+                        from datetime import date
+                        td = date.fromisoformat(td)
+                    # Trade exits the window when today > trade_date + 6 calendar days
+                    # i.e., the first day it's gone is trade_date + 7
+                    falls_off = td + timedelta(days=7)
+                    # If falls_off lands on weekend, advance to Monday
+                    if falls_off.weekday() == 5:  # Saturday
+                        falls_off += timedelta(days=2)
+                    elif falls_off.weekday() == 6:  # Sunday
+                        falls_off += timedelta(days=1)
+                    trades.append({
+                        'trade_date': str(td),
+                        'falls_off': str(falls_off),
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get PDT trigger trades: {e}")
+        return trades
 
     def get_pdt_log(self, days: int = 10) -> List[Dict[str, Any]]:
         entries = []
@@ -530,13 +569,17 @@ class TradingDatabase:
         return entries
 
     def get_next_pdt_reset_date(self) -> Optional[str]:
+        """When the oldest day trade exits the rolling 5 biz day window.
+        A trade on date X exits when today > X + 6 calendar days,
+        so the next slot opens on X + 7 calendar days."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(f"""
                     SELECT MIN(trade_date) FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE AND dte_mode = %s
-                    AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+                    AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                 """, [self.dte_mode])
                 result = c.fetchone()
                 if result and result[0]:
@@ -544,12 +587,12 @@ class TradingDatabase:
                     if isinstance(oldest_date, str):
                         from datetime import date
                         oldest_date = date.fromisoformat(oldest_date)
-                    reset_date = oldest_date
-                    biz_days = 0
-                    while biz_days < 6:
+                    reset_date = oldest_date + timedelta(days=7)
+                    # If lands on weekend, advance to Monday
+                    if reset_date.weekday() == 5:
+                        reset_date += timedelta(days=2)
+                    elif reset_date.weekday() == 6:
                         reset_date += timedelta(days=1)
-                        if reset_date.weekday() < 5:
-                            biz_days += 1
                     return str(reset_date)
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to get PDT reset date: {e}")

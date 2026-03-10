@@ -6,6 +6,11 @@ import { useState, useEffect, useCallback } from 'react'
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
+interface TriggerTrade {
+  trade_date: string
+  falls_off: string
+}
+
 interface PdtStatus {
   bot_name: string
   pdt_enabled: boolean
@@ -20,6 +25,8 @@ interface PdtStatus {
   last_reset_by: string | null
   is_blocked: boolean
   block_reason: string | null
+  trigger_trades: TriggerTrade[]
+  next_slot_opens: string | null
 }
 
 interface AuditEntry {
@@ -287,6 +294,51 @@ export default function PdtCard({
           </span>
         </div>
       </div>
+
+      {/* Trigger trades — which dates count toward PDT + when each slot opens */}
+      {status.trigger_trades && status.trigger_trades.length > 0 && (
+        <div className="mb-3 rounded-lg bg-forge-bg/60 border border-forge-border/40 p-3">
+          <div className="text-[11px] text-forge-muted uppercase tracking-wide mb-2">
+            Day Trades in Window
+          </div>
+          <div className="space-y-1.5">
+            {status.trigger_trades.map((t, i) => {
+              const td = new Date(t.trade_date + 'T12:00:00')
+              const fo = new Date(t.falls_off + 'T12:00:00')
+              const fmtDate = (d: Date) =>
+                d.toLocaleDateString('en-US', {
+                  timeZone: 'America/Chicago',
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                })
+              return (
+                <div key={i} className="flex items-center justify-between text-xs">
+                  <span className="text-white font-mono">
+                    #{i + 1} {fmtDate(td)}
+                  </span>
+                  <span className="text-forge-muted">
+                    slot opens <span className="text-emerald-400">{fmtDate(fo)}</span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          {status.next_slot_opens && count >= max && (
+            <div className="mt-2 pt-2 border-t border-forge-border/30 text-[11px] text-amber-400">
+              Next available trade:{' '}
+              <span className="text-emerald-400 font-medium">
+                {new Date(status.next_slot_opens + 'T12:00:00').toLocaleDateString('en-US', {
+                  timeZone: 'America/Chicago',
+                  weekday: 'long',
+                  month: 'short',
+                  day: 'numeric',
+                })}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Reset button + last reset */}
       <div className="flex items-center justify-between">

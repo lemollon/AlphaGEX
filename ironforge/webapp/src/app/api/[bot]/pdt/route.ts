@@ -49,7 +49,7 @@ export async function GET(
     const countRows = await query(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
-       AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+       AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
        AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
       [dte],
     )
@@ -80,6 +80,10 @@ export async function GET(
 
     const tradesRemaining = Math.max(0, maxDayTrades - dayTradeCount)
 
+    // Get the actual day trade dates that count + when each falls off
+    const triggerTrades = await getTriggerTrades(bot, dte)
+    const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
+
     return NextResponse.json({
       bot_name: botName,
       pdt_enabled: pdtEnabled,
@@ -94,6 +98,8 @@ export async function GET(
       last_reset_by: cfg.last_reset_by ?? null,
       is_blocked: isBlocked,
       block_reason: blockReason,
+      trigger_trades: triggerTrades,
+      next_slot_opens: nextSlotOpens,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
@@ -205,7 +211,7 @@ async function handleReset(
   const countRows = await query(
     `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
     [dte],
   )
@@ -221,7 +227,7 @@ async function handleReset(
     `UPDATE ${botTable(bot, 'pdt_log')}
      SET is_day_trade = FALSE
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
     [dte],
   )
@@ -253,6 +259,37 @@ async function handleReset(
   )
 
   return fetchAndReturnStatus(bot, botName)
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helper: get trigger trades (dates that count toward PDT)           */
+/* ------------------------------------------------------------------ */
+
+async function getTriggerTrades(bot: string, dte: string) {
+  const rows = await query(
+    `SELECT DISTINCT trade_date FROM ${botTable(bot, 'pdt_log')}
+     WHERE is_day_trade = TRUE AND dte_mode = $1
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
+     ORDER BY trade_date ASC`,
+    [dte],
+  )
+  return rows.map((r: any) => {
+    const td = typeof r.trade_date === 'string'
+      ? new Date(r.trade_date + 'T00:00:00')
+      : new Date(r.trade_date)
+    // Trade exits window after 7 calendar days (trade_date + 7)
+    const fallsOff = new Date(td)
+    fallsOff.setDate(fallsOff.getDate() + 7)
+    // If falls on weekend, advance to Monday
+    const dow = fallsOff.getDay()
+    if (dow === 0) fallsOff.setDate(fallsOff.getDate() + 1)  // Sun → Mon
+    if (dow === 6) fallsOff.setDate(fallsOff.getDate() + 2)  // Sat → Mon
+    return {
+      trade_date: td.toISOString().split('T')[0],
+      falls_off: fallsOff.toISOString().split('T')[0],
+    }
+  })
 }
 
 /* ------------------------------------------------------------------ */
@@ -293,7 +330,7 @@ async function fetchAndReturnStatus(
   const countRows = await query(
     `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
     [dte],
   )
@@ -320,6 +357,9 @@ async function fetchAndReturnStatus(
     }
   }
 
+  const triggerTrades = await getTriggerTrades(bot, dte)
+  const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
+
   return NextResponse.json({
     bot_name: botName,
     pdt_enabled: pdtEnabled,
@@ -334,5 +374,7 @@ async function fetchAndReturnStatus(
     last_reset_by: cfg.last_reset_by ?? null,
     is_blocked: isBlocked,
     block_reason: blockReason,
+    trigger_trades: triggerTrades,
+    next_slot_opens: nextSlotOpens,
   })
 }
