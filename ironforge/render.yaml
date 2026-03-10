@@ -35,5 +35,7 @@ services:
         sync: false
       - key: TRADIER_SANDBOX_KEY_LOGAN
         sync: false
+      - key: IRONFORGE_API_URL
+        sync: false
       - key: NODE_ENV
         value: production
