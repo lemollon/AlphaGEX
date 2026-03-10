@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react'
 
 /* ── Configuration ──────────────────────────────────────────────── */
 
-/** Go-live date: March 8, 2026 at 8:30 AM Central Time (market open) */
-const LAUNCH_DATE = new Date('2026-03-08T14:30:00Z') // 8:30 AM CT = 14:30 UTC
+/** Go-live date: March 16, 2026 at 8:30 AM Central Time (market open) */
+const LAUNCH_DATE = new Date('2026-03-16T14:30:00Z') // 8:30 AM CT = 14:30 UTC
 
 /* ── Helpers ────────────────────────────────────────────────────── */
 
@@ -197,7 +197,7 @@ export default function LaunchCountdown() {
 
         {/* Launch date footer */}
         <p className="text-center text-[10px] text-forge-muted mt-3">
-          Target: March 8, 2026 &middot; 8:30 AM CT &middot; Market Open
+          Target: March 16, 2026 &middot; 8:30 AM CT &middot; Market Open
         </p>
       </div>
     </div>
