@@ -99,8 +99,7 @@ export default function StatusCard({
   const nextDay = getNextTradingDay()
   const isZeroDte = bot === 'inferno'
   const showNextDay = data.bot_state === 'market_closed' || (data.bot_state === 'traded' && data.open_positions === 0 && isZeroDte)
-  const stateLabel = data.bot_state === 'market_closed' && isZeroDte ? `NEXT: ${nextDay}`
-    : data.bot_state === 'market_closed' ? 'MARKET CLOSED'
+  const stateLabel = data.bot_state === 'market_closed' ? `NEXT: ${nextDay}`
     : data.bot_state === 'traded' && data.open_positions === 0 && isZeroDte ? `DONE — NEXT: ${nextDay}`
     : data.bot_state === 'traded' && data.open_positions === 0 && account.total_trades === 0 ? 'WAITING'
     : data.bot_state ? data.bot_state.toUpperCase()
@@ -203,8 +202,8 @@ export default function StatusCard({
           </span>
         )}
 
-        {/* Next scan countdown */}
-        {data.last_scan && countdown !== null && (
+        {/* Next scan countdown — only during market hours */}
+        {data.last_scan && countdown !== null && ptState.open && (
           <span
             className={`ml-auto text-xs font-mono px-2 py-0.5 rounded ${
               countdown === 0
@@ -213,6 +212,13 @@ export default function StatusCard({
             }`}
           >
             {countdown === 0 ? 'Scanning...' : `Next scan ${formatCountdown(countdown)}`}
+          </span>
+        )}
+
+        {/* After-hours: pipeline offline indicator */}
+        {data.last_scan && !ptState.open && (
+          <span className="ml-auto text-xs font-mono px-2 py-0.5 rounded bg-forge-border text-gray-500">
+            Offline &mdash; resumes at open
           </span>
         )}
 

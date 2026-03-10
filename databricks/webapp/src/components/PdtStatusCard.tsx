@@ -4,6 +4,19 @@ import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 
+/** Get the next N weekdays from today. */
+function getNextTradingDays(count: number): string[] {
+  const days: string[] = []
+  const d = new Date()
+  while (days.length < count) {
+    d.setDate(d.getDate() + 1)
+    if (d.getDay() !== 0 && d.getDay() !== 6) {
+      days.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }))
+    }
+  }
+  return days
+}
+
 interface PdtStatus {
   bot_name: string
   pdt_enabled: boolean
@@ -206,6 +219,25 @@ export default function PdtStatusCard({
           )}
         </span>
       </div>
+
+      {/* Next available trade dates */}
+      {data.pdt_enabled && data.trades_remaining <= 1 && (
+        <div className="rounded-lg bg-forge-border/30 p-2.5">
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">Next Available Trade Dates</p>
+          <div className="flex gap-2">
+            {getNextTradingDays(data.trades_remaining === 0 ? 3 : 2).map((day) => (
+              <span key={day} className={`text-xs px-2 py-0.5 rounded ${am.border} ${am.text}`}>
+                {day}
+              </span>
+            ))}
+          </div>
+          {data.trades_remaining === 0 && (
+            <p className="text-[10px] text-amber-400/70 mt-1.5">
+              PDT limit reached &mdash; next slot opens when oldest trade exits the rolling {data.window_days}-day window
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Reset Button */}
       <div className="flex items-center justify-between">

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/databricks'
+import { query, botTable, num, int, validateBot, dteMode } from '@/lib/databricks'
 import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
 import { getCurrentPTTier, getCTNow } from '@/lib/pt-tiers'
 
@@ -12,7 +12,7 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
 
   try {
     const positionRows = await query(`
