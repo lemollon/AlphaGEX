@@ -130,6 +130,36 @@ class TradierClient:
             return None
         return quotes
 
+    def get_option_quotes_batch(self, occ_symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Get quotes for multiple option contracts in a single API call.
+
+        Args:
+            occ_symbols: List of OCC symbols, e.g. ["SPY260310P00670000", "SPY260310C00690000"]
+
+        Returns:
+            Dict mapping OCC symbol → quote dict (with bid, ask, last, etc.)
+            Missing/unmatched symbols are excluded.
+        """
+        if not occ_symbols:
+            return {}
+
+        data = self._get("/markets/quotes", {"symbols": ",".join(occ_symbols)})
+        if not data:
+            return {}
+
+        result = {}
+        quotes = data.get("quotes", {}).get("quote", [])
+        if isinstance(quotes, dict):
+            quotes = [quotes]
+
+        for q in quotes:
+            symbol = q.get("symbol")
+            if symbol and q.get("bid") is not None:
+                result[symbol] = q
+
+        return result
+
     def get_vix(self) -> Optional[float]:
         """Get current VIX value."""
         quote = self.get_quote("VIX")
