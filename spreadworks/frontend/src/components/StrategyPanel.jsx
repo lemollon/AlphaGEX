@@ -699,8 +699,28 @@ export default function StrategyPanel({
 
       {/* GEX Suggestion */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
-        <div style={s.gexBanner}>
-          <strong>GEX Suggestion</strong>
+        <div style={{ ...s.gexBanner, position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong>GEX Suggestion</strong>
+            <button
+              onClick={() => {
+                setGexSuggestion(null);
+                setLegs(DEFAULT_LEGS[strategy]);
+                setInputMode(INPUT_MODES.MANUAL);
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ff5252',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontFamily: "'Courier New', monospace",
+                padding: '0 2px',
+                lineHeight: 1,
+              }}
+              title="Dismiss suggestion and switch to Manual"
+            >&times;</button>
+          </div>
           {gexSuggestion.rationale && <div style={{ color: '#888', marginTop: 2 }}>{gexSuggestion.rationale}</div>}
         </div>
       )}
@@ -750,15 +770,34 @@ export default function StrategyPanel({
         </>
       ) : (
         <>
-          <div style={s.sideLabel('#448aff')}>-- STRIKES --</div>
+          <div style={s.sideLabel('#ff5252')}>-- PUT CALENDAR --</div>
           <div style={s.fieldRow}>
             <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
+            Sell @ Front Exp &middot; Buy @ Back Exp
+          </div>
+          <div style={s.sideLabel('#00e676')}>-- CALL CALENDAR --</div>
+          <div style={s.fieldRow}>
             <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
-          <div style={s.fieldRow}>
-            <ExpirationInput label="Front Exp" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <ExpirationInput label="Back Exp" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
+            Sell @ Front Exp &middot; Buy @ Back Exp
           </div>
+          <div style={s.sideLabel('#448aff')}>-- EXPIRATIONS --</div>
+          <div style={s.fieldRow}>
+            <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
+            <div style={{ background: '#080810', borderRadius: 4, padding: '4px 6px', fontSize: 9, color: '#888', marginTop: 2 }}>
+              <div style={{ color: '#555', marginBottom: 2, fontWeight: 600 }}>4 LEGS:</div>
+              <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
+              <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>
+              <div>3. Sell Call ${legs.callStrike} ({legs.frontExpiration})</div>
+              <div>4. Buy Call ${legs.callStrike} ({legs.backExpiration})</div>
+            </div>
+          )}
         </>
       )}
 
