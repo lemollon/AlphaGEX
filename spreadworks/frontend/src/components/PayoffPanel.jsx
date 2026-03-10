@@ -156,6 +156,49 @@ export default function PayoffPanel({
           </g>
         )}
 
+        {/* Current P&L badge at spot price */}
+        {paths && spotY != null && spotPrice && pnlCurve && pnlCurve.length > 0 && (() => {
+          // Interpolate P&L at spot
+          let pnlAtSpot = null;
+          for (let i = 0; i < pnlCurve.length - 1; i++) {
+            const a = pnlCurve[i], b = pnlCurve[i + 1];
+            if ((a.price <= spotPrice && b.price >= spotPrice) || (a.price >= spotPrice && b.price <= spotPrice)) {
+              const t = (spotPrice - a.price) / (b.price - a.price || 1);
+              pnlAtSpot = a.pnl + t * (b.pnl - a.pnl);
+              break;
+            }
+          }
+          if (pnlAtSpot == null) return null;
+
+          const maxRisk = Math.abs(maxLoss || 1);
+          const pctOfRisk = maxRisk > 0 ? (pnlAtSpot / maxRisk) * 100 : 0;
+          const isProfit = pnlAtSpot > 0;
+          const nearBreakeven = Math.abs(pctOfRisk) < 10;
+          const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#00e676' : '#ff5252';
+          const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#00e67622' : '#ff525222';
+
+          const sign = pnlAtSpot >= 0 ? '+' : '';
+          const label = `Now: ${sign}$${pnlAtSpot.toFixed(0)} (${sign}${pctOfRisk.toFixed(1)}%)`;
+
+          // Position badge: clamp Y so it doesn't clip
+          const badgeW = 140;
+          const badgeH = 18;
+          const rawX = 4;
+          let badgeY = spotY - badgeH / 2;
+          badgeY = Math.max(topPad, Math.min(badgeY, height - 28 - badgeH));
+
+          return (
+            <g>
+              <rect x={rawX} y={badgeY} width={badgeW} height={badgeH} rx={3}
+                fill={bgColor} stroke={badgeColor} strokeWidth="0.8" />
+              <text x={rawX + badgeW / 2} y={badgeY + 12} textAnchor="middle"
+                fill={badgeColor} fontSize="9" fontWeight="700" fontFamily="'Courier New', monospace">
+                {label}
+              </text>
+            </g>
+          );
+        })()}
+
         {/* No data placeholder */}
         {!paths && (
           <text x={VIEW_WIDTH / 2} y={height / 2} textAnchor="middle" fill="#333" fontSize="11" fontFamily="'Courier New', monospace">

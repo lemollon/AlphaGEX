@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
@@ -367,6 +367,22 @@ export default function StrategyPanel({
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
+
+  // Reset spread inputs when symbol changes
+  const prevSymbolRef = useRef(symbol);
+  useEffect(() => {
+    if (prevSymbolRef.current !== symbol) {
+      prevSymbolRef.current = symbol;
+      setLegs(DEFAULT_LEGS[strategy]);
+      setContracts(1);
+      setExpirations([]);
+      setChainStrikes([]);
+      setGexSuggestion(null);
+      setError(null);
+      setSaveMsg('');
+      setPushMsg('');
+    }
+  }, [symbol, strategy]);
 
   const handleSavePosition = async () => {
     if (!calcResult || !spotPrice) return;
