@@ -199,7 +199,12 @@ export default function Home() {
           textAlign: 'center',
           maxWidth: '400px',
           margin: '4px auto 0 auto',
-          opacity: 0.85,
+          opacity: 1,
+          border: '2px solid red',
+          padding: '4px',
+          backgroundColor: 'rgba(255,0,0,0.1)',
+          zIndex: 9999,
+          position: 'relative',
         }}>
           &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
         </p>
