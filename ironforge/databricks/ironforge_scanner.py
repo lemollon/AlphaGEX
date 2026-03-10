@@ -85,7 +85,7 @@ SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 BOT_CONFIG = {
     "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 1.0, "entry_end": 1400, "max_trades": 1},
     "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 1.0, "entry_end": 1400, "max_trades": 1},
-    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 2.0, "entry_end": 1430, "max_trades": 3},
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 2.0, "entry_end": 1430, "max_trades": 0},  # 0 = unlimited
 }
 
 BOTS = [
@@ -1036,7 +1036,7 @@ def is_after_eod_cutoff(ct: datetime) -> bool:
     return hhmm >= 1445
 
 
-def get_sliding_profit_target(ct: datetime, base_pt: float = 0.30) -> tuple:
+def get_sliding_profit_target(ct: datetime, base_pt: float = 0.30, bot_name: str = "") -> tuple:
     """
     Return (profit_target_fraction, tier_label) based on current CT time.
 
@@ -1050,17 +1050,23 @@ def get_sliding_profit_target(ct: datetime, base_pt: float = 0.30) -> tuple:
 
     For INFERNO (base_pt=0.50):
         8:30 AM – 10:29 AM  → 50%  (MORNING)
-        10:30 AM – 12:59 PM → 35%  (MIDDAY)
-        1:00 PM – 2:44 PM   → 25%  (AFTERNOON)
+        10:30 AM – 12:59 PM → 30%  (MIDDAY)
+        1:00 PM – 2:44 PM   → 10%  (AFTERNOON)
 
     2:45 PM+ → handled by EOD cutoff (close at any P&L)
     """
     time_minutes = ct.hour * 60 + ct.minute
+    is_inferno = bot_name == "inferno"
+
     if time_minutes < 630:       # before 10:30 AM CT
         return base_pt, "MORNING"
     elif time_minutes < 780:     # before 1:00 PM CT
+        if is_inferno:
+            return 0.30, "MIDDAY"
         return max(0.10, base_pt - 0.10), "MIDDAY"
     else:
+        if is_inferno:
+            return 0.10, "AFTERNOON"
         return max(0.10, base_pt - 0.15), "AFTERNOON"
 
 
@@ -1456,7 +1462,7 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
     entry_credit = num(pos["total_credit"])
     contracts = to_int(pos["contracts"])
     collateral = num(pos["collateral_required"])
-    pt_pct, pt_tier = get_sliding_profit_target(ct, cfg["pt_pct"])
+    pt_pct, pt_tier = get_sliding_profit_target(ct, cfg["pt_pct"], bot["name"])
     profit_target_price = round(entry_credit * (1 - pt_pct), 4)
     stop_loss_price = round(entry_credit * cfg["sl_mult"], 4)
     ticker = pos.get("ticker") or "SPY"
@@ -1592,16 +1598,17 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     pdt_enabled = pdt_cfg.get("pdt_enabled", True) not in (False, 0, "false")
     pdt_count = to_int(pdt_cfg.get("day_trade_count", 0))
     max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3)) or 3
-    max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1)) or 1
+    max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # 0 = unlimited
 
-    # Check 1: Already traded today? (max per-day limit from config)
-    today_trades = db_query(f"""
-        SELECT COUNT(*) as cnt
-        FROM {bot_table(bot['name'], 'pdt_log')}
-        WHERE trade_date = CURRENT_DATE() AND dte_mode = '{bot['dte']}'
-    """)
-    if to_int(today_trades[0].get("cnt") if today_trades else 0) >= max_trades_per_day:
-        return "skip:already_traded_today"
+    # Check 1: Already traded today? (max per-day limit from config, 0 = unlimited)
+    if max_trades_per_day > 0:
+        today_trades = db_query(f"""
+            SELECT COUNT(*) as cnt
+            FROM {bot_table(bot['name'], 'pdt_log')}
+            WHERE trade_date = CURRENT_DATE() AND dte_mode = '{bot['dte']}'
+        """)
+        if to_int(today_trades[0].get("cnt") if today_trades else 0) >= max_trades_per_day:
+            return "skip:already_traded_today"
 
     # Check 2: PDT rolling window (only if enforcement is ON)
     if pdt_enabled and pdt_count >= max_day_trades:
@@ -1990,7 +1997,8 @@ def scan_bot(bot: dict) -> None:
 
         # For multi-trade bots, check if we can open more positions
         # For single-trade bots, only open if no position is open
-        can_open_more = (max_trades > 1 and open_count < max_trades) or (max_trades <= 1 and not has_open_position)
+        # max_trades: 0 = unlimited, 1 = single trade, >1 = multi-trade with cap
+        can_open_more = (max_trades == 0) or (max_trades > 1 and open_count < max_trades) or (max_trades == 1 and not has_open_position)
 
         if not is_market_open(ct):
             if not has_open_position:
@@ -2267,6 +2275,8 @@ def _ensure_pdt_tables() -> None:
             bot_upper = bot["name"].upper()
             cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
             max_tpd = cfg["max_trades"]
+            # INFERNO: no PDT enforcement, unlimited trades per day
+            pdt_on = "FALSE" if bot["name"] == "inferno" else "TRUE"
             existing = db_query(f"""
                 SELECT bot_name FROM {pdt_config_tbl}
                 WHERE bot_name = '{bot_upper}' LIMIT 1
@@ -2276,10 +2286,10 @@ def _ensure_pdt_tables() -> None:
                     INSERT INTO {pdt_config_tbl}
                         (bot_name, pdt_enabled, day_trade_count, max_day_trades,
                          window_days, max_trades_per_day, created_at, updated_at)
-                    VALUES ('{bot_upper}', TRUE, 0, 3, 5, {max_tpd},
+                    VALUES ('{bot_upper}', {pdt_on}, 0, 3, 5, {max_tpd},
                             CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
                 """)
-                log.info(f"Seeded ironforge_pdt_config for {bot_upper} (max_trades_per_day={max_tpd})")
+                log.info(f"Seeded ironforge_pdt_config for {bot_upper} (pdt_enabled={pdt_on}, max_trades_per_day={max_tpd})")
         _pdt_tables_ready = True
         log.info("PDT tables verified/created (ironforge_pdt_config, ironforge_pdt_log)")
     except Exception as e:
