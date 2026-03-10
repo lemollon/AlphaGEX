@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { priceToY } from '../utils/priceScale';
 import { pnlCurveToPoints, buildSmoothPath, buildFillPath, splitProfitLoss } from '../utils/payoffShape';
+import { formatDollarPnl, formatSignedPct } from '../utils/format';
 
 const VIEW_WIDTH = 280;
 const ZERO_X = 220;
@@ -177,8 +178,7 @@ export default function PayoffPanel({
           const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#00e676' : '#ff5252';
           const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#00e67622' : '#ff525222';
 
-          const sign = pnlAtSpot >= 0 ? '+' : '';
-          const label = `Now: ${sign}$${pnlAtSpot.toFixed(0)} (${sign}${pctOfRisk.toFixed(1)}%)`;
+          const label = `Now: ${formatDollarPnl(pnlAtSpot)} (${formatSignedPct(pctOfRisk)})`;
 
           // Position badge: clamp Y so it doesn't clip
           const badgeW = 140;

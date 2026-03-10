@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatCurrency2, formatPct, formatGreek, formatGreekDollar } from '../utils/format';
 
 const font = "'Courier New', monospace";
 
@@ -88,17 +89,13 @@ export default function LegBreakdown({ calcResult }) {
                 const isLong = leg.type === 'long';
                 const greeks = leg.greeks || {};
                 const priceStr = leg.price != null
-                  ? `${tilde}$${leg.price.toFixed(2)}`
+                  ? `${tilde}${formatCurrency2(leg.price)}`
                   : '--';
                 const ivStr = leg.iv != null
-                  ? `${(leg.iv * 100).toFixed(1)}%`
+                  ? formatPct(leg.iv)
                   : '--';
-                const deltaStr = greeks.delta != null
-                  ? (greeks.delta >= 0 ? '+' : '') + greeks.delta.toFixed(3)
-                  : '--';
-                const thetaStr = greeks.theta != null
-                  ? `$${(greeks.theta * 100).toFixed(2)}`
-                  : '--';
+                const deltaStr = formatGreek(greeks.delta, 3);
+                const thetaStr = formatGreekDollar(greeks.theta);
 
                 return (
                   <tr key={i}>

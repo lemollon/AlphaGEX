@@ -1,6 +1,12 @@
 import { useState } from 'react';
+import { formatCurrency, formatPct, formatGreek, formatGreekDollar } from '../utils/format';
 
 const font = "'Courier New', monospace";
+
+const currFmt = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 0,
+  minimumFractionDigits: 0,
+});
 
 const st = {
   bar: {
@@ -120,25 +126,28 @@ export default function MetricsBar({ calcResult }) {
     maxProfitStr = r.max_profit != null ? `${tilde}+${(r.max_profit / maxRisk * 100).toFixed(1)}%` : '--';
     maxLossStr = '--100.0%';
   } else {
-    creditVal = displayAmount > 0 ? `${tilde}${isCredit ? '+' : '-'}$${displayAmount.toFixed(0)}` : '--';
-    maxProfitStr = r.max_profit != null ? `${tilde}+$${r.max_profit.toFixed(0)}` : '--';
-    maxLossStr = r.max_loss != null ? `${tilde}-$${Math.abs(r.max_loss).toFixed(0)}` : '--';
+    creditVal = displayAmount > 0
+      ? `${tilde}${isCredit ? '+' : '-'}$${currFmt.format(displayAmount)}`
+      : '--';
+    maxProfitStr = r.max_profit != null
+      ? `${tilde}+$${currFmt.format(Math.round(r.max_profit))}`
+      : '--';
+    maxLossStr = r.max_loss != null
+      ? `${tilde}-$${currFmt.format(Math.abs(Math.round(r.max_loss)))}`
+      : '--';
   }
 
   const cop = r.probability_of_profit != null
-    ? `${(r.probability_of_profit * 100).toFixed(1)}%`
+    ? formatPct(r.probability_of_profit)
     : r.chance_of_profit != null
-      ? `${(r.chance_of_profit * 100).toFixed(1)}%`
+      ? formatPct(r.chance_of_profit)
       : '--';
 
-  const beLower = r.lower_breakeven?.toFixed(2) ?? '--';
-  const beUpper = r.upper_breakeven?.toFixed(2) ?? '--';
+  const beLower = r.lower_breakeven != null ? r.lower_breakeven.toFixed(2) : '--';
+  const beUpper = r.upper_breakeven != null ? r.upper_breakeven.toFixed(2) : '--';
   const iv = r.implied_vol != null
-    ? `${(r.implied_vol * 100).toFixed(1)}%`
+    ? formatPct(r.implied_vol)
     : '--';
-
-  const fmtGreek = (val, decimals = 4) =>
-    val != null ? (val >= 0 ? '+' : '') + val.toFixed(decimals) : '--';
 
   const unitBtnStyle = (active) => ({
     padding: '1px 5px',
@@ -190,25 +199,25 @@ export default function MetricsBar({ calcResult }) {
       <div style={{ ...st.bar, borderTop: 'none' }}>
         <GreekCell
           label="Delta" symbol={'\u0394'}
-          value={fmtGreek(g.delta)}
+          value={formatGreek(g.delta)}
           color={deltaColor(g.delta)}
           tooltip={GREEK_TOOLTIPS.delta}
         />
         <GreekCell
           label="Gamma" symbol={'\u0393'}
-          value={fmtGreek(g.gamma, 5)}
+          value={formatGreek(g.gamma, 5)}
           color="#aaa"
           tooltip={GREEK_TOOLTIPS.gamma}
         />
         <GreekCell
           label="Theta" symbol={'\u0398'}
-          value={g.theta != null ? `$${(g.theta * 100).toFixed(2)}/day` : '--'}
+          value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'}
           color={thetaColor(g.theta)}
           tooltip={GREEK_TOOLTIPS.theta}
         />
         <GreekCell
           label="Vega" symbol={'\u03BD'}
-          value={g.vega != null ? `$${(g.vega * 100).toFixed(2)}` : '--'}
+          value={formatGreekDollar(g.vega)}
           color="#aaa"
           tooltip={GREEK_TOOLTIPS.vega}
         />
