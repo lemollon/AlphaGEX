@@ -12,7 +12,7 @@ const s = {
     fontFamily: "'Courier New', monospace",
   },
   modal: {
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     border: '1px solid #1a1a2e',
     borderRadius: 8,
     padding: '20px 24px',
@@ -44,7 +44,7 @@ const s = {
     padding: '8px 10px',
     border: '1px solid #1a1a2e',
     borderRadius: 4,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#e0e0e0',
     fontSize: 14,
     fontFamily: "'Courier New', monospace",

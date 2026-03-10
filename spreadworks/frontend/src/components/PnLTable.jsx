@@ -40,7 +40,7 @@ const s = {
   wrapper: {
     flex: 1,
     overflow: 'auto',
-    background: '#080810',
+    background: 'var(--bg-base)',
     fontFamily: font,
     fontSize: 11,
   },
@@ -51,7 +51,7 @@ const s = {
   },
   th: (isExpiry) => ({
     padding: '6px 8px',
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     color: isExpiry ? '#ffd600' : '#888',
     fontWeight: isExpiry ? 700 : 600,
     fontSize: 10,
@@ -65,7 +65,7 @@ const s = {
   }),
   priceCell: (isSpot) => ({
     padding: '4px 8px',
-    background: isSpot ? '#448aff22' : '#0d0d18',
+    background: isSpot ? '#448aff22' : 'var(--bg-surface)',
     color: isSpot ? '#448aff' : '#aaa',
     fontWeight: isSpot ? 700 : 600,
     fontSize: 11,

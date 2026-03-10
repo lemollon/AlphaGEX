@@ -11,10 +11,11 @@ const currFmt = new Intl.NumberFormat('en-US', {
 const st = {
   bar: {
     display: 'flex',
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     borderTop: '1px solid #1a1a2e',
     fontFamily: font,
     fontSize: 11,
+    boxShadow: 'var(--shadow-panel)',
   },
   cell: {
     flex: 1,
@@ -46,7 +47,7 @@ const st = {
     left: '50%',
     transform: 'translateX(-50%)',
     marginBottom: 6,
-    background: '#1a1a2e',
+    background: 'var(--bg-elevated)',
     border: '1px solid #2a2a40',
     borderRadius: 4,
     padding: '6px 10px',
