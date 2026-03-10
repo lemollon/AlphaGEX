@@ -88,19 +88,6 @@ export default function Nav() {
             <span className="text-white glow-amber">Iron</span>
             <span className="text-amber-400 glow-amber">Forge</span>
           </Link>
-          <p style={{
-            color: '#F59E0B',
-            fontStyle: 'italic',
-            fontSize: '0.75rem',
-            fontFamily: "Georgia, 'Times New Roman', serif",
-            letterSpacing: '0.05em',
-            textAlign: 'center',
-            maxWidth: '400px',
-            margin: '4px auto 0 auto',
-            opacity: 0.85,
-          }}>
-            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
-          </p>
         </div>
         <div className="flex gap-6">
           {links.map((link) => {
