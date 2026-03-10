@@ -37,7 +37,7 @@ interface ConfigData {
   max_contracts?: number
 }
 
-const SCAN_INTERVAL_SEC = 300 // 5 minutes
+const SCAN_INTERVAL_SEC = 60 // 1 minute
 
 /** Compute seconds until next scan based on last heartbeat. */
 function getSecondsUntilNextScan(lastScan: string | null): number | null {

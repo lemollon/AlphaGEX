@@ -142,8 +142,8 @@ export default function BotDashboard({
       }
       const ageMs = Date.now() - new Date(status.last_scan).getTime()
       const ageMin = ageMs / 60_000
-      if (ageMin > 20) setStaleBanner('red')
-      else if (ageMin > 10) setStaleBanner('yellow')
+      if (ageMin > 3) setStaleBanner('red')
+      else if (ageMin > 2) setStaleBanner('yellow')
       else setStaleBanner('none')
     }
     check()

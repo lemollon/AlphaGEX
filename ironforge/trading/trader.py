@@ -379,7 +379,7 @@ class Trader:
             self.last_scan_result = result
             return result
         finally:
-            # Save an equity snapshot every cycle so intraday chart has 5-min data
+            # Save an equity snapshot every cycle so intraday chart has 1-min data
             self._save_periodic_snapshot(result.get("action", "unknown"))
 
     def _save_periodic_snapshot(self, action: str):

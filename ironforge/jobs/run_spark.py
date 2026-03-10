@@ -4,7 +4,7 @@ Render Worker: SPARK (1DTE Iron Condor)
 
 Entry point for the SPARK trading bot as a Render worker.
 
-Runs a proper loop: one cycle every 5 minutes during market hours.
+Runs a proper loop: one cycle every 1 minute during market hours.
 """
 
 import sys
@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("spark_job")
 
-CYCLE_INTERVAL = 300  # 5 minutes
+CYCLE_INTERVAL = 60  # 1 minute
 
 
 def main():
@@ -38,7 +38,7 @@ def main():
     from trading.trader import create_spark_trader
 
     trader = create_spark_trader()
-    logger.info("SPARK trader initialized, starting 5-min loop...")
+    logger.info("SPARK trader initialized, starting 1-min loop...")
 
     scan_num = 0
     while True:
