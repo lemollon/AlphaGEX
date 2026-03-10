@@ -1600,27 +1600,26 @@ async def delete_position(position_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-# --- Live option mid-price helper ---
+# --- Live option quote helper ---
 
-async def _get_leg_mids(
+async def _get_leg_quotes(
     request: Request,
     symbol: str,
     legs: list[dict],
-) -> dict[str, float | None]:
-    """Fetch live mid prices for option legs from Tradier chains.
+) -> dict[str, dict]:
+    """Fetch live mid prices AND IV for option legs from Tradier chains.
 
     *legs* is a list of dicts, each with keys:
         strike (float), exp (str YYYY-MM-DD), option_type ("put" | "call"), key (str)
 
-    Returns {key: mid_price_or_None}.
+    Returns {key: {"mid": float|None, "iv": float|None}}.
     """
-    # Group legs by expiration to minimize API calls
     by_exp: dict[str, list[dict]] = {}
     for leg in legs:
         exp = str(leg["exp"])
         by_exp.setdefault(exp, []).append(leg)
 
-    result: dict[str, float | None] = {leg["key"]: None for leg in legs}
+    result: dict[str, dict] = {leg["key"]: {"mid": None, "iv": None} for leg in legs}
 
     for exp, exp_legs in by_exp.items():
         try:
@@ -1628,74 +1627,85 @@ async def _get_leg_mids(
         except Exception:
             continue
 
-        # Build lookup: (strike, option_type) -> mid
-        lookup: dict[tuple[float, str], float | None] = {}
+        # Build lookup: (strike, option_type) -> {mid, iv}
+        lookup: dict[tuple[float, str], dict] = {}
         for o in chain:
             strike = o.get("strike")
             otype = (o.get("option_type") or "").lower()
             bid = o.get("bid")
             ask = o.get("ask")
+            greeks = o.get("greeks") or {}
             if strike is not None and bid is not None and ask is not None:
-                lookup[(float(strike), otype)] = round((bid + ask) / 2, 4)
+                iv = greeks.get("mid_iv") or greeks.get("smv_vol")
+                lookup[(float(strike), otype)] = {
+                    "mid": round((bid + ask) / 2, 4),
+                    "iv": float(iv) if iv is not None else None,
+                }
 
         for leg in exp_legs:
-            mid = lookup.get((float(leg["strike"]), leg["option_type"]))
-            if mid is not None:
-                result[leg["key"]] = mid
+            found = lookup.get((float(leg["strike"]), leg["option_type"]))
+            if found:
+                result[leg["key"]] = found
 
     return result
 
 
-def _spread_val_from_mids(mids: dict[str, float | None]) -> float | None:
+def _spread_val_from_quotes(quotes: dict[str, dict]) -> float | None:
     """Compute net spread value from leg mid prices.
 
     Value = (short legs we'd buy back) - (long legs we'd sell to close).
-    A positive result means it costs money to close (we're profitable
-    if entry_price > val). A negative result means we receive money
-    to close.
     """
-    sp = mids.get("short_put")
-    sc = mids.get("short_call")
-    lp = mids.get("long_put")
-    lc = mids.get("long_call")
+    sp = quotes.get("short_put", {}).get("mid")
+    sc = quotes.get("short_call", {}).get("mid")
+    lp = quotes.get("long_put", {}).get("mid")
+    lc = quotes.get("long_call", {}).get("mid")
     if any(v is None for v in [sp, sc, lp, lc]):
         return None
     return sp + sc - lp - lc
 
 
-def _bs_spread_val(pos, current_price: float) -> float:
-    """Black-Scholes fallback spread valuation (flat 20% vol)."""
-    r, sigma = RISK_FREE_RATE, 0.20
+def _bs_spread_val(pos, current_price: float, leg_ivs: dict[str, float | None] | None = None) -> float:
+    """Black-Scholes fallback spread valuation.
+
+    Uses per-leg IV from Tradier when available, otherwise falls back to 20%.
+    """
+    r = RISK_FREE_RATE
+    default_sigma = 0.20
     today_date = _today_ct()
 
     def tte(d):
         return max((d - today_date).days, 0) / 365.0 if d else 0
 
+    def iv_for(key: str) -> float:
+        if leg_ivs and leg_ivs.get(key) is not None:
+            return leg_ivs[key]
+        return default_sigma
+
     if pos.strategy == "double_diagonal" and pos.long_exp:
         T_short = tte(pos.short_exp)
         T_long = tte(pos.long_exp)
         return (
-            _bs_price(current_price, pos.short_put, T_short, r, sigma, False)
-            + _bs_price(current_price, pos.short_call, T_short, r, sigma, True)
-            - _bs_price(current_price, pos.long_put, T_long, r, sigma, False)
-            - _bs_price(current_price, pos.long_call, T_long, r, sigma, True)
+            _bs_price(current_price, pos.short_put, T_short, r, iv_for("short_put"), False)
+            + _bs_price(current_price, pos.short_call, T_short, r, iv_for("short_call"), True)
+            - _bs_price(current_price, pos.long_put, T_long, r, iv_for("long_put"), False)
+            - _bs_price(current_price, pos.long_call, T_long, r, iv_for("long_call"), True)
         )
     elif pos.strategy == "double_calendar" and pos.long_exp:
         T_front = tte(pos.short_exp)
         T_back = tte(pos.long_exp)
         return (
-            _bs_price(current_price, pos.short_put, T_front, r, sigma, False)
-            + _bs_price(current_price, pos.short_call, T_front, r, sigma, True)
-            - _bs_price(current_price, pos.long_put, T_back, r, sigma, False)
-            - _bs_price(current_price, pos.long_call, T_back, r, sigma, True)
+            _bs_price(current_price, pos.short_put, T_front, r, iv_for("short_put"), False)
+            + _bs_price(current_price, pos.short_call, T_front, r, iv_for("short_call"), True)
+            - _bs_price(current_price, pos.long_put, T_back, r, iv_for("long_put"), False)
+            - _bs_price(current_price, pos.long_call, T_back, r, iv_for("long_call"), True)
         )
     else:
         T = tte(pos.short_exp)
         return (
-            _bs_price(current_price, pos.short_put, T, r, sigma, False)
-            + _bs_price(current_price, pos.short_call, T, r, sigma, True)
-            - _bs_price(current_price, pos.long_put, T, r, sigma, False)
-            - _bs_price(current_price, pos.long_call, T, r, sigma, True)
+            _bs_price(current_price, pos.short_put, T, r, iv_for("short_put"), False)
+            + _bs_price(current_price, pos.short_call, T, r, iv_for("short_call"), True)
+            - _bs_price(current_price, pos.long_put, T, r, iv_for("long_put"), False)
+            - _bs_price(current_price, pos.long_call, T, r, iv_for("long_call"), True)
         )
 
 
@@ -1718,7 +1728,7 @@ async def position_live_pnl(
     pricing_source = None
 
     if current_price:
-        # 1) Try live option mid prices from Tradier chains
+        # 1) Try live option quotes from Tradier chains (mid prices + IV)
         short_exp_str = str(pos.short_exp) if pos.short_exp else None
         long_exp_str = str(pos.long_exp) if pos.long_exp else None
 
@@ -1730,19 +1740,23 @@ async def position_live_pnl(
         ]
 
         val = None
+        leg_quotes = None
         if short_exp_str:
             try:
-                mids = await _get_leg_mids(request, pos.symbol, legs)
-                val = _spread_val_from_mids(mids)
+                leg_quotes = await _get_leg_quotes(request, pos.symbol, legs)
+                val = _spread_val_from_quotes(leg_quotes)
                 if val is not None:
                     pricing_source = "live_quotes"
             except Exception as e:
                 logger.debug("Live quote repricing failed: %s", e)
 
-        # 2) Fall back to BS if live quotes unavailable
+        # 2) Fall back to BS with per-leg IV from Tradier (or 20% default)
         if val is None:
-            val = _bs_spread_val(pos, current_price)
-            pricing_source = "black_scholes"
+            leg_ivs = None
+            if leg_quotes:
+                leg_ivs = {k: v.get("iv") for k, v in leg_quotes.items()}
+            val = _bs_spread_val(pos, current_price, leg_ivs)
+            pricing_source = "black_scholes_live_iv" if leg_ivs and any(v is not None for v in leg_ivs.values()) else "black_scholes"
 
         current_value = round(val, 4)
         unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
@@ -1800,15 +1814,17 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
             ]
 
             val = None
+            leg_quotes = None
             if short_exp_str:
                 try:
-                    mids = await _get_leg_mids(request, pos.symbol, legs)
-                    val = _spread_val_from_mids(mids)
+                    leg_quotes = await _get_leg_quotes(request, pos.symbol, legs)
+                    val = _spread_val_from_quotes(leg_quotes)
                 except Exception:
                     pass
 
             if val is None:
-                val = _bs_spread_val(pos, current_price)
+                leg_ivs = {k: v.get("iv") for k, v in leg_quotes.items()} if leg_quotes else None
+                val = _bs_spread_val(pos, current_price, leg_ivs)
 
             dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
             unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
@@ -2444,15 +2460,17 @@ async def discord_push_position(
                 ]
 
                 val = None
+                leg_quotes = None
                 if short_exp_str:
                     try:
-                        mids = await _get_leg_mids(request, pos.symbol, legs)
-                        val = _spread_val_from_mids(mids)
+                        leg_quotes = await _get_leg_quotes(request, pos.symbol, legs)
+                        val = _spread_val_from_quotes(leg_quotes)
                     except Exception:
                         pass
 
                 if val is None:
-                    val = _bs_spread_val(pos, spot)
+                    leg_ivs = {k: v.get("iv") for k, v in leg_quotes.items()} if leg_quotes else None
+                    val = _bs_spread_val(pos, spot, leg_ivs)
 
                 current_value = round(val, 4)
                 unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
