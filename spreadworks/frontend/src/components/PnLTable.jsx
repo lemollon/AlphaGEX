@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { formatDollarPnl, formatSignedPct, formatCurrency } from '../utils/format';
 
 const font = "'Courier New', monospace";
 
@@ -24,14 +25,14 @@ function cellColor(pnl, maxProfit, maxLoss) {
 function formatCell(cell, viewMode) {
   switch (viewMode) {
     case VIEW_MODES.PNL_DOLLAR:
-      return cell.pnl >= 0 ? `+$${cell.pnl.toFixed(0)}` : `-$${Math.abs(cell.pnl).toFixed(0)}`;
+      return formatDollarPnl(cell.pnl);
     case VIEW_MODES.PNL_PCT:
     case VIEW_MODES.MAX_RISK_PCT:
-      return cell.pnl_pct >= 0 ? `+${cell.pnl_pct.toFixed(1)}%` : `${cell.pnl_pct.toFixed(1)}%`;
+      return formatSignedPct(cell.pnl_pct);
     case VIEW_MODES.CONTRACT_VALUE:
-      return `$${cell.contract_value.toFixed(0)}`;
+      return formatCurrency(cell.contract_value);
     default:
-      return `$${cell.pnl.toFixed(0)}`;
+      return formatDollarPnl(cell.pnl);
   }
 }
 

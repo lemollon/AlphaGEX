@@ -13,6 +13,7 @@ import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 import SymbolSelector from './components/SymbolSelector';
+import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
 
 const CHART_HEIGHT = 500;
 
@@ -232,7 +233,8 @@ function BuilderPage() {
             </span>
           )}
         </div>
-        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
+          {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
           ) : (
@@ -248,7 +250,7 @@ function BuilderPage() {
           interval={interval} onIntervalChange={setInterval_}
           onRefreshIv={refetchGex} viewMode={viewMode} onViewModeChange={setViewMode}
           tableViewMode={tableViewMode} onTableViewModeChange={setTableViewMode} />
-        <MetricsBar calcResult={calcResult} />
+        {calcLoading ? <MetricsBarSkeleton /> : <MetricsBar calcResult={calcResult} />}
         <LegBreakdown calcResult={calcResult} />
         <Legend interval={interval} barCount={Math.min(candles.length, 80)} />
       </div>
