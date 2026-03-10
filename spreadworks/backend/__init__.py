@@ -78,7 +78,7 @@ def _send_webhook_sync(embed: dict) -> bool:
 
 
 def _start_scheduler(app: FastAPI):
-    """Start APScheduler for market open/close Discord posts (UTC times)."""
+    """Start APScheduler for market open/close Discord posts (Central Time)."""
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
     except ImportError:
@@ -101,7 +101,7 @@ def _start_scheduler(app: FastAPI):
         logger.warning(f"[SpreadWorks] Content modules not found — rich posts disabled: {e}")
         content_loaded = False
 
-    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler = AsyncIOScheduler(timezone="America/Chicago")
 
     def _is_trading_day() -> bool:
         """Check if today is a trading day (weekday + not holiday)."""
@@ -286,23 +286,23 @@ def _start_scheduler(app: FastAPI):
         except Exception as e:
             logger.error(f"[SpreadWorks] EOD Discord post failed: {e}")
 
-    # Schedule using CT-equivalent UTC cron times
-    # CT is UTC-6 (CST) or UTC-5 (CDT). Use both possible hours.
+    # Schedule using direct CT hours — APScheduler handles DST automatically
+    # since the scheduler timezone is set to America/Chicago.
 
     # 8:00 CT — Bible verse + tip (30 min before open)
-    scheduler.add_job(_fire_market_open_message, "cron", hour="13,14", minute=0,
+    scheduler.add_job(_fire_market_open_message, "cron", hour=8, minute=0,
                       day_of_week="mon-fri", id="discord_market_open_msg")
     # 8:00:30 CT — Open positions summary
-    scheduler.add_job(_fire_open_post, "cron", hour="13,14", minute=0, second=30,
+    scheduler.add_job(_fire_open_post, "cron", hour=8, minute=0, second=30,
                       day_of_week="mon-fri", id="discord_open")
     # 8:05 CT — Economic event countdown
-    scheduler.add_job(_fire_economic_countdown, "cron", hour="13,14", minute=5,
+    scheduler.add_job(_fire_economic_countdown, "cron", hour=8, minute=5,
                       day_of_week="mon-fri", id="discord_economic")
     # 15:00 CT — Market close reflection
-    scheduler.add_job(_fire_market_close_message, "cron", hour="20,21", minute=0,
+    scheduler.add_job(_fire_market_close_message, "cron", hour=15, minute=0,
                       day_of_week="mon-fri", id="discord_market_close_msg")
     # 15:00:30 CT — EOD summary with AI commentary (right at close)
-    scheduler.add_job(_fire_eod_post, "cron", hour="20,21", minute=0, second=30,
+    scheduler.add_job(_fire_eod_post, "cron", hour=15, minute=0, second=30,
                       day_of_week="mon-fri", id="discord_eod")
 
     scheduler.start()
