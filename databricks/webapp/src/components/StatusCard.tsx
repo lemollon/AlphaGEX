@@ -356,9 +356,11 @@ export default function StatusCard({
           <span className="text-xs font-mono text-gray-400">
             {(config.max_contracts ?? 10) === 0 ? 'no contract limit' : `max ${config.max_contracts ?? 10}x`}
           </span>
-          {(config.max_trades_per_day ?? 1) > 1 && (
+          {(config.max_trades_per_day ?? 1) === 0 ? (
+            <span className="text-xs font-mono text-gray-400">no trade limit</span>
+          ) : (config.max_trades_per_day ?? 1) > 1 ? (
             <span className="text-xs font-mono text-gray-400">{config.max_trades_per_day}/day</span>
-          )}
+          ) : null}
         </div>
       )}
 
