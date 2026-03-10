@@ -105,8 +105,9 @@ export default function MetricsBar({ calcResult }) {
 
   const maxRisk = r.max_loss != null ? Math.abs(r.max_loss) : null;
 
-  const netCredit = r.net_credit ?? r.net_debit;
-  const isCredit = netCredit != null && netCredit > 0;
+  // net_debit < 0 means credit strategy (IC); net_debit > 0 means debit strategy (DC, DD)
+  const isCredit = r.net_debit != null && r.net_debit < 0;
+  const displayAmount = Math.abs(r.net_debit ?? 0);
   const creditLabel = isCredit ? 'NET CREDIT' : 'NET DEBIT';
   const creditColor = isCredit ? '#00e676' : '#ff5252';
   const isTheoretical = r.pricing_mode === 'black_scholes';
@@ -114,13 +115,13 @@ export default function MetricsBar({ calcResult }) {
 
   let creditVal, maxProfitStr, maxLossStr;
   if (isPct && maxRisk && maxRisk > 0) {
-    const creditPct = netCredit != null ? (Math.abs(netCredit) / maxRisk * 100).toFixed(1) : null;
-    creditVal = creditPct != null ? `${tilde}${isCredit ? '+' : '-'}${creditPct}%` : '--';
+    const costPct = displayAmount > 0 ? (displayAmount / maxRisk * 100).toFixed(1) : null;
+    creditVal = costPct != null ? `${tilde}${isCredit ? '+' : '-'}${costPct}%` : '--';
     maxProfitStr = r.max_profit != null ? `${tilde}+${(r.max_profit / maxRisk * 100).toFixed(1)}%` : '--';
     maxLossStr = '--100.0%';
   } else {
-    creditVal = netCredit != null ? `${tilde}${isCredit ? '+' : ''}$${Math.abs(netCredit).toFixed(0)}` : '--';
-    maxProfitStr = r.max_profit != null ? `${tilde}$${r.max_profit.toFixed(0)}` : '--';
+    creditVal = displayAmount > 0 ? `${tilde}${isCredit ? '+' : '-'}$${displayAmount.toFixed(0)}` : '--';
+    maxProfitStr = r.max_profit != null ? `${tilde}+$${r.max_profit.toFixed(0)}` : '--';
     maxLossStr = r.max_loss != null ? `${tilde}-$${Math.abs(r.max_loss).toFixed(0)}` : '--';
   }
 
