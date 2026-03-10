@@ -18,7 +18,7 @@ export default function Nav() {
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
-        <div className="flex flex-col">
+        <div className="flex flex-col items-start shrink-0">
           <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
             <span className="text-amber-500">&#9632;</span>
             <span className="text-white">Iron</span>
@@ -26,18 +26,18 @@ export default function Nav() {
           </Link>
           <span
             style={{
-              color: '#F59E0B',
-              fontSize: '0.55rem',
+              color: '#92400E',
+              fontSize: '0.5rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
-              letterSpacing: '0.08em',
-              opacity: 1,
+              fontStyle: 'italic',
+              letterSpacing: '0.12em',
               lineHeight: 1,
-              marginTop: '-2px',
-              paddingLeft: '1.1rem',
-              border: '2px solid red',
+              marginTop: '-1px',
+              paddingLeft: '1.15rem',
+              textShadow: '0 0 8px rgba(245,158,11,0.25)',
             }}
           >
-            PROVERBS 27:17
+            &ldquo;As iron sharpens iron&rdquo; &mdash; Proverbs 27:17
           </span>
         </div>
         <div className="flex gap-6">
