@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
   DOUBLE_CALENDAR: 'double_calendar',
+  IRON_CONDOR: 'iron_condor',
 };
 
 const INPUT_MODES = {
@@ -25,6 +26,13 @@ const DEFAULT_LEGS = {
     callStrike: '',
     frontExpiration: '',
     backExpiration: '',
+  },
+  [STRATEGY_TYPES.IRON_CONDOR]: {
+    longPutStrike: '',
+    shortPutStrike: '',
+    shortCallStrike: '',
+    longCallStrike: '',
+    expiration: '',
   },
 };
 
@@ -374,6 +382,13 @@ export default function StrategyPanel({
         long_call = parseFloat(legs.longCallStrike) || 0;
         short_exp = legs.shortExpiration;
         long_exp = legs.longExpiration;
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+        long_put = parseFloat(legs.longPutStrike) || 0;
+        short_put = parseFloat(legs.shortPutStrike) || 0;
+        short_call = parseFloat(legs.shortCallStrike) || 0;
+        long_call = parseFloat(legs.longCallStrike) || 0;
+        short_exp = legs.expiration;
+        long_exp = null;  // single expiration
       } else {
         long_put = parseFloat(legs.putStrike) || 0;
         short_put = parseFloat(legs.putStrike) || 0;
@@ -438,6 +453,15 @@ export default function StrategyPanel({
         };
         shortExp = legs.shortExpiration;
         longExp = legs.longExpiration;
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+        legPayload = {
+          long_put: parseFloat(legs.longPutStrike) || 0,
+          short_put: parseFloat(legs.shortPutStrike) || 0,
+          short_call: parseFloat(legs.shortCallStrike) || 0,
+          long_call: parseFloat(legs.longCallStrike) || 0,
+        };
+        shortExp = legs.expiration;
+        longExp = null;
       } else {
         legPayload = {
           long_put: parseFloat(legs.putStrike) || 0,
@@ -449,12 +473,18 @@ export default function StrategyPanel({
         longExp = legs.backExpiration;
       }
 
+      const strategyLabels = {
+        [STRATEGY_TYPES.DOUBLE_DIAGONAL]: 'Dbl Diagonal',
+        [STRATEGY_TYPES.DOUBLE_CALENDAR]: 'Dbl Calendar',
+        [STRATEGY_TYPES.IRON_CONDOR]: 'Iron Condor',
+      };
+
       const res = await fetch(`${API_URL}/api/spreadworks/discord/push-spread`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           symbol,
-          strategy: strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'Dbl Diagonal' : 'Dbl Calendar',
+          strategy: strategyLabels[strategy] || strategy,
           spot: spotPrice,
           legs: legPayload,
           short_exp: shortExp,
@@ -542,6 +572,14 @@ export default function StrategyPanel({
           longExpiration: data.legs.long_expiration ?? '',
           shortExpiration: data.legs.short_expiration ?? '',
         });
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR && data.legs) {
+        setLegs({
+          longPutStrike: data.legs.long_put_strike ?? '',
+          shortPutStrike: data.legs.short_put_strike ?? '',
+          shortCallStrike: data.legs.short_call_strike ?? '',
+          longCallStrike: data.legs.long_call_strike ?? '',
+          expiration: data.legs.expiration ?? '',
+        });
       } else if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR && data.legs) {
         setLegs({
           putStrike: data.legs.put_strike ?? '',
@@ -583,6 +621,9 @@ export default function StrategyPanel({
     if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
       return legs.longPutStrike && legs.shortPutStrike && legs.shortCallStrike && legs.longCallStrike && legs.longExpiration && legs.shortExpiration;
     }
+    if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+      return legs.longPutStrike && legs.shortPutStrike && legs.shortCallStrike && legs.longCallStrike && legs.expiration;
+    }
     return legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration;
   };
 
@@ -622,7 +663,7 @@ export default function StrategyPanel({
           <span style={s.logoWhite}>Spread</span>
           <span style={s.logoBlue}>Works</span>
         </div>
-        <div style={s.subtitle}>DD & Calendar Analyzer</div>
+        <div style={s.subtitle}>Options Spread Analyzer</div>
       </div>
 
       {/* Strategy toggle */}
@@ -637,6 +678,10 @@ export default function StrategyPanel({
             style={s.toggleBtn(strategy === STRATEGY_TYPES.DOUBLE_CALENDAR)}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}
           >Dbl Calendar</button>
+          <button
+            style={s.toggleBtn(strategy === STRATEGY_TYPES.IRON_CONDOR)}
+            onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}
+          >Iron Condor</button>
         </div>
       </div>
 
@@ -685,6 +730,22 @@ export default function StrategyPanel({
           <div style={s.fieldRow}>
             <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+        </>
+      ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
+        <>
+          <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
+          <div style={s.fieldRow}>
+            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
+          <div style={s.fieldRow}>
+            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          <div style={s.fieldRow}>
+            <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
         </>
       ) : (

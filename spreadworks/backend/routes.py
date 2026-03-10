@@ -28,6 +28,19 @@ import os
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
+
+_CT = ZoneInfo("America/Chicago")
+
+
+def _now_ct() -> datetime:
+    """Current time in Central Time (America/Chicago)."""
+    return datetime.now(_CT)
+
+
+def _today_ct() -> date:
+    """Today's date in Central Time."""
+    return _now_ct().date()
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -327,7 +340,7 @@ async def market_status():
 @router.get("/candles")
 async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15min"):
     """Return 15-min candles. Live from Tradier during market hours, cached otherwise."""
-    start_date = (date.today() - timedelta(days=14)).isoformat()
+    start_date = (_today_ct() - timedelta(days=14)).isoformat()
 
     candles: list[dict] = []
     last_price = None
@@ -622,7 +635,7 @@ async def gex_suggest(
     def _round_strike(v: float) -> float:
         return round(v * 2) / 2
 
-    today = date.today()
+    today = _today_ct()
     days_until_friday = (4 - today.weekday()) % 7
     if days_until_friday == 0:
         days_until_friday = 7
@@ -651,7 +664,27 @@ async def gex_suggest(
             f"Front exp {front_exp}, back exp {back_exp}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
-    else:
+    elif strategy == "iron_condor":
+        short_put = _round_strike(put_wall)
+        short_call = _round_strike(call_wall)
+        long_put = _round_strike(short_put - wing_offset)
+        long_call = _round_strike(short_call + wing_offset)
+
+        legs = {
+            "long_put_strike": long_put,
+            "short_put_strike": short_put,
+            "short_call_strike": short_call,
+            "long_call_strike": long_call,
+            "expiration": front_exp,
+        }
+        rationale = (
+            f"Iron Condor: short strikes at GEX walls "
+            f"(put wall ${short_put}, call wall ${short_call}). "
+            f"Long wings ${wing_offset} wide. "
+            f"Single exp {front_exp}. "
+            f"Regime: {regime or 'UNKNOWN'}."
+        )
+    else:  # double_calendar
         put_strike = _round_strike(put_wall)
         call_strike = _round_strike(call_wall)
 
@@ -741,7 +774,7 @@ def _scan_pnl_profile(
     n: int,
 ) -> dict:
     """Scan underlying prices to build P&L curve, breakevens, max profit/loss."""
-    today_date = date.today()
+    today_date = _today_ct()
 
     def _tte(d: str) -> float:
         exp = datetime.strptime(d, "%Y-%m-%d").date()
@@ -753,6 +786,12 @@ def _scan_pnl_profile(
         T_short = _tte(expirations["short"])
         T_long = _tte(expirations["long"])
         T_remaining = max(T_long - T_short, 1 / 365.0)
+        scan_lo = min(lp, sp, sc, lc) - 20
+        scan_hi = max(lp, sp, sc, lc) + 20
+    elif strategy == "iron_condor":
+        lp, sp = strikes["lp"], strikes["sp"]
+        sc, lc = strikes["sc"], strikes["lc"]
+        T_exp = _tte(expirations["exp"])
         scan_lo = min(lp, sp, sc, lc) - 20
         scan_hi = max(lp, sp, sc, lc) + 20
     else:
@@ -782,6 +821,15 @@ def _scan_pnl_profile(
                 - max(0, px - sc)
                 + _bs_price(px, lc, T_remaining, r, sigma, True)
                 - entry_cost
+            ) * 100 * n
+        elif strategy == "iron_condor":
+            # Iron Condor at expiration: all intrinsic
+            pnl = (
+                max(0, lp - px)   # long put payoff
+                - max(0, sp - px)  # short put payoff
+                - max(0, px - sc)  # short call payoff
+                + max(0, px - lc)  # long call payoff
+                + entry_cost       # credit received (entry_cost is negative for credit)
             ) * 100 * n
         else:
             pnl = (
@@ -847,7 +895,7 @@ def _lookup_chain_iv(options: dict, strike: float, otype: str) -> float | None:
 
 class CalcRequest(BaseModel):
     symbol: str = "SPY"
-    strategy: str  # double_diagonal | double_calendar
+    strategy: str  # double_diagonal | double_calendar | iron_condor
     contracts: int = 1
     legs: dict[str, Any]
     spot_price: float | None = None
@@ -876,7 +924,7 @@ async def calculate_spread(request: Request, body: CalcRequest):
     default_sigma = 0.20
     legs = body.legs
     n = body.contracts
-    today_date = date.today()
+    today_date = _today_ct()
     chain_opts = body.chain_options or {}
 
     def _tte(d: str) -> float:
@@ -950,6 +998,52 @@ async def calculate_spread(request: Request, body: CalcRequest):
             {"leg": "Short Put", "strike": sp, "exp": short_exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
             {"leg": "Short Call", "strike": sc, "exp": short_exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
             {"leg": "Long Call", "strike": lc, "exp": long_exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
+        ]
+
+    elif body.strategy == "iron_condor":
+        lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
+        sp = float(legs.get("shortPutStrike") or legs.get("short_put_strike", 0))
+        sc = float(legs.get("shortCallStrike") or legs.get("short_call_strike", 0))
+        lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
+        exp = str(legs.get("expiration") or "")
+
+        if not all([lp, sp, sc, lc, exp]):
+            raise HTTPException(422, "All 4 strikes and expiration required for Iron Condor")
+
+        T_exp = _tte(exp)
+
+        p_lp, iv_lp, theo_lp = _price_or_bs(lp, T_exp, False, exp)
+        p_sp, iv_sp, theo_sp = _price_or_bs(sp, T_exp, False, exp)
+        p_sc, iv_sc, theo_sc = _price_or_bs(sc, T_exp, True, exp)
+        p_lc, iv_lc, theo_lc = _price_or_bs(lc, T_exp, True, exp)
+
+        # IC is a credit strategy: sell short legs, buy long wings
+        entry_cost = p_lp + p_lc - p_sp - p_sc  # negative = net credit
+        net_debit = entry_cost * 100 * n
+
+        g_lp = _bs_greeks(S, lp, T_exp, r, iv_lp, False)
+        g_sp = _bs_greeks(S, sp, T_exp, r, iv_sp, False)
+        g_sc = _bs_greeks(S, sc, T_exp, r, iv_sc, True)
+        g_lc = _bs_greeks(S, lc, T_exp, r, iv_lc, True)
+
+        greeks = {
+            k: round((g_lp[k] - g_sp[k] - g_sc[k] + g_lc[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lp, iv_sp, iv_sc, iv_lc]) / 4
+        profile = _scan_pnl_profile(
+            "iron_condor", S,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        leg_detail = [
+            {"leg": "Long Put", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp},
+            {"leg": "Short Put", "strike": sp, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp},
+            {"leg": "Short Call", "strike": sc, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc},
+            {"leg": "Long Call", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc},
         ]
 
     elif body.strategy == "double_calendar":
@@ -1053,7 +1147,7 @@ async def create_alert(body: AlertCreate):
         "condition": body.condition,
         "label": body.label or f"Price {body.condition} {body.price}",
         "triggered": False,
-        "created_at": datetime.now().isoformat(),
+        "created_at": _now_ct().isoformat(),
     }
     _alerts.append(alert)
     return alert
@@ -1099,7 +1193,7 @@ STRATEGY_LABELS = {
 
 def _pos_to_dict(pos: Position) -> dict:
     """Serialize a Position ORM object to a JSON-friendly dict."""
-    today = date.today()
+    today = _today_ct()
     dte = (pos.short_exp - today).days if pos.short_exp else None
     return {
         "id": pos.id,
@@ -1326,7 +1420,7 @@ async def close_position(
     realized = round((pos.entry_price - body.close_price) * 100 * pos.contracts, 2)
 
     pos.status = "closed"
-    pos.close_date = date.today()
+    pos.close_date = _today_ct()
     pos.close_price = body.close_price
     pos.realized_pnl = realized
     db.commit()
@@ -1369,7 +1463,7 @@ async def position_live_pnl(
 
     if current_price:
         r, sigma = RISK_FREE_RATE, 0.20
-        today_date = date.today()
+        today_date = _today_ct()
 
         def tte(d):
             return max((d - today_date).days, 0) / 365.0 if d else 0
@@ -1439,7 +1533,7 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
     if not current_price:
         raise HTTPException(502, "Could not fetch current price for marking")
 
-    today_date = date.today()
+    today_date = _today_ct()
     r, sigma = 0.05, 0.20
     marked = 0
 
@@ -1664,7 +1758,7 @@ def _discord_post_closed(pos: Position):
             {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
         ],
         "footer": {"text": footer_msg},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     _send_discord_embed(embed)
 
@@ -1703,7 +1797,7 @@ async def discord_test():
         "description": "If you see this, the webhook is working.",
         "color": 0x3B82F6,
         "footer": {"text": "SpreadWorks · Test Ping"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     try:
         resp = req.post(url, json={"embeds": [embed]},
@@ -1745,7 +1839,7 @@ async def discord_test_daily():
     verse = VERSES[_rotation_index(VERSES)]
     tip = TIPS[_rotation_index(TIPS, offset=37)]
     embed_open = {
-        "title": "\U0001f305 MARKET OPENS IN 5 MINUTES",
+        "title": "\U0001f305 MARKET OPENS IN 30 MINUTES",
         "color": 0x00E676,
         "fields": [
             {"name": f"\U0001f4d6 {verse['reference']}", "value": f"*\"{verse['text']}\"*", "inline": False},
@@ -1861,7 +1955,7 @@ async def discord_push_spread(body: DiscordPushSpread):
         "color": color,
         "fields": fields,
         "footer": {"text": f"SpreadWorks \u00b7 {footer_source}"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     # Generate payoff chart if curve data provided
@@ -1898,13 +1992,13 @@ async def discord_post_open(db: Session = Depends(get_db)):
     if not open_positions:
         return {"posted": False, "reason": "No open positions"}
 
-    today_str = date.today().strftime("%B %d, %Y")
+    today_str = _today_ct().strftime("%B %d, %Y")
     total_credit = sum(p.entry_credit for p in open_positions)
 
     lines = []
     for pos in open_positions:
         strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
-        dte = (pos.short_exp - date.today()).days if pos.short_exp else "?"
+        dte = (pos.short_exp - _today_ct()).days if pos.short_exp else "?"
         lines.append(
             f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
             f"Entry: +${pos.entry_credit:,.2f}\n"
@@ -1925,7 +2019,7 @@ async def discord_post_open(db: Session = Depends(get_db)):
             {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
         "footer": {"text": "Trade with discipline \U0001f64f"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     ok = _send_discord_embed(embed)
@@ -1942,8 +2036,8 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
     # Get current price
     q = await _get_quote(request, "SPY")
     current_price = q.get("last", 0)
-    today_str = date.today().strftime("%B %d, %Y")
-    today_date = date.today()
+    today_str = _today_ct().strftime("%B %d, %Y")
+    today_date = _today_ct()
 
     # Build per-position P&L lines using latest marks
     lines = []
@@ -2052,7 +2146,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             {"name": "Closed Today", "value": str(closed_today), "inline": True},
         ],
         "footer": {"text": "SpreadWorks \u2022 End of Day"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
     if commentary:
         embed["fields"].append({
@@ -2084,7 +2178,7 @@ async def discord_push_position(
 
     strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
     strikes_str = _strikes_str(pos)
-    dte = (pos.short_exp - date.today()).days if pos.short_exp else None
+    dte = (pos.short_exp - _today_ct()).days if pos.short_exp else None
     is_open = pos.status == "open"
 
     # Get live P&L for open positions
@@ -2099,7 +2193,7 @@ async def discord_push_position(
             spot = q.get("last")
             if spot:
                 r, sigma = RISK_FREE_RATE, 0.20
-                today_date = date.today()
+                today_date = _today_ct()
 
                 def tte(d):
                     return max((d - today_date).days, 0) / 365.0 if d else 0
@@ -2213,7 +2307,7 @@ async def discord_push_position(
         "color": color,
         "fields": fields,
         "footer": {"text": f"SpreadWorks \u00b7 Opened {pos.entry_date}"},
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": _now_ct().isoformat(),
     }
 
     # Generate payoff chart image (non-fatal if it fails)
@@ -2237,7 +2331,7 @@ def _generate_position_payoff_chart(pos: Position, spot: float | None, title: st
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = date.today()
+    today_date = _today_ct()
 
     if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
         if pos.strategy == "double_diagonal":
@@ -2325,7 +2419,7 @@ async def position_payoff(
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = date.today()
+    today_date = _today_ct()
 
     # Get spot price for the marker
     spot = None
