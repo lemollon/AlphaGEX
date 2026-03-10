@@ -3,7 +3,8 @@ Position Monitor: Fast Exit Guardian
 ======================================
 
 Lightweight job that ONLY monitors open positions for exit conditions.
-Runs every 15 seconds — much faster than the full scan cycle (1-5 min).
+Designed for Databricks scheduled execution (every 1 minute) or as a
+long-running loop (Render worker).
 
 What it does:
   1. Query open positions across ALL bots (FLAME, SPARK, INFERNO)
@@ -17,8 +18,12 @@ What it does NOT do:
   - No option chain scanning
   - No PDT checks or buying power calculations
 
-This ensures exits happen within 15 seconds of hitting targets,
-even when the full scanner is slow or queued.
+Usage:
+  # Databricks / single-run mode (default):
+  python jobs/run_position_monitor.py
+
+  # Long-running loop mode (Render worker):
+  python jobs/run_position_monitor.py --loop
 """
 
 import sys
@@ -36,7 +41,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("position_monitor")
 
-MONITOR_INTERVAL = 15  # seconds
+LOOP_INTERVAL = 15  # seconds (only used in --loop mode)
 
 
 class PositionMonitor:
@@ -78,8 +83,7 @@ class PositionMonitor:
             }
 
         logger.info(
-            f"PositionMonitor initialized for {list(self.bots.keys())} "
-            f"— checking every {MONITOR_INTERVAL}s"
+            f"PositionMonitor initialized for {list(self.bots.keys())}"
         )
 
     def run_once(self) -> Dict[str, int]:
@@ -280,7 +284,8 @@ class PositionMonitor:
         return False
 
 
-def main():
+def run_single():
+    """Run one monitoring pass and exit. For Databricks scheduled jobs."""
     from config import Config
 
     valid, msg = Config.validate()
@@ -292,7 +297,35 @@ def main():
     setup_all_tables()
 
     monitor = PositionMonitor()
-    logger.info(f"Position monitor started — checking every {MONITOR_INTERVAL}s")
+    start = time.time()
+
+    results = monitor.run_once()
+    total_closed = sum(results.values())
+    elapsed = time.time() - start
+
+    if total_closed > 0:
+        logger.info(
+            f"Position monitor: CLOSED {total_closed} position(s) "
+            f"in {elapsed:.1f}s — {results}"
+        )
+    else:
+        logger.info(f"Position monitor: No exits needed ({elapsed:.1f}s)")
+
+
+def run_loop():
+    """Run continuously with 15-second intervals. For Render workers."""
+    from config import Config
+
+    valid, msg = Config.validate()
+    if not valid:
+        logger.error(f"Config invalid: {msg}")
+        sys.exit(1)
+
+    from setup_tables import setup_all_tables
+    setup_all_tables()
+
+    monitor = PositionMonitor()
+    logger.info(f"Position monitor started in loop mode — every {LOOP_INTERVAL}s")
 
     cycle = 0
     while True:
@@ -304,10 +337,7 @@ def main():
             total_closed = sum(results.values())
             elapsed = time.time() - start
 
-            # Only log details when there are open positions or closures
-            has_activity = total_closed > 0
-
-            if has_activity:
+            if total_closed > 0:
                 logger.info(
                     f"Monitor #{cycle}: CLOSED {total_closed} position(s) "
                     f"in {elapsed:.1f}s — {results}"
@@ -315,15 +345,18 @@ def main():
             elif cycle % 20 == 1:
                 # Heartbeat log every ~5 minutes (20 cycles × 15s)
                 logger.info(
-                    f"Monitor #{cycle}: No open positions — heartbeat OK "
+                    f"Monitor #{cycle}: No exits needed — heartbeat OK "
                     f"({elapsed:.1f}s)"
                 )
 
         except Exception as e:
             logger.error(f"Monitor #{cycle} error: {e}", exc_info=True)
 
-        time.sleep(MONITOR_INTERVAL)
+        time.sleep(LOOP_INTERVAL)
 
 
 if __name__ == "__main__":
-    main()
+    if "--loop" in sys.argv:
+        run_loop()
+    else:
+        run_single()
