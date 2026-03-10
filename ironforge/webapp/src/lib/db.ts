@@ -316,8 +316,8 @@ async function ensureTables(): Promise<void> {
     // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
     try {
       await client.query(
-        `UPDATE inferno_pdt_config SET max_day_trades = 0, pdt_enabled = FALSE, max_trades_per_day = 0
-         WHERE max_day_trades > 0`,
+        `UPDATE inferno_pdt_config SET max_day_trades = 0, pdt_enabled = FALSE, max_trades_per_day = 0, day_trade_count = 0
+         WHERE bot_name = 'INFERNO'`,
       )
     } catch { /* ignore if table doesn't exist yet */ }
     try {

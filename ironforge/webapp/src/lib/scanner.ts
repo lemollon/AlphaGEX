@@ -439,7 +439,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [bot.name.toUpperCase()],
   )
   const pdtCfg = pdtConfigRows[0]
-  const pdtEnabled = pdtCfg ? pdtCfg.pdt_enabled !== false : true
+  const pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
   const pdtCount = int(pdtCfg?.day_trade_count)
   // 0 = disabled/unlimited, so don't fall back to a positive number
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
