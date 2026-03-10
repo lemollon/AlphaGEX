@@ -824,12 +824,14 @@ def _scan_pnl_profile(
             ) * 100 * n
         elif strategy == "iron_condor":
             # Iron Condor at expiration: all intrinsic
+            # entry_cost is negative for credit spreads (you receive premium)
+            # P&L = intrinsic payoff - cost to open (subtracting a negative = adding credit)
             pnl = (
                 max(0, lp - px)   # long put payoff
                 - max(0, sp - px)  # short put payoff
                 - max(0, px - sc)  # short call payoff
                 + max(0, px - lc)  # long call payoff
-                + entry_cost       # credit received (entry_cost is negative for credit)
+                - entry_cost       # subtract entry_cost (negative = add credit received)
             ) * 100 * n
         else:
             pnl = (
@@ -1099,11 +1101,14 @@ async def calculate_spread(request: Request, body: CalcRequest):
         ivs = [leg["iv"] for leg in leg_detail if leg.get("iv") and leg["iv"] > 0]
         avg_iv = round(sum(ivs) / len(ivs), 4) if ivs else None
 
+    # net_debit < 0 means net credit (IC, credit spreads)
+    rounded_debit = round(net_debit, 2)
     return {
         "symbol": body.symbol,
         "strategy": body.strategy,
         "contracts": n,
-        "net_debit": round(net_debit, 2),
+        "net_debit": rounded_debit,
+        "net_credit": round(-rounded_debit, 2) if rounded_debit < 0 else None,
         "max_profit": profile["max_profit"],
         "max_loss": profile["max_loss"],
         "lower_breakeven": profile["lower_breakeven"],
