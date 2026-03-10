@@ -441,19 +441,22 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const pdtCfg = pdtConfigRows[0]
   const pdtEnabled = pdtCfg ? pdtCfg.pdt_enabled !== false : true
   const pdtCount = int(pdtCfg?.day_trade_count)
-  const maxDayTrades = int(pdtCfg?.max_day_trades) || 3
-  const maxTradesPerDay = int(pdtCfg?.max_trades_per_day) || 1
+  // 0 = disabled/unlimited, so don't fall back to a positive number
+  const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
+  const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
 
-  // Already traded today?
-  const todayTrades = await query(
-    `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-     WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
-    [bot.dte],
-  )
-  if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
+  // Already traded today? (0 = unlimited)
+  if (maxTradesPerDay > 0) {
+    const todayTrades = await query(
+      `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+       WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
+      [bot.dte],
+    )
+    if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
+  }
 
-  // PDT rolling window check (only if enforcement is ON)
-  if (pdtEnabled && pdtCount >= maxDayTrades) {
+  // PDT rolling window check (only if enforcement is ON and limit > 0)
+  if (pdtEnabled && maxDayTrades > 0 && pdtCount >= maxDayTrades) {
     return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
   }
 
