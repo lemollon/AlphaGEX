@@ -68,6 +68,22 @@ class ChainCache(Base):
     __table_args__ = (UniqueConstraint("symbol", "expiration"),)
 
 
+class GexSnapshot(Base):
+    """Historical GEX snapshots for flip point tracking and alerts."""
+    __tablename__ = "gex_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(10), nullable=False, default="SPY")
+    flip_point = Column(Float, nullable=True)
+    call_wall = Column(Float, nullable=True)
+    put_wall = Column(Float, nullable=True)
+    gamma_regime = Column(String(30), nullable=True)
+    spot_price = Column(Float, nullable=True)
+    vix = Column(Float, nullable=True)
+    source = Column(String(30), nullable=True)
+    captured_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Position(Base):
     __tablename__ = "positions"
 
