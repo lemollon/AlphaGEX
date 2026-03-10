@@ -4,7 +4,7 @@ const font = "'Courier New', monospace";
 
 const st = {
   container: {
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     borderTop: '1px solid #1a1a2e',
     padding: '6px 12px',
     display: 'flex',

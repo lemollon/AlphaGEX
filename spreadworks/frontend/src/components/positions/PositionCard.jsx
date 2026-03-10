@@ -10,7 +10,7 @@ const STRAT_LABELS = {
 
 const s = {
   card: (pnl, status) => ({
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     border: `1px solid ${status === 'closed' ? '#2a2a3a' : pnl > 0 ? '#00e67625' : pnl < 0 ? '#ff174425' : '#1a1a2e'}`,
     borderRadius: 6,
     padding: '14px 16px',

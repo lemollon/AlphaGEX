@@ -42,7 +42,7 @@ const s = {
   panel: {
     width: 260,
     minWidth: 260,
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     borderRight: '1px solid #1a1a2e',
     padding: '12px 14px',
     overflowY: 'auto',
@@ -53,6 +53,7 @@ const s = {
     flexDirection: 'column',
     gap: 8,
     height: '100%',
+    boxShadow: 'var(--shadow-panel)',
   },
   logo: {
     display: 'flex',
@@ -94,7 +95,7 @@ const s = {
     alignItems: 'center',
     gap: 8,
     padding: '4px 6px',
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     borderRadius: 4,
     fontSize: 11,
   },
@@ -131,7 +132,7 @@ const s = {
     padding: '4px 6px',
     border: `1px solid ${borderColor || '#1a1a2e'}`,
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#e0e0e0',
     fontSize: 12,
     fontFamily: "'Courier New', monospace",
@@ -143,7 +144,7 @@ const s = {
     padding: '4px 6px',
     border: `1px solid ${borderColor || '#1a1a2e'}`,
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#e0e0e0',
     fontSize: 12,
     fontFamily: "'Courier New', monospace",
@@ -181,7 +182,7 @@ const s = {
     padding: '3px 4px',
     border: '1px solid #1a1a2e',
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#ccc',
     fontSize: 11,
     fontFamily: "'Courier New', monospace",
@@ -191,7 +192,7 @@ const s = {
     padding: '3px 6px',
     border: '1px solid #1a1a2e',
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#ccc',
     fontSize: 11,
     fontFamily: "'Courier New', monospace",
@@ -288,7 +289,7 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
         disabled={disabled}
         style={{
           width: '100%',
-          background: '#111120',
+          background: 'var(--bg-elevated)',
           border: `1px solid ${borderColor || '#1e1e32'}`,
           color: '#ccc',
           padding: '6px 8px',
@@ -806,7 +807,7 @@ export default function StrategyPanel({
             <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
-            <div style={{ background: '#080810', borderRadius: 4, padding: '4px 6px', fontSize: 9, color: '#888', marginTop: 2 }}>
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 4, padding: '4px 6px', fontSize: 9, color: '#888', marginTop: 2 }}>
               <div style={{ color: '#555', marginBottom: 2, fontWeight: 600 }}>4 LEGS:</div>
               <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
               <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>

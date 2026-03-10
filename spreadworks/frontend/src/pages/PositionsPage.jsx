@@ -12,7 +12,7 @@ const s = {
     overflowY: 'auto',
     fontFamily: "'Courier New', monospace",
     color: '#ccc',
-    background: '#080810',
+    background: 'var(--bg-base)',
   },
   header: {
     display: 'flex',

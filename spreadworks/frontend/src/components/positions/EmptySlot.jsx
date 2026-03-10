@@ -1,6 +1,6 @@
 const s = {
   slot: {
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     border: '1px dashed #1a1a2e',
     borderRadius: 6,
     padding: 24,

@@ -52,7 +52,7 @@ const cellStyle = {
 
 const barStyle = {
   display: 'flex',
-  background: '#0d0d18',
+  background: 'var(--bg-surface)',
   borderTop: '1px solid #1a1a2e',
   fontFamily: font,
 };

@@ -21,7 +21,7 @@ const navStyle = {
   display: 'flex',
   alignItems: 'center',
   gap: 0,
-  background: '#080810',
+  background: 'var(--bg-surface)',
   borderBottom: '1px solid #1a1a2e',
   fontFamily: "'Courier New', monospace",
   fontSize: 12,
@@ -179,8 +179,9 @@ function BuilderPage() {
 
   const headerStyle = {
     display: 'flex', alignItems: 'center', gap: 12,
-    padding: '6px 12px', background: '#0d0d18',
+    padding: '6px 12px', background: 'var(--bg-surface)',
     borderBottom: '1px solid #1a1a2e',
+    boxShadow: 'var(--shadow-panel)',
     fontFamily: "'Courier New', monospace", fontSize: 12,
   };
 
@@ -264,7 +265,7 @@ export default function App() {
       <div style={{
         display: 'flex', flexDirection: 'column',
         height: '100vh', width: '100%',
-        background: '#080810', overflow: 'hidden',
+        background: 'var(--bg-base)', overflow: 'hidden',
       }}>
         <NavBar />
         <Routes>

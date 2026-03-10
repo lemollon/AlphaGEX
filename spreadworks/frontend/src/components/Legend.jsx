@@ -6,7 +6,7 @@ const st = {
     alignItems: 'center',
     gap: 14,
     padding: '5px 12px',
-    background: '#0a0a12',
+    background: 'var(--bg-surface)',
     borderTop: '1px solid #1a1a2e',
     fontFamily: font,
     fontSize: 10,

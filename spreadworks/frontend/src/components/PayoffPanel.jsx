@@ -81,7 +81,7 @@ export default function PayoffPanel({
     <div style={{
       width: 220,
       minWidth: 220,
-      background: '#06060f',
+      background: 'var(--bg-base)',
       borderLeft: '1px solid #1e2038',
       position: 'relative',
     }}>
