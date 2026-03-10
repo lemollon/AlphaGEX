@@ -95,9 +95,9 @@ export default function Nav() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`text-sm font-medium transition-colors ${
+                className={`text-sm font-medium transition-colors ${glow} ${
                   isActive
-                    ? `text-white underline underline-offset-4 decoration-amber-500 ${glow}`
+                    ? 'text-white underline underline-offset-4 decoration-amber-500'
                     : link.className || 'text-gray-400 hover:text-gray-200'
                 }`}
               >

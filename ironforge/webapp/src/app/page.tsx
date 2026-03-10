@@ -192,10 +192,10 @@ export default function Home() {
         </p>
         <p
           className="mx-auto max-w-[420px] text-[0.75rem] italic tracking-[0.05em]"
-          style={{ color: '#92400E', fontFamily: "Georgia, 'Times New Roman', serif" }}
+          style={{ color: '#b45309', fontFamily: "Georgia, 'Times New Roman', serif", fontVariant: 'small-caps' }}
         >
           &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo;
-          <span className="block mt-0.5 not-italic text-[0.65rem] tracking-wider opacity-70">
+          <span className="block mt-0.5 not-italic text-[0.65rem] tracking-wider" style={{ color: '#92400E' }}>
             &mdash; Proverbs 27:17
           </span>
         </p>
