@@ -77,8 +77,16 @@ def _send_webhook_sync(embed: dict) -> bool:
     return False
 
 
+_active_scheduler = None  # singleton guard — only one scheduler per process
+
+
 def _start_scheduler(app: FastAPI):
     """Start APScheduler for market open/close Discord posts (Central Time)."""
+    global _active_scheduler
+    if _active_scheduler is not None:
+        logger.warning("[SpreadWorks] Scheduler already running — skipping duplicate start")
+        return _active_scheduler
+
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
     except ImportError:
@@ -806,6 +814,7 @@ def _start_scheduler(app: FastAPI):
                       day_of_week="sat", id="discord_weekend_playbook")
 
     scheduler.start()
+    _active_scheduler = scheduler
     logger.info(
         "[SpreadWorks] APScheduler started — 11 jobs: "
         "market_open_msg (8:00), open_positions (8:00:30), "
@@ -914,8 +923,10 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    global _active_scheduler
     if scheduler:
         scheduler.shutdown(wait=False)
+        _active_scheduler = None
         logger.info("[SpreadWorks] APScheduler shut down")
     await app.state.http.aclose()
 
