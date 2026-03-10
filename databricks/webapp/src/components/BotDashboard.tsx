@@ -118,8 +118,8 @@ export default function BotDashboard({
       }
       const ageMs = Date.now() - new Date(status.last_scan).getTime()
       const ageMin = ageMs / 60_000
-      if (ageMin > 5) setStaleBanner('red')
-      else if (ageMin > 3) setStaleBanner('yellow')
+      if (ageMin > 3) setStaleBanner('red')
+      else if (ageMin > 2) setStaleBanner('yellow')
       else setStaleBanner('none')
     }
     check()
@@ -168,10 +168,10 @@ export default function BotDashboard({
       </div>
 
       {/* Status card */}
-      {status && <StatusCard data={status} accent={accent} config={config} />}
+      {status && <StatusCard data={status} accent={accent} config={config} bot={bot} />}
 
-      {/* PDT Status */}
-      <PdtStatusCard bot={bot} accent={accent} />
+      {/* PDT Status — not applicable for 0DTE (INFERNO) */}
+      {bot !== 'inferno' && <PdtStatusCard bot={bot} accent={accent} />}
 
       {/* PT Timeline */}
       <PTTimeline />
