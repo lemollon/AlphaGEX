@@ -39,8 +39,8 @@ export default function PdtCard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark'
-  accent: 'amber' | 'blue'
+  bot: 'flame' | 'spark' | 'inferno'
+  accent: 'amber' | 'blue' | 'red'
 }) {
   const [status, setStatus] = useState<PdtStatus | null>(null)
   const [audit, setAudit] = useState<AuditEntry[]>([])
@@ -146,8 +146,8 @@ export default function PdtCard({
     )
   }
 
-  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
-  const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
+  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : accent === 'red' ? 'border-red-500/30' : 'border-blue-500/30'
+  const accentText = accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : 'text-blue-400'
   const count = status.day_trade_count
   const max = status.max_day_trades
   const pct = max > 0 ? (count / max) * 100 : 0

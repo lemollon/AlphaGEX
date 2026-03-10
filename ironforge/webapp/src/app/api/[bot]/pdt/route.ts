@@ -41,10 +41,19 @@ export async function GET(
     }
 
     const pdtEnabled = cfg.pdt_enabled !== false
-    const dayTradeCount = int(cfg.day_trade_count)
     const maxDayTrades = int(cfg.max_day_trades) || 3
     const maxTradesPerDay = int(cfg.max_trades_per_day) || 1
     const windowDays = int(cfg.window_days) || 5
+
+    // Count day trades from pdt_log (source of truth — matches trader.py logic)
+    const countRows = await query(
+      `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
+       WHERE is_day_trade = TRUE AND dte_mode = $1
+       AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+       AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+      [dte],
+    )
+    const dayTradeCount = int(countRows[0]?.cnt)
 
     // Check if already traded today
     const todayRows = await query(
@@ -190,21 +199,34 @@ async function handleReset(
   bot: string,
   botName: string,
 ): Promise<NextResponse> {
-  // Read current count
-  const rows = await query(
-    `SELECT day_trade_count FROM ${botTable(bot, 'pdt_config')}
-     WHERE bot_name = $1 LIMIT 1`,
-    [botName],
-  )
+  const dte = dteMode(bot)!
 
-  const currentCount = rows[0] ? parseInt(rows[0].day_trade_count ?? '0', 10) : 0
+  // Count actual day trades from pdt_log (source of truth)
+  const countRows = await query(
+    `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
+     WHERE is_day_trade = TRUE AND dte_mode = $1
+     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+    [dte],
+  )
+  const currentCount = parseInt(countRows[0]?.cnt ?? '0', 10)
 
   // No-op if already 0
   if (currentCount === 0) {
     return fetchAndReturnStatus(bot, botName)
   }
 
-  // Reset
+  // Clear is_day_trade flags in pdt_log so trader.py also sees the reset
+  await query(
+    `UPDATE ${botTable(bot, 'pdt_log')}
+     SET is_day_trade = FALSE
+     WHERE is_day_trade = TRUE AND dte_mode = $1
+     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+    [dte],
+  )
+
+  // Also zero the config counter (keeps display consistent)
   await query(
     `UPDATE ${botTable(bot, 'pdt_config')}
      SET day_trade_count = 0,
@@ -223,9 +245,9 @@ async function handleReset(
     [
       botName,
       'reset',
-      JSON.stringify({ day_trade_count: currentCount }),
+      JSON.stringify({ day_trade_count: currentCount, pdt_log_cleared: true }),
       JSON.stringify({ day_trade_count: 0 }),
-      'Manual reset by user',
+      'Manual reset by user — cleared is_day_trade flags in pdt_log',
       'user',
     ],
   )
@@ -244,7 +266,7 @@ async function fetchAndReturnStatus(
   const dte = dteMode(bot)!
 
   const configRows = await query(
-    `SELECT pdt_enabled, day_trade_count, max_day_trades,
+    `SELECT pdt_enabled, max_day_trades,
             max_trades_per_day, window_days,
             last_reset_at, last_reset_by
      FROM ${botTable(bot, 'pdt_config')}
@@ -255,7 +277,6 @@ async function fetchAndReturnStatus(
 
   const cfg = configRows[0] ?? {
     pdt_enabled: true,
-    day_trade_count: 0,
     max_day_trades: 3,
     max_trades_per_day: 1,
     window_days: 5,
@@ -264,10 +285,19 @@ async function fetchAndReturnStatus(
   }
 
   const pdtEnabled = cfg.pdt_enabled !== false
-  const dayTradeCount = parseInt(cfg.day_trade_count ?? '0', 10)
   const maxDayTrades = parseInt(cfg.max_day_trades ?? '3', 10) || 3
   const maxTradesPerDay = parseInt(cfg.max_trades_per_day ?? '1', 10) || 1
   const windowDays = parseInt(cfg.window_days ?? '5', 10) || 5
+
+  // Count from pdt_log (source of truth — matches trader.py logic)
+  const countRows = await query(
+    `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
+     WHERE is_day_trade = TRUE AND dte_mode = $1
+     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+    [dte],
+  )
+  const dayTradeCount = parseInt(countRows[0]?.cnt ?? '0', 10)
 
   const todayRows = await query(
     `SELECT COUNT(*) as cnt
