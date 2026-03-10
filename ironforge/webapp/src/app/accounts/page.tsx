@@ -347,39 +347,18 @@ export default function AccountsPage() {
     setTestingAll(true)
     setTestResults({})
 
-    // Collect all active accounts — we need unmasked keys from Databricks
-    // The test-all endpoint on Databricks uses the keys stored in DB
-    // But our proxy only has masked keys. So we call the Databricks test-all
-    // with the account IDs and let Databricks look up the real keys.
-    //
-    // Actually, the Databricks /api/accounts/test-all expects {accounts: [{account_id, api_key}]}
-    // and we only have masked keys client-side. The test needs real keys.
-    // So we need a different approach: call Databricks test-all with the DB IDs
-    // and let it look up keys server-side.
-    //
-    // For now, we'll rely on the existing /api/accounts/production endpoint
-    // which already tests Tradier connectivity by fetching balances.
-    // Let's use that as a connectivity check instead.
     try {
-      const res = await fetch('/api/accounts/production')
-      if (!res.ok) throw new Error('Failed to fetch')
-      const accounts = await res.json()
+      // Server-side endpoint reads real API keys from Databricks and tests each
+      const res = await fetch('/api/accounts/test-all', { method: 'POST' })
+      if (!res.ok) throw new Error('Failed to test accounts')
+      const results: TestResult[] = await res.json()
 
-      const results: Record<string, TestResult> = {}
-      if (Array.isArray(accounts)) {
-        for (const acct of accounts) {
-          results[acct.account_id] = {
-            account_id: acct.account_id,
-            success: typeof acct.balance === 'number',
-            message: typeof acct.balance === 'number'
-              ? `Connected — $${acct.balance.toLocaleString()}`
-              : 'No balance data',
-          }
-        }
+      const map: Record<string, TestResult> = {}
+      for (const r of results) {
+        map[r.account_id] = r
       }
-      setTestResults(results)
+      setTestResults(map)
     } catch {
-      // If production endpoint fails, mark all as unknown
       setTestResults({})
     } finally {
       setTestingAll(false)

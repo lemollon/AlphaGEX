@@ -1,40 +1,97 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { databricksFetch } from '@/lib/databricks-api'
+import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
-/** PUT /api/accounts/manage/:id — proxy to Databricks PUT /api/accounts/:id */
+const TABLE = sharedTable('ironforge_accounts')
+
+/** PUT /api/accounts/manage/:id — update bot assignment, API key, or active status */
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
+    const id = parseInt(params.id)
+    if (isNaN(id)) {
+      return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
+    }
+
+    const existing = await dbQuery(
+      `SELECT id, person, account_id FROM ${TABLE} WHERE id = ${id} LIMIT 1`,
+    )
+    if (existing.length === 0) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    }
+
     const body = await req.json()
-    const data = await databricksFetch(`/api/accounts/${params.id}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    })
-    return NextResponse.json(data)
+    const updates: string[] = []
+
+    if (body.bot != null) {
+      if (!['FLAME', 'SPARK', 'INFERNO', 'BOTH'].includes(body.bot)) {
+        return NextResponse.json(
+          { error: 'bot must be FLAME, SPARK, INFERNO, or BOTH' },
+          { status: 400 },
+        )
+      }
+      updates.push(`bot = '${escapeSql(body.bot)}'`)
+    }
+    if (body.api_key != null) {
+      updates.push(`api_key = '${escapeSql(body.api_key)}'`)
+    }
+    if (body.is_active != null) {
+      updates.push(`is_active = ${body.is_active}`)
+    }
+
+    if (updates.length === 0) {
+      return NextResponse.json({ success: true, message: 'No changes' })
+    }
+
+    updates.push('updated_at = CURRENT_TIMESTAMP()')
+
+    await dbExecute(`
+      UPDATE ${TABLE}
+      SET ${updates.join(', ')}
+      WHERE id = ${id}
+    `)
+
+    return NextResponse.json({ success: true, message: 'Account updated' })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    const status = msg.includes('404') ? 404 : msg.includes('400') ? 400 : 500
-    return NextResponse.json({ error: msg }, { status })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
-/** DELETE /api/accounts/manage/:id — proxy to Databricks DELETE /api/accounts/:id */
+/** DELETE /api/accounts/manage/:id — soft delete (set is_active = false) */
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
   try {
-    const data = await databricksFetch(`/api/accounts/${params.id}`, {
-      method: 'DELETE',
+    const id = parseInt(params.id)
+    if (isNaN(id)) {
+      return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
+    }
+
+    const existing = await dbQuery(
+      `SELECT id, person, account_id FROM ${TABLE} WHERE id = ${id} LIMIT 1`,
+    )
+    if (existing.length === 0) {
+      return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+    }
+
+    await dbExecute(`
+      UPDATE ${TABLE}
+      SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
+      WHERE id = ${id}
+    `)
+
+    const acct = existing[0]
+    return NextResponse.json({
+      success: true,
+      message: `Account ${acct.account_id} deactivated`,
     })
-    return NextResponse.json(data)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    const status = msg.includes('404') ? 404 : 500
-    return NextResponse.json({ error: msg }, { status })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
