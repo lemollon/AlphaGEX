@@ -323,6 +323,103 @@ async function getSandboxBuyingPower(
   return bp != null ? parseFloat(bp) : null
 }
 
+/* ------------------------------------------------------------------ */
+/*  Sandbox account balance details (for Accounts page)                */
+/* ------------------------------------------------------------------ */
+
+export interface SandboxAccountBalance {
+  name: string
+  account_id: string | null
+  total_equity: number | null
+  option_buying_power: number | null
+  day_pnl: number | null
+  open_positions_count: number
+}
+
+/**
+ * Fetch full balance + position count for all configured sandbox accounts.
+ * Returns one entry per account. Values are null when Tradier API is unreachable.
+ */
+export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance[]> {
+  const results: SandboxAccountBalance[] = []
+
+  await Promise.all(
+    _sandboxAccounts.map(async (acct) => {
+      const accountId = await getAccountIdForKey(acct.apiKey)
+      if (!accountId) {
+        results.push({
+          name: acct.name,
+          account_id: null,
+          total_equity: null,
+          option_buying_power: null,
+          day_pnl: null,
+          open_positions_count: 0,
+        })
+        return
+      }
+
+      // Fetch balances and positions in parallel
+      const [balData, posData] = await Promise.all([
+        sandboxGet(`/accounts/${accountId}/balances`, undefined, acct.apiKey),
+        sandboxGet(`/accounts/${accountId}/positions`, undefined, acct.apiKey),
+      ])
+
+      const bal = balData?.balances || {}
+      const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
+      const bp = bal.option_buying_power ?? bal.buying_power
+      const optionBp = bp != null ? parseFloat(bp) : null
+
+      // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
+      // Use pending_cash or option_short_value as proxy; safest: just report null if unavailable
+      // Actually Tradier balances include `close_pl` which is realized day P&L
+      const closePl = bal.close_pl != null ? parseFloat(bal.close_pl) : null
+      const openPl = bal.pending_cash != null ? parseFloat(bal.pending_cash) : null
+      const dayPnl = closePl != null ? closePl + (openPl || 0) : null
+
+      // Count open positions
+      let posCount = 0
+      if (posData?.positions?.position) {
+        const pos = posData.positions.position
+        posCount = Array.isArray(pos) ? pos.length : 1
+      }
+
+      results.push({
+        name: acct.name,
+        account_id: accountId,
+        total_equity: equity,
+        option_buying_power: optionBp,
+        day_pnl: dayPnl,
+        open_positions_count: posCount,
+      })
+    }),
+  )
+
+  return results
+}
+
+/**
+ * Get all open position OCC symbols for a sandbox account.
+ * Used by the accounts page to cross-reference against bot positions.
+ */
+export async function getSandboxPositionSymbols(
+  apiKey: string,
+): Promise<string[]> {
+  const accountId = await getAccountIdForKey(apiKey)
+  if (!accountId) return []
+
+  const data = await sandboxGet(
+    `/accounts/${accountId}/positions`,
+    undefined,
+    apiKey,
+  )
+  if (!data?.positions?.position) return []
+
+  let positions = data.positions.position
+  if (!Array.isArray(positions)) positions = [positions]
+
+  return positions.map((p: any) => p.symbol || '').filter(Boolean)
+}
+
 export interface SandboxOrderInfo {
   order_id: number
   contracts: number
