@@ -85,8 +85,8 @@ class BotConfig:
             return False, "Profit target must be between 0 and 100"
         if self.stop_loss_pct <= 0:
             return False, "Stop loss must be positive"
-        if self.max_trades_per_day < 1:
-            return False, "Max trades per day must be at least 1"
+        if self.max_trades_per_day < 0:
+            return False, "Max trades per day must be 0 (unlimited) or positive"
         if self.min_dte < 0:
             return False, "Min DTE must be at least 0"
         return True, "OK"
@@ -108,11 +108,13 @@ def inferno_config() -> BotConfig:
         bot_name="INFERNO",
         min_dte=0,
         dte_mode="0DTE",
-        max_trades_per_day=3,
+        max_trades_per_day=0,  # 0 = unlimited
+        max_contracts=0,  # 0 = no limit (sized by buying power)
         profit_target_pct=50.0,
         stop_loss_pct=200.0,
         sd_multiplier=1.0,
         entry_end="14:30",
+        pdt_max_day_trades=0,  # no PDT enforcement for 0DTE
     )
 
 
