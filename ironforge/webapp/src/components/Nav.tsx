@@ -80,12 +80,27 @@ export default function Nav() {
 
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
-        <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
-          <AnvilIcon size={22} />
-          <span className="text-white glow-amber">Iron</span>
-          <span className="text-amber-400 glow-amber">Forge</span>
-        </Link>
+      <div className="max-w-7xl mx-auto px-4 py-2 flex items-center gap-8">
+        <div className="flex flex-col items-start">
+          <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
+            <AnvilIcon size={22} />
+            <span className="text-white glow-amber">Iron</span>
+            <span className="text-amber-400 glow-amber">Forge</span>
+          </Link>
+          <p style={{
+            color: '#F59E0B',
+            fontStyle: 'italic',
+            fontSize: '0.75rem',
+            fontFamily: "Georgia, 'Times New Roman', serif",
+            letterSpacing: '0.05em',
+            textAlign: 'center',
+            maxWidth: '400px',
+            margin: '4px auto 0 auto',
+            opacity: 0.85,
+          }}>
+            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
+          </p>
+        </div>
         <div className="flex gap-6">
           {links.map((link) => {
             const isActive = pathname === link.href

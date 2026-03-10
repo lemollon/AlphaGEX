@@ -186,9 +186,6 @@ export default function BotDashboard({
             {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
           </span>
         </div>
-        <p className="text-xs text-forge-muted mt-1 italic">
-          &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
-        </p>
       </div>
 
       {/* Status card */}
