@@ -176,11 +176,90 @@ test("9:00 AM = 30% MORNING", pct == 0.30 and tier == "MORNING", f"{pct} {tier}"
 
 midday = datetime(2026, 3, 6, 11, 0, tzinfo=CT)
 pct, tier = scanner.get_sliding_profit_target(midday)
-test("11:00 AM = 20% MIDDAY", pct == 0.20 and tier == "MIDDAY", f"{pct} {tier}")
+test("11:00 AM = 20% MIDDAY", abs(pct - 0.20) < 1e-9 and tier == "MIDDAY", f"{pct} {tier}")
 
 afternoon = datetime(2026, 3, 6, 14, 0, tzinfo=CT)
 pct, tier = scanner.get_sliding_profit_target(afternoon)
 test("2:00 PM = 15% AFTERNOON", pct == 0.15 and tier == "AFTERNOON", f"{pct} {tier}")
+
+# ─── Fix 1: INFERNO Sliding PT Tiers (50/30/10) ─────────────────
+print("\n=== INFERNO Sliding Profit Targets (Fix 1) ===")
+
+pct, tier = scanner.get_sliding_profit_target(morning, base_pt=0.50, bot_name="inferno")
+test("INFERNO 9:00 AM = 50% MORNING", pct == 0.50 and tier == "MORNING", f"{pct} {tier}")
+
+pct, tier = scanner.get_sliding_profit_target(midday, base_pt=0.50, bot_name="inferno")
+test("INFERNO 11:00 AM = 30% MIDDAY", pct == 0.30 and tier == "MIDDAY", f"{pct} {tier}")
+
+pct, tier = scanner.get_sliding_profit_target(afternoon, base_pt=0.50, bot_name="inferno")
+test("INFERNO 2:00 PM = 10% AFTERNOON", pct == 0.10 and tier == "AFTERNOON", f"{pct} {tier}")
+
+# Non-inferno bot_name should use standard sliding
+pct, tier = scanner.get_sliding_profit_target(midday, base_pt=0.30, bot_name="flame")
+test("FLAME 11:00 AM = 20% MIDDAY (not inferno path)", abs(pct - 0.20) < 1e-9 and tier == "MIDDAY", f"{pct} {tier}")
+
+# ─── Fix 2: INFERNO max_trades = 0 (unlimited) ──────────────────
+print("\n=== INFERNO BOT_CONFIG max_trades=0 (Fix 2) ===")
+
+test("INFERNO max_trades = 0 (unlimited)",
+     scanner.BOT_CONFIG["inferno"]["max_trades"] == 0,
+     f"got {scanner.BOT_CONFIG['inferno']['max_trades']}")
+
+test("FLAME max_trades = 1",
+     scanner.BOT_CONFIG["flame"]["max_trades"] == 1,
+     f"got {scanner.BOT_CONFIG['flame']['max_trades']}")
+
+test("SPARK max_trades = 1",
+     scanner.BOT_CONFIG["spark"]["max_trades"] == 1,
+     f"got {scanner.BOT_CONFIG['spark']['max_trades']}")
+
+# ─── Fix 3: INFERNO entry_end = 1430 (2:30 PM CT) ───────────────
+print("\n=== INFERNO Entry Window (Fix 3) ===")
+
+test("INFERNO entry_end = 1430",
+     scanner.BOT_CONFIG["inferno"]["entry_end"] == 1430,
+     f"got {scanner.BOT_CONFIG['inferno']['entry_end']}")
+
+# 2:15 PM CT should be within INFERNO's entry window (1430)
+entry_ok_inferno = datetime(2026, 3, 6, 14, 15, tzinfo=CT)
+test("2:15 PM in INFERNO entry window",
+     scanner.is_in_entry_window(entry_ok_inferno, entry_end=1430))
+
+# 2:15 PM CT should be OUTSIDE FLAME's entry window (1400)
+test("2:15 PM outside FLAME entry window",
+     not scanner.is_in_entry_window(entry_ok_inferno, entry_end=1400))
+
+# ─── Fix 4: INFERNO SD = 1.0 (tighter strikes) ─────────────────
+print("\n=== INFERNO SD Multiplier (Fix 4) ===")
+
+test("INFERNO sd = 1.0",
+     scanner.BOT_CONFIG["inferno"]["sd"] == 1.0,
+     f"got {scanner.BOT_CONFIG['inferno']['sd']}")
+
+test("FLAME sd = 1.2",
+     scanner.BOT_CONFIG["flame"]["sd"] == 1.2,
+     f"got {scanner.BOT_CONFIG['flame']['sd']}")
+
+# Verify tighter SD produces tighter strikes
+strikes_tight = scanner.calculate_strikes(585.0, 5.0, sd_mult=1.0)
+strikes_wide = scanner.calculate_strikes(585.0, 5.0, sd_mult=1.2)
+test("SD=1.0 put_short > SD=1.2 put_short (tighter)",
+     strikes_tight["putShort"] > strikes_wide["putShort"],
+     f"tight={strikes_tight['putShort']} wide={strikes_wide['putShort']}")
+test("SD=1.0 call_short < SD=1.2 call_short (tighter)",
+     strikes_tight["callShort"] < strikes_wide["callShort"],
+     f"tight={strikes_tight['callShort']} wide={strikes_wide['callShort']}")
+
+# ─── Fix 5: INFERNO stop loss mult = 2.0 ────────────────────────
+print("\n=== INFERNO Stop Loss Multiplier (Fix 5) ===")
+
+test("INFERNO sl_mult = 2.0",
+     scanner.BOT_CONFIG["inferno"]["sl_mult"] == 2.0,
+     f"got {scanner.BOT_CONFIG['inferno']['sl_mult']}")
+
+test("FLAME sl_mult = 1.0",
+     scanner.BOT_CONFIG["flame"]["sl_mult"] == 1.0,
+     f"got {scanner.BOT_CONFIG['flame']['sl_mult']}")
 
 # ─── Market Hours ─────────────────────────────────────────────────
 print("\n=== Market Hours ===")
