@@ -83,7 +83,7 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 - Max 1 trade/day (FLAME/SPARK), 3 trades/day (INFERNO)
 - 10 max contracts
 - VIX skip: > 32
-- PDT limit: 3 day trades / 5 rolling days
+- PDT limit: 4 day trades / 5 rolling business days (matches FINRA Rule 4210)
 - Entry window: 8:30 AM - 2:00 PM CT (FLAME/SPARK), 8:30 AM - 2:30 PM CT (INFERNO)
 - EOD cutoff: 2:45 PM CT (3:45 PM ET)
 - Scan frequency: every 5 minutes

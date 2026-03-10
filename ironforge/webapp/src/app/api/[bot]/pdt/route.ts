@@ -33,7 +33,7 @@ export async function GET(
     const cfg = configRows[0] ?? {
       pdt_enabled: true,
       day_trade_count: 0,
-      max_day_trades: 3,
+      max_day_trades: 4,
       max_trades_per_day: 1,
       window_days: 5,
       last_reset_at: null,
@@ -41,7 +41,7 @@ export async function GET(
     }
 
     const pdtEnabled = cfg.pdt_enabled !== false
-    const maxDayTrades = int(cfg.max_day_trades) || 3
+    const maxDayTrades = int(cfg.max_day_trades) || 4
     const maxTradesPerDay = int(cfg.max_trades_per_day) || 1
     const windowDays = int(cfg.window_days) || 5
 
@@ -314,7 +314,7 @@ async function fetchAndReturnStatus(
 
   const cfg = configRows[0] ?? {
     pdt_enabled: true,
-    max_day_trades: 3,
+    max_day_trades: 4,
     max_trades_per_day: 1,
     window_days: 5,
     last_reset_at: null,
@@ -322,7 +322,7 @@ async function fetchAndReturnStatus(
   }
 
   const pdtEnabled = cfg.pdt_enabled !== false
-  const maxDayTrades = parseInt(cfg.max_day_trades ?? '3', 10) || 3
+  const maxDayTrades = parseInt(cfg.max_day_trades ?? '4', 10) || 4
   const maxTradesPerDay = parseInt(cfg.max_trades_per_day ?? '1', 10) || 1
   const windowDays = parseInt(cfg.window_days ?? '5', 10) || 5
 

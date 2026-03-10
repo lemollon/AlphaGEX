@@ -48,8 +48,8 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark'
-  accent: 'amber' | 'blue'
+  bot: 'flame' | 'spark' | 'inferno'
+  accent: 'amber' | 'blue' | 'red'
 }) {
   const [tab, setTab] = useState<Tab>('Equity Curve')
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')

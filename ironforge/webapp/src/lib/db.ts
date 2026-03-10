@@ -203,7 +203,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_pdt_config (
   bot_name TEXT NOT NULL,
   pdt_enabled BOOLEAN DEFAULT TRUE,
   day_trade_count INT DEFAULT 0,
-  max_day_trades INT DEFAULT 3,
+  max_day_trades INT DEFAULT 4,
   window_days INT DEFAULT 5,
   max_trades_per_day INT DEFAULT 1,
   last_reset_at TIMESTAMPTZ,
@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_config (
   entry_start TEXT DEFAULT '08:30',
   entry_end TEXT DEFAULT '14:00',
   eod_cutoff_et TEXT DEFAULT '15:45',
-  pdt_max_day_trades INT DEFAULT 3,
+  pdt_max_day_trades INT DEFAULT 4,
   starting_capital NUMERIC(12,2) DEFAULT 10000.0,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -288,10 +288,24 @@ async function ensureTables(): Promise<void> {
       if (pdtRes.rows.length === 0) {
         await client.query(
           `INSERT INTO ${bot}_pdt_config (bot_name, pdt_enabled, day_trade_count, max_day_trades, window_days, max_trades_per_day)
-           VALUES ($1, TRUE, 0, 3, 5, 1)`,
+           VALUES ($1, TRUE, 0, 4, 5, 1)`,
           [bot.toUpperCase()],
         )
       }
+    }
+
+    // Migrate PDT max_day_trades from 3 → 4 (match FINRA's actual 4-trade rule)
+    for (const bot of ['flame', 'spark', 'inferno']) {
+      try {
+        await client.query(
+          `UPDATE ${bot}_pdt_config SET max_day_trades = 4 WHERE max_day_trades = 3`,
+        )
+      } catch { /* ignore if table doesn't exist yet */ }
+      try {
+        await client.query(
+          `UPDATE ${bot}_config SET pdt_max_day_trades = 4 WHERE pdt_max_day_trades = 3`,
+        )
+      } catch { /* ignore if table doesn't exist yet */ }
     }
 
     tablesReady = true
