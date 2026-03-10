@@ -25,6 +25,7 @@ import math
 import random
 import logging
 import traceback
+import requests
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -53,8 +54,10 @@ from ironforge_scanner import (
     _get_sandbox_order_fill_price,
     _get_sandbox_accounts_lazy,
     _get_account_id_for_key,
+    shared_table,
     CATALOG,
     SCHEMA,
+    SANDBOX_URL,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -1358,3 +1361,338 @@ async def bot_toggle(bot: str, request: Request):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+#  Accounts Management (ironforge_accounts)
+# ---------------------------------------------------------------------------
+
+ACCOUNTS_TABLE = f"{CATALOG}.{SCHEMA}.ironforge_accounts"
+
+
+def _mask_api_key(key: str) -> str:
+    """Mask API key: show first 4 + ... + last 4 chars."""
+    if not key or len(key) < 9:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
+def _escape_sql(val: str) -> str:
+    """Escape single quotes for Databricks SQL string literals."""
+    return val.replace("'", "''")
+
+
+def _ensure_accounts_table() -> None:
+    """Create ironforge_accounts table if it doesn't exist (idempotent)."""
+    try:
+        db_execute(f"""
+            CREATE TABLE IF NOT EXISTS {ACCOUNTS_TABLE} (
+                id         BIGINT GENERATED ALWAYS AS IDENTITY,
+                person     STRING NOT NULL,
+                account_id STRING NOT NULL,
+                api_key    STRING NOT NULL,
+                bot        STRING NOT NULL,
+                type       STRING NOT NULL,
+                is_active  BOOLEAN,
+                created_at TIMESTAMP,
+                updated_at TIMESTAMP,
+                CONSTRAINT ironforge_accounts_pk PRIMARY KEY (id)
+            )
+        """)
+    except Exception as e:
+        log.warning(f"[accounts] ensure table failed (may already exist): {e}")
+
+
+def _seed_accounts_from_env() -> None:
+    """One-time bootstrap: seed ironforge_accounts from env vars if empty."""
+    try:
+        rows = db_query(f"SELECT id FROM {ACCOUNTS_TABLE} LIMIT 1")
+        if rows:
+            return  # Already seeded
+
+        for acct in _get_sandbox_accounts_lazy():
+            name = acct["name"]
+            api_key = acct["api_key"]
+            if not api_key:
+                continue
+
+            # Discover account ID
+            acct_id = acct.get("account_id") or ""
+            if not acct_id:
+                acct_id = _get_account_id_for_key(api_key) or ""
+            if not acct_id:
+                log.warning(f"[accounts] Could not discover account ID for {name} — skipping seed")
+                continue
+
+            esc_person = _escape_sql(name)
+            esc_acct_id = _escape_sql(acct_id)
+            esc_key = _escape_sql(api_key)
+
+            db_execute(f"""
+                MERGE INTO {ACCOUNTS_TABLE} AS t
+                USING (SELECT '{esc_acct_id}' AS account_id) AS s
+                ON t.account_id = s.account_id
+                WHEN NOT MATCHED THEN INSERT (
+                    person, account_id, api_key, bot, type, is_active, created_at, updated_at
+                ) VALUES (
+                    '{esc_person}', '{esc_acct_id}', '{esc_key}', 'BOTH', 'production',
+                    TRUE, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+                )
+            """)
+            log.info(f"[accounts] Seeded {name} → {acct_id} (production)")
+    except Exception as e:
+        log.error(f"[accounts] Seed failed: {e}")
+
+
+# Run table creation + seed on module load
+_ensure_accounts_table()
+_seed_accounts_from_env()
+
+
+@app.get("/api/accounts")
+async def get_accounts():
+    """Get all accounts grouped by person, with masked API keys."""
+    try:
+        rows = db_query(f"""
+            SELECT id, person, account_id, api_key, bot, type, is_active,
+                   created_at, updated_at
+            FROM {ACCOUNTS_TABLE}
+            ORDER BY type, person, id
+        """)
+
+        # Group production accounts by person
+        production_by_person: dict[str, list[dict]] = {}
+        sandbox_account = None
+
+        for row in rows:
+            acct = {
+                "id": int(row["id"]),
+                "account_id": row["account_id"],
+                "api_key_masked": _mask_api_key(row["api_key"] or ""),
+                "bot": row["bot"],
+                "type": row["type"],
+                "is_active": bool(row["is_active"]) if row["is_active"] is not None else True,
+                "created_at": fmt_ts(row.get("created_at")),
+                "updated_at": fmt_ts(row.get("updated_at")),
+            }
+
+            if row["type"] == "sandbox":
+                sandbox_account = {
+                    "person": row["person"],
+                    **acct,
+                }
+            else:
+                person = row["person"]
+                if person not in production_by_person:
+                    production_by_person[person] = []
+                production_by_person[person].append(acct)
+
+        production = [
+            {"person": person, "accounts": accounts}
+            for person, accounts in production_by_person.items()
+        ]
+
+        return {"production": production, "sandbox": sandbox_account}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AccountCreate(BaseModel):
+    person: str
+    account_id: str
+    api_key: str
+    bot: str
+    type: str
+
+
+@app.post("/api/accounts")
+async def create_account(body: AccountCreate):
+    """Create a new account. Rejects sandbox if one already exists."""
+    if not body.person or not body.account_id or not body.api_key:
+        raise HTTPException(status_code=400, detail="person, account_id, and api_key are required")
+    if body.bot not in ("FLAME", "SPARK", "INFERNO", "BOTH"):
+        raise HTTPException(status_code=400, detail="bot must be FLAME, SPARK, INFERNO, or BOTH")
+    if body.type not in ("production", "sandbox"):
+        raise HTTPException(status_code=400, detail="type must be production or sandbox")
+
+    try:
+        # Sandbox enforcement: only one active sandbox allowed
+        if body.type == "sandbox":
+            existing = db_query(f"""
+                SELECT id FROM {ACCOUNTS_TABLE}
+                WHERE type = 'sandbox' AND is_active = TRUE
+                LIMIT 1
+            """)
+            if existing:
+                raise HTTPException(status_code=409, detail="A sandbox account already exists")
+
+        # Check duplicate account_id
+        esc_acct_id = _escape_sql(body.account_id)
+        dupes = db_query(f"""
+            SELECT id FROM {ACCOUNTS_TABLE}
+            WHERE account_id = '{esc_acct_id}'
+            LIMIT 1
+        """)
+        if dupes:
+            raise HTTPException(status_code=409, detail="This account ID already exists")
+
+        esc_person = _escape_sql(body.person)
+        esc_key = _escape_sql(body.api_key)
+        esc_bot = _escape_sql(body.bot)
+        esc_type = _escape_sql(body.type)
+
+        db_execute(f"""
+            INSERT INTO {ACCOUNTS_TABLE}
+                (person, account_id, api_key, bot, type, is_active, created_at, updated_at)
+            VALUES (
+                '{esc_person}', '{esc_acct_id}', '{esc_key}', '{esc_bot}', '{esc_type}',
+                TRUE, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            )
+        """)
+
+        log.info(f"[accounts] Created account {body.account_id} for {body.person} ({body.type})")
+        return {"success": True, "message": f"Account {body.account_id} created"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AccountUpdate(BaseModel):
+    bot: Optional[str] = None
+    api_key: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+@app.put("/api/accounts/{account_db_id}")
+async def update_account(account_db_id: int, body: AccountUpdate):
+    """Update an existing account (bot assignment, API key, active status)."""
+    try:
+        existing = db_query(f"""
+            SELECT id, person, account_id FROM {ACCOUNTS_TABLE}
+            WHERE id = {account_db_id}
+            LIMIT 1
+        """)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        updates = []
+        if body.bot is not None:
+            if body.bot not in ("FLAME", "SPARK", "INFERNO", "BOTH"):
+                raise HTTPException(status_code=400, detail="bot must be FLAME, SPARK, INFERNO, or BOTH")
+            updates.append(f"bot = '{_escape_sql(body.bot)}'")
+        if body.api_key is not None:
+            updates.append(f"api_key = '{_escape_sql(body.api_key)}'")
+        if body.is_active is not None:
+            updates.append(f"is_active = {body.is_active}")
+
+        if not updates:
+            return {"success": True, "message": "No changes"}
+
+        updates.append("updated_at = CURRENT_TIMESTAMP()")
+        set_clause = ", ".join(updates)
+
+        db_execute(f"""
+            UPDATE {ACCOUNTS_TABLE}
+            SET {set_clause}
+            WHERE id = {account_db_id}
+        """)
+
+        log.info(f"[accounts] Updated account id={account_db_id}")
+        return {"success": True, "message": "Account updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/accounts/{account_db_id}")
+async def deactivate_account(account_db_id: int):
+    """Soft delete — sets is_active = false. Never hard deletes."""
+    try:
+        existing = db_query(f"""
+            SELECT id, person, account_id FROM {ACCOUNTS_TABLE}
+            WHERE id = {account_db_id}
+            LIMIT 1
+        """)
+        if not existing:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        db_execute(f"""
+            UPDATE {ACCOUNTS_TABLE}
+            SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
+            WHERE id = {account_db_id}
+        """)
+
+        acct = existing[0]
+        log.info(f"[accounts] Deactivated {acct['account_id']} ({acct['person']})")
+        return {"success": True, "message": f"Account {acct['account_id']} deactivated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TestAccountRequest(BaseModel):
+    account_id: str
+    api_key: str
+
+
+@app.post("/api/accounts/test")
+async def test_account(body: TestAccountRequest):
+    """Test a single account's API key against Tradier sandbox."""
+    try:
+        resp = requests.get(
+            f"{SANDBOX_URL}/user/profile",
+            headers={
+                "Authorization": f"Bearer {body.api_key}",
+                "Accept": "application/json",
+            },
+            timeout=5,
+        )
+        if resp.ok:
+            return {"account_id": body.account_id, "success": True, "message": "Connected"}
+        else:
+            return {
+                "account_id": body.account_id,
+                "success": False,
+                "message": f"HTTP {resp.status_code}",
+            }
+    except requests.exceptions.Timeout:
+        return {"account_id": body.account_id, "success": False, "message": "Timeout"}
+    except Exception as e:
+        return {"account_id": body.account_id, "success": False, "message": str(e)}
+
+
+class TestAllRequest(BaseModel):
+    accounts: list[TestAccountRequest]
+
+
+@app.post("/api/accounts/test-all")
+async def test_all_accounts(body: TestAllRequest):
+    """Test all provided accounts in parallel (5s timeout each)."""
+    import concurrent.futures
+
+    def _test_one(acct: TestAccountRequest) -> dict:
+        try:
+            resp = requests.get(
+                f"{SANDBOX_URL}/user/profile",
+                headers={
+                    "Authorization": f"Bearer {acct.api_key}",
+                    "Accept": "application/json",
+                },
+                timeout=5,
+            )
+            if resp.ok:
+                return {"account_id": acct.account_id, "success": True, "message": "Connected"}
+            return {"account_id": acct.account_id, "success": False, "message": f"HTTP {resp.status_code}"}
+        except requests.exceptions.Timeout:
+            return {"account_id": acct.account_id, "success": False, "message": "Timeout"}
+        except Exception as e:
+            return {"account_id": acct.account_id, "success": False, "message": str(e)}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_test_one, acct) for acct in body.accounts]
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+    return results

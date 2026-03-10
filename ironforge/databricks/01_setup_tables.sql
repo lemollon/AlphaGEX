@@ -630,6 +630,35 @@ CREATE TABLE IF NOT EXISTS inferno_config (
 );
 
 -- =============================================================================
+-- Accounts Management (ironforge_accounts)
+-- =============================================================================
+-- Stores Tradier sandbox account credentials for people.
+-- type: 'production' = real people's sandbox accounts receiving mirrored trades
+--       'sandbox'    = single designated paper testing account
+-- bot assignment is display-only (does not yet filter trade mirroring).
+-- Sandbox enforcement (max one active sandbox) is handled in application layer.
+-- updated_at is maintained by application layer (no triggers in Databricks).
+
+CREATE TABLE IF NOT EXISTS ironforge_accounts (
+  id            BIGINT GENERATED ALWAYS AS IDENTITY,
+  person        STRING NOT NULL,
+  account_id    STRING NOT NULL,
+  api_key       STRING NOT NULL,
+  bot           STRING NOT NULL,
+  type          STRING NOT NULL,
+  is_active     BOOLEAN,
+  created_at    TIMESTAMP,
+  updated_at    TIMESTAMP,
+  CONSTRAINT ironforge_accounts_pk PRIMARY KEY (id)
+);
+
+-- =============================================================================
+-- Seed Accounts from env vars (one-time, handled in application layer)
+-- =============================================================================
+-- The FastAPI startup function reads TRADIER_SANDBOX_KEY_* env vars and
+-- seeds ironforge_accounts if empty. After that, the DB is the source of truth.
+
+-- =============================================================================
 -- Seed Paper Accounts (starting capital $10,000 per bot)
 -- =============================================================================
 
