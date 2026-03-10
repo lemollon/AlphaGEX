@@ -18,11 +18,28 @@ export default function Nav() {
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
-        <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
-          <span className="text-amber-500">&#9632;</span>
-          <span className="text-white">Iron</span>
-          <span className="text-amber-400">Forge</span>
-        </Link>
+        <div className="flex flex-col">
+          <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
+            <span className="text-amber-500">&#9632;</span>
+            <span className="text-white">Iron</span>
+            <span className="text-amber-400">Forge</span>
+          </Link>
+          <span
+            style={{
+              color: '#F59E0B',
+              fontSize: '0.55rem',
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              letterSpacing: '0.08em',
+              opacity: 1,
+              lineHeight: 1,
+              marginTop: '-2px',
+              paddingLeft: '1.1rem',
+              border: '2px solid red',
+            }}
+          >
+            PROVERBS 27:17
+          </span>
+        </div>
         <div className="flex gap-6">
           {links.map((link) => {
             const isActive = pathname === link.href
