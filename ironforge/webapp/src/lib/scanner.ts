@@ -1,7 +1,7 @@
 /**
  * IronForge Scan Loop — runs INSIDE the Next.js process.
  *
- * Every 5 minutes, for both FLAME (2DTE) and SPARK (1DTE):
+ * Every 1 minute, for FLAME (2DTE), SPARK (1DTE), and INFERNO (0DTE):
  *   1. If position is open → monitor MTM, check PT/SL/EOD
  *   2. If no position + within entry window + not traded today → try opening
  *   3. Log every scan, update heartbeat, take equity snapshot
@@ -27,7 +27,7 @@ import {
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const SCAN_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const SCAN_INTERVAL_MS = 60 * 1000 // 1 minute
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2, maxTradesPerDay: 1 },
   { name: 'spark', dte: '1DTE', minDte: 1, maxTradesPerDay: 1 },
@@ -441,19 +441,22 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const pdtCfg = pdtConfigRows[0]
   const pdtEnabled = pdtCfg ? pdtCfg.pdt_enabled !== false : true
   const pdtCount = int(pdtCfg?.day_trade_count)
-  const maxDayTrades = int(pdtCfg?.max_day_trades) || 3
-  const maxTradesPerDay = int(pdtCfg?.max_trades_per_day) || 1
+  // 0 = disabled/unlimited, so don't fall back to a positive number
+  const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
+  const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
 
-  // Already traded today?
-  const todayTrades = await query(
-    `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-     WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
-    [bot.dte],
-  )
-  if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
+  // Already traded today? (0 = unlimited)
+  if (maxTradesPerDay > 0) {
+    const todayTrades = await query(
+      `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+       WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
+      [bot.dte],
+    )
+    if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
+  }
 
-  // PDT rolling window check (only if enforcement is ON)
-  if (pdtEnabled && pdtCount >= maxDayTrades) {
+  // PDT rolling window check (only if enforcement is ON and limit > 0)
+  if (pdtEnabled && maxDayTrades > 0 && pdtCount >= maxDayTrades) {
     return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
   }
 
@@ -851,7 +854,7 @@ export function startScanner(): void {
   if (_started) return
   _started = true
 
-  console.log('[scanner] IronForge scan loop starting — 5 min interval for FLAME + SPARK')
+  console.log('[scanner] IronForge scan loop starting — 1 min interval for all bots')
 
   // First scan immediately (fire-and-forget)
   safeRunAllScans()

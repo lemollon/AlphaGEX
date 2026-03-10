@@ -21,6 +21,14 @@ const DEFAULTS: Record<string, Record<string, any>> = {
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '15:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
   },
+  inferno: {
+    sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.05,
+    profit_target_pct: 50.0, stop_loss_pct: 200.0, vix_skip: 32.0,
+    max_contracts: 0, max_trades_per_day: 0, buying_power_usage_pct: 0.85,
+    risk_per_trade_pct: 0.15, min_win_probability: 0.42,
+    entry_start: '08:30', entry_end: '14:30', eod_cutoff_et: '15:45',
+    pdt_max_day_trades: 0, starting_capital: 10000.0,
+  },
 }
 
 const NUMERIC_FIELDS = [
@@ -44,7 +52,8 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dteMap: Record<string, string> = { flame: '2DTE', spark: '1DTE', inferno: '0DTE' }
+  const dte = dteMap[bot] ?? '0DTE'
 
   try {
     const rows = await query(
@@ -58,7 +67,7 @@ export async function GET(
       [dte],
     )
 
-    const defaults = DEFAULTS[bot]
+    const defaults = DEFAULTS[bot] ?? DEFAULTS.inferno
     if (rows.length === 0) {
       return NextResponse.json({ ...defaults, source: 'defaults' })
     }
@@ -95,7 +104,8 @@ export async function PUT(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dteMap: Record<string, string> = { flame: '2DTE', spark: '1DTE', inferno: '0DTE' }
+  const dte = dteMap[bot] ?? '0DTE'
 
   try {
     const body = await req.json()

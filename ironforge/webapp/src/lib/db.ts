@@ -280,7 +280,12 @@ async function ensureTables(): Promise<void> {
       }
     }
     // Seed PDT config if empty
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
+    // INFERNO (0DTE) has PDT disabled (max_day_trades=0) and unlimited trades per day
+    for (const [bot, dte, maxDT, maxPerDay] of [
+      ['flame', '2DTE', 4, 1],
+      ['spark', '1DTE', 4, 1],
+      ['inferno', '0DTE', 0, 0],  // 0 = disabled/unlimited
+    ] as const) {
       const pdtRes = await client.query(
         `SELECT id FROM ${bot}_pdt_config WHERE bot_name = $1 LIMIT 1`,
         [bot.toUpperCase()],
@@ -288,14 +293,15 @@ async function ensureTables(): Promise<void> {
       if (pdtRes.rows.length === 0) {
         await client.query(
           `INSERT INTO ${bot}_pdt_config (bot_name, pdt_enabled, day_trade_count, max_day_trades, window_days, max_trades_per_day)
-           VALUES ($1, TRUE, 0, 4, 5, 1)`,
-          [bot.toUpperCase()],
+           VALUES ($1, $2, 0, $3, 5, $4)`,
+          [bot.toUpperCase(), maxDT > 0, maxDT, maxPerDay],
         )
       }
     }
 
     // Migrate PDT max_day_trades from 3 → 4 (match FINRA's actual 4-trade rule)
-    for (const bot of ['flame', 'spark', 'inferno']) {
+    // Only for FLAME/SPARK — INFERNO should have 0 (disabled)
+    for (const bot of ['flame', 'spark']) {
       try {
         await client.query(
           `UPDATE ${bot}_pdt_config SET max_day_trades = 4 WHERE max_day_trades = 3`,
@@ -307,6 +313,18 @@ async function ensureTables(): Promise<void> {
         )
       } catch { /* ignore if table doesn't exist yet */ }
     }
+    // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
+    try {
+      await client.query(
+        `UPDATE inferno_pdt_config SET max_day_trades = 0, pdt_enabled = FALSE, max_trades_per_day = 0
+         WHERE max_day_trades > 0`,
+      )
+    } catch { /* ignore if table doesn't exist yet */ }
+    try {
+      await client.query(
+        `UPDATE inferno_config SET pdt_max_day_trades = 0 WHERE pdt_max_day_trades > 0`,
+      )
+    } catch { /* ignore if table doesn't exist yet */ }
 
     tablesReady = true
 

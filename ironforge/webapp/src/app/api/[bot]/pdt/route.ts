@@ -41,8 +41,9 @@ export async function GET(
     }
 
     const pdtEnabled = cfg.pdt_enabled !== false
-    const maxDayTrades = int(cfg.max_day_trades) || 4
-    const maxTradesPerDay = int(cfg.max_trades_per_day) || 1
+    // 0 means disabled/unlimited — don't fall back to positive defaults
+    const maxDayTrades = cfg.max_day_trades != null ? int(cfg.max_day_trades) : 4
+    const maxTradesPerDay = cfg.max_trades_per_day != null ? int(cfg.max_trades_per_day) : 1
     const windowDays = int(cfg.window_days) || 5
 
     // Count day trades from pdt_log (source of truth — matches trader.py logic)
@@ -55,20 +56,20 @@ export async function GET(
     )
     const dayTradeCount = int(countRows[0]?.cnt)
 
-    // Check if already traded today
+    // Check if already traded today (0 = unlimited)
     const todayRows = await query(
       `SELECT COUNT(*) as cnt
        FROM ${botTable(bot, 'pdt_log')}
        WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
       [dte],
     )
-    const tradedToday = int(todayRows[0]?.cnt) >= maxTradesPerDay
+    const tradedToday = maxTradesPerDay > 0 && int(todayRows[0]?.cnt) >= maxTradesPerDay
 
     // Determine block status
     let isBlocked = false
     let blockReason: string | null = null
 
-    if (pdtEnabled) {
+    if (pdtEnabled && maxDayTrades > 0) {
       if (dayTradeCount >= maxDayTrades) {
         isBlocked = true
         blockReason = `PDT limit reached: ${dayTradeCount}/${maxDayTrades} day trades in rolling ${windowDays} days`
@@ -78,7 +79,7 @@ export async function GET(
       }
     }
 
-    const tradesRemaining = Math.max(0, maxDayTrades - dayTradeCount)
+    const tradesRemaining = maxDayTrades > 0 ? Math.max(0, maxDayTrades - dayTradeCount) : -1  // -1 = unlimited
 
     // Get the actual day trade dates that count + when each falls off
     const triggerTrades = await getTriggerTrades(bot, dte)
@@ -322,8 +323,8 @@ async function fetchAndReturnStatus(
   }
 
   const pdtEnabled = cfg.pdt_enabled !== false
-  const maxDayTrades = parseInt(cfg.max_day_trades ?? '4', 10) || 4
-  const maxTradesPerDay = parseInt(cfg.max_trades_per_day ?? '1', 10) || 1
+  const maxDayTrades = cfg.max_day_trades != null ? parseInt(String(cfg.max_day_trades), 10) : 4
+  const maxTradesPerDay = cfg.max_trades_per_day != null ? parseInt(String(cfg.max_trades_per_day), 10) : 1
   const windowDays = parseInt(cfg.window_days ?? '5', 10) || 5
 
   // Count from pdt_log (source of truth — matches trader.py logic)
@@ -342,12 +343,12 @@ async function fetchAndReturnStatus(
      WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
     [dte],
   )
-  const tradedToday = parseInt(todayRows[0]?.cnt ?? '0', 10) >= maxTradesPerDay
+  const tradedToday = maxTradesPerDay > 0 && parseInt(todayRows[0]?.cnt ?? '0', 10) >= maxTradesPerDay
 
   let isBlocked = false
   let blockReason: string | null = null
 
-  if (pdtEnabled) {
+  if (pdtEnabled && maxDayTrades > 0) {
     if (dayTradeCount >= maxDayTrades) {
       isBlocked = true
       blockReason = `PDT limit reached: ${dayTradeCount}/${maxDayTrades} day trades in rolling ${windowDays} days`
@@ -365,7 +366,7 @@ async function fetchAndReturnStatus(
     pdt_enabled: pdtEnabled,
     day_trade_count: dayTradeCount,
     max_day_trades: maxDayTrades,
-    trades_remaining: Math.max(0, maxDayTrades - dayTradeCount),
+    trades_remaining: maxDayTrades > 0 ? Math.max(0, maxDayTrades - dayTradeCount) : -1,
     max_trades_per_day: maxTradesPerDay,
     traded_today: tradedToday,
     can_trade: !isBlocked,
