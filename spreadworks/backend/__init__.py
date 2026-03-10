@@ -286,9 +286,488 @@ def _start_scheduler(app: FastAPI):
         except Exception as e:
             logger.error(f"[SpreadWorks] EOD Discord post failed: {e}")
 
+    # ------------------------------------------------------------------
+    # NEW: GEX Briefing — 8:30 AM CT (market open)
+    # ------------------------------------------------------------------
+    async def _fire_gex_briefing():
+        """8:30 AM CT — Morning GEX Briefing with engagement prompt."""
+        if not _is_trading_day():
+            return
+
+        import asyncio
+        now = get_central_now() if content_loaded else __import__("datetime").datetime.now(
+            __import__("zoneinfo").ZoneInfo("America/Chicago")
+        )
+
+        # Fetch GEX from internal API
+        gex = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+                resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
+                if resp.status_code == 200:
+                    gex = resp.json()
+        except Exception as e:
+            logger.error(f"[SpreadWorks] GEX briefing fetch failed: {e}")
+            return
+
+        if not gex or gex.get("error"):
+            logger.info("[SpreadWorks] GEX data unavailable — skipping briefing")
+            return
+
+        fp = gex.get("flip_point")
+        cw = gex.get("call_wall")
+        pw = gex.get("put_wall")
+        regime = gex.get("gamma_regime", "UNKNOWN")
+        spot = gex.get("spot_price")
+        vix = gex.get("vix")
+
+        # Regime color: green for positive (mean-reverting), red for negative (trending)
+        regime_color = 0x00E676 if regime == "POSITIVE" else 0xFF1744 if regime == "NEGATIVE" else 0xFFD600
+        regime_emoji = "\U0001f7e2" if regime == "POSITIVE" else "\U0001f534" if regime == "NEGATIVE" else "\U0001f7e1"
+        regime_desc = {
+            "POSITIVE": "Mean-reverting — dealers dampen moves. ICs are safer.",
+            "NEGATIVE": "Momentum — dealers amplify moves. Directional plays favored.",
+        }.get(regime, "Neutral — mixed dealer positioning.")
+
+        fields = []
+        if spot:
+            fields.append({"name": "\U0001f4b0 SPY Spot", "value": f"**${spot:.2f}**", "inline": True})
+        if vix is not None:
+            vix_label = "LOW" if vix < 15 else "NORMAL" if vix < 22 else "ELEVATED" if vix < 28 else "HIGH"
+            fields.append({"name": "\U0001f4ca VIX", "value": f"**{vix:.1f}** ({vix_label})", "inline": True})
+        fields.append({"name": f"{regime_emoji} Gamma Regime", "value": f"**{regime}**\n{regime_desc}", "inline": False})
+        if fp:
+            direction = ""
+            if spot and fp:
+                diff = spot - fp
+                direction = f" (spot {'above' if diff > 0 else 'below'} by ${abs(diff):.1f})"
+            fields.append({"name": "\u2696\ufe0f Flip Point", "value": f"**${fp:.0f}**{direction}", "inline": True})
+        if cw:
+            fields.append({"name": "\U0001f7e2 Call Wall", "value": f"**${cw:.0f}**", "inline": True})
+        if pw:
+            fields.append({"name": "\U0001f534 Put Wall", "value": f"**${pw:.0f}**", "inline": True})
+
+        # Engagement prompt
+        fields.append({
+            "name": "\U0001f4ac What's your read today?",
+            "value": "React below: \U0001f402 Bull \u2022 \U0001f43b Bear \u2022 \U0001f980 Chop",
+            "inline": False,
+        })
+
+        embed = {
+            "title": "\U0001f4ca MORNING GEX BRIEFING",
+            "color": regime_color,
+            "fields": fields,
+            "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Market Open"},
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] GEX briefing {'sent' if ok else 'FAILED'}")
+
+    # ------------------------------------------------------------------
+    # NEW: Midday Pulse Check — 12:00 PM CT
+    # ------------------------------------------------------------------
+    async def _fire_midday_pulse():
+        """12:00 PM CT — Midday market pulse with position P&L and engagement."""
+        if not _is_trading_day():
+            return
+
+        import asyncio
+        now = get_central_now() if content_loaded else __import__("datetime").datetime.now(
+            __import__("zoneinfo").ZoneInfo("America/Chicago")
+        )
+        base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+
+        # Fetch spot price + GEX
+        spot = None
+        gex = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                gex_resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
+                if gex_resp.status_code == 200:
+                    gex = gex_resp.json()
+                    spot = gex.get("spot_price")
+        except Exception as e:
+            logger.error(f"[SpreadWorks] Midday pulse GEX fetch failed: {e}")
+
+        # Fetch position summary
+        summary = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base}/api/spreadworks/positions/summary")
+                if resp.status_code == 200:
+                    summary = resp.json()
+        except Exception as e:
+            logger.error(f"[SpreadWorks] Midday pulse summary fetch failed: {e}")
+
+        # Fetch candle data for daily change
+        open_price = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base}/api/spreadworks/candles", params={"symbol": "SPY", "interval": "15min"})
+                if resp.status_code == 200:
+                    candle_data = resp.json()
+                    candles = candle_data.get("candles", [])
+                    if candles:
+                        open_price = candles[0].get("open")
+        except Exception:
+            pass
+
+        fields = []
+        if spot:
+            change_str = ""
+            if open_price and spot:
+                chg = spot - open_price
+                chg_pct = (chg / open_price) * 100
+                arrow = "\u2B06\ufe0f" if chg >= 0 else "\u2B07\ufe0f"
+                change_str = f"\n{arrow} **{'+' if chg >= 0 else ''}{chg:.2f}** ({chg_pct:+.2f}%) since open"
+            fields.append({
+                "name": "\U0001f4b0 SPY Midday",
+                "value": f"**${spot:.2f}**{change_str}",
+                "inline": False,
+            })
+
+        if gex:
+            regime = gex.get("gamma_regime", "?")
+            fp = gex.get("flip_point")
+            regime_emoji = "\U0001f7e2" if regime == "POSITIVE" else "\U0001f534" if regime == "NEGATIVE" else "\U0001f7e1"
+            fp_str = f" \u2022 Flip: ${fp:.0f}" if fp else ""
+            fields.append({
+                "name": "\U0001f30a GEX Regime",
+                "value": f"{regime_emoji} **{regime}**{fp_str}",
+                "inline": True,
+            })
+
+        if summary:
+            open_ct = summary.get("open_count", 0)
+            unrealized = summary.get("total_unrealized", 0)
+            pnl_color = "\U0001f7e2" if unrealized >= 0 else "\U0001f534"
+            fields.append({
+                "name": "\U0001f4bc Open Positions",
+                "value": f"**{open_ct}** position{'s' if open_ct != 1 else ''}\n{pnl_color} Unrealized: **{'+'if unrealized >= 0 else ''}${unrealized:,.0f}**",
+                "inline": True,
+            })
+
+        fields.append({
+            "name": "\U0001f4ac Holding through lunch or taking profits?",
+            "value": "Drop your play below \u2935\ufe0f",
+            "inline": False,
+        })
+
+        color = 0x448AFF
+        if spot and open_price:
+            color = 0x00E676 if spot >= open_price else 0xFF1744
+
+        embed = {
+            "title": "\u2615 MIDDAY PULSE CHECK",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Halftime"},
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Midday pulse {'sent' if ok else 'FAILED'}")
+
+    # ------------------------------------------------------------------
+    # NEW: Position Scoreboard — 3:05 PM CT (after close)
+    # ------------------------------------------------------------------
+    async def _fire_scoreboard():
+        """3:05 PM CT — Weekly scoreboard with win/loss record and streaks."""
+        if not _is_trading_day():
+            return
+
+        import asyncio
+        from datetime import timedelta
+        now = get_central_now() if content_loaded else __import__("datetime").datetime.now(
+            __import__("zoneinfo").ZoneInfo("America/Chicago")
+        )
+        base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+
+        # Fetch all closed positions
+        closed = []
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base}/api/spreadworks/positions", params={"status": "closed"})
+                if resp.status_code == 200:
+                    data = resp.json()
+                    closed = data if isinstance(data, list) else data.get("positions", [])
+        except Exception as e:
+            logger.error(f"[SpreadWorks] Scoreboard positions fetch failed: {e}")
+            return
+
+        if not closed:
+            logger.info("[SpreadWorks] No closed positions — skipping scoreboard")
+            return
+
+        # Compute stats
+        total_pnl = sum(p.get("realized_pnl", 0) or 0 for p in closed)
+        wins = [p for p in closed if (p.get("realized_pnl") or 0) > 0]
+        losses = [p for p in closed if (p.get("realized_pnl") or 0) <= 0]
+        win_count = len(wins)
+        loss_count = len(losses)
+        win_rate = (win_count / len(closed) * 100) if closed else 0
+
+        # This week's trades (Mon-Fri of current week)
+        week_start = (now - timedelta(days=now.weekday())).date()
+        week_trades = [p for p in closed if p.get("close_date") and str(p["close_date"]) >= str(week_start)]
+        week_pnl = sum(p.get("realized_pnl", 0) or 0 for p in week_trades)
+        week_wins = len([p for p in week_trades if (p.get("realized_pnl") or 0) > 0])
+        week_total = len(week_trades)
+
+        # Current streak (most recent trades)
+        sorted_closed = sorted(closed, key=lambda p: p.get("close_date", ""), reverse=True)
+        streak = 0
+        streak_type = None
+        for p in sorted_closed:
+            pnl = p.get("realized_pnl") or 0
+            current_type = "W" if pnl > 0 else "L"
+            if streak_type is None:
+                streak_type = current_type
+            if current_type == streak_type:
+                streak += 1
+            else:
+                break
+        streak_str = f"{'🔥' if streak_type == 'W' else '🧊'} **{streak} {'Win' if streak_type == 'W' else 'Loss'}{'s' if streak > 1 else ''} in a row**"
+
+        # Best & worst trade
+        best = max(closed, key=lambda p: p.get("realized_pnl") or 0)
+        worst = min(closed, key=lambda p: p.get("realized_pnl") or 0)
+        best_pnl = best.get("realized_pnl") or 0
+        worst_pnl = worst.get("realized_pnl") or 0
+
+        pnl_emoji = "\U0001f7e2" if total_pnl >= 0 else "\U0001f534"
+        week_emoji = "\U0001f7e2" if week_pnl >= 0 else "\U0001f534"
+
+        fields = [
+            {
+                "name": "\U0001f4c5 This Week",
+                "value": f"**{week_wins}/{week_total}** trades won\n{week_emoji} Week P&L: **{'+'if week_pnl >= 0 else ''}${week_pnl:,.0f}**",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f3af All-Time Record",
+                "value": f"**{win_count}W / {loss_count}L** ({win_rate:.0f}% WR)\n{pnl_emoji} Total: **{'+'if total_pnl >= 0 else ''}${total_pnl:,.0f}**",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f525 Current Streak",
+                "value": streak_str,
+                "inline": False,
+            },
+            {
+                "name": "\U0001f3c6 Best Trade",
+                "value": f"**+${best_pnl:,.0f}** ({best.get('strategy', '?')})",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f4a9 Worst Trade",
+                "value": f"**-${abs(worst_pnl):,.0f}** ({worst.get('strategy', '?')})",
+                "inline": True,
+            },
+        ]
+
+        embed = {
+            "title": "\U0001f3c6 POSITION SCOREBOARD",
+            "color": 0x00E676 if total_pnl >= 0 else 0xFF1744,
+            "fields": fields,
+            "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Market Closed"},
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Scoreboard {'sent' if ok else 'FAILED'}")
+
+    # ------------------------------------------------------------------
+    # NEW: Weekend Playbook — Saturday 10:00 AM CT
+    # ------------------------------------------------------------------
+    async def _fire_weekend_playbook():
+        """Saturday 10:00 AM CT — Next week's economic calendar + engagement."""
+        if not content_loaded:
+            return
+
+        import asyncio
+        now = get_central_now()
+
+        # Only fire on Saturday
+        if now.weekday() != 5:
+            return
+
+        upcoming = get_upcoming_events(days=7, count=5)
+        if not upcoming:
+            logger.info("[SpreadWorks] No events next week — skipping weekend playbook")
+            return
+
+        fields = []
+        high_count = 0
+        for event in upcoming:
+            impact = event.get("impact", "LOW")
+            if impact == "HIGH":
+                high_count += 1
+            emoji = "\U0001f534" if impact == "HIGH" else "\U0001f7e1" if impact == "MEDIUM" else "\U0001f535"
+            event_time = format_event_time(event["datetime"])
+            fields.append({
+                "name": f"{emoji} {event['name']}",
+                "value": f"\U0001f4c6 {event['datetime'].strftime('%A, %b %-d')} at {event_time}\nImpact: **{impact}** \u2022 {event['description']}",
+                "inline": False,
+            })
+
+        # Engagement: ask what they're watching
+        fields.append({
+            "name": "\U0001f4ac Which event are you watching?",
+            "value": "What's your play going into next week? Reply below \u2935\ufe0f",
+            "inline": False,
+        })
+
+        # Headline color based on week severity
+        color = 0xFF1744 if high_count >= 2 else 0xFFD600 if high_count >= 1 else 0x448AFF
+
+        embed = {
+            "title": f"\U0001f4cb NEXT WEEK PLAYBOOK \u2022 {high_count} HIGH impact event{'s' if high_count != 1 else ''}",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": f"SpreadWorks \u2022 Week of {now.strftime('%B %d, %Y')} \u2022 Plan your trades, trade your plan."},
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Weekend playbook {'sent' if ok else 'FAILED'}")
+
+    # ------------------------------------------------------------------
+    # NEW: GEX Shift Alert — every 5 min during market hours
+    # ------------------------------------------------------------------
+    _last_flip_point = {"SPY": None}  # in-memory state for comparison
+
+    async def _fire_gex_shift_check():
+        """Every 5 min during market hours — check for significant flip point moves."""
+        if not _is_trading_day():
+            return
+
+        import asyncio
+        now = get_central_now() if content_loaded else __import__("datetime").datetime.now(
+            __import__("zoneinfo").ZoneInfo("America/Chicago")
+        )
+
+        # Only check during market hours (8:30 AM - 3:00 PM CT)
+        ct_minutes = now.hour * 60 + now.minute
+        if ct_minutes < 510 or ct_minutes > 900:  # 8:30=510, 15:00=900
+            return
+
+        base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+        gex = None
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
+                if resp.status_code == 200:
+                    gex = resp.json()
+        except Exception as e:
+            logger.error(f"[SpreadWorks] GEX shift check fetch failed: {e}")
+            return
+
+        if not gex or gex.get("error"):
+            return
+
+        fp = gex.get("flip_point")
+        spot = gex.get("spot_price")
+        regime = gex.get("gamma_regime")
+        if fp is None:
+            return
+
+        # Save snapshot to DB for historical tracking
+        try:
+            from .db import SessionLocal
+            from .models import GexSnapshot
+            if SessionLocal:
+                db = SessionLocal()
+                try:
+                    snap = GexSnapshot(
+                        symbol="SPY",
+                        flip_point=fp,
+                        call_wall=gex.get("call_wall"),
+                        put_wall=gex.get("put_wall"),
+                        gamma_regime=regime,
+                        spot_price=spot,
+                        vix=gex.get("vix"),
+                        source=gex.get("source"),
+                    )
+                    db.add(snap)
+                    db.commit()
+                finally:
+                    db.close()
+        except Exception as e:
+            logger.error(f"[SpreadWorks] GEX snapshot save failed: {e}")
+
+        # Compare with last known flip point
+        prev_fp = _last_flip_point.get("SPY")
+        _last_flip_point["SPY"] = fp
+
+        if prev_fp is None:
+            # First check of the day — no comparison yet
+            logger.info(f"[SpreadWorks] GEX shift: initial flip point ${fp:.0f}")
+            return
+
+        delta = fp - prev_fp
+        if abs(delta) < 3.0:
+            return  # Normal movement, no alert
+
+        # Significant shift detected!
+        direction = "UP" if delta > 0 else "DOWN"
+        arrow = "\u2B06\ufe0f" if delta > 0 else "\u2B07\ufe0f"
+        urgency = "\U0001f6a8" if abs(delta) >= 5 else "\u26a0\ufe0f"
+
+        # What it means for trading
+        if delta > 0 and regime == "POSITIVE":
+            implication = "Dealers shifting higher — resistance moved up. Bullish grind likely."
+        elif delta > 0 and regime == "NEGATIVE":
+            implication = "Flip rising in negative gamma — could accelerate upward breakout."
+        elif delta < 0 and regime == "POSITIVE":
+            implication = "Dealers shifting lower — support dropped. Watch for mean-reversion down."
+        elif delta < 0 and regime == "NEGATIVE":
+            implication = "Flip falling in negative gamma — downside momentum building."
+        else:
+            implication = "Significant dealer repositioning — reassess your strikes."
+
+        fields = [
+            {
+                "name": f"{arrow} Flip Point Moved {direction} ${abs(delta):.1f}",
+                "value": f"**${prev_fp:.0f}** → **${fp:.0f}**",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f4b0 SPY Spot",
+                "value": f"**${spot:.2f}**" if spot else "--",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f30a Regime",
+                "value": f"**{regime or '?'}**",
+                "inline": True,
+            },
+            {
+                "name": "\U0001f4a1 What This Means",
+                "value": implication,
+                "inline": False,
+            },
+        ]
+
+        color = 0x00E676 if delta > 0 else 0xFF1744
+
+        embed = {
+            "title": f"{urgency} GEX SHIFT ALERT \u2022 Flip {direction} ${abs(delta):.1f}",
+            "color": color,
+            "fields": fields,
+            "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%I:%M %p CT')} \u2022 Check your positions"},
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] GEX SHIFT ALERT: flip {direction} ${abs(delta):.1f} ({'sent' if ok else 'FAILED'})")
+
+    # ==================================================================
+    # SCHEDULE ALL JOBS
+    # ==================================================================
+
     # Schedule using direct CT hours — APScheduler handles DST automatically
     # since the scheduler timezone is set to America/Chicago.
 
+    # --- Morning block ---
     # 8:00 CT — Bible verse + tip (30 min before open)
     scheduler.add_job(_fire_market_open_message, "cron", hour=8, minute=0,
                       day_of_week="mon-fri", id="discord_market_open_msg")
@@ -298,18 +777,42 @@ def _start_scheduler(app: FastAPI):
     # 8:05 CT — Economic event countdown
     scheduler.add_job(_fire_economic_countdown, "cron", hour=8, minute=5,
                       day_of_week="mon-fri", id="discord_economic")
+    # 8:30 CT — GEX Briefing (market open)
+    scheduler.add_job(_fire_gex_briefing, "cron", hour=8, minute=30,
+                      day_of_week="mon-fri", id="discord_gex_briefing")
+
+    # --- Intraday ---
+    # 12:00 CT — Midday Pulse Check
+    scheduler.add_job(_fire_midday_pulse, "cron", hour=12, minute=0,
+                      day_of_week="mon-fri", id="discord_midday_pulse")
+    # Every 5 min 8:30-15:00 CT — GEX shift detection + snapshot
+    scheduler.add_job(_fire_gex_shift_check, "cron", minute="*/5",
+                      hour="8-14", day_of_week="mon-fri", id="discord_gex_shift")
+
+    # --- Close block ---
     # 15:00 CT — Market close reflection
     scheduler.add_job(_fire_market_close_message, "cron", hour=15, minute=0,
                       day_of_week="mon-fri", id="discord_market_close_msg")
     # 15:00:30 CT — EOD summary with AI commentary (right at close)
     scheduler.add_job(_fire_eod_post, "cron", hour=15, minute=0, second=30,
                       day_of_week="mon-fri", id="discord_eod")
+    # 15:05 CT — Position Scoreboard
+    scheduler.add_job(_fire_scoreboard, "cron", hour=15, minute=5,
+                      day_of_week="mon-fri", id="discord_scoreboard")
+
+    # --- Weekend ---
+    # Saturday 10:00 AM CT — Weekend Playbook
+    scheduler.add_job(_fire_weekend_playbook, "cron", hour=10, minute=0,
+                      day_of_week="sat", id="discord_weekend_playbook")
 
     scheduler.start()
     logger.info(
-        "[SpreadWorks] APScheduler started — 5 jobs: "
+        "[SpreadWorks] APScheduler started — 11 jobs: "
         "market_open_msg (8:00), open_positions (8:00:30), "
-        "economic (8:05), market_close_msg (15:00), eod (15:00:30) CT"
+        "economic (8:05), gex_briefing (8:30), "
+        "midday_pulse (12:00), gex_shift (*/5 min), "
+        "market_close_msg (15:00), eod (15:00:30), "
+        "scoreboard (15:05), weekend_playbook (Sat 10:00) CT"
     )
     return scheduler
 
