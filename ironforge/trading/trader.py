@@ -384,6 +384,8 @@ class Trader:
         finally:
             # Save an equity snapshot every cycle so intraday chart has 1-min data
             self._save_periodic_snapshot(result.get("action", "unknown"))
+            # Compute sleep hint so the job runner can back off when idle
+            result["sleep_hint"] = self._compute_sleep_hint(result)
 
     def _save_periodic_snapshot(self, action: str):
         """Save an equity snapshot every cycle for intraday chart continuity."""
@@ -567,6 +569,60 @@ class Trader:
             return False, "Past EOD cutoff (2:45 PM CT)"
 
         return True, "In trading window"
+
+    def _compute_sleep_hint(self, result: Dict[str, Any]) -> int:
+        """
+        Return how many seconds the runner should sleep before the next cycle.
+
+        Phases for FLAME/SPARK (max 1 trade/day):
+          - Before market: sleep until entry window opens (no point scanning)
+          - After EOD: done for the day, sleep until tomorrow 8:25 AM CT
+          - Already traded + no open positions: done, sleep until tomorrow
+          - Already traded + positions open: monitoring, keep 60s cycles
+          - Scanning / position open: 60s cycles (need to watch for entry or exit)
+          - Error: retry in 60s
+
+        INFERNO (unlimited trades): always 60s during market hours.
+        """
+        action = result.get("action", "unknown")
+        now = datetime.now(CENTRAL_TZ)
+        current_minutes = now.hour * 60 + now.minute
+
+        start_parts = self.config.entry_start.split(":")
+        start_minutes = int(start_parts[0]) * 60 + int(start_parts[1])
+        eod_ct_minutes = 14 * 60 + 45  # 2:45 PM CT
+
+        if action == "outside_window":
+            if current_minutes < start_minutes:
+                # Before market — sleep until 5 min before entry window
+                wait = max((start_minutes - current_minutes - 5) * 60, 60)
+                return wait
+            else:
+                # After EOD — done for the day
+                return self._seconds_until_tomorrow(start_minutes - 5)
+
+        if action == "max_trades":
+            # Already used all trade slots. Still have a position open?
+            open_count = len(self.db.get_open_positions())
+            if open_count > 0:
+                return 60  # Keep monitoring for exit
+            else:
+                # Fully done for the day — sleep until tomorrow
+                return self._seconds_until_tomorrow(start_minutes - 5)
+
+        if action == "inactive":
+            return 300  # Check again in 5 min in case user re-enables
+
+        # Everything else: scanning, monitoring, traded, no_signal, error
+        return 60
+
+    def _seconds_until_tomorrow(self, target_minutes: int) -> int:
+        """Seconds from now until target_minutes (in CT) tomorrow."""
+        now = datetime.now(CENTRAL_TZ)
+        current_minutes = now.hour * 60 + now.minute
+        # Minutes until midnight + minutes into tomorrow
+        remaining_today = (24 * 60) - current_minutes
+        return (remaining_today + target_minutes) * 60
 
     def _get_sliding_profit_target(self, ct_now: datetime) -> Tuple[float, str]:
         """
