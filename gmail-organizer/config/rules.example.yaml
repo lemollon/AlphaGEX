@@ -1,0 +1,36 @@
+# Gmail Organizer Rules
+# Copy this file to rules.yaml and customize for your inbox.
+#
+# Available match_fields: from, to, subject, body, has_attachment
+# Available actions: label, archive, mark_read, star, delete, move
+
+rules:
+  - name: "Newsletters"
+    match_field: "from"
+    pattern: "newsletter|digest|weekly.update"
+    actions: ["label", "archive"]
+    target_label: "Newsletters"
+
+  - name: "GitHub Notifications"
+    match_field: "from"
+    pattern: "notifications@github\\.com"
+    actions: ["label"]
+    target_label: "GitHub"
+
+  - name: "Receipts"
+    match_field: "subject"
+    pattern: "receipt|invoice|order.confirm|payment"
+    actions: ["label", "mark_read"]
+    target_label: "Receipts"
+
+  - name: "Social Media"
+    match_field: "from"
+    pattern: "twitter|facebook|linkedin|instagram"
+    actions: ["label", "archive"]
+    target_label: "Social"
+
+  - name: "Important with Attachments"
+    match_field: "has_attachment"
+    pattern: "true"
+    actions: ["star"]
+    enabled: false  # Enable if you want to auto-star attachment emails
