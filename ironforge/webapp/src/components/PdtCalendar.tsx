@@ -3,9 +3,9 @@
 import { useState, useEffect } from 'react'
 
 /* ------------------------------------------------------------------ */
-/*  PdtCalendar — Monthly visual showing which days a bot can trade    */
-/*  Shows business days only (Mon–Fri). Past = actual, Future = projected */
-/*  based on the rolling 5-day PDT window with max_day_trades limit.   */
+/*  PdtCalendar — 3-week rolling view (past + current + next week)    */
+/*  Shows business days only (Mon–Fri). Each cell: date, status,      */
+/*  and expiry annotation for traded days. Merged with slot expiry.   */
 /* ------------------------------------------------------------------ */
 
 interface TriggerTrade {
@@ -37,33 +37,42 @@ type DayKind =
   | 'today_blocked' // Today, PDT blocked
   | 'available'     // Future day — slot open
   | 'blocked'       // Future day — all slots consumed
-  | 'weekend'       // Sat/Sun — never trades
-  | 'outside'       // Padding day outside current month
+  | 'future_opens'  // Future day — a slot frees up here
 
-/** Build a 4-week (Mon-Fri) grid starting from the Monday of today's week */
-function buildFourWeekGrid(today: Date): Date[][] {
-  // Find Monday of this week
-  const monday = new Date(today)
-  const dow = monday.getDay()
-  const diff = dow === 0 ? -6 : 1 - dow // Sunday = go back 6, else go back to Monday
-  monday.setDate(monday.getDate() + diff)
-
-  const weeks: Date[][] = []
-  const cursor = new Date(monday)
-  for (let w = 0; w < 4; w++) {
-    const week: Date[] = []
-    for (let d = 0; d < 5; d++) {
-      week.push(new Date(cursor))
-      cursor.setDate(cursor.getDate() + 1)
-    }
-    // Skip weekend
-    cursor.setDate(cursor.getDate() + 2)
-    weeks.push(week)
-  }
-  return weeks
+interface DayInfo {
+  kind: DayKind
+  expiryDate?: string    // falls_off date (for traded days)
+  slotsOpening?: number  // how many slots free up (for future_opens)
+  positionIds?: string[] // position IDs (for traded days)
 }
 
-/** Format as YYYY-MM-DD in local time (NOT UTC — avoids day-off bugs near midnight) */
+/* ---- Grid construction ---- */
+
+/** Build a 3-week grid: last week, this week, next week (Mon-Fri each) */
+function buildThreeWeekGrid(today: Date): Date[][] {
+  const thisMonday = new Date(today)
+  const dow = thisMonday.getDay()
+  const diff = dow === 0 ? -6 : 1 - dow
+  thisMonday.setDate(thisMonday.getDate() + diff)
+
+  const lastMonday = new Date(thisMonday)
+  lastMonday.setDate(lastMonday.getDate() - 7)
+
+  const nextMonday = new Date(thisMonday)
+  nextMonday.setDate(nextMonday.getDate() + 7)
+
+  return [lastMonday, thisMonday, nextMonday].map(monday => {
+    const week: Date[] = []
+    for (let d = 0; d < 5; d++) {
+      const day = new Date(monday)
+      day.setDate(monday.getDate() + d)
+      week.push(day)
+    }
+    return week
+  })
+}
+
+/** Format as YYYY-MM-DD in local time */
 function dateStr(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
@@ -71,79 +80,17 @@ function dateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function classifyDays(
-  weeks: Date[][],
-  status: PdtStatus,
-  todayStr: string,
-): Map<string, DayKind> {
-  const result = new Map<string, DayKind>()
-
-  // Set of dates where trades actually happened
-  const tradedDates = new Set(status.trigger_trades.map(t => t.trade_date))
-
-  // Actual trade dates including today if traded
-  const actualTradeDates = Array.from(tradedDates)
-  if (status.traded_today && !tradedDates.has(todayStr)) {
-    actualTradeDates.push(todayStr)
-  }
-  actualTradeDates.sort()
-
-  const max = status.max_day_trades
-  const allDays = weeks.flat()
-
-  for (const day of allDays) {
-    const ds = dateStr(day)
-    const dow = day.getDay()
-
-    if (dow === 0 || dow === 6) {
-      result.set(ds, 'weekend')
-      continue
-    }
-
-    if (ds < todayStr) {
-      // Past day — show what actually happened
-      result.set(ds, tradedDates.has(ds) ? 'traded' : 'skipped')
-    } else if (ds === todayStr) {
-      // Today — live status from API
-      if (!status.pdt_enabled) {
-        result.set(ds, status.traded_today ? 'today_traded' : 'today_open')
-      } else if (status.traded_today) {
-        result.set(ds, 'today_traded')
-      } else if (status.is_blocked) {
-        result.set(ds, 'today_blocked')
-      } else {
-        result.set(ds, 'today_open')
-      }
-    } else {
-      // Future day — only count ACTUAL trades in its rolling window
-      // No greedy simulation: we don't assume the bot will trade
-      if (!status.pdt_enabled) {
-        result.set(ds, 'available')
-        continue
-      }
-
-      // Count actual trades that fall within this day's trailing window
-      const windowStart = getBusinessDaysBefore(day, status.window_days)
-      const windowStartStr = dateStr(windowStart)
-      let tradesInWindow = 0
-      actualTradeDates.forEach(td => {
-        if (td >= windowStartStr && td <= ds) {
-          tradesInWindow++
-        }
-      })
-
-      if (tradesInWindow >= max) {
-        result.set(ds, 'blocked')
-      } else {
-        result.set(ds, 'available')
-      }
-    }
-  }
-
-  return result
+/** Short date: "Mar 18" */
+function fmtShortDate(ds: string): string {
+  const d = new Date(ds + 'T12:00:00')
+  return d.toLocaleDateString('en-US', {
+    timeZone: 'America/Chicago',
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
-/** Go back N business days from a date */
+/** Go back N business days from a date, return the start day (inclusive) */
 function getBusinessDaysBefore(from: Date, nBizDays: number): Date {
   const d = new Date(from)
   let count = 0
@@ -152,64 +99,172 @@ function getBusinessDaysBefore(from: Date, nBizDays: number): Date {
     const dow = d.getDay()
     if (dow >= 1 && dow <= 5) count++
   }
-  // We want the window to START the day after (inclusive of nBizDays ago)
-  d.setDate(d.getDate() + 1)
+  d.setDate(d.getDate() + 1) // inclusive start
   return d
 }
 
-/* ------------------------------------------------------------------ */
-/*  Styling per DayKind                                                */
-/* ------------------------------------------------------------------ */
+/* ---- Day classification ---- */
 
-function dayStyle(kind: DayKind, isToday: boolean): string {
-  const base = 'w-9 h-9 rounded-md flex items-center justify-center text-xs font-mono transition-all'
-  const todayRing = isToday ? ' ring-2 ring-white/60' : ''
+function classifyDays(
+  weeks: Date[][],
+  status: PdtStatus,
+  todayStr: string,
+): Map<string, DayInfo> {
+  const result = new Map<string, DayInfo>()
 
+  // Build lookup maps from trigger_trades
+  const tradeDateMap = new Map<string, { falls_off: string; position_ids: string[] }>()
+  const fallsOffCount = new Map<string, number>()
+
+  for (const t of status.trigger_trades) {
+    tradeDateMap.set(t.trade_date, {
+      falls_off: t.falls_off,
+      position_ids: t.position_ids || [],
+    })
+    fallsOffCount.set(t.falls_off, (fallsOffCount.get(t.falls_off) || 0) + 1)
+  }
+
+  // Build sorted list of actual trade dates
+  const actualTradeDates = Array.from(tradeDateMap.keys())
+  if (status.traded_today && !tradeDateMap.has(todayStr)) {
+    actualTradeDates.push(todayStr)
+  }
+  actualTradeDates.sort()
+
+  const max = status.max_day_trades
+
+  for (const day of weeks.flat()) {
+    const ds = dateStr(day)
+    const dow = day.getDay()
+
+    if (dow === 0 || dow === 6) continue // skip weekends (grid is Mon-Fri)
+
+    if (ds < todayStr) {
+      // Past day
+      const trade = tradeDateMap.get(ds)
+      if (trade) {
+        result.set(ds, {
+          kind: 'traded',
+          expiryDate: trade.falls_off,
+          positionIds: trade.position_ids,
+        })
+      } else {
+        result.set(ds, { kind: 'skipped' })
+      }
+    } else if (ds === todayStr) {
+      // Today
+      const trade = tradeDateMap.get(ds)
+      if (!status.pdt_enabled) {
+        result.set(ds, {
+          kind: status.traded_today ? 'today_traded' : 'today_open',
+          expiryDate: trade?.falls_off,
+        })
+      } else if (status.traded_today) {
+        result.set(ds, {
+          kind: 'today_traded',
+          expiryDate: trade?.falls_off,
+        })
+      } else if (status.is_blocked) {
+        result.set(ds, { kind: 'today_blocked' })
+      } else {
+        result.set(ds, { kind: 'today_open' })
+      }
+    } else {
+      // Future day
+      if (!status.pdt_enabled) {
+        result.set(ds, { kind: 'available' })
+        continue
+      }
+
+      const slotsOpening = fallsOffCount.get(ds) || 0
+
+      // Count actual trades in this day's rolling window
+      const windowStart = getBusinessDaysBefore(day, status.window_days)
+      const windowStartStr = dateStr(windowStart)
+      let tradesInWindow = 0
+      for (const td of actualTradeDates) {
+        if (td >= windowStartStr && td <= ds) tradesInWindow++
+      }
+
+      const isAvailable = tradesInWindow < max
+      if (slotsOpening > 0 && isAvailable) {
+        result.set(ds, { kind: 'future_opens', slotsOpening })
+      } else if (!isAvailable) {
+        result.set(ds, { kind: 'blocked' })
+      } else {
+        result.set(ds, { kind: 'available' })
+      }
+    }
+  }
+
+  return result
+}
+
+/* ---- Cell styling ---- */
+
+function cellBg(kind: DayKind, isToday: boolean): string {
+  const ring = isToday ? ' ring-2' : ''
   switch (kind) {
     case 'traded':
-      return `${base} bg-emerald-600/40 text-emerald-300${todayRing}`
+      return `bg-emerald-600/30 border border-emerald-700/40${ring} ring-emerald-400/50`
     case 'skipped':
-      return `${base} bg-forge-border/30 text-gray-600${todayRing}`
+      return `bg-forge-border/15 border border-forge-border/20${ring} ring-white/30`
     case 'today_traded':
-      return `${base} bg-emerald-600/50 text-emerald-200 ring-2 ring-emerald-400`
+      return 'bg-emerald-600/40 border border-emerald-500/50 ring-2 ring-emerald-400'
     case 'today_open':
-      return `${base} bg-blue-600/40 text-blue-200 ring-2 ring-blue-400`
+      return 'bg-blue-600/30 border border-blue-500/40 ring-2 ring-blue-400'
     case 'today_blocked':
-      return `${base} bg-red-600/30 text-red-300 ring-2 ring-red-400`
+      return 'bg-red-600/20 border border-red-500/30 ring-2 ring-red-400'
     case 'available':
-      return `${base} bg-emerald-900/30 text-emerald-400/70 border border-emerald-800/40${todayRing}`
+      return `bg-emerald-900/15 border border-emerald-800/25${ring} ring-white/30`
     case 'blocked':
-      return `${base} bg-red-900/20 text-red-500/50 border border-red-900/30${todayRing}`
-    case 'weekend':
-      return `${base} bg-transparent text-gray-800${todayRing}`
-    case 'outside':
-      return `${base} bg-transparent text-gray-800${todayRing}`
+      return `bg-red-900/10 border border-red-900/20${ring} ring-white/30`
+    case 'future_opens':
+      return `bg-amber-900/20 border border-amber-700/30${ring} ring-white/30`
   }
 }
 
-function dayLabel(kind: DayKind): string {
+function dateColor(kind: DayKind): string {
   switch (kind) {
-    case 'traded':
-    case 'today_traded':
-      return 'Traded'
-    case 'skipped':
-      return 'No trade'
-    case 'today_open':
-      return 'Can trade today'
-    case 'today_blocked':
-      return 'Blocked today (PDT)'
-    case 'available':
-      return 'Available (projected)'
-    case 'blocked':
-      return 'Blocked (projected)'
-    default:
-      return ''
+    case 'traded': return 'text-emerald-300'
+    case 'skipped': return 'text-gray-600'
+    case 'today_traded': return 'text-emerald-200'
+    case 'today_open': return 'text-blue-200'
+    case 'today_blocked': return 'text-red-300'
+    case 'available': return 'text-emerald-400/60'
+    case 'blocked': return 'text-red-500/40'
+    case 'future_opens': return 'text-amber-300'
   }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Component                                                          */
-/* ------------------------------------------------------------------ */
+function statusLabel(kind: DayKind, slotsOpening?: number): string {
+  switch (kind) {
+    case 'traded': return 'Traded'
+    case 'skipped': return 'No trade'
+    case 'today_traded': return 'Traded'
+    case 'today_open': return 'Can trade'
+    case 'today_blocked': return 'Blocked'
+    case 'available': return 'Open'
+    case 'blocked': return 'Blocked'
+    case 'future_opens':
+      return slotsOpening === 1 ? 'Slot opens' : `${slotsOpening} open`
+  }
+}
+
+function labelColor(kind: DayKind): string {
+  switch (kind) {
+    case 'traded':
+    case 'today_traded': return 'text-emerald-400/70'
+    case 'skipped': return 'text-gray-700'
+    case 'today_open': return 'text-blue-300/70'
+    case 'today_blocked':
+    case 'blocked': return 'text-red-400/60'
+    case 'available': return 'text-emerald-500/40'
+    case 'future_opens': return 'text-amber-400/70'
+  }
+}
+
+/* ---- Component ---- */
 
 export default function PdtCalendar({ status }: { status: PdtStatus }) {
   const [todayStr, setTodayStr] = useState<string | null>(null)
@@ -218,15 +273,13 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
     setTodayStr(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }))
   }, [])
 
-  // Avoid hydration mismatch: render nothing until client-side date is resolved
   if (!todayStr) return null
 
   const todayDate = new Date(todayStr + 'T12:00:00')
-  const weeks = buildFourWeekGrid(todayDate)
-  const kinds = classifyDays(weeks, status, todayStr)
+  const weeks = buildThreeWeekGrid(todayDate)
+  const dayInfoMap = classifyDays(weeks, status, todayStr)
 
-  // Week label: date range
-  const fmtShort = (d: Date) =>
+  const fmtWeekLabel = (d: Date) =>
     d.toLocaleDateString('en-US', {
       timeZone: 'America/Chicago',
       month: 'short',
@@ -235,28 +288,32 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
 
   return (
     <div className="rounded-lg bg-forge-bg/60 border border-forge-border/40 p-3">
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="text-[11px] text-forge-muted uppercase tracking-wide">
-          4-Week Trading Calendar
+          Rolling Window Calendar
         </div>
-        <div className="flex items-center gap-3 text-[10px]">
+        <div className="flex items-center gap-2.5 text-[10px]">
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded bg-emerald-600/40" /> Traded
+            <span className="w-2 h-2 rounded bg-emerald-600/40 border border-emerald-700/40" /> Traded
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded bg-emerald-900/30 border border-emerald-800/40" /> Available
+            <span className="w-2 h-2 rounded bg-emerald-900/20 border border-emerald-800/30" /> Open
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded bg-red-900/20 border border-red-900/30" /> Blocked
+            <span className="w-2 h-2 rounded bg-amber-900/25 border border-amber-700/30" /> Slot opens
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded bg-forge-border/30" /> No trade
+            <span className="w-2 h-2 rounded bg-red-900/15 border border-red-900/20" /> Blocked
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded bg-forge-border/20" /> No trade
           </span>
         </div>
       </div>
 
-      {/* Header row */}
-      <div className="grid grid-cols-[60px_repeat(5,1fr)] gap-1 mb-1">
+      {/* Column headers */}
+      <div className="grid grid-cols-[56px_repeat(5,1fr)] gap-1 mb-1">
         <div />
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(d => (
           <div key={d} className="text-center text-[10px] text-forge-muted font-medium">
@@ -271,21 +328,47 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
         return (
           <div
             key={wi}
-            className={`grid grid-cols-[60px_repeat(5,1fr)] gap-1 mb-1 ${
-              isThisWeek ? 'bg-white/[0.02] rounded-lg py-0.5' : ''
+            className={`grid grid-cols-[56px_repeat(5,1fr)] gap-1 mb-1 ${
+              isThisWeek ? 'bg-white/[0.03] rounded-lg py-0.5' : ''
             }`}
           >
+            {/* Week label */}
             <div className="flex items-center text-[10px] text-forge-muted pl-1">
-              {fmtShort(week[0])}
+              {fmtWeekLabel(week[0])}
             </div>
-            {week.map((day) => {
+
+            {/* Day cells */}
+            {week.map(day => {
               const ds = dateStr(day)
-              const kind = kinds.get(ds) || 'outside'
+              const info = dayInfoMap.get(ds)
+              if (!info) return <div key={ds} />
+
               const isToday = ds === todayStr
+              const bg = cellBg(info.kind, isToday)
+              const label = statusLabel(info.kind, info.slotsOpening)
+
               return (
-                <div key={ds} className="flex justify-center" title={dayLabel(kind)}>
-                  <div className={dayStyle(kind, isToday)}>
-                    {day.getDate()}
+                <div key={ds} className="flex justify-center">
+                  <div
+                    className={`w-full min-h-[52px] rounded-lg flex flex-col items-center justify-center py-1 px-0.5 ${bg}`}
+                    title={`${ds} — ${label}${info.expiryDate ? ` (expires ${info.expiryDate})` : ''}`}
+                  >
+                    {/* Date number */}
+                    <span className={`text-sm font-mono font-bold leading-none ${dateColor(info.kind)}`}>
+                      {day.getDate()}
+                    </span>
+
+                    {/* Status label */}
+                    <span className={`text-[9px] leading-tight mt-0.5 ${labelColor(info.kind)}`}>
+                      {label}
+                    </span>
+
+                    {/* Expiry annotation (only for traded days) */}
+                    {info.expiryDate && (
+                      <span className="text-[8px] leading-tight mt-px text-forge-muted/60">
+                        exp {fmtShortDate(info.expiryDate)}
+                      </span>
+                    )}
                   </div>
                 </div>
               )
@@ -297,21 +380,12 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
       {/* Summary line */}
       <div className="mt-2 pt-2 border-t border-forge-border/30 text-[11px] text-forge-muted">
         {!status.pdt_enabled ? (
-          <span className="text-amber-400">PDT OFF — all days available for trading</span>
+          <span className="text-amber-400">PDT bypassed — all days available</span>
         ) : (
           <>
-            Rolling {status.window_days}-day window · {status.max_day_trades} day trades max ·{' '}
-            {status.max_trades_per_day} trade/day limit
-            {status.next_slot_opens && status.is_blocked && (
-              <span className="ml-2 text-emerald-400">
-                · Next slot: {new Date(status.next_slot_opens + 'T12:00:00').toLocaleDateString('en-US', {
-                  timeZone: 'America/Chicago',
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                })}
-              </span>
-            )}
+            Rolling {status.window_days}-day window
+            {' '}&middot;{' '}{status.max_day_trades} day trades max
+            {' '}&middot;{' '}{status.max_trades_per_day > 0 ? `${status.max_trades_per_day} trade/day limit` : 'unlimited trades/day'}
           </>
         )}
       </div>
