@@ -676,7 +676,7 @@ def open_ic_sandbox_per_account(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = max(1, math.floor(acct_usable / collateral_per_contract))
+            acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per_contract)))
 
             log.info(
                 f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
@@ -1728,9 +1728,9 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                         )
                         continue
 
-                    # Size based on THIS account's buying power — NO max cap
+                    # Size based on THIS account's buying power (capped at 500)
                     acct_usable = acct_bp * 0.85
-                    acct_contracts = max(1, math.floor(acct_usable / collateral_per))
+                    acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
 
                     log.info(
                         f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
