@@ -80,10 +80,10 @@ export default function PdtCard({
     } catch {}
   }, [bot])
 
-  // Initial fetch + 15s polling
+  // Initial fetch + 60s polling (PDT status only changes when a trade executes)
   useEffect(() => {
     fetchStatus()
-    const timer = setInterval(fetchStatus, 15_000)
+    const timer = setInterval(fetchStatus, 60_000)
     return () => clearInterval(timer)
   }, [fetchStatus])
 
