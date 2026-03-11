@@ -71,16 +71,18 @@ const CONFIG = {
 /**
  * Batched Gmail assessment that handles any inbox size.
  * Processes as many threads as possible within the 6-min Apps Script limit,
- * saves progress, and auto-resumes via a 5-minute trigger.
+ * saves progress, and auto-resumes via a 10-minute trigger.
  *
- * For 21,000 threads: ~4-5 runs over ~25 minutes, fully automatic.
+ * QUOTA-AWARE: Uses lightweight analysis (no body reads) to stay under
+ * Gmail's daily read quota (~20,000 for free accounts). With ~4,500 threads
+ * remaining, this should complete in 1-2 batches.
  *
  * Just run assessMyGmail() once — it handles everything.
  * If anything gets stuck, run resetAssessment() to start over.
  */
 function assessMyGmail() {
   var TIME_LIMIT_MS = 5 * 60 * 1000; // bail at 5 min to stay under 6-min limit
-  var PAGE = 500;                     // threads per Gmail API fetch
+  var PAGE = 200;                     // smaller batches to reduce quota pressure
   var startTime = new Date().getTime();
   var props = PropertiesService.getScriptProperties();
 
@@ -98,7 +100,18 @@ function assessMyGmail() {
       break;
     }
 
-    var batch = GmailApp.getInboxThreads(offset, PAGE);
+    var batch;
+    try {
+      batch = GmailApp.getInboxThreads(offset, PAGE);
+    } catch (e) {
+      if (e.message && e.message.indexOf("too many times") !== -1) {
+        Logger.log("QUOTA HIT at offset " + offset + ". Saving progress. Will auto-resume tomorrow.");
+        state.quotaHitAt = new Date().toISOString();
+        break;
+      }
+      throw e;
+    }
+
     if (batch.length === 0) {
       // We've reached the end
       state.complete = true;
@@ -110,6 +123,16 @@ function assessMyGmail() {
       try {
         analyzeThread_(batch[i], state);
       } catch (e) {
+        if (e.message && e.message.indexOf("too many times") !== -1) {
+          Logger.log("QUOTA HIT mid-batch at offset " + (offset + i) + ". Saving progress.");
+          state.quotaHitAt = new Date().toISOString();
+          offset += i;
+          state.offset = offset;
+          state.totalThreads = offset;
+          saveAssessmentState_(props, state);
+          ensureAssessmentTrigger_();
+          return;
+        }
         state.errors++;
       }
     }
@@ -128,7 +151,11 @@ function assessMyGmail() {
     }
   }
 
-  state.unreadCount = GmailApp.getInboxUnreadCount();
+  try {
+    state.unreadCount = GmailApp.getInboxUnreadCount();
+  } catch (e) {
+    Logger.log("Could not get unread count (quota). Using last known value.");
+  }
 
   // ---- Save state ----
   saveAssessmentState_(props, state);
@@ -143,8 +170,25 @@ function assessMyGmail() {
   } else {
     // More to do — ensure auto-resume trigger exists
     ensureAssessmentTrigger_();
-    Logger.log("Progress saved. " + offset + " threads processed so far. Will auto-resume in ~5 min.");
+    Logger.log("Progress saved. " + offset + " threads processed so far. Will auto-resume in ~10 min.");
   }
+}
+
+/**
+ * Run this once manually to grant OAuth scopes to triggers.
+ * After running, the auto-resume trigger will fire on its own.
+ */
+function authorizeTrigger() {
+  GmailApp.getInboxUnreadCount();
+  ScriptApp.getProjectTriggers();
+  PropertiesService.getScriptProperties();
+  Logger.log("Authorization granted for all required scopes.");
+  Logger.log("Triggers will now auto-fire. Current triggers:");
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    Logger.log("  - " + t.getHandlerFunction() + " (every " + t.getEventType() + ")");
+  });
+  ensureAssessmentTrigger_();
+  Logger.log("Assessment trigger ensured. It will auto-resume within 10 minutes.");
 }
 
 /**
@@ -257,28 +301,52 @@ function analyzeThread_(thread, state) {
   state.dayOfWeekCount[lastDate.getDay()]++;
   state.hourCount[lastDate.getHours()]++;
 
-  // Newsletter + large email detection (single body fetch for speed)
+  // Newsletter detection — LIGHTWEIGHT: check headers/from only to reduce quota usage.
+  // Skips getPlainBody() which costs extra API reads per message.
+  // Instead, detect newsletters by common sender patterns (noreply, newsletter, digest, etc.)
   try {
-    var body = firstMsg.getPlainBody().substring(0, 3000).toLowerCase();
-    if (isNewsletter_(from.toLowerCase(), subject.toLowerCase(), body)) {
+    var fromLower = from.toLowerCase();
+    var subjectLower = subject.toLowerCase();
+    if (isNewsletterLightweight_(fromLower, subjectLower)) {
       state.newsletterSenders[senderKey] = (state.newsletterSenders[senderKey] || 0) + 1;
     }
-    // Estimate size from plain body * message count (avoids extra getBody() API calls)
-    var estimatedSize = body.length * messages.length;
-    if (estimatedSize > 100000) {
+    // Large thread heuristic: many messages = large thread
+    if (messages.length > 20) {
       state.largeEmails.push({
         subject: subject.substring(0, 60),
         from: senderKey.substring(0, 30),
         date: Utilities.formatDate(lastDate, Session.getScriptTimeZone(), "yyyy-MM-dd"),
-        sizeKB: Math.round(estimatedSize / 1024)
+        sizeKB: messages.length * 10  // rough estimate
       });
     }
   } catch (e) {
-    // Skip body analysis on error
+    // Skip analysis on error
   }
 }
 
 // ---- Auto-resume trigger ----
+
+/**
+ * Lightweight newsletter detection using only From and Subject headers.
+ * No body reads = no extra API quota consumed.
+ */
+function isNewsletterLightweight_(fromLower, subjectLower) {
+  var newsletterFromPatterns = [
+    "noreply", "no-reply", "newsletter", "digest", "updates@", "notifications@",
+    "info@", "mailer@", "news@", "marketing@", "hello@", "team@", "announce"
+  ];
+  var newsletterSubjectPatterns = [
+    "newsletter", "digest", "weekly", "monthly", "daily roundup",
+    "your .* update", "top stories", "what's new", "new from"
+  ];
+  for (var i = 0; i < newsletterFromPatterns.length; i++) {
+    if (fromLower.indexOf(newsletterFromPatterns[i]) !== -1) return true;
+  }
+  for (var i = 0; i < newsletterSubjectPatterns.length; i++) {
+    if (new RegExp(newsletterSubjectPatterns[i], "i").test(subjectLower)) return true;
+  }
+  return false;
+}
 
 function ensureAssessmentTrigger_() {
   var triggers = ScriptApp.getProjectTriggers();
@@ -287,9 +355,9 @@ function ensureAssessmentTrigger_() {
   }
   ScriptApp.newTrigger("assessMyGmail")
     .timeBased()
-    .everyMinutes(5)
+    .everyMinutes(10)
     .create();
-  Logger.log("Auto-resume trigger created (every 5 min).");
+  Logger.log("Auto-resume trigger created (every 10 min).");
 }
 
 function removeAssessmentTrigger_() {
