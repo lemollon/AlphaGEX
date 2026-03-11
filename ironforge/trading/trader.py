@@ -574,15 +574,16 @@ class Trader:
         """
         Return how many seconds the runner should sleep before the next cycle.
 
-        Phases for FLAME/SPARK (max 1 trade/day):
-          - Before market: sleep until entry window opens (no point scanning)
-          - After EOD: done for the day, sleep until tomorrow 8:25 AM CT
-          - Already traded + no open positions: done, sleep until tomorrow
-          - Already traded + positions open: monitoring, keep 60s cycles
-          - Scanning / position open: 60s cycles (need to watch for entry or exit)
-          - Error: retry in 60s
+        Checks trade count directly — works regardless of PDT on/off.
 
-        INFERNO (unlimited trades): always 60s during market hours.
+        Phases:
+          - Before market: sleep until entry window opens
+          - After EOD: sleep until tomorrow
+          - Bot disabled: check every 5 min
+          - Max trades hit + no open positions: done, sleep until tomorrow
+          - Max trades hit + positions open: monitoring, 60s
+          - Unlimited trades (INFERNO): always 60s during market hours
+          - Everything else (scanning, monitoring): 60s
         """
         action = result.get("action", "unknown")
         now = datetime.now(CENTRAL_TZ)
@@ -590,7 +591,6 @@ class Trader:
 
         start_parts = self.config.entry_start.split(":")
         start_minutes = int(start_parts[0]) * 60 + int(start_parts[1])
-        eod_ct_minutes = 14 * 60 + 45  # 2:45 PM CT
 
         if action == "outside_window":
             if current_minutes < start_minutes:
@@ -601,19 +601,25 @@ class Trader:
                 # After EOD — done for the day
                 return self._seconds_until_tomorrow(start_minutes - 5)
 
-        if action == "max_trades":
-            # Already used all trade slots. Still have a position open?
-            open_count = len(self.db.get_open_positions())
-            if open_count > 0:
-                return 60  # Keep monitoring for exit
-            else:
-                # Fully done for the day — sleep until tomorrow
-                return self._seconds_until_tomorrow(start_minutes - 5)
-
         if action == "inactive":
-            return 300  # Check again in 5 min in case user re-enables
+            return 300  # Check every 5 min in case user re-enables
 
-        # Everything else: scanning, monitoring, traded, no_signal, error
+        # Check if this bot has a daily trade limit and has used it up.
+        # This works whether PDT is on or off — max_trades_per_day is a
+        # bot config constraint independent of the PDT rolling window.
+        max_trades = self.config.max_trades_per_day  # 0 = unlimited
+        if max_trades > 0:
+            today_str = now.strftime("%Y-%m-%d")
+            trades_today = self.db.get_trades_today_count(today_str)
+            if trades_today >= max_trades:
+                open_count = len(self.db.get_open_positions())
+                if open_count > 0:
+                    return 60  # Still monitoring for exit
+                else:
+                    # Fully done — traded and closed. Sleep until tomorrow.
+                    return self._seconds_until_tomorrow(start_minutes - 5)
+
+        # Everything else: scanning, monitoring, position open, no_signal, error
         return 60
 
     def _seconds_until_tomorrow(self, target_minutes: int) -> int:
