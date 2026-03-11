@@ -99,13 +99,15 @@ function Separator() {
 /* ── Main Component ─────────────────────────────────────────────── */
 
 export default function LaunchCountdown() {
-  const [time, setTime] = useState<TimeLeft>(getTimeLeft)
+  // Initialize with null to avoid hydration mismatch (Date.now() differs server vs client)
+  const [time, setTime] = useState<TimeLeft | null>(null)
   const [embers, setEmbers] = useState<React.CSSProperties[]>([])
   const [mounted, setMounted] = useState(false)
 
-  // Tick every second
+  // Initialize on client + tick every second
   useEffect(() => {
     setMounted(true)
+    setTime(getTimeLeft())
     const interval = setInterval(() => setTime(getTimeLeft()), 1000)
     return () => clearInterval(interval)
   }, [])
@@ -122,6 +124,15 @@ export default function LaunchCountdown() {
     }))
     setEmbers(particles)
   }, [])
+
+  // Don't render until client-side time is resolved
+  if (!time) {
+    return (
+      <div className="rounded-xl border border-amber-500/20 bg-forge-card/80 p-6">
+        <div className="h-20 animate-pulse rounded bg-forge-border/30" />
+      </div>
+    )
+  }
 
   if (time.total <= 0) {
     return (

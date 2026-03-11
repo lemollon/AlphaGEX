@@ -30,29 +30,36 @@ function widthPct(startMin: number, endMin: number): string {
 }
 
 export default function PTTimeline() {
-  const [ctMins, setCtMins] = useState(getCTMinutes)
-  const [open, setOpen] = useState(isMarketOpen)
+  // Initialize with null to avoid hydration mismatch (server has no CT clock)
+  const [ctMins, setCtMins] = useState<number | null>(null)
+  const [open, setOpen] = useState<boolean | null>(null)
+  const [timeStr, setTimeStr] = useState<string | null>(null)
 
+  // Resolve on client only, then tick every second
   useEffect(() => {
-    const timer = setInterval(() => {
+    function tick() {
       const d = getCTNow()
       setCtMins(getCTMinutes(d))
       setOpen(isMarketOpen(d))
-    }, 1000)
+      setTimeStr(d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }))
+    }
+    tick() // immediate first tick
+    const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
   }, [])
+
+  // Don't render until client-side time is resolved (prevents hydration mismatch)
+  if (ctMins === null || open === null) {
+    return (
+      <div className="rounded-xl border border-forge-border bg-forge-card/60 px-4 py-3 opacity-40">
+        <div className="h-3 rounded-full bg-forge-border" />
+      </div>
+    )
+  }
 
   // Marker position (clamped to bar range)
   const markerMin = Math.max(MARKET_OPEN, Math.min(MARKET_CLOSE, ctMins))
   const markerPct = ((markerMin - MARKET_OPEN) / TOTAL) * 100
-
-  // Format current CT time for the "You are here" label
-  const ctNow = getCTNow()
-  const timeStr = ctNow.toLocaleTimeString('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  })
 
   const grayed = !open
 
@@ -128,7 +135,7 @@ export default function PTTimeline() {
       </div>
 
       {/* "You are here" label */}
-      {open && (
+      {open && timeStr && (
         <p className="text-[10px] text-forge-muted text-center -mt-0.5">
           ▲ {timeStr} CT
         </p>
