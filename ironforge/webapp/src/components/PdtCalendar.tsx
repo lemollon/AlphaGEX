@@ -36,17 +36,6 @@ type DayKind =
   | 'weekend'       // Sat/Sun — never trades
   | 'outside'       // Padding day outside current month
 
-function getBusinessDaysInMonth(year: number, month: number): Date[] {
-  const days: Date[] = []
-  const d = new Date(year, month, 1)
-  while (d.getMonth() === month) {
-    const dow = d.getDay()
-    if (dow >= 1 && dow <= 5) days.push(new Date(d))
-    d.setDate(d.getDate() + 1)
-  }
-  return days
-}
-
 /** Build a 4-week (Mon-Fri) grid starting from the Monday of today's week */
 function buildFourWeekGrid(today: Date): Date[][] {
   // Find Monday of this week
@@ -70,8 +59,12 @@ function buildFourWeekGrid(today: Date): Date[][] {
   return weeks
 }
 
+/** Format as YYYY-MM-DD in local time (NOT UTC — avoids day-off bugs near midnight) */
 function dateStr(d: Date): string {
-  return d.toISOString().split('T')[0]
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function classifyDays(
