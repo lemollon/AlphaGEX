@@ -187,7 +187,7 @@ SELECT
   opened_at,
   closed_at
 FROM alpha_prime.ironforge.flame_pdt_log
-WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -8)
+WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -6)
 ORDER BY opened_at DESC;
 
 
@@ -199,7 +199,7 @@ SELECT
   opened_at,
   closed_at
 FROM alpha_prime.ironforge.spark_pdt_log
-WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -8)
+WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -6)
 ORDER BY opened_at DESC;
 
 
