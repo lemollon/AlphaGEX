@@ -1476,12 +1476,23 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
 
     if is_after_eod_cutoff(ct) or is_stale_holdover:
         close_reason = "stale_holdover" if is_stale_holdover else "eod_cutoff"
-        close_position(
-            bot, pos["position_id"], ticker, expiration,
-            num(pos["put_short_strike"]), num(pos["put_long_strike"]),
-            num(pos["call_short_strike"]), num(pos["call_long_strike"]),
-            contracts, entry_credit, collateral, close_reason,
-        )
+        try:
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+            )
+        except Exception as e:
+            # Fallback: close at entry credit (break-even) if Tradier/sandbox unavailable
+            log.warning(f"{bot['name'].upper()} Force-close failed, retrying at entry credit: {e}")
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+                close_price=entry_credit,
+            )
         return {"status": f"closed:{close_reason}", "unrealizedPnl": 0}
 
     if not is_tradier_configured():

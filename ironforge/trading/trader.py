@@ -440,23 +440,32 @@ class Trader:
                 reason = (
                     "expired_previous_day" if is_expired else "stale_overnight_position"
                 )
-                close_price = self.signal_generator.get_ic_mark_to_market(
-                    put_short=position.put_short_strike,
-                    put_long=position.put_long_strike,
-                    call_short=position.call_short_strike,
-                    call_long=position.call_long_strike,
-                    expiration=position.expiration,
-                )
-                if close_price is None:
+                try:
+                    close_price = self.signal_generator.get_ic_mark_to_market(
+                        put_short=position.put_short_strike,
+                        put_long=position.put_long_strike,
+                        call_short=position.call_short_strike,
+                        call_long=position.call_long_strike,
+                        expiration=position.expiration,
+                    )
+                    if close_price is None:
+                        close_price = position.total_credit
+                except Exception:
                     close_price = position.total_credit
 
-                success, pnl = self.executor.close_paper_position(
-                    position, close_price, reason
-                )
-                if success:
-                    managed += 1
-                    total_pnl += pnl
-                    self._mtm_failure_counts.pop(position.position_id, None)
+                try:
+                    success, pnl = self.executor.close_paper_position(
+                        position, close_price, reason
+                    )
+                    if success:
+                        managed += 1
+                        total_pnl += pnl
+                        self._mtm_failure_counts.pop(position.position_id, None)
+                except Exception as e:
+                    logger.error(
+                        f"{self.config.bot_name}: Failed to close stale "
+                        f"position {position.position_id}: {e}"
+                    )
                 continue
 
             # Get current MTM

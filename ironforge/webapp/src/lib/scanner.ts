@@ -202,12 +202,22 @@ async function monitorSinglePosition(
   const isStaleHoldover = openDate !== null && openDate < todayStr
 
   // EOD cutoff or stale holdover → force close
+  // Use entryCredit as fallback close price when Tradier data is unavailable (pre-market/pending)
   if (isAfterEodCutoff(ct) || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
-    await closePosition(bot, pos.position_id, ticker, expiration,
-      num(pos.put_short_strike), num(pos.put_long_strike),
-      num(pos.call_short_strike), num(pos.call_long_strike),
-      contracts, entryCredit, collateral, reason)
+    try {
+      await closePosition(bot, pos.position_id, ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        contracts, entryCredit, collateral, reason)
+    } catch (err: any) {
+      // Fallback: close at entry credit (break-even) if Tradier/sandbox unavailable
+      console.warn(`[scanner] ${bot.name.toUpperCase()}: Force-close failed, retrying at entry credit: ${err.message}`)
+      await closePosition(bot, pos.position_id, ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        contracts, entryCredit, collateral, reason, entryCredit)
+    }
     return { status: `closed:${reason}`, unrealizedPnl: 0 }
   }
 
