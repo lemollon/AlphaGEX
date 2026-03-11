@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot } from '@/lib/db'
+import { query, botTable, num, validateBot, CT_TODAY } from '@/lib/db'
 import {
   getQuote,
   getOptionExpirations,
@@ -271,7 +271,7 @@ export async function POST(
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
         $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-        $31, $32, $33, $34, $35, NOW(), CURRENT_DATE, $36
+        $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36
       )`,
       [
         positionId, 'SPY', expiration,
@@ -363,7 +363,7 @@ export async function POST(
       `INSERT INTO ${botTable(bot, 'pdt_log')} (
         trade_date, symbol, position_id, opened_at,
         contracts, entry_credit, dte_mode
-      ) VALUES (CURRENT_DATE, $1, $2, NOW(), $3, $4, $5)`,
+      ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5)`,
       ['SPY', positionId, maxContracts, credits.totalCredit, dte],
     )
 
@@ -384,7 +384,7 @@ export async function POST(
     // 15. Update daily_perf
     await query(
       `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (CURRENT_DATE, 1, 0, 0)
+       VALUES (${CT_TODAY}, 1, 0, 0)
        ON CONFLICT (trade_date) DO UPDATE SET
          trades_executed = ${botTable(bot, 'daily_perf')}.trades_executed + 1`,
     )

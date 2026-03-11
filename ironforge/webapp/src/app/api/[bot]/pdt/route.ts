@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, dteMode } from '@/lib/db'
+import { query, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +24,7 @@ function dayTradeWhereClause(table: string, dte: string, lastResetAt: string | n
   // Base: is_day_trade = TRUE, in rolling 6-day window, weekdays only
   let sql = `SELECT COUNT(*) as cnt FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   const params: any[] = [dte]
 
@@ -43,7 +43,7 @@ function triggerTradeQuery(table: string, dte: string, lastResetAt: string | nul
 } {
   let sql = `SELECT trade_date, position_id FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   const params: any[] = [dte]
 
@@ -341,7 +341,7 @@ async function buildStatusResponse(
   const todayRows = await query(
     `SELECT COUNT(*) as cnt
      FROM ${botTable(bot, 'pdt_log')}
-     WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
+     WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
     [dte],
   )
   const tradedToday = maxTradesPerDay > 0 && parseInt(todayRows[0]?.cnt ?? '0', 10) >= maxTradesPerDay

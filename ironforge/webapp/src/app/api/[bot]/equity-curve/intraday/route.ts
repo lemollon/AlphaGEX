@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, dteMode } from '@/lib/db'
+import { query, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,14 +33,14 @@ export async function GET(
                  open_positions, note
           FROM ${botTable(bot, 'equity_snapshots')}
           WHERE dte_mode = $1
-            AND snapshot_time::date = CURRENT_DATE
+            AND (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
           ORDER BY snapshot_time ASC
         `, [dte])
       : query(`
           SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
                  open_positions, note
           FROM ${botTable(bot, 'equity_snapshots')}
-          WHERE snapshot_time::date = CURRENT_DATE
+          WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
           ORDER BY snapshot_time ASC
         `)
 

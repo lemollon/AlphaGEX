@@ -4,7 +4,7 @@ import {
   getLoadedSandboxAccounts,
   getSandboxPositionSymbols,
 } from '@/lib/tradier'
-import { query, botTable, dteMode } from '@/lib/db'
+import { query, botTable, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -93,7 +93,7 @@ export async function GET() {
               SELECT COALESCE(SUM(realized_pnl), 0) as pnl
               FROM ${tbl}
               WHERE status IN ('closed', 'expired')
-                AND close_time::date = CURRENT_DATE
+                AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
                 ${dteFilter}
             `)
             const dayPnl = parseFloat(todayPnlRows[0]?.pnl || '0')

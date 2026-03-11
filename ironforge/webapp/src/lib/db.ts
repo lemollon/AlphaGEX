@@ -35,6 +35,14 @@ const HEARTBEAT_MAP: Record<string, string> = {
   inferno: 'INFERNO',
 }
 
+/**
+ * SQL expression for "today" in Central Time.
+ * PostgreSQL on Render runs UTC — CURRENT_DATE returns the UTC date, which
+ * is wrong after 7 PM CT (midnight UTC).  This converts the server timestamp
+ * to America/Chicago before extracting the date.
+ */
+export const CT_TODAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date"
+
 /** Bot-specific table name: {prefix}_{suffix}. */
 export function botTable(bot: string, suffix: string): string {
   const prefix = DB_PREFIX[bot] || bot
@@ -337,7 +345,7 @@ async function ensureTables(): Promise<void> {
           `UPDATE ${bot}_pdt_log
            SET is_day_trade = FALSE
            WHERE is_day_trade = TRUE AND dte_mode = $1
-             AND trade_date < CURRENT_DATE - INTERVAL '6 days'`,
+             AND trade_date < ${CT_TODAY} - INTERVAL '6 days'`,
           [dte],
         )
 
@@ -360,7 +368,7 @@ async function ensureTables(): Promise<void> {
         const countRes = await client.query(
           `SELECT COUNT(*) as cnt FROM ${bot}_pdt_log
            WHERE is_day_trade = TRUE AND dte_mode = $1
-             AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+             AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
              AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
           [dte],
         )

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot } from '@/lib/db'
+import { query, botTable, num, validateBot, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, SandboxCloseInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -145,7 +145,7 @@ export async function POST(
       `UPDATE ${botTable(bot, 'pdt_log')}
        SET closed_at = NOW(), exit_cost = $1, pnl = $2,
            close_reason = 'manual_close',
-           is_day_trade = (opened_at::date = CURRENT_DATE)
+           is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
        WHERE position_id = $3 AND dte_mode = $4`,
       [effectivePrice, realizedPnl, position_id, dte],
     )
@@ -194,7 +194,7 @@ export async function POST(
     // 11. Update daily_perf
     await query(
       `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (CURRENT_DATE, 0, 1, $1)
+       VALUES (${CT_TODAY}, 0, 1, $1)
        ON CONFLICT (trade_date) DO UPDATE SET
          positions_closed = ${botTable(bot, 'daily_perf')}.positions_closed + 1,
          realized_pnl = ${botTable(bot, 'daily_perf')}.realized_pnl + $1`,
