@@ -1476,12 +1476,23 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
 
     if is_after_eod_cutoff(ct) or is_stale_holdover:
         close_reason = "stale_holdover" if is_stale_holdover else "eod_cutoff"
-        close_position(
-            bot, pos["position_id"], ticker, expiration,
-            num(pos["put_short_strike"]), num(pos["put_long_strike"]),
-            num(pos["call_short_strike"]), num(pos["call_long_strike"]),
-            contracts, entry_credit, collateral, close_reason,
-        )
+        try:
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+            )
+        except Exception as e:
+            # Fallback: close at entry credit (break-even) if Tradier/sandbox unavailable
+            log.warning(f"{bot['name'].upper()} Force-close failed, retrying at entry credit: {e}")
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+                close_price=entry_credit,
+            )
         return {"status": f"closed:{close_reason}", "unrealizedPnl": 0}
 
     if not is_tradier_configured():
@@ -1601,7 +1612,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # 0 = unlimited
 
     # Check 1: Already traded today? (max per-day limit from config, 0 = unlimited)
-    if max_trades_per_day > 0:
+    # When PDT is off, daily trade limit is also bypassed
+    if pdt_enabled and max_trades_per_day > 0:
         today_trades = db_query(f"""
             SELECT COUNT(*) as cnt
             FROM {bot_table(bot['name'], 'pdt_log')}

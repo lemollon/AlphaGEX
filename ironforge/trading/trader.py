@@ -188,11 +188,13 @@ class Trader:
                 return result
 
             # Step 5: Check trade count for today (multi-trade aware)
+            # When PDT is disabled, max_trades_per_day limit is also bypassed
             today_str = now.strftime("%Y-%m-%d")
             trades_today = self.db.get_trades_today_count(today_str)
             max_trades = self.config.max_trades_per_day  # 0 = unlimited
+            pdt_enabled = self.db.is_pdt_enabled()
 
-            if max_trades > 0 and trades_today >= max_trades:
+            if pdt_enabled and max_trades > 0 and trades_today >= max_trades:
                 # Already used all trade slots for today
                 open_positions = self.db.get_open_positions()
                 result["action"] = "max_trades"
@@ -208,7 +210,7 @@ class Trader:
                 return result
 
             # For single-trade bots: block if any position is still open
-            if max_trades == 1:
+            if max_trades == 1 and pdt_enabled:
                 open_positions = self.db.get_open_positions()
                 if open_positions:
                     result["action"] = "monitoring"
@@ -222,14 +224,15 @@ class Trader:
             # Step 7: PDT check
             # PDT applies to paper accounts. When paper is blocked,
             # sandbox doesn't fire either (sandbox mirrors paper).
-            can_trade, pdt_count, pdt_msg = self.can_trade_today()
-            if not can_trade:
-                result["action"] = "pdt_blocked"
-                result["details"]["reason"] = pdt_msg
-                self.db.log("SKIP", f"PDT blocked: {pdt_msg}")
-                self.db.update_heartbeat("active", "pdt_blocked")
-                self.last_scan_result = result
-                return result
+            if pdt_enabled:
+                can_trade, pdt_count, pdt_msg = self.can_trade_today()
+                if not can_trade:
+                    result["action"] = "pdt_blocked"
+                    result["details"]["reason"] = pdt_msg
+                    self.db.log("SKIP", f"PDT blocked: {pdt_msg}")
+                    self.db.update_heartbeat("active", "pdt_blocked")
+                    self.last_scan_result = result
+                    return result
 
             # Step 8: Check buying power
             account = self.db.get_paper_account()
@@ -308,13 +311,13 @@ class Trader:
             # Step 11: Race condition guard (multi-trade aware)
             current_open = len(self.db.get_open_positions())
             current_today = self.db.get_trades_today_count(today_str)
-            if self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
+            if pdt_enabled and self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Max trades reached (race guard)"
                 self.db.log("SKIP", "Max trades reached — aborting")
                 self.last_scan_result = result
                 return result
-            if self.config.max_trades_per_day == 1 and current_open > 0:
+            if pdt_enabled and self.config.max_trades_per_day == 1 and current_open > 0:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Position already exists (race guard)"
                 self.db.log("SKIP", "Position already open — aborting")
@@ -437,23 +440,32 @@ class Trader:
                 reason = (
                     "expired_previous_day" if is_expired else "stale_overnight_position"
                 )
-                close_price = self.signal_generator.get_ic_mark_to_market(
-                    put_short=position.put_short_strike,
-                    put_long=position.put_long_strike,
-                    call_short=position.call_short_strike,
-                    call_long=position.call_long_strike,
-                    expiration=position.expiration,
-                )
-                if close_price is None:
+                try:
+                    close_price = self.signal_generator.get_ic_mark_to_market(
+                        put_short=position.put_short_strike,
+                        put_long=position.put_long_strike,
+                        call_short=position.call_short_strike,
+                        call_long=position.call_long_strike,
+                        expiration=position.expiration,
+                    )
+                    if close_price is None:
+                        close_price = position.total_credit
+                except Exception:
                     close_price = position.total_credit
 
-                success, pnl = self.executor.close_paper_position(
-                    position, close_price, reason
-                )
-                if success:
-                    managed += 1
-                    total_pnl += pnl
-                    self._mtm_failure_counts.pop(position.position_id, None)
+                try:
+                    success, pnl = self.executor.close_paper_position(
+                        position, close_price, reason
+                    )
+                    if success:
+                        managed += 1
+                        total_pnl += pnl
+                        self._mtm_failure_counts.pop(position.position_id, None)
+                except Exception as e:
+                    logger.error(
+                        f"{self.config.bot_name}: Failed to close stale "
+                        f"position {position.position_id}: {e}"
+                    )
                 continue
 
             # Get current MTM
@@ -600,17 +612,20 @@ class Trader:
         return False
 
     def can_trade_today(self) -> Tuple[bool, int, str]:
-        """Pre-trade PDT + frequency check (multi-trade aware)."""
+        """Pre-trade PDT + frequency check (multi-trade aware).
+        Respects pdt_enabled from DB — when PDT is off, all limits are bypassed.
+        """
         now = datetime.now(CENTRAL_TZ)
         today_str = now.strftime("%Y-%m-%d")
+        pdt_enabled = self.db.is_pdt_enabled()
 
         trades_today = self.db.get_trades_today_count(today_str)
         max_trades = self.config.max_trades_per_day  # 0 = unlimited
-        if max_trades > 0 and trades_today >= max_trades:
+        if pdt_enabled and max_trades > 0 and trades_today >= max_trades:
             return False, -1, f"Already traded {trades_today}/{max_trades} today"
 
         count = self.db.get_day_trade_count_rolling_5_days()
-        if self.config.pdt_max_day_trades > 0 and count >= self.config.pdt_max_day_trades:
+        if pdt_enabled and self.config.pdt_max_day_trades > 0 and count >= self.config.pdt_max_day_trades:
             return (
                 False,
                 count,

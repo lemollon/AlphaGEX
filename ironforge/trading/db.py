@@ -502,6 +502,26 @@ class TradingDatabase:
             logger.error(f"{self.bot_name}: Failed to get PDT count: {e}")
             return 0
 
+    def is_pdt_enabled(self) -> bool:
+        """Check if PDT enforcement is enabled in the DB config table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT pdt_enabled FROM {self._t('pdt_config')}
+                    WHERE bot_name = %s LIMIT 1
+                """, [self.bot_name.upper()])
+                row = c.fetchone()
+                if row is None:
+                    return True  # default: PDT on
+                val = row[0]
+                if isinstance(val, bool):
+                    return val
+                return str(val).lower() not in ('false', 'f', '0', 'off')
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Failed to read pdt_enabled: {e}")
+            return True  # safe default
+
     def get_pdt_trigger_trades(self) -> List[Dict[str, Any]]:
         """Return the actual day trades in the rolling 5 biz day window with their dates
         and when each falls off (trade_date + 7 calendar days = exits the window)."""

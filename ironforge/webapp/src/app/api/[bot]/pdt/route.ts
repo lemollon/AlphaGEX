@@ -133,13 +133,33 @@ async function handleToggle(
     return await buildStatusResponse(bot, botName, dteMode(bot)!)
   }
 
-  // Update
-  await query(
-    `UPDATE ${botTable(bot, 'pdt_config')}
-     SET pdt_enabled = $1, updated_at = NOW()
-     WHERE bot_name = $2`,
-    [enabled, botName],
-  )
+  // Update — when turning OFF, also reset the counter so bots can trade immediately
+  if (enabled) {
+    await query(
+      `UPDATE ${botTable(bot, 'pdt_config')}
+       SET pdt_enabled = $1, updated_at = NOW()
+       WHERE bot_name = $2`,
+      [enabled, botName],
+    )
+  } else {
+    await query(
+      `UPDATE ${botTable(bot, 'pdt_config')}
+       SET pdt_enabled = $1, day_trade_count = 0,
+           last_reset_at = NOW(), last_reset_by = 'pdt_toggle_off',
+           updated_at = NOW()
+       WHERE bot_name = $2`,
+      [enabled, botName],
+    )
+    // Clear pdt_log flags (best-effort)
+    try {
+      await query(
+        `UPDATE ${botTable(bot, 'pdt_log')}
+         SET is_day_trade = FALSE
+         WHERE is_day_trade = TRUE AND dte_mode = $1`,
+        [dteMode(bot)!],
+      )
+    } catch { /* non-critical */ }
+  }
 
   // Audit log
   await query(
@@ -151,7 +171,7 @@ async function handleToggle(
       enabled ? 'toggle_on' : 'toggle_off',
       JSON.stringify({ pdt_enabled: current }),
       JSON.stringify({ pdt_enabled: enabled }),
-      'User toggled PDT enforcement',
+      enabled ? 'User toggled PDT enforcement on' : 'User toggled PDT off — counter auto-reset, unlimited trades enabled',
       'user',
     ],
   )

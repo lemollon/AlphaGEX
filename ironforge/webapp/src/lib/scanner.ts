@@ -202,12 +202,22 @@ async function monitorSinglePosition(
   const isStaleHoldover = openDate !== null && openDate < todayStr
 
   // EOD cutoff or stale holdover → force close
+  // Use entryCredit as fallback close price when Tradier data is unavailable (pre-market/pending)
   if (isAfterEodCutoff(ct) || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
-    await closePosition(bot, pos.position_id, ticker, expiration,
-      num(pos.put_short_strike), num(pos.put_long_strike),
-      num(pos.call_short_strike), num(pos.call_long_strike),
-      contracts, entryCredit, collateral, reason)
+    try {
+      await closePosition(bot, pos.position_id, ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        contracts, entryCredit, collateral, reason)
+    } catch (err: any) {
+      // Fallback: close at entry credit (break-even) if Tradier/sandbox unavailable
+      console.warn(`[scanner] ${bot.name.toUpperCase()}: Force-close failed, retrying at entry credit: ${err.message}`)
+      await closePosition(bot, pos.position_id, ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        contracts, entryCredit, collateral, reason, entryCredit)
+    }
     return { status: `closed:${reason}`, unrealizedPnl: 0 }
   }
 
@@ -445,8 +455,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
   const lastResetAt = pdtCfg?.last_reset_at ?? null
 
-  // Already traded today? (0 = unlimited)
-  if (maxTradesPerDay > 0) {
+  // Already traded today? (0 = unlimited, also unlimited when PDT is off)
+  if (pdtEnabled && maxTradesPerDay > 0) {
     const todayTrades = await query(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
