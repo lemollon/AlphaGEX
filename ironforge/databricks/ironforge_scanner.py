@@ -111,6 +111,11 @@ except NameError:
         "(not 'Python script') so Databricks injects the spark session."
     )
 
+# Fix CURRENT_DATE() / CURRENT_TIMESTAMP() to return Central Time (not UTC)
+if _HAS_SPARK:
+    spark.sql("SET TIME ZONE 'America/Chicago'")  # noqa: F821
+    log.info("Spark session timezone set to America/Chicago")
+
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
     """Execute a SQL query and return rows as list of dicts."""
