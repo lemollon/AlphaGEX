@@ -107,26 +107,23 @@ export default function StatusCard({
   }
 
   /* ---- Next-scan countdown timer ---- */
-  const [countdown, setCountdown] = useState<number | null>(
-    getSecondsUntilNextScan(data.last_scan),
-  )
+  const [countdown, setCountdown] = useState<number | null>(null)
 
-  /* ---- PT tier + next-tier countdown (ticks every 1s) ---- */
-  const [ptState, setPtState] = useState(() => {
-    const tier = getCurrentPTTier()
-    const next = secondsUntilNextTier()
-    const open = isMarketOpen()
-    return { tier, next, open }
-  })
+  /* ---- PT tier + next-tier countdown (initialized client-side to avoid hydration mismatch) ---- */
+  const [ptState, setPtState] = useState<{
+    tier: ReturnType<typeof getCurrentPTTier>
+    next: ReturnType<typeof secondsUntilNextTier>
+    open: boolean
+  } | null>(null)
 
-  // Re-sync when last_scan changes from parent SWR refresh
+  // Initialize on client + re-sync when last_scan changes
   useEffect(() => {
     setCountdown(getSecondsUntilNextScan(data.last_scan))
   }, [data.last_scan])
 
-  // Unified 1-second tick for scan countdown + PT state
+  // Initialize PT state + unified 1-second tick
   useEffect(() => {
-    const timer = setInterval(() => {
+    function tick() {
       setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0))
       const ctNow = getCTNow()
       setPtState({
@@ -134,7 +131,9 @@ export default function StatusCard({
         next: secondsUntilNextTier(ctNow),
         open: isMarketOpen(ctNow),
       })
-    }, 1000)
+    }
+    tick() // immediate first tick to initialize
+    const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
   }, [])
 
@@ -142,7 +141,7 @@ export default function StatusCard({
   const ageMin = scanAgeMinutes(data.last_scan)
   let healthDot = 'bg-gray-500'    // market closed default
   let healthTooltip = 'Market closed'
-  if (ptState.open) {
+  if (ptState?.open) {
     if (ageMin === null) {
       healthDot = 'bg-red-400'
       healthTooltip = 'Scanner status unknown'
@@ -229,7 +228,7 @@ export default function StatusCard({
         </span>
 
         {/* PT tier badge */}
-        {ptState.open ? (
+        {ptState?.open ? (
           <span
             className={`text-xs font-medium px-2 py-0.5 rounded ${ptState.tier.bgColor} ${ptState.tier.color}`}
           >
@@ -276,7 +275,7 @@ export default function StatusCard({
       </div>
 
       {/* PT next-tier countdown (small text below header) */}
-      {ptState.open && ptState.next && (
+      {ptState?.open && ptState.next && (
         <p className="text-[11px] text-forge-muted mb-3 -mt-2">
           {ptState.next.seconds > 0
             ? `PT drops to ${ptState.next.nextLabel} in ${formatCountdown(ptState.next.seconds)}`
