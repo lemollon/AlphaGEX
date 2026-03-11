@@ -1,5 +1,7 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+
 /* ------------------------------------------------------------------ */
 /*  PdtCalendar — Monthly visual showing which days a bot can trade    */
 /*  Shows business days only (Mon–Fri). Past = actual, Future = projected */
@@ -210,10 +212,16 @@ function dayLabel(kind: DayKind): string {
 /* ------------------------------------------------------------------ */
 
 export default function PdtCalendar({ status }: { status: PdtStatus }) {
-  const now = new Date()
-  const todayStr = now.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-  const todayDate = new Date(todayStr + 'T12:00:00')
+  const [todayStr, setTodayStr] = useState<string | null>(null)
 
+  useEffect(() => {
+    setTodayStr(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }))
+  }, [])
+
+  // Avoid hydration mismatch: render nothing until client-side date is resolved
+  if (!todayStr) return null
+
+  const todayDate = new Date(todayStr + 'T12:00:00')
   const weeks = buildFourWeekGrid(todayDate)
   const kinds = classifyDays(weeks, status, todayStr)
 
