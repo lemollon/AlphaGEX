@@ -445,8 +445,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
   const lastResetAt = pdtCfg?.last_reset_at ?? null
 
-  // Already traded today? (0 = unlimited)
-  if (maxTradesPerDay > 0) {
+  // Already traded today? (0 = unlimited, also unlimited when PDT is off)
+  if (pdtEnabled && maxTradesPerDay > 0) {
     const todayTrades = await query(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,

@@ -1601,7 +1601,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # 0 = unlimited
 
     # Check 1: Already traded today? (max per-day limit from config, 0 = unlimited)
-    if max_trades_per_day > 0:
+    # When PDT is off, daily trade limit is also bypassed
+    if pdt_enabled and max_trades_per_day > 0:
         today_trades = db_query(f"""
             SELECT COUNT(*) as cnt
             FROM {bot_table(bot['name'], 'pdt_log')}
