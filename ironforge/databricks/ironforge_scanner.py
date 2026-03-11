@@ -83,9 +83,9 @@ SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 
 # Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM)
 BOT_CONFIG = {
-    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},
-    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},
-    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 2.0, "entry_end": 1430, "max_trades": 0},  # 0 = unlimited
+    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},  # SL = 100% credit loss
+    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},  # SL = 100% credit loss
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0},  # SL = 200% credit loss, 0 = unlimited
 }
 
 BOTS = [
