@@ -338,18 +338,42 @@ class PaperExecutor:
                 f"(collateral: ${total_collateral:.2f})"
             )
 
-            # Mirror to all Tradier sandbox accounts.
-            # After mirroring, read back actual fill prices per account so the
-            # DB reflects what Tradier actually filled at (not our bid/ask estimate).
+            # FLAME: Tradier sandbox is SOURCE OF TRUTH (1:1 sync).
+            # Mirror to sandbox FIRST, wait for User fill, use that price.
+            # If User doesn't fill → abort (position already saved, will be cleaned up).
+            # SPARK/INFERNO: no sandbox mirroring.
             sandbox_info = {}
             actual_fill_credit = None
-            if self.sandbox_clients:
+            is_flame = self.config.bot_name == "FLAME"
+
+            if is_flame and self.sandbox_clients:
                 sandbox_info = self._mirror_open_to_all_sandboxes(position)
                 if sandbox_info:
                     self.db.update_sandbox_order_id(
                         position_id, json.dumps(sandbox_info)
                     )
                     actual_fill_credit = self._get_user_fill_price(sandbox_info)
+
+                if actual_fill_credit is None or actual_fill_credit <= 0:
+                    # FLAME: User sandbox didn't fill — abort trade
+                    logger.error(
+                        f"{self.config.bot_name}: Tradier User sandbox did not fill. "
+                        f"Removing paper position {position_id}."
+                    )
+                    self.db.close_position(
+                        position_id=position_id,
+                        close_price=signal.total_credit,
+                        realized_pnl=0.0,
+                        close_reason="sandbox_not_filled_abort",
+                    )
+                    self.db.update_paper_balance(
+                        collateral_change=-total_collateral,
+                    )
+                    self.db.log(
+                        "ERROR",
+                        f"FLAME 1:1 ABORT: {position_id} — User sandbox not filled",
+                    )
+                    return None
 
             # If we got an actual fill, update the position so the frontend
             # and P&L math use the real Tradier fill, not our bid/ask estimate.
@@ -424,11 +448,17 @@ class PaperExecutor:
         P&L = (credit received - debit to close) * 100 * contracts
         """
         try:
-            # Mirror close to Tradier sandbox accounts FIRST so we can read
-            # back the actual fill price before committing paper P&L.
+            # FLAME: Tradier sandbox is SOURCE OF TRUTH (1:1 sync).
+            #   - Close User sandbox first, WAIT for fill
+            #   - Use User fill price for paper P&L (overrides calculated MTM)
+            #   - Matt/Logan are best-effort
+            # SPARK/INFERNO: paper-only, no sandbox mirroring.
             sandbox_close_info = {}
             actual_close_price = None
-            if self.sandbox_clients:
+            is_flame = self.config.bot_name == "FLAME"
+            price_source = "calculated"
+
+            if is_flame and self.sandbox_clients:
                 sandbox_close_info = self._mirror_close_to_all_sandboxes(
                     position, close_price
                 )
@@ -437,17 +467,23 @@ class PaperExecutor:
                         sandbox_close_info
                     )
 
-            # Use Tradier's actual fill if available, otherwise fall back to
-            # the paper MTM estimate.
+            # FLAME 1:1: Use sandbox fill as paper close price.
+            # SPARK/INFERNO: Use calculated MTM.
             effective_close = close_price
-            if actual_close_price is not None and actual_close_price > 0:
+            if actual_close_price is not None and actual_close_price >= 0:
                 logger.info(
-                    f"{self.config.bot_name}: Actual sandbox close fill="
+                    f"{self.config.bot_name}: FLAME 1:1 close: using sandbox fill "
                     f"${actual_close_price:.4f} "
-                    f"(estimated=${close_price:.4f}, "
+                    f"(MTM was ${close_price:.4f}, "
                     f"diff={actual_close_price - close_price:+.4f})"
                 )
                 effective_close = actual_close_price
+                price_source = "sandbox_fill"
+            elif is_flame:
+                logger.warning(
+                    f"{self.config.bot_name}: FLAME close: User fill not available, "
+                    f"falling back to calculated MTM ${close_price:.4f}"
+                )
 
             pnl_per_contract = (position.total_credit - effective_close) * 100
             realized_pnl = round(pnl_per_contract * position.contracts, 2)
@@ -508,6 +544,11 @@ class PaperExecutor:
                 f"{sandbox_summary}"
             )
 
+            fill_delta_pct = (
+                round(abs(actual_close_price - close_price) / close_price * 100, 1)
+                if actual_close_price is not None and close_price > 0
+                else None
+            )
             self.db.log(
                 "TRADE_CLOSE",
                 f"Closed {position.position_id}: ${realized_pnl:.2f} [{reason}]"
@@ -517,6 +558,8 @@ class PaperExecutor:
                     "close_price_estimated": close_price,
                     "close_price_actual": actual_close_price,
                     "close_price": effective_close,
+                    "price_source": price_source,
+                    "fill_delta_pct": fill_delta_pct,
                     "realized_pnl": realized_pnl,
                     "close_reason": reason,
                     "entry_credit": position.total_credit,

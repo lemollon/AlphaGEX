@@ -448,12 +448,12 @@ class TradierClient:
         logger.warning(f"Spread close rejected: {buy_occ}/{sell_occ} [{status}]")
         return None
 
-    def get_order_fill_price(self, order_id: int) -> Optional[float]:
+    def get_order_fill_price(self, order_id: int, max_wait: int = 45) -> Optional[float]:
         """
         Query a sandbox order and return the average fill price.
 
-        Tries up to 3 times with 1-second delay between attempts,
-        because sandbox market orders may take a moment to fill.
+        Waits up to max_wait seconds with progressive backoff for the order
+        to fill.  FLAME depends on this for 1:1 paper↔sandbox sync.
 
         Returns the net credit received (positive) or None if not filled.
         """
@@ -464,10 +464,16 @@ class TradierClient:
             logger.warning("Cannot get fill price: no account ID")
             return None
 
-        for attempt in range(3):
+        backoff = [1, 2, 3, 5, 5, 5, 5, 5, 5, 5]  # ~44s total
+        elapsed = 0
+        for attempt, delay in enumerate(backoff):
+            if elapsed >= max_wait:
+                break
+
             data = self._get(f"/accounts/{account_id}/orders/{order_id}")
             if not data:
-                _time.sleep(1)
+                _time.sleep(delay)
+                elapsed += delay
                 continue
 
             order = data.get("order", {})
@@ -477,6 +483,10 @@ class TradierClient:
                 # For multileg orders, avg_fill_price is on the order level
                 avg_fill = order.get("avg_fill_price")
                 if avg_fill is not None:
+                    logger.info(
+                        f"Sandbox order {order_id} filled after {elapsed}s: "
+                        f"${abs(float(avg_fill)):.4f}"
+                    )
                     return abs(float(avg_fill))
 
                 # Fallback: calculate from leg fills
@@ -492,17 +502,24 @@ class TradierClient:
                             total += fill  # credit
                         else:
                             total -= fill  # debit
-                    return abs(total) if total != 0 else None
+                    if total != 0:
+                        return abs(total)
+                    return None
 
             if status in ("pending", "open", "partially_filled"):
-                _time.sleep(1)
+                logger.info(
+                    f"Sandbox order {order_id} still {status} after {elapsed}s "
+                    f"(attempt {attempt + 1}/{len(backoff)})"
+                )
+                _time.sleep(delay)
+                elapsed += delay
                 continue
 
             # rejected, canceled, expired — no fill
             logger.warning(f"Sandbox order {order_id} status={status}, no fill price")
             return None
 
-        logger.warning(f"Sandbox order {order_id} not filled after 3 attempts")
+        logger.warning(f"Sandbox order {order_id} not filled after {elapsed}s")
         return None
 
     def get_sandbox_positions(self) -> Optional[List[Dict]]:
