@@ -59,6 +59,12 @@ export default function PdtCard({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [confirmAction, setConfirmAction] = useState<'toggle_off' | 'reset' | null>(null)
+  const [todayStr, setTodayStr] = useState<string | null>(null)
+
+  // Resolve "today" on client only to avoid hydration mismatch
+  useEffect(() => {
+    setTodayStr(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }))
+  }, [])
 
   /* ---- Fetch PDT status ---- */
   const fetchStatus = useCallback(async () => {
@@ -335,9 +341,8 @@ export default function PdtCard({
                   month: 'short',
                   day: 'numeric',
                 })
-              // Highlight today's row
-              const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
-              const isToday = t.trade_date === today
+              // Highlight today's row (todayStr resolved in useEffect to avoid hydration mismatch)
+              const isToday = todayStr ? t.trade_date === todayStr : false
               return (
                 <div key={i} className={`text-xs rounded px-1.5 py-1 ${isToday ? 'bg-amber-500/10 border border-amber-500/30' : ''}`}>
                   <div className="flex items-center justify-between">
