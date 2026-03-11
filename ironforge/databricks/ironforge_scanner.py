@@ -1940,20 +1940,32 @@ def scan_bot(bot: dict) -> None:
 
     try:
         # Auto-decrement PDT counter: recount actual day trades in rolling window
+        # Respects manual resets: only counts trades AFTER last_reset_at
         try:
-            pdt_actual = db_query(f"""
-                SELECT COUNT(*) as cnt FROM {bot_table(bot['name'], 'pdt_log')}
-                WHERE is_day_trade = TRUE AND dte_mode = '{bot['dte']}'
-                  AND trade_date >= DATE_ADD(CURRENT_DATE(), -8)
-                  AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
-            """)
-            actual_count = to_int(pdt_actual[0]["cnt"]) if pdt_actual else 0
+            # Read last_reset_at so we don't overwrite manual resets
             pdt_cfg_row = db_query(f"""
-                SELECT day_trade_count FROM {shared_table('ironforge_pdt_config')}
+                SELECT day_trade_count, last_reset_at
+                FROM {shared_table('ironforge_pdt_config')}
                 WHERE bot_name = '{bot_name}'
                 LIMIT 1
             """)
             stored_count = to_int(pdt_cfg_row[0]["day_trade_count"]) if pdt_cfg_row else 0
+            last_reset_at = pdt_cfg_row[0].get("last_reset_at") if pdt_cfg_row else None
+
+            # Build the rolling window query: 5 business days = DATE_ADD(-6)
+            # Also filter by last_reset_at if a manual reset was performed
+            reset_filter = ""
+            if last_reset_at is not None:
+                reset_filter = f" AND closed_at >= CAST('{last_reset_at}' AS TIMESTAMP)"
+
+            pdt_actual = db_query(f"""
+                SELECT COUNT(*) as cnt FROM {bot_table(bot['name'], 'pdt_log')}
+                WHERE is_day_trade = TRUE AND dte_mode = '{bot['dte']}'
+                  AND trade_date >= DATE_ADD(CURRENT_DATE(), -6)
+                  AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+                  {reset_filter}
+            """)
+            actual_count = to_int(pdt_actual[0]["cnt"]) if pdt_actual else 0
             if stored_count != actual_count:
                 db_execute(f"""
                     UPDATE {shared_table('ironforge_pdt_config')}
