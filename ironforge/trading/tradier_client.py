@@ -280,15 +280,14 @@ class TradierClient:
         tag: str = "",
     ) -> Optional[Dict[str, Any]]:
         """
-        Close an Iron Condor by placing the opposite multileg order.
+        Close an Iron Condor with cascade fallback (from original scanner).
 
-        Sends a 4-leg debit order to close:
-          - Buy put_short  (buy to close)
-          - Sell put_long   (sell to close)
-          - Buy call_short  (buy to close)
-          - Sell call_long   (sell to close)
+        Cascade strategy:
+          1. Try 4-leg multileg close
+          2. If rejected → try 2×2-leg spread closes (put spread + call spread)
+          3. If rejected → try 4 individual leg closes
 
-        Returns: {"order_id": int, "status": str} or None on failure.
+        Returns: {"order_id": int/str, "status": str, "method": str} or None.
         """
         account_id = self.get_account_id()
         if not account_id:
@@ -300,6 +299,9 @@ class TradierClient:
         cs_occ = build_occ_symbol(ticker, expiration, call_short, "C")
         cl_occ = build_occ_symbol(ticker, expiration, call_long, "C")
 
+        tag_prefix = tag[:240] if tag else "CLOSE"
+
+        # ── Attempt 1: 4-leg multileg close ──
         order_data = {
             "class": "multileg",
             "symbol": ticker,
@@ -319,23 +321,132 @@ class TradierClient:
             "quantity[3]": str(contracts),
         }
         if tag:
+            order_data["tag"] = tag_prefix[:255]
+
+        result = self._post(f"/accounts/{account_id}/orders", data=order_data)
+        if result:
+            order = result.get("order", {})
+            order_id = order.get("id")
+            status = order.get("status", "unknown")
+            if order_id and status not in ("rejected", "error"):
+                logger.info(
+                    f"SANDBOX IC CLOSE [4-leg]: {ticker} {expiration} "
+                    f"{put_long}/{put_short}P-{call_short}/{call_long}C "
+                    f"x{contracts} → order_id={order_id} [{status}]"
+                )
+                return {"order_id": order_id, "status": status, "method": "4-leg"}
+            logger.warning(
+                f"SANDBOX IC CLOSE [4-leg] rejected ({status}), trying 2×2-leg"
+            )
+
+        # ── Attempt 2: 2×2-leg spread closes ──
+        put_result = self._close_spread(
+            account_id, ticker,
+            buy_occ=ps_occ, sell_occ=pl_occ,
+            contracts=contracts, tag=f"{tag_prefix}-PUT",
+        )
+        call_result = self._close_spread(
+            account_id, ticker,
+            buy_occ=cs_occ, sell_occ=cl_occ,
+            contracts=contracts, tag=f"{tag_prefix}-CALL",
+        )
+
+        if put_result and call_result:
+            combined_id = f"{put_result.get('order_id', '?')}+{call_result.get('order_id', '?')}"
+            logger.info(
+                f"SANDBOX IC CLOSE [2×2-leg]: {ticker} {expiration} "
+                f"put_order={put_result.get('order_id')} "
+                f"call_order={call_result.get('order_id')}"
+            )
+            return {"order_id": combined_id, "status": "filled", "method": "2x2-leg"}
+
+        logger.warning(
+            f"SANDBOX IC CLOSE [2×2-leg] failed "
+            f"(put={'OK' if put_result else 'FAIL'}, "
+            f"call={'OK' if call_result else 'FAIL'}), trying individual legs"
+        )
+
+        # ── Attempt 3: 4 individual leg closes ──
+        leg_results = []
+        for occ, side, label in [
+            (ps_occ, "buy_to_close", "PS"),
+            (pl_occ, "sell_to_close", "PL"),
+            (cs_occ, "buy_to_close", "CS"),
+            (cl_occ, "sell_to_close", "CL"),
+        ]:
+            leg_data = {
+                "class": "option",
+                "symbol": ticker,
+                "option_symbol": occ,
+                "side": side,
+                "quantity": str(contracts),
+                "type": "market",
+                "duration": "day",
+                "tag": f"{tag_prefix}-{label}"[:255],
+            }
+            leg_result = self._post(f"/accounts/{account_id}/orders", data=leg_data)
+            if leg_result:
+                order = leg_result.get("order", {})
+                leg_results.append(order.get("id", "?"))
+                logger.info(
+                    f"SANDBOX LEG CLOSE [{label}]: {occ} {side} → "
+                    f"order_id={order.get('id')} [{order.get('status')}]"
+                )
+            else:
+                leg_results.append(None)
+                logger.error(f"SANDBOX LEG CLOSE [{label}] FAILED: {occ}")
+
+        successful = [r for r in leg_results if r is not None]
+        if successful:
+            combined_id = "+".join(str(r) for r in successful)
+            logger.info(
+                f"SANDBOX IC CLOSE [individual]: {len(successful)}/4 legs closed"
+            )
+            return {"order_id": combined_id, "status": "partial" if len(successful) < 4 else "filled", "method": "individual"}
+
+        logger.error(
+            f"SANDBOX IC CLOSE: ALL methods failed for {ticker} {expiration}"
+        )
+        return None
+
+    def _close_spread(
+        self,
+        account_id: str,
+        ticker: str,
+        buy_occ: str,
+        sell_occ: str,
+        contracts: int,
+        tag: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """Close a single 2-leg spread (buy short + sell long)."""
+        order_data = {
+            "class": "multileg",
+            "symbol": ticker,
+            "type": "market",
+            "duration": "day",
+            "option_symbol[0]": buy_occ,
+            "side[0]": "buy_to_close",
+            "quantity[0]": str(contracts),
+            "option_symbol[1]": sell_occ,
+            "side[1]": "sell_to_close",
+            "quantity[1]": str(contracts),
+        }
+        if tag:
             order_data["tag"] = tag[:255]
 
         result = self._post(f"/accounts/{account_id}/orders", data=order_data)
         if not result:
-            logger.error(f"Sandbox IC close order failed for {ticker} {expiration}")
             return None
 
         order = result.get("order", {})
         order_id = order.get("id")
         status = order.get("status", "unknown")
 
-        logger.info(
-            f"SANDBOX IC CLOSE: {ticker} {expiration} "
-            f"{put_long}/{put_short}P-{call_short}/{call_long}C "
-            f"x{contracts} @ ${close_price:.2f} → order_id={order_id} [{status}]"
-        )
-        return {"order_id": order_id, "status": status}
+        if order_id and status not in ("rejected", "error"):
+            return {"order_id": order_id, "status": status}
+
+        logger.warning(f"Spread close rejected: {buy_occ}/{sell_occ} [{status}]")
+        return None
 
     def get_order_fill_price(self, order_id: int) -> Optional[float]:
         """

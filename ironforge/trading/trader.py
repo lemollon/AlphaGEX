@@ -71,7 +71,7 @@ class Trader:
         logger.info(
             f"{config.bot_name} initialized: capital=${config.starting_capital}, "
             f"DTE={config.min_dte}, PT={config.profit_target_pct}%, "
-            f"SL={config.stop_loss_pct}%, EOD={config.eod_cutoff_et} ET"
+            f"SL={config.stop_loss_pct}% ({config.stop_loss_pct/100:.1f}x), EOD={config.eod_cutoff_et} ET"
         )
 
         self._recover_orphaned_positions()
@@ -184,6 +184,20 @@ class Trader:
             if close_only:
                 result["action"] = "close_only"
                 self.db.update_heartbeat("active", "close_only")
+                self.last_scan_result = result
+                return result
+
+            # Step 4b: Check entry_end — block new entries past the per-bot cutoff
+            # (position management already ran in Step 1)
+            current_minutes = now.hour * 60 + now.minute
+            end_parts = self.config.entry_end.split(":")
+            end_minutes = int(end_parts[0]) * 60 + int(end_parts[1])
+            if current_minutes > end_minutes:
+                result["action"] = "past_entry_end"
+                result["details"]["reason"] = (
+                    f"Past entry cutoff ({self.config.entry_end} CT) — monitoring only"
+                )
+                self.db.update_heartbeat("active", "past_entry_end")
                 self.last_scan_result = result
                 return result
 
@@ -470,13 +484,14 @@ class Trader:
                     )
                 continue
 
-            # Get current MTM
+            # Get current MTM (with validation against entry credit)
             close_price = self.signal_generator.get_ic_mark_to_market(
                 put_short=position.put_short_strike,
                 put_long=position.put_long_strike,
                 call_short=position.call_short_strike,
                 call_long=position.call_long_strike,
                 expiration=position.expiration,
+                entry_credit=position.total_credit,
             )
 
             if close_price is None:
@@ -530,8 +545,8 @@ class Trader:
                     )
                 continue
 
-            # Stop loss (100%)
-            stop_loss_price = entry_credit * (1 + self.config.stop_loss_pct / 100)
+            # Stop loss — pct/100 = multiplier (100%=1.0x for FLAME/SPARK, 200%=2.0x for INFERNO)
+            stop_loss_price = entry_credit * (self.config.stop_loss_pct / 100)
             if close_price >= stop_loss_price:
                 success, pnl = self.executor.close_paper_position(
                     position, close_price, "stop_loss"
@@ -638,6 +653,8 @@ class Trader:
         The profit target slides DOWN as the day progresses — based on CURRENT
         time, not when the trade was opened.
 
+        Uses the original scanner formula: max(0.10, base_pt - offset)
+
         FLAME/SPARK (base 30%):
             8:30 AM – 10:29 AM  → 30%  (MORNING)
             10:30 AM – 12:59 PM → 20%  (MIDDAY)
@@ -645,20 +662,20 @@ class Trader:
 
         INFERNO (base 50%):
             8:30 AM – 10:29 AM  → 50%  (MORNING)
-            10:30 AM – 12:59 PM → 30%  (MIDDAY)
-            1:00 PM – 2:44 PM   → 10%  (AFTERNOON)
+            10:30 AM – 12:59 PM → 40%  (MIDDAY)
+            1:00 PM – 2:44 PM   → 35%  (AFTERNOON)
 
         2:45 PM+ → handled by EOD cutoff (close at any P&L)
         """
         time_minutes = ct_now.hour * 60 + ct_now.minute
-        is_inferno = self.config.bot_name == "INFERNO"
+        base_pt = self.config.profit_target_pct / 100.0  # 0.30 or 0.50
 
         if time_minutes < 630:       # before 10:30 AM CT
-            return (0.50 if is_inferno else 0.30), "MORNING"
+            return base_pt, "MORNING"
         elif time_minutes < 780:     # before 1:00 PM CT
-            return (0.30 if is_inferno else 0.20), "MIDDAY"
+            return max(0.10, base_pt - 0.10), "MIDDAY"
         else:
-            return (0.10 if is_inferno else 0.15), "AFTERNOON"
+            return max(0.10, base_pt - 0.15), "AFTERNOON"
 
     def _is_past_eod_cutoff(self, now: datetime) -> bool:
         """Check if past EOD cutoff (3:45 PM ET = 2:45 PM CT)."""
@@ -775,7 +792,7 @@ class Trader:
         now_ct = datetime.now(CENTRAL_TZ)
         pt_pct, pt_tier = self._get_sliding_profit_target(now_ct)
         profit_target_price = entry_credit * (1 - pt_pct)
-        stop_loss_price = entry_credit * (1 + self.config.stop_loss_pct / 100)
+        stop_loss_price = entry_credit * (self.config.stop_loss_pct / 100)
 
         pnl_per_contract = 0
         pnl_pct = 0
