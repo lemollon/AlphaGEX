@@ -282,8 +282,8 @@ async function ensureTables(): Promise<void> {
     // Seed PDT config if empty
     // INFERNO (0DTE) has PDT disabled (max_day_trades=0) and unlimited trades per day
     for (const [bot, dte, maxDT, maxPerDay] of [
-      ['flame', '2DTE', 4, 1],
-      ['spark', '1DTE', 4, 1],
+      ['flame', '2DTE', 3, 1],
+      ['spark', '1DTE', 3, 1],
       ['inferno', '0DTE', 0, 0],  // 0 = disabled/unlimited
     ] as const) {
       const pdtRes = await client.query(
@@ -299,17 +299,17 @@ async function ensureTables(): Promise<void> {
       }
     }
 
-    // Migrate PDT max_day_trades from 3 → 4 (match FINRA's actual 4-trade rule)
-    // Only for FLAME/SPARK — INFERNO should have 0 (disabled)
+    // Ensure PDT max_day_trades = 3 for FLAME/SPARK (broker-safe limit, under FINRA's 4)
+    // INFERNO should have 0 (disabled)
     for (const bot of ['flame', 'spark']) {
       try {
         await client.query(
-          `UPDATE ${bot}_pdt_config SET max_day_trades = 4 WHERE max_day_trades = 3`,
+          `UPDATE ${bot}_pdt_config SET max_day_trades = 3 WHERE max_day_trades NOT IN (0, 3)`,
         )
       } catch { /* ignore if table doesn't exist yet */ }
       try {
         await client.query(
-          `UPDATE ${bot}_config SET pdt_max_day_trades = 4 WHERE pdt_max_day_trades = 3`,
+          `UPDATE ${bot}_config SET pdt_max_day_trades = 3 WHERE pdt_max_day_trades NOT IN (0, 3)`,
         )
       } catch { /* ignore if table doesn't exist yet */ }
     }
@@ -325,6 +325,57 @@ async function ensureTables(): Promise<void> {
         `UPDATE inferno_config SET pdt_max_day_trades = 0 WHERE pdt_max_day_trades > 0`,
       )
     } catch { /* ignore if table doesn't exist yet */ }
+
+    // PDT cleanup on startup: clear stale is_day_trade flags outside the rolling
+    // 6-day window, and reconcile pdt_config.day_trade_count to match reality.
+    // Also clear orphan pdt_log entries that have no matching position.
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+      try {
+        // 1. Clear is_day_trade flags for entries outside the 6-day rolling window
+        //    These should never count — they're expired from the window.
+        await client.query(
+          `UPDATE ${bot}_pdt_log
+           SET is_day_trade = FALSE
+           WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND trade_date < CURRENT_DATE - INTERVAL '6 days'`,
+          [dte],
+        )
+
+        // 2. Clear is_day_trade flags for orphan pdt_log entries that have no
+        //    matching closed position (phantom entries from failed trades)
+        await client.query(
+          `UPDATE ${bot}_pdt_log pl
+           SET is_day_trade = FALSE
+           WHERE pl.is_day_trade = TRUE AND pl.dte_mode = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM ${bot}_positions p
+               WHERE p.position_id = pl.position_id
+                 AND p.status IN ('closed', 'expired')
+                 AND p.dte_mode = $1
+             )`,
+          [dte],
+        )
+
+        // 3. Reconcile pdt_config counter to match actual pdt_log count
+        const countRes = await client.query(
+          `SELECT COUNT(*) as cnt FROM ${bot}_pdt_log
+           WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+             AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+          [dte],
+        )
+        const realCount = parseInt(countRes.rows[0]?.cnt ?? '0', 10)
+        await client.query(
+          `UPDATE ${bot}_pdt_config
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [realCount, bot.toUpperCase()],
+        )
+        console.log(`  PDT cleanup: ${bot.toUpperCase()} day_trade_count → ${realCount}`)
+      } catch (err) {
+        console.warn(`  PDT cleanup for ${bot} failed:`, err)
+      }
+    }
 
     tablesReady = true
 

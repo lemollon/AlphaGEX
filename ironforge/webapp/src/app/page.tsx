@@ -82,7 +82,7 @@ const sharedConfig = {
   vixSkipThreshold: 32,
   minCredit: '$0.05',
   buyingPowerUsage: '85%',
-  pdtLimit: '3 / 5 days',
+  pdtLimit: '3 / 5 rolling days',
   eodCutoff: '2:45 PM CT',
   entryWindow: '8:30 AM – 2:00 PM CT',
   scanFrequency: 'Every 1 min',
@@ -315,7 +315,7 @@ export default function Home() {
             { step: '1', title: 'Market Data', desc: 'SPY spot + VIX from Tradier production API', icon: '&#9673;' },
             { step: '2', title: 'Filter Gates', desc: 'VIX < 32, not max trades, PDT compliant, within window', icon: '&#9670;' },
             { step: '3', title: 'Strike Calc', desc: 'SD-based strikes, $5 wings, real option chain credits', icon: '&#9651;' },
-            { step: '4', title: 'Execute', desc: 'Size position, log to PostgreSQL, monitor MTM every 1 min', icon: '&#9632;' },
+            { step: '4', title: 'Execute', desc: 'Size position, log to Delta Lake, monitor MTM every 1 min', icon: '&#9632;' },
           ].map((s) => (
             <div key={s.step} className="rounded-xl border border-forge-border bg-forge-card/40 p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -389,7 +389,7 @@ export default function Home() {
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Storage</p>
-          <p className="font-medium">PostgreSQL</p>
+          <p className="font-medium">Delta Lake</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Ticker</p>

@@ -208,32 +208,39 @@ async function handleReset(
 ): Promise<NextResponse> {
   const dte = dteMode(bot)!
 
-  // Count actual day trades from pdt_log (source of truth)
+  // Count ALL is_day_trade = TRUE entries (not just 6-day window) to detect stale data
   const countRows = await query(
+    `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
+     WHERE is_day_trade = TRUE AND dte_mode = $1`,
+    [dte],
+  )
+  const totalFlagged = parseInt(countRows[0]?.cnt ?? '0', 10)
+
+  // Count only those in the 6-day window (for audit)
+  const windowRows = await query(
     `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
      WHERE is_day_trade = TRUE AND dte_mode = $1
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
     [dte],
   )
-  const currentCount = parseInt(countRows[0]?.cnt ?? '0', 10)
+  const windowCount = parseInt(windowRows[0]?.cnt ?? '0', 10)
 
   // No-op if already 0
-  if (currentCount === 0) {
+  if (totalFlagged === 0) {
     return fetchAndReturnStatus(bot, botName)
   }
 
-  // Clear is_day_trade flags in pdt_log so trader.py also sees the reset
+  // Clear ALL is_day_trade flags — both in-window and stale entries.
+  // This prevents old entries from re-entering the window through bugs.
   await query(
     `UPDATE ${botTable(bot, 'pdt_log')}
      SET is_day_trade = FALSE
-     WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
-     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+     WHERE is_day_trade = TRUE AND dte_mode = $1`,
     [dte],
   )
 
-  // Also zero the config counter (keeps display consistent)
+  // Zero the config counter
   await query(
     `UPDATE ${botTable(bot, 'pdt_config')}
      SET day_trade_count = 0,
@@ -252,9 +259,9 @@ async function handleReset(
     [
       botName,
       'reset',
-      JSON.stringify({ day_trade_count: currentCount, pdt_log_cleared: true }),
+      JSON.stringify({ day_trade_count: windowCount, total_flagged: totalFlagged, pdt_log_cleared: true }),
       JSON.stringify({ day_trade_count: 0 }),
-      'Manual reset by user — cleared is_day_trade flags in pdt_log',
+      `Manual reset — cleared ${totalFlagged} is_day_trade flags (${windowCount} in window, ${totalFlagged - windowCount} stale)`,
       'user',
     ],
   )
@@ -267,18 +274,29 @@ async function handleReset(
 /* ------------------------------------------------------------------ */
 
 async function getTriggerTrades(bot: string, dte: string) {
+  // Return individual day trades with position_ids for diagnostics
   const rows = await query(
-    `SELECT DISTINCT trade_date FROM ${botTable(bot, 'pdt_log')}
+    `SELECT trade_date, position_id FROM ${botTable(bot, 'pdt_log')}
      WHERE is_day_trade = TRUE AND dte_mode = $1
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
      ORDER BY trade_date ASC`,
     [dte],
   )
-  return rows.map((r: any) => {
+  // Group by trade_date (multiple trades on same day count as 1 for display)
+  const byDate = new Map<string, string[]>()
+  for (const r of rows) {
     const td = typeof r.trade_date === 'string'
       ? new Date(r.trade_date + 'T00:00:00')
       : new Date(r.trade_date)
+    const dateStr = td.toISOString().split('T')[0]
+    const existing = byDate.get(dateStr) || []
+    existing.push(r.position_id || 'unknown')
+    byDate.set(dateStr, existing)
+  }
+
+  return Array.from(byDate.entries()).map(([dateStr, posIds]) => {
+    const td = new Date(dateStr + 'T00:00:00')
     // Trade exits window after 7 calendar days (trade_date + 7)
     const fallsOff = new Date(td)
     fallsOff.setDate(fallsOff.getDate() + 7)
@@ -287,8 +305,9 @@ async function getTriggerTrades(bot: string, dte: string) {
     if (dow === 0) fallsOff.setDate(fallsOff.getDate() + 1)  // Sun → Mon
     if (dow === 6) fallsOff.setDate(fallsOff.getDate() + 2)  // Sat → Mon
     return {
-      trade_date: td.toISOString().split('T')[0],
+      trade_date: dateStr,
       falls_off: fallsOff.toISOString().split('T')[0],
+      position_ids: posIds,
     }
   })
 }

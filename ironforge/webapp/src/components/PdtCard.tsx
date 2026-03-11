@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react'
 interface TriggerTrade {
   trade_date: string
   falls_off: string
+  position_ids?: string[]
 }
 
 interface PdtStatus {
@@ -313,13 +314,20 @@ export default function PdtCard({
                   day: 'numeric',
                 })
               return (
-                <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-white font-mono">
-                    #{i + 1} {fmtDate(td)}
-                  </span>
-                  <span className="text-forge-muted">
-                    slot opens <span className="text-emerald-400">{fmtDate(fo)}</span>
-                  </span>
+                <div key={i} className="text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-white font-mono">
+                      #{i + 1} {fmtDate(td)}
+                    </span>
+                    <span className="text-forge-muted">
+                      slot opens <span className="text-emerald-400">{fmtDate(fo)}</span>
+                    </span>
+                  </div>
+                  {t.position_ids && t.position_ids.length > 0 && (
+                    <div className="text-[10px] text-forge-muted mt-0.5 pl-4 font-mono">
+                      {t.position_ids.join(', ')}
+                    </div>
+                  )}
                 </div>
               )
             })}
