@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import PdtCalendar from './PdtCalendar'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -369,6 +370,11 @@ export default function PdtCard({
           )}
         </div>
       )}
+
+      {/* 4-Week Trading Calendar */}
+      <div className="mb-3">
+        <PdtCalendar status={status} />
+      </div>
 
       {/* Reset button + last reset */}
       <div className="flex items-center justify-between">
