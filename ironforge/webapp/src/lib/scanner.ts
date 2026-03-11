@@ -433,14 +433,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // PDT config check — read enforcement state from pdt_config table
   const pdtConfigRows = await query(
-    `SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
+    `SELECT pdt_enabled, max_day_trades, max_trades_per_day
      FROM ${botTable(bot.name, 'pdt_config')}
      WHERE bot_name = $1 LIMIT 1`,
     [bot.name.toUpperCase()],
   )
   const pdtCfg = pdtConfigRows[0]
   const pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
-  const pdtCount = int(pdtCfg?.day_trade_count)
   // 0 = disabled/unlimited, so don't fall back to a positive number
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
@@ -455,9 +454,20 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
   }
 
-  // PDT rolling window check (only if enforcement is ON and limit > 0)
-  if (pdtEnabled && maxDayTrades > 0 && pdtCount >= maxDayTrades) {
-    return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
+  // PDT rolling window check — live COUNT from pdt_log (source of truth)
+  // Must match the 6-day window used by the /api/[bot]/pdt route and Python trader
+  if (pdtEnabled && maxDayTrades > 0) {
+    const liveCountRows = await query(
+      `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+       WHERE is_day_trade = TRUE AND dte_mode = $1
+         AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+         AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+      [bot.dte],
+    )
+    const pdtCount = int(liveCountRows[0]?.cnt)
+    if (pdtCount >= maxDayTrades) {
+      return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
+    }
   }
 
   // Get account
@@ -681,7 +691,7 @@ async function scanBot(bot: BotDef): Promise<void> {
       const pdtActual = await query(
         `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
          WHERE is_day_trade = TRUE AND dte_mode = $1
-           AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+           AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
            AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
         [bot.dte],
       )

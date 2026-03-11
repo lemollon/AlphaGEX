@@ -282,8 +282,8 @@ async function ensureTables(): Promise<void> {
     // Seed PDT config if empty
     // INFERNO (0DTE) has PDT disabled (max_day_trades=0) and unlimited trades per day
     for (const [bot, dte, maxDT, maxPerDay] of [
-      ['flame', '2DTE', 4, 1],
-      ['spark', '1DTE', 4, 1],
+      ['flame', '2DTE', 3, 1],
+      ['spark', '1DTE', 3, 1],
       ['inferno', '0DTE', 0, 0],  // 0 = disabled/unlimited
     ] as const) {
       const pdtRes = await client.query(
@@ -299,17 +299,17 @@ async function ensureTables(): Promise<void> {
       }
     }
 
-    // Migrate PDT max_day_trades from 3 → 4 (match FINRA's actual 4-trade rule)
-    // Only for FLAME/SPARK — INFERNO should have 0 (disabled)
+    // Ensure PDT max_day_trades = 3 for FLAME/SPARK (broker-safe limit, under FINRA's 4)
+    // INFERNO should have 0 (disabled)
     for (const bot of ['flame', 'spark']) {
       try {
         await client.query(
-          `UPDATE ${bot}_pdt_config SET max_day_trades = 4 WHERE max_day_trades = 3`,
+          `UPDATE ${bot}_pdt_config SET max_day_trades = 3 WHERE max_day_trades NOT IN (0, 3)`,
         )
       } catch { /* ignore if table doesn't exist yet */ }
       try {
         await client.query(
-          `UPDATE ${bot}_config SET pdt_max_day_trades = 4 WHERE pdt_max_day_trades = 3`,
+          `UPDATE ${bot}_config SET pdt_max_day_trades = 3 WHERE pdt_max_day_trades NOT IN (0, 3)`,
         )
       } catch { /* ignore if table doesn't exist yet */ }
     }

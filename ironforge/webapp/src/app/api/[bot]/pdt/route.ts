@@ -267,18 +267,29 @@ async function handleReset(
 /* ------------------------------------------------------------------ */
 
 async function getTriggerTrades(bot: string, dte: string) {
+  // Return individual day trades with position_ids for diagnostics
   const rows = await query(
-    `SELECT DISTINCT trade_date FROM ${botTable(bot, 'pdt_log')}
+    `SELECT trade_date, position_id FROM ${botTable(bot, 'pdt_log')}
      WHERE is_day_trade = TRUE AND dte_mode = $1
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
      ORDER BY trade_date ASC`,
     [dte],
   )
-  return rows.map((r: any) => {
+  // Group by trade_date (multiple trades on same day count as 1 for display)
+  const byDate = new Map<string, string[]>()
+  for (const r of rows) {
     const td = typeof r.trade_date === 'string'
       ? new Date(r.trade_date + 'T00:00:00')
       : new Date(r.trade_date)
+    const dateStr = td.toISOString().split('T')[0]
+    const existing = byDate.get(dateStr) || []
+    existing.push(r.position_id || 'unknown')
+    byDate.set(dateStr, existing)
+  }
+
+  return Array.from(byDate.entries()).map(([dateStr, posIds]) => {
+    const td = new Date(dateStr + 'T00:00:00')
     // Trade exits window after 7 calendar days (trade_date + 7)
     const fallsOff = new Date(td)
     fallsOff.setDate(fallsOff.getDate() + 7)
@@ -287,8 +298,9 @@ async function getTriggerTrades(bot: string, dte: string) {
     if (dow === 0) fallsOff.setDate(fallsOff.getDate() + 1)  // Sun → Mon
     if (dow === 6) fallsOff.setDate(fallsOff.getDate() + 2)  // Sat → Mon
     return {
-      trade_date: td.toISOString().split('T')[0],
+      trade_date: dateStr,
       falls_off: fallsOff.toISOString().split('T')[0],
+      position_ids: posIds,
     }
   })
 }
