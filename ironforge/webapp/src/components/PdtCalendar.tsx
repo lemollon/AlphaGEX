@@ -77,25 +77,15 @@ function classifyDays(
   // Set of dates where trades actually happened
   const tradedDates = new Set(status.trigger_trades.map(t => t.trade_date))
 
-  // For future projection, simulate the rolling window
-  // Collect all trade dates (past + today) as a sorted list
-  const allTradeDates = Array.from(tradedDates)
+  // Actual trade dates including today if traded
+  const actualTradeDates = Array.from(tradedDates)
   if (status.traded_today && !tradedDates.has(todayStr)) {
-    allTradeDates.push(todayStr)
+    actualTradeDates.push(todayStr)
   }
-  allTradeDates.sort()
+  actualTradeDates.sort()
 
-  // Simulate forward: for each future day, check how many trades fall in its
-  // trailing 5-business-day window. If >= max, it's blocked.
   const max = status.max_day_trades
-
-  // Build list of all days in the grid
   const allDays = weeks.flat()
-
-  // For projection: we'll track which dates are "simulated trades"
-  // Past dates: use actual data
-  // Future dates: assume the bot trades whenever it can (greedy projection)
-  const simulatedTrades = new Set(allTradeDates)
 
   for (const day of allDays) {
     const ds = dateStr(day)
@@ -107,10 +97,10 @@ function classifyDays(
     }
 
     if (ds < todayStr) {
-      // Past day
+      // Past day — show what actually happened
       result.set(ds, tradedDates.has(ds) ? 'traded' : 'skipped')
     } else if (ds === todayStr) {
-      // Today
+      // Today — live status from API
       if (!status.pdt_enabled) {
         result.set(ds, status.traded_today ? 'today_traded' : 'today_open')
       } else if (status.traded_today) {
@@ -121,17 +111,18 @@ function classifyDays(
         result.set(ds, 'today_open')
       }
     } else {
-      // Future day: project based on rolling window
+      // Future day — only count ACTUAL trades in its rolling window
+      // No greedy simulation: we don't assume the bot will trade
       if (!status.pdt_enabled) {
         result.set(ds, 'available')
         continue
       }
 
-      // Count trades in 5-business-day trailing window for this date
+      // Count actual trades that fall within this day's trailing window
       const windowStart = getBusinessDaysBefore(day, status.window_days)
       const windowStartStr = dateStr(windowStart)
       let tradesInWindow = 0
-      Array.from(simulatedTrades).forEach(td => {
+      actualTradeDates.forEach(td => {
         if (td >= windowStartStr && td <= ds) {
           tradesInWindow++
         }
@@ -141,8 +132,6 @@ function classifyDays(
         result.set(ds, 'blocked')
       } else {
         result.set(ds, 'available')
-        // Greedy: assume bot will trade this day (for projection)
-        simulatedTrades.add(ds)
       }
     }
   }
