@@ -187,14 +187,15 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 5: Check trade count for today (multi-trade aware)
-            # When PDT is disabled, max_trades_per_day limit is also bypassed
+            # Step 5: Check trade count for today (ALWAYS enforced —
+            # daily cap is independent of PDT on/off. PDT only gates
+            # the rolling 5-day window check in Step 7.)
             today_str = now.strftime("%Y-%m-%d")
             trades_today = self.db.get_trades_today_count(today_str)
             max_trades = self.config.max_trades_per_day  # 0 = unlimited
             pdt_enabled = self.db.is_pdt_enabled()
 
-            if pdt_enabled and max_trades > 0 and trades_today >= max_trades:
+            if max_trades > 0 and trades_today >= max_trades:
                 # Already used all trade slots for today
                 open_positions = self.db.get_open_positions()
                 result["action"] = "max_trades"
@@ -210,7 +211,7 @@ class Trader:
                 return result
 
             # For single-trade bots: block if any position is still open
-            if max_trades == 1 and pdt_enabled:
+            if max_trades == 1:
                 open_positions = self.db.get_open_positions()
                 if open_positions:
                     result["action"] = "monitoring"
@@ -221,9 +222,8 @@ class Trader:
                     self.last_scan_result = result
                     return result
 
-            # Step 7: PDT check
-            # PDT applies to paper accounts. When paper is blocked,
-            # sandbox doesn't fire either (sandbox mirrors paper).
+            # Step 7: PDT rolling window check (only when PDT enabled)
+            pdt_count = 0
             if pdt_enabled:
                 can_trade, pdt_count, pdt_msg = self.can_trade_today()
                 if not can_trade:
@@ -308,16 +308,16 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 11: Race condition guard (multi-trade aware)
+            # Step 11: Race condition guard (independent of PDT)
             current_open = len(self.db.get_open_positions())
             current_today = self.db.get_trades_today_count(today_str)
-            if pdt_enabled and self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
+            if self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Max trades reached (race guard)"
                 self.db.log("SKIP", "Max trades reached — aborting")
                 self.last_scan_result = result
                 return result
-            if pdt_enabled and self.config.max_trades_per_day == 1 and current_open > 0:
+            if self.config.max_trades_per_day == 1 and current_open > 0:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Position already exists (race guard)"
                 self.db.log("SKIP", "Position already open — aborting")
@@ -384,6 +384,8 @@ class Trader:
         finally:
             # Save an equity snapshot every cycle so intraday chart has 1-min data
             self._save_periodic_snapshot(result.get("action", "unknown"))
+            # Compute sleep hint so the job runner can back off when idle
+            result["sleep_hint"] = self._compute_sleep_hint(result)
 
     def _save_periodic_snapshot(self, action: str):
         """Save an equity snapshot every cycle for intraday chart continuity."""
@@ -567,6 +569,66 @@ class Trader:
             return False, "Past EOD cutoff (2:45 PM CT)"
 
         return True, "In trading window"
+
+    def _compute_sleep_hint(self, result: Dict[str, Any]) -> int:
+        """
+        Return how many seconds the runner should sleep before the next cycle.
+
+        Checks trade count directly — works regardless of PDT on/off.
+
+        Phases:
+          - Before market: sleep until entry window opens
+          - After EOD: sleep until tomorrow
+          - Bot disabled: check every 5 min
+          - Max trades hit + no open positions: done, sleep until tomorrow
+          - Max trades hit + positions open: monitoring, 60s
+          - Unlimited trades (INFERNO): always 60s during market hours
+          - Everything else (scanning, monitoring): 60s
+        """
+        action = result.get("action", "unknown")
+        now = datetime.now(CENTRAL_TZ)
+        current_minutes = now.hour * 60 + now.minute
+
+        start_parts = self.config.entry_start.split(":")
+        start_minutes = int(start_parts[0]) * 60 + int(start_parts[1])
+
+        if action == "outside_window":
+            if current_minutes < start_minutes:
+                # Before market — sleep until 5 min before entry window
+                wait = max((start_minutes - current_minutes - 5) * 60, 60)
+                return wait
+            else:
+                # After EOD — done for the day
+                return self._seconds_until_tomorrow(start_minutes - 5)
+
+        if action == "inactive":
+            return 300  # Check every 5 min in case user re-enables
+
+        # Check if this bot has a daily trade limit and has used it up.
+        # This works whether PDT is on or off — max_trades_per_day is a
+        # bot config constraint independent of the PDT rolling window.
+        max_trades = self.config.max_trades_per_day  # 0 = unlimited
+        if max_trades > 0:
+            today_str = now.strftime("%Y-%m-%d")
+            trades_today = self.db.get_trades_today_count(today_str)
+            if trades_today >= max_trades:
+                open_count = len(self.db.get_open_positions())
+                if open_count > 0:
+                    return 60  # Still monitoring for exit
+                else:
+                    # Fully done — traded and closed. Sleep until tomorrow.
+                    return self._seconds_until_tomorrow(start_minutes - 5)
+
+        # Everything else: scanning, monitoring, position open, no_signal, error
+        return 60
+
+    def _seconds_until_tomorrow(self, target_minutes: int) -> int:
+        """Seconds from now until target_minutes (in CT) tomorrow."""
+        now = datetime.now(CENTRAL_TZ)
+        current_minutes = now.hour * 60 + now.minute
+        # Minutes until midnight + minutes into tomorrow
+        remaining_today = (24 * 60) - current_minutes
+        return (remaining_today + target_minutes) * 60
 
     def _get_sliding_profit_target(self, ct_now: datetime) -> Tuple[float, str]:
         """

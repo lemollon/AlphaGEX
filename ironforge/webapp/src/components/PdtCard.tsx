@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import PdtCalendar from './PdtCalendar'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -15,6 +16,7 @@ interface TriggerTrade {
 interface PdtStatus {
   bot_name: string
   pdt_enabled: boolean
+  pdt_status: 'BLOCKED' | 'CAN_TRADE' | 'TRADED_TODAY' | 'PDT_OFF'
   day_trade_count: number
   max_day_trades: number
   trades_remaining: number
@@ -28,6 +30,7 @@ interface PdtStatus {
   block_reason: string | null
   trigger_trades: TriggerTrade[]
   next_slot_opens: string | null
+  next_available_date: string | null
 }
 
 interface AuditEntry {
@@ -79,10 +82,10 @@ export default function PdtCard({
     } catch {}
   }, [bot])
 
-  // Initial fetch + 15s polling
+  // Initial fetch + 60s polling (PDT status only changes when a trade executes)
   useEffect(() => {
     fetchStatus()
-    const timer = setInterval(fetchStatus, 15_000)
+    const timer = setInterval(fetchStatus, 60_000)
     return () => clearInterval(timer)
   }, [fetchStatus])
 
@@ -169,17 +172,36 @@ export default function PdtCard({
   let statusText: string
   let statusClass: string
 
-  if (!status.pdt_enabled) {
+  // Format next_available_date for inline display
+  const nextDateFormatted = status.next_available_date
+    ? new Date(status.next_available_date + 'T12:00:00').toLocaleDateString('en-US', {
+        timeZone: 'America/Chicago',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null
+
+  const pdtStatus = status.pdt_status
+  const remaining = status.trades_remaining ?? (max - count)
+
+  if (pdtStatus === 'PDT_OFF') {
     statusIcon = '\u26A0\uFE0F'
-    statusText = 'PDT BYPASSED \u2014 trading unrestricted'
+    statusText = 'PDT OFF \u2014 Unlimited trading, counter auto-resets on toggle'
     statusClass = 'text-amber-400'
-  } else if (status.is_blocked) {
+  } else if (pdtStatus === 'BLOCKED') {
     statusIcon = '\uD83D\uDD34'
-    statusText = `BLOCKED \u2014 ${status.block_reason}`
+    statusText = nextDateFormatted
+      ? `BLOCKED \u2014 ${count}/${max} day trades used. Next slot opens ${nextDateFormatted}`
+      : `BLOCKED \u2014 ${count}/${max} day trades used`
     statusClass = 'text-red-400'
+  } else if (pdtStatus === 'TRADED_TODAY') {
+    statusIcon = '\uD83D\uDFE1'
+    statusText = `TRADED TODAY \u2014 ${count}/${max} day trades used, next trade tomorrow`
+    statusClass = 'text-amber-300'
   } else {
     statusIcon = '\u2705'
-    statusText = 'CAN TRADE'
+    statusText = `CLEAR \u2014 ${count}/${max} day trades used, ${remaining} remaining`
     statusClass = 'text-emerald-400'
   }
 
@@ -313,11 +335,14 @@ export default function PdtCard({
                   month: 'short',
                   day: 'numeric',
                 })
+              // Highlight today's row
+              const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+              const isToday = t.trade_date === today
               return (
-                <div key={i} className="text-xs">
+                <div key={i} className={`text-xs rounded px-1.5 py-1 ${isToday ? 'bg-amber-500/10 border border-amber-500/30' : ''}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-white font-mono">
-                      #{i + 1} {fmtDate(td)}
+                      #{i + 1} {fmtDate(td)}{isToday ? ' (today)' : ''}
                     </span>
                     <span className="text-forge-muted">
                       slot opens <span className="text-emerald-400">{fmtDate(fo)}</span>
@@ -332,11 +357,11 @@ export default function PdtCard({
               )
             })}
           </div>
-          {status.next_slot_opens && count >= max && (
+          {status.next_available_date && status.is_blocked && (
             <div className="mt-2 pt-2 border-t border-forge-border/30 text-[11px] text-amber-400">
               Next available trade:{' '}
               <span className="text-emerald-400 font-medium">
-                {new Date(status.next_slot_opens + 'T12:00:00').toLocaleDateString('en-US', {
+                {new Date(status.next_available_date + 'T12:00:00').toLocaleDateString('en-US', {
                   timeZone: 'America/Chicago',
                   weekday: 'long',
                   month: 'short',
@@ -348,13 +373,18 @@ export default function PdtCard({
         </div>
       )}
 
+      {/* 4-Week Trading Calendar */}
+      <div className="mb-3">
+        <PdtCalendar status={status} />
+      </div>
+
       {/* Reset button + last reset */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => setConfirmAction('reset')}
-          disabled={loading || count === 0}
+          disabled={loading || count === 0 || !status.pdt_enabled}
           className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-            count === 0
+            count === 0 || !status.pdt_enabled
               ? 'border-forge-border text-gray-600 cursor-not-allowed'
               : 'border-forge-border text-gray-300 hover:text-white hover:border-gray-500'
           }`}

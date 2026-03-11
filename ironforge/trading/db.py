@@ -27,6 +27,12 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# SQL expression for "today" in Central Time.
+# PostgreSQL on Render runs UTC — CURRENT_DATE returns the UTC date, which is
+# wrong after 7 PM CT (midnight UTC).  This expression converts the current
+# timestamp to America/Chicago before extracting the date component.
+CT_TODAY = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date"
+
 
 class TradingDatabase:
     """Unified database operations for both FLAME and SPARK on PostgreSQL."""
@@ -415,7 +421,7 @@ class TradingDatabase:
                 c = conn.cursor()
                 c.execute(f"""
                     SELECT COUNT(*) FROM {self._t('positions')}
-                    WHERE open_time::date = %s AND dte_mode = %s
+                    WHERE (open_time AT TIME ZONE 'America/Chicago')::date = %s AND dte_mode = %s
                 """, [date, self.dte_mode])
                 return c.fetchone()[0] > 0
         except Exception:
@@ -427,7 +433,7 @@ class TradingDatabase:
                 c = conn.cursor()
                 c.execute(f"""
                     SELECT COUNT(*) FROM {self._t('positions')}
-                    WHERE open_time::date = %s AND dte_mode = %s
+                    WHERE (open_time AT TIME ZONE 'America/Chicago')::date = %s AND dte_mode = %s
                 """, [date, self.dte_mode])
                 return c.fetchone()[0]
         except Exception:
@@ -493,7 +499,7 @@ class TradingDatabase:
                     SELECT COUNT(*) FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
-                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+                    AND trade_date >= {CT_TODAY} - INTERVAL '6 days'
                     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                 """, [self.dte_mode])
                 result = c.fetchone()
@@ -533,7 +539,7 @@ class TradingDatabase:
                     SELECT DISTINCT trade_date FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
-                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+                    AND trade_date >= {CT_TODAY} - INTERVAL '6 days'
                     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                     ORDER BY trade_date ASC
                 """, [self.dte_mode])
@@ -567,7 +573,7 @@ class TradingDatabase:
                     SELECT trade_date, symbol, position_id, opened_at, closed_at,
                            is_day_trade, contracts, entry_credit, exit_cost, pnl, close_reason
                     FROM {self._t('pdt_log')}
-                    WHERE trade_date >= CURRENT_DATE - (%s || ' days')::interval AND dte_mode = %s
+                    WHERE trade_date >= {CT_TODAY} - (%s || ' days')::interval AND dte_mode = %s
                     ORDER BY opened_at DESC
                 """, [str(days), self.dte_mode])
                 for row in c.fetchall():
@@ -598,7 +604,7 @@ class TradingDatabase:
                 c.execute(f"""
                     SELECT MIN(trade_date) FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE AND dte_mode = %s
-                    AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+                    AND trade_date >= {CT_TODAY} - INTERVAL '6 days'
                     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                 """, [self.dte_mode])
                 result = c.fetchone()

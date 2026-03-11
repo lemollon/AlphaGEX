@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, dteMode } from '@/lib/db'
+import { query, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,6 +9,14 @@ export const dynamic = 'force-dynamic'
 /*  This makes reset persistent without needing to UPDATE pdt_log rows.*/
 /* ------------------------------------------------------------------ */
 
+/** Format a Date as YYYY-MM-DD using local time (NOT toISOString which shifts to UTC). */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 function dayTradeWhereClause(table: string, dte: string, lastResetAt: string | null): {
   sql: string
   params: any[]
@@ -16,7 +24,7 @@ function dayTradeWhereClause(table: string, dte: string, lastResetAt: string | n
   // Base: is_day_trade = TRUE, in rolling 6-day window, weekdays only
   let sql = `SELECT COUNT(*) as cnt FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   const params: any[] = [dte]
 
@@ -35,7 +43,7 @@ function triggerTradeQuery(table: string, dte: string, lastResetAt: string | nul
 } {
   let sql = `SELECT trade_date, position_id FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   const params: any[] = [dte]
 
@@ -263,16 +271,16 @@ async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | 
   const byDate = new Map<string, string[]>()
   for (const r of rows) {
     const td = typeof r.trade_date === 'string'
-      ? new Date(r.trade_date + 'T00:00:00')
+      ? new Date(r.trade_date + 'T12:00:00')
       : new Date(r.trade_date)
-    const dateStr = td.toISOString().split('T')[0]
-    const existing = byDate.get(dateStr) || []
+    const ds = localDateStr(td)
+    const existing = byDate.get(ds) || []
     existing.push(r.position_id || 'unknown')
-    byDate.set(dateStr, existing)
+    byDate.set(ds, existing)
   }
 
-  return Array.from(byDate.entries()).map(([dateStr, posIds]) => {
-    const td = new Date(dateStr + 'T00:00:00')
+  return Array.from(byDate.entries()).map(([ds, posIds]) => {
+    const td = new Date(ds + 'T12:00:00')
     // Trade exits window after 7 calendar days (trade_date + 7)
     const fallsOff = new Date(td)
     fallsOff.setDate(fallsOff.getDate() + 7)
@@ -281,8 +289,8 @@ async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | 
     if (dow === 0) fallsOff.setDate(fallsOff.getDate() + 1)  // Sun → Mon
     if (dow === 6) fallsOff.setDate(fallsOff.getDate() + 2)  // Sat → Mon
     return {
-      trade_date: dateStr,
-      falls_off: fallsOff.toISOString().split('T')[0],
+      trade_date: ds,
+      falls_off: localDateStr(fallsOff),
       position_ids: posIds,
     }
   })
@@ -333,42 +341,56 @@ async function buildStatusResponse(
   const todayRows = await query(
     `SELECT COUNT(*) as cnt
      FROM ${botTable(bot, 'pdt_log')}
-     WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
+     WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
     [dte],
   )
   const tradedToday = maxTradesPerDay > 0 && parseInt(todayRows[0]?.cnt ?? '0', 10) >= maxTradesPerDay
 
+  // is_blocked = only rolling PDT limit (not traded_today — that's a separate status)
   let isBlocked = false
   let blockReason: string | null = null
 
-  if (pdtEnabled && maxDayTrades > 0) {
-    if (dayTradeCount >= maxDayTrades) {
-      isBlocked = true
-      blockReason = `PDT limit reached: ${dayTradeCount}/${maxDayTrades} day trades in rolling ${windowDays} days`
-    } else if (tradedToday) {
-      isBlocked = true
-      blockReason = `Already traded today (max ${maxTradesPerDay}/day)`
-    }
+  if (pdtEnabled && maxDayTrades > 0 && dayTradeCount >= maxDayTrades) {
+    isBlocked = true
+    blockReason = `${dayTradeCount}/${maxDayTrades} day trades used`
+  }
+
+  // pdt_status enum: BLOCKED / CAN_TRADE / TRADED_TODAY / PDT_OFF
+  let pdtStatus: string
+  if (!pdtEnabled) {
+    pdtStatus = 'PDT_OFF'
+  } else if (isBlocked) {
+    pdtStatus = 'BLOCKED'
+  } else if (tradedToday) {
+    pdtStatus = 'TRADED_TODAY'
+  } else {
+    pdtStatus = 'CAN_TRADE'
   }
 
   const triggerTrades = await getTriggerTrades(bot, dte, lastResetAt)
   const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
+  // next_available_date is only meaningful when BLOCKED
+  const nextAvailableDate = isBlocked && nextSlotOpens ? nextSlotOpens : null
 
   return NextResponse.json({
+    bot: botName,
     bot_name: botName,
     pdt_enabled: pdtEnabled,
+    pdt_status: pdtStatus,
     day_trade_count: dayTradeCount,
     max_day_trades: maxDayTrades,
     trades_remaining: maxDayTrades > 0 ? Math.max(0, maxDayTrades - dayTradeCount) : -1,
     max_trades_per_day: maxTradesPerDay,
     traded_today: tradedToday,
-    can_trade: !isBlocked,
+    can_trade: pdtStatus === 'CAN_TRADE' || pdtStatus === 'PDT_OFF',
     window_days: windowDays,
+    last_reset: lastResetAt,
     last_reset_at: lastResetAt,
     last_reset_by: cfg.last_reset_by ?? null,
     is_blocked: isBlocked,
     block_reason: blockReason,
     trigger_trades: triggerTrades,
+    next_available_date: nextAvailableDate,
     next_slot_opens: nextSlotOpens,
   })
 }

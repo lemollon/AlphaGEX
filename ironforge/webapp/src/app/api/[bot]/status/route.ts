@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, heartbeatName, dteMode } from '@/lib/db'
+import { query, botTable, num, int, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,12 +69,12 @@ export async function GET(
       ? query(`
           SELECT COUNT(*) as cnt
           FROM ${botTable(bot, 'logs')}
-          WHERE level = 'SCAN' AND log_time::date = CURRENT_DATE AND dte_mode = $1
+          WHERE level = 'SCAN' AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} AND dte_mode = $1
         `, [dte])
       : query(`
           SELECT COUNT(*) as cnt
           FROM ${botTable(bot, 'logs')}
-          WHERE level = 'SCAN' AND log_time::date = CURRENT_DATE
+          WHERE level = 'SCAN' AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
         `)
 
     // Last error: most recent error-level log

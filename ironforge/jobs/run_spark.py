@@ -4,7 +4,8 @@ Render Worker: SPARK (1DTE Iron Condor)
 
 Entry point for the SPARK trading bot as a Render worker.
 
-Runs a proper loop: one cycle every 1 minute during market hours.
+Runs a proper loop with adaptive sleep: fast (60s) during active trading,
+longer when done for the day or before market open.
 """
 
 import sys
@@ -19,8 +20,6 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
 )
 logger = logging.getLogger("spark_job")
-
-CYCLE_INTERVAL = 60  # 1 minute
 
 
 def main():
@@ -38,11 +37,12 @@ def main():
     from trading.trader import create_spark_trader
 
     trader = create_spark_trader()
-    logger.info("SPARK trader initialized, starting 1-min loop...")
+    logger.info("SPARK trader initialized, starting adaptive loop...")
 
     scan_num = 0
     while True:
         scan_num += 1
+        sleep_secs = 60  # default fallback
         try:
             logger.info(f"SPARK scan #{scan_num} started")
             result = trader.run_cycle()
@@ -50,23 +50,24 @@ def main():
             md = result.get("market_data", {})
             details = result.get("details", {})
             reason = details.get("reason", "") if isinstance(details, dict) else str(details)
+            sleep_secs = result.get("sleep_hint", 60)
 
             spy_str = f" SPY=${md['spy']}" if md.get("spy") else ""
             vix_str = f" VIX={md['vix']}" if md.get("vix") else ""
 
             next_time = time.strftime(
-                "%H:%M CT", time.localtime(time.time() + CYCLE_INTERVAL)
+                "%H:%M CT", time.localtime(time.time() + sleep_secs)
             )
             logger.info(
                 f"SPARK scan #{scan_num}: {action}{spy_str}{vix_str}"
                 f" | traded={result['traded']}"
                 f" | {reason}"
-                f" | next={next_time}"
+                f" | next={next_time} (sleep {sleep_secs}s)"
             )
         except Exception as e:
             logger.error(f"SPARK cycle #{scan_num} error: {e}", exc_info=True)
 
-        time.sleep(CYCLE_INTERVAL)
+        time.sleep(sleep_secs)
 
 
 if __name__ == "__main__":

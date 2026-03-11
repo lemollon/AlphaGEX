@@ -10,7 +10,7 @@
  * This module has ZERO Next.js dependencies — pure Node.js + pg + fetch.
  */
 
-import { query, botTable, num, int } from './db'
+import { query, botTable, num, int, CT_TODAY } from './db'
 import {
   getQuote,
   getOptionExpirations,
@@ -348,7 +348,7 @@ async function closePosition(
     `UPDATE ${botTable(bot.name, 'pdt_log')}
      SET closed_at = NOW(), exit_cost = $1, pnl = $2,
          close_reason = $3,
-         is_day_trade = (opened_at::date = CURRENT_DATE)
+         is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
      WHERE position_id = $4 AND dte_mode = $5`,
     [effectivePrice, realizedPnl, reason, positionId, bot.dte],
   )
@@ -380,7 +380,7 @@ async function closePosition(
   // Daily perf
   await query(
     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-     VALUES (CURRENT_DATE, 0, 1, $1)
+     VALUES (${CT_TODAY}, 0, 1, $1)
      ON CONFLICT (trade_date) DO UPDATE SET
        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
@@ -396,8 +396,10 @@ async function closePosition(
        WHERE position_id = $1 AND dte_mode = $2 LIMIT 1`,
       [positionId, bot.dte],
     )
-    const openDate = posRow[0]?.open_time ? new Date(posRow[0].open_time).toISOString().slice(0, 10) : null
-    const closeDate = new Date().toISOString().slice(0, 10)
+    const openDate = posRow[0]?.open_time
+      ? new Date(posRow[0].open_time).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+      : null
+    const closeDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     if (openDate === closeDate) {
       // Same-day round trip = day trade
       const pdtRow = await query(
@@ -459,7 +461,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (pdtEnabled && maxTradesPerDay > 0) {
     const todayTrades = await query(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-       WHERE trade_date = CURRENT_DATE AND dte_mode = $1`,
+       WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
       [bot.dte],
     )
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
@@ -471,7 +473,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (pdtEnabled && maxDayTrades > 0) {
     let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
-         AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+         AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
          AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
     const pdtParams: any[] = [bot.dte]
     if (lastResetAt) {
@@ -564,7 +566,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-      $31, $32, $33, $34, $35, NOW(), CURRENT_DATE, $36
+      $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36
     )`,
     [
       positionId, 'SPY', expiration,
@@ -650,7 +652,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
       trade_date, symbol, position_id, opened_at,
       contracts, entry_credit, dte_mode
-    ) VALUES (CURRENT_DATE, $1, $2, NOW(), $3, $4, $5)`,
+    ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5)`,
     ['SPY', positionId, maxContracts, credits.totalCredit, bot.dte],
   )
 
@@ -669,7 +671,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Daily perf
   await query(
     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-     VALUES (CURRENT_DATE, 1, 0, 0)
+     VALUES (${CT_TODAY}, 1, 0, 0)
      ON CONFLICT (trade_date) DO UPDATE SET
        trades_executed = ${botTable(bot.name, 'daily_perf')}.trades_executed + 1`,
   )
@@ -714,7 +716,7 @@ async function scanBot(bot: BotDef): Promise<void> {
 
       let pdtCountSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
          WHERE is_day_trade = TRUE AND dte_mode = $1
-           AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+           AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
            AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
       const pdtCountParams: any[] = [bot.dte]
       if (syncResetAt) {
