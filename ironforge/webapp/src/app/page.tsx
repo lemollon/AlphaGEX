@@ -82,7 +82,7 @@ const sharedConfig = {
   vixSkipThreshold: 32,
   minCredit: '$0.05',
   buyingPowerUsage: '85%',
-  pdtLimit: '3 / 5 days',
+  pdtLimit: '3 / 5 rolling days',
   eodCutoff: '2:45 PM CT',
   entryWindow: '8:30 AM – 2:00 PM CT',
   scanFrequency: 'Every 1 min',

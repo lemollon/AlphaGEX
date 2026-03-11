@@ -2277,7 +2277,7 @@ def _ensure_pdt_tables() -> None:
             max_tpd = cfg["max_trades"]
             # INFERNO: no PDT enforcement, unlimited trades per day
             pdt_on = "FALSE" if bot["name"] == "inferno" else "TRUE"
-            pdt_max = 0 if bot["name"] == "inferno" else 4  # 0 = disabled, 4 = FINRA limit
+            pdt_max = 0 if bot["name"] == "inferno" else 3  # 0 = disabled, 3 = broker-safe limit
             existing = db_query(f"""
                 SELECT bot_name FROM {pdt_config_tbl}
                 WHERE bot_name = '{bot_upper}' LIMIT 1
