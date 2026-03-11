@@ -3,10 +3,14 @@
 -- ============================================================
 -- Run these queries in Databricks SQL Editor or a notebook.
 -- Each query is a self-contained check. Look for PASS/FAIL.
+--
+-- The scanner reads PDT config from the SHARED table:
+--   alpha_prime.ironforge.ironforge_pdt_config
+-- NOT from per-bot tables (inferno_pdt_config, etc.)
 -- ============================================================
 
--- ── 1. INFERNO PDT: Must be DISABLED ────────────────────────
--- CRITICAL CHECK: pdt_enabled must be FALSE, max_day_trades must be 0
+-- ── 1. INFERNO PDT: Must be DISABLED (SHARED table) ────────
+-- CRITICAL: This is the table the scanner ACTUALLY reads
 SELECT
   bot_name,
   pdt_enabled,
@@ -15,9 +19,10 @@ SELECT
   max_trades_per_day,
   CASE
     WHEN pdt_enabled = FALSE AND max_day_trades = 0 THEN 'PASS - PDT disabled for INFERNO'
+    WHEN pdt_enabled = FALSE AND max_day_trades > 0 THEN 'WARN - pdt_enabled=false but max_day_trades should be 0'
     ELSE 'FAIL - PDT should be disabled for INFERNO!'
   END AS check_result
-FROM alpha_prime.ironforge.inferno_pdt_config
+FROM alpha_prime.ironforge.ironforge_pdt_config
 WHERE bot_name = 'INFERNO';
 
 
@@ -28,10 +33,10 @@ SELECT
   day_trade_count,
   max_day_trades,
   CASE
-    WHEN day_trade_count < max_day_trades THEN 'PASS - FLAME can trade'
+    WHEN day_trade_count < max_day_trades THEN 'PASS - FLAME can trade (' || day_trade_count || '/' || max_day_trades || ')'
     ELSE 'BLOCKED - FLAME at PDT limit (' || day_trade_count || '/' || max_day_trades || ')'
   END AS check_result
-FROM alpha_prime.ironforge.flame_pdt_config
+FROM alpha_prime.ironforge.ironforge_pdt_config
 WHERE bot_name = 'FLAME';
 
 
@@ -42,10 +47,10 @@ SELECT
   day_trade_count,
   max_day_trades,
   CASE
-    WHEN day_trade_count < max_day_trades THEN 'PASS - SPARK can trade'
+    WHEN day_trade_count < max_day_trades THEN 'PASS - SPARK can trade (' || day_trade_count || '/' || max_day_trades || ')'
     ELSE 'BLOCKED - SPARK at PDT limit (' || day_trade_count || '/' || max_day_trades || ')'
   END AS check_result
-FROM alpha_prime.ironforge.spark_pdt_config
+FROM alpha_prime.ironforge.ironforge_pdt_config
 WHERE bot_name = 'SPARK';
 
 
@@ -53,12 +58,12 @@ WHERE bot_name = 'SPARK';
 SELECT
   bot_name,
   scan_count,
-  last_scan,
-  TIMESTAMPDIFF(MINUTE, last_scan, CURRENT_TIMESTAMP()) AS minutes_since_scan,
+  last_heartbeat,
+  TIMESTAMPDIFF(MINUTE, last_heartbeat, CURRENT_TIMESTAMP()) AS mins_ago,
   CASE
-    WHEN TIMESTAMPDIFF(MINUTE, last_scan, CURRENT_TIMESTAMP()) <= 10 THEN 'PASS - Scanner alive'
-    WHEN TIMESTAMPDIFF(MINUTE, last_scan, CURRENT_TIMESTAMP()) <= 60 THEN 'WARN - Stale (market may be closed)'
-    ELSE 'FAIL - Scanner dead (last scan ' || TIMESTAMPDIFF(HOUR, last_scan, CURRENT_TIMESTAMP()) || 'h ago)'
+    WHEN TIMESTAMPDIFF(MINUTE, last_heartbeat, CURRENT_TIMESTAMP()) <= 10 THEN 'PASS - Scanner alive'
+    WHEN TIMESTAMPDIFF(MINUTE, last_heartbeat, CURRENT_TIMESTAMP()) <= 60 THEN 'WARN - Stale (market may be closed)'
+    ELSE 'INFO - Last heartbeat ' || CAST(TIMESTAMPDIFF(HOUR, last_heartbeat, CURRENT_TIMESTAMP()) AS STRING) || 'h ago'
   END AS check_result
 FROM alpha_prime.ironforge.bot_heartbeats
 ORDER BY bot_name;
@@ -99,12 +104,15 @@ FROM alpha_prime.ironforge.inferno_paper_account
 WHERE is_active = TRUE;
 
 
--- ── 6. INFERNO: Never PDT-blocked (scan logs) ──────────────
+-- ── 6. INFERNO PDT blocks: historical vs post-fix ───────────
+-- All blocks should be BEFORE the fix. Zero blocks after fix = PASS.
 SELECT
-  COUNT(*) AS pdt_blocked_count,
+  COUNT(*) AS total_pdt_blocks,
+  SUM(CASE WHEN log_time > '2026-03-11T00:00:00Z' THEN 1 ELSE 0 END) AS blocks_after_fix,
   CASE
-    WHEN COUNT(*) = 0 THEN 'PASS - INFERNO never PDT-blocked'
-    ELSE 'FAIL - Found ' || COUNT(*) || ' PDT blocks for INFERNO!'
+    WHEN SUM(CASE WHEN log_time > '2026-03-11T00:00:00Z' THEN 1 ELSE 0 END) = 0
+      THEN 'PASS - No PDT blocks after fix'
+    ELSE 'FAIL - Still blocking after fix!'
   END AS check_result
 FROM alpha_prime.ironforge.inferno_logs
 WHERE message LIKE '%pdt_blocked%';
@@ -112,21 +120,21 @@ WHERE message LIKE '%pdt_blocked%';
 
 -- ── 7. Recent scan activity (last 20 per bot) ───────────────
 -- FLAME
-SELECT 'FLAME' AS bot, log_time, level, action, message
+SELECT 'FLAME' AS bot, log_time, level, message
 FROM alpha_prime.ironforge.flame_logs
 WHERE level = 'SCAN'
 ORDER BY log_time DESC
 LIMIT 20;
 
 -- SPARK
-SELECT 'SPARK' AS bot, log_time, level, action, message
+SELECT 'SPARK' AS bot, log_time, level, message
 FROM alpha_prime.ironforge.spark_logs
 WHERE level = 'SCAN'
 ORDER BY log_time DESC
 LIMIT 20;
 
 -- INFERNO
-SELECT 'INFERNO' AS bot, log_time, level, action, message
+SELECT 'INFERNO' AS bot, log_time, level, message
 FROM alpha_prime.ironforge.inferno_logs
 WHERE level = 'SCAN'
 ORDER BY log_time DESC
@@ -179,7 +187,7 @@ SELECT
   opened_at,
   closed_at
 FROM alpha_prime.ironforge.flame_pdt_log
-WHERE trade_date >= CURRENT_DATE - 8
+WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -8)
 ORDER BY opened_at DESC;
 
 
@@ -191,22 +199,22 @@ SELECT
   opened_at,
   closed_at
 FROM alpha_prime.ironforge.spark_pdt_log
-WHERE trade_date >= CURRENT_DATE - 8
+WHERE trade_date >= DATE_ADD(CURRENT_DATE(), -8)
 ORDER BY opened_at DESC;
 
 
 -- ── 13. Equity snapshots today (intraday chart data) ─────────
 SELECT 'FLAME' AS bot, COUNT(*) AS snapshots_today
 FROM alpha_prime.ironforge.flame_equity_snapshots
-WHERE snapshot_time >= CURRENT_DATE
+WHERE snapshot_time >= CURRENT_DATE()
 UNION ALL
 SELECT 'SPARK', COUNT(*)
 FROM alpha_prime.ironforge.spark_equity_snapshots
-WHERE snapshot_time >= CURRENT_DATE
+WHERE snapshot_time >= CURRENT_DATE()
 UNION ALL
 SELECT 'INFERNO', COUNT(*)
 FROM alpha_prime.ironforge.inferno_equity_snapshots
-WHERE snapshot_time >= CURRENT_DATE;
+WHERE snapshot_time >= CURRENT_DATE();
 
 
 -- ── 14. Config overrides (any DB-level config changes?) ──────
@@ -215,12 +223,27 @@ SELECT 'SPARK' AS bot, * FROM alpha_prime.ironforge.spark_config;
 SELECT 'INFERNO' AS bot, * FROM alpha_prime.ironforge.inferno_config;
 
 
+-- ── QUICK FIX: If INFERNO PDT is wrong, run this ────────────
+-- UPDATE alpha_prime.ironforge.ironforge_pdt_config
+-- SET pdt_enabled = FALSE, max_day_trades = 0, day_trade_count = 0
+-- WHERE bot_name = 'INFERNO';
+
+-- ── QUICK FIX: If FLAME/SPARK max_day_trades is 3 (should be 4) ─
+-- UPDATE alpha_prime.ironforge.ironforge_pdt_config
+-- SET max_day_trades = 4
+-- WHERE bot_name IN ('FLAME', 'SPARK');
+
+
 -- ── SUMMARY ──────────────────────────────────────────────────
 -- Run queries 1-6 first. If all show PASS, the system is healthy.
 -- Queries 7-14 are for deeper investigation if something looks off.
 --
 -- Key things to watch:
---   Query 1: INFERNO PDT MUST be disabled (pdt_enabled=FALSE)
+--   Query 1: INFERNO PDT MUST be disabled in ironforge_pdt_config
 --   Query 4: Scanner heartbeats < 10 min old during market hours
---   Query 6: Zero pdt_blocked entries for INFERNO (EVER)
+--   Query 6: Zero pdt_blocked entries AFTER the fix date
 --   Query 8: No stale open positions outside market hours
+--
+-- IMPORTANT: The scanner reads from ironforge_pdt_config (shared table),
+-- NOT from inferno_pdt_config / flame_pdt_config / spark_pdt_config.
+-- Always check/fix the shared table!
