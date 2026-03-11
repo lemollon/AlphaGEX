@@ -12,6 +12,7 @@ done for the day or before market open.
 import sys
 import os
 import time
+import signal
 import logging
 import threading
 
@@ -92,12 +93,22 @@ def main():
 
     logger.info(f"All {len(bots)} bots running. Press Ctrl+C to stop.")
 
-    # Keep main thread alive
+    # Graceful shutdown on SIGTERM (Render sends this before killing the process)
+    shutdown = threading.Event()
+
+    def handle_sigterm(signum: int, frame: object) -> None:
+        logger.info("SIGTERM received — shutting down gracefully...")
+        shutdown.set()
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+
+    # Keep main thread alive until shutdown or KeyboardInterrupt
     try:
-        while True:
-            time.sleep(60)
+        shutdown.wait()
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        pass
+
+    logger.info("Shutdown complete.")
 
 
 if __name__ == "__main__":

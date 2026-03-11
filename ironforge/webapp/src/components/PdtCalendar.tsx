@@ -14,6 +14,7 @@ interface TriggerTrade {
 
 interface PdtStatus {
   pdt_enabled: boolean
+  pdt_status: string
   day_trade_count: number
   max_day_trades: number
   traded_today: boolean
@@ -22,6 +23,7 @@ interface PdtStatus {
   window_days: number
   trigger_trades: TriggerTrade[]
   next_slot_opens: string | null
+  next_available_date: string | null
   max_trades_per_day: number
 }
 

@@ -187,14 +187,15 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 5: Check trade count for today (multi-trade aware)
-            # When PDT is disabled, max_trades_per_day limit is also bypassed
+            # Step 5: Check trade count for today (ALWAYS enforced —
+            # daily cap is independent of PDT on/off. PDT only gates
+            # the rolling 5-day window check in Step 7.)
             today_str = now.strftime("%Y-%m-%d")
             trades_today = self.db.get_trades_today_count(today_str)
             max_trades = self.config.max_trades_per_day  # 0 = unlimited
             pdt_enabled = self.db.is_pdt_enabled()
 
-            if pdt_enabled and max_trades > 0 and trades_today >= max_trades:
+            if max_trades > 0 and trades_today >= max_trades:
                 # Already used all trade slots for today
                 open_positions = self.db.get_open_positions()
                 result["action"] = "max_trades"
@@ -210,7 +211,7 @@ class Trader:
                 return result
 
             # For single-trade bots: block if any position is still open
-            if max_trades == 1 and pdt_enabled:
+            if max_trades == 1:
                 open_positions = self.db.get_open_positions()
                 if open_positions:
                     result["action"] = "monitoring"
@@ -221,9 +222,8 @@ class Trader:
                     self.last_scan_result = result
                     return result
 
-            # Step 7: PDT check
-            # PDT applies to paper accounts. When paper is blocked,
-            # sandbox doesn't fire either (sandbox mirrors paper).
+            # Step 7: PDT rolling window check (only when PDT enabled)
+            pdt_count = 0
             if pdt_enabled:
                 can_trade, pdt_count, pdt_msg = self.can_trade_today()
                 if not can_trade:
@@ -308,16 +308,16 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 11: Race condition guard (multi-trade aware)
+            # Step 11: Race condition guard (independent of PDT)
             current_open = len(self.db.get_open_positions())
             current_today = self.db.get_trades_today_count(today_str)
-            if pdt_enabled and self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
+            if self.config.max_trades_per_day > 0 and current_today >= self.config.max_trades_per_day:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Max trades reached (race guard)"
                 self.db.log("SKIP", "Max trades reached — aborting")
                 self.last_scan_result = result
                 return result
-            if pdt_enabled and self.config.max_trades_per_day == 1 and current_open > 0:
+            if self.config.max_trades_per_day == 1 and current_open > 0:
                 result["action"] = "skipped"
                 result["details"]["reason"] = "Position already exists (race guard)"
                 self.db.log("SKIP", "Position already open — aborting")
