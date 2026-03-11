@@ -433,7 +433,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // PDT config check — read enforcement state from pdt_config table
   const pdtConfigRows = await query(
-    `SELECT pdt_enabled, max_day_trades, max_trades_per_day
+    `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
      FROM ${botTable(bot.name, 'pdt_config')}
      WHERE bot_name = $1 LIMIT 1`,
     [bot.name.toUpperCase()],
@@ -443,6 +443,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // 0 = disabled/unlimited, so don't fall back to a positive number
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : 1
+  const lastResetAt = pdtCfg?.last_reset_at ?? null
 
   // Already traded today? (0 = unlimited)
   if (maxTradesPerDay > 0) {
@@ -456,14 +457,18 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // PDT rolling window check — live COUNT from pdt_log (source of truth)
   // Must match the 6-day window used by the /api/[bot]/pdt route and Python trader
+  // Respects last_reset_at: trades created before reset are excluded
   if (pdtEnabled && maxDayTrades > 0) {
-    const liveCountRows = await query(
-      `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+    let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
          AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
-         AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
-      [bot.dte],
-    )
+         AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+    const pdtParams: any[] = [bot.dte]
+    if (lastResetAt) {
+      pdtSql += ` AND created_at > $2`
+      pdtParams.push(lastResetAt)
+    }
+    const liveCountRows = await query(pdtSql, pdtParams)
     const pdtCount = int(liveCountRows[0]?.cnt)
     if (pdtCount >= maxDayTrades) {
       return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
@@ -687,21 +692,29 @@ async function scanBot(bot: BotDef): Promise<void> {
     // Step 1: Always monitor open positions first
     // Auto-decrement PDT counter: recount actual day trades in rolling window
     // Runs every scan but is cheap (single COUNT query)
+    // Respects last_reset_at: trades before reset are excluded from count
     try {
-      const pdtActual = await query(
-        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-         WHERE is_day_trade = TRUE AND dte_mode = $1
-           AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
-           AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
-        [bot.dte],
-      )
-      const actualCount = int(pdtActual[0]?.cnt)
       const pdtCfgRow = await query(
-        `SELECT day_trade_count FROM ${botTable(bot.name, 'pdt_config')}
+        `SELECT day_trade_count, last_reset_at FROM ${botTable(bot.name, 'pdt_config')}
          WHERE bot_name = $1 LIMIT 1`,
         [bot.name.toUpperCase()],
       )
       const storedCount = int(pdtCfgRow[0]?.day_trade_count)
+      const syncResetAt = pdtCfgRow[0]?.last_reset_at ?? null
+
+      let pdtCountSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+         WHERE is_day_trade = TRUE AND dte_mode = $1
+           AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+           AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+      const pdtCountParams: any[] = [bot.dte]
+      if (syncResetAt) {
+        pdtCountSql += ` AND created_at > $2`
+        pdtCountParams.push(syncResetAt)
+      }
+
+      const pdtActual = await query(pdtCountSql, pdtCountParams)
+      const actualCount = int(pdtActual[0]?.cnt)
+
       if (storedCount !== actualCount) {
         await query(
           `UPDATE ${botTable(bot.name, 'pdt_config')}
