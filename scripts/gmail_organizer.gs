@@ -10,9 +10,10 @@
  * Setup:
  *   1. Go to https://script.google.com and create a new project
  *   2. Paste this entire file into Code.gs
- *   3. Run `setup()` once to create labels and time-based triggers
- *   4. Customize the CONFIG object below to match your preferences
- *   5. Run `organizeAll()` manually for the first pass, then triggers handle the rest
+ *   3. Run `assessMyGmail()` FIRST — sends you a full inbox audit email (read-only, changes nothing)
+ *   4. Review the assessment, then customize the CONFIG object below
+ *   5. Run `setup()` once to create labels and time-based triggers
+ *   6. Run `dryRunAll()` to preview changes, then `organizeAll()` for the first real pass
  */
 
 // ============================================================
@@ -61,6 +62,361 @@ const CONFIG = {
   maxThreadsPerSearch: 50,       // Limit per search to avoid execution timeouts
   dryRun: false,                 // Set true to log actions without making changes
 };
+
+
+// ============================================================
+// 0. FULL INBOX ASSESSMENT — run this FIRST (read-only)
+// ============================================================
+
+/**
+ * Scans your entire Gmail and emails you a comprehensive assessment report.
+ * This is 100% read-only — it does NOT move, label, archive, or delete anything.
+ * Run this FIRST to understand what's in your inbox before configuring rules.
+ *
+ * The report covers:
+ *   - Inbox size & unread count
+ *   - Age distribution (how old are your emails)
+ *   - Top 25 senders by volume
+ *   - Top 25 domains by volume
+ *   - Newsletter detection (what looks like a newsletter)
+ *   - Email frequency by day of week and hour of day
+ *   - Large email detection (attachments eating storage)
+ *   - Existing labels and their thread counts
+ *   - Read vs unread ratio by age bracket
+ *   - Suggested auto-label rules based on YOUR actual data
+ */
+function assessMyGmail() {
+  Logger.log("=== Starting full Gmail assessment (read-only) ===");
+  const startTime = new Date();
+
+  // ---- Gather all inbox threads (paginated) ----
+  const allThreads = [];
+  const PAGE = 500;
+  let offset = 0;
+  while (true) {
+    const batch = GmailApp.getInboxThreads(offset, PAGE);
+    if (batch.length === 0) break;
+    allThreads.push(...batch);
+    offset += batch.length;
+    if (batch.length < PAGE) break;
+  }
+  const totalThreads = allThreads.length;
+  const unreadCount = GmailApp.getInboxUnreadCount();
+  Logger.log(`Found ${totalThreads} inbox threads, ${unreadCount} unread`);
+
+  // ---- Analyze each thread ----
+  const senderCount = {};       // "Name <email>" -> count
+  const domainCount = {};       // "example.com" -> count
+  const newsletterSenders = {}; // sender -> count (detected newsletters)
+  const ageBuckets = { "Today": 0, "Yesterday": 0, "This week": 0, "This month": 0, "1-3 months": 0, "3-6 months": 0, "6-12 months": 0, "1-2 years": 0, "2+ years": 0 };
+  const unreadByAge = { "Today": 0, "Yesterday": 0, "This week": 0, "This month": 0, "1-3 months": 0, "3-6 months": 0, "6-12 months": 0, "1-2 years": 0, "2+ years": 0 };
+  const dayOfWeekCount = [0, 0, 0, 0, 0, 0, 0]; // Sun-Sat
+  const hourCount = new Array(24).fill(0);
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  let largeEmails = [];         // {subject, from, date, sizeEstimate}
+  let oldestDate = new Date();
+  let newestDate = new Date(0);
+  let totalMessages = 0;
+
+  const now = new Date();
+  const msPerDay = 86400000;
+
+  allThreads.forEach(thread => {
+    const messages = thread.getMessages();
+    const firstMsg = messages[0];
+    const lastDate = thread.getLastMessageDate();
+    const from = firstMsg.getFrom();
+    const subject = firstMsg.getSubject();
+    const isUnread = thread.isUnread();
+
+    totalMessages += messages.length;
+
+    // Track oldest/newest
+    if (lastDate < oldestDate) oldestDate = lastDate;
+    if (lastDate > newestDate) newestDate = lastDate;
+
+    // Sender tracking
+    const senderKey = from.replace(/<.*>/, "").trim() || from;
+    senderCount[senderKey] = (senderCount[senderKey] || 0) + 1;
+
+    // Domain tracking
+    const domainMatch = from.match(/@([a-zA-Z0-9.-]+)/);
+    if (domainMatch) {
+      const domain = domainMatch[1].toLowerCase();
+      domainCount[domain] = (domainCount[domain] || 0) + 1;
+    }
+
+    // Age bucketing
+    const ageMs = now - lastDate;
+    const ageDays = ageMs / msPerDay;
+    const bucket = ageDays < 1 ? "Today"
+      : ageDays < 2 ? "Yesterday"
+      : ageDays < 7 ? "This week"
+      : ageDays < 30 ? "This month"
+      : ageDays < 90 ? "1-3 months"
+      : ageDays < 180 ? "3-6 months"
+      : ageDays < 365 ? "6-12 months"
+      : ageDays < 730 ? "1-2 years"
+      : "2+ years";
+    ageBuckets[bucket]++;
+    if (isUnread) unreadByAge[bucket]++;
+
+    // Day of week & hour
+    dayOfWeekCount[lastDate.getDay()]++;
+    hourCount[lastDate.getHours()]++;
+
+    // Newsletter detection (read-only check)
+    try {
+      const body = firstMsg.getPlainBody().substring(0, 3000).toLowerCase();
+      if (isNewsletter_(from.toLowerCase(), subject.toLowerCase(), body)) {
+        newsletterSenders[senderKey] = (newsletterSenders[senderKey] || 0) + 1;
+      }
+
+      // Large email detection (estimate from body length * message count)
+      const estimatedSize = messages.reduce((sum, m) => sum + m.getBody().length, 0);
+      if (estimatedSize > 100000) { // ~100KB+
+        largeEmails.push({
+          subject: subject.substring(0, 60),
+          from: senderKey.substring(0, 30),
+          date: Utilities.formatDate(lastDate, Session.getScriptTimeZone(), "yyyy-MM-dd"),
+          sizeKB: Math.round(estimatedSize / 1024)
+        });
+      }
+    } catch (e) {
+      // Skip body analysis for this thread if it fails
+    }
+  });
+
+  // Sort large emails by size desc, keep top 15
+  largeEmails.sort((a, b) => b.sizeKB - a.sizeKB);
+  largeEmails = largeEmails.slice(0, 15);
+
+  // ---- Existing labels ----
+  const existingLabels = GmailApp.getUserLabels().map(label => ({
+    name: label.getName(),
+    threads: label.getThreads(0, 1).length > 0 ? label.getThreads().length : 0
+  }));
+  existingLabels.sort((a, b) => b.threads - a.threads);
+
+  // ---- Generate suggested rules ----
+  const topDomains = Object.entries(domainCount).sort((a, b) => b[1] - a[1]).slice(0, 25);
+  const topSenders = Object.entries(senderCount).sort((a, b) => b[1] - a[1]).slice(0, 25);
+  const topNewsletters = Object.entries(newsletterSenders).sort((a, b) => b[1] - a[1]).slice(0, 20);
+
+  const suggestions = generateSuggestions_(topDomains, topSenders, topNewsletters, ageBuckets, totalThreads);
+
+  // ---- Build HTML report ----
+  const reportDate = Utilities.formatDate(now, Session.getScriptTimeZone(), "EEEE, MMMM d, yyyy h:mm a");
+  const elapsed = ((new Date() - startTime) / 1000).toFixed(1);
+
+  let html = `
+  <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 700px; margin: 0 auto; color: #202124;">
+    <h1 style="color: #1a73e8; border-bottom: 3px solid #1a73e8; padding-bottom: 10px;">
+      Gmail Inbox Assessment Report
+    </h1>
+    <p style="color: #5f6368;">Generated ${reportDate} &bull; Scanned ${totalThreads} threads (${totalMessages} messages) in ${elapsed}s</p>
+
+    <!-- OVERVIEW -->
+    <div style="background: #e8f0fe; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0; color: #1a73e8;">Overview</h2>
+      <table style="width: 100%; border-collapse: collapse; font-size: 15px;">
+        <tr><td style="padding: 6px 10px;">Total inbox threads</td><td style="text-align: right; font-weight: bold; font-size: 18px;">${totalThreads.toLocaleString()}</td></tr>
+        <tr><td style="padding: 6px 10px;">Total messages</td><td style="text-align: right; font-weight: bold;">${totalMessages.toLocaleString()}</td></tr>
+        <tr><td style="padding: 6px 10px;">Unread</td><td style="text-align: right; font-weight: bold; color: #d93025;">${unreadCount.toLocaleString()} (${totalThreads > 0 ? Math.round(unreadCount / totalThreads * 100) : 0}%)</td></tr>
+        <tr><td style="padding: 6px 10px;">Unique senders</td><td style="text-align: right; font-weight: bold;">${Object.keys(senderCount).length.toLocaleString()}</td></tr>
+        <tr><td style="padding: 6px 10px;">Unique domains</td><td style="text-align: right; font-weight: bold;">${Object.keys(domainCount).length.toLocaleString()}</td></tr>
+        <tr><td style="padding: 6px 10px;">Detected newsletters</td><td style="text-align: right; font-weight: bold; color: #e37400;">${Object.keys(newsletterSenders).length} senders (${Object.values(newsletterSenders).reduce((a, b) => a + b, 0)} threads)</td></tr>
+        <tr><td style="padding: 6px 10px;">Oldest email</td><td style="text-align: right; font-weight: bold;">${Utilities.formatDate(oldestDate, Session.getScriptTimeZone(), "MMM d, yyyy")}</td></tr>
+        <tr><td style="padding: 6px 10px;">Existing labels</td><td style="text-align: right; font-weight: bold;">${existingLabels.length}</td></tr>
+      </table>
+    </div>
+
+    <!-- AGE DISTRIBUTION -->
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Age Distribution</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #e8eaed;"><th style="padding: 6px 10px; text-align: left;">Age</th><th style="text-align: right; padding: 6px 10px;">Threads</th><th style="text-align: right; padding: 6px 10px;">Unread</th><th style="text-align: right; padding: 6px 10px;">% of Inbox</th></tr>`;
+
+  Object.entries(ageBuckets).forEach(([bucket, count]) => {
+    const pct = totalThreads > 0 ? (count / totalThreads * 100).toFixed(1) : "0";
+    const unread = unreadByAge[bucket];
+    const barWidth = totalThreads > 0 ? Math.max(1, Math.round(count / totalThreads * 200)) : 0;
+    html += `
+        <tr>
+          <td style="padding: 6px 10px;">${bucket}</td>
+          <td style="text-align: right; padding: 6px 10px; font-weight: bold;">${count.toLocaleString()}</td>
+          <td style="text-align: right; padding: 6px 10px; color: #d93025;">${unread > 0 ? unread : "-"}</td>
+          <td style="text-align: right; padding: 6px 10px;">
+            <div style="display: inline-block; width: ${barWidth}px; height: 12px; background: #1a73e8; border-radius: 2px; margin-right: 6px; vertical-align: middle;"></div>
+            ${pct}%
+          </td>
+        </tr>`;
+  });
+  html += `</table></div>`;
+
+  // TOP SENDERS
+  html += `
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Top 25 Senders</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #e8eaed;"><th style="padding: 6px 10px; text-align: left;">#</th><th style="text-align: left; padding: 6px 10px;">Sender</th><th style="text-align: right; padding: 6px 10px;">Threads</th></tr>`;
+  topSenders.forEach(([sender, count], i) => {
+    html += `<tr><td style="padding: 4px 10px; color: #5f6368;">${i + 1}</td><td style="padding: 4px 10px;">${escapeHtml_(sender)}</td><td style="text-align: right; padding: 4px 10px; font-weight: bold;">${count}</td></tr>`;
+  });
+  html += `</table></div>`;
+
+  // TOP DOMAINS
+  html += `
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Top 25 Domains</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #e8eaed;"><th style="padding: 6px 10px; text-align: left;">#</th><th style="text-align: left; padding: 6px 10px;">Domain</th><th style="text-align: right; padding: 6px 10px;">Threads</th></tr>`;
+  topDomains.forEach(([domain, count], i) => {
+    html += `<tr><td style="padding: 4px 10px; color: #5f6368;">${i + 1}</td><td style="padding: 4px 10px;">${escapeHtml_(domain)}</td><td style="text-align: right; padding: 4px 10px; font-weight: bold;">${count}</td></tr>`;
+  });
+  html += `</table></div>`;
+
+  // NEWSLETTERS
+  if (topNewsletters.length > 0) {
+    html += `
+    <div style="background: #fef7e0; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0; color: #e37400;">Detected Newsletters (${topNewsletters.length} senders)</h2>
+      <p style="color: #5f6368; margin-top: 0;">These senders have "unsubscribe" or similar patterns. Good candidates for auto-archive.</p>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #fce8b2;"><th style="padding: 6px 10px; text-align: left;">Sender</th><th style="text-align: right; padding: 6px 10px;">Threads</th></tr>`;
+    topNewsletters.forEach(([sender, count]) => {
+      html += `<tr><td style="padding: 4px 10px;">${escapeHtml_(sender)}</td><td style="text-align: right; padding: 4px 10px; font-weight: bold;">${count}</td></tr>`;
+    });
+    html += `</table></div>`;
+  }
+
+  // EMAIL FREQUENCY
+  html += `
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Email Frequency by Day of Week</h2>
+      <table style="width: 100%; border-collapse: collapse;">`;
+  dayOfWeekCount.forEach((count, i) => {
+    const barWidth = totalThreads > 0 ? Math.max(1, Math.round(count / Math.max(...dayOfWeekCount) * 200)) : 0;
+    html += `<tr><td style="padding: 4px 10px; width: 100px;">${dayNames[i]}</td><td style="padding: 4px 10px;"><div style="display: inline-block; width: ${barWidth}px; height: 14px; background: #34a853; border-radius: 2px; vertical-align: middle;"></div> ${count}</td></tr>`;
+  });
+  html += `</table></div>`;
+
+  // PEAK HOURS
+  html += `
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Email Frequency by Hour</h2>
+      <table style="width: 100%; border-collapse: collapse;">`;
+  const maxHour = Math.max(...hourCount);
+  hourCount.forEach((count, h) => {
+    if (count === 0) return;
+    const barWidth = maxHour > 0 ? Math.max(1, Math.round(count / maxHour * 200)) : 0;
+    const label = h === 0 ? "12 AM" : h < 12 ? `${h} AM` : h === 12 ? "12 PM" : `${h - 12} PM`;
+    html += `<tr><td style="padding: 2px 10px; width: 60px; font-size: 13px;">${label}</td><td style="padding: 2px 10px;"><div style="display: inline-block; width: ${barWidth}px; height: 12px; background: #4285f4; border-radius: 2px; vertical-align: middle;"></div> ${count}</td></tr>`;
+  });
+  html += `</table></div>`;
+
+  // LARGE EMAILS
+  if (largeEmails.length > 0) {
+    html += `
+    <div style="background: #fce8e6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0; color: #d93025;">Large Emails (top 15)</h2>
+      <p style="color: #5f6368; margin-top: 0;">These threads have large HTML content. Consider archiving or deleting to free space.</p>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr style="background: #f4c7c3;"><th style="padding: 6px 8px; text-align: left;">Subject</th><th style="text-align: left; padding: 6px 8px;">From</th><th style="text-align: right; padding: 6px 8px;">Size</th><th style="text-align: right; padding: 6px 8px;">Date</th></tr>`;
+    largeEmails.forEach(e => {
+      html += `<tr><td style="padding: 3px 8px;">${escapeHtml_(e.subject)}</td><td style="padding: 3px 8px;">${escapeHtml_(e.from)}</td><td style="text-align: right; padding: 3px 8px; font-weight: bold;">${e.sizeKB} KB</td><td style="text-align: right; padding: 3px 8px;">${e.date}</td></tr>`;
+    });
+    html += `</table></div>`;
+  }
+
+  // EXISTING LABELS
+  if (existingLabels.length > 0) {
+    html += `
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0;">Existing Labels (${existingLabels.length})</h2>
+      <table style="width: 100%; border-collapse: collapse;">
+        <tr style="background: #e8eaed;"><th style="padding: 6px 10px; text-align: left;">Label</th><th style="text-align: right; padding: 6px 10px;">Threads</th></tr>`;
+    existingLabels.slice(0, 30).forEach(l => {
+      html += `<tr><td style="padding: 3px 10px;">${escapeHtml_(l.name)}</td><td style="text-align: right; padding: 3px 10px;">${l.threads}</td></tr>`;
+    });
+    html += `</table></div>`;
+  }
+
+  // SUGGESTIONS
+  html += `
+    <div style="background: #e6f4ea; padding: 20px; border-radius: 8px; margin: 20px 0;">
+      <h2 style="margin-top: 0; color: #137333;">Suggested Actions</h2>
+      <ol style="padding-left: 20px;">`;
+  suggestions.forEach(s => {
+    html += `<li style="padding: 4px 0;">${s}</li>`;
+  });
+  html += `</ol></div>`;
+
+  html += `
+    <p style="color: #5f6368; font-size: 12px; margin-top: 24px; border-top: 1px solid #dadce0; padding-top: 12px;">
+      This assessment is read-only &mdash; no emails were moved, labeled, or deleted.<br>
+      Next step: customize the CONFIG rules in gmail_organizer.gs, then run <code>setup()</code> and <code>organizeAll()</code>.
+    </p>
+  </div>`;
+
+  // ---- Send the report ----
+  const subject = `Gmail Assessment: ${totalThreads.toLocaleString()} threads, ${unreadCount.toLocaleString()} unread, ${Object.keys(newsletterSenders).length} newsletters detected`;
+
+  GmailApp.sendEmail(
+    "me",
+    subject,
+    `Gmail Assessment Summary: ${totalThreads} inbox threads, ${totalMessages} messages, ${unreadCount} unread, ${Object.keys(senderCount).length} unique senders, ${Object.keys(newsletterSenders).length} newsletters detected. Open the HTML version for the full report.`,
+    { htmlBody: html }
+  );
+
+  Logger.log(`Assessment complete in ${elapsed}s. Report emailed to you.`);
+  Logger.log(`Summary: ${totalThreads} threads, ${totalMessages} messages, ${unreadCount} unread, ${Object.keys(domainCount).length} domains, ${Object.keys(newsletterSenders).length} newsletters`);
+}
+
+function generateSuggestions_(topDomains, topSenders, topNewsletters, ageBuckets, totalThreads) {
+  const suggestions = [];
+
+  // Newsletter suggestion
+  if (topNewsletters.length > 5) {
+    suggestions.push(`<strong>Auto-archive ${topNewsletters.length} newsletter senders</strong> — these clutter your inbox. The script will label them "Newsletters" and archive automatically.`);
+  }
+
+  // Old email suggestion
+  const oldCount = (ageBuckets["3-6 months"] || 0) + (ageBuckets["6-12 months"] || 0) + (ageBuckets["1-2 years"] || 0) + (ageBuckets["2+ years"] || 0);
+  if (oldCount > 50) {
+    suggestions.push(`<strong>Archive ${oldCount.toLocaleString()} old emails</strong> (3+ months) — they're still searchable after archiving, just won't clutter your inbox.`);
+  }
+
+  // High-volume senders
+  const highVolume = topSenders.filter(([_, count]) => count > 20);
+  if (highVolume.length > 0) {
+    const names = highVolume.slice(0, 3).map(([s]) => `"${s}"`).join(", ");
+    suggestions.push(`<strong>Create auto-label rules</strong> for high-volume senders like ${names} — keeps your inbox scannable.`);
+  }
+
+  // Domain consolidation
+  const topDomainNames = topDomains.slice(0, 5).map(([d]) => d);
+  if (topDomainNames.length > 0) {
+    suggestions.push(`<strong>Your top domains</strong>: ${topDomainNames.join(", ")} — consider adding domain-based label rules for these in CONFIG.labelRules.`);
+  }
+
+  // General tips
+  if (totalThreads > 500) {
+    suggestions.push(`<strong>Enable daily digest</strong> — with ${totalThreads.toLocaleString()} inbox threads, a daily summary helps you stay on top of what matters.`);
+  }
+
+  suggestions.push(`<strong>Run a dry run first</strong> — use <code>dryRunAll()</code> to preview what the organizer would do before making real changes.`);
+
+  return suggestions;
+}
+
+function escapeHtml_(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 
 // ============================================================
