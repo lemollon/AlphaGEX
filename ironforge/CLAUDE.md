@@ -4,7 +4,7 @@
 
 IronForge is a **standalone SPY Iron Condor paper trading system** that runs independently from the main AlphaGEX platform. It was originally built for Databricks, then migrated to **Render + PostgreSQL** for simpler deployment and lower cost.
 
-It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution. INFERNO is a FORTRESS-style aggressive bot that allows up to 3 trades/day with multiple simultaneous positions.
+It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution. INFERNO is a FORTRESS-style aggressive bot that allows unlimited trades/day with multiple simultaneous positions.
 
 ## Architecture
 
@@ -71,7 +71,7 @@ ironforge/
 |-----|-----|-------------|
 | **FLAME** | 2DTE | Longer-duration Iron Condors. More premium, more time to work. |
 | **SPARK** | 1DTE | Shorter-duration Iron Condors. Faster theta decay, quicker resolution. |
-| **INFERNO** | 0DTE | FORTRESS-style aggressive Iron Condors. Up to 3 trades/day, multiple simultaneous positions. |
+| **INFERNO** | 0DTE | FORTRESS-style aggressive Iron Condors. Unlimited trades/day, multiple simultaneous positions. |
 
 FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-style aggressive parameters. Key parameters:
 - Ticker: SPY
@@ -80,7 +80,7 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 - SD multiplier: 1.2x (FLAME/SPARK), 1.0x (INFERNO)
 - Profit target: 30% of credit (FLAME/SPARK), 50% (INFERNO)
 - Stop loss: 100% of credit (FLAME/SPARK), 200% (INFERNO)
-- Max 1 trade/day (FLAME/SPARK), 3 trades/day (INFERNO)
+- Max 1 trade/day (FLAME/SPARK), unlimited (INFERNO)
 - 10 max contracts
 - VIX skip: > 32
 - PDT limit: 4 day trades / 5 rolling business days (matches FINRA Rule 4210)
@@ -168,7 +168,7 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame` or `spark`.
 ## Key Design Decisions
 
 1. **Fully standalone** — no imports from the main AlphaGEX codebase. Has its own Tradier client, config, DB layer
-2. **Unified code for all bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (FLAME/SPARK differ only by `min_dte`; INFERNO adds `max_trades_per_day=3` and FORTRESS-style parameters)
+2. **Unified code for all bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (FLAME/SPARK differ only by `min_dte`; INFERNO adds `max_trades_per_day=0` (unlimited) and FORTRESS-style parameters)
 3. **Real market data, paper execution** — Tradier production/sandbox API for quotes and option chains, but no actual orders placed
 4. **Conservative fills** — sells at bid, buys at ask (worst-case paper fills)
 5. **PostgreSQL on Render** — migrated from Databricks Delta Lake. Uses psycopg2 (Python) and node-pg (Next.js API routes)

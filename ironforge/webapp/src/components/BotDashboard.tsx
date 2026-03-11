@@ -132,48 +132,13 @@ export default function BotDashboard({
     )
   }
 
-  /* ---- Stale scanner banner ---- */
-  const [staleBanner, setStaleBanner] = useState<'none' | 'yellow' | 'red'>('none')
-  useEffect(() => {
-    function check() {
-      if (!status?.last_scan || !isMarketOpen(getCTNow())) {
-        setStaleBanner('none')
-        return
-      }
-      const ageMs = Date.now() - new Date(status.last_scan).getTime()
-      const ageMin = ageMs / 60_000
-      if (ageMin > 3) setStaleBanner('red')
-      else if (ageMin > 2) setStaleBanner('yellow')
-      else setStaleBanner('none')
-    }
-    check()
-    const timer = setInterval(check, 15_000)
-    return () => clearInterval(timer)
-  }, [status?.last_scan])
+  /* ---- Stale scanner banner (removed — not needed) ---- */
 
   const accentActive =
     accent === 'amber' ? 'border-amber-400 text-amber-400' : 'border-blue-400 text-blue-400'
 
-  const scanAgeText = status?.last_scan
-    ? `${Math.round((Date.now() - new Date(status.last_scan).getTime()) / 60_000)} minutes ago`
-    : 'unknown'
-
   return (
     <div className="space-y-6">
-      {/* Stale scanner banner */}
-      {staleBanner === 'red' && (
-        <div className="rounded-lg bg-red-500/15 border border-red-500/30 px-4 py-2 text-sm text-red-400 flex items-center gap-2">
-          <span>&#128680;</span>
-          <span>Scanner may be offline &mdash; last scan {scanAgeText}</span>
-        </div>
-      )}
-      {staleBanner === 'yellow' && (
-        <div className="rounded-lg bg-amber-500/15 border border-amber-500/30 px-4 py-2 text-sm text-amber-400 flex items-center gap-2">
-          <span>&#9888;&#65039;</span>
-          <span>Scanner delayed &mdash; last scan {scanAgeText}</span>
-        </div>
-      )}
-
       {/* Title */}
       <div>
         <div className="flex items-baseline gap-2">
