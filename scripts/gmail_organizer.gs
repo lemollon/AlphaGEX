@@ -69,20 +69,20 @@ const CONFIG = {
 // ============================================================
 
 /**
- * Batched Gmail assessment that handles any inbox size.
- * Processes as many threads as possible within the 6-min Apps Script limit,
- * saves progress, and auto-resumes via a 10-minute trigger.
+ * Batched Gmail assessment — MANUAL RESUME.
  *
- * QUOTA-AWARE: Uses lightweight analysis (no body reads) to stay under
- * Gmail's daily read quota (~20,000 for free accounts). With ~4,500 threads
- * remaining, this should complete in 1-2 batches.
+ * How to use:
+ *   1. Run assessMyGmail() — it processes as much as it can within 5 minutes
+ *   2. If it says "run again to continue", just click Run again
+ *   3. If it hits quota, wait until tomorrow (quota resets midnight Pacific) and run again
+ *   4. When done, it emails you the full report automatically
  *
- * Just run assessMyGmail() once — it handles everything.
- * If anything gets stuck, run resetAssessment() to start over.
+ * No triggers needed. Just keep clicking Run until it finishes.
+ * Progress is saved between runs — you won't lose anything.
  */
 function assessMyGmail() {
-  var TIME_LIMIT_MS = 5 * 60 * 1000; // bail at 5 min to stay under 6-min limit
-  var PAGE = 200;                     // smaller batches to reduce quota pressure
+  var TIME_LIMIT_MS = 5 * 60 * 1000;
+  var PAGE = 200;
   var startTime = new Date().getTime();
   var props = PropertiesService.getScriptProperties();
 
@@ -90,13 +90,29 @@ function assessMyGmail() {
   var state = loadAssessmentState_(props);
   var offset = state.offset;
 
+  // ---- Check if we hit quota recently (within last 30 min) ----
+  if (state.quotaHitAt) {
+    var quotaTime = new Date(state.quotaHitAt).getTime();
+    var minutesSinceQuota = (startTime - quotaTime) / 60000;
+    if (minutesSinceQuota < 30) {
+      Logger.log("QUOTA was hit " + Math.round(minutesSinceQuota) + " min ago.");
+      Logger.log("Gmail quota resets at midnight Pacific Time.");
+      Logger.log("Try again in " + Math.round(30 - minutesSinceQuota) + " minutes, or wait until tomorrow.");
+      Logger.log("Progress is saved at offset " + offset + " — nothing is lost.");
+      return;
+    }
+    // Enough time passed, clear the quota flag and retry
+    delete state.quotaHitAt;
+    Logger.log("Quota cooldown passed. Retrying from offset " + offset);
+  }
+
   Logger.log("=== Assessment batch starting at offset " + offset + " ===");
 
   // ---- Process threads until time runs out ----
+  var quotaHit = false;
   while (true) {
-    // Time check — bail if approaching limit
     if (new Date().getTime() - startTime > TIME_LIMIT_MS) {
-      Logger.log("Approaching time limit. Saving progress at offset " + offset);
+      Logger.log("Time limit reached. Saving progress at offset " + offset);
       break;
     }
 
@@ -104,16 +120,16 @@ function assessMyGmail() {
     try {
       batch = GmailApp.getInboxThreads(offset, PAGE);
     } catch (e) {
-      if (e.message && e.message.indexOf("too many times") !== -1) {
-        Logger.log("QUOTA HIT at offset " + offset + ". Saving progress. Will auto-resume tomorrow.");
+      if (e.message && e.message.indexOf("too many") !== -1) {
+        Logger.log("QUOTA HIT fetching threads at offset " + offset);
         state.quotaHitAt = new Date().toISOString();
+        quotaHit = true;
         break;
       }
       throw e;
     }
 
     if (batch.length === 0) {
-      // We've reached the end
       state.complete = true;
       Logger.log("All threads scanned. Total: " + offset);
       break;
@@ -123,26 +139,25 @@ function assessMyGmail() {
       try {
         analyzeThread_(batch[i], state);
       } catch (e) {
-        if (e.message && e.message.indexOf("too many times") !== -1) {
-          Logger.log("QUOTA HIT mid-batch at offset " + (offset + i) + ". Saving progress.");
+        if (e.message && e.message.indexOf("too many") !== -1) {
+          Logger.log("QUOTA HIT analyzing thread at offset " + (offset + i));
           state.quotaHitAt = new Date().toISOString();
           offset += i;
-          state.offset = offset;
-          state.totalThreads = offset;
-          saveAssessmentState_(props, state);
-          ensureAssessmentTrigger_();
-          return;
+          quotaHit = true;
+          break;
         }
         state.errors++;
       }
+      if (quotaHit) break;
     }
+    if (quotaHit) break;
 
     offset += batch.length;
     state.offset = offset;
     state.totalThreads = offset;
 
     var elapsed = ((new Date().getTime() - startTime) / 1000).toFixed(0);
-    Logger.log("Scanned " + offset + " threads so far (" + elapsed + "s elapsed)");
+    Logger.log("Scanned " + offset + " threads (" + elapsed + "s)");
 
     if (batch.length < PAGE) {
       state.complete = true;
@@ -151,44 +166,32 @@ function assessMyGmail() {
     }
   }
 
+  // Update offset in state
+  state.offset = offset;
+  state.totalThreads = Math.max(state.totalThreads, offset);
+
   try {
     state.unreadCount = GmailApp.getInboxUnreadCount();
-  } catch (e) {
-    Logger.log("Could not get unread count (quota). Using last known value.");
-  }
+  } catch (e) { /* quota — keep last known value */ }
 
   // ---- Save state ----
   saveAssessmentState_(props, state);
 
   if (state.complete) {
-    // All done — build and send report, then clean up
-    Logger.log("Assessment complete. Building report...");
+    Logger.log("=== ASSESSMENT COMPLETE ===");
+    Logger.log("Building and emailing report...");
     sendAssessmentReport_(state);
     clearAssessmentState_(props);
-    removeAssessmentTrigger_();
-    Logger.log("Report emailed. Assessment state cleared.");
+    Logger.log("Done! Check your email for the full report.");
+  } else if (quotaHit) {
+    Logger.log("=== QUOTA HIT — PAUSED ===");
+    Logger.log("Progress saved: " + offset + " threads processed.");
+    Logger.log("Wait 30 min and run assessMyGmail() again (or wait until tomorrow for full quota reset).");
   } else {
-    // More to do — ensure auto-resume trigger exists
-    ensureAssessmentTrigger_();
-    Logger.log("Progress saved. " + offset + " threads processed so far. Will auto-resume in ~10 min.");
+    Logger.log("=== BATCH DONE — MORE TO GO ===");
+    Logger.log("Progress saved: " + offset + " threads processed.");
+    Logger.log("Run assessMyGmail() again to continue.");
   }
-}
-
-/**
- * Run this once manually to grant OAuth scopes to triggers.
- * After running, the auto-resume trigger will fire on its own.
- */
-function authorizeTrigger() {
-  GmailApp.getInboxUnreadCount();
-  ScriptApp.getProjectTriggers();
-  PropertiesService.getScriptProperties();
-  Logger.log("Authorization granted for all required scopes.");
-  Logger.log("Triggers will now auto-fire. Current triggers:");
-  ScriptApp.getProjectTriggers().forEach(function(t) {
-    Logger.log("  - " + t.getHandlerFunction() + " (every " + t.getEventType() + ")");
-  });
-  ensureAssessmentTrigger_();
-  Logger.log("Assessment trigger ensured. It will auto-resume within 10 minutes.");
 }
 
 /**
@@ -196,8 +199,32 @@ function authorizeTrigger() {
  */
 function resetAssessment() {
   PropertiesService.getScriptProperties().deleteProperty("ASSESS_STATE");
-  removeAssessmentTrigger_();
   Logger.log("Assessment state cleared. Run assessMyGmail() to start fresh.");
+}
+
+/**
+ * Check current assessment progress without running anything.
+ */
+function checkProgress() {
+  var props = PropertiesService.getScriptProperties();
+  var raw = props.getProperty("ASSESS_STATE");
+  if (!raw) {
+    Logger.log("No assessment in progress. Run assessMyGmail() to start.");
+    return;
+  }
+  var state = JSON.parse(raw);
+  Logger.log("=== Assessment Progress ===");
+  Logger.log("Threads scanned: " + state.offset);
+  Logger.log("Messages counted: " + state.totalMessages);
+  Logger.log("Errors: " + state.errors);
+  Logger.log("Started: " + state.startedAt);
+  Logger.log("Complete: " + state.complete);
+  if (state.quotaHitAt) {
+    Logger.log("Last quota hit: " + state.quotaHitAt);
+  }
+  Logger.log("Unique senders tracked: " + Object.keys(state.senderCount).length);
+  Logger.log("Newsletters detected: " + Object.keys(state.newsletterSenders).length);
+  Logger.log("Run assessMyGmail() to continue processing.");
 }
 
 // ---- State management ----
@@ -324,8 +351,6 @@ function analyzeThread_(thread, state) {
   }
 }
 
-// ---- Auto-resume trigger ----
-
 /**
  * Lightweight newsletter detection using only From and Subject headers.
  * No body reads = no extra API quota consumed.
@@ -346,27 +371,6 @@ function isNewsletterLightweight_(fromLower, subjectLower) {
     if (new RegExp(newsletterSubjectPatterns[i], "i").test(subjectLower)) return true;
   }
   return false;
-}
-
-function ensureAssessmentTrigger_() {
-  var triggers = ScriptApp.getProjectTriggers();
-  for (var i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === "assessMyGmail") return;
-  }
-  ScriptApp.newTrigger("assessMyGmail")
-    .timeBased()
-    .everyMinutes(10)
-    .create();
-  Logger.log("Auto-resume trigger created (every 10 min).");
-}
-
-function removeAssessmentTrigger_() {
-  ScriptApp.getProjectTriggers().forEach(function(t) {
-    if (t.getHandlerFunction() === "assessMyGmail") {
-      ScriptApp.deleteTrigger(t);
-    }
-  });
-  Logger.log("Assessment trigger removed.");
 }
 
 // ---- Report builder (runs once when all threads are scanned) ----
