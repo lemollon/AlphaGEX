@@ -1597,7 +1597,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     pdt_cfg = pdt_cfg_rows[0] if pdt_cfg_rows else {}
     pdt_enabled = pdt_cfg.get("pdt_enabled", True) not in (False, 0, "false")
     pdt_count = to_int(pdt_cfg.get("day_trade_count", 0))
-    max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3)) or 3
+    max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3))  # 0 = disabled/unlimited
     max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # 0 = unlimited
 
     # Check 1: Already traded today? (max per-day limit from config, 0 = unlimited)
@@ -1610,8 +1610,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         if to_int(today_trades[0].get("cnt") if today_trades else 0) >= max_trades_per_day:
             return "skip:already_traded_today"
 
-    # Check 2: PDT rolling window (only if enforcement is ON)
-    if pdt_enabled and pdt_count >= max_day_trades:
+    # Check 2: PDT rolling window (only if enforcement is ON and limit > 0)
+    if pdt_enabled and max_day_trades > 0 and pdt_count >= max_day_trades:
         log.info(f"{bot_upper} PDT BLOCKED: {pdt_count}/{max_day_trades} day trades in rolling window")
         return f"skip:pdt_blocked({pdt_count}/{max_day_trades})"
 
@@ -2277,6 +2277,7 @@ def _ensure_pdt_tables() -> None:
             max_tpd = cfg["max_trades"]
             # INFERNO: no PDT enforcement, unlimited trades per day
             pdt_on = "FALSE" if bot["name"] == "inferno" else "TRUE"
+            pdt_max = 0 if bot["name"] == "inferno" else 4  # 0 = disabled, 4 = FINRA limit
             existing = db_query(f"""
                 SELECT bot_name FROM {pdt_config_tbl}
                 WHERE bot_name = '{bot_upper}' LIMIT 1
@@ -2286,7 +2287,7 @@ def _ensure_pdt_tables() -> None:
                     INSERT INTO {pdt_config_tbl}
                         (bot_name, pdt_enabled, day_trade_count, max_day_trades,
                          window_days, max_trades_per_day, created_at, updated_at)
-                    VALUES ('{bot_upper}', {pdt_on}, 0, 3, 5, {max_tpd},
+                    VALUES ('{bot_upper}', {pdt_on}, 0, {pdt_max}, 5, {max_tpd},
                             CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
                 """)
                 log.info(f"Seeded ironforge_pdt_config for {bot_upper} (pdt_enabled={pdt_on}, max_trades_per_day={max_tpd})")
