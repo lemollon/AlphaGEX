@@ -113,8 +113,11 @@ except NameError:
 
 # Fix CURRENT_DATE() / CURRENT_TIMESTAMP() to return Central Time (not UTC)
 if _HAS_SPARK:
-    spark.sql("SET TIME ZONE 'America/Chicago'")  # noqa: F821
-    log.info("Spark session timezone set to America/Chicago")
+    try:
+        spark.sql("SET TIME ZONE 'America/Chicago'")  # noqa: F821
+        log.info("Spark session timezone set to America/Chicago")
+    except Exception as e:
+        log.error(f"Failed to set Spark timezone: {e} — CURRENT_DATE may return UTC")
 
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
