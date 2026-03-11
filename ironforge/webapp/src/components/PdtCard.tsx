@@ -169,17 +169,36 @@ export default function PdtCard({
   let statusText: string
   let statusClass: string
 
+  // Format next_slot_opens for inline display
+  const nextSlotFormatted = status.next_slot_opens
+    ? new Date(status.next_slot_opens + 'T12:00:00').toLocaleDateString('en-US', {
+        timeZone: 'America/Chicago',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null
+
   if (!status.pdt_enabled) {
     statusIcon = '\u26A0\uFE0F'
-    statusText = 'PDT BYPASSED \u2014 trading unrestricted'
+    statusText = 'PDT OFF \u2014 unlimited trading, counter auto-resets'
     statusClass = 'text-amber-400'
   } else if (status.is_blocked) {
     statusIcon = '\uD83D\uDD34'
-    statusText = `BLOCKED \u2014 ${status.block_reason}`
+    // Add next slot info to blocked reason
+    const baseReason = status.block_reason || 'PDT limit reached'
+    statusText = nextSlotFormatted
+      ? `BLOCKED \u2014 ${baseReason}. Next slot: ${nextSlotFormatted}`
+      : `BLOCKED \u2014 ${baseReason}`
     statusClass = 'text-red-400'
+  } else if (status.traded_today) {
+    statusIcon = '\uD83D\uDFE1'
+    statusText = `TRADED TODAY \u2014 ${count}/${max} day trades used, ${status.trades_remaining} remaining`
+    statusClass = 'text-amber-300'
   } else {
     statusIcon = '\u2705'
-    statusText = 'CAN TRADE'
+    const remaining = status.trades_remaining ?? (max - count)
+    statusText = `CLEAR \u2014 ${count}/${max} day trades used, ${remaining} remaining`
     statusClass = 'text-emerald-400'
   }
 
@@ -313,11 +332,14 @@ export default function PdtCard({
                   month: 'short',
                   day: 'numeric',
                 })
+              // Highlight today's row
+              const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+              const isToday = t.trade_date === today
               return (
-                <div key={i} className="text-xs">
+                <div key={i} className={`text-xs rounded px-1.5 py-1 ${isToday ? 'bg-amber-500/10 border border-amber-500/30' : ''}`}>
                   <div className="flex items-center justify-between">
                     <span className="text-white font-mono">
-                      #{i + 1} {fmtDate(td)}
+                      #{i + 1} {fmtDate(td)}{isToday ? ' (today)' : ''}
                     </span>
                     <span className="text-forge-muted">
                       slot opens <span className="text-emerald-400">{fmtDate(fo)}</span>
@@ -332,7 +354,7 @@ export default function PdtCard({
               )
             })}
           </div>
-          {status.next_slot_opens && count >= max && (
+          {status.next_slot_opens && status.is_blocked && (
             <div className="mt-2 pt-2 border-t border-forge-border/30 text-[11px] text-amber-400">
               Next available trade:{' '}
               <span className="text-emerald-400 font-medium">
