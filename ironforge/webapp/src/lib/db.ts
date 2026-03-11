@@ -326,6 +326,57 @@ async function ensureTables(): Promise<void> {
       )
     } catch { /* ignore if table doesn't exist yet */ }
 
+    // PDT cleanup on startup: clear stale is_day_trade flags outside the rolling
+    // 6-day window, and reconcile pdt_config.day_trade_count to match reality.
+    // Also clear orphan pdt_log entries that have no matching position.
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+      try {
+        // 1. Clear is_day_trade flags for entries outside the 6-day rolling window
+        //    These should never count — they're expired from the window.
+        await client.query(
+          `UPDATE ${bot}_pdt_log
+           SET is_day_trade = FALSE
+           WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND trade_date < CURRENT_DATE - INTERVAL '6 days'`,
+          [dte],
+        )
+
+        // 2. Clear is_day_trade flags for orphan pdt_log entries that have no
+        //    matching closed position (phantom entries from failed trades)
+        await client.query(
+          `UPDATE ${bot}_pdt_log pl
+           SET is_day_trade = FALSE
+           WHERE pl.is_day_trade = TRUE AND pl.dte_mode = $1
+             AND NOT EXISTS (
+               SELECT 1 FROM ${bot}_positions p
+               WHERE p.position_id = pl.position_id
+                 AND p.status IN ('closed', 'expired')
+                 AND p.dte_mode = $1
+             )`,
+          [dte],
+        )
+
+        // 3. Reconcile pdt_config counter to match actual pdt_log count
+        const countRes = await client.query(
+          `SELECT COUNT(*) as cnt FROM ${bot}_pdt_log
+           WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+             AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+          [dte],
+        )
+        const realCount = parseInt(countRes.rows[0]?.cnt ?? '0', 10)
+        await client.query(
+          `UPDATE ${bot}_pdt_config
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [realCount, bot.toUpperCase()],
+        )
+        console.log(`  PDT cleanup: ${bot.toUpperCase()} day_trade_count → ${realCount}`)
+      } catch (err) {
+        console.warn(`  PDT cleanup for ${bot} failed:`, err)
+      }
+    }
+
     tablesReady = true
 
     // Start the scan loop in THIS process (same as API routes).
