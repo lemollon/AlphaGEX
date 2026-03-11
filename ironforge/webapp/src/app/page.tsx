@@ -1,7 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import LaunchCountdown from '@/components/LaunchCountdown'
+import dynamic from 'next/dynamic'
+
+const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
+  ssr: false,
+  loading: () => (
+    <div className="rounded-xl border border-amber-500/20 bg-forge-card/80 p-6">
+      <div className="h-20 animate-pulse rounded bg-forge-border/30" />
+    </div>
+  ),
+})
 
 /* ── Inline SVG Icons (no external deps) ───────────────────────── */
 
