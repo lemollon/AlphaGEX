@@ -35,6 +35,7 @@ interface ConfigData {
   stop_loss_pct?: number
   vix_skip?: number
   max_contracts?: number
+  starting_capital?: number
 }
 
 const SCAN_INTERVAL_SEC = 60 // 1 minute
@@ -90,6 +91,31 @@ export default function StatusCard({
   /* ---- Toggle bot active state ---- */
   const [toggling, setToggling] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(false)
+
+  /* ---- Editable config fields ---- */
+  const [editingBP, setEditingBP] = useState(false)
+  const [bpDraft, setBpDraft] = useState('')
+  const [editingCapital, setEditingCapital] = useState(false)
+  const [capitalDraft, setCapitalDraft] = useState('')
+  const [configSaving, setConfigSaving] = useState(false)
+
+  async function saveConfigField(field: string, value: number) {
+    setConfigSaving(true)
+    try {
+      const res = await fetch(`/api/${bot}/config`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    } catch (e: unknown) {
+      console.error('Config save failed:', e)
+    } finally {
+      setConfigSaving(false)
+      setEditingBP(false)
+      setEditingCapital(false)
+    }
+  }
 
   async function handleToggle(active: boolean) {
     setToggling(true)
@@ -387,17 +413,93 @@ export default function StatusCard({
         </div>
       </div>
 
-      {/* Config summary */}
+      {/* Config summary with editable allocation */}
       {config && (
-        <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-forge-border/50">
+        <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-forge-border/50">
           <span className="text-[10px] text-forge-muted uppercase tracking-wider">Config</span>
           <span className="text-xs font-mono text-gray-400">{config.sd_multiplier ?? 1.2}x SD</span>
           <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
-          <span className="text-xs font-mono text-gray-400">{((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP</span>
-          <span className="text-xs font-mono text-gray-400">PT 30/20/15%</span>
+
+          {/* Editable BP% */}
+          {editingBP ? (
+            <span className="inline-flex items-center gap-1">
+              <input
+                type="number"
+                min={10}
+                max={100}
+                step={5}
+                autoFocus
+                className="w-14 text-xs font-mono bg-forge-bg border border-amber-500/40 rounded px-1.5 py-0.5 text-white text-center"
+                value={bpDraft}
+                onChange={(e) => setBpDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = parseFloat(bpDraft)
+                    if (v >= 10 && v <= 100) saveConfigField('buying_power_usage_pct', v / 100)
+                  }
+                  if (e.key === 'Escape') setEditingBP(false)
+                }}
+                onBlur={() => {
+                  const v = parseFloat(bpDraft)
+                  if (v >= 10 && v <= 100) saveConfigField('buying_power_usage_pct', v / 100)
+                  else setEditingBP(false)
+                }}
+                disabled={configSaving}
+              />
+              <span className="text-xs text-gray-500">% BP</span>
+            </span>
+          ) : (
+            <button
+              onClick={() => { setBpDraft(String(((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0))); setEditingBP(true) }}
+              className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
+              title="Click to edit buying power allocation %"
+            >
+              {((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP
+            </button>
+          )}
+
+          {/* Editable Starting Capital */}
+          {editingCapital ? (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-xs text-gray-500">$</span>
+              <input
+                type="number"
+                min={100}
+                step={1000}
+                autoFocus
+                className="w-20 text-xs font-mono bg-forge-bg border border-amber-500/40 rounded px-1.5 py-0.5 text-white text-center"
+                value={capitalDraft}
+                onChange={(e) => setCapitalDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = parseFloat(capitalDraft)
+                    if (v >= 100) saveConfigField('starting_capital', v)
+                  }
+                  if (e.key === 'Escape') setEditingCapital(false)
+                }}
+                onBlur={() => {
+                  const v = parseFloat(capitalDraft)
+                  if (v >= 100) saveConfigField('starting_capital', v)
+                  else setEditingCapital(false)
+                }}
+                disabled={configSaving}
+              />
+              <span className="text-xs text-gray-500">capital</span>
+            </span>
+          ) : (
+            <button
+              onClick={() => { setCapitalDraft(String(config.starting_capital ?? 10000)); setEditingCapital(true) }}
+              className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
+              title="Click to edit starting capital"
+            >
+              ${(config.starting_capital ?? 10000).toLocaleString()} capital
+            </button>
+          )}
+
+          <span className="text-xs font-mono text-gray-400">PT {config.profit_target_pct ?? 30}%</span>
           <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
           <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
-          <span className="text-xs font-mono text-gray-400">max {config.max_contracts ?? 10}x</span>
+          <span className="text-xs font-mono text-gray-400">max {config.max_contracts === 0 ? '∞' : (config.max_contracts ?? 10)}x</span>
         </div>
       )}
 
