@@ -326,27 +326,30 @@ function formatTime(ts: string) {
 export function ComparisonChart({
   flameData,
   sparkData,
+  infernoData = [],
   startingCapital,
 }: {
   flameData: CurvePoint[]
   sparkData: CurvePoint[]
+  infernoData?: CurvePoint[]
   startingCapital: number
 }) {
-  if (!flameData.length && !sparkData.length) {
+  if (!flameData.length && !sparkData.length && !infernoData.length) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-        <p className="text-forge-muted">No closed trades yet for either bot</p>
+        <p className="text-forge-muted">No closed trades yet for any bot</p>
       </div>
     )
   }
 
-  const map = new Map<string, { flame?: number; spark?: number }>()
+  const map = new Map<string, { flame?: number; spark?: number; inferno?: number }>()
   const allTimestamps = [
     ...flameData.map((d) => d.timestamp),
     ...sparkData.map((d) => d.timestamp),
+    ...infernoData.map((d) => d.timestamp),
   ].sort()
   if (allTimestamps.length) {
-    map.set(allTimestamps[0], { flame: startingCapital, spark: startingCapital })
+    map.set(allTimestamps[0], { flame: startingCapital, spark: startingCapital, inferno: startingCapital })
   }
 
   let flameCum = startingCapital
@@ -361,15 +364,25 @@ export function ComparisonChart({
     map.set(pt.timestamp, { ...map.get(pt.timestamp), spark: sparkCum })
   }
 
+  let infernoCum = startingCapital
+  for (const pt of infernoData) {
+    infernoCum = pt.equity
+    map.set(pt.timestamp, { ...map.get(pt.timestamp), inferno: infernoCum })
+  }
+
   const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
 
   let lastFlame = startingCapital
   let lastSpark = startingCapital
+  let lastInferno = startingCapital
   const chartData = sorted.map(([ts, vals]) => {
     if (vals.flame !== undefined) lastFlame = vals.flame
     if (vals.spark !== undefined) lastSpark = vals.spark
-    return { timestamp: ts, flame: vals.flame ?? lastFlame, spark: vals.spark ?? lastSpark }
+    if (vals.inferno !== undefined) lastInferno = vals.inferno
+    return { timestamp: ts, flame: vals.flame ?? lastFlame, spark: vals.spark ?? lastSpark, inferno: vals.inferno ?? lastInferno }
   })
+
+  const nameMap: Record<string, string> = { flame: 'FLAME', spark: 'SPARK', inferno: 'INFERNO' }
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -392,12 +405,13 @@ export function ComparisonChart({
             contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8 }}
             formatter={(value: number, name: string) => [
               `$${value.toFixed(2)}`,
-              name === 'flame' ? 'FLAME' : 'SPARK',
+              nameMap[name] || name,
             ]}
           />
           <ReferenceLine y={startingCapital} stroke="#78716c" strokeDasharray="4 4" />
           <Area type="monotone" dataKey="flame" stroke="#f59e0b" strokeWidth={2} fill="rgba(245, 158, 11, 0.1)" />
           <Area type="monotone" dataKey="spark" stroke="#3b82f6" strokeWidth={2} fill="rgba(59, 130, 246, 0.1)" />
+          <Area type="monotone" dataKey="inferno" stroke="#ef4444" strokeWidth={2} fill="rgba(239, 68, 68, 0.1)" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
