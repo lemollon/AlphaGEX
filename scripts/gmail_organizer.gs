@@ -120,12 +120,16 @@ function assessMyGmail() {
     try {
       batch = GmailApp.getInboxThreads(offset, PAGE);
     } catch (e) {
-      if (e.message && e.message.indexOf("too many") !== -1) {
-        Logger.log("QUOTA HIT fetching threads at offset " + offset);
+      var msg = e.message || String(e);
+      if (msg.indexOf("Service invoked too many times") !== -1 ||
+          msg.indexOf("Too many requests") !== -1 ||
+          msg.indexOf("Rate Limit") !== -1) {
+        Logger.log("QUOTA HIT fetching threads at offset " + offset + ": " + msg);
         state.quotaHitAt = new Date().toISOString();
         quotaHit = true;
         break;
       }
+      Logger.log("Error fetching threads at offset " + offset + ": " + msg);
       throw e;
     }
 
@@ -139,13 +143,17 @@ function assessMyGmail() {
       try {
         analyzeThread_(batch[i], state);
       } catch (e) {
-        if (e.message && e.message.indexOf("too many") !== -1) {
-          Logger.log("QUOTA HIT analyzing thread at offset " + (offset + i));
+        var msg = e.message || String(e);
+        if (msg.indexOf("Service invoked too many times") !== -1 ||
+            msg.indexOf("Too many requests") !== -1 ||
+            msg.indexOf("Rate Limit") !== -1) {
+          Logger.log("QUOTA HIT analyzing thread at offset " + (offset + i) + ": " + msg);
           state.quotaHitAt = new Date().toISOString();
           offset += i;
           quotaHit = true;
           break;
         }
+        Logger.log("Error on thread " + (offset + i) + ": " + msg);
         state.errors++;
       }
       if (quotaHit) break;
