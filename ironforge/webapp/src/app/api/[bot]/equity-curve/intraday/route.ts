@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/databricks-sql'
+import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,23 +15,30 @@ export async function GET(
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
 
   try {
-    const capitalQuery = dbQuery(
-      `SELECT starting_capital
-       FROM ${botTable(bot, 'paper_account')}
-       WHERE is_active = TRUE ${dteFilter}
-       LIMIT 1`,
-    )
-
-    const snapshotQuery = dbQuery(
-      `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
-             open_positions, note
-       FROM ${botTable(bot, 'equity_snapshots')}
-       WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', snapshot_time) AS DATE) = ${CT_TODAY}
-         ${dteFilter}
-       ORDER BY snapshot_time ASC`,
-    )
-
-    const [capitalRows, snapshotRows] = await Promise.all([capitalQuery, snapshotQuery])
+    const [capitalRows, snapshotRows, openPositions] = await Promise.all([
+      dbQuery(
+        `SELECT starting_capital
+         FROM ${botTable(bot, 'paper_account')}
+         WHERE is_active = TRUE ${dteFilter}
+         LIMIT 1`,
+      ),
+      dbQuery(
+        `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
+               open_positions, note
+         FROM ${botTable(bot, 'equity_snapshots')}
+         WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', snapshot_time) AS DATE) = ${CT_TODAY}
+           ${dteFilter}
+         ORDER BY snapshot_time ASC`,
+      ),
+      dbQuery(
+        `SELECT position_id, ticker, expiration,
+                put_short_strike, put_long_strike,
+                call_short_strike, call_long_strike,
+                contracts, total_credit, spread_width
+         FROM ${botTable(bot, 'positions')}
+         WHERE status = 'open' ${dteFilter}`,
+      ),
+    ])
 
     const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
 
@@ -44,7 +52,55 @@ export async function GET(
       note: r.note,
     }))
 
-    return NextResponse.json({ starting_capital: startingCapital, snapshots })
+    // Compute live unrealized P&L from open positions via Tradier
+    let liveUnrealizedPnl = 0
+    if (openPositions.length > 0 && isConfigured()) {
+      const mtmResults = await Promise.all(
+        openPositions.map(async (pos) => {
+          try {
+            const mtm = await getIcMarkToMarket(
+              pos.ticker || 'SPY',
+              String(pos.expiration).slice(0, 10),
+              num(pos.put_short_strike),
+              num(pos.put_long_strike),
+              num(pos.call_short_strike),
+              num(pos.call_long_strike),
+            )
+            if (!mtm) return 0
+            const entryCredit = num(pos.total_credit)
+            const contracts = int(pos.contracts)
+            // Cap cost at spread width
+            const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
+            const cappedCost = Math.min(Math.max(0, mtm.cost_to_close), spreadWidth)
+            return (entryCredit - cappedCost) * 100 * contracts
+          } catch {
+            return 0
+          }
+        }),
+      )
+      liveUnrealizedPnl = Math.round(mtmResults.reduce((a, b) => a + b, 0) * 100) / 100
+    }
+
+    // Append a live snapshot with current unrealized P&L
+    if (snapshots.length > 0) {
+      const latest = snapshots[snapshots.length - 1]
+      snapshots.push({
+        timestamp: new Date().toISOString(),
+        balance: latest.balance,
+        realized_pnl: latest.realized_pnl,
+        unrealized_pnl: liveUnrealizedPnl,
+        equity: latest.balance + liveUnrealizedPnl,
+        open_positions: openPositions.length,
+        note: 'live',
+      })
+    }
+
+    return NextResponse.json({
+      starting_capital: startingCapital,
+      snapshots,
+      live_unrealized_pnl: liveUnrealizedPnl,
+      open_position_count: openPositions.length,
+    })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

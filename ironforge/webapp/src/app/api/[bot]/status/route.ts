@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/databricks-sql'
+import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -60,14 +61,51 @@ export async function GET(
        ORDER BY log_time DESC LIMIT 1`,
     )
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery])
+    const openPositionsQuery = dbQuery(
+      `SELECT position_id, ticker, expiration,
+              put_short_strike, put_long_strike,
+              call_short_strike, call_long_strike,
+              contracts, total_credit, spread_width
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' ${dteFilter}`,
+    )
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery])
 
     const acct = accountRows[0]
     const balance = num(acct?.current_balance)
     const startingCapital = num(acct?.starting_capital)
     const realizedPnl = num(acct?.cumulative_pnl)
-    const unrealizedPnl = num(snapshotRows[0]?.unrealized_pnl)
+
+    // Compute live unrealized P&L from open positions via Tradier
+    let unrealizedPnl = 0
+    if (openPositionRows.length > 0 && isConfigured()) {
+      const mtmResults = await Promise.all(
+        openPositionRows.map(async (pos) => {
+          try {
+            const mtm = await getIcMarkToMarket(
+              pos.ticker || 'SPY',
+              String(pos.expiration).slice(0, 10),
+              num(pos.put_short_strike),
+              num(pos.put_long_strike),
+              num(pos.call_short_strike),
+              num(pos.call_long_strike),
+            )
+            if (!mtm) return 0
+            const entryCredit = num(pos.total_credit)
+            const contracts = int(pos.contracts)
+            const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
+            const cappedCost = Math.min(Math.max(0, mtm.cost_to_close), spreadWidth)
+            return (entryCredit - cappedCost) * 100 * contracts
+          } catch {
+            return 0
+          }
+        }),
+      )
+      unrealizedPnl = Math.round(mtmResults.reduce((a, b) => a + b, 0) * 100) / 100
+    }
+
     const totalPnl = realizedPnl + unrealizedPnl
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 

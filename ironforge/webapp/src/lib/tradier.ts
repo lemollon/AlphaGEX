@@ -138,9 +138,12 @@ export async function getIcMarkToMarket(
   if (!psQ || !plQ || !csQ || !clQ) return null
 
   // Cost to close = buy back shorts (at ask) - sell longs (at bid)
-  const cost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
+  // Cap at spread width — theoretical max cost for an IC
+  const rawCost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
+  const spreadWidth = Math.round((putShort - putLong) * 100) / 100
+  const cost = Math.min(Math.max(0, rawCost), spreadWidth)
   return {
-    cost_to_close: Math.max(0, Math.round(cost * 10000) / 10000),
+    cost_to_close: Math.round(cost * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
