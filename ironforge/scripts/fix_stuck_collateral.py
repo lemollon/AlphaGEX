@@ -1,68 +1,53 @@
-#!/usr/bin/env python3
-"""
-Fix stuck collateral in IronForge paper accounts.
+# Databricks notebook source
 
-When positions are closed but collateral_in_use doesn't get released (e.g., due to
-a code path that doesn't update the paper account, or NULL collateral_required),
-this script detects and fixes the mismatch.
+# COMMAND ----------
 
-Usage:
-    python fix_stuck_collateral.py              # Dry run — show what would change
-    python fix_stuck_collateral.py --execute    # Actually fix the paper accounts
-    python fix_stuck_collateral.py --bot flame  # Fix only one bot
-"""
-import argparse
+# MAGIC %md
+# MAGIC # Fix Stuck Collateral in IronForge Paper Accounts
+# MAGIC
+# MAGIC When positions are closed but `collateral_in_use` doesn't get released,
+# MAGIC this script detects the mismatch and fixes it for ALL bots.
+# MAGIC
+# MAGIC **How it works:**
+# MAGIC 1. For each bot, sums `collateral_required` from OPEN positions
+# MAGIC 2. Compares to `collateral_in_use` in paper_account
+# MAGIC 3. If mismatched, resets collateral and recalculates buying_power
+# MAGIC
+# MAGIC Set `EXECUTE = True` below to apply fixes.
+
+# COMMAND ----------
+
+# ── CONFIGURATION ──────────────────────────────────────────────────────────
+
+EXECUTE = True           # True = apply fixes, False = dry run (show only)
+BOT_FILTER = None         # None = all bots, or "flame", "spark", "inferno"
+
+# COMMAND ----------
+
 import os
-import sys
 
-# Add parent dirs so we can import IronForge modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "databricks"))
-
-# ---------------------------------------------------------------------------
-#  Try Databricks connection (same as scanner)
-# ---------------------------------------------------------------------------
 CATALOG = os.getenv("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.getenv("DATABRICKS_SCHEMA", "ironforge")
 
-try:
-    from databricks.sdk import WorkspaceClient
-    from databricks.sdk.service.sql import StatementState
-
-    ws = WorkspaceClient()
-    WAREHOUSE_ID = None
-    for wh in ws.warehouses.list():
-        if wh.state and wh.state.value == "RUNNING":
-            WAREHOUSE_ID = wh.id
-            break
-    if not WAREHOUSE_ID:
-        raise RuntimeError("No running SQL warehouse found")
-
-    def db_query(sql: str) -> list:
-        resp = ws.statement_execution.execute_statement(
-            warehouse_id=WAREHOUSE_ID, statement=sql, wait_timeout="30s"
-        )
-        if resp.status.state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"Query failed: {resp.status.error}")
-        cols = [c.name for c in resp.manifest.schema.columns]
-        return [dict(zip(cols, row)) for row in (resp.result.data_array or [])]
-
-    def db_execute(sql: str):
-        resp = ws.statement_execution.execute_statement(
-            warehouse_id=WAREHOUSE_ID, statement=sql, wait_timeout="30s"
-        )
-        if resp.status.state != StatementState.SUCCEEDED:
-            raise RuntimeError(f"Execute failed: {resp.status.error}")
-
-    DB_MODE = "databricks"
-    print(f"Connected to Databricks warehouse {WAREHOUSE_ID}")
-except Exception as e:
-    print(f"Databricks not available ({e}), using local DB simulation mode")
-    DB_MODE = "local"
+# Set timezone to Central
+spark.sql("SET TIME ZONE 'America/Chicago'")
 
 
 def bot_table(bot: str, table: str) -> str:
     return f"{CATALOG}.{SCHEMA}.{bot}_{table}"
+
+
+def db_query(sql: str) -> list:
+    result = spark.sql(sql)
+    rows = result.collect()
+    if not rows:
+        return []
+    columns = result.columns
+    return [dict(zip(columns, row)) for row in rows]
+
+
+def db_execute(sql: str):
+    spark.sql(sql)
 
 
 BOTS = [
@@ -71,6 +56,7 @@ BOTS = [
     {"name": "inferno", "dte": "0DTE"},
 ]
 
+# COMMAND ----------
 
 def check_and_fix_bot(bot: dict, execute: bool) -> bool:
     """Check a bot for stuck collateral, optionally fix it. Returns True if issue found."""
@@ -124,7 +110,7 @@ def check_and_fix_bot(bot: dict, execute: bool) -> bool:
     print(f"    → collateral_in_use should be: ${actual_collateral:,.2f}")
     print(f"    → buying_power should be:      ${correct_bp:,.2f}")
 
-    # 4. Also check for positions closed with NULL/0 collateral_required
+    # 4. Check for positions closed with NULL/0 collateral_required
     null_collateral_rows = db_query(f"""
         SELECT COUNT(*) as cnt
         FROM {bot_table(bot['name'], 'positions')}
@@ -140,7 +126,6 @@ def check_and_fix_bot(bot: dict, execute: bool) -> bool:
         return True
 
     # 5. Fix it
-    acct_id = acct.get("id")
     db_execute(f"""
         UPDATE {bot_table(bot['name'], 'paper_account')}
         SET collateral_in_use = {actual_collateral},
@@ -152,11 +137,12 @@ def check_and_fix_bot(bot: dict, execute: bool) -> bool:
 
     # 6. Log the fix
     try:
+        escaped_msg = f"Fixed stuck collateral: was {stuck:.2f}, now {actual_collateral:.2f}"
         db_execute(f"""
             INSERT INTO {bot_table(bot['name'], 'logs')} (level, message, details, dte_mode)
             VALUES ('RECOVERY',
-                    'Fixed stuck collateral: was ${stuck:,.2f}, now ${actual_collateral:,.2f}',
-                    '{{"stuck_amount": {stuck}, "open_positions": {open_count}, "source": "fix_stuck_collateral.py"}}',
+                    '{escaped_msg}',
+                    '{{"stuck_amount": {stuck}, "open_positions": {open_count}, "source": "fix_stuck_collateral"}}',
                     '{dte}')
         """)
     except Exception as e:
@@ -164,41 +150,30 @@ def check_and_fix_bot(bot: dict, execute: bool) -> bool:
 
     return True
 
+# COMMAND ----------
 
-def main():
-    parser = argparse.ArgumentParser(description="Fix stuck collateral in IronForge paper accounts")
-    parser.add_argument("--execute", action="store_true", help="Actually apply the fix (default: dry run)")
-    parser.add_argument("--bot", choices=["flame", "spark", "inferno"], help="Fix only this bot")
-    args = parser.parse_args()
+# ── MAIN ──────────────────────────────────────────────────────────────────
 
-    if DB_MODE != "databricks":
-        print("ERROR: This script requires Databricks connection. Run on Databricks or set credentials.")
-        sys.exit(1)
+print("=" * 60)
+print("IronForge Stuck Collateral Fix")
+print(f"Mode: {'EXECUTE' if EXECUTE else 'DRY RUN'}")
+print("=" * 60)
 
-    print("=" * 60)
-    print("IronForge Stuck Collateral Fix")
-    print(f"Mode: {'EXECUTE' if args.execute else 'DRY RUN'}")
-    print("=" * 60)
+bots_to_check = BOTS
+if BOT_FILTER:
+    bots_to_check = [b for b in BOTS if b["name"] == BOT_FILTER]
 
-    bots_to_check = BOTS
-    if args.bot:
-        bots_to_check = [b for b in BOTS if b["name"] == args.bot]
+issues_found = 0
+for bot in bots_to_check:
+    if check_and_fix_bot(bot, EXECUTE):
+        issues_found += 1
 
-    issues_found = 0
-    for bot in bots_to_check:
-        if check_and_fix_bot(bot, args.execute):
-            issues_found += 1
-
-    print(f"\n{'=' * 60}")
-    if issues_found == 0:
-        print("All bots have correct collateral. No fixes needed.")
-    elif args.execute:
-        print(f"Fixed {issues_found} bot(s) with stuck collateral.")
-    else:
-        print(f"Found {issues_found} bot(s) with stuck collateral.")
-        print("Run with --execute to apply fixes.")
-    print("=" * 60)
-
-
-if __name__ == "__main__":
-    main()
+print(f"\n{'=' * 60}")
+if issues_found == 0:
+    print("All bots have correct collateral. No fixes needed.")
+elif EXECUTE:
+    print(f"Fixed {issues_found} bot(s) with stuck collateral.")
+else:
+    print(f"Found {issues_found} bot(s) with stuck collateral.")
+    print("Set EXECUTE = True and re-run to apply fixes.")
+print("=" * 60)
