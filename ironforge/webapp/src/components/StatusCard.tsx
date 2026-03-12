@@ -68,17 +68,20 @@ export default function StatusCard({
   accent,
   config,
   bot,
+  liveUnrealizedPnl,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
   bot: 'flame' | 'spark' | 'inferno'
+  liveUnrealizedPnl?: number
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
-  const unrealized = account.unrealized_pnl || 0
+  // Prefer position-monitor's live unrealized P&L (single source of truth with position cards)
+  const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl ?? 0
   const unrealizedPositive = unrealized >= 0
-  const totalPnl = account.total_pnl || account.cumulative_pnl + unrealized
+  const totalPnl = account.cumulative_pnl + unrealized
   const totalPositive = totalPnl >= 0
 
   const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
