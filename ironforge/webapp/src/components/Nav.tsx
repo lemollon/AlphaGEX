@@ -40,7 +40,7 @@ export default function Nav() {
           <span
             style={{
               color: '#FBBF24',
-              fontSize: '0.5rem',
+              fontSize: '0.7rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
               fontStyle: 'italic',
               letterSpacing: '0.08em',
