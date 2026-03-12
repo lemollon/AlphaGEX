@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,84 +13,52 @@ export async function GET(
   const dte = dteMode(bot)
 
   try {
-    const accountQuery = dte
-      ? query(`
-          SELECT starting_capital, current_balance, cumulative_pnl,
-                 total_trades, collateral_in_use, buying_power,
-                 high_water_mark, max_drawdown, is_active
-          FROM ${botTable(bot, 'paper_account')}
-          WHERE is_active = TRUE AND dte_mode = $1
-          ORDER BY id DESC LIMIT 1
-        `, [dte])
-      : query(`
-          SELECT starting_capital, current_balance, cumulative_pnl,
-                 total_trades, collateral_in_use, buying_power,
-                 high_water_mark, max_drawdown, is_active
-          FROM ${botTable(bot, 'paper_account')}
-          WHERE is_active = TRUE
-          ORDER BY id DESC LIMIT 1
-        `)
+    const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
 
-    const positionCountQuery = dte
-      ? query(`
-          SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'positions')}
-          WHERE status = 'open' AND dte_mode = $1
-        `, [dte])
-      : query(`
-          SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'positions')}
-          WHERE status = 'open'
-        `)
+    const accountQuery = dbQuery(
+      `SELECT starting_capital, current_balance, cumulative_pnl,
+              total_trades, collateral_in_use, buying_power,
+              high_water_mark, max_drawdown, is_active
+       FROM ${botTable(bot, 'paper_account')}
+       WHERE is_active = TRUE ${dteFilter}
+       ORDER BY id DESC LIMIT 1`,
+    )
 
-    const heartbeatQuery = query(`
-      SELECT scan_count, last_heartbeat, status, details
-      FROM bot_heartbeats
-      WHERE bot_name = $1
-    `, [heartbeatName(bot)])
+    const positionCountQuery = dbQuery(
+      `SELECT COUNT(*) as cnt
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' ${dteFilter}`,
+    )
 
-    const snapshotQuery = dte
-      ? query(`
-          SELECT unrealized_pnl, open_positions, snapshot_time
-          FROM ${botTable(bot, 'equity_snapshots')}
-          WHERE dte_mode = $1
-          ORDER BY snapshot_time DESC
-          LIMIT 1
-        `, [dte])
-      : query(`
-          SELECT unrealized_pnl, open_positions, snapshot_time
-          FROM ${botTable(bot, 'equity_snapshots')}
-          ORDER BY snapshot_time DESC
-          LIMIT 1
-        `)
+    const hbName = heartbeatName(bot)
+    const heartbeatQuery = dbQuery(
+      `SELECT scan_count, last_heartbeat, status, details
+       FROM ${sharedTable('bot_heartbeats')}
+       WHERE bot_name = '${escapeSql(hbName)}'`,
+    )
 
-    // Scans today: count actual scan cycles (SCAN-level logs), not just executed trades
-    const scansTodayQuery = dte
-      ? query(`
-          SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'logs')}
-          WHERE level = 'SCAN' AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} AND dte_mode = $1
-        `, [dte])
-      : query(`
-          SELECT COUNT(*) as cnt
-          FROM ${botTable(bot, 'logs')}
-          WHERE level = 'SCAN' AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-        `)
+    const snapshotQuery = dbQuery(
+      `SELECT unrealized_pnl, open_positions, snapshot_time
+       FROM ${botTable(bot, 'equity_snapshots')}
+       ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+       ORDER BY snapshot_time DESC
+       LIMIT 1`,
+    )
 
-    // Last error: most recent error-level log
-    const lastErrorQuery = dte
-      ? query(`
-          SELECT log_time, message
-          FROM ${botTable(bot, 'logs')}
-          WHERE level = 'ERROR' AND dte_mode = $1
-          ORDER BY log_time DESC LIMIT 1
-        `, [dte])
-      : query(`
-          SELECT log_time, message
-          FROM ${botTable(bot, 'logs')}
-          WHERE level = 'ERROR'
-          ORDER BY log_time DESC LIMIT 1
-        `)
+    const scansTodayQuery = dbQuery(
+      `SELECT COUNT(*) as cnt
+       FROM ${botTable(bot, 'logs')}
+       WHERE level = 'SCAN'
+         AND CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = ${CT_TODAY}
+         ${dteFilter}`,
+    )
+
+    const lastErrorQuery = dbQuery(
+      `SELECT log_time, message
+       FROM ${botTable(bot, 'logs')}
+       WHERE level = 'ERROR' ${dteFilter}
+       ORDER BY log_time DESC LIMIT 1`,
+    )
 
     const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows] =
       await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery])
@@ -109,7 +77,9 @@ export async function GET(
     // Parse heartbeat details JSON for SPY/VIX and bot state
     let hbDetails: { action?: string; reason?: string; spot?: number; vix?: number } = {}
     if (hb?.details) {
-      try { hbDetails = typeof hb.details === 'string' ? JSON.parse(hb.details) : hb.details } catch {}
+      try { hbDetails = typeof hb.details === 'string' ? JSON.parse(hb.details) : hb.details } catch {
+        // Malformed JSON in heartbeat details — ignore
+      }
     }
 
     // Derive bot_state from heartbeat status + action
@@ -124,12 +94,17 @@ export async function GET(
       : hbStatus === 'active' ? 'scanning'
       : 'unknown'
 
+    const dteNum = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
+    const strategy = bot === 'flame' ? '2DTE Paper Iron Condor'
+      : bot === 'spark' ? '1DTE Paper Iron Condor'
+      : '0DTE Paper Iron Condor'
+
     return NextResponse.json({
       bot_name: bot.toUpperCase(),
-      strategy: bot === 'flame' ? '2DTE Paper Iron Condor' : '1DTE Paper Iron Condor',
-      dte: bot === 'flame' ? 2 : 1,
+      strategy,
+      dte: dteNum,
       ticker: 'SPY',
-      is_active: acct?.is_active === true,
+      is_active: acct?.is_active === true || acct?.is_active === 'true',
       account: {
         starting_capital: startingCapital,
         balance,
@@ -144,19 +119,20 @@ export async function GET(
         max_drawdown: num(acct?.max_drawdown),
       },
       open_positions: int(positionCountRows[0]?.cnt),
-      last_scan: hb?.last_heartbeat?.toISOString?.() || hb?.last_heartbeat || null,
-      last_snapshot: snapshotRows[0]?.snapshot_time?.toISOString?.() || snapshotRows[0]?.snapshot_time || null,
+      last_scan: hb?.last_heartbeat || null,
+      last_snapshot: snapshotRows[0]?.snapshot_time || null,
       scan_count: int(hb?.scan_count),
       scans_today: int(scansTodayRows[0]?.cnt),
       spot_price: hbDetails.spot || null,
       vix: hbDetails.vix || null,
       bot_state: botState,
       last_error: lastErr ? {
-        time: lastErr.log_time?.toISOString?.() || lastErr.log_time || null,
+        time: lastErr.log_time || null,
         message: lastErr.message || null,
       } : null,
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

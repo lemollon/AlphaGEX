@@ -117,3 +117,49 @@ export async function dbExecute(sql: string): Promise<void> {
 export function escapeSql(val: string): string {
   return val.replace(/'/g, "''")
 }
+
+/** Bot-specific fully-qualified table name: alpha_prime.ironforge.{bot}_{suffix}. */
+export function botTable(bot: string, suffix: string): string {
+  return `${CATALOG}.${SCHEMA}.${bot}_${suffix}`
+}
+
+/** Validate bot name — only flame, spark, or inferno allowed. */
+export function validateBot(bot: string): string | null {
+  const b = bot.toLowerCase()
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
+  return b
+}
+
+/** Returns the dte_mode value for this bot. */
+export function dteMode(bot: string): string | null {
+  if (bot === 'flame') return '2DTE'
+  if (bot === 'spark') return '1DTE'
+  if (bot === 'inferno') return '0DTE'
+  return null
+}
+
+/** Parse a value as a float, defaulting to 0. */
+export function num(val: unknown): number {
+  if (val == null || val === '') return 0
+  const n = parseFloat(String(val))
+  return isNaN(n) ? 0 : n
+}
+
+/** Parse a value as an int, defaulting to 0. */
+export function int(val: unknown): number {
+  if (val == null || val === '') return 0
+  const n = parseInt(String(val), 10)
+  return isNaN(n) ? 0 : n
+}
+
+/** Map bot name to heartbeat bot_name value in bot_heartbeats table. */
+export function heartbeatName(bot: string): string {
+  return bot.toUpperCase()
+}
+
+/**
+ * SQL expression for "today" in Central Time for Databricks.
+ * Databricks CURRENT_DATE() uses the warehouse timezone, but to be
+ * explicit we convert from UTC to CT before extracting the date.
+ */
+export const CT_TODAY = "CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', CURRENT_TIMESTAMP()) AS DATE)"

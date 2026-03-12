@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, SandboxCloseInfo } from '@/lib/tradier'
+import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/databricks-sql'
+import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +19,7 @@ export async function POST(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'
   const botName = bot.toUpperCase()
 
   try {
@@ -34,16 +34,16 @@ export async function POST(
     }
 
     // 1. Look up the open position
-    const rows = await query(
+    const rows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
               collateral_required, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
-       WHERE position_id = $1 AND status = 'open' AND dte_mode = $2
+       WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
+         AND dte_mode = '${escapeSql(dte)}'
        LIMIT 1`,
-      [position_id, dte],
     )
 
     if (rows.length === 0) {
@@ -73,16 +73,16 @@ export async function POST(
       )
       closePrice = mtm?.cost_to_close ?? 0
     } else {
-      // Market closed / no API — close at zero (full credit kept)
       closePrice = 0
     }
 
-    // 3. Mirror close to all Tradier sandbox accounts FIRST
-    //    so we can read back the actual fill price before computing P&L.
+    // 3. Mirror close to sandbox accounts
     let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-    let sandboxOpenInfo: Record<string, any> | null = null
+    let sandboxOpenInfo: Record<string, SandboxOrderInfo | number> | null = null
     if (pos.sandbox_order_id) {
-      try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch {}
+      try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch {
+        // Malformed sandbox JSON — proceed without mirror
+      }
     }
     try {
       sandboxCloseInfo = await closeIcOrderAllAccounts(
@@ -97,108 +97,108 @@ export async function POST(
         position_id,
         sandboxOpenInfo,
       )
-    } catch (sbErr: any) {
-      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
+    } catch (sbErr: unknown) {
+      const sbMsg = sbErr instanceof Error ? sbErr.message : String(sbErr)
+      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbMsg}`)
     }
 
-    // 4. Use User's actual fill price if available (1:1 match with Tradier)
+    // 4. Use User's actual fill price if available
     let effectivePrice = closePrice
     const userClose = sandboxCloseInfo['User']
     if (userClose?.fill_price != null && userClose.fill_price > 0) {
       effectivePrice = userClose.fill_price
     }
 
-    // 5. Calculate P&L using effective (actual) close price
+    // 5. Calculate P&L
     const pnlPerContract = (totalCredit - effectivePrice) * 100
     const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
 
     // 6. Close the position
-    await query(
+    const sandboxCloseJson = Object.keys(sandboxCloseInfo).length > 0
+      ? `'${escapeSql(JSON.stringify(sandboxCloseInfo))}'`
+      : 'NULL'
+    await dbExecute(
       `UPDATE ${botTable(bot, 'positions')}
-       SET status = 'closed', close_time = NOW(),
-           close_price = $1, realized_pnl = $2,
-           close_reason = 'manual_close', updated_at = NOW(),
-           sandbox_close_order_id = $5
-       WHERE position_id = $3 AND status = 'open' AND dte_mode = $4`,
-      [effectivePrice, realizedPnl, position_id, dte,
-       Object.keys(sandboxCloseInfo).length > 0 ? JSON.stringify(sandboxCloseInfo) : null],
+       SET status = 'closed', close_time = CURRENT_TIMESTAMP(),
+           close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
+           close_reason = 'manual_close', updated_at = CURRENT_TIMESTAMP(),
+           sandbox_close_order_id = ${sandboxCloseJson}
+       WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
+         AND dte_mode = '${escapeSql(dte)}'`,
     )
 
-    // 7. Update paper account (add realized P&L, refund collateral)
-    await query(
+    // 7. Update paper account
+    await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
-       SET current_balance = current_balance + $1,
-           cumulative_pnl = cumulative_pnl + $1,
+       SET current_balance = current_balance + ${realizedPnl},
+           cumulative_pnl = cumulative_pnl + ${realizedPnl},
            total_trades = total_trades + 1,
-           collateral_in_use = GREATEST(0, collateral_in_use - $2),
-           buying_power = buying_power + $2 + $1,
-           high_water_mark = GREATEST(high_water_mark, current_balance + $1),
+           collateral_in_use = GREATEST(0, collateral_in_use - ${collateral}),
+           buying_power = buying_power + ${collateral} + ${realizedPnl},
+           high_water_mark = GREATEST(high_water_mark, current_balance + ${realizedPnl}),
            max_drawdown = GREATEST(max_drawdown,
-             GREATEST(high_water_mark, current_balance + $1) - (current_balance + $1)),
-           updated_at = NOW()
-       WHERE is_active IS NOT NULL AND dte_mode = $3`,
-      [realizedPnl, collateral, dte],
+             GREATEST(high_water_mark, current_balance + ${realizedPnl}) - (current_balance + ${realizedPnl})),
+           updated_at = CURRENT_TIMESTAMP()
+       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'`,
     )
 
     // 8. Update PDT log
-    await query(
+    await dbExecute(
       `UPDATE ${botTable(bot, 'pdt_log')}
-       SET closed_at = NOW(), exit_cost = $1, pnl = $2,
+       SET closed_at = CURRENT_TIMESTAMP(), exit_cost = ${effectivePrice}, pnl = ${realizedPnl},
            close_reason = 'manual_close',
-           is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
-       WHERE position_id = $3 AND dte_mode = $4`,
-      [effectivePrice, realizedPnl, position_id, dte],
+           is_day_trade = (CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', opened_at) AS DATE) = ${CT_TODAY})
+       WHERE position_id = '${escapeSql(position_id)}' AND dte_mode = '${escapeSql(dte)}'`,
     )
 
-    // 9. Save equity snapshot
-    const acctRows = await query(
+    // 9. Equity snapshot
+    const acctRows = await dbQuery(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
-       WHERE dte_mode = $1 ORDER BY id DESC LIMIT 1`,
-      [dte],
+       WHERE dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
     )
     const bal = num(acctRows[0]?.current_balance)
-    const openCount = await query(
-      `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1`,
-      [dte],
-    )
     const cumPnl = num(acctRows[0]?.cumulative_pnl)
-    await query(
+    const openCount = await dbQuery(
+      `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+    )
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'equity_snapshots')}
        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-       VALUES ($1, $2, 0, $3, $4, $5)`,
-      [bal, cumPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
+       VALUES (${bal}, ${cumPnl}, 0, ${num(openCount[0]?.cnt)},
+               '${escapeSql(`force_close:${position_id}`)}', '${escapeSql(dte)}')`,
     )
 
     // 10. Log
-    await query(
+    const logDetails = escapeSql(JSON.stringify({
+      position_id,
+      close_price_estimated: closePrice,
+      close_price_actual: effectivePrice,
+      realized_pnl: realizedPnl,
+      close_reason: 'manual_close',
+      entry_credit: totalCredit,
+      source: 'force_close_api',
+      sandbox_close_info: sandboxCloseInfo,
+    }))
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        'TRADE_CLOSE',
-        `FORCE CLOSE: ${position_id} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`,
-        JSON.stringify({
-          position_id,
-          close_price_estimated: closePrice,
-          close_price_actual: effectivePrice,
-          realized_pnl: realizedPnl,
-          close_reason: 'manual_close',
-          entry_credit: totalCredit,
-          source: 'force_close_api',
-          sandbox_close_info: sandboxCloseInfo,
-        }),
-        dte,
-      ],
+       VALUES ('TRADE_CLOSE',
+               '${escapeSql(`FORCE CLOSE: ${position_id} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`)}',
+               '${logDetails}',
+               '${escapeSql(dte)}')`,
     )
 
-    // 11. Update daily_perf
-    await query(
-      `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (${CT_TODAY}, 0, 1, $1)
-       ON CONFLICT (trade_date) DO UPDATE SET
-         positions_closed = ${botTable(bot, 'daily_perf')}.positions_closed + 1,
-         realized_pnl = ${botTable(bot, 'daily_perf')}.realized_pnl + $1`,
-      [realizedPnl],
+    // 11. Daily perf (MERGE upsert)
+    const dailyTable = botTable(bot, 'daily_perf')
+    await dbExecute(
+      `MERGE INTO ${dailyTable} AS t
+       USING (SELECT ${CT_TODAY} AS trade_date) AS s
+       ON t.trade_date = s.trade_date
+       WHEN MATCHED THEN UPDATE SET
+         t.positions_closed = t.positions_closed + 1,
+         t.realized_pnl = t.realized_pnl + ${realizedPnl}
+       WHEN NOT MATCHED THEN INSERT (trade_date, trades_executed, positions_closed, realized_pnl)
+         VALUES (${CT_TODAY}, 0, 1, ${realizedPnl})`,
     )
 
     return NextResponse.json({
@@ -211,7 +211,8 @@ export async function POST(
       contracts,
       sandbox_close_info: sandboxCloseInfo,
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
