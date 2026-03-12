@@ -119,7 +119,7 @@ def test_bot_configs():
     check("FLAME dte_mode = 2DTE", flame.dte_mode == "2DTE", f"got {flame.dte_mode}")
     check("FLAME sd_multiplier = 1.2", flame.sd_multiplier == 1.2, f"got {flame.sd_multiplier}")
     check("FLAME profit_target_pct = 30", flame.profit_target_pct == 30.0, f"got {flame.profit_target_pct}")
-    check("FLAME stop_loss_pct = 100", flame.stop_loss_pct == 100.0, f"got {flame.stop_loss_pct}")
+    check("FLAME stop_loss_pct = 200", flame.stop_loss_pct == 200.0, f"got {flame.stop_loss_pct}")
     check("FLAME max_trades_per_day = 1", flame.max_trades_per_day == 1, f"got {flame.max_trades_per_day}")
     check("FLAME entry_end = 14:00", flame.entry_end == "14:00", f"got {flame.entry_end}")
     check("FLAME spread_width = 5", flame.spread_width == 5.0, f"got {flame.spread_width}")
@@ -135,7 +135,7 @@ def test_bot_configs():
     check("SPARK dte_mode = 1DTE", spark.dte_mode == "1DTE", f"got {spark.dte_mode}")
     check("SPARK sd_multiplier = 1.2", spark.sd_multiplier == 1.2, f"got {spark.sd_multiplier}")
     check("SPARK profit_target_pct = 30", spark.profit_target_pct == 30.0, f"got {spark.profit_target_pct}")
-    check("SPARK stop_loss_pct = 100", spark.stop_loss_pct == 100.0, f"got {spark.stop_loss_pct}")
+    check("SPARK stop_loss_pct = 200", spark.stop_loss_pct == 200.0, f"got {spark.stop_loss_pct}")
     check("SPARK max_trades_per_day = 1", spark.max_trades_per_day == 1, f"got {spark.max_trades_per_day}")
     check("SPARK entry_end = 14:00", spark.entry_end == "14:00", f"got {spark.entry_end}")
 
@@ -145,7 +145,7 @@ def test_bot_configs():
     check("INFERNO dte_mode = 0DTE", inferno.dte_mode == "0DTE", f"got {inferno.dte_mode}")
     check("INFERNO sd_multiplier = 1.0", inferno.sd_multiplier == 1.0, f"got {inferno.sd_multiplier}")
     check("INFERNO profit_target_pct = 50", inferno.profit_target_pct == 50.0, f"got {inferno.profit_target_pct}")
-    check("INFERNO stop_loss_pct = 200", inferno.stop_loss_pct == 200.0, f"got {inferno.stop_loss_pct}")
+    check("INFERNO stop_loss_pct = 300", inferno.stop_loss_pct == 300.0, f"got {inferno.stop_loss_pct}")
     check("INFERNO max_trades = 0 (unlimited)", inferno.max_trades_per_day == 0, f"got {inferno.max_trades_per_day}")
     check("INFERNO entry_end = 14:30", inferno.entry_end == "14:30", f"got {inferno.entry_end}")
     check("INFERNO pdt_max = 0 (no PDT)", inferno.pdt_max_day_trades == 0, f"got {inferno.pdt_max_day_trades}")
@@ -174,14 +174,10 @@ def test_stop_loss_consistency():
         SPARK:   sl_mult = 2.0  → SL at 2x credit → 100% credit LOSS
         INFERNO: sl_mult = 3.0  → SL at 3x credit → 200% credit LOSS
 
-    Trader models.py:
-        FLAME:   stop_loss_pct = 100  → SL at 1x credit → BREAK EVEN (not 100% loss!)
-        SPARK:   stop_loss_pct = 100  → SL at 1x credit → BREAK EVEN
-        INFERNO: stop_loss_pct = 200  → SL at 2x credit → 100% credit loss
-
-    MISMATCH DETECTED:
-        FLAME/SPARK: Scanner stops at 2x credit, Trader stops at 1x credit
-        INFERNO:     Scanner stops at 3x credit, Trader stops at 2x credit
+    Trader models.py (ALIGNED):
+        FLAME:   stop_loss_pct = 200  → SL at 2x credit → 100% credit LOSS
+        SPARK:   stop_loss_pct = 200  → SL at 2x credit → 100% credit LOSS
+        INFERNO: stop_loss_pct = 300  → SL at 3x credit → 200% credit LOSS
     """
     print("\n=== 2. Stop Loss Consistency (Scanner vs Trader) ===")
 
@@ -273,16 +269,22 @@ def test_stop_loss_consistency():
 # 3. SLIDING PROFIT TARGETS
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _get_sliding_profit_target(ct_now: datetime, base_pt_pct: float) -> Tuple[float, str]:
-    """Replicate the trader's sliding PT logic for testing."""
+def _get_sliding_profit_target(ct_now: datetime, base_pt_pct: float, bot_name: str = "") -> Tuple[float, str]:
+    """Replicate the trader's sliding PT logic for testing.
+    Matches scanner get_sliding_profit_target() exactly."""
     time_minutes = ct_now.hour * 60 + ct_now.minute
     base_pt = base_pt_pct / 100.0
+    is_inferno = bot_name.upper() == "INFERNO"
 
     if time_minutes < 630:       # before 10:30 AM CT
         return base_pt, "MORNING"
     elif time_minutes < 780:     # before 1:00 PM CT
+        if is_inferno:
+            return 0.30, "MIDDAY"
         return max(0.10, base_pt - 0.10), "MIDDAY"
     else:
+        if is_inferno:
+            return 0.10, "AFTERNOON"
         return max(0.10, base_pt - 0.15), "AFTERNOON"
 
 
@@ -311,20 +313,20 @@ def test_sliding_profit_targets():
     check(f"FLAME 2:00 PM = 15% AFTERNOON", pct == 0.15 and tier == "AFTERNOON", f"got {pct} {tier}")
     print(f"    Close at ${threshold:.4f} (entry ${entry_credit})")
 
-    # INFERNO (base 50%)
-    pct, tier = _get_sliding_profit_target(morning, 50.0)
+    # INFERNO (base 50%, INFERNO-specific path: 50/30/10)
+    pct, tier = _get_sliding_profit_target(morning, 50.0, "INFERNO")
     threshold = entry_credit * (1 - pct)
     check(f"INFERNO 9:00 AM = 50% MORNING", pct == 0.50 and tier == "MORNING", f"got {pct} {tier}")
     print(f"    Close at ${threshold:.4f} (entry ${entry_credit})")
 
-    pct, tier = _get_sliding_profit_target(midday, 50.0)
+    pct, tier = _get_sliding_profit_target(midday, 50.0, "INFERNO")
     threshold = entry_credit * (1 - pct)
-    check(f"INFERNO 11:00 AM = 40% MIDDAY", abs(pct - 0.40) < 1e-9 and tier == "MIDDAY", f"got {pct} {tier}")
+    check(f"INFERNO 11:00 AM = 30% MIDDAY", abs(pct - 0.30) < 1e-9 and tier == "MIDDAY", f"got {pct} {tier}")
     print(f"    Close at ${threshold:.4f} (entry ${entry_credit})")
 
-    pct, tier = _get_sliding_profit_target(afternoon, 50.0)
+    pct, tier = _get_sliding_profit_target(afternoon, 50.0, "INFERNO")
     threshold = entry_credit * (1 - pct)
-    check(f"INFERNO 2:00 PM = 35% AFTERNOON", pct == 0.35 and tier == "AFTERNOON", f"got {pct} {tier}")
+    check(f"INFERNO 2:00 PM = 10% AFTERNOON", pct == 0.10 and tier == "AFTERNOON", f"got {pct} {tier}")
     print(f"    Close at ${threshold:.4f} (entry ${entry_credit})")
 
     # Floor test: ensure PT never goes below 10%
@@ -367,14 +369,13 @@ def test_scanner_sliding_pt():
     pct, tier = scanner.get_sliding_profit_target(afternoon, base_pt=0.50, bot_name="inferno")
     check(f"Scanner INFERNO 2PM = 10% AFTERNOON", pct == 0.10 and tier == "AFTERNOON", f"got {pct} {tier}")
 
-    # Cross-check: INFERNO scanner MIDDAY vs trader MIDDAY
-    trader_pct, _ = _get_sliding_profit_target(midday, 50.0)
+    # Cross-check: INFERNO scanner MIDDAY vs trader MIDDAY (should now match)
+    trader_pct, _ = _get_sliding_profit_target(midday, 50.0, "INFERNO")
     scanner_pct, _ = scanner.get_sliding_profit_target(midday, base_pt=0.50, bot_name="inferno")
     if abs(trader_pct - scanner_pct) > 0.001:
         warn(
             "INFERNO MIDDAY PT MISMATCH",
-            f"Trader={trader_pct:.0%} vs Scanner={scanner_pct:.0%}. "
-            "Scanner uses INFERNO-specific path (50/30/10), Trader uses generic (50/40/35)"
+            f"Trader={trader_pct:.0%} vs Scanner={scanner_pct:.0%}"
         )
     else:
         check("INFERNO MIDDAY PT matches scanner", True)
@@ -523,13 +524,13 @@ def test_pnl_calculations():
     pnl = (entry_credit - close_price) * 100 * contracts
     check(f"Break-even: ${entry_credit} entry, ${close_price} close = ${pnl:.0f}", pnl == 0.0)
 
-    # FLAME stop loss scenario (trader logic: SL at 1x = break even)
+    # FLAME stop loss scenario (SL at 2x = 100% credit loss)
     flame = flame_config()
     sl_price = entry_credit * (flame.stop_loss_pct / 100)
     sl_pnl = (entry_credit - sl_price) * 100 * contracts
     print(f"    FLAME SL trigger: cost=${sl_price:.2f}, P&L={sl_pnl:.0f} (stop_loss_pct={flame.stop_loss_pct})")
 
-    # INFERNO stop loss scenario (trader logic: SL at 2x = -100% credit)
+    # INFERNO stop loss scenario (SL at 3x = 200% credit loss)
     inferno = inferno_config()
     sl_price = entry_credit * (inferno.stop_loss_pct / 100)
     sl_pnl = (entry_credit - sl_price) * 100 * contracts
@@ -572,11 +573,11 @@ def test_exit_priority():
     check("PT checked before SL (close=$0.50)", close_price <= pt_threshold and close_price < sl_threshold)
     print(f"    PT threshold=${pt_threshold:.2f}, SL threshold=${sl_threshold:.2f}, close=${close_price}")
 
-    # Scenario: SL triggers, PT doesn't
-    close_price = 3.00
+    # Scenario: SL triggers, PT doesn't (SL threshold is 2x credit = $5.00)
+    close_price = 5.50
     pt_hit = close_price <= pt_threshold
     sl_hit = close_price >= sl_threshold
-    check("SL triggers when PT doesn't (close=$3.00)", not pt_hit and sl_hit)
+    check("SL triggers when PT doesn't (close=$5.50)", not pt_hit and sl_hit)
 
     # Scenario: EOD — neither PT nor SL, but past 2:45 PM
     close_price = 2.00  # Between PT and SL thresholds
@@ -696,11 +697,13 @@ def test_scanner_trader_config_alignment():
         else:
             check(f"{bot_name.upper()} max_trades matches", True)
 
-        # Stop loss (known mismatch documented in test 2)
+        # Stop loss (aligned: trader stop_loss_pct/100 should equal scanner sl_mult)
         trader_sl = trader_cfg.stop_loss_pct / 100.0
         scanner_sl = scanner_cfg["sl_mult"]
         if abs(trader_sl - scanner_sl) > 0.001:
-            print(f"    SL: Trader={trader_sl}x Scanner={scanner_sl}x (KNOWN MISMATCH — see test 2)")
+            check(f"{bot_name.upper()} SL aligned (Trader={trader_sl}x Scanner={scanner_sl}x)", False)
+        else:
+            check(f"{bot_name.upper()} SL aligned ({trader_sl}x)", True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -770,13 +773,13 @@ def test_scenario_table():
         ("FLAME", 2.00, (11, 0),  1.50, "PROFIT_TARGET"),   # 1.50 < 2.00*(1-0.20)=1.60
         ("FLAME", 2.00, (14, 0),  1.60, "PROFIT_TARGET"),   # 1.60 < 2.00*(1-0.15)=1.70
         ("FLAME", 2.00, (14, 0),  1.80, "HOLD"),            # Between PT and SL
-        ("FLAME", 2.00, (14, 0),  2.00, "STOP_LOSS"),       # 2.00 >= 2.00*1.0=2.00
-        ("FLAME", 2.00, (14, 0),  3.00, "STOP_LOSS"),       # 3.00 >= 2.00*1.0=2.00
+        ("FLAME", 2.00, (14, 0),  4.00, "STOP_LOSS"),       # 4.00 >= 2.00*2.0=4.00
+        ("FLAME", 2.00, (14, 0),  5.00, "STOP_LOSS"),       # 5.00 >= 2.00*2.0=4.00
         ("INFERNO", 3.00, (9, 0), 1.00, "PROFIT_TARGET"),   # 1.00 < 3.00*(1-0.50)=1.50
-        ("INFERNO", 3.00, (11, 0), 1.70, "PROFIT_TARGET"),  # 1.70 < 3.00*(1-0.40)=1.80
-        ("INFERNO", 3.00, (14, 0), 1.90, "PROFIT_TARGET"),  # 1.90 < 3.00*(1-0.35)=1.95
-        ("INFERNO", 3.00, (14, 0), 4.00, "HOLD"),           # 4.00 < 3.00*2.0=6.00
-        ("INFERNO", 3.00, (14, 0), 6.00, "STOP_LOSS"),      # 6.00 >= 3.00*2.0=6.00
+        ("INFERNO", 3.00, (11, 0), 1.70, "PROFIT_TARGET"),  # 1.70 < 3.00*(1-0.30)=2.10
+        ("INFERNO", 3.00, (14, 0), 2.60, "PROFIT_TARGET"),  # 2.60 < 3.00*(1-0.10)=2.70
+        ("INFERNO", 3.00, (14, 0), 4.00, "HOLD"),           # 4.00 < 3.00*3.0=9.00
+        ("INFERNO", 3.00, (14, 0), 9.00, "STOP_LOSS"),      # 9.00 >= 3.00*3.0=9.00
     ]
 
     for bot_name, entry, (h, m), cost, expected in scenarios:
@@ -786,7 +789,7 @@ def test_scenario_table():
             cfg = inferno_config()
 
         t = datetime(2026, 3, 12, h, m, tzinfo=CT)
-        pt_pct, tier = _get_sliding_profit_target(t, cfg.profit_target_pct)
+        pt_pct, tier = _get_sliding_profit_target(t, cfg.profit_target_pct, bot_name)
         pt_threshold = entry * (1 - pt_pct)
         sl_threshold = entry * (cfg.stop_loss_pct / 100)
 
@@ -802,6 +805,59 @@ def test_scenario_table():
             actual == expected,
             f"got {actual} (PT<=${pt_threshold:.2f} SL>={sl_threshold:.2f})"
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 13. POSITION SIZING & CONTRACT CAPS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_position_sizing():
+    """
+    Verify position sizing respects per-bot max_contracts:
+    - FLAME/SPARK: capped at 10 contracts
+    - INFERNO: no cap (max_contracts=0 means unlimited, sized by BP only)
+    """
+    print("\n=== 13. Position Sizing & Contract Caps ===")
+
+    flame = flame_config()
+    spark = spark_config()
+    inferno = inferno_config()
+
+    check("FLAME max_contracts = 10", flame.max_contracts == 10)
+    check("SPARK max_contracts = 10", spark.max_contracts == 10)
+    check("INFERNO max_contracts = 0 (no limit)", inferno.max_contracts == 0)
+
+    # Simulate sizing: $10,000 BP, $250 collateral per contract
+    buying_power = 10000.0
+    collateral_per = 250.0
+    bp_usage = 0.85
+
+    usable_bp = buying_power * bp_usage  # $8,500
+    bp_contracts = int(usable_bp / collateral_per)  # 34
+
+    # FLAME: capped at 10
+    flame_contracts = min(bp_contracts, flame.max_contracts)
+    check("FLAME sized to 10 (capped)", flame_contracts == 10)
+
+    # INFERNO: no cap, uses all available BP
+    inferno_contracts = bp_contracts if inferno.max_contracts == 0 else min(bp_contracts, inferno.max_contracts)
+    check("INFERNO sized to 34 (uncapped)", inferno_contracts == 34)
+
+    # Scanner BOT_CONFIG alignment
+    scanner = _load_scanner()
+    if scanner:
+        s_flame = scanner.BOT_CONFIG["flame"]
+        s_inferno = scanner.BOT_CONFIG["inferno"]
+        check("Scanner FLAME max_contracts = 10", s_flame.get("max_contracts") == 10)
+        check("Scanner INFERNO max_contracts = 0", s_inferno.get("max_contracts") == 0)
+
+        # Simulate scanner sizing logic for INFERNO (no cap)
+        bp_c = max(1, int(usable_bp / collateral_per))
+        cap = s_inferno.get("max_contracts", 10)
+        scanner_contracts = bp_c if cap == 0 else min(cap, bp_c)
+        check("Scanner INFERNO sizes to 34 (uncapped)", scanner_contracts == 34)
+    else:
+        print("    Scanner not loaded — skipping scanner sizing checks")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -826,6 +882,7 @@ def main():
     test_scanner_trader_config_alignment()
     test_position_model()
     test_scenario_table()
+    test_position_sizing()
 
     print(f"\n{'=' * 60}")
     print(f"  RESULTS: {passed} passed, {failed} failed, {warnings} warnings")

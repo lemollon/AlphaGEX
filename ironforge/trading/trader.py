@@ -663,7 +663,7 @@ class Trader:
         The profit target slides DOWN as the day progresses — based on CURRENT
         time, not when the trade was opened.
 
-        Uses the original scanner formula: max(0.10, base_pt - offset)
+        Matches scanner get_sliding_profit_target() exactly.
 
         FLAME/SPARK (base 30%):
             8:30 AM – 10:29 AM  → 30%  (MORNING)
@@ -672,19 +672,24 @@ class Trader:
 
         INFERNO (base 50%):
             8:30 AM – 10:29 AM  → 50%  (MORNING)
-            10:30 AM – 12:59 PM → 40%  (MIDDAY)
-            1:00 PM – 2:44 PM   → 35%  (AFTERNOON)
+            10:30 AM – 12:59 PM → 30%  (MIDDAY)
+            1:00 PM – 2:44 PM   → 10%  (AFTERNOON)
 
         2:45 PM+ → handled by EOD cutoff (close at any P&L)
         """
         time_minutes = ct_now.hour * 60 + ct_now.minute
         base_pt = self.config.profit_target_pct / 100.0  # 0.30 or 0.50
+        is_inferno = self.config.bot_name == "INFERNO"
 
         if time_minutes < 630:       # before 10:30 AM CT
             return base_pt, "MORNING"
         elif time_minutes < 780:     # before 1:00 PM CT
+            if is_inferno:
+                return 0.30, "MIDDAY"
             return max(0.10, base_pt - 0.10), "MIDDAY"
         else:
+            if is_inferno:
+                return 0.10, "AFTERNOON"
             return max(0.10, base_pt - 0.15), "AFTERNOON"
 
     def _is_past_eod_cutoff(self, now: datetime) -> bool:

@@ -253,12 +253,14 @@ test("SD=1.0 call_short < SD=1.2 call_short (tighter)",
 # ─── Fix 5: INFERNO stop loss mult = 2.0 ────────────────────────
 print("\n=== INFERNO Stop Loss Multiplier (Fix 5) ===")
 
-test("INFERNO sl_mult = 2.0",
-     scanner.BOT_CONFIG["inferno"]["sl_mult"] == 2.0,
+# Scanner sl_mult values: FLAME/SPARK=2.0 (SL at 2x credit), INFERNO=3.0 (SL at 3x credit)
+# These differ from trader models.py (stop_loss_pct) — known mismatch, scanner is authority
+test("INFERNO sl_mult = 3.0",
+     scanner.BOT_CONFIG["inferno"]["sl_mult"] == 3.0,
      f"got {scanner.BOT_CONFIG['inferno']['sl_mult']}")
 
-test("FLAME sl_mult = 1.0",
-     scanner.BOT_CONFIG["flame"]["sl_mult"] == 1.0,
+test("FLAME sl_mult = 2.0",
+     scanner.BOT_CONFIG["flame"]["sl_mult"] == 2.0,
      f"got {scanner.BOT_CONFIG['flame']['sl_mult']}")
 
 # ─── Market Hours ─────────────────────────────────────────────────
@@ -339,6 +341,34 @@ test("Logan account present", "Logan" in names, str(names))
 for acct in accounts:
     test(f"{acct['name']} has api_key", len(acct.get("api_key", "")) > 0)
     test(f"{acct['name']} has account_id", len(acct.get("account_id", "")) > 0)
+
+# ─── Position Sizing & Contract Caps ─────────────────────────────
+print("\n=== Position Sizing & Contract Caps ===")
+
+test("FLAME max_contracts = 10",
+     scanner.BOT_CONFIG["flame"].get("max_contracts") == 10,
+     f"got {scanner.BOT_CONFIG['flame'].get('max_contracts')}")
+
+test("SPARK max_contracts = 10",
+     scanner.BOT_CONFIG["spark"].get("max_contracts") == 10,
+     f"got {scanner.BOT_CONFIG['spark'].get('max_contracts')}")
+
+test("INFERNO max_contracts = 0 (no limit)",
+     scanner.BOT_CONFIG["inferno"].get("max_contracts") == 0,
+     f"got {scanner.BOT_CONFIG['inferno'].get('max_contracts')}")
+
+# Simulate sizing: $10,000 BP, $250 collateral
+bp = 10000.0 * 0.85  # usable
+coll = 250.0
+bp_contracts = max(1, math.floor(bp / coll))  # 34
+
+flame_cap = scanner.BOT_CONFIG["flame"]["max_contracts"]
+flame_sized = bp_contracts if flame_cap == 0 else min(flame_cap, bp_contracts)
+test("FLAME capped at 10", flame_sized == 10, f"got {flame_sized}")
+
+inferno_cap = scanner.BOT_CONFIG["inferno"]["max_contracts"]
+inferno_sized = bp_contracts if inferno_cap == 0 else min(inferno_cap, bp_contracts)
+test("INFERNO uncapped = 34", inferno_sized == 34, f"got {inferno_sized}")
 
 # ─── bot_table() ──────────────────────────────────────────────────
 print("\n=== bot_table() ===")
