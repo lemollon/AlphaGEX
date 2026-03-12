@@ -4,7 +4,7 @@ import { dbQuery, botTable, escapeSql, validateBot, dteMode } from '@/lib/databr
 export const dynamic = 'force-dynamic'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
@@ -13,13 +13,17 @@ export async function GET(
   const dte = dteMode(bot)
   const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''
 
+  const url = new URL(req.url)
+  const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50), 200)
+  const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0)
+
   try {
     const rows = await dbQuery(
       `SELECT log_time, level, message, details
        FROM ${botTable(bot, 'logs')}
        ${dteFilter}
        ORDER BY log_time DESC
-       LIMIT 50`,
+       LIMIT ${limit} OFFSET ${offset}`,
     )
 
     const logs = rows.map((r) => ({

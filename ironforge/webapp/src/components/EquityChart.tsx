@@ -326,7 +326,7 @@ function formatTime(ts: string) {
 export function ComparisonChart({
   flameData,
   sparkData,
-  infernoData = [],
+  infernoData,
   startingCapital,
 }: {
   flameData: CurvePoint[]
@@ -334,7 +334,8 @@ export function ComparisonChart({
   infernoData?: CurvePoint[]
   startingCapital: number
 }) {
-  if (!flameData.length && !sparkData.length && !infernoData.length) {
+  const infData = infernoData || []
+  if (!flameData.length && !sparkData.length && !infData.length) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
         <p className="text-forge-muted">No closed trades yet for any bot</p>
@@ -346,7 +347,7 @@ export function ComparisonChart({
   const allTimestamps = [
     ...flameData.map((d) => d.timestamp),
     ...sparkData.map((d) => d.timestamp),
-    ...infernoData.map((d) => d.timestamp),
+    ...infData.map((d) => d.timestamp),
   ].sort()
   if (allTimestamps.length) {
     map.set(allTimestamps[0], { flame: startingCapital, spark: startingCapital, inferno: startingCapital })
@@ -365,7 +366,7 @@ export function ComparisonChart({
   }
 
   let infernoCum = startingCapital
-  for (const pt of infernoData) {
+  for (const pt of infData) {
     infernoCum = pt.equity
     map.set(pt.timestamp, { ...map.get(pt.timestamp), inferno: infernoCum })
   }
@@ -379,7 +380,12 @@ export function ComparisonChart({
     if (vals.flame !== undefined) lastFlame = vals.flame
     if (vals.spark !== undefined) lastSpark = vals.spark
     if (vals.inferno !== undefined) lastInferno = vals.inferno
-    return { timestamp: ts, flame: vals.flame ?? lastFlame, spark: vals.spark ?? lastSpark, inferno: vals.inferno ?? lastInferno }
+    return {
+      timestamp: ts,
+      flame: vals.flame ?? lastFlame,
+      spark: vals.spark ?? lastSpark,
+      inferno: vals.inferno ?? lastInferno,
+    }
   })
 
   const nameMap: Record<string, string> = { flame: 'FLAME', spark: 'SPARK', inferno: 'INFERNO' }

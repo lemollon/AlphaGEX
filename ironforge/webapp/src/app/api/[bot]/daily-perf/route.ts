@@ -9,18 +9,22 @@ export const dynamic = 'force-dynamic'
  * Returns the last 30 days of daily performance summaries.
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
+
+  const url = new URL(req.url)
+  const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 30), 200)
+  const offset = Math.max(0, int(url.searchParams.get('offset')) || 0)
 
   try {
     const rows = await dbQuery(
       `SELECT trade_date, trades_executed, positions_closed, realized_pnl
        FROM ${botTable(bot, 'daily_perf')}
        ORDER BY trade_date DESC
-       LIMIT 30`,
+       LIMIT ${limit} OFFSET ${offset}`,
     )
 
     const data = rows.map((r) => ({

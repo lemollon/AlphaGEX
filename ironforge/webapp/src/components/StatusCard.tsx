@@ -409,6 +409,11 @@ export default function StatusCard({
             second: '2-digit',
             hour12: true,
           })} CT
+          {(data as any).last_scan_reason && (
+            <span className="ml-2 text-gray-500">
+              &mdash; {(data as any).last_scan_reason}
+            </span>
+          )}
         </p>
       )}
     </div>
