@@ -30,16 +30,16 @@ export default function Nav() {
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
-        {/* Logo with subtitle to the left */}
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-[0.65rem] text-amber-600/60 leading-tight text-right hidden sm:block">
-            SPY Iron Condor<br />Paper Trading
-          </span>
+        {/* Logo + subtitle underneath, left-aligned */}
+        <div className="flex flex-col items-start shrink-0">
           <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
             <img src="/ironforge-logo.svg" alt="" className="h-8 w-8 inline-block" />
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>
           </Link>
+          <span className="text-[0.65rem] text-amber-600/60 pl-1 -mt-px">
+            SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+          </span>
         </div>
 
         {/* Nav links */}
