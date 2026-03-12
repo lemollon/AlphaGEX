@@ -5,6 +5,7 @@ import ClientNav from '@/components/ClientNav'
 export const metadata: Metadata = {
   title: 'IronForge',
   description: 'FLAME vs SPARK Iron Condor Paper Trading on Render',
+  icons: { icon: '/favicon.svg' },
 }
 
 export default function RootLayout({
