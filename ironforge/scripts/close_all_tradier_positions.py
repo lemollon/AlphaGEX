@@ -1,43 +1,54 @@
-#!/usr/bin/env python3
-"""
-Close All Tradier Sandbox Positions (Iron Condor Multileg)
-==========================================================
+# Databricks notebook source
 
-Emergency script to close ALL open option positions across ALL three
-Tradier sandbox accounts (User, Matt, Logan).
+# COMMAND ----------
 
-Positions are grouped into Iron Condors by expiration and contract count,
-then closed using the same cascade fallback as the live scanner:
+# MAGIC %md
+# MAGIC # Close All Tradier Sandbox Positions (Iron Condor Multileg)
+# MAGIC
+# MAGIC Emergency script to close ALL open option positions across ALL three
+# MAGIC Tradier sandbox accounts (User, Matt, Logan).
+# MAGIC
+# MAGIC Positions are grouped into Iron Condors by expiration and contract count,
+# MAGIC then closed using the same cascade fallback as the live scanner:
+# MAGIC
+# MAGIC 1. Try 4-leg multileg close (buy_to_close shorts, sell_to_close longs)
+# MAGIC 2. If rejected → try 2x2-leg spread closes (put spread + call spread)
+# MAGIC 3. If rejected → try 4 individual leg closes
+# MAGIC
+# MAGIC Any legs that don't group into a clean IC are closed individually.
 
-    1. Try 4-leg multileg close (buy_to_close shorts, sell_to_close longs)
-    2. If rejected -> try 2x2-leg spread closes (put spread + call spread)
-    3. If rejected -> try 4 individual leg closes
+# COMMAND ----------
 
-Any legs that don't group into a clean IC are closed individually.
+# ── CONFIGURATION ──────────────────────────────────────────────────────────
+# Change these before running:
 
-Usage:
-    # Dry run (default) — shows what WOULD be closed
-    python ironforge/scripts/close_all_tradier_positions.py
+EXECUTE = False          # Set to True to actually close positions (False = dry run)
+ACCOUNT_FILTER = None    # Set to "User", "Matt", or "Logan" to filter (None = all)
 
-    # Actually close everything
-    python ironforge/scripts/close_all_tradier_positions.py --execute
-
-    # Close only one account
-    python ironforge/scripts/close_all_tradier_positions.py --execute --account User
-"""
-
+# ── Credentials (same as scanner — auto-populated if env vars are set) ──
 import os
+
+def _set_if_missing(key: str, fallback: str) -> None:
+    if not os.environ.get(key):
+        os.environ[key] = fallback
+
+_set_if_missing("TRADIER_SANDBOX_KEY_USER", "iPidGGnYrhzjp6vGBBQw8HyqF0xj")
+_set_if_missing("TRADIER_SANDBOX_KEY_MATT", "AGoNTv6o6GKMKT8uc7ooVNOct0e0")
+_set_if_missing("TRADIER_SANDBOX_KEY_LOGAN", "AcDucIMyjeNgFh60LWOb0F5fhXHh")
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_USER", "VA39284047")
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_MATT", "VA55391129")
+_set_if_missing("TRADIER_SANDBOX_ACCOUNT_ID_LOGAN", "VA59240884")
+
+# COMMAND ----------
+
 import re
-import sys
 import time
-import argparse
 import logging
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
-
-import requests
 
 CT = ZoneInfo("America/Chicago")
 
@@ -51,16 +62,11 @@ log = logging.getLogger("close_all")
 SANDBOX_URL = "https://sandbox.tradier.com/v1"
 
 # OCC symbol regex: SPY260312P00580000
-#   group 1 = underlying (e.g. SPY)
-#   group 2 = date YYMMDD
-#   group 3 = type P or C
-#   group 4 = strike x1000 (e.g. 00580000 = 580.0)
 OCC_RE = re.compile(r"^([A-Z]{1,6})(\d{6})([PC])(\d{8})$")
 
+# COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# OCC parsing
-# ---------------------------------------------------------------------------
+# ── OCC parsing ────────────────────────────────────────────────────────────
 
 def parse_occ(symbol: str) -> Optional[Dict]:
     """Parse an OCC option symbol into its components."""
@@ -73,15 +79,13 @@ def parse_occ(symbol: str) -> Optional[Dict]:
     return {
         "underlying": underlying,
         "expiration": expiration,
-        "type": opt_type,  # P or C
+        "type": opt_type,
         "strike": strike,
         "occ": symbol,
     }
 
 
-# ---------------------------------------------------------------------------
-# Tradier API helpers
-# ---------------------------------------------------------------------------
+# ── Tradier API helpers ────────────────────────────────────────────────────
 
 def api_get(base_url: str, api_key: str, endpoint: str, params: Dict = None) -> Optional[Dict]:
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
@@ -127,10 +131,9 @@ def get_balance(base_url: str, api_key: str, account_id: str) -> Optional[Dict]:
     data = api_get(base_url, api_key, f"/accounts/{account_id}/balances")
     return data.get("balances", {}) if data else None
 
+# COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# Iron Condor grouping
-# ---------------------------------------------------------------------------
+# ── Iron Condor grouping ──────────────────────────────────────────────────
 
 def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dict]]:
     """
@@ -142,12 +145,8 @@ def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dic
         - 1 short call (qty < 0, type C)
         - 1 long call  (qty > 0, type C)
 
-    Returns:
-        (iron_condors, ungrouped_legs)
-        iron_condors: list of dicts with IC details
-        ungrouped_legs: positions that didn't fit into any IC
+    Returns: (iron_condors, ungrouped_legs)
     """
-    # Parse each position
     parsed = []
     non_options = []
     for pos in positions:
@@ -176,7 +175,6 @@ def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dic
         short_calls = [l for l in legs if l["type"] == "C" and l["qty"] < 0]
         long_calls = [l for l in legs if l["type"] == "C" and l["qty"] > 0]
 
-        # Match ICs: pair up one of each type
         while short_puts and long_puts and short_calls and long_calls:
             sp = short_puts.pop(0)
             lp = long_puts.pop(0)
@@ -185,7 +183,6 @@ def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dic
 
             # Validate: long put < short put < short call < long call
             if not (lp["strike"] < sp["strike"] < sc["strike"] < lc["strike"]):
-                # Try sorting by strike to find the right arrangement
                 puts_sorted = sorted([sp, lp], key=lambda x: x["strike"])
                 calls_sorted = sorted([sc, lc], key=lambda x: x["strike"])
                 lp, sp = puts_sorted[0], puts_sorted[1]
@@ -207,7 +204,6 @@ def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dic
             iron_condors.append(ic)
             used.update([id(sp["raw"]), id(lp["raw"]), id(sc["raw"]), id(lc["raw"])])
 
-    # Anything not grouped is ungrouped
     ungrouped = []
     for p in parsed:
         if id(p["raw"]) not in used:
@@ -216,10 +212,9 @@ def group_into_iron_condors(positions: List[Dict]) -> Tuple[List[Dict], List[Dic
 
     return iron_condors, ungrouped
 
+# COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# Close an IC with cascade fallback (4-leg -> 2x2-leg -> individual)
-# ---------------------------------------------------------------------------
+# ── Close IC with cascade fallback (4-leg -> 2x2-leg -> individual) ───────
 
 def close_ic_multileg(
     base_url: str,
@@ -228,11 +223,7 @@ def close_ic_multileg(
     ic: Dict,
     tag: str = "",
 ) -> Dict:
-    """
-    Close an Iron Condor using the same cascade as the live scanner.
-
-    Returns {"method": str, "success": bool, "details": str}
-    """
+    """Close an Iron Condor using the same cascade as the live scanner."""
     contracts = str(ic["contracts"])
     ticker = ic["underlying"]
 
@@ -327,7 +318,6 @@ def close_ic_multileg(
         (ic["call_long_occ"], "sell_to_close", "CL"),
     ]
 
-    # Skip legs that already closed in attempt 2
     if put_ok:
         legs = [l for l in legs if l[2] not in ("PS", "PL")]
     if call_ok:
@@ -422,35 +412,20 @@ def close_single_leg(
         return {"order_id": order.get("id"), "status": order.get("status", "unknown")}
     return None
 
+# COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# Account discovery
-# ---------------------------------------------------------------------------
+# ── Account discovery ─────────────────────────────────────────────────────
 
 def get_all_accounts(account_filter: str = None) -> List[Dict]:
     accounts = []
-
-    primary_key = os.getenv("TRADIER_API_KEY", "")
-    primary_id = os.getenv("TRADIER_ACCOUNT_ID", "")
-    primary_url = os.getenv("TRADIER_BASE_URL", SANDBOX_URL)
-    if primary_key and primary_id:
-        accounts.append({
-            "name": "Primary",
-            "api_key": primary_key,
-            "account_id": primary_id,
-            "base_url": primary_url,
-        })
-
     for label, env_key, env_id in [
         ("User", "TRADIER_SANDBOX_KEY_USER", "TRADIER_SANDBOX_ACCOUNT_ID_USER"),
         ("Matt", "TRADIER_SANDBOX_KEY_MATT", "TRADIER_SANDBOX_ACCOUNT_ID_MATT"),
         ("Logan", "TRADIER_SANDBOX_KEY_LOGAN", "TRADIER_SANDBOX_ACCOUNT_ID_LOGAN"),
     ]:
-        key = os.getenv(env_key, "")
-        acct_id = os.getenv(env_id, "")
+        key = os.environ.get(env_key, "")
+        acct_id = os.environ.get(env_id, "")
         if key and acct_id:
-            if acct_id == primary_id:
-                continue
             accounts.append({
                 "name": label,
                 "api_key": key,
@@ -463,147 +438,114 @@ def get_all_accounts(account_filter: str = None) -> List[Dict]:
 
     return accounts
 
+# COMMAND ----------
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# ── MAIN ──────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Close all Tradier sandbox positions as Iron Condors (multileg)"
-    )
-    parser.add_argument(
-        "--execute", action="store_true",
-        help="Actually send close orders (default is dry run)",
-    )
-    parser.add_argument(
-        "--account", type=str, default=None,
-        help="Only close positions for this account name (User, Matt, Logan, Primary)",
-    )
-    args = parser.parse_args()
+now = datetime.now(CT)
+mode = "EXECUTE" if EXECUTE else "DRY RUN"
 
-    now = datetime.now(CT)
-    mode = "EXECUTE" if args.execute else "DRY RUN"
+print("=" * 70)
+print(f"  Close All Tradier Positions (IC Multileg) — {mode}")
+print(f"  Time: {now.strftime('%Y-%m-%d %H:%M:%S CT')}")
+print(f"  Cascade: 4-leg -> 2x2-leg -> individual legs")
+print("=" * 70)
 
-    print("=" * 70)
-    print(f"  Close All Tradier Positions (IC Multileg) — {mode}")
-    print(f"  Time: {now.strftime('%Y-%m-%d %H:%M:%S CT')}")
-    print(f"  Cascade: 4-leg -> 2x2-leg -> individual legs")
-    print("=" * 70)
-
-    accounts = get_all_accounts(args.account)
-    if not accounts:
-        print("\n  No Tradier accounts found. Set environment variables:")
-        print("    TRADIER_API_KEY + TRADIER_ACCOUNT_ID (primary)")
-        print("    TRADIER_SANDBOX_KEY_USER + TRADIER_SANDBOX_ACCOUNT_ID_USER")
-        print("    TRADIER_SANDBOX_KEY_MATT + TRADIER_SANDBOX_ACCOUNT_ID_MATT")
-        print("    TRADIER_SANDBOX_KEY_LOGAN + TRADIER_SANDBOX_ACCOUNT_ID_LOGAN")
-        sys.exit(1)
-
+accounts = get_all_accounts(ACCOUNT_FILTER)
+if not accounts:
+    print("\n  No Tradier accounts found. Check environment variables.")
+else:
     print(f"\n  Found {len(accounts)} account(s): {', '.join(a['name'] for a in accounts)}")
 
-    total_ics = 0
-    total_ungrouped = 0
-    total_closed = 0
-    total_failed = 0
+total_ics = 0
+total_ungrouped = 0
+total_closed = 0
+total_failed = 0
 
-    for acct in accounts:
-        name = acct["name"]
-        base_url = acct["base_url"]
-        api_key = acct["api_key"]
-        account_id = acct["account_id"]
-        is_sandbox = "sandbox" in base_url
+for acct in accounts:
+    name = acct["name"]
+    base_url = acct["base_url"]
+    api_key = acct["api_key"]
+    account_id = acct["account_id"]
+    is_sandbox = "sandbox" in base_url
 
-        print(f"\n{'─' * 70}")
-        print(f"  Account: {name} ({'SANDBOX' if is_sandbox else 'PRODUCTION'}) — {account_id}")
-        print(f"{'─' * 70}")
+    print(f"\n{'─' * 70}")
+    print(f"  Account: {name} ({'SANDBOX' if is_sandbox else 'PRODUCTION'}) — {account_id}")
+    print(f"{'─' * 70}")
 
-        # Fetch balance
-        balance = get_balance(base_url, api_key, account_id)
-        if balance:
-            equity = balance.get("total_equity", balance.get("equity", "?"))
-            print(f"  Equity: ${equity}")
+    balance = get_balance(base_url, api_key, account_id)
+    if balance:
+        equity = balance.get("total_equity", balance.get("equity", "?"))
+        print(f"  Equity: ${equity}")
 
-        # Fetch positions
-        positions = get_positions(base_url, api_key, account_id)
-        if not positions:
-            print("  No open positions.")
-            continue
+    positions = get_positions(base_url, api_key, account_id)
+    if not positions:
+        print("  No open positions.")
+        continue
 
-        print(f"  {len(positions)} raw position leg(s)")
+    print(f"  {len(positions)} raw position leg(s)")
 
-        # Group into ICs
-        ics, ungrouped = group_into_iron_condors(positions)
-        total_ics += len(ics)
-        total_ungrouped += len(ungrouped)
+    ics, ungrouped = group_into_iron_condors(positions)
+    total_ics += len(ics)
+    total_ungrouped += len(ungrouped)
 
-        # Display ICs
-        if ics:
-            print(f"\n  Iron Condors ({len(ics)}):")
-            for i, ic in enumerate(ics, 1):
-                print(
-                    f"    IC #{i}: {ic['underlying']} {ic['expiration']}  "
-                    f"{ic['put_long']}/{ic['put_short']}P — "
-                    f"{ic['call_short']}/{ic['call_long']}C  "
-                    f"x{ic['contracts']}"
-                )
+    if ics:
+        print(f"\n  Iron Condors ({len(ics)}):")
+        for i, ic in enumerate(ics, 1):
+            print(
+                f"    IC #{i}: {ic['underlying']} {ic['expiration']}  "
+                f"{ic['put_long']}/{ic['put_short']}P — "
+                f"{ic['call_short']}/{ic['call_long']}C  "
+                f"x{ic['contracts']}"
+            )
 
-                if not args.execute:
-                    print(f"           [DRY RUN] Would close as 4-leg multileg @ market")
-                    continue
+            if not EXECUTE:
+                print(f"           [DRY RUN] Would close as 4-leg multileg @ market")
+                continue
 
-                # Close IC with cascade
-                tag = f"CLOSE_ALL_{now.strftime('%Y%m%d_%H%M')}"
-                result = close_ic_multileg(base_url, api_key, account_id, ic, tag)
+            tag = f"CLOSE_ALL_{now.strftime('%Y%m%d_%H%M')}"
+            result = close_ic_multileg(base_url, api_key, account_id, ic, tag)
 
-                if result["success"]:
-                    total_closed += 1
-                    print(f"           CLOSED [{result['method']}]: {result['details']}")
-                else:
-                    total_failed += 1
-                    print(f"           FAILED [{result['method']}]: {result['details']}")
+            if result["success"]:
+                total_closed += 1
+                print(f"           CLOSED [{result['method']}]: {result['details']}")
+            else:
+                total_failed += 1
+                print(f"           FAILED [{result['method']}]: {result['details']}")
 
-                time.sleep(0.5)  # Rate limit between ICs
+            time.sleep(0.5)
 
-        # Display ungrouped legs
-        if ungrouped:
-            print(f"\n  Ungrouped legs ({len(ungrouped)}):")
-            for pos in ungrouped:
-                symbol = pos.get("symbol", "???")
-                qty = float(pos.get("quantity", 0))
-                side_label = "BUY_TO_CLOSE" if qty < 0 else "SELL_TO_CLOSE"
-                print(f"    {symbol:30s}  qty={qty:>6.0f}  → {side_label}")
+    if ungrouped:
+        print(f"\n  Ungrouped legs ({len(ungrouped)}):")
+        for pos in ungrouped:
+            symbol = pos.get("symbol", "???")
+            qty = float(pos.get("quantity", 0))
+            side_label = "BUY_TO_CLOSE" if qty < 0 else "SELL_TO_CLOSE"
+            print(f"    {symbol:30s}  qty={qty:>6.0f}  → {side_label}")
 
-                if not args.execute:
-                    print(f"      [DRY RUN] Would close individually @ market")
-                    continue
+            if not EXECUTE:
+                print(f"      [DRY RUN] Would close individually @ market")
+                continue
 
-                tag = f"CLOSE_ALL_{now.strftime('%Y%m%d_%H%M')}"
-                result = close_single_leg(base_url, api_key, account_id, pos, tag)
-                if result and result.get("order_id"):
-                    total_closed += 1
-                    print(f"      CLOSED: order_id={result['order_id']} [{result['status']}]")
-                else:
-                    total_failed += 1
-                    print(f"      FAILED to close!")
+            tag = f"CLOSE_ALL_{now.strftime('%Y%m%d_%H%M')}"
+            result = close_single_leg(base_url, api_key, account_id, pos, tag)
+            if result and result.get("order_id"):
+                total_closed += 1
+                print(f"      CLOSED: order_id={result['order_id']} [{result['status']}]")
+            else:
+                total_failed += 1
+                print(f"      FAILED to close!")
 
-                time.sleep(0.3)
+            time.sleep(0.3)
 
-    # Summary
-    print(f"\n{'=' * 70}")
-    print(f"  SUMMARY")
-    print(f"  Iron Condors found:    {total_ics}")
-    print(f"  Ungrouped legs found:  {total_ungrouped}")
-    if args.execute:
-        print(f"  Successfully closed:   {total_closed}")
-        print(f"  Failed to close:       {total_failed}")
-    else:
-        print(f"  [DRY RUN] — no orders sent. Use --execute to close.")
-    print(f"{'=' * 70}")
-
-    if total_failed > 0:
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+# Summary
+print(f"\n{'=' * 70}")
+print(f"  SUMMARY")
+print(f"  Iron Condors found:    {total_ics}")
+print(f"  Ungrouped legs found:  {total_ungrouped}")
+if EXECUTE:
+    print(f"  Successfully closed:   {total_closed}")
+    print(f"  Failed to close:       {total_failed}")
+else:
+    print(f"  [DRY RUN] — no orders sent. Set EXECUTE = True and re-run.")
+print(f"{'=' * 70}")
