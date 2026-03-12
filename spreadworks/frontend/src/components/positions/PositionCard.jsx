@@ -10,86 +10,95 @@ const STRAT_LABELS = {
 
 const s = {
   card: (pnl, status) => ({
-    background: 'var(--bg-surface)',
-    border: `1px solid ${status === 'closed' ? '#2a2a3a' : pnl > 0 ? '#00e67625' : pnl < 0 ? '#ff174425' : '#1a1a2e'}`,
-    borderRadius: 6,
-    padding: '14px 16px',
-    fontFamily: "'Courier New', monospace",
-    fontSize: 12,
-    color: '#ccc',
-    opacity: status === 'closed' ? 0.6 : 1,
+    background: 'var(--bg-card)',
+    border: `1px solid ${status === 'closed' ? 'var(--border-subtle)' : pnl > 0 ? 'rgba(0, 230, 118, 0.15)' : pnl < 0 ? 'rgba(255, 82, 82, 0.15)' : 'var(--border-subtle)'}`,
+    borderRadius: 'var(--radius-lg)',
+    padding: '16px 18px',
+    fontFamily: 'var(--font-ui)',
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    opacity: status === 'closed' ? 0.65 : 1,
+    transition: 'border-color var(--transition-default), box-shadow var(--transition-default)',
   }),
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  title: { color: '#fff', fontWeight: 700, fontSize: 13 },
+  title: { color: '#fff', fontWeight: 700, fontSize: 14 },
   badge: (color) => ({
-    fontSize: 9,
-    padding: '2px 6px',
-    borderRadius: 3,
-    background: color + '22',
+    fontSize: 10,
+    padding: '3px 8px',
+    borderRadius: 20,
+    background: color + '18',
     color: color,
     fontWeight: 600,
     textTransform: 'uppercase',
+    letterSpacing: '0.04em',
   }),
   strikesRow: {
     display: 'flex',
-    gap: 4,
+    gap: 5,
     marginBottom: 10,
     flexWrap: 'wrap',
   },
   chip: (type) => ({
-    fontSize: 10,
-    padding: '2px 8px',
-    borderRadius: 3,
+    fontSize: 11,
+    padding: '3px 10px',
+    borderRadius: 'var(--radius-sm)',
     fontWeight: 600,
-    fontFamily: "'Courier New', monospace",
-    background: type === 'long' ? '#00e67615' : '#ff174415',
-    border: `1px solid ${type === 'long' ? '#00e67633' : '#ff174433'}`,
-    color: type === 'long' ? '#00e676' : '#ff5252',
+    fontFamily: 'var(--font-mono)',
+    background: type === 'long' ? 'var(--green-dim)' : 'var(--red-dim)',
+    border: `1px solid ${type === 'long' ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 82, 82, 0.2)'}`,
+    color: type === 'long' ? 'var(--green)' : 'var(--red)',
   }),
   metricsGrid: {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
-    gap: '4px 12px',
-    marginBottom: 8,
+    gap: '3px 14px',
+    marginBottom: 10,
   },
   metric: {
     display: 'flex',
     justifyContent: 'space-between',
-    padding: '2px 0',
-    fontSize: 11,
+    padding: '4px 0',
+    fontSize: 12,
   },
-  dim: { color: '#555' },
-  pnl: (v) => ({ fontWeight: 700, color: v >= 0 ? '#00e676' : '#ff5252' }),
+  dim: { color: 'var(--text-tertiary)', fontWeight: 500 },
+  pnl: (v) => ({
+    fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
+    color: v >= 0 ? 'var(--green)' : 'var(--red)',
+  }),
   actions: {
     display: 'flex',
     gap: 6,
-    marginTop: 10,
-    borderTop: '1px solid #1a1a2e',
-    paddingTop: 8,
+    marginTop: 12,
+    borderTop: '1px solid var(--border-subtle)',
+    paddingTop: 10,
   },
   btn: (color) => ({
-    padding: '4px 10px',
-    border: `1px solid ${color}44`,
-    borderRadius: 4,
+    padding: '5px 12px',
+    border: `1px solid ${color}33`,
+    borderRadius: 'var(--radius-sm)',
     background: 'transparent',
     color: color,
-    fontSize: 10,
-    fontFamily: "'Courier New', monospace",
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 600,
     cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
   }),
   btnDisabled: {
     opacity: 0.3,
     cursor: 'not-allowed',
   },
   expRow: {
-    fontSize: 10,
-    color: '#555',
-    marginBottom: 8,
+    fontSize: 11,
+    color: 'var(--text-tertiary)',
+    marginBottom: 10,
+    fontWeight: 500,
   },
 };
 
@@ -103,8 +112,6 @@ export default function PositionCard({ position, onClose, onDelete }) {
 
   const isOpen = position.status === 'open';
   const strat = STRAT_LABELS[position.strategy] || position.strategy;
-  const stratFull = position.strategy === 'double_diagonal' ? 'Double Diagonal'
-    : position.strategy === 'double_calendar' ? 'Double Calendar' : 'Iron Condor';
 
   useEffect(() => {
     if (!isOpen) return;
@@ -157,7 +164,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
       <div style={s.header}>
         <div>
           <span style={s.title}>{position.label || `#${position.id}`}</span>
-          <span style={{ color: '#555', fontSize: 10, marginLeft: 6 }}>{strat}</span>
+          <span style={{ color: 'var(--text-tertiary)', fontSize: 11, marginLeft: 8, fontWeight: 500 }}>{strat}</span>
         </div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           {position.dte != null && (
@@ -187,11 +194,11 @@ export default function PositionCard({ position, onClose, onDelete }) {
       <div style={s.metricsGrid}>
         <div style={s.metric}>
           <span style={s.dim}>Entry Credit</span>
-          <span style={{ color: '#00e676', fontWeight: 600 }}>+${position.entry_credit?.toFixed(2)}</span>
+          <span style={{ color: 'var(--green)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>+${position.entry_credit?.toFixed(2)}</span>
         </div>
         <div style={s.metric}>
           <span style={s.dim}>Current Value</span>
-          <span>{currentValue != null ? `$${currentValue.toFixed(4)}` : '\u2014'}</span>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{currentValue != null ? `$${currentValue.toFixed(4)}` : '\u2014'}</span>
         </div>
         <div style={s.metric}>
           <span style={s.dim}>P&L $</span>
@@ -216,35 +223,36 @@ export default function PositionCard({ position, onClose, onDelete }) {
         </div>
         <div style={s.metric}>
           <span style={s.dim}>Max Profit</span>
-          <span>${position.max_profit != null ? position.max_profit.toFixed(2) : '\u2014'}</span>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>${position.max_profit != null ? position.max_profit.toFixed(2) : '\u2014'}</span>
         </div>
         <div style={s.metric}>
           <span style={s.dim}>Max Loss</span>
-          <span style={{ color: '#ff5252' }}>
+          <span style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>
             ${position.max_loss != null ? position.max_loss.toFixed(2) : '\u2014'}
           </span>
         </div>
         <div style={s.metric}>
           <span style={s.dim}>Contracts</span>
-          <span>{position.contracts}</span>
+          <span style={{ fontFamily: 'var(--font-mono)' }}>{position.contracts}</span>
         </div>
       </div>
 
-      {/* Pricing source — so users know where the numbers come from */}
+      {/* Pricing source */}
       {isOpen && pnl?.pricing_source && (
         <div style={{
-          fontSize: 9,
-          color: pnl.pricing_source === 'live_quotes' ? '#00e676' : '#888',
-          marginBottom: 6,
+          fontSize: 10,
+          color: pnl.pricing_source === 'live_quotes' ? 'var(--green)' : 'var(--text-secondary)',
+          marginBottom: 8,
           display: 'flex',
           alignItems: 'center',
-          gap: 4,
+          gap: 5,
+          fontWeight: 500,
         }}>
           <span style={{
             width: 5, height: 5, borderRadius: '50%',
-            background: pnl.pricing_source === 'live_quotes' ? '#00e676'
+            background: pnl.pricing_source === 'live_quotes' ? 'var(--green)'
               : pnl.pricing_source === 'black_scholes_live_iv' ? '#ffb300'
-              : '#ff5252',
+              : 'var(--red)',
             display: 'inline-block',
           }} />
           {pnl.pricing_source === 'live_quotes'
@@ -257,13 +265,13 @@ export default function PositionCard({ position, onClose, onDelete }) {
 
       {/* Notes */}
       {position.notes && (
-        <div style={{ fontSize: 10, color: '#666', fontStyle: 'italic', marginBottom: 6 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontStyle: 'italic', marginBottom: 8 }}>
           {position.notes}
         </div>
       )}
 
       {/* Date info */}
-      <div style={{ fontSize: 10, color: '#444' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>
         Opened {position.entry_date || '\u2014'}
         {position.close_date && ` \u2022 Closed ${position.close_date}`}
       </div>
@@ -272,19 +280,19 @@ export default function PositionCard({ position, onClose, onDelete }) {
       <div style={s.actions}>
         {isOpen && (
           <>
-            <button style={s.btn('#ff5252')} onClick={() => onClose(position)}>
+            <button style={s.btn('var(--red)')} onClick={() => onClose(position)}>
               \u2715 Close
             </button>
-            <button style={s.btn('#555')} onClick={() => onDelete(position.id)}>
+            <button style={s.btn('var(--text-tertiary)')} onClick={() => onDelete(position.id)}>
               Delete
             </button>
-            <button style={{ ...s.btn('#555'), ...s.btnDisabled }} disabled title="Coming soon">
+            <button style={{ ...s.btn('var(--text-tertiary)'), ...s.btnDisabled }} disabled title="Coming soon">
               \u21bb Roll
             </button>
           </>
         )}
         <button
-          style={s.btn('#5865F2')}
+          style={s.btn('var(--purple)')}
           onClick={pushToDiscord}
           disabled={discordPushing}
           title="Push to Discord"
@@ -292,7 +300,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
           {discordDone ? '\u2713 Sent' : discordPushing ? '...' : '\u21d2 Discord'}
         </button>
         <button
-          style={s.btn('#448aff')}
+          style={s.btn('var(--accent)')}
           onClick={toggleChart}
           title="View payoff chart"
         >
@@ -300,11 +308,11 @@ export default function PositionCard({ position, onClose, onDelete }) {
         </button>
       </div>
 
-      {/* Payoff Chart */}
+      {/* Payoff Chart — SVG visualization untouched */}
       {showChart && (
-        <div style={{ marginTop: 8, borderTop: '1px solid #1a1a2e', paddingTop: 8 }}>
+        <div style={{ marginTop: 10, borderTop: '1px solid var(--border-subtle)', paddingTop: 10, animation: 'sw-fadeIn 0.2s ease' }}>
           {payoffLoading ? (
-            <div style={{ color: '#444', fontSize: 10, textAlign: 'center', padding: 12 }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'center', padding: 16 }}>
               Loading payoff...
             </div>
           ) : payoff?.pnl_curve ? (
@@ -316,7 +324,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
               maxLoss={payoff.max_loss}
             />
           ) : (
-            <div style={{ color: '#444', fontSize: 10, textAlign: 'center', padding: 12 }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'center', padding: 16 }}>
               Unable to load payoff data
             </div>
           )}
@@ -327,7 +335,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
 }
 
 
-/** Inline mini payoff chart rendered as SVG. */
+/** Inline mini payoff chart rendered as SVG — visualization logic untouched. */
 function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
   const svg = useMemo(() => {
     if (!curve || curve.length === 0) return null;
@@ -353,7 +361,6 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
     const linePath = `M${points.join('L')}`;
     const zeroY = yScale(0);
 
-    // Profit/loss fills
     const profitPts = [];
     const lossPts = [];
     for (const p of curve) {
@@ -376,7 +383,6 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
     ? `M${svg.xScale(curve.find((p) => p.pnl <= 0)?.price ?? 0).toFixed(1)},${svg.zeroY} ${svg.lossPts.join(' ')} ${svg.xScale(curve.filter((p) => p.pnl <= 0).pop()?.price ?? 0).toFixed(1)},${svg.zeroY} Z`
     : null;
 
-  // X-axis ticks
   const xTicks = [];
   const xStep = (svg.maxP - svg.minP) / 4;
   for (let i = 0; i <= 4; i++) {
@@ -384,7 +390,6 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
     xTicks.push({ val, x: svg.xScale(val) });
   }
 
-  // Y-axis ticks
   const yTicks = [];
   const yStep = (svg.maxPnl - svg.minPnl) / 3;
   for (let i = 0; i <= 3; i++) {
@@ -411,7 +416,7 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
           <line x1={svg.xScale(spotPrice)} y1={svg.pad.top} x2={svg.xScale(spotPrice)} y2={svg.pad.top + svg.plotH}
             stroke="#facc15" strokeWidth="0.8" strokeDasharray="2,2" />
           <text x={svg.xScale(spotPrice)} y={svg.pad.top - 3} textAnchor="middle" fill="#facc15" fontSize="8"
-            fontFamily="'Courier New', monospace">Spot</text>
+            fontFamily="'JetBrains Mono', monospace">Spot</text>
         </>
       )}
 
@@ -430,7 +435,7 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
         <g key={i}>
           <line x1={svg.pad.left - 3} y1={t.y} x2={svg.pad.left} y2={t.y} stroke="#444" />
           <text x={svg.pad.left - 5} y={t.y + 3} textAnchor="end" fill="#555" fontSize="8"
-            fontFamily="'Courier New', monospace">${t.val.toFixed(0)}</text>
+            fontFamily="'JetBrains Mono', monospace">${t.val.toFixed(0)}</text>
         </g>
       ))}
 
@@ -439,23 +444,23 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
         <g key={i}>
           <line x1={t.x} y1={svg.pad.top + svg.plotH} x2={t.x} y2={svg.pad.top + svg.plotH + 3} stroke="#444" />
           <text x={t.x} y={svg.pad.top + svg.plotH + 14} textAnchor="middle" fill="#555" fontSize="8"
-            fontFamily="'Courier New', monospace">${t.val.toFixed(0)}</text>
+            fontFamily="'JetBrains Mono', monospace">${t.val.toFixed(0)}</text>
         </g>
       ))}
 
       {/* Max profit / loss labels */}
       {maxProfit != null && (
         <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#00e676" fontSize="8"
-          fontFamily="'Courier New', monospace">Max +${maxProfit.toFixed(0)}</text>
+          fontFamily="'JetBrains Mono', monospace">Max +${maxProfit.toFixed(0)}</text>
       )}
       {maxLoss != null && (
         <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#ff5252" fontSize="8"
-          fontFamily="'Courier New', monospace">Max ${maxLoss.toFixed(0)}</text>
+          fontFamily="'JetBrains Mono', monospace">Max ${maxLoss.toFixed(0)}</text>
       )}
 
       {/* Border */}
       <rect x={svg.pad.left} y={svg.pad.top} width={svg.plotW} height={svg.plotH}
-        fill="none" stroke="#1a1a2e" />
+        fill="none" stroke="var(--border-subtle)" />
     </svg>
   );
 }

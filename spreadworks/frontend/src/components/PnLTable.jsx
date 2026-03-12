@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { formatDollarPnl, formatSignedPct, formatCurrency } from '../utils/format';
 
-const font = "'Courier New', monospace";
+const font = "var(--font-mono)";
 
 const VIEW_MODES = {
   PNL_DOLLAR: 'pnl_dollar',

@@ -1,28 +1,31 @@
 const s = {
   strip: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
-    gap: 8,
-    marginBottom: 14,
+    gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+    gap: 10,
+    marginBottom: 16,
   },
   card: {
-    background: 'var(--bg-surface)',
-    border: '1px solid #1a1a2e',
-    borderRadius: 6,
-    padding: '10px 12px',
-    fontFamily: "'Courier New', monospace",
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-lg)',
+    padding: '12px 14px',
+    fontFamily: 'var(--font-ui)',
     textAlign: 'center',
+    transition: 'border-color var(--transition-default)',
   },
   label: {
-    fontSize: 9,
-    color: '#555',
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--text-tertiary)',
     textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-    marginBottom: 4,
+    letterSpacing: '0.1em',
+    marginBottom: 6,
   },
   value: (color) => ({
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
     color: color || '#fff',
   }),
 };
@@ -30,20 +33,20 @@ const s = {
 export default function PortfolioSummary({ summary }) {
   if (!summary) return null;
 
-  const unrealColor = summary.total_unrealized >= 0 ? '#00e676' : '#ff5252';
-  const realColor = summary.total_realized >= 0 ? '#00e676' : '#ff5252';
+  const unrealColor = summary.total_unrealized >= 0 ? 'var(--green)' : 'var(--red)';
+  const realColor = summary.total_realized >= 0 ? 'var(--green)' : 'var(--red)';
 
   return (
     <div style={s.strip}>
       <div style={s.card}>
         <div style={s.label}>Slots</div>
-        <div style={s.value('#448aff')}>
+        <div style={s.value('var(--accent)')}>
           {summary.slots_used}/{summary.slots_total}
         </div>
       </div>
       <div style={s.card}>
         <div style={s.label}>Total Credit</div>
-        <div style={s.value('#00e676')}>+${summary.total_credit?.toFixed(2)}</div>
+        <div style={s.value('var(--green)')}>+${summary.total_credit?.toFixed(2)}</div>
       </div>
       <div style={s.card}>
         <div style={s.label}>Unrealized</div>
@@ -63,7 +66,7 @@ export default function PortfolioSummary({ summary }) {
       </div>
       <div style={s.card}>
         <div style={s.label}>Closed</div>
-        <div style={s.value('#888')}>{summary.closed_count}</div>
+        <div style={s.value('var(--text-secondary)')}>{summary.closed_count}</div>
       </div>
     </div>
   );

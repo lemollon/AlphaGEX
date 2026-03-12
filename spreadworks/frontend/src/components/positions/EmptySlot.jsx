@@ -1,16 +1,18 @@
 const s = {
   slot: {
-    background: 'var(--bg-surface)',
-    border: '1px dashed #1a1a2e',
-    borderRadius: 6,
-    padding: 24,
+    background: 'var(--bg-card)',
+    border: '1px dashed var(--border-subtle)',
+    borderRadius: 'var(--radius-lg)',
+    padding: 28,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    color: '#2a2a3a',
-    fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--text-muted)',
+    fontSize: 12,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 500,
     minHeight: 120,
+    transition: 'border-color var(--transition-default)',
   },
 };
 

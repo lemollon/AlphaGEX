@@ -8,60 +8,80 @@ import EmptySlot from '../components/positions/EmptySlot';
 const s = {
   page: {
     flex: 1,
-    padding: '16px 20px',
+    padding: '20px 24px',
     overflowY: 'auto',
-    fontFamily: "'Courier New', monospace",
-    color: '#ccc',
+    fontFamily: 'var(--font-ui)',
+    color: 'var(--text-primary)',
     background: 'var(--bg-base)',
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  title: { color: '#fff', fontSize: 18, fontWeight: 700 },
+  title: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 800,
+    letterSpacing: '-0.3px',
+  },
   right: { display: 'flex', gap: 8, alignItems: 'center' },
-  filterRow: { display: 'flex', gap: 4 },
+  filterRow: {
+    display: 'flex',
+    gap: 3,
+    background: 'var(--bg-elevated)',
+    borderRadius: 'var(--radius-md)',
+    padding: 3,
+  },
   filterBtn: (active) => ({
-    padding: '4px 12px',
-    border: `1px solid ${active ? '#448aff' : '#1a1a2e'}`,
-    borderRadius: 4,
-    background: active ? '#448aff22' : 'transparent',
-    color: active ? '#448aff' : '#555',
-    fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    padding: '5px 14px',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    background: active
+      ? 'linear-gradient(135deg, var(--accent) 0%, #5c9bff 100%)'
+      : 'transparent',
+    color: active ? '#fff' : 'var(--text-tertiary)',
+    fontSize: 12,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: active ? 600 : 500,
     cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
+    boxShadow: active ? '0 2px 8px rgba(68, 138, 255, 0.2)' : 'none',
   }),
   discordBtn: {
-    padding: '4px 10px',
-    border: '1px solid #5865F244',
-    borderRadius: 4,
-    background: 'transparent',
-    color: '#5865F2',
-    fontSize: 10,
-    fontFamily: "'Courier New', monospace",
+    padding: '5px 12px',
+    border: '1px solid rgba(124, 77, 255, 0.25)',
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--purple-dim)',
+    color: 'var(--purple)',
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 600,
     cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
   },
   grid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-    gap: 10,
+    gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+    gap: 12,
   },
   empty: {
     textAlign: 'center',
-    padding: '40px 0',
-    color: '#444',
-    fontSize: 14,
+    padding: '48px 0',
+    color: 'var(--text-tertiary)',
+    fontSize: 15,
+    fontWeight: 500,
   },
   error: {
-    background: '#1a0a0a',
-    border: '1px solid #ff1744',
-    borderRadius: 4,
-    padding: '8px 12px',
-    fontSize: 12,
-    color: '#ff5252',
-    marginBottom: 12,
+    background: 'var(--red-dim)',
+    border: '1px solid rgba(255, 82, 82, 0.3)',
+    borderRadius: 'var(--radius-md)',
+    padding: '10px 16px',
+    fontSize: 13,
+    color: 'var(--red)',
+    fontWeight: 500,
+    marginBottom: 14,
   },
 };
 
@@ -124,7 +144,7 @@ export default function PositionsPage() {
         <div style={s.empty}>
           No open positions yet.
           <br />
-          <span style={{ fontSize: 12, color: '#555', marginTop: 6, display: 'inline-block' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 8, display: 'inline-block' }}>
             Build a spread in the Builder tab and hit Save to track it here.
           </span>
         </div>
