@@ -55,7 +55,7 @@ class BotConfig:
 
     # Exit parameters
     profit_target_pct: float = 30.0
-    stop_loss_pct: float = 100.0
+    stop_loss_pct: float = 100.0      # 100 = 1.0x entry credit, 200 = 2.0x
     eod_cutoff_et: str = "15:45"
 
     # Trading window (Central Time)

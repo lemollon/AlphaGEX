@@ -191,6 +191,39 @@ def _pdt_log_table_ddl(bot: str) -> str:
     """
 
 
+def _pdt_config_table_ddl(bot: str) -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS {bot}_pdt_config (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        bot_name TEXT NOT NULL UNIQUE,
+        pdt_enabled BOOLEAN DEFAULT TRUE,
+        day_trade_count INT DEFAULT 0,
+        max_day_trades INT DEFAULT 4,
+        max_trades_per_day INT DEFAULT 1,
+        window_days INT DEFAULT 5,
+        last_reset_at TIMESTAMPTZ,
+        last_reset_by TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """
+
+
+def _pdt_audit_log_table_ddl(bot: str) -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS {bot}_pdt_audit_log (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        bot_name TEXT NOT NULL,
+        action TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT,
+        reason TEXT,
+        performed_by TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+    """
+
+
 def _config_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {bot}_config (
@@ -253,6 +286,8 @@ def setup_all_tables():
                 _equity_snapshots_table_ddl,
                 _paper_account_table_ddl,
                 _pdt_log_table_ddl,
+                _pdt_config_table_ddl,
+                _pdt_audit_log_table_ddl,
                 _config_table_ddl,
             ]
 
@@ -264,6 +299,22 @@ def setup_all_tables():
 
         cursor.execute(_heartbeats_table_ddl())
         logger.info("  bot_heartbeats OK")
+
+        # Seed pdt_config rows (idempotent — ON CONFLICT DO NOTHING)
+        pdt_seeds = [
+            ('flame', 'FLAME', 1),   # max 1 trade/day
+            ('spark', 'SPARK', 1),   # max 1 trade/day
+            ('inferno', 'INFERNO', 0),  # unlimited trades/day
+        ]
+        for bot_prefix, bot_name, max_per_day in pdt_seeds:
+            cursor.execute(f"""
+                INSERT INTO {bot_prefix}_pdt_config
+                    (bot_name, pdt_enabled, day_trade_count, max_day_trades,
+                     max_trades_per_day, window_days)
+                VALUES (%s, TRUE, 0, 4, %s, 5)
+                ON CONFLICT (bot_name) DO NOTHING
+            """, (bot_name, max_per_day))
+        logger.info("  pdt_config seeds OK")
 
         # Migrations: add columns that may not exist on older deployments
         for bot in ['flame', 'spark', 'inferno']:

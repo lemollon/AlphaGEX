@@ -316,11 +316,15 @@ async function buildStatusResponse(
   const dayTradeCount = toInt(countRows[0]?.cnt)
 
   const todayRows = await dbQuery(
-    `SELECT COUNT(*) as cnt
+    `SELECT COUNT(*) as cnt, MIN(opened_at) as first_trade_time
      FROM ${botTable(bot, 'pdt_log')}
      WHERE trade_date = CURRENT_DATE() AND dte_mode = '${escapeSql(dte)}'`,
   )
-  const tradedToday = maxTradesPerDay > 0 && toInt(todayRows[0]?.cnt) >= maxTradesPerDay
+  const todayTradesCount = toInt(todayRows[0]?.cnt)
+  const tradedToday = maxTradesPerDay > 0 && todayTradesCount >= maxTradesPerDay
+  const todayTradeTime = todayRows[0]?.first_trade_time
+    ? String(todayRows[0].first_trade_time)
+    : null
 
   // is_blocked = only rolling PDT limit
   let isBlocked = false
@@ -367,5 +371,7 @@ async function buildStatusResponse(
     trigger_trades: triggerTrades,
     next_available_date: nextAvailableDate,
     next_slot_opens: nextSlotOpens,
+    today_trades_count: todayTradesCount,
+    today_trade_time: todayTradeTime,
   })
 }

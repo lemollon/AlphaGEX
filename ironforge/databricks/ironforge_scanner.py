@@ -920,20 +920,28 @@ def close_ic_sandbox_per_account(
     return results
 
 
-def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) -> Optional[float]:
+def _get_sandbox_order_fill_price(
+    api_key: str, account_id: str, order_id: int, max_wait: int = 45,
+) -> Optional[float]:
     """Query a sandbox order and return the average fill price.
 
-    Tries up to 3 times with 1-second delay between attempts,
-    because sandbox orders may take a moment to fill.
+    Waits up to max_wait seconds with progressive backoff (1, 2, 3, 5, 5, 5...)
+    for the order to fill.  FLAME depends on this for 1:1 paper↔sandbox sync.
     """
-    for attempt in range(3):
+    BACKOFF = [1, 2, 3, 5, 5, 5, 5, 5, 5, 5]  # ~44s total
+    elapsed = 0
+    for attempt, delay in enumerate(BACKOFF):
+        if elapsed >= max_wait:
+            break
+
         data = _sandbox_get(
             f"/accounts/{account_id}/orders/{order_id}",
             None,
             api_key,
         )
         if not data:
-            time.sleep(1)
+            time.sleep(delay)
+            elapsed += delay
             continue
 
         order = data.get("order", {})
@@ -943,6 +951,10 @@ def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) 
             # For multileg orders, avg_fill_price is on the order level
             avg_fill = order.get("avg_fill_price")
             if avg_fill is not None:
+                log.info(
+                    f"Sandbox order {order_id} filled after {elapsed}s "
+                    f"(attempt {attempt + 1}): ${abs(float(avg_fill)):.4f}"
+                )
                 return abs(float(avg_fill))
 
             # Fallback: calculate from leg fills
@@ -958,17 +970,28 @@ def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) 
                         total += fill  # credit
                     else:
                         total -= fill  # debit
-                return abs(total) if total != 0 else None
+                if total != 0:
+                    log.info(
+                        f"Sandbox order {order_id} filled (leg calc) after {elapsed}s: "
+                        f"${abs(total):.4f}"
+                    )
+                    return abs(total)
+                return None
 
         if status in ("pending", "open", "partially_filled"):
-            time.sleep(1)
+            log.info(
+                f"Sandbox order {order_id} still {status} after {elapsed}s "
+                f"(attempt {attempt + 1}/{len(BACKOFF)})"
+            )
+            time.sleep(delay)
+            elapsed += delay
             continue
 
         # rejected, canceled, expired — no fill
         log.warning(f"Sandbox order {order_id} status={status}, no fill price")
         return None
 
-    log.warning(f"Sandbox order {order_id} not filled after 3 attempts")
+    log.warning(f"Sandbox order {order_id} not filled after {elapsed}s ({len(BACKOFF)} attempts)")
     return None
 
 
@@ -1262,13 +1285,14 @@ def close_position(
         price = mtm["cost_to_close"] if mtm else 0.0
 
     price_source = "calculated"
-    sandbox_fill_price = None  # track sandbox fill separately (never overwrites paper price)
+    sandbox_fill_price = None
 
     # -------------------------------------------------------------------
-    # For FLAME: close each sandbox account with its OWN contract count
-    # (read from sandbox_order_id stored at open).  Uses cascade close:
-    # 4-leg → 2×2-leg → 4 individual legs.
-    # For SPARK: no sandbox.
+    # FLAME: Tradier sandbox is SOURCE OF TRUTH (1:1 sync).
+    #   - Close User sandbox first, WAIT for fill
+    #   - Use User fill price for paper P&L (overrides calculated MTM)
+    #   - Then close Matt/Logan (best-effort)
+    # SPARK/INFERNO: no sandbox.
     # -------------------------------------------------------------------
     if bot["name"] == "flame":
         try:
@@ -1300,7 +1324,7 @@ def close_position(
                 tag=position_id,
             )
 
-            # Get actual fill price from User's close order (do NOT overwrite paper price)
+            # FLAME 1:1: Use User sandbox fill price as paper close price
             user_order_id = close_results.get("User")
             if user_order_id and user_order_id > 0:
                 try:
@@ -1314,14 +1338,17 @@ def close_position(
                             )
                             if fill_price is not None and fill_price >= 0:
                                 sandbox_fill_price = fill_price
-                                delta_pct = (
-                                    round(abs(fill_price - price) / price * 100, 1)
-                                    if price > 0 else 0
-                                )
+                                # FLAME: sandbox fill IS the paper price (1:1)
+                                price = fill_price
+                                price_source = "sandbox_fill"
                                 log.info(
-                                    f"Sandbox fill: ${fill_price:.4f} vs "
-                                    f"scanner MTM: ${price:.4f} "
-                                    f"(delta: {delta_pct}%)"
+                                    f"FLAME 1:1 close: using sandbox fill ${fill_price:.4f} "
+                                    f"(MTM was ${close_price or 0:.4f})"
+                                )
+                            else:
+                                log.warning(
+                                    f"FLAME close: User fill not available, "
+                                    f"using MTM ${price:.4f} as fallback"
                                 )
                 except Exception as e:
                     log.warning(f"Could not get User sandbox fill price: {e}")
@@ -1699,11 +1726,13 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     today_date = get_central_time().strftime("%Y-%m-%d")
 
     # -------------------------------------------------------------------
-    # For FLAME: each sandbox account sizes independently based on its
-    # OWN buying power.  USER goes first to get the actual fill price.
-    # For SPARK (paper-only): use calculated credit from bid/ask.
+    # FLAME: Tradier sandbox is the SOURCE OF TRUTH (1:1 sync).
+    #   - Place User sandbox order first, WAIT for fill
+    #   - If User doesn't fill → ABORT (no paper position created)
+    #   - If User fills → use fill price for paper, then place Matt/Logan
+    # SPARK/INFERNO: paper-only, use calculated credit from bid/ask.
     # -------------------------------------------------------------------
-    actual_credit = credits["totalCredit"]  # fallback for SPARK or if sandbox fails
+    actual_credit = credits["totalCredit"]  # fallback for SPARK/INFERNO
     sandbox_order_ids: dict[str, dict] = {}  # {"User": {"order_id": 123, "contracts": 85}, ...}
 
     # Build OCC symbols once (shared by all accounts — same strikes)
@@ -1727,19 +1756,85 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
 
     if bot["name"] == "flame":
         try:
-            # Process accounts in order: User first (for fill price), then others
             all_accounts = _get_sandbox_accounts_lazy()
             user_accounts = [a for a in all_accounts if a["name"] == "User"]
             other_accounts = [a for a in all_accounts if a["name"] != "User"]
-            ordered_accounts = user_accounts + other_accounts
 
-            for acct in ordered_accounts:
+            # ── Step 1: Place User order and WAIT for fill ──
+            user_filled = False
+            for acct in user_accounts:
                 try:
                     acct_id = _get_account_id_for_key(acct["api_key"])
                     if not acct_id:
                         continue
 
-                    # Query this account's own buying power
+                    acct_bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
+                    if acct_bp is None or acct_bp < collateral_per:
+                        log.warning(
+                            f"Sandbox [User]: BP=${acct_bp} insufficient "
+                            f"(need ${collateral_per:.2f}/contract)"
+                        )
+                        continue
+
+                    acct_usable = acct_bp * 0.85
+                    acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
+                    log.info(
+                        f"Sandbox [User]: BP=${acct_bp:,.0f} → "
+                        f"usable=${acct_usable:,.0f} → {acct_contracts} contracts"
+                    )
+
+                    order_body = _build_ic_open_body(acct_contracts)
+                    result = _sandbox_post(
+                        f"/accounts/{acct_id}/orders",
+                        order_body,
+                        acct["api_key"],
+                    )
+
+                    if not result or not result.get("order", {}).get("id"):
+                        log.error("Sandbox [User] IC OPEN: no order ID returned")
+                        continue
+
+                    order_id = result["order"]["id"]
+                    log.info(f"Sandbox [User] IC OPEN submitted: order_id={order_id} x{acct_contracts}")
+
+                    # Wait for fill (up to ~45 seconds)
+                    fill_price = _get_sandbox_order_fill_price(
+                        acct["api_key"], acct_id, order_id
+                    )
+                    if fill_price is not None and fill_price > 0:
+                        actual_credit = fill_price
+                        user_filled = True
+                        sandbox_order_ids["User"] = {
+                            "order_id": order_id,
+                            "contracts": acct_contracts,
+                        }
+                        log.info(
+                            f"Sandbox [User] FILLED: ${fill_price:.4f} "
+                            f"(calculated was ${credits['totalCredit']:.4f})"
+                        )
+                    else:
+                        log.error(
+                            f"Sandbox [User] NOT FILLED after waiting — "
+                            f"order_id={order_id}. ABORTING trade (no paper position)."
+                        )
+                except Exception as e:
+                    log.error(f"Sandbox [User] order failed: {e}")
+
+            # ── GATE: If User didn't fill, abort the entire trade ──
+            if not user_filled:
+                log.error(
+                    f"FLAME TRADE ABORTED: Tradier User sandbox did not fill. "
+                    f"No paper position created for {position_id}."
+                )
+                return "skip:sandbox_user_not_filled"
+
+            # ── Step 2: Place Matt/Logan orders (non-blocking, best-effort) ──
+            for acct in other_accounts:
+                try:
+                    acct_id = _get_account_id_for_key(acct["api_key"])
+                    if not acct_id:
+                        continue
+
                     acct_bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
                     if acct_bp is None or acct_bp < collateral_per:
                         log.warning(
@@ -1748,14 +1843,11 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                         )
                         continue
 
-                    # Size based on THIS account's buying power (capped at 500)
                     acct_usable = acct_bp * 0.85
                     acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
-
                     log.info(
                         f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
-                        f"usable=${acct_usable:,.0f} → {acct_contracts} contracts "
-                        f"(collateral/contract=${collateral_per:.2f})"
+                        f"{acct_contracts} contracts"
                     )
 
                     order_body = _build_ic_open_body(acct_contracts)
@@ -1766,32 +1858,15 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                     )
 
                     if result and result.get("order", {}).get("id"):
-                        order_id = result["order"]["id"]
+                        oid = result["order"]["id"]
                         sandbox_order_ids[acct["name"]] = {
-                            "order_id": order_id,
+                            "order_id": oid,
                             "contracts": acct_contracts,
                         }
                         log.info(
                             f"Sandbox IC OPEN OK [{acct['name']}]: "
-                            f"order_id={order_id} x{acct_contracts}"
+                            f"order_id={oid} x{acct_contracts}"
                         )
-
-                        # Get actual fill price from USER (first account)
-                        if acct["name"] == "User":
-                            fill_price = _get_sandbox_order_fill_price(
-                                acct["api_key"], acct_id, order_id
-                            )
-                            if fill_price is not None and fill_price > 0:
-                                log.info(
-                                    f"Actual fill price from USER sandbox: ${fill_price:.4f} "
-                                    f"(calculated was ${credits['totalCredit']:.4f})"
-                                )
-                                actual_credit = fill_price
-                            else:
-                                log.warning(
-                                    f"Could not get fill price for order {order_id}, "
-                                    f"using calculated: ${credits['totalCredit']:.4f}"
-                                )
                     else:
                         log.warning(
                             f"Sandbox IC OPEN FAILED [{acct['name']}]: "
@@ -1800,7 +1875,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                 except Exception as e:
                     log.warning(f"Sandbox order failed [{acct['name']}]: {e}")
         except Exception as e:
-            log.warning(f"Sandbox open failed for {position_id}: {e}")
+            log.error(f"Sandbox open failed for {position_id}: {e}")
+            return "skip:sandbox_open_error"
 
     # Recalculate financials with actual credit (matches what Tradier filled)
     # Paper position uses paper max_contracts, not sandbox contract counts

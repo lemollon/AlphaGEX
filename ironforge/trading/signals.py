@@ -547,6 +547,51 @@ class SignalGenerator:
 
         return signal
 
+    def _validate_mtm(
+        self,
+        quotes: Dict[str, Dict],
+        entry_credit: float = 0.0,
+    ) -> tuple:
+        """
+        Validate MTM quote data for sanity (ported from original scanner).
+
+        Checks:
+        - Zero/negative bid or ask on any leg
+        - cost_to_close bounds (0 to 3x entry credit)
+        - Inverted markets (ask < bid)
+        - Wide spreads (ask - bid > 50% of mid)
+
+        Returns (is_valid, reason) tuple.
+        """
+        for label, q in quotes.items():
+            bid = float(q.get("bid", 0) or 0)
+            ask = float(q.get("ask", 0) or 0)
+
+            if bid <= 0 and ask <= 0:
+                return False, f"{label}: zero bid and ask"
+
+            if ask > 0 and bid > 0 and ask < bid:
+                return False, f"{label}: inverted market (ask {ask} < bid {bid})"
+
+            mid = (bid + ask) / 2 if (bid + ask) > 0 else 0
+            if mid > 0 and (ask - bid) > 0.50 * mid:
+                return False, f"{label}: wide spread ({ask - bid:.2f} > 50% of mid {mid:.2f})"
+
+        # Calculate cost_to_close for bounds check
+        ps_ask = float(quotes["put_short"].get("ask", 0) or 0)
+        cs_ask = float(quotes["call_short"].get("ask", 0) or 0)
+        pl_bid = float(quotes["put_long"].get("bid", 0) or 0)
+        cl_bid = float(quotes["call_long"].get("bid", 0) or 0)
+        cost = ps_ask + cs_ask - pl_bid - cl_bid
+
+        if cost < 0:
+            return False, f"Negative cost_to_close ({cost:.4f})"
+
+        if entry_credit > 0 and cost > 3 * entry_credit:
+            return False, f"cost_to_close ({cost:.4f}) > 3x entry ({entry_credit:.4f})"
+
+        return True, "OK"
+
     def get_ic_mark_to_market(
         self,
         put_short: float,
@@ -554,8 +599,15 @@ class SignalGenerator:
         call_short: float,
         call_long: float,
         expiration: str,
+        entry_credit: float = 0.0,
     ) -> Optional[float]:
-        """Get current cost to close an Iron Condor position."""
+        """
+        Get current cost to close an Iron Condor position.
+
+        Includes MTM validation from the original scanner (validate_mtm):
+        checks for zero/negative values, inverted markets, wide spreads,
+        and cost_to_close bounds.
+        """
         if not self.tradier:
             return None
 
@@ -573,6 +625,20 @@ class SignalGenerator:
             cl_q = self.tradier.get_option_quote(build_symbol(call_long, "C"))
 
             if not all([ps_q, pl_q, cs_q, cl_q]):
+                return None
+
+            # Validate quotes before computing cost
+            quotes = {
+                "put_short": ps_q,
+                "put_long": pl_q,
+                "call_short": cs_q,
+                "call_long": cl_q,
+            }
+            is_valid, reason = self._validate_mtm(quotes, entry_credit)
+            if not is_valid:
+                logger.warning(
+                    f"{self.config.bot_name}: MTM validation failed: {reason}"
+                )
                 return None
 
             # Cost to close: buy back shorts at ask, sell longs at bid

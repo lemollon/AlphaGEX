@@ -210,7 +210,7 @@ class PositionMonitor:
                 continue
 
             # Stop loss
-            stop_loss_price = entry_credit * (1 + config.stop_loss_pct / 100)
+            stop_loss_price = entry_credit * (config.stop_loss_pct / 100)
             if close_price >= stop_loss_price:
                 success, pnl = executor.close_paper_position(pos, close_price, "stop_loss")
                 if success:
@@ -259,16 +259,21 @@ class PositionMonitor:
     def _get_sliding_profit_target(
         self, ct_now: datetime, config
     ) -> Tuple[float, str]:
-        """Return sliding profit target percentage and tier label."""
+        """Return sliding profit target percentage and tier label.
+
+        Uses original scanner formula: max(0.10, base_pt - offset)
+        FLAME/SPARK (30%): 30% → 20% → 15%
+        INFERNO (50%):     50% → 40% → 35%
+        """
         time_minutes = ct_now.hour * 60 + ct_now.minute
-        is_inferno = config.bot_name == "INFERNO"
+        base_pt = config.profit_target_pct / 100.0  # 0.30 or 0.50
 
         if time_minutes < 630:       # before 10:30 AM CT
-            return (0.50 if is_inferno else 0.30), "MORNING"
+            return base_pt, "MORNING"
         elif time_minutes < 780:     # before 1:00 PM CT
-            return (0.30 if is_inferno else 0.20), "MIDDAY"
+            return max(0.10, base_pt - 0.10), "MIDDAY"
         else:
-            return (0.10 if is_inferno else 0.15), "AFTERNOON"
+            return max(0.10, base_pt - 0.15), "AFTERNOON"
 
     def _is_past_eod_cutoff(self, now: datetime, config) -> bool:
         """Check if past EOD cutoff (3:45 PM ET = 2:45 PM CT)."""
