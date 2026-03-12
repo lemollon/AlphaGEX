@@ -117,3 +117,23 @@ export async function dbExecute(sql: string): Promise<void> {
 export function escapeSql(val: string): string {
   return val.replace(/'/g, "''")
 }
+
+/** Bot-specific fully-qualified table name: alpha_prime.ironforge.{bot}_{suffix}. */
+export function botTable(bot: string, suffix: string): string {
+  return `${CATALOG}.${SCHEMA}.${bot}_${suffix}`
+}
+
+/** Validate bot name — only flame, spark, or inferno allowed. */
+export function validateBot(bot: string): string | null {
+  const b = bot.toLowerCase()
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
+  return b
+}
+
+/** Returns the dte_mode value for this bot. */
+export function dteMode(bot: string): string | null {
+  if (bot === 'flame') return '2DTE'
+  if (bot === 'spark') return '1DTE'
+  if (bot === 'inferno') return '0DTE'
+  return null
+}

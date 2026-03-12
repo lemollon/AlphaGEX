@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
+const PDT_CONFIG = sharedTable('ironforge_pdt_config')
+
 /* ------------------------------------------------------------------ */
-/*  Shared: build the WHERE clause for counting day trades.            */
-/*  If last_reset_at is set, exclude trades created before the reset.  */
-/*  This makes reset persistent without needing to UPDATE pdt_log rows.*/
+/*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
 /** Format a Date as YYYY-MM-DD using local time (NOT toISOString which shifts to UTC). */
@@ -17,43 +17,43 @@ function localDateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function dayTradeWhereClause(table: string, dte: string, lastResetAt: string | null): {
-  sql: string
-  params: any[]
-} {
-  // Base: is_day_trade = TRUE, in rolling 6-day window, weekdays only
-  let sql = `SELECT COUNT(*) as cnt FROM ${table}
-     WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
-     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
-  const params: any[] = [dte]
-
-  // If a reset happened, only count trades created AFTER the reset
-  if (lastResetAt) {
-    sql += ` AND created_at > $2`
-    params.push(lastResetAt)
-  }
-
-  return { sql, params }
+function toInt(val: any): number {
+  if (val == null || val === '') return 0
+  const n = parseInt(String(val), 10)
+  return isNaN(n) ? 0 : n
 }
 
-function triggerTradeQuery(table: string, dte: string, lastResetAt: string | null): {
-  sql: string
-  params: any[]
-} {
-  let sql = `SELECT trade_date, position_id FROM ${table}
-     WHERE is_day_trade = TRUE AND dte_mode = $1
-     AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
-     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
-  const params: any[] = [dte]
-
+/**
+ * Count day trades in the rolling window.
+ * Reads from {bot}_pdt_log (per-bot table the scanner writes to).
+ * If last_reset_at is set, exclude trades created before the reset.
+ */
+function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null): string {
+  const table = botTable(bot, 'pdt_log')
+  let sql = `SELECT COUNT(*) as cnt FROM ${table}
+     WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
+     AND trade_date >= DATE_SUB(CURRENT_DATE(), 6)
+     AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6`
   if (lastResetAt) {
-    sql += ` AND created_at > $2`
-    params.push(lastResetAt)
+    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
+  return sql
+}
 
+/**
+ * Get trigger trades (dates that count toward PDT) from {bot}_pdt_log.
+ */
+function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): string {
+  const table = botTable(bot, 'pdt_log')
+  let sql = `SELECT trade_date, position_id FROM ${table}
+     WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
+     AND trade_date >= DATE_SUB(CURRENT_DATE(), 6)
+     AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6`
+  if (lastResetAt) {
+    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
+  }
   sql += ` ORDER BY trade_date ASC`
-  return { sql, params }
+  return sql
 }
 
 /* ------------------------------------------------------------------ */
@@ -72,15 +72,14 @@ export async function GET(
 
   try {
     return await buildStatusResponse(bot, botName, dte)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
 /* ------------------------------------------------------------------ */
 /*  POST /api/[bot]/pdt — dispatch to toggle or reset                  */
-/*  Body: { "action": "toggle", "enabled": bool }                     */
-/*  Body: { "action": "reset" }                                        */
 /* ------------------------------------------------------------------ */
 
 export async function POST(
@@ -106,8 +105,9 @@ export async function POST(
         { status: 400 },
       )
     }
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
@@ -127,61 +127,55 @@ async function handleToggle(
     )
   }
 
-  // Read current state
-  const rows = await query(
-    `SELECT pdt_enabled FROM ${botTable(bot, 'pdt_config')}
-     WHERE bot_name = $1 LIMIT 1`,
-    [botName],
+  // Read current state from shared table
+  const rows = await dbQuery(
+    `SELECT pdt_enabled FROM ${PDT_CONFIG}
+     WHERE bot_name = '${escapeSql(botName)}' LIMIT 1`,
   )
-
-  const current = rows[0]?.pdt_enabled !== false
+  const current = rows[0]?.pdt_enabled !== false && rows[0]?.pdt_enabled !== 'false'
 
   // No-op if already in requested state
   if (current === enabled) {
     return await buildStatusResponse(bot, botName, dteMode(bot)!)
   }
 
-  // Update — when turning OFF, also reset the counter so bots can trade immediately
+  // Update shared table — when turning OFF, also reset the counter
   if (enabled) {
-    await query(
-      `UPDATE ${botTable(bot, 'pdt_config')}
-       SET pdt_enabled = $1, updated_at = NOW()
-       WHERE bot_name = $2`,
-      [enabled, botName],
+    await dbExecute(
+      `UPDATE ${PDT_CONFIG}
+       SET pdt_enabled = ${enabled}, updated_at = CURRENT_TIMESTAMP()
+       WHERE bot_name = '${escapeSql(botName)}'`,
     )
   } else {
-    await query(
-      `UPDATE ${botTable(bot, 'pdt_config')}
-       SET pdt_enabled = $1, day_trade_count = 0,
-           last_reset_at = NOW(), last_reset_by = 'pdt_toggle_off',
-           updated_at = NOW()
-       WHERE bot_name = $2`,
-      [enabled, botName],
+    await dbExecute(
+      `UPDATE ${PDT_CONFIG}
+       SET pdt_enabled = FALSE, day_trade_count = 0,
+           last_reset_at = CURRENT_TIMESTAMP(), last_reset_by = 'pdt_toggle_off',
+           updated_at = CURRENT_TIMESTAMP()
+       WHERE bot_name = '${escapeSql(botName)}'`,
     )
     // Clear pdt_log flags (best-effort)
     try {
-      await query(
+      const dte = dteMode(bot)!
+      await dbExecute(
         `UPDATE ${botTable(bot, 'pdt_log')}
          SET is_day_trade = FALSE
-         WHERE is_day_trade = TRUE AND dte_mode = $1`,
-        [dteMode(bot)!],
+         WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'`,
       )
     } catch { /* non-critical */ }
   }
 
-  // Audit log
-  await query(
+  // Audit log (per-bot table)
+  const oldJson = JSON.stringify({ pdt_enabled: current }).replace(/'/g, "''")
+  const newJson = JSON.stringify({ pdt_enabled: enabled }).replace(/'/g, "''")
+  const reason = enabled
+    ? 'User toggled PDT enforcement on'
+    : 'User toggled PDT off — counter auto-reset, unlimited trades enabled'
+  await dbExecute(
     `INSERT INTO ${botTable(bot, 'pdt_audit_log')}
-       (bot_name, action, old_value, new_value, reason, performed_by)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      botName,
-      enabled ? 'toggle_on' : 'toggle_off',
-      JSON.stringify({ pdt_enabled: current }),
-      JSON.stringify({ pdt_enabled: enabled }),
-      enabled ? 'User toggled PDT enforcement on' : 'User toggled PDT off — counter auto-reset, unlimited trades enabled',
-      'user',
-    ],
+       (bot_name, action, old_value, new_value, reason, performed_by, created_at)
+     VALUES ('${escapeSql(botName)}', '${enabled ? 'toggle_on' : 'toggle_off'}',
+             '${oldJson}', '${newJson}', '${escapeSql(reason)}', 'user', CURRENT_TIMESTAMP())`,
   )
 
   return await buildStatusResponse(bot, botName, dteMode(bot)!)
@@ -189,9 +183,6 @@ async function handleToggle(
 
 /* ------------------------------------------------------------------ */
 /*  Reset day trade counter                                            */
-/*  Strategy: set last_reset_at = NOW() on pdt_config.                 */
-/*  All COUNT queries exclude trades created before last_reset_at.     */
-/*  This avoids needing to UPDATE individual pdt_log rows.             */
 /* ------------------------------------------------------------------ */
 
 async function handleReset(
@@ -200,74 +191,64 @@ async function handleReset(
 ): Promise<NextResponse> {
   const dte = dteMode(bot)!
 
-  // Read current count for audit
-  const configRows = await query(
-    `SELECT last_reset_at FROM ${botTable(bot, 'pdt_config')}
-     WHERE bot_name = $1 LIMIT 1`,
-    [botName],
+  // Read current state from shared table
+  const configRows = await dbQuery(
+    `SELECT last_reset_at FROM ${PDT_CONFIG}
+     WHERE bot_name = '${escapeSql(botName)}' LIMIT 1`,
   )
   const currentResetAt = configRows[0]?.last_reset_at ?? null
 
-  const { sql: countSql, params: countParams } = dayTradeWhereClause(
-    botTable(bot, 'pdt_log'), dte, currentResetAt,
-  )
-  const countRows = await query(countSql, countParams)
-  const currentCount = parseInt(countRows[0]?.cnt ?? '0', 10)
+  // Count current day trades
+  const countRows = await dbQuery(dayTradeCountSql(bot, dte, currentResetAt))
+  const currentCount = toInt(countRows[0]?.cnt)
 
   // No-op if already 0
   if (currentCount === 0) {
     return await buildStatusResponse(bot, botName, dte)
   }
 
-  // Set last_reset_at = NOW() — this is the ONLY write needed.
-  // All COUNT queries will now exclude trades created before this timestamp.
-  await query(
-    `UPDATE ${botTable(bot, 'pdt_config')}
+  // Set last_reset_at = NOW() on shared table
+  await dbExecute(
+    `UPDATE ${PDT_CONFIG}
      SET day_trade_count = 0,
-         last_reset_at = NOW(),
+         last_reset_at = CURRENT_TIMESTAMP(),
          last_reset_by = 'manual',
-         updated_at = NOW()
-     WHERE bot_name = $1`,
-    [botName],
+         updated_at = CURRENT_TIMESTAMP()
+     WHERE bot_name = '${escapeSql(botName)}'`,
   )
 
-  // Also try to clear pdt_log flags (best-effort, not critical)
+  // Clear pdt_log flags (best-effort)
   try {
-    await query(
+    await dbExecute(
       `UPDATE ${botTable(bot, 'pdt_log')}
        SET is_day_trade = FALSE
-       WHERE is_day_trade = TRUE AND dte_mode = $1`,
-      [dte],
+       WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'`,
     )
   } catch { /* non-critical — last_reset_at is the real reset mechanism */ }
 
-  // Audit log
-  await query(
+  // Audit log (per-bot table)
+  const oldJson = JSON.stringify({ day_trade_count: currentCount }).replace(/'/g, "''")
+  const newJson = JSON.stringify({ day_trade_count: 0 }).replace(/'/g, "''")
+  await dbExecute(
     `INSERT INTO ${botTable(bot, 'pdt_audit_log')}
-       (bot_name, action, old_value, new_value, reason, performed_by)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      botName,
-      'reset',
-      JSON.stringify({ day_trade_count: currentCount }),
-      JSON.stringify({ day_trade_count: 0 }),
-      `Manual reset — trades before reset timestamp excluded from count`,
-      'user',
-    ],
+       (bot_name, action, old_value, new_value, reason, performed_by, created_at)
+     VALUES ('${escapeSql(botName)}', 'reset',
+             '${oldJson}', '${newJson}',
+             'Manual reset — trades before reset timestamp excluded from count',
+             'user', CURRENT_TIMESTAMP())`,
   )
 
   return await buildStatusResponse(bot, botName, dte)
 }
 
 /* ------------------------------------------------------------------ */
-/*  Helper: get trigger trades (dates that count toward PDT)           */
+/*  Helper: get trigger trades                                         */
 /* ------------------------------------------------------------------ */
 
 async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | null) {
-  const { sql, params } = triggerTradeQuery(botTable(bot, 'pdt_log'), dte, lastResetAt)
-  const rows = await query(sql, params)
+  const rows = await dbQuery(triggerTradeSql(bot, dte, lastResetAt))
 
-  // Group by trade_date (multiple trades on same day count as 1 for display)
+  // Group by trade_date
   const byDate = new Map<string, string[]>()
   for (const r of rows) {
     const td = typeof r.trade_date === 'string'
@@ -298,7 +279,7 @@ async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | 
 
 /* ------------------------------------------------------------------ */
 /*  Helper: build full PDT status JSON response                        */
-/*  All COUNT queries respect last_reset_at for persistent resets.      */
+/*  Reads from ironforge_pdt_config (shared) + {bot}_pdt_log (per-bot) */
 /* ------------------------------------------------------------------ */
 
 async function buildStatusResponse(
@@ -306,14 +287,13 @@ async function buildStatusResponse(
   botName: string,
   dte: string,
 ): Promise<NextResponse> {
-  const configRows = await query(
+  const configRows = await dbQuery(
     `SELECT pdt_enabled, max_day_trades,
             max_trades_per_day, window_days,
             last_reset_at, last_reset_by
-     FROM ${botTable(bot, 'pdt_config')}
-     WHERE bot_name = $1
+     FROM ${PDT_CONFIG}
+     WHERE bot_name = '${escapeSql(botName)}'
      LIMIT 1`,
-    [botName],
   )
 
   const cfg = configRows[0] ?? {
@@ -325,28 +305,24 @@ async function buildStatusResponse(
     last_reset_by: null,
   }
 
-  const pdtEnabled = cfg.pdt_enabled !== false
-  const maxDayTrades = cfg.max_day_trades != null ? parseInt(String(cfg.max_day_trades), 10) : 4
-  const maxTradesPerDay = cfg.max_trades_per_day != null ? parseInt(String(cfg.max_trades_per_day), 10) : 1
-  const windowDays = parseInt(cfg.window_days ?? '5', 10) || 5
-  const lastResetAt = cfg.last_reset_at?.toISOString?.() ?? cfg.last_reset_at ?? null
+  const pdtEnabled = cfg.pdt_enabled !== false && cfg.pdt_enabled !== 'false'
+  const maxDayTrades = toInt(cfg.max_day_trades) || 4
+  const maxTradesPerDay = toInt(cfg.max_trades_per_day)
+  const windowDays = toInt(cfg.window_days) || 5
+  const lastResetAt = cfg.last_reset_at ?? null
 
-  // Count from pdt_log — respects last_reset_at for persistent resets
-  const { sql: countSql, params: countParams } = dayTradeWhereClause(
-    botTable(bot, 'pdt_log'), dte, lastResetAt,
-  )
-  const countRows = await query(countSql, countParams)
-  const dayTradeCount = parseInt(countRows[0]?.cnt ?? '0', 10)
+  // Count from {bot}_pdt_log — respects last_reset_at
+  const countRows = await dbQuery(dayTradeCountSql(bot, dte, lastResetAt))
+  const dayTradeCount = toInt(countRows[0]?.cnt)
 
-  const todayRows = await query(
+  const todayRows = await dbQuery(
     `SELECT COUNT(*) as cnt
      FROM ${botTable(bot, 'pdt_log')}
-     WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
-    [dte],
+     WHERE trade_date = CURRENT_DATE() AND dte_mode = '${escapeSql(dte)}'`,
   )
-  const tradedToday = maxTradesPerDay > 0 && parseInt(todayRows[0]?.cnt ?? '0', 10) >= maxTradesPerDay
+  const tradedToday = maxTradesPerDay > 0 && toInt(todayRows[0]?.cnt) >= maxTradesPerDay
 
-  // is_blocked = only rolling PDT limit (not traded_today — that's a separate status)
+  // is_blocked = only rolling PDT limit
   let isBlocked = false
   let blockReason: string | null = null
 
@@ -355,7 +331,7 @@ async function buildStatusResponse(
     blockReason = `${dayTradeCount}/${maxDayTrades} day trades used`
   }
 
-  // pdt_status enum: BLOCKED / CAN_TRADE / TRADED_TODAY / PDT_OFF
+  // pdt_status enum
   let pdtStatus: string
   if (!pdtEnabled) {
     pdtStatus = 'PDT_OFF'
@@ -369,7 +345,6 @@ async function buildStatusResponse(
 
   const triggerTrades = await getTriggerTrades(bot, dte, lastResetAt)
   const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
-  // next_available_date is only meaningful when BLOCKED
   const nextAvailableDate = isBlocked && nextSlotOpens ? nextSlotOpens : null
 
   return NextResponse.json({
