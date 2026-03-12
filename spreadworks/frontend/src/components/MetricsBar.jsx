@@ -9,7 +9,9 @@ const currFmt = new Intl.NumberFormat('en-US', {
 const st = {
   bar: {
     display: 'flex',
-    background: 'var(--bg-surface)',
+    gap: 2,
+    padding: '6px 10px',
+    background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)',
     borderTop: '1px solid var(--border-subtle)',
     fontFamily: 'var(--font-ui)',
     fontSize: 12,
@@ -17,10 +19,18 @@ const st = {
   cell: {
     flex: 1,
     padding: '10px 14px',
-    borderRight: '1px solid var(--border-subtle)',
+    background: 'rgba(13, 13, 35, 0.6)',
+    backdropFilter: 'blur(6px)',
+    border: '1px solid rgba(30, 30, 70, 0.4)',
+    borderRadius: 'var(--radius-md)',
     display: 'flex',
     flexDirection: 'column',
-    gap: 3,
+    gap: 4,
+    transition: 'all var(--transition-fast)',
+  },
+  cellHover: {
+    borderColor: 'rgba(68, 138, 255, 0.2)',
+    background: 'rgba(16, 16, 42, 0.7)',
   },
   label: {
     color: 'var(--text-tertiary)',
@@ -34,6 +44,9 @@ const st = {
     fontWeight: 700,
     fontSize: 15,
     fontFamily: 'var(--font-mono)',
+    textShadow: color && color !== 'var(--text-primary)'
+      ? `0 0 12px ${color}33`
+      : 'none',
   }),
   greekValue: (color) => ({
     color: color || 'var(--text-primary)',
@@ -47,7 +60,8 @@ const st = {
     left: '50%',
     transform: 'translateX(-50%)',
     marginBottom: 8,
-    background: 'var(--bg-elevated)',
+    background: 'rgba(16, 16, 42, 0.95)',
+    backdropFilter: 'blur(12px)',
     border: '1px solid var(--border-default)',
     borderRadius: 'var(--radius-md)',
     padding: '8px 12px',
@@ -58,7 +72,7 @@ const st = {
     whiteSpace: 'nowrap',
     zIndex: 10,
     pointerEvents: 'none',
-    boxShadow: 'var(--shadow-lg)',
+    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.05)',
     animation: 'sw-fadeIn 0.15s ease',
   },
 };
@@ -74,7 +88,7 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      style={{ ...st.cell, position: 'relative', cursor: 'default' }}
+      style={{ ...st.cell, position: 'relative', cursor: 'default', ...(hovered ? st.cellHover : {}) }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
@@ -102,6 +116,7 @@ function getInitialUnit() {
 
 export default function MetricsBar({ calcResult }) {
   const [unit, setUnit] = useState(getInitialUnit);
+  const [hoveredIdx, setHoveredIdx] = useState(-1);
   const r = calcResult || {};
   const g = r.greeks || {};
   const isPct = unit === 'pct';
@@ -152,23 +167,33 @@ export default function MetricsBar({ calcResult }) {
     : '--';
 
   const unitBtnStyle = (active) => ({
-    padding: '2px 6px',
-    border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
-    borderRadius: 3,
-    background: active ? 'rgba(68, 138, 255, 0.15)' : 'transparent',
-    color: active ? 'var(--accent)' : 'var(--text-muted)',
+    padding: '3px 8px',
+    border: `1px solid ${active ? 'var(--accent)' : 'rgba(30, 30, 70, 0.6)'}`,
+    borderRadius: 'var(--radius-sm)',
+    background: active ? 'rgba(68, 138, 255, 0.2)' : 'transparent',
+    color: active ? 'var(--accent-bright)' : 'var(--text-muted)',
     cursor: 'pointer',
     fontSize: 10,
     fontFamily: 'var(--font-mono)',
     fontWeight: 600,
     lineHeight: 1,
+    transition: 'all var(--transition-fast)',
+  });
+
+  const cellWithHover = (idx) => ({
+    ...st.cell,
+    ...(hoveredIdx === idx ? st.cellHover : {}),
   });
 
   return (
     <div>
       {/* Row 1: P&L Metrics */}
       <div style={st.bar}>
-        <div style={st.cell}>
+        <div
+          style={cellWithHover(0)}
+          onMouseEnter={() => setHoveredIdx(0)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={st.label}>{creditLabel}</span>
             <button style={unitBtnStyle(!isPct)} onClick={toggleUnit}>$</button>
@@ -176,23 +201,43 @@ export default function MetricsBar({ calcResult }) {
           </div>
           <span style={st.value(creditColor)}>{creditVal}</span>
         </div>
-        <div style={st.cell}>
+        <div
+          style={cellWithHover(1)}
+          onMouseEnter={() => setHoveredIdx(1)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <span style={st.label}>Max Profit</span>
           <span style={st.value('var(--green)')}>{maxProfitStr}</span>
         </div>
-        <div style={st.cell}>
+        <div
+          style={cellWithHover(2)}
+          onMouseEnter={() => setHoveredIdx(2)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <span style={st.label}>Max Loss</span>
           <span style={st.value('var(--red)')}>{maxLossStr}</span>
         </div>
-        <div style={st.cell}>
+        <div
+          style={cellWithHover(3)}
+          onMouseEnter={() => setHoveredIdx(3)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <span style={st.label}>Chance of Profit</span>
-          <span style={st.value('var(--accent)')}>{cop}</span>
+          <span style={st.value('var(--accent-bright)')}>{cop}</span>
         </div>
-        <div style={st.cell}>
+        <div
+          style={cellWithHover(4)}
+          onMouseEnter={() => setHoveredIdx(4)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <span style={st.label}>Breakevens</span>
           <span style={st.value()}>${beLower} &mdash; ${beUpper}</span>
         </div>
-        <div style={{ ...st.cell, borderRight: 'none' }}>
+        <div
+          style={{ ...cellWithHover(5) }}
+          onMouseEnter={() => setHoveredIdx(5)}
+          onMouseLeave={() => setHoveredIdx(-1)}
+        >
           <span style={st.label}>Implied Vol</span>
           <span style={st.value()}>{iv}</span>
         </div>
@@ -223,7 +268,7 @@ export default function MetricsBar({ calcResult }) {
           color="var(--text-secondary)"
           tooltip={GREEK_TOOLTIPS.vega}
         />
-        <div style={{ ...st.cell, flex: 2, borderRight: 'none' }} />
+        <div style={{ ...st.cell, flex: 2, opacity: 0 }} />
       </div>
     </div>
   );

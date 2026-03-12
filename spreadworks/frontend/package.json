@@ -10,9 +10,12 @@
   },
   "dependencies": {
     "lightweight-charts": "^4.2.3",
+    "plotly.js-dist-min": "^3.4.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^7.13.1"
+    "react-plotly.js": "^2.6.0",
+    "react-router-dom": "^7.13.1",
+    "recharts": "^3.8.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
