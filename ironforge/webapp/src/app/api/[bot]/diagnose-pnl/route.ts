@@ -71,7 +71,7 @@ export async function GET(
         // Method A: getIcMarkToMarket (used by position-monitor & status)
         let methodA: Record<string, unknown> = { error: 'Tradier not configured' }
         if (isConfigured()) {
-          const mtm = await getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl)
+          const mtm = await getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit)
           if (mtm) {
             const pnl = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
             methodA = {

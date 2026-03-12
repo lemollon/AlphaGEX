@@ -36,6 +36,13 @@ export interface IcMtmResult {
   call_short_ask: number
   call_long_bid: number
   spot_price: number | null
+  validation_issues?: string[]
+}
+
+/** Validation issues found in a set of MTM quotes (empty = passed). */
+interface MtmValidation {
+  pass: boolean
+  issues: string[]
 }
 
 /* ------------------------------------------------------------------ */
@@ -116,8 +123,46 @@ export async function getOptionQuote(
 }
 
 /**
+ * Validate MTM option quotes — mirrors the scanner's _validate_mtm logic.
+ * Rejects: zero/negative bid+ask, inverted markets, wide spreads (>50% of mid),
+ * negative cost_to_close, or cost > 3x entry credit.
+ */
+function validateMtmQuotes(
+  legs: Array<{ label: string; bid: number; ask: number }>,
+  rawCost: number,
+  entryCredit: number,
+): MtmValidation {
+  const issues: string[] = []
+
+  for (const { label, bid, ask } of legs) {
+    if (bid <= 0 && ask <= 0) {
+      issues.push(`${label}: zero bid/ask (bid=${bid}, ask=${ask})`)
+    }
+    if (bid > ask && ask > 0) {
+      issues.push(`${label}: inverted market (bid ${bid} > ask ${ask})`)
+    }
+    const mid = (bid + ask) / 2
+    if (mid > 0 && (ask - bid) > 0.50 * mid) {
+      issues.push(`${label}: wide spread (${(ask - bid).toFixed(2)} > 50% of mid ${mid.toFixed(2)})`)
+    }
+  }
+
+  if (rawCost < 0) {
+    issues.push(`Negative raw cost: ${rawCost.toFixed(4)}`)
+  }
+  if (entryCredit > 0 && rawCost > 3 * entryCredit) {
+    issues.push(`Cost ${rawCost.toFixed(4)} > 3x entry ${entryCredit.toFixed(4)}`)
+  }
+
+  return { pass: issues.length === 0, issues }
+}
+
+/**
  * Get current cost-to-close for an Iron Condor by fetching live quotes
- * for all four legs.  Returns null when any leg quote is unavailable.
+ * for all four legs.  Returns null when any leg quote is unavailable
+ * or when quote validation fails (wide spreads, stale data, etc.).
+ *
+ * Pass entryCredit to enable the "cost > 3x entry" validation check.
  */
 export async function getIcMarkToMarket(
   ticker: string,
@@ -126,6 +171,7 @@ export async function getIcMarkToMarket(
   putLong: number,
   callShort: number,
   callLong: number,
+  entryCredit?: number,
 ): Promise<IcMtmResult | null> {
   const [psQ, plQ, csQ, clQ, spotQ] = await Promise.all([
     getOptionQuote(buildOccSymbol(ticker, expiration, putShort, 'P')),
@@ -138,8 +184,26 @@ export async function getIcMarkToMarket(
   if (!psQ || !plQ || !csQ || !clQ) return null
 
   // Cost to close = buy back shorts (at ask) - sell longs (at bid)
-  // Cap at spread width — theoretical max cost for an IC
   const rawCost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
+
+  // Validate quotes — matching the scanner's _validate_mtm logic
+  const validation = validateMtmQuotes(
+    [
+      { label: 'PS', bid: psQ.bid, ask: psQ.ask },
+      { label: 'PL', bid: plQ.bid, ask: plQ.ask },
+      { label: 'CS', bid: csQ.bid, ask: csQ.ask },
+      { label: 'CL', bid: clQ.bid, ask: clQ.ask },
+    ],
+    rawCost,
+    entryCredit ?? 0,
+  )
+
+  if (!validation.pass) {
+    // Quotes failed validation — return null so caller falls back to scanner snapshot
+    return null
+  }
+
+  // Cap at spread width — theoretical max cost for an IC
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
   const cost = Math.min(Math.max(0, rawCost), spreadWidth)
   return {

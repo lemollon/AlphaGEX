@@ -84,6 +84,7 @@ export async function GET(
       const mtmResults = await Promise.all(
         openPositionRows.map(async (pos) => {
           try {
+            const entryCredit = num(pos.total_credit)
             const mtm = await getIcMarkToMarket(
               pos.ticker || 'SPY',
               String(pos.expiration).slice(0, 10),
@@ -91,9 +92,9 @@ export async function GET(
               num(pos.put_long_strike),
               num(pos.call_short_strike),
               num(pos.call_long_strike),
+              entryCredit,
             )
             if (!mtm) return 0
-            const entryCredit = num(pos.total_credit)
             const contracts = int(pos.contracts)
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
             return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
