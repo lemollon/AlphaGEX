@@ -342,9 +342,17 @@ def get_ic_mark_to_market(
     if not all([ps_q, pl_q, cs_q, cl_q]):
         return None
 
-    cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
+    # Raw cost: buy back shorts at ask, sell longs at bid
+    raw_cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
+
+    # Cap at spread width — an IC's cost to close can NEVER exceed this.
+    # Without this cap, illiquid long legs (bid≈$0) inflate cost_to_close
+    # far beyond reality, causing false stop-loss triggers.
+    spread_width = round(put_short - put_long, 2)  # same as call_long - call_short
+    cost = min(max(0, raw_cost), spread_width)
+
     return {
-        "cost_to_close": max(0, round(cost, 4)),
+        "cost_to_close": round(cost, 4),
         "put_short_bid": ps_q["bid"],
         "put_short_ask": ps_q["ask"],
         "put_long_bid": pl_q["bid"],
@@ -1569,6 +1577,13 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
         }
 
     if cost_to_close >= stop_loss_price:
+        log.info(
+            f"{bot['name'].upper()} STOP LOSS TRIGGER: "
+            f"cost_to_close=${cost_to_close:.4f} >= threshold=${stop_loss_price:.4f} "
+            f"(entry=${entry_credit:.4f} × sl_mult={cfg['sl_mult']}) "
+            f"legs: PS_ask={mtm['put_short_ask']:.4f} PL_bid={mtm['put_long_bid']:.4f} "
+            f"CS_ask={mtm['call_short_ask']:.4f} CL_bid={mtm['call_long_bid']:.4f}"
+        )
         close_position(
             bot, pos["position_id"], ticker, expiration,
             num(pos["put_short_strike"]), num(pos["put_long_strike"]),
