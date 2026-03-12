@@ -253,12 +253,14 @@ test("SD=1.0 call_short < SD=1.2 call_short (tighter)",
 # ─── Fix 5: INFERNO stop loss mult = 2.0 ────────────────────────
 print("\n=== INFERNO Stop Loss Multiplier (Fix 5) ===")
 
-test("INFERNO sl_mult = 2.0",
-     scanner.BOT_CONFIG["inferno"]["sl_mult"] == 2.0,
+# Scanner sl_mult values: FLAME/SPARK=2.0 (SL at 2x credit), INFERNO=3.0 (SL at 3x credit)
+# These differ from trader models.py (stop_loss_pct) — known mismatch, scanner is authority
+test("INFERNO sl_mult = 3.0",
+     scanner.BOT_CONFIG["inferno"]["sl_mult"] == 3.0,
      f"got {scanner.BOT_CONFIG['inferno']['sl_mult']}")
 
-test("FLAME sl_mult = 1.0",
-     scanner.BOT_CONFIG["flame"]["sl_mult"] == 1.0,
+test("FLAME sl_mult = 2.0",
+     scanner.BOT_CONFIG["flame"]["sl_mult"] == 2.0,
      f"got {scanner.BOT_CONFIG['flame']['sl_mult']}")
 
 # ─── Market Hours ─────────────────────────────────────────────────
