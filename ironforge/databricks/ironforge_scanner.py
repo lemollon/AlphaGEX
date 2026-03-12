@@ -1382,13 +1382,25 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
+    # Reconcile collateral from actual open positions (prevents stuck collateral)
+    # Instead of relying on collateral_required from the closed position,
+    # recalculate collateral_in_use from all remaining open positions.
+    pos_table = bot_table(bot['name'], 'positions')
+    acct_table = bot_table(bot['name'], 'paper_account')
+    remaining = db_query(f"""
+        SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+        FROM {pos_table}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+    """)
+    actual_collateral = num(remaining[0]["total_collateral"]) if remaining else 0.0
+
     db_execute(f"""
-        UPDATE {bot_table(bot['name'], 'paper_account')}
+        UPDATE {acct_table}
         SET current_balance = current_balance + {realized_pnl},
             cumulative_pnl = cumulative_pnl + {realized_pnl},
             total_trades = total_trades + 1,
-            collateral_in_use = GREATEST(0, collateral_in_use - {collateral}),
-            buying_power = buying_power + {collateral} + {realized_pnl},
+            collateral_in_use = {actual_collateral},
+            buying_power = current_balance + {realized_pnl} - {actual_collateral},
             high_water_mark = GREATEST(high_water_mark, current_balance + {realized_pnl}),
             max_drawdown = GREATEST(max_drawdown,
                 GREATEST(high_water_mark, current_balance + {realized_pnl}) - (current_balance + {realized_pnl})),

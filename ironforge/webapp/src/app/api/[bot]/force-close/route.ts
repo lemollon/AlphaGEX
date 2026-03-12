@@ -127,14 +127,20 @@ export async function POST(
          AND dte_mode = '${escapeSql(dte)}'`,
     )
 
-    // 7. Update paper account
+    // 7. Update paper account — reconcile collateral from actual open positions
+    const remainingCollateral = await dbQuery(
+      `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+    )
+    const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET current_balance = current_balance + ${realizedPnl},
            cumulative_pnl = cumulative_pnl + ${realizedPnl},
            total_trades = total_trades + 1,
-           collateral_in_use = GREATEST(0, collateral_in_use - ${collateral}),
-           buying_power = buying_power + ${collateral} + ${realizedPnl},
+           collateral_in_use = ${actualCollateral},
+           buying_power = current_balance + ${realizedPnl} - ${actualCollateral},
            high_water_mark = GREATEST(high_water_mark, current_balance + ${realizedPnl}),
            max_drawdown = GREATEST(max_drawdown,
              GREATEST(high_water_mark, current_balance + ${realizedPnl}) - (current_balance + ${realizedPnl})),
