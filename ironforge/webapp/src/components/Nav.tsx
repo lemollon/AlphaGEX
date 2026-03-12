@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  INFERNO: <img src="/icon-inferno.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
 }
 
 const botGlow: Record<string, string> = {

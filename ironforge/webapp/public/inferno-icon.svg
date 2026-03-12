@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 120" width="80" height="120">
+  <defs>
+    <linearGradient id="wr-hot" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#7f1d1d"/>
+      <stop offset="20%" style="stop-color:#dc2626"/>
+      <stop offset="40%" style="stop-color:#ef4444"/>
+      <stop offset="60%" style="stop-color:#f97316"/>
+      <stop offset="75%" style="stop-color:#f59e0b"/>
+      <stop offset="90%" style="stop-color:#fbbf24"/>
+      <stop offset="100%" style="stop-color:#fef3c7"/>
+    </linearGradient>
+    <linearGradient id="wr-core" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" style="stop-color:#f87171;stop-opacity:0"/>
+      <stop offset="40%" style="stop-color:#f59e0b"/>
+      <stop offset="70%" style="stop-color:#fbbf24"/>
+      <stop offset="100%" style="stop-color:#fef9c3"/>
+    </linearGradient>
+    <filter id="wrg"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="wrg2"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <!-- Side sparks -->
+  <line x1="2" y1="65" x2="-5" y2="48" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" filter="url(#wrg)" opacity="0.5"/>
+  <circle cx="-5" cy="48" r="2" fill="#f87171" filter="url(#wrg)" opacity="0.6"/>
+  <line x1="78" y1="60" x2="85" y2="42" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" filter="url(#wrg)" opacity="0.5"/>
+  <circle cx="85" cy="42" r="2" fill="#f87171" filter="url(#wrg)" opacity="0.6"/>
+  <circle cx="-2" cy="35" r="1.5" fill="#dc2626" filter="url(#wrg)" opacity="0.4"/>
+  <circle cx="82" cy="28" r="1.5" fill="#dc2626" filter="url(#wrg)" opacity="0.4"/>
+  <!-- Outer flame — THICK, WIDE, torn serrated edges -->
+  <path d="M 40 118 Q 2 95, -4 62 Q -6 42, 2 25 Q -2 35, -5 12 Q 2 28, 6 38 Q 8 24, 13 10 Q 11 20, 16 6 Q 19 0, 23 -4 Q 25 2, 28 -2 Q 30 -6, 33 -2 Q 35 -8, 38 -4 Q 40 -10, 42 -4 Q 45 -8, 47 -2 Q 50 -6, 52 -2 Q 55 2, 57 -4 Q 61 0, 64 6 Q 69 20, 67 10 Q 72 24, 74 38 Q 78 28, 82 12 Q 85 35, 84 25 Q 86 42, 84 62 Q 78 95, 40 118 Z" fill="url(#wr-hot)" filter="url(#wrg2)"/>
+  <!-- Mid layer -->
+  <path d="M 40 110 Q 12 90, 8 60 Q 6 42, 14 25 Q 18 15, 24 6 Q 28 0, 33 -2 Q 36 2, 40 0 Q 44 2, 47 -2 Q 52 0, 56 6 Q 62 15, 66 25 Q 74 42, 72 60 Q 68 90, 40 110 Z" fill="#ef4444" opacity="0.45"/>
+  <!-- Core — blazing -->
+  <path d="M 40 100 Q 22 78, 20 55 Q 19 40, 28 26 Q 34 16, 40 8 Q 46 16, 52 26 Q 61 40, 60 55 Q 58 78, 40 100 Z" fill="url(#wr-core)" opacity="0.5" filter="url(#wrg)"/>
+  <!-- White-hot center -->
+  <path d="M 40 85 Q 30 68, 28 52 Q 27 42, 34 32 Q 38 26, 40 20 Q 42 26, 46 32 Q 53 42, 52 52 Q 50 68, 40 85 Z" fill="#fef3c7" opacity="0.25" filter="url(#wrg)"/>
+</svg>
