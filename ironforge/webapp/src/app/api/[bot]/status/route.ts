@@ -31,6 +31,25 @@ export async function GET(
        WHERE status = 'open' ${dteFilter}`,
     )
 
+    // Live reconciliation: compute realized P&L and trade count from actual closed positions
+    // This is the source of truth — paper_account can drift out of sync
+    const liveStatsQuery = dbQuery(
+      `SELECT
+        COALESCE(SUM(realized_pnl), 0) as actual_realized_pnl,
+        COUNT(*) as actual_total_trades
+       FROM ${botTable(bot, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         ${dteFilter}`,
+    )
+
+    // Actual collateral from open positions (not stale paper_account value)
+    const liveCollateralQuery = dbQuery(
+      `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' ${dteFilter}`,
+    )
+
     const hbName = heartbeatName(bot)
     const heartbeatQuery = dbQuery(
       `SELECT scan_count, last_heartbeat, status, details
@@ -70,13 +89,19 @@ export async function GET(
        WHERE status = 'open' ${dteFilter}`,
     )
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery])
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery])
 
     const acct = accountRows[0]
-    const balance = num(acct?.current_balance)
-    const startingCapital = num(acct?.starting_capital)
-    const realizedPnl = num(acct?.cumulative_pnl)
+    const startingCapital = num(acct?.starting_capital) || 10000
+
+    // Use LIVE stats from actual positions (source of truth), not stale paper_account
+    const liveStats = liveStatsRows[0]
+    const realizedPnl = Math.round(num(liveStats?.actual_realized_pnl) * 100) / 100
+    const totalTrades = int(liveStats?.actual_total_trades)
+    const liveCollateral = num(liveCollateralRows[0]?.actual_collateral)
+    const balance = Math.round((startingCapital + realizedPnl) * 100) / 100
+    const buyingPower = Math.round((balance - liveCollateral) * 100) / 100
 
     // Compute live unrealized P&L from open positions via Tradier
     let unrealizedPnl = 0
@@ -150,9 +175,9 @@ export async function GET(
         unrealized_pnl: unrealizedPnl,
         total_pnl: Math.round(totalPnl * 100) / 100,
         return_pct: Math.round(returnPct * 100) / 100,
-        total_trades: int(acct?.total_trades),
-        collateral_in_use: num(acct?.collateral_in_use),
-        buying_power: num(acct?.buying_power),
+        total_trades: totalTrades,
+        collateral_in_use: liveCollateral,
+        buying_power: buyingPower,
         high_water_mark: num(acct?.high_water_mark),
         max_drawdown: num(acct?.max_drawdown),
       },

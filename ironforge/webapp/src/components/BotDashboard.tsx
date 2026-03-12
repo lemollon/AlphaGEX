@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
-import { isMarketOpen, getCTNow } from '@/lib/pt-tiers'
+import { getCTNow, getCTMinutes } from '@/lib/pt-tiers'
 import StatusCard from './StatusCard'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
@@ -161,6 +161,36 @@ export default function BotDashboard({
 
   const onPeriodChange = useCallback((p: Period) => setEquityPeriod(p), [])
 
+  /* ---- Auto EOD close: when past 2:45 PM CT and positions still open, trigger close ---- */
+  const eodCloseTriggered = useRef(false)
+  const [eodCloseResult, setEodCloseResult] = useState<{ closed: number; total_pnl: number } | null>(null)
+
+  useEffect(() => {
+    // Only trigger once per page load, and only when we have position data
+    if (eodCloseTriggered.current) return
+    const positions = positionMonitor?.positions
+    if (!positions || positions.length === 0) return
+
+    const ctMins = getCTMinutes(getCTNow())
+    if (ctMins < 885) return // Not past 2:45 PM CT
+
+    eodCloseTriggered.current = true
+
+    fetch(`/api/${bot}/eod-close`, { method: 'POST' })
+      .then((res) => {
+        if (!res.ok) return null
+        return res.json()
+      })
+      .then((data) => {
+        if (data && data.closed > 0) {
+          setEodCloseResult({ closed: data.closed, total_pnl: data.total_realized_pnl })
+        }
+      })
+      .catch(() => {
+        // Non-fatal — scanner will catch it on next cycle
+      })
+  }, [positionMonitor, bot])
+
   if (statusErr) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
@@ -203,6 +233,14 @@ export default function BotDashboard({
           bot={bot}
           liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
         />
+      )}
+
+      {/* EOD auto-close result banner */}
+      {eodCloseResult && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-400">
+          EOD auto-close: {eodCloseResult.closed} position{eodCloseResult.closed !== 1 ? 's' : ''} closed
+          {' '}| P&L: {eodCloseResult.total_pnl >= 0 ? '+' : ''}${eodCloseResult.total_pnl.toFixed(2)}
+        </div>
       )}
 
       {/* PDT Management */}
