@@ -306,9 +306,9 @@ async function buildStatusResponse(
   }
 
   const pdtEnabled = cfg.pdt_enabled !== false && cfg.pdt_enabled !== 'false'
-  const maxDayTrades = toInt(cfg.max_day_trades) || 4
-  const maxTradesPerDay = toInt(cfg.max_trades_per_day)
-  const windowDays = toInt(cfg.window_days) || 5
+  const maxDayTrades = cfg.max_day_trades != null && cfg.max_day_trades !== '' ? toInt(cfg.max_day_trades) : 4
+  const maxTradesPerDay = cfg.max_trades_per_day != null && cfg.max_trades_per_day !== '' ? toInt(cfg.max_trades_per_day) : 1
+  const windowDays = cfg.window_days != null && cfg.window_days !== '' ? toInt(cfg.window_days) : 5
   const lastResetAt = cfg.last_reset_at ?? null
 
   // Count from {bot}_pdt_log — respects last_reset_at
@@ -351,6 +351,18 @@ async function buildStatusResponse(
   const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
   const nextAvailableDate = isBlocked && nextSlotOpens ? nextSlotOpens : null
 
+  // Compute rolling window start (windowDays business days back, inclusive of today)
+  const today = new Date()
+  const windowEnd = localDateStr(today)
+  const windowStartDate = new Date(today)
+  let remaining = windowDays - 1
+  while (remaining > 0) {
+    windowStartDate.setDate(windowStartDate.getDate() - 1)
+    const dow = windowStartDate.getDay()
+    if (dow >= 1 && dow <= 5) remaining--
+  }
+  const windowStart = localDateStr(windowStartDate)
+
   return NextResponse.json({
     bot: botName,
     bot_name: botName,
@@ -363,6 +375,8 @@ async function buildStatusResponse(
     traded_today: tradedToday,
     can_trade: pdtStatus === 'CAN_TRADE' || pdtStatus === 'PDT_OFF',
     window_days: windowDays,
+    window_start: windowStart,
+    window_end: windowEnd,
     last_reset: lastResetAt,
     last_reset_at: lastResetAt,
     last_reset_by: cfg.last_reset_by ?? null,
