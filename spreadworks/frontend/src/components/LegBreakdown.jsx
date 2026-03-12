@@ -1,59 +1,55 @@
 import { useState } from 'react';
 import { formatCurrency2, formatPct, formatGreek, formatGreekDollar } from '../utils/format';
 
-const font = "'Courier New', monospace";
-
 const s = {
   wrapper: {
     background: 'var(--bg-surface)',
-    borderTop: '1px solid #1a1a2e',
-    fontFamily: font,
-    fontSize: 11,
+    borderTop: '1px solid var(--border-subtle)',
+    fontFamily: 'var(--font-ui)',
+    fontSize: 12,
   },
   toggleBtn: {
     background: 'transparent',
     border: 'none',
-    color: '#555',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
-    padding: '4px 12px',
-    fontSize: 10,
-    fontFamily: font,
+    padding: '6px 16px',
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
     fontWeight: 600,
     width: '100%',
     textAlign: 'left',
+    transition: 'color var(--transition-fast)',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
   },
   th: {
-    padding: '4px 8px',
-    color: '#555',
-    fontSize: 9,
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    textAlign: 'right',
-    borderBottom: '1px solid #1a1a2e',
+    padding: '6px 10px',
+    color: 'var(--text-tertiary)',
+    fontSize: 10,
     fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    textAlign: 'right',
+    borderBottom: '1px solid var(--border-subtle)',
   },
   td: (isLong) => ({
-    padding: '4px 8px',
+    padding: '6px 10px',
     textAlign: 'right',
-    fontSize: 11,
-    color: '#ccc',
-    borderBottom: '1px solid #0a0a14',
-    background: isLong ? '#00e67608' : '#ff525208',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    borderBottom: '1px solid var(--bg-base)',
+    background: isLong ? 'rgba(0, 230, 118, 0.03)' : 'rgba(255, 82, 82, 0.03)',
   }),
   legName: (isLong) => ({
     textAlign: 'left',
-    color: isLong ? '#00e676' : '#ff5252',
+    color: isLong ? 'var(--green)' : 'var(--red)',
     fontWeight: 600,
+    fontFamily: 'var(--font-ui)',
   }),
-  noData: {
-    color: '#444',
-    fontStyle: 'italic',
-    fontSize: 10,
-  },
 };
 
 export default function LegBreakdown({ calcResult }) {
@@ -67,11 +63,16 @@ export default function LegBreakdown({ calcResult }) {
 
   return (
     <div style={s.wrapper}>
-      <button style={s.toggleBtn} onClick={() => setOpen(!open)}>
+      <button
+        style={s.toggleBtn}
+        onClick={() => setOpen(!open)}
+        onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'}
+        onMouseLeave={(e) => e.target.style.color = 'var(--text-tertiary)'}
+      >
         {open ? 'Legs \u25B4' : 'Legs \u25BE'} ({legs.length} legs)
       </button>
       {open && (
-        <div style={{ padding: '0 8px 8px' }}>
+        <div style={{ padding: '0 12px 10px', animation: 'sw-fadeIn 0.2s ease' }}>
           <table style={s.table}>
             <thead>
               <tr>

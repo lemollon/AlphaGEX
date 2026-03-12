@@ -12,52 +12,57 @@ const s = {
     alignItems: 'center',
   },
   input: {
-    background: '#12121e',
-    border: '1px solid #2a2a40',
-    borderRadius: 3,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-sm)',
     color: '#fff',
     fontWeight: 700,
-    fontFamily: "'Courier New', monospace",
-    fontSize: 13,
-    padding: '3px 8px',
-    width: 72,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 14,
+    padding: '4px 10px',
+    width: 76,
     outline: 'none',
     textTransform: 'uppercase',
+    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
   },
   inputFocused: {
-    borderColor: '#448aff',
+    borderColor: 'var(--accent)',
+    boxShadow: '0 0 0 2px var(--accent-glow)',
   },
   dropdown: {
     position: 'absolute',
     top: '100%',
     left: 0,
-    marginTop: 2,
-    background: '#12121e',
-    border: '1px solid #2a2a40',
-    borderRadius: 3,
+    marginTop: 4,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-md)',
     zIndex: 100,
-    maxHeight: 200,
+    maxHeight: 220,
     overflowY: 'auto',
-    minWidth: 72,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    minWidth: 76,
+    boxShadow: 'var(--shadow-lg)',
+    animation: 'sw-fadeIn 0.15s ease',
   },
   option: (isHighlighted) => ({
-    padding: '5px 10px',
+    padding: '7px 12px',
     cursor: 'pointer',
-    fontFamily: "'Courier New', monospace",
-    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 13,
     fontWeight: 600,
-    color: isHighlighted ? '#fff' : '#aaa',
-    background: isHighlighted ? '#448aff33' : 'transparent',
+    color: isHighlighted ? '#fff' : 'var(--text-secondary)',
+    background: isHighlighted ? 'rgba(68, 138, 255, 0.15)' : 'transparent',
+    transition: 'background var(--transition-fast)',
   }),
   error: {
-    color: '#ef5350',
-    fontSize: 10,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--red)',
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 500,
     position: 'absolute',
     top: '100%',
     left: 0,
-    marginTop: 2,
+    marginTop: 4,
     whiteSpace: 'nowrap',
   },
 };
@@ -71,12 +76,10 @@ export default function SymbolSelector({ value, onChange }) {
   const debounceRef = useRef(null);
   const wrapperRef = useRef(null);
 
-  // Sync external value changes
   useEffect(() => {
     setInputVal(value);
   }, [value]);
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClick = (e) => {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target)) {
@@ -139,7 +142,7 @@ export default function SymbolSelector({ value, onChange }) {
       }
     } else if (e.key === 'Escape') {
       setOpen(false);
-      setInputVal(value); // revert
+      setInputVal(value);
     }
   };
 
@@ -151,10 +154,9 @@ export default function SymbolSelector({ value, onChange }) {
 
   const handleBlur = () => {
     setFocused(false);
-    // Small delay to allow click on dropdown item
     setTimeout(() => {
       if (!inputVal || inputVal.toUpperCase() !== value) {
-        setInputVal(value); // revert on blur if not committed
+        setInputVal(value);
       }
       setOpen(false);
     }, 150);
@@ -179,7 +181,7 @@ export default function SymbolSelector({ value, onChange }) {
               key={sym}
               style={s.option(i === highlighted)}
               onMouseDown={(e) => {
-                e.preventDefault(); // prevent blur
+                e.preventDefault();
                 commitSymbol(sym);
               }}
               onMouseEnter={() => setHighlighted(i)}

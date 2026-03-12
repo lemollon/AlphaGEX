@@ -17,47 +17,31 @@ import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
 
 const CHART_HEIGHT = 500;
 
-const navStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 0,
-  background: 'var(--bg-surface)',
-  borderBottom: '1px solid #1a1a2e',
-  fontFamily: "'Courier New', monospace",
-  fontSize: 12,
-  padding: '0 12px',
-};
-
-const navLinkStyle = (isActive) => ({
-  padding: '8px 16px',
-  color: isActive ? '#448aff' : '#555',
-  borderBottom: isActive ? '2px solid #448aff' : '2px solid transparent',
-  textDecoration: 'none',
-  fontWeight: isActive ? 700 : 400,
-  fontSize: 12,
-  fontFamily: "'Courier New', monospace",
-  transition: 'all 0.15s',
-});
-
-const logoStyle = {
-  display: 'flex',
-  alignItems: 'baseline',
-  gap: 0,
-  padding: '8px 12px 8px 0',
-  marginRight: 12,
-  borderRight: '1px solid #1a1a2e',
-};
-
 function MarketStatusBadge() {
   const { isOpen, statusText } = useMarketHours();
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '4px 10px',
+      borderRadius: 20,
+      background: isOpen ? 'var(--green-dim)' : 'rgba(255, 82, 82, 0.08)',
+      border: `1px solid ${isOpen ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 82, 82, 0.15)'}`,
+    }}>
       <span style={{
         display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
-        background: isOpen ? '#00e676' : '#ef5350',
+        background: isOpen ? 'var(--green)' : 'var(--red)',
+        boxShadow: isOpen ? '0 0 6px rgba(0, 230, 118, 0.5)' : 'none',
+        animation: isOpen ? 'sw-pulse 2s ease-in-out infinite' : 'none',
       }} />
-      <span style={{ color: isOpen ? '#00e676' : '#ef5350', fontSize: 10 }}>
-        {isOpen ? 'Open' : statusText}
+      <span style={{
+        color: isOpen ? 'var(--green)' : 'var(--red)',
+        fontSize: 11,
+        fontWeight: 600,
+        fontFamily: 'var(--font-ui)',
+      }}>
+        {isOpen ? 'Market Open' : statusText}
       </span>
     </div>
   );
@@ -69,14 +53,12 @@ function NextPostCountdown() {
   useEffect(() => {
     const update = () => {
       const now = new Date();
-      // Next scheduled posts: 8:25 CT open, 15:00 CT mark, 15:05 CT EOD
       const targets = [
         { h: 8, m: 25, label: 'Open Post' },
         { h: 15, m: 0, label: 'EOD Mark' },
         { h: 15, m: 5, label: 'EOD Post' },
       ];
 
-      // Get current CT time
       const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
       const ctMins = ct.getHours() * 60 + ct.getMinutes();
 
@@ -100,7 +82,12 @@ function NextPostCountdown() {
 
   if (!text) return null;
   return (
-    <span style={{ color: '#444', fontSize: 10, fontFamily: "'Courier New', monospace" }}>
+    <span style={{
+      color: 'var(--text-muted)',
+      fontSize: 11,
+      fontFamily: 'var(--font-ui)',
+      fontWeight: 500,
+    }}>
       {text}
     </span>
   );
@@ -108,18 +95,83 @@ function NextPostCountdown() {
 
 function NavBar() {
   return (
-    <nav style={navStyle}>
-      <div style={logoStyle}>
-        <span style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>Spread</span>
-        <span style={{ color: '#448aff', fontWeight: 700, fontSize: 14 }}>Works</span>
+    <nav style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 0,
+      background: 'var(--bg-surface)',
+      borderBottom: '1px solid var(--border-subtle)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: 13,
+      padding: '0 16px',
+      height: 48,
+    }}>
+      {/* Logo */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '0 16px 0 0',
+        marginRight: 8,
+        borderRight: '1px solid var(--border-subtle)',
+        height: '100%',
+      }}>
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 26,
+          height: 26,
+          borderRadius: 6,
+          background: 'linear-gradient(135deg, var(--accent) 0%, #7c4dff 100%)',
+          fontSize: 12,
+          color: '#fff',
+          fontWeight: 800,
+          boxShadow: '0 2px 8px rgba(68, 138, 255, 0.25)',
+        }}>S</div>
+        <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>
+          Spread<span style={{ color: 'var(--accent)' }}>Works</span>
+        </span>
       </div>
-      <NavLink to="/" style={({ isActive }) => navLinkStyle(isActive)} end>
+
+      {/* Nav Links */}
+      <NavLink
+        to="/"
+        end
+        style={({ isActive }) => ({
+          padding: '0 16px',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
+          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+          textDecoration: 'none',
+          fontWeight: isActive ? 600 : 500,
+          fontSize: 13,
+          transition: 'all 0.15s',
+        })}
+      >
         Builder
       </NavLink>
-      <NavLink to="/positions" style={({ isActive }) => navLinkStyle(isActive)}>
+      <NavLink
+        to="/positions"
+        style={({ isActive }) => ({
+          padding: '0 16px',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
+          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+          textDecoration: 'none',
+          fontWeight: isActive ? 600 : 500,
+          fontSize: 13,
+          transition: 'all 0.15s',
+        })}
+      >
         Positions
       </NavLink>
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
         <NextPostCountdown />
         <MarketStatusBadge />
       </div>
@@ -177,14 +229,6 @@ function BuilderPage() {
     await calculate(payload);
   };
 
-  const headerStyle = {
-    display: 'flex', alignItems: 'center', gap: 12,
-    padding: '6px 12px', background: 'var(--bg-surface)',
-    borderBottom: '1px solid #1a1a2e',
-    boxShadow: 'var(--shadow-panel)',
-    fontFamily: "'Courier New', monospace", fontSize: 12,
-  };
-
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <StrategyPanel
@@ -199,27 +243,43 @@ function BuilderPage() {
         onRefreshAlerts={fetchAlerts}
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-        <div style={headerStyle}>
+        {/* Chart Header */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '8px 16px',
+          background: 'var(--bg-surface)',
+          borderBottom: '1px solid var(--border-subtle)',
+          fontFamily: 'var(--font-ui)',
+          fontSize: 13,
+        }}>
           <SymbolSelector value={symbol} onChange={handleSymbolChange} />
-          <span style={{ color: '#555' }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 500 }}>
             {interval === '15min' ? '15M' : interval === '1h' ? '1H' : '4H'}
           </span>
-          <span style={{ color: '#555' }}>&middot;</span>
-          <span style={{ color: '#888' }}>Price + Spread Payoff</span>
+          <span style={{ color: 'var(--text-muted)' }}>&middot;</span>
+          <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Price + Spread Payoff</span>
           {spotPrice && (
-            <span style={{ color: '#448aff', fontWeight: 600, marginLeft: 8 }}>
+            <span style={{
+              color: 'var(--accent)',
+              fontWeight: 700,
+              fontSize: 14,
+              fontFamily: 'var(--font-mono)',
+              marginLeft: 4,
+            }}>
               ${spotPrice.toFixed(2)}
             </span>
           )}
           {!isOpen && dataAsOf && (
             <span style={{
               marginLeft: 'auto',
-              padding: '2px 8px',
-              background: '#ffd60022',
-              border: '1px solid #ffd60044',
-              borderRadius: 3,
-              color: '#ffd600',
-              fontSize: 10,
+              padding: '3px 10px',
+              background: 'var(--yellow-dim)',
+              border: '1px solid rgba(255, 214, 0, 0.2)',
+              borderRadius: 20,
+              color: 'var(--yellow)',
+              fontSize: 11,
               fontWeight: 600,
             }}>
               Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
@@ -234,6 +294,8 @@ function BuilderPage() {
             </span>
           )}
         </div>
+
+        {/* Chart Area — UNTOUCHED */}
         <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
           {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
@@ -243,6 +305,7 @@ function BuilderPage() {
               strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
           )}
         </div>
+
         <ControlsBar dteSlider={dteSlider} onDteChange={setDteSlider}
           rangePct={rangePct} onRangeChange={setRangePct}
           ivMultiplier={ivMultiplier} onIvMultiplierChange={setIvMultiplier}
