@@ -3,24 +3,28 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Force Open Trades for All IronForge Bots
+# MAGIC # Force Open Trades — FLAME & SPARK
 # MAGIC
 # MAGIC Bypasses all gates (PDT, daily limit, entry window) and opens one IC position
 # MAGIC per bot using live Tradier quotes for strike selection and credit pricing.
 # MAGIC
-# MAGIC - FLAME (2DTE): opens + mirrors to Tradier sandbox (User, Matt, Logan)
-# MAGIC - SPARK (1DTE): paper only
-# MAGIC - INFERNO (0DTE): paper only
+# MAGIC - **FLAME** (2DTE): opens paper position + mirrors to Tradier sandbox (User, Matt, Logan)
+# MAGIC - **SPARK** (1DTE): paper only
 # MAGIC
 # MAGIC **IMPORTANT**: Make sure the scanner has the MTM spread_width cap fix
 # MAGIC before running this, otherwise the new positions will get false-SL'd.
+# MAGIC
+# MAGIC ## How to use
+# MAGIC 1. Set `EXECUTE = False` for a dry run first
+# MAGIC 2. Review the output — check strikes, credits, collateral
+# MAGIC 3. Set `EXECUTE = True` and Run All to open trades
 
 # COMMAND ----------
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────
 
 EXECUTE = False           # True = open trades, False = dry run (show what would open)
-BOT_FILTER = None         # None = all bots, or "flame", "spark", "inferno"
+BOTS = ["flame", "spark"] # Only FLAME and SPARK
 
 # ── Credentials ──
 import os
@@ -542,12 +546,8 @@ print(f"  Force Open Trades — {'EXECUTE' if EXECUTE else 'DRY RUN'}")
 print(f"  Time: {datetime.now(CT).strftime('%Y-%m-%d %H:%M:%S CT')}")
 print("=" * 60)
 
-bots = ["flame", "spark", "inferno"]
-if BOT_FILTER:
-    bots = [BOT_FILTER]
-
 results = {}
-for bot_name in bots:
+for bot_name in BOTS:
     try:
         result = force_trade_for_bot(bot_name, EXECUTE)
         results[bot_name] = result
