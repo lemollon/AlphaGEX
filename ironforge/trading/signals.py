@@ -642,14 +642,17 @@ class SignalGenerator:
                 return None
 
             # Cost to close: buy back shorts at ask, sell longs at bid
-            cost = (
+            # Cap at [0, spread_width] — theoretical max cost for an IC
+            raw_cost = (
                 float(ps_q.get("ask", 0) or 0)
                 + float(cs_q.get("ask", 0) or 0)
                 - float(pl_q.get("bid", 0) or 0)
                 - float(cl_q.get("bid", 0) or 0)
             )
+            spread_width = round(put_short - put_long, 2)
+            cost = min(max(0, raw_cost), spread_width)
 
-            return max(0, round(cost, 4))
+            return round(cost, 4)
         except Exception as e:
             logger.warning(f"{self.config.bot_name}: MTM calculation failed: {e}")
             return None

@@ -152,6 +152,27 @@ export async function getIcMarkToMarket(
   }
 }
 
+/**
+ * Shared unrealized P&L calculation for an Iron Condor position.
+ * Ensures consistent formula, capping, and rounding across all endpoints.
+ *
+ * @param entryCredit  Per-contract credit received at open
+ * @param costToClose  Per-contract cost to close (already capped by getIcMarkToMarket)
+ * @param contracts    Number of contracts
+ * @param spreadWidth  Width of the spread (e.g. 5.0 for $5 wide)
+ * @returns Unrealized P&L in dollars, rounded to 2 decimals
+ */
+export function calculateIcUnrealizedPnl(
+  entryCredit: number,
+  costToClose: number,
+  contracts: number,
+  spreadWidth: number,
+): number {
+  // Cap cost at [0, spreadWidth] — theoretical bounds for an IC
+  const cappedCost = Math.min(Math.max(0, costToClose), spreadWidth)
+  return Math.round((entryCredit - cappedCost) * 100 * contracts * 100) / 100
+}
+
 /** Get available option expirations for a symbol. */
 export async function getOptionExpirations(
   symbol: string,

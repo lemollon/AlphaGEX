@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/databricks-sql'
-import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,16 +69,14 @@ export async function GET(
             if (!mtm) return 0
             const entryCredit = num(pos.total_credit)
             const contracts = int(pos.contracts)
-            // Cap cost at spread width
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
-            const cappedCost = Math.min(Math.max(0, mtm.cost_to_close), spreadWidth)
-            return (entryCredit - cappedCost) * 100 * contracts
+            return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
           } catch {
             return 0
           }
         }),
       )
-      liveUnrealizedPnl = Math.round(mtmResults.reduce((a, b) => a + b, 0) * 100) / 100
+      liveUnrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
     }
 
     // Append a live snapshot with current unrealized P&L
