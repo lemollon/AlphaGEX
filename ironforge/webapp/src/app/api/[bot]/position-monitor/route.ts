@@ -127,16 +127,23 @@ export async function GET(
     // Fallback: use the scanner's latest equity snapshot for unrealized P&L.
     // The scanner runs every 5 min with its own validated MTM — more reliable
     // than stale/wide-spread Tradier quotes from the webapp.
-    const snapshotRows = await dbQuery(
-      `SELECT unrealized_pnl, snapshot_time
-       FROM ${botTable(bot, 'equity_snapshots')}
-       ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
-       ORDER BY snapshot_time DESC
-       LIMIT 1`,
-    )
-
-    const scannerPnl = snapshotRows.length > 0 ? num(snapshotRows[0].unrealized_pnl) : 0
-    const snapshotTime = snapshotRows.length > 0 ? snapshotRows[0].snapshot_time : null
+    let scannerPnl = 0
+    let snapshotTime: string | null = null
+    try {
+      const snapshotRows = await dbQuery(
+        `SELECT unrealized_pnl, snapshot_time
+         FROM ${botTable(bot, 'equity_snapshots')}
+         ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+         ORDER BY snapshot_time DESC
+         LIMIT 1`,
+      )
+      if (snapshotRows.length > 0) {
+        scannerPnl = num(snapshotRows[0].unrealized_pnl)
+        snapshotTime = snapshotRows[0].snapshot_time
+      }
+    } catch {
+      // Non-fatal — still return positions without scanner P&L
+    }
 
     return NextResponse.json({
       positions,
