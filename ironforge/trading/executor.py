@@ -229,12 +229,16 @@ class PaperExecutor:
     def calculate_max_contracts(
         self, buying_power: float, collateral_per_contract: float
     ) -> int:
-        """Calculate maximum contracts based on buying power (85% usage)."""
+        """Calculate maximum contracts based on buying power (85% usage).
+        max_contracts=0 means no cap (sized purely by buying power).
+        """
         if collateral_per_contract <= 0:
             return 0
         usable_bp = buying_power * self.config.buying_power_usage_pct
-        max_contracts = int(usable_bp / collateral_per_contract)
-        return min(max_contracts, self.config.max_contracts)
+        bp_contracts = int(usable_bp / collateral_per_contract)
+        if self.config.max_contracts == 0:
+            return bp_contracts  # No cap (INFERNO)
+        return min(bp_contracts, self.config.max_contracts)
 
     def open_paper_position(
         self, signal: IronCondorSignal, contracts: int

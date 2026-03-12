@@ -85,11 +85,11 @@ SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 # Track consecutive MTM failures per position_id (resets on success or close)
 _mtm_failure_counts: dict[str, int] = {}
 
-# Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM)
+# Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM), max_contracts (0 = no limit)
 BOT_CONFIG = {
-    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},  # SL = 100% credit loss
-    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1},  # SL = 100% credit loss
-    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0},  # SL = 200% credit loss, 0 = unlimited
+    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10},
+    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10},
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 0},  # 0 = no limit
 }
 
 BOTS = [
@@ -1780,7 +1780,9 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     if collateral_per <= 0:
         return "skip:bad_collateral"
     usable_bp = buying_power * 0.85
-    max_contracts = min(10, max(1, math.floor(usable_bp / collateral_per)))
+    bp_contracts = max(1, math.floor(usable_bp / collateral_per))
+    contract_cap = cfg.get("max_contracts", 10)  # 0 = no limit
+    max_contracts = bp_contracts if contract_cap == 0 else min(contract_cap, bp_contracts)
 
     now = datetime.now()
     date_str = now.strftime("%Y%m%d")

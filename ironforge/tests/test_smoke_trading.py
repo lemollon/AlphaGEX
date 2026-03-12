@@ -808,6 +808,59 @@ def test_scenario_table():
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# 13. POSITION SIZING & CONTRACT CAPS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_position_sizing():
+    """
+    Verify position sizing respects per-bot max_contracts:
+    - FLAME/SPARK: capped at 10 contracts
+    - INFERNO: no cap (max_contracts=0 means unlimited, sized by BP only)
+    """
+    print("\n=== 13. Position Sizing & Contract Caps ===")
+
+    flame = flame_config()
+    spark = spark_config()
+    inferno = inferno_config()
+
+    check("FLAME max_contracts = 10", flame.max_contracts == 10)
+    check("SPARK max_contracts = 10", spark.max_contracts == 10)
+    check("INFERNO max_contracts = 0 (no limit)", inferno.max_contracts == 0)
+
+    # Simulate sizing: $10,000 BP, $250 collateral per contract
+    buying_power = 10000.0
+    collateral_per = 250.0
+    bp_usage = 0.85
+
+    usable_bp = buying_power * bp_usage  # $8,500
+    bp_contracts = int(usable_bp / collateral_per)  # 34
+
+    # FLAME: capped at 10
+    flame_contracts = min(bp_contracts, flame.max_contracts)
+    check("FLAME sized to 10 (capped)", flame_contracts == 10)
+
+    # INFERNO: no cap, uses all available BP
+    inferno_contracts = bp_contracts if inferno.max_contracts == 0 else min(bp_contracts, inferno.max_contracts)
+    check("INFERNO sized to 34 (uncapped)", inferno_contracts == 34)
+
+    # Scanner BOT_CONFIG alignment
+    scanner = _load_scanner()
+    if scanner:
+        s_flame = scanner.BOT_CONFIG["flame"]
+        s_inferno = scanner.BOT_CONFIG["inferno"]
+        check("Scanner FLAME max_contracts = 10", s_flame.get("max_contracts") == 10)
+        check("Scanner INFERNO max_contracts = 0", s_inferno.get("max_contracts") == 0)
+
+        # Simulate scanner sizing logic for INFERNO (no cap)
+        bp_c = max(1, int(usable_bp / collateral_per))
+        cap = s_inferno.get("max_contracts", 10)
+        scanner_contracts = bp_c if cap == 0 else min(cap, bp_c)
+        check("Scanner INFERNO sizes to 34 (uncapped)", scanner_contracts == 34)
+    else:
+        print("    Scanner not loaded — skipping scanner sizing checks")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -829,6 +882,7 @@ def main():
     test_scanner_trader_config_alignment()
     test_position_model()
     test_scenario_table()
+    test_position_sizing()
 
     print(f"\n{'=' * 60}")
     print(f"  RESULTS: {passed} passed, {failed} failed, {warnings} warnings")
