@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static && node scripts/patch-hostname.js; fi",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
