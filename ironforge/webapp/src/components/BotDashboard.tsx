@@ -12,6 +12,7 @@ import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
 import PTTimeline from './PTTimeline'
 import PdtCard from './PdtCard'
+import PdtTabContent from './PdtTabContent'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -37,7 +38,7 @@ class ComponentErrorBoundary extends React.Component<
   }
 }
 
-const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs'] as const
+const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs', 'PDT'] as const
 type Tab = (typeof TABS)[number]
 
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
@@ -120,6 +121,13 @@ export default function BotDashboard({
     { refreshInterval: DATA_REFRESH },
   )
 
+  /* ---- PDT ---- */
+  const { data: pdtData, mutate: mutatePdt } = useSWR(
+    tab === 'PDT' ? `/api/${bot}/pdt` : null,
+    fetcher,
+    { refreshInterval: DATA_REFRESH },
+  )
+
   const onPeriodChange = useCallback((p: Period) => setEquityPeriod(p), [])
 
   if (statusErr) {
@@ -135,7 +143,9 @@ export default function BotDashboard({
   /* ---- Stale scanner banner (removed — not needed) ---- */
 
   const accentActive =
-    accent === 'amber' ? 'border-amber-400 text-amber-400' : 'border-blue-400 text-blue-400'
+    accent === 'amber' ? 'border-amber-400 text-amber-400'
+    : accent === 'red' ? 'border-red-400 text-red-400'
+    : 'border-blue-400 text-blue-400'
 
   return (
     <div className="space-y-6">
@@ -208,6 +218,14 @@ export default function BotDashboard({
         )}
         {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} />}
         {tab === 'Logs' && logs && <LogsTable logs={logs.logs} />}
+        {tab === 'PDT' && (
+          <PdtTabContent
+            bot={bot}
+            pdtData={pdtData}
+            botStatus={status}
+            onPdtUpdate={() => mutatePdt()}
+          />
+        )}
       </div>
     </div>
   )
