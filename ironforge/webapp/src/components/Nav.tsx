@@ -39,15 +39,15 @@ export default function Nav() {
           </Link>
           <span
             style={{
-              color: '#FBBF24',
-              fontSize: '0.7rem',
+              color: '#FCD34D',
+              fontSize: '0.75rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
               fontStyle: 'italic',
-              letterSpacing: '0.08em',
+              letterSpacing: '0.06em',
               lineHeight: 1,
               marginTop: '-1px',
               paddingLeft: '1.15rem',
-              textShadow: '0 0 6px rgba(251,191,36,0.6), 0 0 14px rgba(245,158,11,0.4)',
+              textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.5)',
             }}
           >
             &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
