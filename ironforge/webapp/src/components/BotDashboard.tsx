@@ -103,9 +103,9 @@ export default function BotDashboard({
     { refreshInterval: LIVE_REFRESH },
   )
 
-  /* ---- Position monitor (live MTM) ---- */
+  /* ---- Position monitor (live MTM) — always fetched so StatusCard unrealized P&L is accurate ---- */
   const { data: positionMonitor } = useSWR(
-    tab === 'Positions' ? `/api/${bot}/position-monitor` : null,
+    `/api/${bot}/position-monitor`,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
   )
@@ -188,7 +188,15 @@ export default function BotDashboard({
       </div>
 
       {/* Status card */}
-      {status && <StatusCard data={status} accent={accent} config={config} bot={bot} />}
+      {status && (
+        <StatusCard
+          data={status}
+          accent={accent}
+          config={config}
+          bot={bot}
+          liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
+        />
+      )}
 
       {/* PDT Management */}
       <ComponentErrorBoundary fallback="PDT card error">

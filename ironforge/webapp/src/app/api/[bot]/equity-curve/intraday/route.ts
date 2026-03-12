@@ -69,10 +69,8 @@ export async function GET(
             if (!mtm) return 0
             const entryCredit = num(pos.total_credit)
             const contracts = int(pos.contracts)
-            // Cap cost at spread width
-            const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
-            const cappedCost = Math.min(Math.max(0, mtm.cost_to_close), spreadWidth)
-            return (entryCredit - cappedCost) * 100 * contracts
+            // Use cost_to_close directly — already capped in getIcMarkToMarket()
+            return Math.round((entryCredit - mtm.cost_to_close) * 100 * contracts * 100) / 100
           } catch {
             return 0
           }
