@@ -233,6 +233,7 @@ async function monitorSinglePosition(
     ticker, expiration,
     num(pos.put_short_strike), num(pos.put_long_strike),
     num(pos.call_short_strike), num(pos.call_long_strike),
+    entryCredit,
   )
 
   if (!mtm) return { status: 'monitoring:mtm_failed', unrealizedPnl: 0 }

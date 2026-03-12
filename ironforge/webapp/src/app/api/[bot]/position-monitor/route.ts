@@ -33,8 +33,11 @@ export async function GET(
         total_unrealized_pnl: 0,
         spot_price: null,
         tradier_connected: isConfigured(),
+        pnl_source: 'none',
       })
     }
+
+    let anyLiveQuoteSucceeded = false
 
     const positions = await Promise.all(
       positionRows.map(async (r) => {
@@ -59,9 +62,10 @@ export async function GET(
 
         if (isConfigured()) {
           const mtmResult = await getIcMarkToMarket(
-            ticker, expiration, ps, pl, cs, cl,
+            ticker, expiration, ps, pl, cs, cl, entryCredit,
           )
           if (mtmResult) {
+            anyLiveQuoteSucceeded = true
             mtm = mtmResult.cost_to_close
             spotPrice = mtmResult.spot_price
             const spreadWidth = num(r.spread_width) || (ps - pl)
@@ -106,15 +110,41 @@ export async function GET(
       }),
     )
 
-    const totalUnrealizedPnl = positions.reduce(
-      (sum, p) => sum + (p.unrealized_pnl || 0), 0,
+    // If live Tradier quotes passed validation, use them
+    if (anyLiveQuoteSucceeded) {
+      const totalUnrealizedPnl = positions.reduce(
+        (sum, p) => sum + (p.unrealized_pnl || 0), 0,
+      )
+      return NextResponse.json({
+        positions,
+        total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
+        spot_price: positions[0]?.spot_price ?? null,
+        tradier_connected: isConfigured(),
+        pnl_source: 'live',
+      })
+    }
+
+    // Fallback: use the scanner's latest equity snapshot for unrealized P&L.
+    // The scanner runs every 5 min with its own validated MTM — more reliable
+    // than stale/wide-spread Tradier quotes from the webapp.
+    const snapshotRows = await dbQuery(
+      `SELECT unrealized_pnl, snapshot_time
+       FROM ${botTable(bot, 'equity_snapshots')}
+       ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+       ORDER BY snapshot_time DESC
+       LIMIT 1`,
     )
+
+    const scannerPnl = snapshotRows.length > 0 ? num(snapshotRows[0].unrealized_pnl) : 0
+    const snapshotTime = snapshotRows.length > 0 ? snapshotRows[0].snapshot_time : null
 
     return NextResponse.json({
       positions,
-      total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
+      total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
+      pnl_source: 'scanner_snapshot',
+      scanner_snapshot_time: snapshotTime,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

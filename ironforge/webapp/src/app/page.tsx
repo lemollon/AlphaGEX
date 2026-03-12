@@ -15,7 +15,7 @@ const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
-  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-6 w-6 inline-block mr-1.5 align-[-3px]" />,
+  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
 }
 
 const botGlow: Record<string, string> = {

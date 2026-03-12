@@ -70,6 +70,7 @@ export async function POST(
         num(pos.put_long_strike),
         num(pos.call_short_strike),
         num(pos.call_long_strike),
+        totalCredit,
       )
       closePrice = mtm?.cost_to_close ?? 0
     } else {
