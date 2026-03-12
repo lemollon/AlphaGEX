@@ -78,8 +78,12 @@ log = logging.getLogger("ironforge")
 # ---------------------------------------------------------------------------
 
 SCAN_INTERVAL = 60  # 1 minute
+MAX_CONSECUTIVE_MTM_FAILURES = 10  # Force-close at entry credit after 10 consecutive MTM failures
 CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
+
+# Track consecutive MTM failures per position_id (resets on success or close)
+_mtm_failure_counts: dict[str, int] = {}
 
 # Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM)
 BOT_CONFIG = {
@@ -1553,6 +1557,7 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
     if not is_tradier_configured():
         return {"status": "monitoring:no_tradier", "unrealizedPnl": 0}
 
+    pid = pos["position_id"]
     mtm = get_ic_mark_to_market(
         ticker, expiration,
         num(pos["put_short_strike"]), num(pos["put_long_strike"]),
@@ -1560,16 +1565,50 @@ def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
     )
 
     if not mtm:
-        return {"status": "monitoring:mtm_failed", "unrealizedPnl": 0}
+        _mtm_failure_counts[pid] = _mtm_failure_counts.get(pid, 0) + 1
+        fail_count = _mtm_failure_counts[pid]
+        if fail_count >= MAX_CONSECUTIVE_MTM_FAILURES:
+            log.error(
+                f"{bot['name'].upper()} {pid}: {fail_count} consecutive MTM failures "
+                f"— force-closing at entry credit ${entry_credit:.4f}"
+            )
+            close_position(
+                bot, pid, ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, "data_feed_failure",
+                close_price=entry_credit,
+            )
+            _mtm_failure_counts.pop(pid, None)
+            return {"status": f"closed:data_feed_failure({fail_count})", "unrealizedPnl": 0}
+        return {"status": f"monitoring:mtm_failed({fail_count}/{MAX_CONSECUTIVE_MTM_FAILURES})", "unrealizedPnl": 0}
 
     is_valid, invalid_reason = validate_mtm(mtm, entry_credit)
     if not is_valid:
+        _mtm_failure_counts[pid] = _mtm_failure_counts.get(pid, 0) + 1
+        fail_count = _mtm_failure_counts[pid]
+        if fail_count >= MAX_CONSECUTIVE_MTM_FAILURES:
+            log.error(
+                f"{bot['name'].upper()} {pid}: {fail_count} consecutive MTM validation failures "
+                f"— force-closing at entry credit ${entry_credit:.4f}"
+            )
+            close_position(
+                bot, pid, ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, "data_feed_failure",
+                close_price=entry_credit,
+            )
+            _mtm_failure_counts.pop(pid, None)
+            return {"status": f"closed:data_feed_failure({fail_count})", "unrealizedPnl": 0}
         log.warning(
             f"{bot['name'].upper()} MTM validation failed: {invalid_reason} "
-            f"— skipping PT/SL check this cycle"
+            f"— skipping PT/SL check this cycle ({fail_count}/{MAX_CONSECUTIVE_MTM_FAILURES})"
         )
         return {"status": f"monitoring:mtm_invalid({invalid_reason})", "unrealizedPnl": 0}
 
+    # MTM succeeded — reset failure counter
+    _mtm_failure_counts.pop(pid, None)
     cost_to_close = mtm["cost_to_close"]
 
     if cost_to_close <= profit_target_price:

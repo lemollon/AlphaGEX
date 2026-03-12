@@ -55,7 +55,7 @@ class BotConfig:
 
     # Exit parameters
     profit_target_pct: float = 30.0
-    stop_loss_pct: float = 100.0      # 100 = 1.0x entry credit, 200 = 2.0x
+    stop_loss_pct: float = 200.0      # 200 = 2.0x entry credit (matches scanner sl_mult=2.0)
     eod_cutoff_et: str = "15:45"
 
     # Trading window (Central Time)
@@ -111,7 +111,7 @@ def inferno_config() -> BotConfig:
         max_trades_per_day=0,  # 0 = unlimited
         max_contracts=0,  # 0 = no limit (sized by buying power)
         profit_target_pct=50.0,
-        stop_loss_pct=200.0,
+        stop_loss_pct=300.0,  # 300 = 3.0x entry credit (matches scanner sl_mult=3.0)
         sd_multiplier=1.0,
         entry_end="14:30",
         pdt_max_day_trades=0,  # no PDT enforcement for 0DTE
