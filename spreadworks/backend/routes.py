@@ -2753,3 +2753,69 @@ async def position_payoff(
             "upper": round(upper_be, 2) if upper_be else None,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# GEX Profile — proxy endpoints to main AlphaGEX watchtower API
+# ---------------------------------------------------------------------------
+
+
+@router.get("/gex-analysis")
+async def proxy_gex_analysis(request: Request, symbol: str = "SPY"):
+    """Proxy to AlphaGEX /api/watchtower/gex-analysis."""
+    http = request.app.state.http
+    try:
+        resp = await http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/gex-analysis",
+            params={"symbol": symbol},
+            timeout=20.0,
+        )
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(502, f"AlphaGEX proxy error: {e}")
+
+
+@router.get("/intraday-ticks")
+async def proxy_intraday_ticks(
+    request: Request,
+    symbol: str = "SPY",
+    interval: int = 5,
+    fallback: bool = False,
+):
+    """Proxy to AlphaGEX /api/watchtower/intraday-ticks."""
+    http = request.app.state.http
+    params: dict[str, Any] = {"symbol": symbol, "interval": interval}
+    if fallback:
+        params["fallback"] = "true"
+    try:
+        resp = await http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-ticks",
+            params=params,
+            timeout=20.0,
+        )
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(502, f"AlphaGEX proxy error: {e}")
+
+
+@router.get("/intraday-bars")
+async def proxy_intraday_bars(
+    request: Request,
+    symbol: str = "SPY",
+    interval: str = "5min",
+    fallback: bool = False,
+):
+    """Proxy to AlphaGEX /api/watchtower/intraday-bars."""
+    http = request.app.state.http
+    params: dict[str, Any] = {"symbol": symbol, "interval": interval}
+    if fallback:
+        params["fallback"] = "true"
+    try:
+        resp = await http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-bars",
+            params=params,
+            timeout=20.0,
+        )
+        return resp.json()
+    except Exception as e:
+        raise HTTPException(502, f"AlphaGEX proxy error: {e}")

@@ -8,6 +8,7 @@ import LegBreakdown from './components/LegBreakdown';
 import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
 import PositionsPage from './pages/PositionsPage';
+import GexProfilePage from './pages/GexProfilePage';
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
@@ -169,6 +170,23 @@ function NavBar() {
         })}
       >
         Positions
+      </NavLink>
+      <NavLink
+        to="/gex-profile"
+        style={({ isActive }) => ({
+          padding: '0 16px',
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
+          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+          textDecoration: 'none',
+          fontWeight: isActive ? 600 : 500,
+          fontSize: 13,
+          transition: 'all 0.15s',
+        })}
+      >
+        GEX Profile
       </NavLink>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
@@ -334,6 +352,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<BuilderPage />} />
           <Route path="/positions" element={<PositionsPage />} />
+          <Route path="/gex-profile" element={<GexProfilePage />} />
         </Routes>
       </div>
     </BrowserRouter>
