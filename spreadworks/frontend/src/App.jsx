@@ -95,99 +95,66 @@ function NextPostCountdown() {
 }
 
 function NavBar() {
+  const navLinkStyle = ({ isActive }) => ({
+    padding: '0 18px',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    color: isActive ? '#fff' : 'var(--text-tertiary)',
+    background: isActive ? 'rgba(68, 138, 255, 0.08)' : 'transparent',
+    borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+    textDecoration: 'none',
+    fontWeight: isActive ? 700 : 500,
+    fontSize: 13,
+    letterSpacing: '0.01em',
+    transition: 'all 0.2s ease',
+  });
+
   return (
     <nav style={{
       display: 'flex',
       alignItems: 'center',
       gap: 0,
-      background: 'var(--bg-surface)',
+      background: 'linear-gradient(180deg, #0e0e28 0%, #0a0a1e 100%)',
       borderBottom: '1px solid var(--border-subtle)',
       fontFamily: 'var(--font-ui)',
       fontSize: 13,
       padding: '0 16px',
-      height: 48,
+      height: 52,
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
     }}>
       {/* Logo */}
       <div style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        padding: '0 16px 0 0',
+        gap: 10,
+        padding: '0 20px 0 0',
         marginRight: 8,
-        borderRight: '1px solid var(--border-subtle)',
+        borderRight: '1px solid rgba(30, 30, 70, 0.5)',
         height: '100%',
       }}>
         <div style={{
           display: 'inline-flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 26,
-          height: 26,
-          borderRadius: 6,
+          width: 30,
+          height: 30,
+          borderRadius: 8,
           background: 'linear-gradient(135deg, var(--accent) 0%, #7c4dff 100%)',
-          fontSize: 12,
+          fontSize: 14,
           color: '#fff',
           fontWeight: 800,
-          boxShadow: '0 2px 8px rgba(68, 138, 255, 0.25)',
+          boxShadow: '0 4px 16px rgba(68, 138, 255, 0.4), 0 0 30px rgba(68, 138, 255, 0.15)',
         }}>S</div>
-        <span style={{ fontWeight: 800, fontSize: 15, color: '#fff', letterSpacing: '-0.3px' }}>
-          Spread<span style={{ color: 'var(--accent)' }}>Works</span>
+        <span style={{ fontWeight: 800, fontSize: 17, color: '#fff', letterSpacing: '-0.5px' }}>
+          Spread<span style={{ color: 'var(--accent-bright)' }}>Works</span>
         </span>
       </div>
 
       {/* Nav Links */}
-      <NavLink
-        to="/"
-        end
-        style={({ isActive }) => ({
-          padding: '0 16px',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
-          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-          textDecoration: 'none',
-          fontWeight: isActive ? 600 : 500,
-          fontSize: 13,
-          transition: 'all 0.15s',
-        })}
-      >
-        Builder
-      </NavLink>
-      <NavLink
-        to="/positions"
-        style={({ isActive }) => ({
-          padding: '0 16px',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
-          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-          textDecoration: 'none',
-          fontWeight: isActive ? 600 : 500,
-          fontSize: 13,
-          transition: 'all 0.15s',
-        })}
-      >
-        Positions
-      </NavLink>
-      <NavLink
-        to="/gex-profile"
-        style={({ isActive }) => ({
-          padding: '0 16px',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          color: isActive ? 'var(--accent)' : 'var(--text-tertiary)',
-          borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-          textDecoration: 'none',
-          fontWeight: isActive ? 600 : 500,
-          fontSize: 13,
-          transition: 'all 0.15s',
-        })}
-      >
-        GEX Profile
-      </NavLink>
+      <NavLink to="/" end style={navLinkStyle}>Builder</NavLink>
+      <NavLink to="/positions" style={navLinkStyle}>Positions</NavLink>
+      <NavLink to="/gex-profile" style={navLinkStyle}>GEX Profile</NavLink>
 
       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
         <NextPostCountdown />
@@ -266,8 +233,8 @@ function BuilderPage() {
           display: 'flex',
           alignItems: 'center',
           gap: 12,
-          padding: '8px 16px',
-          background: 'var(--bg-surface)',
+          padding: '10px 16px',
+          background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)',
           borderBottom: '1px solid var(--border-subtle)',
           fontFamily: 'var(--font-ui)',
           fontSize: 13,
