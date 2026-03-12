@@ -31,43 +31,10 @@ function AnvilIcon({ size = 40 }: { size?: number }) {
   )
 }
 
-function FlameIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M8 1C8 1 3 6.5 3 10a5 5 0 0 0 10 0C13 6.5 8 1 8 1zm0 12.5a2.5 2.5 0 0 1-2.5-2.5c0-1.5 2.5-4.5 2.5-4.5s2.5 3 2.5 4.5A2.5 2.5 0 0 1 8 13.5z"
-        fill="#F59E0B"
-      />
-    </svg>
-  )
-}
-
-function SparkIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M9.5 1L4 9h4l-1.5 6L13 7H9l.5-6z"
-        fill="#3B82F6"
-      />
-    </svg>
-  )
-}
-
-function InfernoIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M8 0l2 5h-1.5l2.5 4h-2l2 5H5l2-5H5l2.5-4H6L8 0z"
-        fill="#EF4444"
-      />
-    </svg>
-  )
-}
-
 const botIcons: Record<string, React.ReactNode> = {
-  FLAME: <FlameIcon />,
-  SPARK: <SparkIcon />,
-  INFERNO: <InfernoIcon />,
+  FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
+  SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
+  INFERNO: <img src="/icon-inferno.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
 }
 
 const botGlow: Record<string, string> = {

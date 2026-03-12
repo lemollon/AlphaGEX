@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <!-- Outer flame -->
+  <path d="M12 2C12 2 6 8 6 14a6 6 0 0 0 12 0c0-6-6-12-6-12z" fill="#D97706"/>
+  <!-- Mid flame -->
+  <path d="M12 6C12 6 8 10.5 8 14a4 4 0 0 0 8 0c0-3.5-4-8-4-8z" fill="#F59E0B"/>
+  <!-- Inner glow -->
+  <path d="M12 10c0 0-2.2 2.5-2.2 4.5a2.2 2.2 0 0 0 4.4 0c0-2-2.2-4.5-2.2-4.5z" fill="#FDE68A"/>
+</svg>

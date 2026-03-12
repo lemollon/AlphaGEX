@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <!-- Lightning bolt -->
+  <path d="M13 2L5 13h5.5L9 22l9-13h-5.5L13 2z" fill="#2563EB"/>
+  <!-- Inner highlight -->
+  <path d="M12.5 5L7 13h4l-1.2 6L16 12h-4l.5-7z" fill="#3B82F6" opacity="0.7"/>
+  <!-- Core glow -->
+  <path d="M12 8l-3 5h2.5L10.5 18l5-6.5h-2.5L12 8z" fill="#93C5FD" opacity="0.5"/>
+</svg>
