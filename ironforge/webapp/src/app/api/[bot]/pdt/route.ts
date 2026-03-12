@@ -306,9 +306,9 @@ async function buildStatusResponse(
   }
 
   const pdtEnabled = cfg.pdt_enabled !== false && cfg.pdt_enabled !== 'false'
-  const maxDayTrades = toInt(cfg.max_day_trades) || 4
+  const maxDayTrades = cfg.max_day_trades != null ? toInt(cfg.max_day_trades) : 4
   const maxTradesPerDay = toInt(cfg.max_trades_per_day)
-  const windowDays = toInt(cfg.window_days) || 5
+  const windowDays = cfg.window_days != null ? toInt(cfg.window_days) : 5
   const lastResetAt = cfg.last_reset_at ?? null
 
   // Count from {bot}_pdt_log — respects last_reset_at
