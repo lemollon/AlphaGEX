@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, sharedTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/databricks-sql'
 import {
   getQuote,
   getOptionExpirations,
@@ -26,7 +26,7 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   else if (vix <= 28) { const a = -0.05; winProb += a; factors.push(['VIX_ELEVATED', a]) }
   else { const a = -0.15; winProb += a; factors.push(['VIX_HIGH_RISK', a]) }
 
-  // Day of week (0=Sun, 6=Sat in JS)
+  // Day of week
   const dow = new Date().getDay()
   if (dow >= 2 && dow <= 4) { const a = 0.08; winProb += a; factors.push(['DAY_OPTIMAL', a]) }
   else if (dow === 1) { const a = 0.03; winProb += a; factors.push(['DAY_MONDAY', a]) }
@@ -71,8 +71,8 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
 /* ------------------------------------------------------------------ */
 
 function calculateStrikes(spot: number, expectedMove: number) {
-  const SD = 1.2 // sd_multiplier
-  const WIDTH = 5 // spread_width
+  const SD = 1.2
+  const WIDTH = 5
 
   const minEM = spot * 0.005
   const em = Math.max(expectedMove, minEM)
@@ -82,7 +82,6 @@ function calculateStrikes(spot: number, expectedMove: number) {
   let putLong = putShort - WIDTH
   let callLong = callShort + WIDTH
 
-  // Sanity guard
   if (callShort <= putShort) {
     putShort = Math.floor(spot - spot * 0.02)
     callShort = Math.ceil(spot + spot * 0.02)
@@ -93,10 +92,9 @@ function calculateStrikes(spot: number, expectedMove: number) {
   return { putShort, putLong, callShort, callLong }
 }
 
-/** Find target expiration N trading days out. */
 function getTargetExpiration(minDte: number): string {
   const now = new Date()
-  let target = new Date(now)
+  const target = new Date(now)
   let counted = 0
   while (counted < minDte) {
     target.setDate(target.getDate() + 1)
@@ -124,16 +122,15 @@ export async function POST(
     )
   }
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
-  const minDte = bot === 'flame' ? 2 : 1
+  const dte = bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'
+  const minDte = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
   const botName = bot.toUpperCase()
 
   try {
     // 1. Check for existing open position
-    const openRows = await query(
+    const openRows = await dbQuery(
       `SELECT position_id FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1 LIMIT 1`,
-      [dte],
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' LIMIT 1`,
     )
     if (openRows.length > 0) {
       return NextResponse.json(
@@ -159,7 +156,7 @@ export async function POST(
     const vix = vixQuote?.last ?? 20
     const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
 
-    // 3. VIX filter (skip if VIX > 32)
+    // 3. VIX filter
     if (vix > 32) {
       return NextResponse.json(
         { error: `VIX ${vix.toFixed(1)} too high (>32), skipping` },
@@ -173,7 +170,6 @@ export async function POST(
 
     let expiration = targetExp
     if (expirations.length > 0 && !expirations.includes(targetExp)) {
-      // Find nearest valid expiration
       const targetDate = new Date(targetExp + 'T12:00:00').getTime()
       let nearest = expirations[0]
       let minDiff = Infinity
@@ -192,12 +188,9 @@ export async function POST(
 
     // 6. Get real option credits from Tradier
     const credits = await getIcEntryCredit(
-      'SPY',
-      expiration,
-      strikes.putShort,
-      strikes.putLong,
-      strikes.callShort,
-      strikes.callLong,
+      'SPY', expiration,
+      strikes.putShort, strikes.putLong,
+      strikes.callShort, strikes.callLong,
     )
 
     if (!credits || credits.totalCredit < 0.05) {
@@ -212,10 +205,9 @@ export async function POST(
     }
 
     // 7. Get paper account and calculate sizing
-    const accountRows = await query(
+    const accountRows = await dbQuery(
       `SELECT id, current_balance, buying_power FROM ${botTable(bot, 'paper_account')}
-       WHERE is_active = TRUE AND dte_mode = $1 ORDER BY id DESC LIMIT 1`,
-      [dte],
+       WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
     )
     if (accountRows.length === 0) {
       return NextResponse.json(
@@ -225,6 +217,7 @@ export async function POST(
     }
 
     const acct = accountRows[0]
+    const acctId = acct.id
     const buyingPower = num(acct.buying_power)
     const spreadWidth = strikes.putShort - strikes.putLong
     const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
@@ -242,7 +235,7 @@ export async function POST(
     const maxProfit = credits.totalCredit * 100 * maxContracts
     const maxLoss = totalCollateral
 
-    // 8. Run advisor for oracle fields
+    // 8. Run advisor
     const adv = evaluateAdvisor(vix, spot, expectedMove, dte)
 
     // 9. Generate position ID
@@ -252,7 +245,8 @@ export async function POST(
     const positionId = `${botName}-${dateStr}-${hex}`
 
     // 10. Insert position
-    await query(
+    const topFactorsJson = escapeSql(JSON.stringify(adv.topFactors))
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'positions')} (
         position_id, ticker, expiration,
         put_short_strike, put_long_strike, put_credit,
@@ -268,29 +262,23 @@ export async function POST(
         put_order_id, call_order_id,
         status, open_time, open_date, dte_mode
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-        $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36
-      )`,
-      [
-        positionId, 'SPY', expiration,
-        strikes.putShort, strikes.putLong, credits.putCredit,
-        strikes.callShort, strikes.callLong, credits.callCredit,
-        maxContracts, spreadWidth, credits.totalCredit, maxLoss, maxProfit,
-        totalCollateral,
-        spot, vix, expectedMove,
+        '${escapeSql(positionId)}', 'SPY', '${escapeSql(expiration)}',
+        ${strikes.putShort}, ${strikes.putLong}, ${credits.putCredit},
+        ${strikes.callShort}, ${strikes.callLong}, ${credits.callCredit},
+        ${maxContracts}, ${spreadWidth}, ${credits.totalCredit}, ${maxLoss}, ${maxProfit},
+        ${totalCollateral},
+        ${spot}, ${vix}, ${expectedMove},
         0, 0, 'UNKNOWN',
         0, 0,
-        adv.confidence, adv.winProbability, adv.advice,
-        adv.reasoning, JSON.stringify(adv.topFactors), false,
-        false, spreadWidth, spreadWidth,
+        ${adv.confidence}, ${adv.winProbability}, '${escapeSql(adv.advice)}',
+        '${escapeSql(adv.reasoning)}', '${topFactorsJson}', FALSE,
+        FALSE, ${spreadWidth}, ${spreadWidth},
         'PAPER', 'PAPER',
-        'open', dte,
-      ],
+        'open', CURRENT_TIMESTAMP(), ${CT_TODAY}, '${escapeSql(dte)}'
+      )`,
     )
 
-    // 10b. Mirror to all 3 Tradier sandbox accounts (both FLAME and SPARK)
+    // 10b. Mirror to Tradier sandbox accounts
     let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
@@ -301,103 +289,106 @@ export async function POST(
         positionId,
       )
       if (Object.keys(sandboxOrderIds).length > 0) {
-        await query(
+        await dbExecute(
           `UPDATE ${botTable(bot, 'positions')}
-           SET sandbox_order_id = $1, updated_at = NOW()
-           WHERE position_id = $2`,
-          [JSON.stringify(sandboxOrderIds), positionId],
+           SET sandbox_order_id = '${escapeSql(JSON.stringify(sandboxOrderIds))}',
+               updated_at = CURRENT_TIMESTAMP()
+           WHERE position_id = '${escapeSql(positionId)}'`,
         )
       }
-    } catch (sbErr: any) {
-      // Sandbox mirror is non-fatal — paper trade still succeeds
-      console.warn(`Sandbox mirror failed for ${positionId}: ${sbErr.message}`)
+    } catch (sbErr: unknown) {
+      const sbMsg = sbErr instanceof Error ? sbErr.message : String(sbErr)
+      console.warn(`Sandbox mirror failed for ${positionId}: ${sbMsg}`)
     }
 
-    // 11. Update paper account (deduct collateral)
-    await query(
+    // 11. Update paper account
+    await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
-       SET collateral_in_use = collateral_in_use + $1,
-           buying_power = buying_power - $1,
-           updated_at = NOW()
-       WHERE id = $2`,
-      [totalCollateral, acct.id],
+       SET collateral_in_use = collateral_in_use + ${totalCollateral},
+           buying_power = buying_power - ${totalCollateral},
+           updated_at = CURRENT_TIMESTAMP()
+       WHERE id = '${escapeSql(String(acctId))}'`,
     )
 
-    // 12. Log the signal
-    await query(
+    // 12. Log signal
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'signals')} (
         spot_price, vix, expected_move, call_wall, put_wall,
         gex_regime, put_short, put_long, call_short, call_long,
         total_credit, confidence, was_executed, reasoning,
         wings_adjusted, dte_mode
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-      [
-        spot, vix, expectedMove, 0, 0,
-        'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-        credits.totalCredit, adv.confidence, true, `Force trade via API | ${adv.reasoning}`,
-        false, dte,
-      ],
+      ) VALUES (
+        ${spot}, ${vix}, ${expectedMove}, 0, 0,
+        'UNKNOWN', ${strikes.putShort}, ${strikes.putLong}, ${strikes.callShort}, ${strikes.callLong},
+        ${credits.totalCredit}, ${adv.confidence}, TRUE,
+        '${escapeSql(`Force trade via API | ${adv.reasoning}`)}',
+        FALSE, '${escapeSql(dte)}'
+      )`,
     )
 
     // 13. Log
-    await query(
+    const logDetails = escapeSql(JSON.stringify({
+      position_id: positionId,
+      contracts: maxContracts,
+      credit: credits.totalCredit,
+      collateral: totalCollateral,
+      source: 'force_trade_api',
+      sandbox_order_ids: sandboxOrderIds,
+    }))
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        'TRADE_OPEN',
-        `FORCE TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${maxContracts} @ $${credits.totalCredit.toFixed(4)}`,
-        JSON.stringify({
-          position_id: positionId,
-          contracts: maxContracts,
-          credit: credits.totalCredit,
-          collateral: totalCollateral,
-          source: 'force_trade_api',
-          sandbox_order_ids: sandboxOrderIds,
-        }),
-        dte,
-      ],
+       VALUES ('TRADE_OPEN',
+               '${escapeSql(`FORCE TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${maxContracts} @ $${credits.totalCredit.toFixed(4)}`)}',
+               '${logDetails}',
+               '${escapeSql(dte)}')`,
     )
 
-    // 13b. Log PDT entry (so force-trades count toward PDT limits)
-    await query(
+    // 13b. PDT entry
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'pdt_log')} (
         trade_date, symbol, position_id, opened_at,
         contracts, entry_credit, dte_mode
-      ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5)`,
-      ['SPY', positionId, maxContracts, credits.totalCredit, dte],
+      ) VALUES (${CT_TODAY}, 'SPY', '${escapeSql(positionId)}', CURRENT_TIMESTAMP(),
+                ${maxContracts}, ${credits.totalCredit}, '${escapeSql(dte)}')`,
     )
 
-    // 14. Save equity snapshot
-    const updatedAcct = await query(
+    // 14. Equity snapshot
+    const updatedAcct = await dbQuery(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
-       WHERE id = $1`,
-      [acct.id],
+       WHERE id = '${escapeSql(String(acctId))}'`,
     )
     const bal = num(updatedAcct[0]?.current_balance)
-    await query(
+    const cumPnl = num(updatedAcct[0]?.cumulative_pnl)
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'equity_snapshots')}
        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-       VALUES ($1, $2, 0, 1, $3, $4)`,
-      [bal, num(updatedAcct[0]?.cumulative_pnl), `force_trade:${positionId}`, dte],
+       VALUES (${bal}, ${cumPnl}, 0, 1,
+               '${escapeSql(`force_trade:${positionId}`)}', '${escapeSql(dte)}')`,
     )
 
-    // 15. Update daily_perf
-    await query(
-      `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (${CT_TODAY}, 1, 0, 0)
-       ON CONFLICT (trade_date) DO UPDATE SET
-         trades_executed = ${botTable(bot, 'daily_perf')}.trades_executed + 1`,
+    // 15. Daily perf (MERGE upsert)
+    const dailyTable = botTable(bot, 'daily_perf')
+    await dbExecute(
+      `MERGE INTO ${dailyTable} AS t
+       USING (SELECT ${CT_TODAY} AS trade_date) AS s
+       ON t.trade_date = s.trade_date
+       WHEN MATCHED THEN UPDATE SET t.trades_executed = t.trades_executed + 1
+       WHEN NOT MATCHED THEN INSERT (trade_date, trades_executed, positions_closed, realized_pnl)
+         VALUES (${CT_TODAY}, 1, 0, 0)`,
     )
 
-    // 16. Update heartbeat
-    await query(
-      `INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
-       VALUES ($1, NOW(), 'active', 1, $2)
-       ON CONFLICT (bot_name) DO UPDATE SET
-         last_heartbeat = NOW(), status = 'active',
-         scan_count = bot_heartbeats.scan_count + 1,
-         details = EXCLUDED.details`,
-      [botName, JSON.stringify({ last_action: 'force_trade' })],
+    // 16. Heartbeat (MERGE upsert)
+    const hbTable = sharedTable('bot_heartbeats')
+    const hbDetails = escapeSql(JSON.stringify({ last_action: 'force_trade' }))
+    await dbExecute(
+      `MERGE INTO ${hbTable} AS t
+       USING (SELECT '${escapeSql(botName)}' AS bot_name) AS s
+       ON t.bot_name = s.bot_name
+       WHEN MATCHED THEN UPDATE SET
+         t.last_heartbeat = CURRENT_TIMESTAMP(), t.status = 'active',
+         t.scan_count = t.scan_count + 1, t.details = '${hbDetails}'
+       WHEN NOT MATCHED THEN INSERT (bot_name, last_heartbeat, status, scan_count, details)
+         VALUES ('${escapeSql(botName)}', CURRENT_TIMESTAMP(), 'active', 1, '${hbDetails}')`,
     )
 
     return NextResponse.json({
@@ -420,7 +411,8 @@ export async function POST(
       source: credits.source,
       sandbox_order_ids: sandboxOrderIds,
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, num, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,46 +12,28 @@ export async function GET(
 
   const dte = dteMode(bot)
   const period = req.nextUrl.searchParams.get('period') || 'all'
+  const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
 
   try {
-    const capitalQuery = dte
-      ? query(`
-          SELECT starting_capital
-          FROM ${botTable(bot, 'paper_account')}
-          WHERE is_active = TRUE AND dte_mode = $1
-          LIMIT 1
-        `, [dte])
-      : query(`
-          SELECT starting_capital
-          FROM ${botTable(bot, 'paper_account')}
-          WHERE is_active = TRUE
-          LIMIT 1
-        `)
+    const capitalQuery = dbQuery(
+      `SELECT starting_capital
+       FROM ${botTable(bot, 'paper_account')}
+       WHERE is_active = TRUE ${dteFilter}
+       LIMIT 1`,
+    )
 
-    const curveQuery = dte
-      ? query(`
-          SELECT
-            close_time,
-            realized_pnl,
-            SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
-          FROM ${botTable(bot, 'positions')}
-          WHERE status IN ('closed', 'expired')
-            AND realized_pnl IS NOT NULL
-            AND close_time IS NOT NULL
-            AND dte_mode = $1
-          ORDER BY close_time
-        `, [dte])
-      : query(`
-          SELECT
-            close_time,
-            realized_pnl,
-            SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
-          FROM ${botTable(bot, 'positions')}
-          WHERE status IN ('closed', 'expired')
-            AND realized_pnl IS NOT NULL
-            AND close_time IS NOT NULL
-          ORDER BY close_time
-        `)
+    const curveQuery = dbQuery(
+      `SELECT
+        close_time,
+        realized_pnl,
+        SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
+      FROM ${botTable(bot, 'positions')}
+      WHERE status IN ('closed', 'expired')
+        AND realized_pnl IS NOT NULL
+        AND close_time IS NOT NULL
+        ${dteFilter}
+      ORDER BY close_time`,
+    )
 
     const [capitalRows, curveRows] = await Promise.all([capitalQuery, curveQuery])
 
@@ -60,7 +42,7 @@ export async function GET(
     let curve = curveRows.map((row) => {
       const cumPnl = num(row.cumulative_pnl)
       return {
-        timestamp: row.close_time?.toISOString?.() || row.close_time,
+        timestamp: row.close_time || null,
         pnl: num(row.realized_pnl),
         cumulative_pnl: cumPnl,
         equity: Math.round((startingCapital + cumPnl) * 100) / 100,
@@ -90,7 +72,8 @@ export async function GET(
     }
 
     return NextResponse.json({ starting_capital: startingCapital, curve, period })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

@@ -108,32 +108,31 @@ ironforge/
     └── .env.local.example
 ```
 
-### Migration Status
+### Migration Status — ✅ COMPLETE
 
-Routes migrated to Databricks (`@/lib/databricks-sql`):
+All API routes migrated to Databricks (`@/lib/databricks-sql`). Zero imports from `@/lib/db` remain.
+
 - `api/[bot]/pdt/route.ts` — PDT status, toggle, reset
 - `api/[bot]/pdt/audit/route.ts` — PDT audit log
+- `api/[bot]/status/route.ts` — Account balance, P&L, heartbeat
+- `api/[bot]/positions/route.ts` — Open positions
+- `api/[bot]/position-monitor/route.ts` — Live MTM via Tradier
+- `api/[bot]/position-detail/route.ts` — Per-leg quotes, sandbox accounts
+- `api/[bot]/equity-curve/route.ts` — Historical equity curve
+- `api/[bot]/equity-curve/intraday/route.ts` — Today's equity snapshots
+- `api/[bot]/trades/route.ts` — Closed trade history
+- `api/[bot]/performance/route.ts` — Win rate, P&L stats
+- `api/[bot]/daily-perf/route.ts` — Daily performance summary
+- `api/[bot]/config/route.ts` — Config read/upsert (MERGE)
+- `api/[bot]/toggle/route.ts` — Enable/disable bot
+- `api/[bot]/force-trade/route.ts` — Force open IC position
+- `api/[bot]/force-close/route.ts` — Force close position
+- `api/[bot]/logs/route.ts` — Activity logs
+- `api/health/route.ts` — Databricks connectivity check
 - `api/accounts/manage/route.ts` — Account CRUD
 - `api/accounts/manage/[id]/route.ts` — Account update/delete
 - `api/accounts/test-all/route.ts` — Account connectivity test
-
-Routes still on dead `@/lib/db` (need migration):
-- `api/[bot]/status/route.ts`
-- `api/[bot]/positions/route.ts`
-- `api/[bot]/position-monitor/route.ts`
-- `api/[bot]/position-detail/route.ts`
-- `api/[bot]/equity-curve/route.ts`
-- `api/[bot]/equity-curve/intraday/route.ts`
-- `api/[bot]/trades/route.ts`
-- `api/[bot]/performance/route.ts`
-- `api/[bot]/daily-perf/route.ts`
-- `api/[bot]/config/route.ts`
-- `api/[bot]/toggle/route.ts`
-- `api/[bot]/force-trade/route.ts`
-- `api/[bot]/force-close/route.ts`
-- `api/[bot]/logs/route.ts`
-- `api/health/route.ts`
-- `api/accounts/production/route.ts`
+- `api/accounts/production/route.ts` — Sandbox account balances with bot attribution
 
 ## Bots
 
@@ -216,19 +215,27 @@ Shared tables:
 
 All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `inferno`.
 
-| Route | Description | DB Client |
-|-------|-------------|-----------|
-| `GET /api/{bot}/pdt` | PDT status, day trade count, trigger trades | databricks-sql |
-| `POST /api/{bot}/pdt` | Toggle PDT enforcement, reset counter | databricks-sql |
-| `GET /api/{bot}/pdt/audit` | PDT audit log (last 10 events) | databricks-sql |
-| `GET /api/{bot}/status` | Account balance, P&L, open positions, heartbeat | db.ts (needs migration) |
-| `GET /api/{bot}/positions` | Open positions with live data | db.ts (needs migration) |
-| `GET /api/{bot}/position-monitor` | Live MTM, P&L %, profit target/stop loss proximity | db.ts (needs migration) |
-| `GET /api/{bot}/equity-curve` | Historical equity curve from closed trades | db.ts (needs migration) |
-| `GET /api/{bot}/equity-curve/intraday` | Today's equity snapshots (5-min intervals) | db.ts (needs migration) |
-| `GET /api/{bot}/trades` | Closed trade history | db.ts (needs migration) |
-| `GET /api/{bot}/performance` | Win rate, total P&L, avg win/loss, best/worst trade | db.ts (needs migration) |
-| `GET /api/{bot}/logs` | Activity logs | db.ts (needs migration) |
+| Route | Description |
+|-------|-------------|
+| `GET /api/{bot}/pdt` | PDT status, day trade count, trigger trades |
+| `POST /api/{bot}/pdt` | Toggle PDT enforcement, reset counter |
+| `GET /api/{bot}/pdt/audit` | PDT audit log (last 10 events) |
+| `GET /api/{bot}/status` | Account balance, P&L, open positions, heartbeat |
+| `GET /api/{bot}/positions` | Open positions with live data |
+| `GET /api/{bot}/position-monitor` | Live MTM, P&L %, profit target/stop loss proximity |
+| `GET /api/{bot}/position-detail` | Per-leg quotes, sandbox accounts, PT tier |
+| `GET /api/{bot}/equity-curve` | Historical equity curve from closed trades |
+| `GET /api/{bot}/equity-curve/intraday` | Today's equity snapshots (5-min intervals) |
+| `GET /api/{bot}/trades` | Closed trade history |
+| `GET /api/{bot}/performance` | Win rate, total P&L, avg win/loss, best/worst trade |
+| `GET /api/{bot}/daily-perf` | Last 30 days daily performance summary |
+| `GET /api/{bot}/config` | Bot config (merged defaults + DB) |
+| `PUT /api/{bot}/config` | Update bot config (MERGE upsert) |
+| `POST /api/{bot}/toggle` | Enable/disable bot |
+| `POST /api/{bot}/force-trade` | Force open IC position |
+| `POST /api/{bot}/force-close` | Force close position |
+| `GET /api/{bot}/logs` | Activity logs |
+| `GET /api/health` | Databricks connectivity check |
 
 ## Frontend Pages
 

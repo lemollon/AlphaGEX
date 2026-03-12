@@ -137,3 +137,29 @@ export function dteMode(bot: string): string | null {
   if (bot === 'inferno') return '0DTE'
   return null
 }
+
+/** Parse a value as a float, defaulting to 0. */
+export function num(val: unknown): number {
+  if (val == null || val === '') return 0
+  const n = parseFloat(String(val))
+  return isNaN(n) ? 0 : n
+}
+
+/** Parse a value as an int, defaulting to 0. */
+export function int(val: unknown): number {
+  if (val == null || val === '') return 0
+  const n = parseInt(String(val), 10)
+  return isNaN(n) ? 0 : n
+}
+
+/** Map bot name to heartbeat bot_name value in bot_heartbeats table. */
+export function heartbeatName(bot: string): string {
+  return bot.toUpperCase()
+}
+
+/**
+ * SQL expression for "today" in Central Time for Databricks.
+ * Databricks CURRENT_DATE() uses the warehouse timezone, but to be
+ * explicit we convert from UTC to CT before extracting the date.
+ */
+export const CT_TODAY = "CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', CURRENT_TIMESTAMP()) AS DATE)"

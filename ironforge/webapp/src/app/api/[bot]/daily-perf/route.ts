@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/db'
+import { dbQuery, botTable, num, int, validateBot } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,14 +16,14 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   try {
-    const rows = await query(
+    const rows = await dbQuery(
       `SELECT trade_date, trades_executed, positions_closed, realized_pnl
        FROM ${botTable(bot, 'daily_perf')}
        ORDER BY trade_date DESC
        LIMIT 30`,
     )
 
-    const data = rows.map((r: any) => ({
+    const data = rows.map((r) => ({
       trade_date: String(r.trade_date).slice(0, 10),
       trades_executed: int(r.trades_executed),
       positions_closed: int(r.positions_closed),
@@ -31,7 +31,8 @@ export async function GET(
     }))
 
     return NextResponse.json(data)
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
