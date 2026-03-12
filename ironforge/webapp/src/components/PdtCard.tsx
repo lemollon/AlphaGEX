@@ -74,8 +74,8 @@ export default function PdtCard({
       const data = await res.json()
       setStatus(data)
       setError(null)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
     }
   }, [bot])
 
@@ -85,7 +85,9 @@ export default function PdtCard({
       if (!res.ok) return
       const data = await res.json()
       setAudit(data.entries || [])
-    } catch {}
+    } catch (e: unknown) {
+      console.error(`[PdtCard] Failed to fetch audit for ${bot}:`, e instanceof Error ? e.message : e)
+    }
   }, [bot])
 
   // Initial fetch + 60s polling (PDT status only changes when a trade executes)
@@ -116,10 +118,9 @@ export default function PdtCard({
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setStatus(data)
-    } catch (e: any) {
-      // Rollback optimistic update
+    } catch (e: unknown) {
       fetchStatus()
-      setError(e.message)
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -137,8 +138,8 @@ export default function PdtCard({
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setStatus(data)
-    } catch (e: any) {
-      setError(e.message)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setLoading(false)
     }
@@ -174,7 +175,6 @@ export default function PdtCard({
     count >= max ? 'bg-red-500' : count >= max - 1 ? 'bg-amber-500' : 'bg-emerald-500'
 
   // Status indicator
-  let statusIcon: string
   let statusText: string
   let statusClass: string
 
@@ -192,21 +192,17 @@ export default function PdtCard({
   const remaining = status.trades_remaining ?? (max - count)
 
   if (pdtStatus === 'PDT_OFF') {
-    statusIcon = '\u26A0\uFE0F'
     statusText = 'PDT OFF \u2014 Unlimited trading, counter auto-resets on toggle'
     statusClass = 'text-amber-400'
   } else if (pdtStatus === 'BLOCKED') {
-    statusIcon = '\uD83D\uDD34'
     statusText = nextDateFormatted
       ? `BLOCKED \u2014 ${count}/${max} day trades used. Next slot opens ${nextDateFormatted}`
       : `BLOCKED \u2014 ${count}/${max} day trades used`
     statusClass = 'text-red-400'
   } else if (pdtStatus === 'TRADED_TODAY') {
-    statusIcon = '\uD83D\uDFE1'
     statusText = `TRADED TODAY \u2014 ${count}/${max} day trades used, next trade tomorrow`
     statusClass = 'text-amber-300'
   } else {
-    statusIcon = '\u2705'
     statusText = `CLEAR \u2014 ${count}/${max} day trades used, ${remaining} remaining`
     statusClass = 'text-emerald-400'
   }
@@ -310,17 +306,34 @@ export default function PdtCard({
         </div>
       </div>
 
-      {/* Traded today + Status */}
-      <div className="grid grid-cols-2 gap-4 mb-3 text-sm">
-        <div>
-          <span className="text-xs text-forge-muted">Traded Today:</span>
-          <span className="ml-2 text-white">{status.traded_today ? 'Yes' : 'No'}</span>
+      {/* Today's Status — live indicator dot */}
+      <div className="flex items-start gap-3 mb-3 rounded-lg bg-forge-bg/60 border border-forge-border/40 px-3 py-2.5">
+        {/* Pulsing dot: outer ring pings, inner dot stays solid */}
+        <div className="relative flex h-3 w-3 mt-0.5 shrink-0">
+          {(pdtStatus === 'CAN_TRADE' || pdtStatus === 'TRADED_TODAY') && (
+            <span
+              className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${
+                pdtStatus === 'CAN_TRADE' ? 'bg-emerald-400' : 'bg-amber-400'
+              }`}
+            />
+          )}
+          <span
+            className={`relative inline-flex rounded-full h-3 w-3 ${
+              pdtStatus === 'PDT_OFF'
+                ? 'bg-gray-500'
+                : pdtStatus === 'BLOCKED'
+                  ? 'bg-red-500'
+                  : pdtStatus === 'TRADED_TODAY'
+                    ? 'bg-amber-400'
+                    : 'bg-emerald-400'
+            }`}
+          />
         </div>
-        <div>
-          <span className="text-xs text-forge-muted">Status:</span>
-          <span className={`ml-2 ${statusClass}`}>
-            {statusIcon} {statusText}
-          </span>
+        <div className="min-w-0">
+          <div className={`text-sm font-medium ${statusClass}`}>{statusText}</div>
+          {status.traded_today && (
+            <div className="text-[11px] text-forge-muted mt-0.5">Traded today</div>
+          )}
         </div>
       </div>
 
