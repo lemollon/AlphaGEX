@@ -454,10 +454,17 @@ class Trader:
 
             is_stale = position_date and position_date < today_str
             is_expired = position.expiration < today_str
+            # 0DTE positions expiring today should be force-closed if past EOD cutoff
+            is_0dte_past_eod = (
+                position.expiration == today_str
+                and self._is_past_eod_cutoff(now)
+            )
 
-            if is_stale or is_expired:
+            if is_stale or is_expired or is_0dte_past_eod:
                 reason = (
-                    "expired_previous_day" if is_expired else "stale_overnight_position"
+                    "expired_previous_day" if is_expired
+                    else "0dte_past_eod" if is_0dte_past_eod
+                    else "stale_overnight_position"
                 )
                 try:
                     close_price = self.signal_generator.get_ic_mark_to_market(
