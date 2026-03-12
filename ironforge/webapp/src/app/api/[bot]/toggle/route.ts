@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, validateBot, dteMode, heartbeatName } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, escapeSql, validateBot, dteMode, heartbeatName } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,21 +26,18 @@ export async function POST(
     const active = Boolean(body.active)
 
     // Update paper_account is_active flag
-    const result = dte
-      ? await query(
-          `UPDATE ${botTable(bot, 'paper_account')}
-           SET is_active = $1, updated_at = NOW()
-           WHERE dte_mode = $2
-           RETURNING is_active`,
-          [active, dte],
-        )
-      : await query(
-          `UPDATE ${botTable(bot, 'paper_account')}
-           SET is_active = $1, updated_at = NOW()
-           WHERE is_active IS NOT NULL
-           RETURNING is_active`,
-          [active],
-        )
+    const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : 'WHERE is_active IS NOT NULL'
+    await dbExecute(
+      `UPDATE ${botTable(bot, 'paper_account')}
+       SET is_active = ${active}, updated_at = CURRENT_TIMESTAMP()
+       ${dteFilter}`,
+    )
+
+    // Verify the update took effect
+    const result = await dbQuery(
+      `SELECT is_active FROM ${botTable(bot, 'paper_account')}
+       ${dteFilter} LIMIT 1`,
+    )
 
     if (result.length === 0) {
       return NextResponse.json(
@@ -51,35 +48,20 @@ export async function POST(
 
     // Log the toggle action
     const status = active ? 'ENABLED' : 'DISABLED'
-    if (dte) {
-      await query(
-        `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-         VALUES ($1, $2, $3, $4)`,
-        [
-          'CONFIG',
-          `${botName} bot ${status} via API`,
-          JSON.stringify({ active, source: 'toggle_api' }),
-          dte,
-        ],
-      )
-    } else {
-      await query(
-        `INSERT INTO ${botTable(bot, 'logs')} (level, message, details)
-         VALUES ($1, $2, $3)`,
-        [
-          'CONFIG',
-          `${botName} bot ${status} via API`,
-          JSON.stringify({ active, source: 'toggle_api' }),
-        ],
-      )
-    }
+    const dtePart = dte ? `, dte_mode = '${escapeSql(dte)}'` : ''
+    await dbExecute(
+      `INSERT INTO ${botTable(bot, 'logs')} (level, message, details${dte ? ', dte_mode' : ''})
+       VALUES ('CONFIG', '${escapeSql(botName)} bot ${status} via API',
+               '${escapeSql(JSON.stringify({ active, source: 'toggle_api' }))}'${dtePart})`,
+    )
 
     return NextResponse.json({
       success: true,
       is_active: active,
       message: `${botName} ${status.toLowerCase()}`,
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

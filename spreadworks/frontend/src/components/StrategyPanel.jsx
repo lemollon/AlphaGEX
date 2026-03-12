@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
   DOUBLE_CALENDAR: 'double_calendar',
+  IRON_CONDOR: 'iron_condor',
 };
 
 const INPUT_MODES = {
@@ -26,6 +27,13 @@ const DEFAULT_LEGS = {
     frontExpiration: '',
     backExpiration: '',
   },
+  [STRATEGY_TYPES.IRON_CONDOR]: {
+    longPutStrike: '',
+    shortPutStrike: '',
+    shortCallStrike: '',
+    longCallStrike: '',
+    expiration: '',
+  },
 };
 
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -34,7 +42,7 @@ const s = {
   panel: {
     width: 260,
     minWidth: 260,
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     borderRight: '1px solid #1a1a2e',
     padding: '12px 14px',
     overflowY: 'auto',
@@ -45,6 +53,7 @@ const s = {
     flexDirection: 'column',
     gap: 8,
     height: '100%',
+    boxShadow: 'var(--shadow-panel)',
   },
   logo: {
     display: 'flex',
@@ -86,7 +95,7 @@ const s = {
     alignItems: 'center',
     gap: 8,
     padding: '4px 6px',
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     borderRadius: 4,
     fontSize: 11,
   },
@@ -123,7 +132,7 @@ const s = {
     padding: '4px 6px',
     border: `1px solid ${borderColor || '#1a1a2e'}`,
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#e0e0e0',
     fontSize: 12,
     fontFamily: "'Courier New', monospace",
@@ -135,7 +144,7 @@ const s = {
     padding: '4px 6px',
     border: `1px solid ${borderColor || '#1a1a2e'}`,
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#e0e0e0',
     fontSize: 12,
     fontFamily: "'Courier New', monospace",
@@ -173,7 +182,7 @@ const s = {
     padding: '3px 4px',
     border: '1px solid #1a1a2e',
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#ccc',
     fontSize: 11,
     fontFamily: "'Courier New', monospace",
@@ -183,7 +192,7 @@ const s = {
     padding: '3px 6px',
     border: '1px solid #1a1a2e',
     borderRadius: 3,
-    background: '#080810',
+    background: 'var(--bg-elevated)',
     color: '#ccc',
     fontSize: 11,
     fontFamily: "'Courier New', monospace",
@@ -240,6 +249,96 @@ const s = {
   },
 };
 
+function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
+  const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
+  const optionType = label.toLowerCase().includes('put') ? 'put' : 'call';
+  // Live Chain mode: dropdown with delta info
+  if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
+    return (
+      <div style={s.fieldCol}>
+        <span style={s.fieldLabel(color)}>{label}</span>
+        <select
+          style={s.select(borderColor)}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="">--</option>
+          {chainStrikes.map((sk) => {
+            const opt = chainOptions[sk]?.[optionType];
+            const delta = opt?.delta;
+            const displayDelta = delta != null ? ` (\u0394${Math.abs(delta).toFixed(2)})` : '';
+            return (
+              <option key={sk} value={sk}>${sk}{displayDelta}</option>
+            );
+          })}
+        </select>
+      </div>
+    );
+  }
+  // Manual and GEX Suggest: plain text input (no spinners)
+  return (
+    <div style={s.fieldCol}>
+      <span style={s.fieldLabel(color)}>{label}</span>
+      <input
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9.]*"
+        placeholder={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        style={{
+          width: '100%',
+          background: 'var(--bg-elevated)',
+          border: `1px solid ${borderColor || '#1e1e32'}`,
+          color: '#ccc',
+          padding: '6px 8px',
+          fontSize: '11px',
+          borderRadius: '3px',
+          fontFamily: 'inherit',
+          outline: 'none',
+          boxSizing: 'border-box',
+        }}
+      />
+    </div>
+  );
+}
+
+function ExpirationInput({ label, value, inputMode, expirations, onChange, onFetchStrikes, disabled }) {
+  if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
+    return (
+      <div style={s.fieldCol}>
+        <span style={s.fieldLabel()}>{label}</span>
+        <select
+          style={s.select()}
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value);
+            if (onFetchStrikes) onFetchStrikes(e.target.value);
+          }}
+        >
+          <option value="">--</option>
+          {expirations.map((exp) => (
+            <option key={exp} value={exp}>{exp}</option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+  return (
+    <div style={s.fieldCol}>
+      <span style={s.fieldLabel()}>{label}</span>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        style={s.input()}
+      />
+    </div>
+  );
+}
+
 export default function StrategyPanel({
   symbol = 'SPY',
   spotPrice,
@@ -262,11 +361,29 @@ export default function StrategyPanel({
   const [gexSuggestion, setGexSuggestion] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const [pushing, setPushing] = useState(false);
+  const [pushMsg, setPushMsg] = useState('');
 
   // Alert form state
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
+
+  // Reset spread inputs when symbol changes
+  const prevSymbolRef = useRef(symbol);
+  useEffect(() => {
+    if (prevSymbolRef.current !== symbol) {
+      prevSymbolRef.current = symbol;
+      setLegs(DEFAULT_LEGS[strategy]);
+      setContracts(1);
+      setExpirations([]);
+      setChainStrikes([]);
+      setGexSuggestion(null);
+      setError(null);
+      setSaveMsg('');
+      setPushMsg('');
+    }
+  }, [symbol, strategy]);
 
   const handleSavePosition = async () => {
     if (!calcResult || !spotPrice) return;
@@ -282,6 +399,13 @@ export default function StrategyPanel({
         long_call = parseFloat(legs.longCallStrike) || 0;
         short_exp = legs.shortExpiration;
         long_exp = legs.longExpiration;
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+        long_put = parseFloat(legs.longPutStrike) || 0;
+        short_put = parseFloat(legs.shortPutStrike) || 0;
+        short_call = parseFloat(legs.shortCallStrike) || 0;
+        long_call = parseFloat(legs.longCallStrike) || 0;
+        short_exp = legs.expiration;
+        long_exp = null;  // single expiration
       } else {
         long_put = parseFloat(legs.putStrike) || 0;
         short_put = parseFloat(legs.putStrike) || 0;
@@ -328,6 +452,84 @@ export default function StrategyPanel({
       setSaveMsg(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePushDiscord = async () => {
+    if (!calcResult || !spotPrice) return;
+    setPushing(true);
+    setPushMsg('');
+    try {
+      let legPayload, shortExp, longExp;
+      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
+        legPayload = {
+          long_put: parseFloat(legs.longPutStrike) || 0,
+          short_put: parseFloat(legs.shortPutStrike) || 0,
+          short_call: parseFloat(legs.shortCallStrike) || 0,
+          long_call: parseFloat(legs.longCallStrike) || 0,
+        };
+        shortExp = legs.shortExpiration;
+        longExp = legs.longExpiration;
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+        legPayload = {
+          long_put: parseFloat(legs.longPutStrike) || 0,
+          short_put: parseFloat(legs.shortPutStrike) || 0,
+          short_call: parseFloat(legs.shortCallStrike) || 0,
+          long_call: parseFloat(legs.longCallStrike) || 0,
+        };
+        shortExp = legs.expiration;
+        longExp = null;
+      } else {
+        legPayload = {
+          long_put: parseFloat(legs.putStrike) || 0,
+          short_put: parseFloat(legs.putStrike) || 0,
+          short_call: parseFloat(legs.callStrike) || 0,
+          long_call: parseFloat(legs.callStrike) || 0,
+        };
+        shortExp = legs.frontExpiration;
+        longExp = legs.backExpiration;
+      }
+
+      const strategyLabels = {
+        [STRATEGY_TYPES.DOUBLE_DIAGONAL]: 'Dbl Diagonal',
+        [STRATEGY_TYPES.DOUBLE_CALENDAR]: 'Dbl Calendar',
+        [STRATEGY_TYPES.IRON_CONDOR]: 'Iron Condor',
+      };
+
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-spread`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol,
+          strategy: strategyLabels[strategy] || strategy,
+          spot: spotPrice,
+          legs: legPayload,
+          short_exp: shortExp,
+          long_exp: longExp,
+          net_credit: calcResult.net_debit ? -calcResult.net_debit : null,
+          max_profit: calcResult.max_profit || null,
+          max_loss: calcResult.max_loss || null,
+          breakevens: [calcResult.lower_breakeven, calcResult.upper_breakeven].filter(Boolean),
+          chance_of_profit: calcResult.probability_of_profit != null
+            ? calcResult.probability_of_profit * 100
+            : calcResult.chance_of_profit != null
+              ? calcResult.chance_of_profit * 100
+              : null,
+          implied_vol: calcResult.implied_vol != null ? calcResult.implied_vol * 100 : null,
+          contracts,
+          gex_suggestion: gexSuggestion?.rationale || '',
+          pricing_mode: calcResult.pricing_mode || '',
+          pnl_curve: calcResult.pnl_curve || [],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to post');
+      setPushMsg('Posted!');
+      setTimeout(() => setPushMsg(''), 3000);
+    } catch (err) {
+      setPushMsg(err.message);
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -387,6 +589,14 @@ export default function StrategyPanel({
           longExpiration: data.legs.long_expiration ?? '',
           shortExpiration: data.legs.short_expiration ?? '',
         });
+      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR && data.legs) {
+        setLegs({
+          longPutStrike: data.legs.long_put_strike ?? '',
+          shortPutStrike: data.legs.short_put_strike ?? '',
+          shortCallStrike: data.legs.short_call_strike ?? '',
+          longCallStrike: data.legs.long_call_strike ?? '',
+          expiration: data.legs.expiration ?? '',
+        });
       } else if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR && data.legs) {
         setLegs({
           putStrike: data.legs.put_strike ?? '',
@@ -428,6 +638,9 @@ export default function StrategyPanel({
     if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
       return legs.longPutStrike && legs.shortPutStrike && legs.shortCallStrike && legs.longCallStrike && legs.longExpiration && legs.shortExpiration;
     }
+    if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+      return legs.longPutStrike && legs.shortPutStrike && legs.shortCallStrike && legs.longCallStrike && legs.expiration;
+    }
     return legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration;
   };
 
@@ -459,84 +672,6 @@ export default function StrategyPanel({
     }
   };
 
-  const StrikeInput = ({ label, field, value, color, optionType }) => {
-    const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
-    // Live Chain mode: dropdown with delta info
-    if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
-      return (
-        <div style={s.fieldCol}>
-          <span style={s.fieldLabel(color)}>{label}</span>
-          <select
-            style={s.select(borderColor)}
-            value={value}
-            onChange={(e) => updateLeg(field, e.target.value)}
-          >
-            <option value="">--</option>
-            {chainStrikes.map((sk) => {
-              const ot = optionType || (field.toLowerCase().includes('put') ? 'put' : 'call');
-              const opt = chainOptions[sk]?.[ot];
-              const delta = opt?.delta;
-              const displayDelta = delta != null ? ` (\u0394${Math.abs(delta).toFixed(2)})` : '';
-              return (
-                <option key={sk} value={sk}>${sk}{displayDelta}</option>
-              );
-            })}
-          </select>
-        </div>
-      );
-    }
-    // Manual and GEX Suggest: plain number input
-    return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel(color)}>{label}</span>
-        <input
-          type="number"
-          step="0.5"
-          placeholder={label}
-          value={value}
-          onChange={(e) => updateLeg(field, e.target.value)}
-          disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={s.input(borderColor)}
-        />
-      </div>
-    );
-  };
-
-  const ExpirationInput = ({ label, field, value }) => {
-    if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
-      return (
-        <div style={s.fieldCol}>
-          <span style={s.fieldLabel()}>{label}</span>
-          <select
-            style={s.select()}
-            value={value}
-            onChange={(e) => {
-              updateLeg(field, e.target.value);
-              fetchStrikes(e.target.value);
-            }}
-          >
-            <option value="">--</option>
-            {expirations.map((exp) => (
-              <option key={exp} value={exp}>{exp}</option>
-            ))}
-          </select>
-        </div>
-      );
-    }
-    return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel()}>{label}</span>
-        <input
-          type="date"
-          value={value}
-          onChange={(e) => updateLeg(field, e.target.value)}
-          disabled={inputMode === INPUT_MODES.GEX_SUGGEST}
-          style={s.input()}
-        />
-      </div>
-    );
-  };
-
   return (
     <div style={s.panel}>
       {/* Logo */}
@@ -545,7 +680,7 @@ export default function StrategyPanel({
           <span style={s.logoWhite}>Spread</span>
           <span style={s.logoBlue}>Works</span>
         </div>
-        <div style={s.subtitle}>DD & Calendar Analyzer</div>
+        <div style={s.subtitle}>Options Spread Analyzer</div>
       </div>
 
       {/* Strategy toggle */}
@@ -560,6 +695,10 @@ export default function StrategyPanel({
             style={s.toggleBtn(strategy === STRATEGY_TYPES.DOUBLE_CALENDAR)}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}
           >Dbl Calendar</button>
+          <button
+            style={s.toggleBtn(strategy === STRATEGY_TYPES.IRON_CONDOR)}
+            onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}
+          >Iron Condor</button>
         </div>
       </div>
 
@@ -577,8 +716,28 @@ export default function StrategyPanel({
 
       {/* GEX Suggestion */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
-        <div style={s.gexBanner}>
-          <strong>GEX Suggestion</strong>
+        <div style={{ ...s.gexBanner, position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong>GEX Suggestion</strong>
+            <button
+              onClick={() => {
+                setGexSuggestion(null);
+                setLegs(DEFAULT_LEGS[strategy]);
+                setInputMode(INPUT_MODES.MANUAL);
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#ff5252',
+                cursor: 'pointer',
+                fontSize: 14,
+                fontFamily: "'Courier New', monospace",
+                padding: '0 2px',
+                lineHeight: 1,
+              }}
+              title="Dismiss suggestion and switch to Manual"
+            >&times;</button>
+          </div>
           {gexSuggestion.rationale && <div style={{ color: '#888', marginTop: 2 }}>{gexSuggestion.rationale}</div>}
         </div>
       )}
@@ -597,30 +756,65 @@ export default function StrategyPanel({
         <>
           <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Long Put" field="longPutStrike" value={legs.longPutStrike} color="#00e676" />
-            <StrikeInput label="Short Put" field="shortPutStrike" value={legs.shortPutStrike} color="#ff5252" />
+            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Short Call" field="shortCallStrike" value={legs.shortCallStrike} color="#ff5252" />
-            <StrikeInput label="Long Call" field="longCallStrike" value={legs.longCallStrike} color="#00e676" />
+            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
           <div style={s.fieldRow}>
-            <ExpirationInput label="Short Exp" field="shortExpiration" value={legs.shortExpiration} />
-            <ExpirationInput label="Long Exp" field="longExpiration" value={legs.longExpiration} />
+            <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+        </>
+      ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
+        <>
+          <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
+          <div style={s.fieldRow}>
+            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
+          <div style={s.fieldRow}>
+            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          <div style={s.fieldRow}>
+            <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
         </>
       ) : (
         <>
-          <div style={s.sideLabel('#448aff')}>-- STRIKES --</div>
+          <div style={s.sideLabel('#ff5252')}>-- PUT CALENDAR --</div>
           <div style={s.fieldRow}>
-            <StrikeInput label="Put Strike" field="putStrike" value={legs.putStrike} color="#ff5252" />
-            <StrikeInput label="Call Strike" field="callStrike" value={legs.callStrike} color="#00e676" />
+            <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
+          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
+            Sell @ Front Exp &middot; Buy @ Back Exp
+          </div>
+          <div style={s.sideLabel('#00e676')}>-- CALL CALENDAR --</div>
           <div style={s.fieldRow}>
-            <ExpirationInput label="Front Exp" field="frontExpiration" value={legs.frontExpiration} />
-            <ExpirationInput label="Back Exp" field="backExpiration" value={legs.backExpiration} />
+            <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
           </div>
+          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
+            Sell @ Front Exp &middot; Buy @ Back Exp
+          </div>
+          <div style={s.sideLabel('#448aff')}>-- EXPIRATIONS --</div>
+          <div style={s.fieldRow}>
+            <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+          </div>
+          {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
+            <div style={{ background: 'var(--bg-elevated)', borderRadius: 4, padding: '4px 6px', fontSize: 9, color: '#888', marginTop: 2 }}>
+              <div style={{ color: '#555', marginBottom: 2, fontWeight: 600 }}>4 LEGS:</div>
+              <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
+              <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>
+              <div>3. Sell Call ${legs.callStrike} ({legs.frontExpiration})</div>
+              <div>4. Buy Call ${legs.callStrike} ({legs.backExpiration})</div>
+            </div>
+          )}
         </>
       )}
 
@@ -671,6 +865,34 @@ export default function StrategyPanel({
           marginTop: 2,
         }}>
           {saveMsg}
+        </div>
+      )}
+
+      {/* Push to Discord */}
+      {calcResult && (
+        <button
+          style={{
+            ...s.calcBtn,
+            background: '#5865F222',
+            color: '#5865F2',
+            border: '1px solid #5865F2',
+            marginTop: 2,
+            ...(pushing ? s.calcBtnDisabled : {}),
+          }}
+          onClick={handlePushDiscord}
+          disabled={pushing}
+        >
+          {pushing ? 'Posting...' : '\uD83D\uDCE3 PUSH TO DISCORD'}
+        </button>
+      )}
+      {pushMsg && (
+        <div style={{
+          fontSize: 10,
+          color: pushMsg === 'Posted!' ? '#5865F2' : '#ff5252',
+          textAlign: 'center',
+          marginTop: 2,
+        }}>
+          {pushMsg}
         </div>
       )}
 

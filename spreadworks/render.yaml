@@ -53,7 +53,7 @@ services:
         sync: false
       - key: DATABASE_URL
         fromDatabase:
-          name: spreadworks-db
+          name: alphagex-db
           property: connectionString
 
   # SERVICE 3: Discord Bot (Node.js worker)
@@ -78,9 +78,4 @@ services:
       - key: VITE_API_URL
         sync: false
 
-databases:
-  - name: spreadworks-db
-    databaseName: spreadworks
-    user: spreadworks
-    plan: starter
-    region: oregon
+# No separate database — shares alphagex-db from main render.yaml

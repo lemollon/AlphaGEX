@@ -12,7 +12,7 @@ const s = {
     overflowY: 'auto',
     fontFamily: "'Courier New', monospace",
     color: '#ccc',
-    background: '#080810',
+    background: 'var(--bg-base)',
   },
   header: {
     display: 'flex',
@@ -111,17 +111,21 @@ export default function PositionsPage() {
         </div>
       </div>
 
-      {error && <div style={s.error}>{error}</div>}
+      {error && (
+        <div style={s.error}>
+          Unable to connect to database. Check that DATABASE_URL is set in Render environment variables.
+        </div>
+      )}
       <PortfolioSummary summary={summary} />
 
       {loading ? (
         <div style={s.empty}>Loading positions...</div>
       ) : positions.length === 0 && emptySlots === 0 ? (
         <div style={s.empty}>
-          No {filter === 'all' ? '' : filter} positions yet.
+          No open positions yet.
           <br />
-          <span style={{ fontSize: 12, color: '#333' }}>
-            Use the Builder tab to create and save a spread.
+          <span style={{ fontSize: 12, color: '#555', marginTop: 6, display: 'inline-block' }}>
+            Build a spread in the Builder tab and hit Save to track it here.
           </span>
         </div>
       ) : (

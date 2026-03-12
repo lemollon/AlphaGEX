@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
 /** Default config values (mirrors models.py factory functions). */
-const DEFAULTS: Record<string, Record<string, any>> = {
+const DEFAULTS: Record<string, Record<string, number | string>> = {
   flame: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
     profit_target_pct: 30.0, stop_loss_pct: 100.0, vix_skip: 32.0,
@@ -52,19 +52,17 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dteMap: Record<string, string> = { flame: '2DTE', spark: '1DTE', inferno: '0DTE' }
-  const dte = dteMap[bot] ?? '0DTE'
+  const dte = dteMode(bot) ?? '0DTE'
 
   try {
-    const rows = await query(
+    const rows = await dbQuery(
       `SELECT sd_multiplier, spread_width, min_credit, profit_target_pct,
               stop_loss_pct, vix_skip, max_contracts, max_trades_per_day,
               buying_power_usage_pct, risk_per_trade_pct, min_win_probability,
               entry_start, entry_end, eod_cutoff_et, pdt_max_day_trades,
               starting_capital
        FROM ${botTable(bot, 'config')}
-       WHERE dte_mode = $1 LIMIT 1`,
-      [dte],
+       WHERE dte_mode = '${escapeSql(dte)}' LIMIT 1`,
     )
 
     const defaults = DEFAULTS[bot] ?? DEFAULTS.inferno
@@ -73,7 +71,7 @@ export async function GET(
     }
 
     const row = rows[0]
-    const merged: Record<string, any> = { ...defaults }
+    const merged: Record<string, number | string> = { ...defaults }
     for (let i = 0; i < ALL_FIELDS.length; i++) {
       const key = ALL_FIELDS[i]
       if (row[key] != null) {
@@ -104,14 +102,13 @@ export async function PUT(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dteMap: Record<string, string> = { flame: '2DTE', spark: '1DTE', inferno: '0DTE' }
-  const dte = dteMap[bot] ?? '0DTE'
+  const dte = dteMode(bot) ?? '0DTE'
 
   try {
     const body = await req.json()
 
     // Filter to only allowed fields
-    const filtered: Record<string, any> = {}
+    const filtered: Record<string, number | string> = {}
     for (const [key, val] of Object.entries(body)) {
       if (ALL_FIELDS.indexOf(key) < 0) continue
       if (INT_FIELDS.indexOf(key) >= 0) {
@@ -135,46 +132,51 @@ export async function PUT(
     }
 
     // Validate ranges
-    if (filtered.profit_target_pct != null && (filtered.profit_target_pct <= 0 || filtered.profit_target_pct >= 100)) {
+    const ptPct = filtered.profit_target_pct as number | undefined
+    if (ptPct != null && (ptPct <= 0 || ptPct >= 100)) {
       return NextResponse.json({ error: 'profit_target_pct must be 0-100' }, { status: 422 })
     }
-    if (filtered.spread_width != null && filtered.spread_width <= 0) {
+    const sw = filtered.spread_width as number | undefined
+    if (sw != null && sw <= 0) {
       return NextResponse.json({ error: 'spread_width must be positive' }, { status: 422 })
     }
 
-    // Build upsert
-    const columns = ['dte_mode'].concat(Object.keys(filtered))
-    const values = ([dte] as any[]).concat(Object.values(filtered))
-    const placeholders = values.map((_: any, i: number) => `$${i + 1}`).join(', ')
-    const colNames = columns.join(', ')
-    const updateParts = Object.keys(filtered).map(k => `${k} = EXCLUDED.${k}`)
-    updateParts.push('updated_at = NOW()')
+    // Build MERGE upsert for Databricks
+    const keys = Object.keys(filtered)
+    const insertCols = ['dte_mode', ...keys].join(', ')
+    const insertVals = [`'${escapeSql(dte)}'`, ...keys.map(k =>
+      typeof filtered[k] === 'string' ? `'${escapeSql(filtered[k] as string)}'` : String(filtered[k])
+    )].join(', ')
+    const updateSet = keys.map(k =>
+      typeof filtered[k] === 'string'
+        ? `t.${k} = '${escapeSql(filtered[k] as string)}'`
+        : `t.${k} = ${filtered[k]}`
+    ).concat(['t.updated_at = CURRENT_TIMESTAMP()']).join(', ')
 
-    await query(
-      `INSERT INTO ${botTable(bot, 'config')} (${colNames})
-       VALUES (${placeholders})
-       ON CONFLICT (dte_mode) DO UPDATE SET ${updateParts.join(', ')}`,
-      values,
+    const table = botTable(bot, 'config')
+    await dbExecute(
+      `MERGE INTO ${table} AS t
+       USING (SELECT '${escapeSql(dte)}' AS dte_mode) AS s
+       ON t.dte_mode = s.dte_mode
+       WHEN MATCHED THEN UPDATE SET ${updateSet}
+       WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${insertVals})`,
     )
 
     // Log
-    await query(
+    await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        'CONFIG',
-        `Config updated: ${Object.keys(filtered).join(', ')}`,
-        JSON.stringify({ ...filtered, source: 'config_api' }),
-        dte,
-      ],
+       VALUES ('CONFIG', 'Config updated: ${escapeSql(keys.join(', '))}',
+               '${escapeSql(JSON.stringify({ ...filtered, source: 'config_api' }))}',
+               '${escapeSql(dte)}')`,
     )
 
     return NextResponse.json({
       success: true,
-      updated_fields: Object.keys(filtered),
+      updated_fields: keys,
       values: filtered,
     })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

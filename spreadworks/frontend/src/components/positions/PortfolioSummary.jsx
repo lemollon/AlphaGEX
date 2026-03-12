@@ -6,7 +6,7 @@ const s = {
     marginBottom: 14,
   },
   card: {
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     border: '1px solid #1a1a2e',
     borderRadius: 6,
     padding: '10px 12px',

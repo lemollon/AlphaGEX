@@ -139,7 +139,9 @@ export default function PdtCard({
       if (!res.ok) return
       const data = await res.json()
       setAudit(data.entries || [])
-    } catch { /* non-critical */ }
+    } catch (e: unknown) {
+      console.error(`[PdtCard] Failed to fetch audit for ${bot}:`, e instanceof Error ? e.message : e)
+    }
   }, [bot])
 
   useEffect(() => {
@@ -164,7 +166,8 @@ export default function PdtCard({
         body: JSON.stringify({ action: 'toggle', enabled }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setStatus(await res.json())
+      const data = await res.json()
+      setStatus(data)
     } catch (e: unknown) {
       fetchStatus()
       setError(e instanceof Error ? e.message : String(e))
@@ -183,7 +186,8 @@ export default function PdtCard({
         body: JSON.stringify({ action: 'reset' }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setStatus(await res.json())
+      const data = await res.json()
+      setStatus(data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

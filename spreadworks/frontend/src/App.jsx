@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
+import PnLTable from './components/PnLTable';
+import LegBreakdown from './components/LegBreakdown';
 import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
 import PositionsPage from './pages/PositionsPage';
@@ -10,6 +12,8 @@ import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
+import SymbolSelector from './components/SymbolSelector';
+import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
 
 const CHART_HEIGHT = 500;
 
@@ -17,7 +21,7 @@ const navStyle = {
   display: 'flex',
   alignItems: 'center',
   gap: 0,
-  background: '#080810',
+  background: 'var(--bg-surface)',
   borderBottom: '1px solid #1a1a2e',
   fontFamily: "'Courier New', monospace",
   fontSize: 12,
@@ -124,20 +128,27 @@ function NavBar() {
 }
 
 function BuilderPage() {
-  const [symbol] = useState('SPY');
+  const [symbol, setSymbol] = useState('SPY');
   const [interval, setInterval_] = useState('15min');
   const [alerts, setAlerts] = useState([]);
   const [dteSlider, setDteSlider] = useState(0);
   const [rangePct, setRangePct] = useState(2.2);
   const [ivMultiplier, setIvMultiplier] = useState(1.0);
   const [viewMode, setViewMode] = useState('graph');
+  const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
 
   const API_URL = import.meta.env.VITE_API_URL || '';
 
-  const { candles, spotPrice, loading: candlesLoading, refetch: refetchCandles } = useCandles(symbol, interval);
+  const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
-  const { calcResult, calcLoading, calcError, calculate } = useCalculate();
+  const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
+
+  const handleSymbolChange = useCallback((newSymbol) => {
+    setSymbol(newSymbol);
+    setLastPayload(null);
+    clearResult();
+  }, [clearResult]);
   const { isOpen, secondsAgo, markRefreshed, statusText } = useMarketHours();
 
   const strikes = lastPayload?.legs || null;
@@ -168,8 +179,9 @@ function BuilderPage() {
 
   const headerStyle = {
     display: 'flex', alignItems: 'center', gap: 12,
-    padding: '6px 12px', background: '#0d0d18',
+    padding: '6px 12px', background: 'var(--bg-surface)',
     borderBottom: '1px solid #1a1a2e',
+    boxShadow: 'var(--shadow-panel)',
     fontFamily: "'Courier New', monospace", fontSize: 12,
   };
 
@@ -188,7 +200,7 @@ function BuilderPage() {
       />
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         <div style={headerStyle}>
-          <span style={{ color: '#fff', fontWeight: 700 }}>{symbol}</span>
+          <SymbolSelector value={symbol} onChange={handleSymbolChange} />
           <span style={{ color: '#555' }}>
             {interval === '15min' ? '15M' : interval === '1h' ? '1H' : '4H'}
           </span>
@@ -199,18 +211,48 @@ function BuilderPage() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
+          {!isOpen && dataAsOf && (
+            <span style={{
+              marginLeft: 'auto',
+              padding: '2px 8px',
+              background: '#ffd60022',
+              border: '1px solid #ffd60044',
+              borderRadius: 3,
+              color: '#ffd600',
+              fontSize: 10,
+              fontWeight: 600,
+            }}>
+              Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              })} ET
+            </span>
+          )}
         </div>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
-            strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
+          {calcLoading && <CalcOverlay />}
+          {viewMode === 'table' ? (
+            <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
+          ) : (
+            <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
+              strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
+          )}
         </div>
         <ControlsBar dteSlider={dteSlider} onDteChange={setDteSlider}
           rangePct={rangePct} onRangeChange={setRangePct}
           ivMultiplier={ivMultiplier} onIvMultiplierChange={setIvMultiplier}
           isMarketOpen={isOpen} secondsAgo={secondsAgo} statusText={statusText}
+          dataAsOf={dataAsOf}
           interval={interval} onIntervalChange={setInterval_}
-          onRefreshIv={refetchGex} viewMode={viewMode} onViewModeChange={setViewMode} />
-        <MetricsBar calcResult={calcResult} />
+          onRefreshIv={refetchGex} viewMode={viewMode} onViewModeChange={setViewMode}
+          tableViewMode={tableViewMode} onTableViewModeChange={setTableViewMode} />
+        {calcLoading ? <MetricsBarSkeleton /> : <MetricsBar calcResult={calcResult} />}
+        <LegBreakdown calcResult={calcResult} />
         <Legend interval={interval} barCount={Math.min(candles.length, 80)} />
       </div>
     </div>
@@ -223,7 +265,7 @@ export default function App() {
       <div style={{
         display: 'flex', flexDirection: 'column',
         height: '100vh', width: '100%',
-        background: '#080810', overflow: 'hidden',
+        background: 'var(--bg-base)', overflow: 'hidden',
       }}>
         <NavBar />
         <Routes>

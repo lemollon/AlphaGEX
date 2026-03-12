@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,32 +11,27 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot)
+  const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''
 
   try {
-    const rows = dte
-      ? await query(`
-          SELECT log_time, level, message, details
-          FROM ${botTable(bot, 'logs')}
-          WHERE dte_mode = $1
-          ORDER BY log_time DESC
-          LIMIT 50
-        `, [dte])
-      : await query(`
-          SELECT log_time, level, message, details
-          FROM ${botTable(bot, 'logs')}
-          ORDER BY log_time DESC
-          LIMIT 50
-        `)
+    const rows = await dbQuery(
+      `SELECT log_time, level, message, details
+       FROM ${botTable(bot, 'logs')}
+       ${dteFilter}
+       ORDER BY log_time DESC
+       LIMIT 50`,
+    )
 
     const logs = rows.map((r) => ({
-      timestamp: r.log_time?.toISOString?.() || r.log_time,
+      timestamp: r.log_time || null,
       level: r.level,
       message: r.message,
       details: r.details,
     }))
 
     return NextResponse.json({ logs })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }

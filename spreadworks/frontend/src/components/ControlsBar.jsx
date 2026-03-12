@@ -4,7 +4,7 @@ const font = "'Courier New', monospace";
 
 const st = {
   container: {
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     borderTop: '1px solid #1a1a2e',
     padding: '6px 12px',
     display: 'flex',
@@ -102,11 +102,14 @@ export default function ControlsBar({
   isMarketOpen,
   secondsAgo,
   statusText,
+  dataAsOf,
   interval,
   onIntervalChange,
   onRefreshIv,
   viewMode,
   onViewModeChange,
+  tableViewMode,
+  onTableViewModeChange,
 }) {
   const debounceRef = useRef(null);
 
@@ -145,7 +148,11 @@ export default function ControlsBar({
           {isMarketOpen ? 'LIVE' : 'CLOSED'}
         </div>
         <span style={{ color: '#444', fontSize: 10 }}>
-          {isMarketOpen ? `Updated ${secondsAgo}s ago` : `Market Closed \u00b7 ${statusText}`}
+          {isMarketOpen
+            ? `Updated ${secondsAgo}s ago`
+            : dataAsOf
+              ? `Cached data \u00b7 ${statusText}`
+              : `Market Closed \u00b7 ${statusText}`}
         </span>
 
         {/* Timeframe buttons */}
@@ -188,16 +195,36 @@ export default function ControlsBar({
       {/* Row 3: View toggles */}
       <div style={st.row}>
         <button style={st.toggleBtn(viewMode === 'table')} onClick={() => onViewModeChange('table')}>
-          &#8862; Table
+          &#8862; Table {viewMode === 'table' ? '\u2713' : ''}
         </button>
         <button style={st.toggleBtn(viewMode === 'graph')} onClick={() => onViewModeChange('graph')}>
           &#128200; Graph {viewMode === 'graph' ? '\u2713' : ''}
         </button>
-        <button style={st.toggleBtn(false)}>Profit/Loss $</button>
-        <button style={st.toggleBtn(true)}>Profit/Loss % \u2713</button>
-        <button style={st.toggleBtn(false)}>Contract Value</button>
-        <button style={st.toggleBtn(false)}>% of Max Risk</button>
-        <button style={{ ...st.toggleBtn(false), color: '#444' }}>&or; More</button>
+        <span style={{ color: '#333', margin: '0 4px' }}>|</span>
+        <button
+          style={st.toggleBtn(tableViewMode === 'pnl_dollar')}
+          onClick={() => onTableViewModeChange('pnl_dollar')}
+        >
+          Profit/Loss $ {tableViewMode === 'pnl_dollar' ? '\u2713' : ''}
+        </button>
+        <button
+          style={st.toggleBtn(tableViewMode === 'pnl_pct')}
+          onClick={() => onTableViewModeChange('pnl_pct')}
+        >
+          Profit/Loss % {tableViewMode === 'pnl_pct' ? '\u2713' : ''}
+        </button>
+        <button
+          style={st.toggleBtn(tableViewMode === 'contract_value')}
+          onClick={() => onTableViewModeChange('contract_value')}
+        >
+          Contract Value {tableViewMode === 'contract_value' ? '\u2713' : ''}
+        </button>
+        <button
+          style={st.toggleBtn(tableViewMode === 'max_risk_pct')}
+          onClick={() => onTableViewModeChange('max_risk_pct')}
+        >
+          % of Max Risk {tableViewMode === 'max_risk_pct' ? '\u2713' : ''}
+        </button>
       </div>
     </div>
   );

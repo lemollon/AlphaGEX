@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -10,7 +10,7 @@ const STRAT_LABELS = {
 
 const s = {
   card: (pnl, status) => ({
-    background: '#0d0d18',
+    background: 'var(--bg-surface)',
     border: `1px solid ${status === 'closed' ? '#2a2a3a' : pnl > 0 ? '#00e67625' : pnl < 0 ? '#ff174425' : '#1a1a2e'}`,
     borderRadius: 6,
     padding: '14px 16px',
@@ -95,6 +95,11 @@ const s = {
 
 export default function PositionCard({ position, onClose, onDelete }) {
   const [pnl, setPnl] = useState(null);
+  const [discordPushing, setDiscordPushing] = useState(false);
+  const [discordDone, setDiscordDone] = useState(false);
+  const [showChart, setShowChart] = useState(false);
+  const [payoff, setPayoff] = useState(null);
+  const [payoffLoading, setPayoffLoading] = useState(false);
 
   const isOpen = position.status === 'open';
   const strat = STRAT_LABELS[position.strategy] || position.strategy;
@@ -113,6 +118,34 @@ export default function PositionCard({ position, onClose, onDelete }) {
     const iv = setInterval(fetchPnl, 60000);
     return () => clearInterval(iv);
   }, [position.id, isOpen]);
+
+  const pushToDiscord = async () => {
+    setDiscordPushing(true);
+    try {
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-position/${position.id}`, { method: 'POST' });
+      if (res.ok) {
+        setDiscordDone(true);
+        setTimeout(() => setDiscordDone(false), 3000);
+      }
+    } catch { /* silent */ }
+    setDiscordPushing(false);
+  };
+
+  const toggleChart = async () => {
+    if (showChart) {
+      setShowChart(false);
+      return;
+    }
+    setShowChart(true);
+    if (!payoff) {
+      setPayoffLoading(true);
+      try {
+        const res = await fetch(`${API_URL}/api/spreadworks/positions/${position.id}/payoff`);
+        if (res.ok) setPayoff(await res.json());
+      } catch { /* silent */ }
+      setPayoffLoading(false);
+    }
+  };
 
   const unrealized = pnl?.unrealized_pnl ?? 0;
   const currentValue = pnl?.current_value;
@@ -197,6 +230,31 @@ export default function PositionCard({ position, onClose, onDelete }) {
         </div>
       </div>
 
+      {/* Pricing source — so users know where the numbers come from */}
+      {isOpen && pnl?.pricing_source && (
+        <div style={{
+          fontSize: 9,
+          color: pnl.pricing_source === 'live_quotes' ? '#00e676' : '#888',
+          marginBottom: 6,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}>
+          <span style={{
+            width: 5, height: 5, borderRadius: '50%',
+            background: pnl.pricing_source === 'live_quotes' ? '#00e676'
+              : pnl.pricing_source === 'black_scholes_live_iv' ? '#ffb300'
+              : '#ff5252',
+            display: 'inline-block',
+          }} />
+          {pnl.pricing_source === 'live_quotes'
+            ? 'P&L from live Tradier bid/ask'
+            : pnl.pricing_source === 'black_scholes_live_iv'
+              ? 'P&L estimated (BS + live IV)'
+              : 'P&L estimated (BS model — market closed)'}
+        </div>
+      )}
+
       {/* Notes */}
       {position.notes && (
         <div style={{ fontSize: 10, color: '#666', fontStyle: 'italic', marginBottom: 6 }}>
@@ -211,19 +269,193 @@ export default function PositionCard({ position, onClose, onDelete }) {
       </div>
 
       {/* Actions */}
-      {isOpen && (
-        <div style={s.actions}>
-          <button style={s.btn('#ff5252')} onClick={() => onClose(position)}>
-            \u2715 Close
-          </button>
-          <button style={s.btn('#555')} onClick={() => onDelete(position.id)}>
-            Delete
-          </button>
-          <button style={{ ...s.btn('#555'), ...s.btnDisabled }} disabled title="Coming soon">
-            \u21bb Roll
-          </button>
+      <div style={s.actions}>
+        {isOpen && (
+          <>
+            <button style={s.btn('#ff5252')} onClick={() => onClose(position)}>
+              \u2715 Close
+            </button>
+            <button style={s.btn('#555')} onClick={() => onDelete(position.id)}>
+              Delete
+            </button>
+            <button style={{ ...s.btn('#555'), ...s.btnDisabled }} disabled title="Coming soon">
+              \u21bb Roll
+            </button>
+          </>
+        )}
+        <button
+          style={s.btn('#5865F2')}
+          onClick={pushToDiscord}
+          disabled={discordPushing}
+          title="Push to Discord"
+        >
+          {discordDone ? '\u2713 Sent' : discordPushing ? '...' : '\u21d2 Discord'}
+        </button>
+        <button
+          style={s.btn('#448aff')}
+          onClick={toggleChart}
+          title="View payoff chart"
+        >
+          {showChart ? '\u2715 Chart' : '\u25b6 Chart'}
+        </button>
+      </div>
+
+      {/* Payoff Chart */}
+      {showChart && (
+        <div style={{ marginTop: 8, borderTop: '1px solid #1a1a2e', paddingTop: 8 }}>
+          {payoffLoading ? (
+            <div style={{ color: '#444', fontSize: 10, textAlign: 'center', padding: 12 }}>
+              Loading payoff...
+            </div>
+          ) : payoff?.pnl_curve ? (
+            <MiniPayoff
+              curve={payoff.pnl_curve}
+              spotPrice={payoff.spot_price}
+              breakevens={payoff.breakevens}
+              maxProfit={payoff.max_profit}
+              maxLoss={payoff.max_loss}
+            />
+          ) : (
+            <div style={{ color: '#444', fontSize: 10, textAlign: 'center', padding: 12 }}>
+              Unable to load payoff data
+            </div>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+
+/** Inline mini payoff chart rendered as SVG. */
+function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
+  const svg = useMemo(() => {
+    if (!curve || curve.length === 0) return null;
+
+    const W = 320;
+    const H = 160;
+    const pad = { top: 14, right: 12, bottom: 24, left: 46 };
+    const plotW = W - pad.left - pad.right;
+    const plotH = H - pad.top - pad.bottom;
+
+    const prices = curve.map((p) => p.price);
+    const pnls = curve.map((p) => p.pnl);
+    const minP = Math.min(...prices);
+    const maxP = Math.max(...prices);
+    const minPnl = Math.min(...pnls, 0);
+    const maxPnl = Math.max(...pnls, 0);
+    const pnlRange = maxPnl - minPnl || 1;
+
+    const xScale = (p) => pad.left + ((p - minP) / (maxP - minP)) * plotW;
+    const yScale = (v) => pad.top + plotH - ((v - minPnl) / pnlRange) * plotH;
+
+    const points = curve.map((p) => `${xScale(p.price).toFixed(1)},${yScale(p.pnl).toFixed(1)}`);
+    const linePath = `M${points.join('L')}`;
+    const zeroY = yScale(0);
+
+    // Profit/loss fills
+    const profitPts = [];
+    const lossPts = [];
+    for (const p of curve) {
+      const x = xScale(p.price);
+      const y = yScale(p.pnl);
+      if (p.pnl >= 0) profitPts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+      if (p.pnl <= 0) lossPts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    }
+
+    return { W, H, pad, plotW, plotH, linePath, zeroY, xScale, yScale, profitPts, lossPts, minP, maxP, minPnl, maxPnl };
+  }, [curve]);
+
+  if (!svg) return null;
+
+  const profitFill = svg.profitPts.length > 1
+    ? `M${svg.xScale(curve.find((p) => p.pnl >= 0)?.price ?? 0).toFixed(1)},${svg.zeroY} ${svg.profitPts.join(' ')} ${svg.xScale(curve.filter((p) => p.pnl >= 0).pop()?.price ?? 0).toFixed(1)},${svg.zeroY} Z`
+    : null;
+
+  const lossFill = svg.lossPts.length > 1
+    ? `M${svg.xScale(curve.find((p) => p.pnl <= 0)?.price ?? 0).toFixed(1)},${svg.zeroY} ${svg.lossPts.join(' ')} ${svg.xScale(curve.filter((p) => p.pnl <= 0).pop()?.price ?? 0).toFixed(1)},${svg.zeroY} Z`
+    : null;
+
+  // X-axis ticks
+  const xTicks = [];
+  const xStep = (svg.maxP - svg.minP) / 4;
+  for (let i = 0; i <= 4; i++) {
+    const val = svg.minP + xStep * i;
+    xTicks.push({ val, x: svg.xScale(val) });
+  }
+
+  // Y-axis ticks
+  const yTicks = [];
+  const yStep = (svg.maxPnl - svg.minPnl) / 3;
+  for (let i = 0; i <= 3; i++) {
+    const val = svg.minPnl + yStep * i;
+    yTicks.push({ val, y: svg.yScale(val) });
+  }
+
+  return (
+    <svg viewBox={`0 0 ${svg.W} ${svg.H}`} style={{ width: '100%', maxHeight: 160 }}>
+      {/* Zero line */}
+      <line x1={svg.pad.left} y1={svg.zeroY} x2={svg.pad.left + svg.plotW} y2={svg.zeroY}
+        stroke="#475569" strokeWidth="0.5" strokeDasharray="3,2" />
+
+      {/* Fills */}
+      {profitFill && <path d={profitFill} fill="rgba(0,230,118,0.12)" />}
+      {lossFill && <path d={lossFill} fill="rgba(255,23,68,0.10)" />}
+
+      {/* P&L line */}
+      <path d={svg.linePath} fill="none" stroke="#3b82f6" strokeWidth="1.5" />
+
+      {/* Spot price */}
+      {spotPrice && spotPrice >= svg.minP && spotPrice <= svg.maxP && (
+        <>
+          <line x1={svg.xScale(spotPrice)} y1={svg.pad.top} x2={svg.xScale(spotPrice)} y2={svg.pad.top + svg.plotH}
+            stroke="#facc15" strokeWidth="0.8" strokeDasharray="2,2" />
+          <text x={svg.xScale(spotPrice)} y={svg.pad.top - 3} textAnchor="middle" fill="#facc15" fontSize="8"
+            fontFamily="'Courier New', monospace">Spot</text>
+        </>
+      )}
+
+      {/* Breakevens */}
+      {breakevens?.lower && (
+        <line x1={svg.xScale(breakevens.lower)} y1={svg.zeroY - 4} x2={svg.xScale(breakevens.lower)} y2={svg.zeroY + 4}
+          stroke="#a78bfa" strokeWidth="1.5" />
+      )}
+      {breakevens?.upper && (
+        <line x1={svg.xScale(breakevens.upper)} y1={svg.zeroY - 4} x2={svg.xScale(breakevens.upper)} y2={svg.zeroY + 4}
+          stroke="#a78bfa" strokeWidth="1.5" />
+      )}
+
+      {/* Y-axis */}
+      {yTicks.map((t, i) => (
+        <g key={i}>
+          <line x1={svg.pad.left - 3} y1={t.y} x2={svg.pad.left} y2={t.y} stroke="#444" />
+          <text x={svg.pad.left - 5} y={t.y + 3} textAnchor="end" fill="#555" fontSize="8"
+            fontFamily="'Courier New', monospace">${t.val.toFixed(0)}</text>
+        </g>
+      ))}
+
+      {/* X-axis */}
+      {xTicks.map((t, i) => (
+        <g key={i}>
+          <line x1={t.x} y1={svg.pad.top + svg.plotH} x2={t.x} y2={svg.pad.top + svg.plotH + 3} stroke="#444" />
+          <text x={t.x} y={svg.pad.top + svg.plotH + 14} textAnchor="middle" fill="#555" fontSize="8"
+            fontFamily="'Courier New', monospace">${t.val.toFixed(0)}</text>
+        </g>
+      ))}
+
+      {/* Max profit / loss labels */}
+      {maxProfit != null && (
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#00e676" fontSize="8"
+          fontFamily="'Courier New', monospace">Max +${maxProfit.toFixed(0)}</text>
+      )}
+      {maxLoss != null && (
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#ff5252" fontSize="8"
+          fontFamily="'Courier New', monospace">Max ${maxLoss.toFixed(0)}</text>
+      )}
+
+      {/* Border */}
+      <rect x={svg.pad.left} y={svg.pad.top} width={svg.plotW} height={svg.plotH}
+        fill="none" stroke="#1a1a2e" />
+    </svg>
   );
 }

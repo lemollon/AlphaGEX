@@ -1,3 +1,10 @@
+:root {
+  --bg-base: #060610;
+  --bg-surface: #0a0a18;
+  --bg-elevated: #0e0e20;
+  --shadow-panel: 0 1px 3px rgba(0,0,0,0.6), 0 0 1px rgba(255,255,255,0.03);
+}
+
 *,
 *::before,
 *::after {
@@ -14,7 +21,7 @@ html, body, #root {
 
 body {
   font-family: 'Courier New', monospace;
-  background: #080810;
+  background: var(--bg-base);
   color: #e0e0e0;
   line-height: 1.4;
   -webkit-font-smoothing: antialiased;
@@ -26,7 +33,7 @@ body {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #080810;
+  background: var(--bg-base);
 }
 ::-webkit-scrollbar-thumb {
   background: #1a1a2e;
