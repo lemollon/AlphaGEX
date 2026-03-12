@@ -1,94 +1,102 @@
 import { useState, useCallback, useRef } from 'react';
 
-const font = "'Courier New', monospace";
-
 const st = {
   container: {
     background: 'var(--bg-surface)',
-    borderTop: '1px solid #1a1a2e',
-    padding: '6px 12px',
+    borderTop: '1px solid var(--border-subtle)',
+    padding: '8px 16px',
     display: 'flex',
     flexDirection: 'column',
-    gap: 5,
-    fontFamily: font,
-    fontSize: 11,
-    color: '#888',
+    gap: 6,
+    fontFamily: 'var(--font-ui)',
+    fontSize: 12,
+    color: 'var(--text-secondary)',
   },
   row: {
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     flexWrap: 'wrap',
   },
   label: {
-    color: '#555',
+    color: 'var(--text-tertiary)',
     fontSize: 10,
+    fontWeight: 600,
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
+    letterSpacing: '0.06em',
     whiteSpace: 'nowrap',
   },
   slider: {
     flex: 1,
     minWidth: 80,
     maxWidth: 300,
-    accentColor: '#448aff',
-    height: 4,
+    accentColor: 'var(--accent)',
+    height: 3,
   },
   value: {
-    color: '#ccc',
+    color: 'var(--text-primary)',
     fontWeight: 600,
-    fontSize: 11,
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
     minWidth: 50,
   },
   liveBadge: (isOpen) => ({
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 4,
-    padding: '2px 8px',
-    borderRadius: 3,
-    background: isOpen ? '#00e67622' : '#33333344',
-    border: `1px solid ${isOpen ? '#00e676' : '#333'}`,
-    color: isOpen ? '#00e676' : '#666',
+    gap: 5,
+    padding: '3px 10px',
+    borderRadius: 20,
+    background: isOpen ? 'var(--green-dim)' : 'rgba(80, 80, 100, 0.15)',
+    border: `1px solid ${isOpen ? 'rgba(0, 230, 118, 0.2)' : 'var(--border-subtle)'}`,
+    color: isOpen ? 'var(--green)' : 'var(--text-tertiary)',
     fontSize: 10,
     fontWeight: 600,
     marginLeft: 'auto',
   }),
   dot: (isOpen) => ({
-    width: 6,
-    height: 6,
+    width: 5,
+    height: 5,
     borderRadius: '50%',
-    background: isOpen ? '#00e676' : '#666',
+    background: isOpen ? 'var(--green)' : 'var(--text-tertiary)',
+    boxShadow: isOpen ? '0 0 6px rgba(0, 230, 118, 0.4)' : 'none',
   }),
   toggleBtn: (active) => ({
-    padding: '3px 10px',
-    border: `1px solid ${active ? '#448aff' : '#1a1a2e'}`,
-    borderRadius: 3,
-    background: active ? '#448aff33' : 'transparent',
-    color: active ? '#448aff' : '#555',
+    padding: '4px 12px',
+    border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+    borderRadius: 'var(--radius-sm)',
+    background: active ? 'rgba(68, 138, 255, 0.12)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-tertiary)',
     cursor: 'pointer',
-    fontSize: 10,
-    fontFamily: font,
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: active ? 600 : 500,
+    transition: 'all var(--transition-fast)',
   }),
   tfBtn: (active) => ({
-    padding: '3px 10px',
-    border: `1px solid ${active ? '#448aff' : '#1a1a2e'}`,
-    borderRadius: 3,
-    background: active ? '#448aff' : 'transparent',
-    color: active ? '#fff' : '#555',
+    padding: '4px 12px',
+    border: active ? 'none' : '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-sm)',
+    background: active
+      ? 'linear-gradient(135deg, var(--accent) 0%, #5c9bff 100%)'
+      : 'transparent',
+    color: active ? '#fff' : 'var(--text-tertiary)',
     cursor: 'pointer',
-    fontSize: 10,
-    fontFamily: font,
-    fontWeight: active ? 600 : 400,
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: active ? 600 : 500,
+    boxShadow: active ? '0 1px 6px rgba(68, 138, 255, 0.2)' : 'none',
+    transition: 'all var(--transition-fast)',
   }),
   refreshBtn: {
     background: 'transparent',
-    border: '1px solid #1a1a2e',
-    borderRadius: 3,
-    color: '#555',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-sm)',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
-    padding: '2px 6px',
-    fontSize: 12,
-    fontFamily: font,
+    padding: '3px 8px',
+    fontSize: 13,
+    fontFamily: 'var(--font-ui)',
+    transition: 'all var(--transition-fast)',
   },
 };
 
@@ -119,7 +127,6 @@ export default function ControlsBar({
     debounceRef.current = setTimeout(() => {
       if (onDteChange) onDteChange(val);
     }, 300);
-    // Immediate visual update
     e.target.style.setProperty('--val', val);
   }, [onDteChange]);
 
@@ -131,7 +138,7 @@ export default function ControlsBar({
     <div style={st.container}>
       {/* Row 1: Date slider + Live badge + Timeframe buttons */}
       <div style={st.row}>
-        <span style={st.label}>DATE:</span>
+        <span style={st.label}>Date:</span>
         <span style={st.value}>{dteLabel}</span>
         <input
           type="range"
@@ -141,13 +148,13 @@ export default function ControlsBar({
           onChange={handleDteSlider}
           style={st.slider}
         />
-        <span style={{ color: '#555', fontSize: 10 }}>(At expiration)</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>(At expiration)</span>
 
         <div style={st.liveBadge(isMarketOpen)}>
           <span style={st.dot(isMarketOpen)} />
           {isMarketOpen ? 'LIVE' : 'CLOSED'}
         </div>
-        <span style={{ color: '#444', fontSize: 10 }}>
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>
           {isMarketOpen
             ? `Updated ${secondsAgo}s ago`
             : dataAsOf
@@ -156,7 +163,7 @@ export default function ControlsBar({
         </span>
 
         {/* Timeframe buttons */}
-        <div style={{ display: 'flex', gap: 2, marginLeft: 8 }}>
+        <div style={{ display: 'flex', gap: 3 }}>
           {['15min', '1h', '4h'].map(tf => (
             <button key={tf} style={st.tfBtn(interval === tf)} onClick={() => onIntervalChange(tf)}>
               {tf === '15min' ? '15M' : tf === '1h' ? '1H' : '4H'}
@@ -167,7 +174,7 @@ export default function ControlsBar({
 
       {/* Row 2: Range + IV */}
       <div style={st.row}>
-        <span style={st.label}>RANGE: &plusmn;{rangePct.toFixed(1)}%</span>
+        <span style={st.label}>Range: &plusmn;{rangePct.toFixed(1)}%</span>
         <input
           type="range"
           min={10}
@@ -177,7 +184,7 @@ export default function ControlsBar({
           style={{ ...st.slider, maxWidth: 120 }}
         />
         <button style={st.refreshBtn} onClick={onRefreshIv} title="Refresh IV">&orarr;</button>
-        <span style={{ ...st.label, marginLeft: 8 }}>IMPLIED VOLATILITY:</span>
+        <span style={{ ...st.label, marginLeft: 8 }}>Implied Volatility:</span>
         <span style={st.value}>&times;{ivMultiplier.toFixed(1)}</span>
         <input
           type="range"
@@ -187,9 +194,9 @@ export default function ControlsBar({
           onChange={(e) => onIvMultiplierChange(Number(e.target.value) / 10)}
           style={{ ...st.slider, maxWidth: 150 }}
         />
-        <span style={{ color: '#444', fontSize: 9 }}>&times;1</span>
-        <span style={{ color: '#444', fontSize: 9 }}>&times;2</span>
-        <span style={{ color: '#444', fontSize: 9 }}>&times;3</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 10, fontFamily: 'var(--font-mono)' }}>&times;1</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 10, fontFamily: 'var(--font-mono)' }}>&times;2</span>
+        <span style={{ color: 'var(--text-muted)', fontSize: 10, fontFamily: 'var(--font-mono)' }}>&times;3</span>
       </div>
 
       {/* Row 3: View toggles */}
@@ -200,7 +207,7 @@ export default function ControlsBar({
         <button style={st.toggleBtn(viewMode === 'graph')} onClick={() => onViewModeChange('graph')}>
           &#128200; Graph {viewMode === 'graph' ? '\u2713' : ''}
         </button>
-        <span style={{ color: '#333', margin: '0 4px' }}>|</span>
+        <span style={{ color: 'var(--border-subtle)', margin: '0 2px' }}>|</span>
         <button
           style={st.toggleBtn(tableViewMode === 'pnl_dollar')}
           onClick={() => onTableViewModeChange('pnl_dollar')}

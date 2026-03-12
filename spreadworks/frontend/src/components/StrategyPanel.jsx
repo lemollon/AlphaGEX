@@ -38,221 +38,316 @@ const DEFAULT_LEGS = {
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
+/* ── Design Tokens ── */
 const s = {
   panel: {
-    width: 260,
-    minWidth: 260,
+    width: 280,
+    minWidth: 280,
     background: 'var(--bg-surface)',
-    borderRight: '1px solid #1a1a2e',
-    padding: '12px 14px',
+    borderRight: '1px solid var(--border-subtle)',
+    padding: '16px',
     overflowY: 'auto',
-    fontFamily: "'Courier New', monospace",
-    fontSize: 12,
-    color: '#ccc',
+    fontFamily: 'var(--font-ui)',
+    fontSize: 13,
+    color: 'var(--text-primary)',
     display: 'flex',
     flexDirection: 'column',
-    gap: 8,
+    gap: 12,
     height: '100%',
-    boxShadow: 'var(--shadow-panel)',
   },
   logo: {
     display: 'flex',
-    alignItems: 'baseline',
-    gap: 0,
-    marginBottom: 2,
+    alignItems: 'center',
+    gap: 2,
+    marginBottom: 0,
   },
-  logoWhite: { color: '#fff', fontWeight: 700, fontSize: 16, letterSpacing: -0.5 },
-  logoBlue: { color: '#448aff', fontWeight: 700, fontSize: 16, letterSpacing: -0.5 },
-  subtitle: { color: '#555', fontSize: 10, marginBottom: 4 },
+  logoIcon: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 28,
+    height: 28,
+    borderRadius: 'var(--radius-md)',
+    background: 'linear-gradient(135deg, var(--accent) 0%, #7c4dff 100%)',
+    marginRight: 8,
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: 800,
+    boxShadow: '0 2px 8px rgba(68, 138, 255, 0.3)',
+  },
+  logoText: {
+    fontSize: 18,
+    fontWeight: 800,
+    letterSpacing: '-0.5px',
+    color: '#fff',
+  },
+  logoAccent: {
+    color: 'var(--accent)',
+  },
+  subtitle: {
+    color: 'var(--text-tertiary)',
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: '0.02em',
+  },
+  card: {
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-lg)',
+    padding: '12px',
+  },
   sectionLabel: {
-    color: '#555',
+    color: 'var(--text-tertiary)',
     fontSize: 10,
+    fontWeight: 600,
     textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-    marginBottom: 2,
-    marginTop: 6,
+    letterSpacing: '0.1em',
+    marginBottom: 8,
   },
   toggleRow: {
     display: 'flex',
     gap: 4,
-    marginBottom: 4,
+    background: 'var(--bg-elevated)',
+    borderRadius: 'var(--radius-md)',
+    padding: 3,
   },
   toggleBtn: (active) => ({
     flex: 1,
-    padding: '5px 4px',
-    border: `1px solid ${active ? '#448aff' : '#1a1a2e'}`,
-    borderRadius: 4,
-    background: active ? '#448aff' : 'transparent',
-    color: active ? '#fff' : '#666',
+    padding: '7px 6px',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    background: active
+      ? 'linear-gradient(135deg, var(--accent) 0%, #5c9bff 100%)'
+      : 'transparent',
+    color: active ? '#fff' : 'var(--text-tertiary)',
     cursor: 'pointer',
     fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    fontFamily: 'var(--font-ui)',
+    fontWeight: active ? 600 : 500,
     textAlign: 'center',
-    transition: 'all 0.15s',
+    transition: 'all var(--transition-fast)',
+    boxShadow: active ? '0 2px 8px rgba(68, 138, 255, 0.25)' : 'none',
   }),
   spotRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
-    padding: '4px 6px',
+    gap: 10,
+    padding: '10px 12px',
     background: 'var(--bg-elevated)',
-    borderRadius: 4,
-    fontSize: 11,
+    borderRadius: 'var(--radius-md)',
+    border: '1px solid var(--border-subtle)',
   },
-  spotLabel: { color: '#555' },
-  spotValue: { color: '#fff', fontWeight: 600 },
+  spotLabel: {
+    color: 'var(--text-tertiary)',
+    fontSize: 11,
+    fontWeight: 500,
+  },
+  spotSymbol: {
+    color: '#fff',
+    fontWeight: 700,
+    fontSize: 14,
+    fontFamily: 'var(--font-mono)',
+  },
+  spotDot: {
+    width: 4,
+    height: 4,
+    borderRadius: '50%',
+    background: 'var(--text-muted)',
+  },
+  spotValue: {
+    color: 'var(--accent)',
+    fontWeight: 700,
+    fontSize: 14,
+    fontFamily: 'var(--font-mono)',
+  },
   sideLabel: (color) => ({
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
     color: color,
     fontSize: 10,
+    fontWeight: 600,
     textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-    borderBottom: `1px solid ${color}33`,
-    paddingBottom: 2,
-    marginTop: 6,
-    marginBottom: 4,
+    letterSpacing: '0.1em',
+    marginTop: 4,
+    marginBottom: 6,
+  }),
+  sideLine: (color) => ({
+    flex: 1,
+    height: 1,
+    background: `${color}22`,
   }),
   fieldRow: {
     display: 'flex',
-    gap: 6,
-    marginBottom: 4,
+    gap: 8,
+    marginBottom: 6,
   },
   fieldCol: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    gap: 2,
+    gap: 4,
   },
   fieldLabel: (color) => ({
-    fontSize: 9,
-    color: color || '#555',
+    fontSize: 10,
+    color: color || 'var(--text-tertiary)',
+    fontWeight: 600,
     textTransform: 'uppercase',
+    letterSpacing: '0.05em',
   }),
   input: (borderColor) => ({
     width: '100%',
-    padding: '4px 6px',
-    border: `1px solid ${borderColor || '#1a1a2e'}`,
-    borderRadius: 3,
+    padding: '8px 10px',
+    border: `1px solid ${borderColor || 'var(--border-subtle)'}`,
+    borderRadius: 'var(--radius-sm)',
     background: 'var(--bg-elevated)',
-    color: '#e0e0e0',
-    fontSize: 12,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--text-primary)',
+    fontSize: 13,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 500,
     outline: 'none',
     boxSizing: 'border-box',
+    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
   }),
   select: (borderColor) => ({
     width: '100%',
-    padding: '4px 6px',
-    border: `1px solid ${borderColor || '#1a1a2e'}`,
-    borderRadius: 3,
+    padding: '8px 10px',
+    border: `1px solid ${borderColor || 'var(--border-subtle)'}`,
+    borderRadius: 'var(--radius-sm)',
     background: 'var(--bg-elevated)',
-    color: '#e0e0e0',
-    fontSize: 12,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--text-primary)',
+    fontSize: 13,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 500,
     outline: 'none',
     boxSizing: 'border-box',
+    transition: 'border-color var(--transition-fast)',
   }),
   calcBtn: {
     width: '100%',
-    padding: '8px',
-    border: '1px solid #448aff',
-    borderRadius: 4,
-    background: '#448aff22',
-    color: '#448aff',
+    padding: '10px 12px',
+    border: 'none',
+    borderRadius: 'var(--radius-md)',
+    background: 'linear-gradient(135deg, var(--accent) 0%, #5c9bff 100%)',
+    color: '#fff',
     fontWeight: 700,
     fontSize: 13,
-    fontFamily: "'Courier New', monospace",
+    fontFamily: 'var(--font-ui)',
     cursor: 'pointer',
-    transition: 'all 0.15s',
-    marginTop: 4,
+    transition: 'all var(--transition-fast)',
+    boxShadow: '0 2px 12px rgba(68, 138, 255, 0.3)',
+    letterSpacing: '0.03em',
   },
   calcBtnDisabled: {
-    opacity: 0.4,
+    opacity: 0.35,
     cursor: 'not-allowed',
+    boxShadow: 'none',
   },
+  actionBtn: (bg, color, borderColor) => ({
+    width: '100%',
+    padding: '9px 12px',
+    border: `1px solid ${borderColor}`,
+    borderRadius: 'var(--radius-md)',
+    background: bg,
+    color: color,
+    fontWeight: 600,
+    fontSize: 12,
+    fontFamily: 'var(--font-ui)',
+    cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
+    letterSpacing: '0.02em',
+  }),
   alertSection: {
     marginTop: 4,
   },
   alertRow: {
     display: 'flex',
-    gap: 4,
-    marginTop: 4,
+    gap: 6,
+    marginTop: 6,
   },
   alertSelect: {
-    width: 60,
-    padding: '3px 4px',
-    border: '1px solid #1a1a2e',
-    borderRadius: 3,
+    width: 68,
+    padding: '6px 8px',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-sm)',
     background: 'var(--bg-elevated)',
-    color: '#ccc',
-    fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--text-secondary)',
+    fontSize: 12,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 500,
   },
   alertInput: {
     flex: 1,
-    padding: '3px 6px',
-    border: '1px solid #1a1a2e',
-    borderRadius: 3,
+    padding: '6px 10px',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-sm)',
     background: 'var(--bg-elevated)',
-    color: '#ccc',
-    fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    color: 'var(--text-primary)',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    fontWeight: 500,
     minWidth: 0,
   },
   alertAddBtn: {
-    padding: '3px 8px',
-    border: '1px solid #448aff',
-    borderRadius: 3,
-    background: '#448aff',
+    padding: '6px 12px',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--accent)',
     color: '#fff',
-    fontSize: 11,
-    fontFamily: "'Courier New', monospace",
+    fontSize: 12,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 600,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
   },
   alertList: {
     listStyle: 'none',
     padding: 0,
-    margin: '4px 0 0 0',
+    margin: '6px 0 0 0',
   },
   alertItem: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '3px 0',
-    borderBottom: '1px solid #1a1a2e',
-    fontSize: 11,
+    padding: '6px 8px',
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--bg-elevated)',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    marginBottom: 4,
   },
   alertDel: {
     background: 'transparent',
     border: 'none',
-    color: '#555',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
-    fontSize: 14,
-    padding: '0 2px',
+    fontSize: 16,
+    padding: '0 4px',
+    lineHeight: 1,
   },
   gexBanner: {
-    background: '#0d1a2e',
-    border: '1px solid #448aff33',
-    borderRadius: 4,
-    padding: '6px 8px',
-    fontSize: 10,
-    color: '#448aff',
-    marginBottom: 4,
+    background: 'linear-gradient(135deg, rgba(68, 138, 255, 0.08) 0%, rgba(124, 77, 255, 0.06) 100%)',
+    border: '1px solid var(--border-accent)',
+    borderRadius: 'var(--radius-md)',
+    padding: '10px 12px',
+    fontSize: 11,
+    color: 'var(--accent)',
+    animation: 'sw-fadeIn 0.3s ease',
   },
   error: {
-    background: '#1a0a0a',
-    border: '1px solid #ff1744',
-    borderRadius: 4,
-    padding: '4px 8px',
-    fontSize: 10,
-    color: '#ff5252',
+    background: 'var(--red-dim)',
+    border: '1px solid rgba(255, 82, 82, 0.3)',
+    borderRadius: 'var(--radius-md)',
+    padding: '8px 12px',
+    fontSize: 11,
+    color: 'var(--red)',
+    fontWeight: 500,
   },
 };
 
 function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
-  const borderColor = color === '#00e676' ? '#00e67644' : '#ff525244';
+  const borderColor = color === '#00e676' ? 'rgba(0, 230, 118, 0.25)' : 'rgba(255, 82, 82, 0.25)';
   const optionType = label.toLowerCase().includes('put') ? 'put' : 'call';
-  // Live Chain mode: dropdown with delta info
   if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
     return (
       <div style={s.fieldCol}>
@@ -275,7 +370,6 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
       </div>
     );
   }
-  // Manual and GEX Suggest: plain text input (no spinners)
   return (
     <div style={s.fieldCol}>
       <span style={s.fieldLabel(color)}>{label}</span>
@@ -287,18 +381,7 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        style={{
-          width: '100%',
-          background: 'var(--bg-elevated)',
-          border: `1px solid ${borderColor || '#1e1e32'}`,
-          color: '#ccc',
-          padding: '6px 8px',
-          fontSize: '11px',
-          borderRadius: '3px',
-          fontFamily: 'inherit',
-          outline: 'none',
-          boxSizing: 'border-box',
-        }}
+        style={s.input(borderColor)}
       />
     </div>
   );
@@ -364,12 +447,10 @@ export default function StrategyPanel({
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState('');
 
-  // Alert form state
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
 
-  // Reset spread inputs when symbol changes
   const prevSymbolRef = useRef(symbol);
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
@@ -390,7 +471,6 @@ export default function StrategyPanel({
     setSaving(true);
     setSaveMsg('');
     try {
-      // Map legs to individual strike fields based on strategy
       let long_put, short_put, short_call, long_call, short_exp, long_exp;
       if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
         long_put = parseFloat(legs.longPutStrike) || 0;
@@ -405,7 +485,7 @@ export default function StrategyPanel({
         short_call = parseFloat(legs.shortCallStrike) || 0;
         long_call = parseFloat(legs.longCallStrike) || 0;
         short_exp = legs.expiration;
-        long_exp = null;  // single expiration
+        long_exp = null;
       } else {
         long_put = parseFloat(legs.putStrike) || 0;
         short_put = parseFloat(legs.putStrike) || 0;
@@ -415,7 +495,6 @@ export default function StrategyPanel({
         long_exp = legs.backExpiration;
       }
 
-      // entry_credit is the absolute value of net_debit (credit received)
       const entryCredit = Math.abs(calcResult.net_debit);
       const entryPrice = entryCredit / (contracts * 100);
 
@@ -677,15 +756,17 @@ export default function StrategyPanel({
       {/* Logo */}
       <div>
         <div style={s.logo}>
-          <span style={s.logoWhite}>Spread</span>
-          <span style={s.logoBlue}>Works</span>
+          <div style={s.logoIcon}>S</div>
+          <span style={s.logoText}>
+            Spread<span style={s.logoAccent}>Works</span>
+          </span>
         </div>
-        <div style={s.subtitle}>Options Spread Analyzer</div>
+        <div style={{ ...s.subtitle, marginTop: 2, marginLeft: 36 }}>Options Spread Analyzer</div>
       </div>
 
-      {/* Strategy toggle */}
-      <div>
-        <div style={s.sectionLabel}>STRATEGY</div>
+      {/* Strategy */}
+      <div style={s.card}>
+        <div style={s.sectionLabel}>Strategy</div>
         <div style={s.toggleRow}>
           <button
             style={s.toggleBtn(strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL)}
@@ -702,9 +783,9 @@ export default function StrategyPanel({
         </div>
       </div>
 
-      {/* Input mode toggle */}
-      <div>
-        <div style={s.sectionLabel}>INPUT MODE</div>
+      {/* Input Mode */}
+      <div style={s.card}>
+        <div style={s.sectionLabel}>Input Mode</div>
         <div style={s.toggleRow}>
           <button style={s.toggleBtn(inputMode === INPUT_MODES.LIVE_CHAIN)} onClick={() => setInputMode(INPUT_MODES.LIVE_CHAIN)}>Live Chain</button>
           <button style={s.toggleBtn(inputMode === INPUT_MODES.MANUAL)} onClick={() => setInputMode(INPUT_MODES.MANUAL)}>Manual</button>
@@ -716,9 +797,9 @@ export default function StrategyPanel({
 
       {/* GEX Suggestion */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
-        <div style={{ ...s.gexBanner, position: 'relative' }}>
+        <div style={s.gexBanner}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong>GEX Suggestion</strong>
+            <span style={{ fontWeight: 700, fontSize: 12 }}>GEX Suggestion</span>
             <button
               onClick={() => {
                 setGexSuggestion(null);
@@ -728,177 +809,211 @@ export default function StrategyPanel({
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#ff5252',
+                color: 'var(--red)',
                 cursor: 'pointer',
-                fontSize: 14,
-                fontFamily: "'Courier New', monospace",
+                fontSize: 16,
+                fontFamily: 'var(--font-ui)',
                 padding: '0 2px',
                 lineHeight: 1,
               }}
               title="Dismiss suggestion and switch to Manual"
             >&times;</button>
           </div>
-          {gexSuggestion.rationale && <div style={{ color: '#888', marginTop: 2 }}>{gexSuggestion.rationale}</div>}
+          {gexSuggestion.rationale && (
+            <div style={{ color: 'var(--text-secondary)', marginTop: 4, fontSize: 11, lineHeight: 1.5 }}>
+              {gexSuggestion.rationale}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Spot */}
+      {/* Spot Price */}
       <div style={s.spotRow}>
         <span style={s.spotLabel}>Symbol</span>
-        <span style={{ ...s.spotValue, marginRight: 4 }}>{symbol}</span>
-        <span style={{ color: '#333' }}>&middot;</span>
-        <span style={{ ...s.spotLabel, marginLeft: 4 }}>Spot:</span>
+        <span style={s.spotSymbol}>{symbol}</span>
+        <span style={s.spotDot} />
+        <span style={s.spotLabel}>Spot</span>
         <span style={s.spotValue}>{spotPrice ? `$${spotPrice.toFixed(2)}` : '--'}</span>
       </div>
 
-      {/* Legs */}
-      {strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? (
-        <>
-          <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={s.fieldRow}>
-            <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-        </>
-      ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
-        <>
-          <div style={s.sideLabel('#00e676')}>-- PUT SIDE --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={s.sideLabel('#ff5252')}>-- CALL SIDE --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={s.fieldRow}>
-            <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-        </>
-      ) : (
-        <>
-          <div style={s.sideLabel('#ff5252')}>-- PUT CALENDAR --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
-            Sell @ Front Exp &middot; Buy @ Back Exp
-          </div>
-          <div style={s.sideLabel('#00e676')}>-- CALL CALENDAR --</div>
-          <div style={s.fieldRow}>
-            <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          <div style={{ fontSize: 9, color: '#666', marginBottom: 2, marginTop: -2 }}>
-            Sell @ Front Exp &middot; Buy @ Back Exp
-          </div>
-          <div style={s.sideLabel('#448aff')}>-- EXPIRATIONS --</div>
-          <div style={s.fieldRow}>
-            <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-            <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-          </div>
-          {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
-            <div style={{ background: 'var(--bg-elevated)', borderRadius: 4, padding: '4px 6px', fontSize: 9, color: '#888', marginTop: 2 }}>
-              <div style={{ color: '#555', marginBottom: 2, fontWeight: 600 }}>4 LEGS:</div>
-              <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
-              <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>
-              <div>3. Sell Call ${legs.callStrike} ({legs.frontExpiration})</div>
-              <div>4. Buy Call ${legs.callStrike} ({legs.backExpiration})</div>
+      {/* Strike Inputs */}
+      <div style={s.card}>
+        {strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? (
+          <>
+            <div style={s.sideLabel('var(--green)')}>
+              <span>Put Side</span>
+              <div style={s.sideLine('var(--green)')} />
             </div>
-          )}
-        </>
-      )}
+            <div style={s.fieldRow}>
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={s.sideLabel('var(--red)')}>
+              <span>Call Side</span>
+              <div style={s.sideLine('var(--red)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={{ ...s.sideLabel('var(--text-tertiary)'), marginTop: 8 }}>
+              <span>Expirations</span>
+              <div style={s.sideLine('var(--text-tertiary)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+          </>
+        ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
+          <>
+            <div style={s.sideLabel('var(--green)')}>
+              <span>Put Side</span>
+              <div style={s.sideLine('var(--green)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={s.sideLabel('var(--red)')}>
+              <span>Call Side</span>
+              <div style={s.sideLine('var(--red)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={{ ...s.sideLabel('var(--text-tertiary)'), marginTop: 8 }}>
+              <span>Expiration</span>
+              <div style={s.sideLine('var(--text-tertiary)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={s.sideLabel('var(--red)')}>
+              <span>Put Calendar</span>
+              <div style={s.sideLine('var(--red)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, marginTop: -2 }}>
+              Sell @ Front Exp &middot; Buy @ Back Exp
+            </div>
+            <div style={s.sideLabel('var(--green)')}>
+              <span>Call Calendar</span>
+              <div style={s.sideLine('var(--green)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, marginTop: -2 }}>
+              Sell @ Front Exp &middot; Buy @ Back Exp
+            </div>
+            <div style={{ ...s.sideLabel('var(--accent)'), marginTop: 8 }}>
+              <span>Expirations</span>
+              <div style={s.sideLine('var(--accent)')} />
+            </div>
+            <div style={s.fieldRow}>
+              <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
+              <div style={{
+                background: 'var(--bg-elevated)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '8px 10px',
+                fontSize: 10,
+                color: 'var(--text-secondary)',
+                marginTop: 4,
+                fontFamily: 'var(--font-mono)',
+              }}>
+                <div style={{ color: 'var(--text-tertiary)', marginBottom: 4, fontWeight: 600, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>4 Legs:</div>
+                <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
+                <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>
+                <div>3. Sell Call ${legs.callStrike} ({legs.frontExpiration})</div>
+                <div>4. Buy Call ${legs.callStrike} ({legs.backExpiration})</div>
+              </div>
+            )}
+          </>
+        )}
 
-      {/* Contracts */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={s.fieldLabel()}>Contracts</span>
-        <input
-          type="number"
-          min={1}
-          max={100}
-          value={contracts}
-          onChange={(e) => setContracts(Math.max(1, parseInt(e.target.value, 10) || 1))}
-          style={{ ...s.input(), width: 50 }}
-        />
+        {/* Contracts */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+          <span style={s.fieldLabel()}>Contracts</span>
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={contracts}
+            onChange={(e) => setContracts(Math.max(1, parseInt(e.target.value, 10) || 1))}
+            style={{ ...s.input(), width: 60 }}
+          />
+        </div>
       </div>
 
-      {/* Calculate */}
-      <button
-        style={{ ...s.calcBtn, ...((!isFormValid() || calcLoading || loading) ? s.calcBtnDisabled : {}) }}
-        onClick={handleCalculate}
-        disabled={!isFormValid() || calcLoading || loading}
-      >
-        {calcLoading || loading ? 'Loading...' : '\u26A1 CALCULATE'}
-      </button>
-
-      {/* Save Position — only visible after calculate */}
-      {calcResult && (
+      {/* Action Buttons */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <button
-          style={{
-            ...s.calcBtn,
-            background: '#00e67622',
-            color: '#00e676',
-            border: '1px solid #00e676',
-            marginTop: 2,
-            ...(saving ? s.calcBtnDisabled : {}),
-          }}
-          onClick={handleSavePosition}
-          disabled={saving}
+          style={{ ...s.calcBtn, ...((!isFormValid() || calcLoading || loading) ? s.calcBtnDisabled : {}) }}
+          onClick={handleCalculate}
+          disabled={!isFormValid() || calcLoading || loading}
         >
-          {saving ? 'Saving...' : '\uD83D\uDCBE SAVE POSITION'}
+          {calcLoading || loading ? 'Calculating...' : '\u26A1 Calculate'}
         </button>
-      )}
-      {saveMsg && (
-        <div style={{
-          fontSize: 10,
-          color: saveMsg === 'Saved!' ? '#00e676' : '#ff5252',
-          textAlign: 'center',
-          marginTop: 2,
-        }}>
-          {saveMsg}
-        </div>
-      )}
 
-      {/* Push to Discord */}
-      {calcResult && (
-        <button
-          style={{
-            ...s.calcBtn,
-            background: '#5865F222',
-            color: '#5865F2',
-            border: '1px solid #5865F2',
-            marginTop: 2,
-            ...(pushing ? s.calcBtnDisabled : {}),
-          }}
-          onClick={handlePushDiscord}
-          disabled={pushing}
-        >
-          {pushing ? 'Posting...' : '\uD83D\uDCE3 PUSH TO DISCORD'}
-        </button>
-      )}
-      {pushMsg && (
-        <div style={{
-          fontSize: 10,
-          color: pushMsg === 'Posted!' ? '#5865F2' : '#ff5252',
-          textAlign: 'center',
-          marginTop: 2,
-        }}>
-          {pushMsg}
-        </div>
-      )}
+        {calcResult && (
+          <>
+            <button
+              style={{
+                ...s.actionBtn('var(--green-dim)', 'var(--green)', 'rgba(0, 230, 118, 0.25)'),
+                ...(saving ? s.calcBtnDisabled : {}),
+              }}
+              onClick={handleSavePosition}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : '\uD83D\uDCBE Save Position'}
+            </button>
+            <button
+              style={{
+                ...s.actionBtn('var(--purple-dim)', 'var(--purple)', 'rgba(124, 77, 255, 0.25)'),
+                ...(pushing ? s.calcBtnDisabled : {}),
+              }}
+              onClick={handlePushDiscord}
+              disabled={pushing}
+            >
+              {pushing ? 'Posting...' : '\uD83D\uDCE3 Push to Discord'}
+            </button>
+          </>
+        )}
+        {saveMsg && (
+          <div style={{
+            fontSize: 11,
+            color: saveMsg === 'Saved!' ? 'var(--green)' : 'var(--red)',
+            textAlign: 'center',
+            fontWeight: 500,
+          }}>
+            {saveMsg}
+          </div>
+        )}
+        {pushMsg && (
+          <div style={{
+            fontSize: 11,
+            color: pushMsg === 'Posted!' ? 'var(--purple)' : 'var(--red)',
+            textAlign: 'center',
+            fontWeight: 500,
+          }}>
+            {pushMsg}
+          </div>
+        )}
+      </div>
 
       {/* Price Alerts */}
-      <div style={s.alertSection}>
-        <div style={s.sectionLabel}>PRICE ALERTS</div>
+      <div style={s.card}>
+        <div style={s.sectionLabel}>Price Alerts</div>
         <form onSubmit={handleAddAlert}>
           <div style={s.alertRow}>
             <select style={s.alertSelect} value={alertCondition} onChange={(e) => setAlertCondition(e.target.value)}>
@@ -920,7 +1035,7 @@ export default function StrategyPanel({
           <ul style={s.alertList}>
             {alerts.map((a) => (
               <li key={a.id} style={{ ...s.alertItem, opacity: a.triggered ? 0.5 : 1 }}>
-                <span>{a.condition} ${a.price}{a.triggered ? ' \u26A1' : ''}</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{a.condition} ${a.price}{a.triggered ? ' \u26A1' : ''}</span>
                 <button style={s.alertDel} onClick={() => handleDeleteAlert(a.id)}>&times;</button>
               </li>
             ))}

@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { formatCurrency, formatPct, formatGreek, formatGreekDollar } from '../utils/format';
 
-const font = "'Courier New', monospace";
-
 const currFmt = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
@@ -12,52 +10,56 @@ const st = {
   bar: {
     display: 'flex',
     background: 'var(--bg-surface)',
-    borderTop: '1px solid #1a1a2e',
-    fontFamily: font,
-    fontSize: 11,
-    boxShadow: 'var(--shadow-panel)',
+    borderTop: '1px solid var(--border-subtle)',
+    fontFamily: 'var(--font-ui)',
+    fontSize: 12,
   },
   cell: {
     flex: 1,
-    padding: '8px 12px',
-    borderRight: '1px solid #1a1a2e',
+    padding: '10px 14px',
+    borderRight: '1px solid var(--border-subtle)',
     display: 'flex',
     flexDirection: 'column',
-    gap: 2,
+    gap: 3,
   },
   label: {
-    color: '#555',
-    fontSize: 9,
+    color: 'var(--text-tertiary)',
+    fontSize: 10,
+    fontWeight: 600,
     textTransform: 'uppercase',
-    letterSpacing: '0.06em',
+    letterSpacing: '0.08em',
   },
   value: (color) => ({
-    color: color || '#ccc',
+    color: color || 'var(--text-primary)',
     fontWeight: 700,
-    fontSize: 14,
+    fontSize: 15,
+    fontFamily: 'var(--font-mono)',
   }),
   greekValue: (color) => ({
-    color: color || '#ccc',
-    fontWeight: 700,
-    fontSize: 13,
+    color: color || 'var(--text-primary)',
+    fontWeight: 600,
+    fontSize: 14,
+    fontFamily: 'var(--font-mono)',
   }),
   tooltip: {
     position: 'absolute',
     bottom: '100%',
     left: '50%',
     transform: 'translateX(-50%)',
-    marginBottom: 6,
+    marginBottom: 8,
     background: 'var(--bg-elevated)',
-    border: '1px solid #2a2a40',
-    borderRadius: 4,
-    padding: '6px 10px',
-    color: '#aaa',
-    fontSize: 10,
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-md)',
+    padding: '8px 12px',
+    color: 'var(--text-secondary)',
+    fontSize: 11,
     lineHeight: 1.4,
-    fontFamily: font,
+    fontFamily: 'var(--font-ui)',
     whiteSpace: 'nowrap',
     zIndex: 10,
     pointerEvents: 'none',
+    boxShadow: 'var(--shadow-lg)',
+    animation: 'sw-fadeIn 0.15s ease',
   },
 };
 
@@ -84,14 +86,14 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
 }
 
 function deltaColor(val) {
-  if (val == null) return '#555';
-  if (Math.abs(val) < 0.05) return '#666';
-  return val > 0 ? '#00e676' : '#ff5252';
+  if (val == null) return 'var(--text-tertiary)';
+  if (Math.abs(val) < 0.05) return 'var(--text-secondary)';
+  return val > 0 ? 'var(--green)' : 'var(--red)';
 }
 
 function thetaColor(val) {
-  if (val == null) return '#555';
-  return val >= 0 ? '#00e676' : '#ff5252';
+  if (val == null) return 'var(--text-tertiary)';
+  return val >= 0 ? 'var(--green)' : 'var(--red)';
 }
 
 function getInitialUnit() {
@@ -112,11 +114,10 @@ export default function MetricsBar({ calcResult }) {
 
   const maxRisk = r.max_loss != null ? Math.abs(r.max_loss) : null;
 
-  // net_debit < 0 means credit strategy (IC); net_debit > 0 means debit strategy (DC, DD)
   const isCredit = r.net_debit != null && r.net_debit < 0;
   const displayAmount = Math.abs(r.net_debit ?? 0);
   const creditLabel = isCredit ? 'NET CREDIT' : 'NET DEBIT';
-  const creditColor = isCredit ? '#00e676' : '#ff5252';
+  const creditColor = isCredit ? 'var(--green)' : 'var(--red)';
   const isTheoretical = r.pricing_mode === 'black_scholes';
   const tilde = isTheoretical ? '~' : '';
 
@@ -151,14 +152,14 @@ export default function MetricsBar({ calcResult }) {
     : '--';
 
   const unitBtnStyle = (active) => ({
-    padding: '1px 5px',
-    border: `1px solid ${active ? '#448aff' : '#1a1a2e'}`,
-    borderRadius: 2,
-    background: active ? '#448aff33' : 'transparent',
-    color: active ? '#448aff' : '#444',
+    padding: '2px 6px',
+    border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`,
+    borderRadius: 3,
+    background: active ? 'rgba(68, 138, 255, 0.15)' : 'transparent',
+    color: active ? 'var(--accent)' : 'var(--text-muted)',
     cursor: 'pointer',
-    fontSize: 9,
-    fontFamily: font,
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
     fontWeight: 600,
     lineHeight: 1,
   });
@@ -168,7 +169,7 @@ export default function MetricsBar({ calcResult }) {
       {/* Row 1: P&L Metrics */}
       <div style={st.bar}>
         <div style={st.cell}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={st.label}>{creditLabel}</span>
             <button style={unitBtnStyle(!isPct)} onClick={toggleUnit}>$</button>
             <button style={unitBtnStyle(isPct)} onClick={toggleUnit}>%</button>
@@ -176,23 +177,23 @@ export default function MetricsBar({ calcResult }) {
           <span style={st.value(creditColor)}>{creditVal}</span>
         </div>
         <div style={st.cell}>
-          <span style={st.label}>MAX PROFIT</span>
-          <span style={st.value('#00e676')}>{maxProfitStr}</span>
+          <span style={st.label}>Max Profit</span>
+          <span style={st.value('var(--green)')}>{maxProfitStr}</span>
         </div>
         <div style={st.cell}>
-          <span style={st.label}>MAX LOSS</span>
-          <span style={st.value('#ff5252')}>{maxLossStr}</span>
+          <span style={st.label}>Max Loss</span>
+          <span style={st.value('var(--red)')}>{maxLossStr}</span>
         </div>
         <div style={st.cell}>
-          <span style={st.label}>CHANCE OF PROFIT</span>
-          <span style={st.value('#448aff')}>{cop}</span>
+          <span style={st.label}>Chance of Profit</span>
+          <span style={st.value('var(--accent)')}>{cop}</span>
         </div>
         <div style={st.cell}>
-          <span style={st.label}>BREAKEVENS</span>
+          <span style={st.label}>Breakevens</span>
           <span style={st.value()}>${beLower} &mdash; ${beUpper}</span>
         </div>
         <div style={{ ...st.cell, borderRight: 'none' }}>
-          <span style={st.label}>IMPLIED VOL</span>
+          <span style={st.label}>Implied Vol</span>
           <span style={st.value()}>{iv}</span>
         </div>
       </div>
@@ -207,7 +208,7 @@ export default function MetricsBar({ calcResult }) {
         <GreekCell
           label="Gamma" symbol={'\u0393'}
           value={formatGreek(g.gamma, 5)}
-          color="#aaa"
+          color="var(--text-secondary)"
           tooltip={GREEK_TOOLTIPS.gamma}
         />
         <GreekCell
@@ -219,7 +220,7 @@ export default function MetricsBar({ calcResult }) {
         <GreekCell
           label="Vega" symbol={'\u03BD'}
           value={formatGreekDollar(g.vega)}
-          color="#aaa"
+          color="var(--text-secondary)"
           tooltip={GREEK_TOOLTIPS.vega}
         />
         <div style={{ ...st.cell, flex: 2, borderRight: 'none' }} />
