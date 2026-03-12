@@ -379,6 +379,36 @@ test("flame positions table", t == "alpha_prime.ironforge.flame_positions", t)
 t = scanner.bot_table("spark", "pdt_log")
 test("spark pdt_log table", t == "alpha_prime.ironforge.spark_pdt_log", t)
 
+# ─── Config Override Wiring ───────────────────────────────────────
+print("\n=== Config Override Wiring ===")
+
+# Verify BOT_CONFIG has bp_pct and starting_capital keys
+for bname in ["flame", "spark", "inferno"]:
+    cfg = scanner.BOT_CONFIG[bname]
+    test(f"{bname} has bp_pct", "bp_pct" in cfg, f"keys: {list(cfg.keys())}")
+    test(f"{bname} has starting_capital", "starting_capital" in cfg, f"keys: {list(cfg.keys())}")
+    test(f"{bname} bp_pct default = 0.85", cfg["bp_pct"] == 0.85, f"got {cfg['bp_pct']}")
+
+# Verify _DB_TO_CFG mapping exists and maps the right fields
+db_map = scanner._DB_TO_CFG
+test("DB map has buying_power_usage_pct", "buying_power_usage_pct" in db_map)
+test("DB map has starting_capital", "starting_capital" in db_map)
+test("DB map has sd_multiplier", "sd_multiplier" in db_map)
+
+# Verify profit_target_pct transform: DB stores 30.0 → scanner uses 0.30
+pt_mapping = db_map["profit_target_pct"]
+test("profit_target_pct has transform", isinstance(pt_mapping, tuple), f"type: {type(pt_mapping)}")
+_, pt_transform = pt_mapping
+test("profit_target_pct 30.0 → 0.30", pt_transform(30.0) == 0.30, f"got {pt_transform(30.0)}")
+
+# Verify stop_loss_pct transform: DB stores 200.0 → scanner uses 2.0
+sl_mapping = db_map["stop_loss_pct"]
+_, sl_transform = sl_mapping
+test("stop_loss_pct 200.0 → 2.0", sl_transform(200.0) == 2.0, f"got {sl_transform(200.0)}")
+
+# Verify load_config_overrides function exists
+test("load_config_overrides exists", callable(getattr(scanner, "load_config_overrides", None)))
+
 # ─── Summary ──────────────────────────────────────────────────────
 print(f"\n{'=' * 50}")
 print(f"  SMOKE TEST RESULTS: {passed} passed, {failed} failed")
