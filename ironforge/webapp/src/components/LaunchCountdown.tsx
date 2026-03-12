@@ -143,10 +143,10 @@ export default function LaunchCountdown() {
             THE FORGE IS LIVE
           </p>
           <p className="text-sm text-amber-500/60 mt-1">Iron has been tempered. Trading has begun.</p>
-          <p className="text-xs text-forge-muted mt-4 italic max-w-lg mx-auto">
+          <p className="text-sm font-medium text-amber-200/90 mt-4 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(251,191,36,0.3)' }}>
             &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
           </p>
-          <p className="text-[10px] text-amber-500/50 mt-2 max-w-md mx-auto leading-relaxed">
+          <p className="text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(245,158,11,0.25)' }}>
             John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
             On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, now alive.
           </p>
@@ -214,10 +214,10 @@ export default function LaunchCountdown() {
         </div>
 
         {/* Scripture */}
-        <p className="text-center text-xs text-forge-muted mt-5 italic max-w-lg mx-auto">
+        <p className="text-center text-sm font-medium text-amber-200/90 mt-6 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(251,191,36,0.3)' }}>
           &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
         </p>
-        <p className="text-center text-[10px] text-amber-500/50 mt-2 max-w-md mx-auto leading-relaxed">
+        <p className="text-center text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(245,158,11,0.25)' }}>
           John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
           On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, ready to live.
         </p>

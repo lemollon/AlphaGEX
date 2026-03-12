@@ -12,62 +12,10 @@ const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
   ),
 })
 
-/* ── Inline SVG Icons (no external deps) ───────────────────────── */
-
-function AnvilIcon({ size = 40 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block align-middle">
-      <path
-        d="M2 18h20v2H2v-2zm3-2h14l1-3H10l-1-3h8V7H9L7 4H4v6l-2 3v1h3v2zm0 0"
-        fill="#F59E0B"
-      />
-      <path
-        d="M4 4h3l2 3h8v3H9l1 3h10l-1 3H5"
-        stroke="#D97706"
-        strokeWidth="0.5"
-        fill="none"
-      />
-    </svg>
-  )
-}
-
-function FlameIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M8 1C8 1 3 6.5 3 10a5 5 0 0 0 10 0C13 6.5 8 1 8 1zm0 12.5a2.5 2.5 0 0 1-2.5-2.5c0-1.5 2.5-4.5 2.5-4.5s2.5 3 2.5 4.5A2.5 2.5 0 0 1 8 13.5z"
-        fill="#F59E0B"
-      />
-    </svg>
-  )
-}
-
-function SparkIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M9.5 1L4 9h4l-1.5 6L13 7H9l.5-6z"
-        fill="#3B82F6"
-      />
-    </svg>
-  )
-}
-
-function InfernoIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 16 16" fill="none" className="inline-block mr-1.5 align-[-3px]">
-      <path
-        d="M8 0l2 5h-1.5l2.5 4h-2l2 5H5l2-5H5l2.5-4H6L8 0z"
-        fill="#EF4444"
-      />
-    </svg>
-  )
-}
-
 const botIcons: Record<string, React.ReactNode> = {
-  FLAME: <FlameIcon />,
-  SPARK: <SparkIcon />,
-  INFERNO: <InfernoIcon />,
+  FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
+  SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
+  INFERNO: <img src="/icon-inferno.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
 }
 
 const botGlow: Record<string, string> = {
@@ -190,7 +138,7 @@ export default function Home() {
       {/* Hero */}
       <div className="text-center mt-2">
         <h1 className="text-5xl font-extrabold tracking-tight mb-2 glow-amber">
-          <AnvilIcon size={40} />{' '}
+          <img src="/ironforge-logo.svg" alt="" className="h-10 w-10 inline-block align-middle" />{' '}
           <span className="text-white">Iron</span>
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500">
             Forge
