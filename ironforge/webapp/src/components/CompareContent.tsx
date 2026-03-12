@@ -10,12 +10,15 @@ const REFRESH = 60_000
 export default function CompareContent() {
   const { data: flameStatus } = useSWR('/api/flame/status', fetcher, { refreshInterval: REFRESH })
   const { data: sparkStatus } = useSWR('/api/spark/status', fetcher, { refreshInterval: REFRESH })
+  const { data: infernoStatus } = useSWR('/api/inferno/status', fetcher, { refreshInterval: REFRESH })
   const { data: flameEquity } = useSWR('/api/flame/equity-curve', fetcher, { refreshInterval: REFRESH })
   const { data: sparkEquity } = useSWR('/api/spark/equity-curve', fetcher, { refreshInterval: REFRESH })
+  const { data: infernoEquity } = useSWR('/api/inferno/equity-curve', fetcher, { refreshInterval: REFRESH })
   const { data: flamePerf } = useSWR('/api/flame/performance', fetcher, { refreshInterval: REFRESH })
   const { data: sparkPerf } = useSWR('/api/spark/performance', fetcher, { refreshInterval: REFRESH })
+  const { data: infernoPerf } = useSWR('/api/inferno/performance', fetcher, { refreshInterval: REFRESH })
 
-  const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || 5000
+  const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || infernoEquity?.starting_capital || 5000
 
   return (
     <div className="space-y-6">
@@ -24,19 +27,22 @@ export default function CompareContent() {
           <span className="text-amber-400">FLAME</span>
           <span className="text-forge-muted mx-2">vs</span>
           <span className="text-blue-400">SPARK</span>
+          <span className="text-forge-muted mx-2">vs</span>
+          <span className="text-red-400">INFERNO</span>
         </h1>
-        <span className="text-forge-muted">2DTE vs 1DTE Comparison</span>
+        <span className="text-forge-muted">2DTE vs 1DTE vs 0DTE Comparison</span>
       </div>
 
       {/* Equity overlay */}
       <ComparisonChart
         flameData={flameEquity?.curve || []}
         sparkData={sparkEquity?.curve || []}
+        infernoData={infernoEquity?.curve || []}
         startingCapital={startingCapital}
       />
 
       {/* Side-by-side status */}
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-3 gap-6">
         {/* FLAME */}
         <div>
           <h3 className="text-sm font-medium text-amber-400 mb-2">FLAME (2DTE)</h3>
@@ -49,10 +55,16 @@ export default function CompareContent() {
           {sparkStatus && <MiniStatus account={sparkStatus.account} />}
           {sparkPerf && <PerformanceCard data={sparkPerf} label="SPARK" />}
         </div>
+        {/* INFERNO */}
+        <div>
+          <h3 className="text-sm font-medium text-red-400 mb-2">INFERNO (0DTE)</h3>
+          {infernoStatus && <MiniStatus account={infernoStatus.account} />}
+          {infernoPerf && <PerformanceCard data={infernoPerf} label="INFERNO" />}
+        </div>
       </div>
 
       {/* Head-to-head table */}
-      {flamePerf && sparkPerf && (
+      {flamePerf && sparkPerf && infernoPerf && (
         <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
           <h3 className="text-sm font-medium text-gray-400 p-4 pb-2">Head-to-Head Metrics</h3>
           <table className="w-full text-sm">
@@ -61,19 +73,23 @@ export default function CompareContent() {
                 <th className="text-left p-3">Metric</th>
                 <th className="text-right p-3 text-amber-400">FLAME (2DTE)</th>
                 <th className="text-right p-3 text-blue-400">SPARK (1DTE)</th>
+                <th className="text-right p-3 text-red-400">INFERNO (0DTE)</th>
               </tr>
             </thead>
             <tbody>
-              {metricRows(flamePerf, sparkPerf).map(([name, fv, sv, higherBetter]) => {
+              {metricRows(flamePerf, sparkPerf, infernoPerf).map(([name, fv, sv, iv, higherBetter]) => {
                 const fNum = parseFloat(String(fv).replace(/[$%+,]/g, ''))
                 const sNum = parseFloat(String(sv).replace(/[$%+,]/g, ''))
-                const flameWins = higherBetter ? fNum > sNum : fNum < sNum
-                const sparkWins = higherBetter ? sNum > fNum : sNum < fNum
+                const iNum = parseFloat(String(iv).replace(/[$%+,]/g, ''))
+                const best = higherBetter
+                  ? Math.max(fNum, sNum, iNum)
+                  : Math.min(fNum, sNum, iNum)
                 return (
                   <tr key={name} className="border-b border-forge-border/50">
                     <td className="p-3 font-medium">{name}</td>
-                    <td className={`p-3 text-right ${flameWins ? 'text-emerald-400 font-bold' : ''}`}>{fv}</td>
-                    <td className={`p-3 text-right ${sparkWins ? 'text-emerald-400 font-bold' : ''}`}>{sv}</td>
+                    <td className={`p-3 text-right ${fNum === best ? 'text-emerald-400 font-bold' : ''}`}>{fv}</td>
+                    <td className={`p-3 text-right ${sNum === best ? 'text-emerald-400 font-bold' : ''}`}>{sv}</td>
+                    <td className={`p-3 text-right ${iNum === best ? 'text-emerald-400 font-bold' : ''}`}>{iv}</td>
                   </tr>
                 )
               })}
@@ -88,19 +104,21 @@ export default function CompareContent() {
 function metricRows(
   flame: any,
   spark: any,
-): [string, string, string, boolean][] {
+  inferno: any,
+): [string, string, string, string, boolean][] {
   return [
-    ['Total Trades', String(flame.total_trades), String(spark.total_trades), true],
-    ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, true],
-    ['Total P&L', `$${flame.total_pnl >= 0 ? '+' : ''}${flame.total_pnl.toFixed(2)}`, `$${spark.total_pnl >= 0 ? '+' : ''}${spark.total_pnl.toFixed(2)}`, true],
-    ['Avg Win', `$+${flame.avg_win.toFixed(2)}`, `$+${spark.avg_win.toFixed(2)}`, true],
-    ['Avg Loss', `$${flame.avg_loss.toFixed(2)}`, `$${spark.avg_loss.toFixed(2)}`, false],
-    ['Best Trade', `$+${flame.best_trade.toFixed(2)}`, `$+${spark.best_trade.toFixed(2)}`, true],
-    ['Worst Trade', `$${flame.worst_trade.toFixed(2)}`, `$${spark.worst_trade.toFixed(2)}`, false],
+    ['Total Trades', String(flame.total_trades), String(spark.total_trades), String(inferno.total_trades), true],
+    ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, `${inferno.win_rate.toFixed(1)}%`, true],
+    ['Total P&L', `$${flame.total_pnl >= 0 ? '+' : ''}${flame.total_pnl.toFixed(2)}`, `$${spark.total_pnl >= 0 ? '+' : ''}${spark.total_pnl.toFixed(2)}`, `$${inferno.total_pnl >= 0 ? '+' : ''}${inferno.total_pnl.toFixed(2)}`, true],
+    ['Avg Win', `$+${flame.avg_win.toFixed(2)}`, `$+${spark.avg_win.toFixed(2)}`, `$+${inferno.avg_win.toFixed(2)}`, true],
+    ['Avg Loss', `$${flame.avg_loss.toFixed(2)}`, `$${spark.avg_loss.toFixed(2)}`, `$${inferno.avg_loss.toFixed(2)}`, false],
+    ['Best Trade', `$+${flame.best_trade.toFixed(2)}`, `$+${spark.best_trade.toFixed(2)}`, `$+${inferno.best_trade.toFixed(2)}`, true],
+    ['Worst Trade', `$${flame.worst_trade.toFixed(2)}`, `$${spark.worst_trade.toFixed(2)}`, `$${inferno.worst_trade.toFixed(2)}`, false],
   ]
 }
 
 function MiniStatus({ account }: { account: any }) {
+  if (!account) return null
   const positive = account.cumulative_pnl >= 0
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3 mb-3">

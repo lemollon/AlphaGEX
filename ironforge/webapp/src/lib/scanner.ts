@@ -1,4 +1,9 @@
+// @ts-nocheck
 /**
+ * ⚠️ DEAD CODE — DO NOT IMPORT
+ * The real scanner runs on Databricks: ironforge/databricks/ironforge_scanner.py
+ * This file imports from the dead PostgreSQL client (@/lib/db) and is NOT used.
+ *
  * IronForge Scan Loop — runs INSIDE the Next.js process.
  *
  * Every 1 minute, for FLAME (2DTE), SPARK (1DTE), and INFERNO (0DTE):

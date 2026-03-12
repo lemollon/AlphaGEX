@@ -9,12 +9,9 @@ const PDT_CONFIG = sharedTable('ironforge_pdt_config')
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Format a Date as YYYY-MM-DD using local time (NOT toISOString which shifts to UTC). */
+/** Format a Date as YYYY-MM-DD in Central Time (America/Chicago). */
 function localDateStr(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 }
 
 function toInt(val: any): number {

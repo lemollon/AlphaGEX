@@ -4,7 +4,7 @@ import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/
 export const dynamic = 'force-dynamic'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
@@ -12,6 +12,10 @@ export async function GET(
 
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+
+  const url = new URL(req.url)
+  const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 50), 200)
+  const offset = Math.max(0, int(url.searchParams.get('offset')) || 0)
 
   try {
     const rows = await dbQuery(
@@ -27,7 +31,7 @@ export async function GET(
       FROM ${botTable(bot, 'positions')}
       WHERE status IN ('closed', 'expired') ${dteFilter}
       ORDER BY close_time DESC
-      LIMIT 50`,
+      LIMIT ${limit} OFFSET ${offset}`,
     )
 
     const trades = rows.map((r) => ({
