@@ -12,25 +12,6 @@ const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
   ),
 })
 
-/* ── Inline SVG Icons (no external deps) ───────────────────────── */
-
-function AnvilIcon({ size = 40 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block align-middle">
-      <path
-        d="M2 18h20v2H2v-2zm3-2h14l1-3H10l-1-3h8V7H9L7 4H4v6l-2 3v1h3v2zm0 0"
-        fill="#F59E0B"
-      />
-      <path
-        d="M4 4h3l2 3h8v3H9l1 3h10l-1 3H5"
-        stroke="#D97706"
-        strokeWidth="0.5"
-        fill="none"
-      />
-    </svg>
-  )
-}
-
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
@@ -157,7 +138,7 @@ export default function Home() {
       {/* Hero */}
       <div className="text-center mt-2">
         <h1 className="text-5xl font-extrabold tracking-tight mb-2 glow-amber">
-          <AnvilIcon size={40} />{' '}
+          <img src="/ironforge-logo.svg" alt="" className="h-10 w-10 inline-block align-middle" />{' '}
           <span className="text-white">Iron</span>
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500">
             Forge
