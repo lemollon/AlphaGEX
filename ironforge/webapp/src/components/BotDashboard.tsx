@@ -13,6 +13,7 @@ import LogsTable from './LogsTable'
 import PTTimeline from './PTTimeline'
 import PdtCard from './PdtCard'
 import PdtTabContent from './PdtTabContent'
+import SignalsTable from './SignalsTable'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -38,7 +39,23 @@ class ComponentErrorBoundary extends React.Component<
   }
 }
 
-const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Logs', 'PDT'] as const
+function TabError({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+      <p className="text-red-400 text-sm">Failed to load data: {message}</p>
+    </div>
+  )
+}
+
+function TabLoading() {
+  return (
+    <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+      <p className="text-forge-muted text-sm animate-pulse">Loading...</p>
+    </div>
+  )
+}
+
+const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT'] as const
 type Tab = (typeof TABS)[number]
 
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
@@ -101,28 +118,35 @@ export default function BotDashboard({
   )
 
   /* ---- Performance ---- */
-  const { data: perf } = useSWR(
+  const { data: perf, error: perfErr } = useSWR(
     tab === 'Performance' ? `/api/${bot}/performance` : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Trade history ---- */
-  const { data: trades } = useSWR(
+  const { data: trades, error: tradesErr } = useSWR(
     tab === 'Trade History' ? `/api/${bot}/trades` : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Logs ---- */
-  const { data: logs } = useSWR(
+  const { data: logs, error: logsErr } = useSWR(
     tab === 'Logs' ? `/api/${bot}/logs` : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
+  /* ---- Signals ---- */
+  const { data: signalsData, error: signalsErr } = useSWR(
+    tab === 'Signals' ? `/api/${bot}/signals` : null,
+    fetcher,
+    { refreshInterval: DATA_REFRESH },
+  )
+
   /* ---- PDT ---- */
-  const { data: pdtData, mutate: mutatePdt } = useSWR(
+  const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
     tab === 'PDT' ? `/api/${bot}/pdt` : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
@@ -198,14 +222,16 @@ export default function BotDashboard({
             data={equity?.curve || []}
             intradayData={intraday?.snapshots}
             startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-            color={accent === 'amber' ? '#f59e0b' : '#3b82f6'}
+            color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
             title={`${bot.toUpperCase()} Equity Curve`}
             period={equityPeriod}
             onPeriodChange={onPeriodChange}
           />
         )}
-        {tab === 'Performance' && perf && (
-          <PerformanceCard data={perf} label={bot.toUpperCase()} />
+        {tab === 'Performance' && (
+          perfErr
+            ? <TabError message={perfErr.message} />
+            : perf ? <PerformanceCard data={perf} label={bot.toUpperCase()} /> : <TabLoading />
         )}
         {tab === 'Positions' && (
           <PositionTable
@@ -216,15 +242,30 @@ export default function BotDashboard({
             bot={bot}
           />
         )}
-        {tab === 'Trade History' && trades && <TradeHistory trades={trades.trades} />}
-        {tab === 'Logs' && logs && <LogsTable logs={logs.logs} />}
+        {tab === 'Trade History' && (
+          tradesErr
+            ? <TabError message={tradesErr.message} />
+            : trades ? <TradeHistory trades={trades.trades} /> : <TabLoading />
+        )}
+        {tab === 'Signals' && (
+          signalsErr
+            ? <TabError message={signalsErr.message} />
+            : signalsData ? <SignalsTable signals={signalsData.signals} /> : <TabLoading />
+        )}
+        {tab === 'Logs' && (
+          logsErr
+            ? <TabError message={logsErr.message} />
+            : logs ? <LogsTable logs={logs.logs} /> : <TabLoading />
+        )}
         {tab === 'PDT' && (
-          <PdtTabContent
-            bot={bot}
-            pdtData={pdtData}
-            botStatus={status}
-            onPdtUpdate={() => mutatePdt()}
-          />
+          pdtErr
+            ? <TabError message={pdtErr.message} />
+            : <PdtTabContent
+                bot={bot}
+                pdtData={pdtData}
+                botStatus={status}
+                onPdtUpdate={() => mutatePdt()}
+              />
         )}
       </div>
     </div>

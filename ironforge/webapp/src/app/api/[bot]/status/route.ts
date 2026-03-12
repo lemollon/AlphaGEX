@@ -164,6 +164,7 @@ export async function GET(
       spot_price: hbDetails.spot || null,
       vix: hbDetails.vix || null,
       bot_state: botState,
+      last_scan_reason: hbDetails.reason || null,
       last_error: lastErr ? {
         time: lastErr.log_time || null,
         message: lastErr.message || null,

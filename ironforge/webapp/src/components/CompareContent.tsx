@@ -48,6 +48,7 @@ export default function CompareContent() {
 
       {/* Side-by-side status */}
       <div className="grid md:grid-cols-3 gap-6">
+        {/* FLAME */}
         <div>
           <h3 className="text-sm font-medium text-amber-400 mb-2">FLAME (2DTE)</h3>
           {flameStatus && <MiniStatus account={flameStatus.account} />}
@@ -58,6 +59,7 @@ export default function CompareContent() {
           {sparkStatus && <MiniStatus account={sparkStatus.account} />}
           {sparkPerf && <PerformanceCard data={sparkPerf} label="SPARK" />}
         </div>
+        {/* INFERNO */}
         <div>
           <h3 className="text-sm font-medium text-red-400 mb-2">
             <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1 align-[-2px]" />
@@ -69,7 +71,7 @@ export default function CompareContent() {
       </div>
 
       {/* Head-to-head table */}
-      {flamePerf && sparkPerf && (
+      {flamePerf && sparkPerf && infernoPerf && (
         <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
           <h3 className="text-sm font-medium text-gray-400 p-4 pb-2">Head-to-Head Metrics</h3>
           <table className="w-full text-sm">
@@ -83,16 +85,18 @@ export default function CompareContent() {
             </thead>
             <tbody>
               {metricRows(flamePerf, sparkPerf, infernoPerf).map(([name, fv, sv, iv, higherBetter]) => {
-                const vals = [fv, sv, iv].map(v => parseFloat(String(v ?? '0').replace(/[$%+,]/g, '')))
-                const adjusted = vals.map((v, i) => (iv == null && i === 2) ? -Infinity : (higherBetter ? v : -v))
-                const best = Math.max(...adjusted)
-                const wins = adjusted.map(v => v === best && v !== -Infinity)
+                const fNum = parseFloat(String(fv).replace(/[$%+,]/g, ''))
+                const sNum = parseFloat(String(sv).replace(/[$%+,]/g, ''))
+                const iNum = parseFloat(String(iv).replace(/[$%+,]/g, ''))
+                const best = higherBetter
+                  ? Math.max(fNum, sNum, iNum)
+                  : Math.min(fNum, sNum, iNum)
                 return (
                   <tr key={name} className="border-b border-forge-border/50">
                     <td className="p-3 font-medium">{name}</td>
-                    <td className={`p-3 text-right ${wins[0] ? 'text-emerald-400 font-bold' : ''}`}>{fv}</td>
-                    <td className={`p-3 text-right ${wins[1] ? 'text-emerald-400 font-bold' : ''}`}>{sv}</td>
-                    <td className={`p-3 text-right ${wins[2] ? 'text-emerald-400 font-bold' : ''}`}>{iv ?? '—'}</td>
+                    <td className={`p-3 text-right ${fNum === best ? 'text-emerald-400 font-bold' : ''}`}>{fv}</td>
+                    <td className={`p-3 text-right ${sNum === best ? 'text-emerald-400 font-bold' : ''}`}>{sv}</td>
+                    <td className={`p-3 text-right ${iNum === best ? 'text-emerald-400 font-bold' : ''}`}>{iv}</td>
                   </tr>
                 )
               })}
@@ -107,21 +111,21 @@ export default function CompareContent() {
 function metricRows(
   flame: any,
   spark: any,
-  inferno: any | undefined,
-): [string, string, string, string | undefined, boolean][] {
-  const i = inferno
+  inferno: any,
+): [string, string, string, string, boolean][] {
   return [
-    ['Total Trades', String(flame.total_trades), String(spark.total_trades), i ? String(i.total_trades) : undefined, true],
-    ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, i ? `${i.win_rate.toFixed(1)}%` : undefined, true],
-    ['Total P&L', fmtPnl(flame.total_pnl), fmtPnl(spark.total_pnl), i ? fmtPnl(i.total_pnl) : undefined, true],
-    ['Avg Win', `$+${flame.avg_win.toFixed(2)}`, `$+${spark.avg_win.toFixed(2)}`, i ? `$+${i.avg_win.toFixed(2)}` : undefined, true],
-    ['Avg Loss', `$${flame.avg_loss.toFixed(2)}`, `$${spark.avg_loss.toFixed(2)}`, i ? `$${i.avg_loss.toFixed(2)}` : undefined, false],
-    ['Best Trade', `$+${flame.best_trade.toFixed(2)}`, `$+${spark.best_trade.toFixed(2)}`, i ? `$+${i.best_trade.toFixed(2)}` : undefined, true],
-    ['Worst Trade', `$${flame.worst_trade.toFixed(2)}`, `$${spark.worst_trade.toFixed(2)}`, i ? `$${i.worst_trade.toFixed(2)}` : undefined, false],
+    ['Total Trades', String(flame.total_trades), String(spark.total_trades), String(inferno.total_trades), true],
+    ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, `${inferno.win_rate.toFixed(1)}%`, true],
+    ['Total P&L', fmtPnl(flame.total_pnl), fmtPnl(spark.total_pnl), fmtPnl(inferno.total_pnl), true],
+    ['Avg Win', `$+${flame.avg_win.toFixed(2)}`, `$+${spark.avg_win.toFixed(2)}`, `$+${inferno.avg_win.toFixed(2)}`, true],
+    ['Avg Loss', `$${flame.avg_loss.toFixed(2)}`, `$${spark.avg_loss.toFixed(2)}`, `$${inferno.avg_loss.toFixed(2)}`, false],
+    ['Best Trade', `$+${flame.best_trade.toFixed(2)}`, `$+${spark.best_trade.toFixed(2)}`, `$+${inferno.best_trade.toFixed(2)}`, true],
+    ['Worst Trade', `$${flame.worst_trade.toFixed(2)}`, `$${spark.worst_trade.toFixed(2)}`, `$${inferno.worst_trade.toFixed(2)}`, false],
   ]
 }
 
 function MiniStatus({ account }: { account: any }) {
+  if (!account) return null
   const positive = account.cumulative_pnl >= 0
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3 mb-3">

@@ -93,6 +93,18 @@ export async function GET(
         open_positions: openPositions.length,
         note: 'live',
       })
+    } else if (openPositions.length > 0) {
+      // Morning edge case: no snapshots yet today but positions are open.
+      // Create a synthetic snapshot so the intraday chart isn't blank.
+      snapshots.push({
+        timestamp: new Date().toISOString(),
+        balance: startingCapital,
+        realized_pnl: 0,
+        unrealized_pnl: liveUnrealizedPnl,
+        equity: startingCapital + liveUnrealizedPnl,
+        open_positions: openPositions.length,
+        note: 'live',
+      })
     }
 
     return NextResponse.json({
