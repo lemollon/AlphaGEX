@@ -104,10 +104,17 @@ export default function BotDashboard({
   )
 
   /* ---- Position monitor (live MTM) — always fetched so StatusCard unrealized P&L is accurate ---- */
-  const { data: positionMonitor } = useSWR(
+  const { data: positionMonitor, error: posMonitorErr } = useSWR(
     `/api/${bot}/position-monitor`,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
+  )
+
+  /* ---- Fallback positions (simple DB query, no Tradier MTM) — used when position-monitor fails ---- */
+  const { data: fallbackPositions } = useSWR(
+    posMonitorErr && tab === 'Positions' ? `/api/${bot}/positions` : null,
+    fetcher,
+    { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Position detail (per-leg quotes, sandbox P&L, metrics) ---- */
@@ -243,13 +250,20 @@ export default function BotDashboard({
             : perf ? <PerformanceCard data={perf} label={bot.toUpperCase()} /> : <TabLoading />
         )}
         {tab === 'Positions' && (
-          <PositionTable
-            positions={positionMonitor?.positions || []}
-            spotPrice={positionMonitor?.spot_price}
-            tradierConnected={positionMonitor?.tradier_connected}
-            detailData={positionDetail}
-            bot={bot}
-          />
+          <>
+            {posMonitorErr && !positionMonitor && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4 text-sm text-amber-400">
+                Live position monitor unavailable — showing positions without real-time P&L
+              </div>
+            )}
+            <PositionTable
+              positions={positionMonitor?.positions || fallbackPositions?.positions || []}
+              spotPrice={positionMonitor?.spot_price}
+              tradierConnected={positionMonitor?.tradier_connected}
+              detailData={positionDetail}
+              bot={bot}
+            />
+          </>
         )}
         {tab === 'Trade History' && (
           tradesErr
