@@ -61,21 +61,25 @@ export async function GET(
         let distanceToSl: number | null = null
 
         if (isConfigured()) {
-          const mtmResult = await getIcMarkToMarket(
-            ticker, expiration, ps, pl, cs, cl, entryCredit,
-          )
-          if (mtmResult) {
-            anyLiveQuoteSucceeded = true
-            mtm = mtmResult.cost_to_close
-            spotPrice = mtmResult.spot_price
-            const spreadWidth = num(r.spread_width) || (ps - pl)
-            unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtm, contracts, spreadWidth)
-            unrealizedPnlPct =
-              entryCredit > 0
-                ? Math.round(((entryCredit - Math.min(Math.max(0, mtm), spreadWidth)) / entryCredit) * 10000) / 100
-                : 0
-            distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
-            distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
+          try {
+            const mtmResult = await getIcMarkToMarket(
+              ticker, expiration, ps, pl, cs, cl, entryCredit,
+            )
+            if (mtmResult) {
+              anyLiveQuoteSucceeded = true
+              mtm = mtmResult.cost_to_close
+              spotPrice = mtmResult.spot_price
+              const spreadWidth = num(r.spread_width) || (ps - pl)
+              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtm, contracts, spreadWidth)
+              unrealizedPnlPct =
+                entryCredit > 0
+                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtm), spreadWidth)) / entryCredit) * 10000) / 100
+                  : 0
+              distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
+              distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
+            }
+          } catch {
+            // Non-fatal: Tradier quote failed for this position — still show it without MTM
           }
         }
 
