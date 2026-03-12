@@ -7,6 +7,7 @@ import {
   getQuote,
   getLoadedSandboxAccounts,
   getSandboxAccountPositions,
+  calculateIcUnrealizedPnl,
 } from '@/lib/tradier'
 import { getCurrentPTTier, getCTNow } from '@/lib/pt-tiers'
 
@@ -93,10 +94,11 @@ export async function GET(
         let pctProfitCaptured: number | null = null
 
         if (hasQuotes) {
-          currentDebit = Math.round((psQ.ask + csQ.ask - plQ.bid - clQ.bid) * 10000) / 10000
-          currentDebit = Math.max(0, currentDebit)
+          const rawDebit = psQ.ask + csQ.ask - plQ.bid - clQ.bid
+          const spreadWidthCalc = Math.round((ps - pl) * 100) / 100
+          currentDebit = Math.round(Math.min(Math.max(0, rawDebit), spreadWidthCalc) * 10000) / 10000
           spreadPnlPerContract = Math.round((entryCredit - currentDebit) * 10000) / 10000
-          paperPnl = Math.round(spreadPnlPerContract * 100 * contracts * 100) / 100
+          paperPnl = calculateIcUnrealizedPnl(entryCredit, currentDebit, contracts, spreadWidthCalc)
           pctProfitCaptured = entryCredit > 0
             ? Math.round(((entryCredit - currentDebit) / entryCredit) * 10000) / 100
             : 0

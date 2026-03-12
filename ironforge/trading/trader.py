@@ -417,7 +417,10 @@ class Trader:
                     expiration=pos.expiration,
                 )
                 if mtm is not None:
-                    unrealized += (pos.total_credit - mtm) * 100 * pos.contracts
+                    # Cap cost at [0, spread_width] — theoretical bounds for an IC
+                    spread_width = pos.put_short_strike - pos.put_long_strike
+                    capped_cost = min(max(0, mtm), spread_width)
+                    unrealized += (pos.total_credit - capped_cost) * 100 * pos.contracts
 
             self.db.save_equity_snapshot(
                 balance=account.balance,

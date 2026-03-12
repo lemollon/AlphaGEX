@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
-import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,11 +64,11 @@ export async function GET(
           if (mtmResult) {
             mtm = mtmResult.cost_to_close
             spotPrice = mtmResult.spot_price
-            unrealizedPnl =
-              Math.round((entryCredit - mtm) * 100 * contracts * 100) / 100
+            const spreadWidth = num(r.spread_width) || (ps - pl)
+            unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtm, contracts, spreadWidth)
             unrealizedPnlPct =
               entryCredit > 0
-                ? Math.round(((entryCredit - mtm) / entryCredit) * 10000) / 100
+                ? Math.round(((entryCredit - Math.min(Math.max(0, mtm), spreadWidth)) / entryCredit) * 10000) / 100
                 : 0
             distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
             distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/databricks-sql'
-import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,15 +95,14 @@ export async function GET(
             if (!mtm) return 0
             const entryCredit = num(pos.total_credit)
             const contracts = int(pos.contracts)
-            // Use cost_to_close directly — already capped in getIcMarkToMarket()
-            // Must match position-monitor formula: (entryCredit - costToClose) * 100 * contracts
-            return Math.round((entryCredit - mtm.cost_to_close) * 100 * contracts * 100) / 100
+            const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
+            return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
           } catch {
             return 0
           }
         }),
       )
-      unrealizedPnl = Math.round(mtmResults.reduce((a, b) => a + b, 0) * 100) / 100
+      unrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
     }
 
     const totalPnl = realizedPnl + unrealizedPnl
