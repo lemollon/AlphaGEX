@@ -232,6 +232,7 @@ export default function BotDashboard({
             startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
             color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
             title={`${bot.toUpperCase()} Equity Curve`}
+            liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
             period={equityPeriod}
             onPeriodChange={onPeriodChange}
           />

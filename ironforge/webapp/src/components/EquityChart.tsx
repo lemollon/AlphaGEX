@@ -46,6 +46,7 @@ export default function EquityChart({
   title,
   period,
   onPeriodChange,
+  liveUnrealizedPnl,
 }: {
   data: CurvePoint[]
   intradayData?: IntradayPoint[]
@@ -54,6 +55,7 @@ export default function EquityChart({
   title?: string
   period?: Period
   onPeriodChange?: (p: Period) => void
+  liveUnrealizedPnl?: number
 }) {
   const [activePeriod, setActivePeriod] = useState<Period>(period || 'intraday')
 
@@ -74,7 +76,7 @@ export default function EquityChart({
 
   /* ---------- Intraday chart ---------- */
   if (showIntraday) {
-    const points = intradayData || []
+    let points = intradayData || []
     if (!points.length) {
       return (
         <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -91,7 +93,19 @@ export default function EquityChart({
       )
     }
 
+    // If position-monitor provided live unrealized P&L, correct the last point
+    // so the chart line and badge match the header (single source of truth)
+    if (liveUnrealizedPnl !== undefined && points.length > 0) {
+      const last = points[points.length - 1]
+      points = [...points.slice(0, -1), {
+        ...last,
+        unrealized_pnl: liveUnrealizedPnl,
+        equity: last.balance + liveUnrealizedPnl,
+      }]
+    }
+
     const latest = points[points.length - 1]
+    const unrealizedForBadge = liveUnrealizedPnl ?? latest.unrealized_pnl
     const fillColor =
       latest.equity >= startingCapital
         ? 'rgba(16, 185, 129, 0.15)'
@@ -102,7 +116,7 @@ export default function EquityChart({
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
             {title && <h3 className="text-sm font-medium text-gray-400">{title}</h3>}
-            <PnlBadge value={latest.unrealized_pnl} label="Unrealized" />
+            <PnlBadge value={unrealizedForBadge} label="Unrealized" />
           </div>
           <PeriodSelector periods={periods} active={activePeriod} onChange={handlePeriod} />
         </div>
