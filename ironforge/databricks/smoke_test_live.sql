@@ -142,15 +142,15 @@ LIMIT 20;
 
 
 -- ── 8. Open positions (should be empty outside market hours) ─
-SELECT 'FLAME' AS bot, position_id, status, open_time, entry_credit, expiration
+SELECT 'FLAME' AS bot, position_id, status, open_time, total_credit, expiration
 FROM alpha_prime.ironforge.flame_positions
 WHERE status = 'OPEN'
 UNION ALL
-SELECT 'SPARK', position_id, status, open_time, entry_credit, expiration
+SELECT 'SPARK', position_id, status, open_time, total_credit, expiration
 FROM alpha_prime.ironforge.spark_positions
 WHERE status = 'OPEN'
 UNION ALL
-SELECT 'INFERNO', position_id, status, open_time, entry_credit, expiration
+SELECT 'INFERNO', position_id, status, open_time, total_credit, expiration
 FROM alpha_prime.ironforge.inferno_positions
 WHERE status = 'OPEN';
 
