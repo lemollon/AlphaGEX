@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-3.5 w-3.5 inline-block mr-1.5 align-[-1px]" />,
+  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
 }
 
 const botGlow: Record<string, string> = {
@@ -37,8 +37,20 @@ export default function Nav() {
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>
           </Link>
-          <span className="text-[0.65rem] text-amber-600/60 pl-1 -mt-px">
-            SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+          <span
+            style={{
+              color: '#FCD34D',
+              fontSize: '0.75rem',
+              fontFamily: "Georgia, 'Times New Roman', serif",
+              fontStyle: 'italic',
+              letterSpacing: '0.06em',
+              lineHeight: 1,
+              marginTop: '-1px',
+              paddingLeft: '1.15rem',
+              textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.5)',
+            }}
+          >
+            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
           </span>
         </div>
 
