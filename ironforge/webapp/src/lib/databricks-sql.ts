@@ -32,6 +32,12 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
     throw new Error('Databricks env vars not configured (DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN)')
   }
 
+  // Append a unique comment to bust Databricks SQL warehouse result cache.
+  // Without this, the warehouse can return stale cached results for up to 24h
+  // even after the underlying Delta Lake data has changed.
+  const cacheBust = `/* ts=${Date.now()} */`
+  const statement = `${sql} ${cacheBust}`
+
   const url = `https://${HOSTNAME}/api/2.0/sql/statements/`
   const res = await fetch(url, {
     method: 'POST',
@@ -43,7 +49,7 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
       warehouse_id: WAREHOUSE_ID,
       catalog: CATALOG,
       schema: SCHEMA,
-      statement: sql,
+      statement,
       wait_timeout: '30s',
       disposition: 'INLINE',
       format: 'JSON_ARRAY',
