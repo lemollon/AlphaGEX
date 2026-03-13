@@ -3043,6 +3043,87 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
+        # DB-level stale position cleanup — runs even if valor_trader is None
+        # This is the last line of defense: if the trader process dies and positions
+        # are stuck open for days, this SQL-level cleanup frees margin.
+        self._valor_db_stale_cleanup()
+
+    def _valor_db_stale_cleanup(self):
+        """
+        Database-level stale position watchdog for VALOR.
+
+        This runs independently of ValorTrader — if the trader is dead/None,
+        positions can still pile up in the DB. This catches positions older than
+        48 hours and force-closes them at entry price ($0 P&L) to free margin.
+
+        48h is deliberately longer than the per-ticker max_hold_hours (12-24h)
+        in the trader-level watchdog, so this only fires if the trader itself is broken.
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Find positions open longer than 48 hours
+            cur.execute("""
+                SELECT position_id, ticker, direction, entry_price, open_time
+                FROM valor_positions
+                WHERE status = 'open'
+                  AND open_time < NOW() - INTERVAL '48 hours'
+            """)
+            stale = cur.fetchall()
+
+            if not stale:
+                return
+
+            logger.warning(
+                f"VALOR DB WATCHDOG: Found {len(stale)} positions open > 48h — force-closing"
+            )
+
+            for pos_id, ticker, direction, entry_price, open_time in stale:
+                logger.warning(
+                    f"  Closing {pos_id} | {ticker} {direction} | "
+                    f"entry={entry_price} | opened {open_time}"
+                )
+
+                # Close position in DB
+                cur.execute("""
+                    UPDATE valor_positions
+                    SET status = 'closed',
+                        close_time = NOW(),
+                        close_price = entry_price,
+                        close_reason = 'DB_WATCHDOG_48H',
+                        realized_pnl = 0
+                    WHERE position_id = %s AND status = 'open'
+                """, (pos_id,))
+
+                # Copy to closed trades
+                cur.execute("""
+                    INSERT INTO valor_closed_trades (
+                        position_id, symbol, ticker, direction, contracts,
+                        entry_price, exit_price, realized_pnl,
+                        gamma_regime, signal_source, close_reason,
+                        open_time, close_time, hold_duration_minutes,
+                        is_overnight_session
+                    )
+                    SELECT
+                        position_id, symbol, ticker, direction, contracts,
+                        entry_price, entry_price, 0,
+                        gamma_regime, signal_source, 'DB_WATCHDOG_48H',
+                        open_time, NOW(),
+                        EXTRACT(EPOCH FROM (NOW() - open_time)) / 60,
+                        TRUE
+                    FROM valor_positions
+                    WHERE position_id = %s
+                    ON CONFLICT (position_id) DO NOTHING
+                """, (pos_id,))
+
+            conn.commit()
+            logger.info(f"VALOR DB WATCHDOG: Force-closed {len(stale)} stale positions")
+
+        except Exception as e:
+            logger.error(f"VALOR DB WATCHDOG error: {e}")
+
     def scheduled_agape_logic(self):
         """
         AGAPE ETH Micro Futures - runs every 5 minutes during CME crypto hours.

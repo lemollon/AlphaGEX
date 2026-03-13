@@ -99,6 +99,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
+        "max_hold_hours": 24,  # Stale position watchdog: force-close after 24h
 
         # Exit parameters (tuned for NQ volatility - wider stops)
         "initial_stop_points": 10.0,      # ~$20 risk per contract
@@ -150,6 +151,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
+        "max_hold_hours": 12,  # Commodity futures — force-close after 12h
 
         # Exit parameters (CL moves ~$1-3/day, $1 = $100 for MCL)
         "initial_stop_points": 0.30,       # $0.30 = $30 risk per contract
@@ -201,6 +203,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "risk_per_trade_pct": 0.5,   # Lower risk - NG is extremely volatile
         "max_contracts": 3,
         "max_open_positions": 5,
+        "max_hold_hours": 12,  # Commodity futures — force-close after 12h
 
         # Exit parameters (NG moves ~$0.05-0.20/day, $0.01 = $1 for MNG)
         "initial_stop_points": 0.020,      # $0.020 = $2 risk per contract
@@ -252,6 +255,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
+        "max_hold_hours": 24,  # Index futures — force-close after 24h
 
         # Exit parameters (RTY moves ~15-40 pts/day, $5/pt)
         "initial_stop_points": 3.0,        # 3 pts = $15 risk per contract
@@ -301,7 +305,8 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
-        "max_open_positions": 100,
+        "max_open_positions": 10,
+        "max_hold_hours": 24,  # Index futures — force-close after 24h
 
         # Exit parameters (original VALOR params)
         "initial_stop_points": 2.5,
@@ -353,6 +358,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
+        "max_hold_hours": 24,  # Gold futures — force-close after 24h
 
         # Exit parameters (Gold moves ~$20-50/day, $1 = $10 for MGC)
         "initial_stop_points": 5.0,        # $5 = $50 risk per contract
@@ -713,7 +719,7 @@ class ValorConfig:
     capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
-    max_open_positions: int = 100  # Effectively unlimited positions per user request
+    max_open_positions: int = 10  # Global fallback — per-ticker limits in FUTURES_TICKERS take priority
 
     # MES contract settings (legacy/default - new tickers use FUTURES_TICKERS)
     symbol: str = "/MESH6"  # Current front month (March 2026)
