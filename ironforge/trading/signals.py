@@ -35,6 +35,12 @@ class SignalGenerator:
         self.config = config
         self.tradier = None
         self._init_tradier()
+        logger.warning(
+            f"{self.config.bot_name}: GEX data source NOT configured — "
+            "trading without gamma context (call_wall=0, put_wall=0, "
+            "gex_regime=UNKNOWN, flip_point=0, net_gex=0). "
+            "All GEX fields are hardcoded placeholders."
+        )
 
     def _init_tradier(self) -> None:
         """Initialize Tradier API client."""

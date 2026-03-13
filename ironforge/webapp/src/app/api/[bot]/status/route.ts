@@ -104,8 +104,9 @@ export async function GET(
     const buyingPower = Math.round((balance - liveCollateral) * 100) / 100
 
     // Compute live unrealized P&L from open positions via Tradier
-    let unrealizedPnl = 0
+    let unrealizedPnl: number | null = null
     if (openPositionRows.length > 0 && isConfigured()) {
+      let anyMtmSucceeded = false
       const mtmResults = await Promise.all(
         openPositionRows.map(async (pos) => {
           try {
@@ -119,19 +120,29 @@ export async function GET(
               num(pos.call_long_strike),
               entryCredit,
             )
-            if (!mtm) return 0
+            if (!mtm) return null
+            anyMtmSucceeded = true
             const contracts = int(pos.contracts)
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
             return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
-          } catch {
-            return 0
+          } catch (err: unknown) {
+            console.error(`[${bot}] MTM failed for position ${pos.position_id}:`, err instanceof Error ? err.message : err)
+            return null
           }
         }),
       )
-      unrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
+      if (anyMtmSucceeded) {
+        unrealizedPnl = mtmResults.reduce((a: number, b) => a + (b ?? 0), 0)
+      }
+      // else: unrealizedPnl stays null — frontend should show "—"
+    } else if (openPositionRows.length > 0) {
+      // Tradier not configured but positions exist — unrealized PnL unavailable
+      unrealizedPnl = null
+    } else {
+      unrealizedPnl = 0
     }
 
-    const totalPnl = realizedPnl + unrealizedPnl
+    const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
     const hb = heartbeatRows[0]

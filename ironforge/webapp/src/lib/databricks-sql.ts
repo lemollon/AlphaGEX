@@ -32,9 +32,20 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
     throw new Error('Databricks env vars not configured (DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN)')
   }
 
-  // Append a unique comment to bust Databricks SQL warehouse result cache.
-  // Without this, the warehouse can return stale cached results for up to 24h
-  // even after the underlying Delta Lake data has changed.
+  // Bust Databricks SQL warehouse result cache (persists up to 24h, survives
+  // warehouse restarts on serverless).  The result cache is keyed on the full
+  // SQL statement text — any change in the text causes a cache miss.
+  //
+  // The Statement Execution API has NO request-level parameter to disable
+  // caching.  `use_cached_result = false` is a session-level SET command, but
+  // the REST API is stateless (no persistent session), so we cannot use it.
+  //
+  // Adding a unique timestamp comment to every query is the documented
+  // workaround: each request produces a different statement hash, guaranteeing
+  // a cache miss every time.
+  //
+  // Ref: https://docs.databricks.com/aws/en/sql/user/queries/query-caching
+  // Ref: https://community.databricks.com/t5/data-engineering/control-query-caching-using-sql-statement-execution-api/td-p/3561
   const cacheBust = `/* ts=${Date.now()} */`
   const statement = `${sql} ${cacheBust}`
 
@@ -45,6 +56,7 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
       'Authorization': `Bearer ${TOKEN}`,
       'Content-Type': 'application/json',
     },
+    cache: 'no-store',
     body: JSON.stringify({
       warehouse_id: WAREHOUSE_ID,
       catalog: CATALOG,
@@ -100,6 +112,7 @@ export async function dbExecute(sql: string): Promise<number> {
       'Authorization': `Bearer ${TOKEN}`,
       'Content-Type': 'application/json',
     },
+    cache: 'no-store',
     body: JSON.stringify({
       warehouse_id: WAREHOUSE_ID,
       catalog: CATALOG,

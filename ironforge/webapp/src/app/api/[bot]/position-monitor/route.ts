@@ -78,8 +78,8 @@ export async function GET(
               distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
               distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
             }
-          } catch {
-            // Non-fatal: Tradier quote failed for this position — still show it without MTM
+          } catch (err: unknown) {
+            console.error(`[${bot}] position-monitor: MTM fetch failed for ${r.position_id}:`, err instanceof Error ? err.message : err)
           }
         }
 
@@ -145,8 +145,8 @@ export async function GET(
         scannerPnl = num(snapshotRows[0].unrealized_pnl)
         snapshotTime = snapshotRows[0].snapshot_time
       }
-    } catch {
-      // Non-fatal — still return positions without scanner P&L
+    } catch (err: unknown) {
+      console.error(`[${bot}] position-monitor: Equity snapshot query failed:`, err instanceof Error ? err.message : err)
     }
 
     return NextResponse.json({
