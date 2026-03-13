@@ -436,6 +436,21 @@ class ValorTrader:
             # 2. Check for new signals (if room for more positions for this ticker)
             open_count = len(self.db.get_open_positions(ticker=ticker))
 
+            # GATE 4.5: Per-ticker max open positions (prevents position pileup)
+            max_open = ticker_cfg.get("max_open_positions", self.config.max_open_positions) if ticker_cfg else self.config.max_open_positions
+            if open_count >= max_open:
+                logger.info(
+                    f"VALOR [{ticker}] GATE 4.5 BLOCKED: Max positions reached "
+                    f"({open_count}/{max_open})"
+                )
+                self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                       skip_reason=f"Max positions: {open_count}/{max_open} for {ticker}",
+                                       ticker=ticker)
+                # Still save equity snapshot and manage existing positions
+                current_positions = self.db.get_open_positions(ticker=ticker)
+                self._save_equity_snapshot(account_balance, current_positions, ticker=ticker)
+                return scan_result
+
             # Check loss streak pause for THIS ticker
             pause_until = self._loss_pause_until.get(ticker)
             if pause_until:

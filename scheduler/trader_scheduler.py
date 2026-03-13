@@ -2905,11 +2905,19 @@ class AutonomousTraderScheduler:
         self.valor_execution_count += 1
         self.last_valor_check = now
 
-        # Check if VALOR is available
+        # Check if VALOR is available — lazy re-init if it failed on startup
         if not self.valor_trader:
-            if self.valor_execution_count % 60 == 1:  # Log once per hour
-                logger.warning("VALOR trader not available - futures trading disabled")
-            return
+            if self.valor_execution_count % 60 == 1:  # Retry init once per hour
+                logger.warning("VALOR trader not available - attempting re-initialization...")
+                try:
+                    config = ValorConfig(mode=ValorTradingMode.PAPER)
+                    self.valor_trader = ValorTrader(config=config)
+                    logger.info("✅ VALOR re-initialized successfully after startup failure")
+                except Exception as e:
+                    logger.error(f"VALOR re-initialization failed: {e}")
+                    self.valor_trader = None
+            if not self.valor_trader:
+                return
 
         try:
             # Run the scan cycle
