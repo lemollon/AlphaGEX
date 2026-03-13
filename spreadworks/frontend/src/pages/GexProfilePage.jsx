@@ -666,10 +666,9 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
     const maxGamma = visibleStrikes.length > 0
       ? Math.max(...visibleStrikes.map(ss => ss.abs_net_gamma), 0.001) : 1;
-    // GEX bars render in the right margin (200px). In paper coords the plot area
-    // ends around ~0.87 (varies with container width). We anchor bars from x=1.0
-    // extending left with max width 0.13 so they stay within the margin zone.
-    const barMaxWidth = 0.13;
+    // GEX bars render in the right 15% of paper space. The x-axis domain is
+    // constrained to [0, 0.83] so candles don't overlap into the bar zone.
+    const barMaxWidth = 0.15;
     const strikeSpacing = visibleStrikes.length > 1
       ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35 : 0.5;
 
@@ -686,10 +685,10 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
     });
 
     const gexAnnotations = visibleStrikes
-      .filter(ss => ss.abs_net_gamma / maxGamma > 0.08)
+      .filter(ss => ss.abs_net_gamma / maxGamma > 0.15)
       .map(ss => ({
         xref: 'paper', yref: 'y',
-        x: 1 - (ss.abs_net_gamma / maxGamma) * barMaxWidth - 0.005,
+        x: 1 - (ss.abs_net_gamma / maxGamma) * barMaxWidth - 0.003,
         y: ss.strike,
         text: `${formatGex(ss.net_gamma, 1)} [$${ss.strike}]`,
         showarrow: false,
@@ -767,15 +766,15 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
               type: 'date', gridcolor: '#1a1a2e', showgrid: true,
               rangeslider: { visible: false },
               hoverformat: '%I:%M %p CT', tickformat: '%I:%M %p',
+              domain: [0, 0.83],
             },
             yaxis: {
-              title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
               gridcolor: '#1a1a2e', showgrid: true, side: 'right',
               tickformat: '$,.0f', range: plotData.yRange, autorange: false,
             },
             shapes: plotData.shapes,
             annotations: plotData.annotations,
-            margin: { t: 10, b: 40, l: 10, r: 200 },
+            margin: { t: 10, b: 40, l: 10, r: 10 },
             hovermode: 'x unified',
             showlegend: false,
             transition: { duration: 300, easing: 'cubic-in-out' },
