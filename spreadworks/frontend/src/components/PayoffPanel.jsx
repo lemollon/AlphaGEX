@@ -126,9 +126,9 @@ export default function PayoffPanel({
         {/* Spot price horizontal line */}
         {spotY != null && (
           <>
-            <line x1={0} y1={spotY} x2={VIEW_WIDTH} y2={spotY} stroke="#f59e0b" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
-            <rect x={VIEW_WIDTH - 48} y={spotY - 8} width={46} height={16} rx={3} fill="rgba(245, 158, 11, 0.13)" stroke="#f59e0b" strokeWidth="0.5" />
-            <text x={VIEW_WIDTH - 25} y={spotY + 3} textAnchor="middle" fill="#f59e0b" fontSize="8" fontFamily="'Courier New', monospace">
+            <line x1={0} y1={spotY} x2={VIEW_WIDTH} y2={spotY} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
+            <rect x={VIEW_WIDTH - 48} y={spotY - 8} width={46} height={16} rx={3} fill="rgba(68, 138, 255, 0.13)" stroke="#448aff" strokeWidth="0.5" />
+            <text x={VIEW_WIDTH - 25} y={spotY + 3} textAnchor="middle" fill="#448aff" fontSize="8" fontFamily="'Courier New', monospace">
               ${spotPrice?.toFixed(0)}
             </text>
           </>

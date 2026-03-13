@@ -87,8 +87,8 @@ function NavBar() {
       <div className="flex items-center gap-2.5 pr-5 mr-2 border-r border-border-subtle/50 h-full">
         <div className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-lg text-sm text-white font-extrabold"
           style={{
-            background: 'linear-gradient(135deg, var(--color-accent) 0%, #d97706 100%)',
-            boxShadow: '0 4px 16px rgba(245, 158, 11, 0.4), 0 0 30px rgba(245, 158, 11, 0.15)',
+            background: 'linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%)',
+            boxShadow: '0 4px 16px rgba(68, 138, 255, 0.4), 0 0 30px rgba(68, 138, 255, 0.15)',
           }}>
           S
         </div>

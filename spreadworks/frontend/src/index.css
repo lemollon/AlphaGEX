@@ -16,16 +16,16 @@
   /* Borders */
   --color-border-subtle: #1e1e45;
   --color-border-default: #2a2a55;
-  --color-border-accent: rgba(245, 158, 11, 0.3);
+  --color-border-accent: rgba(68, 138, 255, 0.3);
 
-  /* Accent — Amber brand */
-  --color-accent: #f59e0b;
-  --color-accent-glow: rgba(245, 158, 11, 0.2);
-  --color-accent-hover: #fbbf24;
-  --color-accent-bright: #fcd34d;
-  --color-accent-dim: rgba(245, 158, 11, 0.12);
+  /* Accent — Electric Blue (trading terminal) */
+  --color-accent: #448aff;
+  --color-accent-glow: rgba(68, 138, 255, 0.2);
+  --color-accent-hover: #5c9aff;
+  --color-accent-bright: #82b1ff;
+  --color-accent-dim: rgba(68, 138, 255, 0.12);
 
-  /* Legacy blue accent (keep for charts) */
+  /* Secondary blue */
   --color-blue: #448aff;
   --color-blue-bright: #82b1ff;
   --color-blue-dim: rgba(68, 138, 255, 0.12);
@@ -54,7 +54,7 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.04);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.03);
-  --shadow-glow: 0 0 20px rgba(245, 158, 11, 0.15);
+  --shadow-glow: 0 0 20px rgba(68, 138, 255, 0.15);
   --shadow-panel: 4px 0 20px rgba(0, 0, 0, 0.5);
 
   /* Radius */
@@ -120,12 +120,12 @@ input[type="range"]::-webkit-slider-thumb {
   background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-bright) 100%);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5), 0 0 20px rgba(245, 158, 11, 0.2);
+  box-shadow: 0 0 8px rgba(68, 138, 255, 0.5), 0 0 20px rgba(68, 138, 255, 0.2);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 input[type="range"]::-webkit-slider-thumb:hover {
   transform: scale(1.2);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.7), 0 0 30px rgba(245, 158, 11, 0.3);
+  box-shadow: 0 0 12px rgba(68, 138, 255, 0.7), 0 0 30px rgba(68, 138, 255, 0.3);
 }
 input[type="range"]::-moz-range-thumb {
   width: 16px;
@@ -134,7 +134,7 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+  box-shadow: 0 0 8px rgba(68, 138, 255, 0.5);
 }
 
 input[type="number"]::-webkit-inner-spin-button,
@@ -150,7 +150,7 @@ select { cursor: pointer; }
 /* ── Focus styles ── */
 input:focus, select:focus {
   border-color: var(--color-accent) !important;
-  box-shadow: 0 0 0 3px var(--color-accent-glow), 0 0 20px rgba(245, 158, 11, 0.1);
+  box-shadow: 0 0 0 3px var(--color-accent-glow), 0 0 20px rgba(68, 138, 255, 0.1);
   outline: none;
 }
 
@@ -190,13 +190,13 @@ button:disabled {
 }
 
 @keyframes sw-glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(245, 158, 11, 0.15); }
-  50% { box-shadow: 0 0 20px rgba(245, 158, 11, 0.3); }
+  0%, 100% { box-shadow: 0 0 8px rgba(68, 138, 255, 0.15); }
+  50% { box-shadow: 0 0 20px rgba(68, 138, 255, 0.3); }
 }
 
 @keyframes sw-borderGlow {
-  0%, 100% { border-color: rgba(245, 158, 11, 0.2); }
-  50% { border-color: rgba(245, 158, 11, 0.5); }
+  0%, 100% { border-color: rgba(68, 138, 255, 0.2); }
+  50% { border-color: rgba(68, 138, 255, 0.5); }
 }
 
 @keyframes sw-slideIn {
@@ -216,13 +216,13 @@ button:disabled {
 
 .sw-btn-primary {
   @apply px-4 py-2.5 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-all duration-150;
-  background: linear-gradient(135deg, var(--color-accent) 0%, #d97706 100%);
-  color: #000;
-  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.3);
+  background: linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%);
+  color: #fff;
+  box-shadow: 0 2px 12px rgba(68, 138, 255, 0.3);
 }
 .sw-btn-primary:hover:not(:disabled) {
   transform: scale(1.02);
-  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 4px 16px rgba(68, 138, 255, 0.4);
 }
 .sw-btn-primary:disabled {
   opacity: 0.35;
@@ -231,7 +231,7 @@ button:disabled {
 
 .sw-btn-secondary {
   @apply px-4 py-2 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-all duration-150 bg-transparent;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  border: 1px solid rgba(68, 138, 255, 0.25);
   color: var(--color-accent);
 }
 .sw-btn-secondary:hover:not(:disabled) {
@@ -297,10 +297,10 @@ button:disabled {
   font-family: var(--font-ui);
 }
 .sw-toggle-btn.active {
-  background: linear-gradient(135deg, var(--color-accent) 0%, #d97706 100%);
-  color: #000;
+  background: linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%);
+  color: #fff;
   font-weight: 700;
-  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+  box-shadow: 0 2px 12px rgba(68, 138, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.15);
 }
 
 .sw-badge {

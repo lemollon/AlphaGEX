@@ -935,8 +935,8 @@ function CallVsPutView({ sortedStrikes, data }) {
               <ReferenceLine y={data.levels.gex_flip} stroke="#eab308" strokeDasharray="5 3"
                 label={{ value: `Flip ${data.levels.gex_flip}`, fill: '#eab308', fontSize: 9, position: 'right' }} />
             )}
-            <ReferenceLine y={data.levels.price} stroke="#f59e0b" strokeWidth={2}
-              label={{ value: `Price ${data.levels.price}`, fill: '#f59e0b', fontSize: 9, position: 'right' }} />
+            <ReferenceLine y={data.levels.price} stroke="#448aff" strokeWidth={2}
+              label={{ value: `Price ${data.levels.price}`, fill: '#448aff', fontSize: 9, position: 'right' }} />
             {data.levels.call_wall && (
               <ReferenceLine y={data.levels.call_wall} stroke="#06b6d4" strokeDasharray="3 3"
                 label={{ value: 'Call Wall', fill: '#06b6d4', fontSize: 9, position: 'right' }} />
