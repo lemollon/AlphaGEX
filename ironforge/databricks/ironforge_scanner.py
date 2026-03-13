@@ -184,12 +184,25 @@ def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
         raise
 
 
-def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
-    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
+def db_execute(sql_str: str, params: Optional[dict] = None) -> int:
+    """Execute a SQL statement (INSERT/UPDATE/DELETE).
+
+    Returns num_affected_rows for DML (UPDATE/DELETE/MERGE), 0 for DDL/INSERT.
+    """
     if not _HAS_SPARK:
         raise RuntimeError("spark not available — use Notebook task type")
     try:
-        spark.sql(sql_str)  # noqa: F821
+        result = spark.sql(sql_str)  # noqa: F821
+        # Databricks DML returns a single-row DataFrame with num_affected_rows
+        try:
+            rows = result.collect()
+            if rows and len(rows) > 0 and len(rows[0]) > 0:
+                val = rows[0][0]
+                if isinstance(val, (int, float)):
+                    return int(val)
+        except Exception:
+            pass
+        return 0
     except Exception as e:
         log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
         raise
@@ -1380,6 +1393,37 @@ def close_position(
                 tag=position_id,
             )
 
+            # Log sandbox close results to DB — critical for diagnosing stale positions
+            all_accts = [a["name"] for a in _get_sandbox_accounts_lazy()]
+            closed_accts = list(close_results.keys())
+            failed_accts = [a for a in all_accts if a not in closed_accts]
+            if failed_accts:
+                fail_detail = json.dumps({
+                    "event": "sandbox_close_partial_failure",
+                    "position_id": position_id,
+                    "closed": closed_accts,
+                    "failed": failed_accts,
+                    "expiration": expiration,
+                }).replace("'", "''")
+                try:
+                    db_execute(f"""
+                        INSERT INTO {bot_table(bot['name'], 'logs')}
+                            (log_time, level, message, details, dte_mode)
+                        VALUES (
+                            CURRENT_TIMESTAMP(), 'SANDBOX_CLOSE_FAIL',
+                            'Sandbox close FAILED for accounts: {", ".join(failed_accts)} on {position_id}',
+                            '{fail_detail}',
+                            '{bot["dte"]}'
+                        )
+                    """)
+                except Exception:
+                    pass  # Don't let log failure break the close path
+                log.error(
+                    f"FLAME SANDBOX CLOSE INCOMPLETE: {position_id} "
+                    f"closed={closed_accts} failed={failed_accts} "
+                    f"— stale sandbox positions will block future trades!"
+                )
+
             # FLAME 1:1: Use User sandbox fill price as paper close price
             user_order_id = close_results.get("User")
             if user_order_id and user_order_id > 0:
@@ -1410,6 +1454,26 @@ def close_position(
                     log.warning(f"Could not get User sandbox fill price: {e}")
         except Exception as e:
             log.warning(f"Sandbox close failed for {position_id}: {e}")
+            # Log the total failure to DB so triage queries can find it
+            try:
+                err_detail = json.dumps({
+                    "event": "sandbox_close_total_failure",
+                    "position_id": position_id,
+                    "error": str(e)[:500],
+                    "expiration": expiration,
+                }).replace("'", "''")
+                db_execute(f"""
+                    INSERT INTO {bot_table(bot['name'], 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(), 'SANDBOX_CLOSE_FAIL',
+                        'Sandbox close TOTAL FAILURE for {position_id}: {str(e)[:200]}',
+                        '{err_detail}',
+                        '{bot["dte"]}'
+                    )
+                """)
+            except Exception:
+                pass
 
     pnl_per_contract = (entry_credit - price) * 100
     realized_pnl = round(pnl_per_contract * contracts, 2)
@@ -1417,7 +1481,7 @@ def close_position(
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_str = get_central_time().strftime("%Y-%m-%d")
 
-    db_execute(f"""
+    rows_affected = db_execute(f"""
         UPDATE {bot_table(bot['name'], 'positions')}
         SET status = 'closed',
             close_time = CAST('{now_ts}' AS TIMESTAMP),
@@ -1429,6 +1493,18 @@ def close_position(
           AND status = 'open'
           AND dte_mode = '{bot['dte']}'
     """)
+
+    # CRITICAL: Only update paper_account if the position UPDATE actually changed a row.
+    # Without this guard, overlapping scanner runs can double-count P&L:
+    #   Scan A closes position (1 row) → paper_account += pnl
+    #   Scan B tries to close same position (0 rows) → paper_account += pnl AGAIN
+    if rows_affected == 0:
+        log.warning(
+            f"{bot['name'].upper()} {position_id}: position UPDATE matched 0 rows "
+            f"(already closed by another scan). Skipping paper_account update to prevent "
+            f"double-counting. realized_pnl would have been ${realized_pnl:.2f}"
+        )
+        return
 
     # Reconcile collateral from actual open positions (prevents stuck collateral)
     # Instead of relying on collateral_required from the closed position,
@@ -2265,6 +2341,79 @@ def scan_bot(bot: dict) -> None:
             reason = monitor_result["status"]
             unrealized_pnl = monitor_result["unrealizedPnl"]
 
+        # Post-EOD sandbox verification for FLAME:
+        # If we just closed positions at EOD, verify sandbox positions are also closed.
+        # If sandbox still has positions, attempt immediate retry.
+        hhmm_check = ct.hour * 100 + ct.minute
+        if (bot["name"] == "flame"
+                and action == "closed"
+                and is_after_eod_cutoff(ct)
+                and hhmm_check <= 1510):  # Only in the 2:45-3:10 PM CT window
+            try:
+                accounts = _get_sandbox_accounts_lazy()
+                for acct in accounts:
+                    acct_id = _get_account_id_for_key(acct["api_key"])
+                    if not acct_id:
+                        continue
+                    data = _sandbox_get(
+                        f"/accounts/{acct_id}/positions", None, acct["api_key"]
+                    )
+                    if not data:
+                        continue
+                    positions = data.get("positions", {})
+                    if positions == "null" or not positions:
+                        continue
+                    pos_list = positions.get("position", [])
+                    if isinstance(pos_list, dict):
+                        pos_list = [pos_list]
+
+                    # Filter to today's positions (not yet expired)
+                    today_str_check = ct.strftime("%y%m%d")  # YYMMDD for OCC symbol
+                    today_positions = [
+                        p for p in pos_list
+                        if p.get("symbol", "")[3:9] >= today_str_check
+                        and p.get("quantity", 0) != 0
+                    ]
+                    if today_positions:
+                        log.error(
+                            f"POST-EOD SANDBOX CHECK [{acct['name']}]: "
+                            f"{len(today_positions)} positions still open after EOD close! "
+                            f"Attempting emergency close..."
+                        )
+                        for p in today_positions:
+                            symbol = p.get("symbol", "")
+                            qty = p.get("quantity", 0)
+                            if not symbol or qty == 0:
+                                continue
+                            side = "sell_to_close" if qty > 0 else "buy_to_close"
+                            close_body = {
+                                "class": "option",
+                                "symbol": symbol.split(" ")[0] if " " in symbol else "SPY",
+                                "option_symbol": symbol,
+                                "side": side,
+                                "quantity": str(abs(qty)),
+                                "type": "market",
+                                "duration": "day",
+                            }
+                            result = _sandbox_post(
+                                f"/accounts/{acct_id}/orders",
+                                close_body,
+                                acct["api_key"],
+                            )
+                            oid = result.get("order", {}).get("id") if result else None
+                            if oid:
+                                log.info(
+                                    f"POST-EOD EMERGENCY CLOSE [{acct['name']}]: "
+                                    f"{symbol} {side} x{abs(qty)} → order_id={oid}"
+                                )
+                            else:
+                                log.error(
+                                    f"POST-EOD EMERGENCY CLOSE FAILED [{acct['name']}]: "
+                                    f"{symbol} {side} x{abs(qty)}"
+                                )
+            except Exception as eod_err:
+                log.error(f"Post-EOD sandbox verification error: {eod_err}")
+
         # For multi-trade bots, check if we can open more positions
         # For single-trade bots, only open if no position is open
         # max_trades: 0 = unlimited, 1 = single trade, >1 = multi-trade with cap
@@ -2380,6 +2529,155 @@ def scan_bot(bot: dict) -> None:
     log.info(f"{bot_name}: {action} | {reason}")
 
 
+_last_sandbox_cleanup_date: Optional[str] = None
+
+
+def _daily_sandbox_cleanup(ct: datetime) -> None:
+    """Run sandbox orphan cleanup once per trading day at market open.
+
+    Detects stale/expired sandbox positions from previous days and closes them.
+    Only runs for FLAME (the only bot that uses sandbox).
+    Logs results to flame_logs for triage visibility.
+    """
+    global _last_sandbox_cleanup_date
+    today_str = ct.strftime("%Y-%m-%d")
+
+    # Only run once per day, only during first 15 minutes of market (8:30-8:45 CT)
+    if _last_sandbox_cleanup_date == today_str:
+        return
+    hhmm = ct.hour * 100 + ct.minute
+    if hhmm < 830 or hhmm > 845:
+        return
+
+    _last_sandbox_cleanup_date = today_str
+    log.info("DAILY SANDBOX CLEANUP: Starting stale position scan...")
+
+    try:
+        accounts = _get_sandbox_accounts_lazy()
+        if not accounts:
+            log.info("DAILY SANDBOX CLEANUP: No sandbox accounts configured, skipping")
+            return
+
+        total_stale = 0
+        total_closed = 0
+        cleanup_details = {}
+
+        for acct in accounts:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+
+            data = _sandbox_get(f"/accounts/{acct_id}/positions", None, acct["api_key"])
+            if not data:
+                continue
+
+            positions = data.get("positions", {})
+            if positions == "null" or not positions:
+                cleanup_details[acct["name"]] = {"stale": 0, "closed": 0}
+                continue
+
+            pos_list = positions.get("position", [])
+            if isinstance(pos_list, dict):
+                pos_list = [pos_list]
+
+            # Find stale positions: expiration < today
+            stale_positions = []
+            for p in pos_list:
+                symbol = p.get("symbol", "")
+                qty = p.get("quantity", 0)
+                # Extract expiration from OCC symbol (e.g., "SPY260313C00691000" → 2026-03-13)
+                # OCC format: SYMBOL + YYMMDD + C/P + STRIKE
+                if len(symbol) >= 15 and qty != 0:
+                    try:
+                        date_part = symbol[3:9]  # YYMMDD after "SPY"
+                        exp_date = f"20{date_part[:2]}-{date_part[2:4]}-{date_part[4:6]}"
+                        if exp_date < today_str:
+                            stale_positions.append(p)
+                    except (ValueError, IndexError):
+                        pass
+
+            acct_stale = len(stale_positions)
+            acct_closed = 0
+            total_stale += acct_stale
+
+            if stale_positions:
+                log.warning(
+                    f"SANDBOX CLEANUP [{acct['name']}]: Found {acct_stale} stale "
+                    f"positions (expired before {today_str})"
+                )
+
+            for p in stale_positions:
+                symbol = p.get("symbol", "")
+                qty = p.get("quantity", 0)
+                if not symbol or qty == 0:
+                    continue
+
+                side = "sell_to_close" if qty > 0 else "buy_to_close"
+                close_qty = abs(qty)
+
+                close_body = {
+                    "class": "option",
+                    "symbol": symbol.split(" ")[0] if " " in symbol else "SPY",
+                    "option_symbol": symbol,
+                    "side": side,
+                    "quantity": str(close_qty),
+                    "type": "market",
+                    "duration": "day",
+                }
+
+                result = _sandbox_post(
+                    f"/accounts/{acct_id}/orders", close_body, acct["api_key"],
+                )
+                order_id = result.get("order", {}).get("id") if result else None
+                if order_id:
+                    acct_closed += 1
+                    total_closed += 1
+                    log.info(
+                        f"SANDBOX CLEANUP [{acct['name']}]: Closed stale "
+                        f"{symbol} {side} x{close_qty} → order_id={order_id}"
+                    )
+                else:
+                    log.error(
+                        f"SANDBOX CLEANUP [{acct['name']}]: FAILED to close "
+                        f"{symbol} {side} x{close_qty}"
+                    )
+
+            cleanup_details[acct["name"]] = {"stale": acct_stale, "closed": acct_closed}
+
+        # Log results to DB for triage queries
+        if total_stale > 0:
+            detail_json = json.dumps({
+                "event": "daily_sandbox_cleanup",
+                "date": today_str,
+                "total_stale": total_stale,
+                "total_closed": total_closed,
+                "per_account": cleanup_details,
+            }).replace("'", "''")
+            try:
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(), 'SANDBOX_CLEANUP',
+                        'Daily sandbox cleanup: {total_stale} stale positions found, {total_closed} closed',
+                        '{detail_json}',
+                        '2DTE'
+                    )
+                """)
+            except Exception:
+                pass
+
+        log.info(
+            f"DAILY SANDBOX CLEANUP COMPLETE: "
+            f"{total_stale} stale, {total_closed} closed, "
+            f"details={cleanup_details}"
+        )
+
+    except Exception as e:
+        log.error(f"DAILY SANDBOX CLEANUP ERROR: {e}")
+        log.error(traceback.format_exc())
+
+
 def run_scan_cycle() -> None:
     """Run one scan cycle for all bots."""
     # Load config overrides from Databricks {bot}_config tables
@@ -2387,6 +2685,13 @@ def run_scan_cycle() -> None:
         load_config_overrides()
     except Exception as e:
         log.warning(f"Config override load failed (using defaults): {e}")
+
+    # Run daily sandbox orphan cleanup at market open (once per day)
+    ct = get_central_time()
+    try:
+        _daily_sandbox_cleanup(ct)
+    except Exception as e:
+        log.error(f"Daily sandbox cleanup failed (non-fatal): {e}")
 
     for bot in BOTS:
         try:
