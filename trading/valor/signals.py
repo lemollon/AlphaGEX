@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from .models import (
     FuturesSignal, TradeDirection, GammaRegime, SignalSource,
     ValorConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
-    FUTURES_TICKERS, get_ticker_point_value, get_proxy_etf,
+    FUTURES_TICKERS, get_ticker_point_value, get_ticker_config, get_proxy_etf,
     EXPIRATION_SCHEDULES, get_next_gex_expiration,
 )
 
@@ -1109,28 +1109,38 @@ class ValorSignalGenerator:
         # NO-LOSS TRAILING MODE (backtest winner: $18,005 P&L, 88% win rate)
         # ================================================================
         if self.config.use_no_loss_trailing:
+            # Use PER-TICKER stop parameters from FUTURES_TICKERS config.
+            # The global config values (15.0 pts emergency stop) are calibrated for MES.
+            # CL trades at ~$65, NG at ~$3 — using MES stops would produce negative prices.
+            ticker = getattr(signal, 'ticker', None) or getattr(self, '_current_ticker', 'MES')
+            ticker_cfg = get_ticker_config(ticker)
+
             # Determine emergency stop based on session (overnight vs RTH)
             if is_overnight and self.config.use_overnight_hybrid:
-                stop_distance = self.config.overnight_emergency_stop  # 10.0 pts for overnight
+                stop_distance = ticker_cfg.get('overnight_emergency_stop', self.config.overnight_emergency_stop)
                 stop_type = 'NL_OVERNIGHT'
                 session_label = "OVERNIGHT"
             else:
-                stop_distance = self.config.no_loss_emergency_stop  # 15.0 pts default
+                stop_distance = ticker_cfg.get('no_loss_emergency_stop', self.config.no_loss_emergency_stop)
                 stop_type = 'NO_LOSS_TRAIL'
                 session_label = "RTH"
 
             if signal.direction == TradeDirection.LONG:
                 signal.stop_price = signal.entry_price - stop_distance
                 # No profit target in no-loss trailing - let winners run
-                signal.target_price = signal.entry_price + 100  # Effectively no target
+                signal.target_price = signal.entry_price + (100 if signal.entry_price > 500 else signal.entry_price * 1.5)
             else:
                 signal.stop_price = signal.entry_price + stop_distance
-                signal.target_price = signal.entry_price - 100
+                signal.target_price = max(0.01, signal.entry_price - (100 if signal.entry_price > 500 else signal.entry_price * 1.5))
 
+            # Also read per-ticker activation/trail for logging accuracy
+            nl_activation = ticker_cfg.get('no_loss_activation_pts', self.config.no_loss_activation_pts)
+            nl_trail = ticker_cfg.get('no_loss_trail_distance', self.config.no_loss_trail_distance)
             logger.info(
-                f"NO-LOSS TRAILING ({session_label}): Emergency stop at {stop_distance:.1f} pts | "
-                f"Trail activates at +{self.config.no_loss_activation_pts:.1f} pts profit | "
-                f"Trail distance: {self.config.no_loss_trail_distance:.1f} pts"
+                f"NO-LOSS TRAILING ({session_label}) [{ticker}]: Emergency stop at {stop_distance} pts | "
+                f"Trail activates at +{nl_activation} pts profit | "
+                f"Trail distance: {nl_trail} pts | "
+                f"stop_price={signal.stop_price:.4f}"
             )
             return signal, stop_type, stop_distance
 
@@ -1139,13 +1149,16 @@ class ValorSignalGenerator:
         # ================================================================
 
         # OVERNIGHT HYBRID: Use different base stop/target for overnight sessions
+        # Use per-ticker config from FUTURES_TICKERS (CL/NG have very different scales than MES)
+        ticker = getattr(signal, 'ticker', None) or getattr(self, '_current_ticker', 'MES')
+        ticker_cfg_fallback = get_ticker_config(ticker)
         if is_overnight and self.config.use_overnight_hybrid:
-            base_stop = self.config.overnight_stop_points  # 1.5 pts overnight
-            base_target = self.config.overnight_target_points  # 3.0 pts overnight
+            base_stop = ticker_cfg_fallback.get('overnight_stop_points', self.config.overnight_stop_points)
+            base_target = ticker_cfg_fallback.get('overnight_target_points', self.config.overnight_target_points)
             session_label = "OVERNIGHT"
         else:
-            base_stop = self.config.initial_stop_points  # 2.5 pts RTH
-            base_target = self.config.profit_target_points  # 6.0 pts RTH
+            base_stop = ticker_cfg_fallback.get('initial_stop_points', self.config.initial_stop_points)
+            base_target = ticker_cfg_fallback.get('profit_target_points', self.config.profit_target_points)
             session_label = "RTH"
 
         # Determine stop type based on A/B test status
