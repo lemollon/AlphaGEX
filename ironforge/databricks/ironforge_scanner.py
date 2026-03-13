@@ -85,12 +85,56 @@ SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 # Track consecutive MTM failures per position_id (resets on success or close)
 _mtm_failure_counts: dict[str, int] = {}
 
-# Per-bot config: sd_multiplier, profit_target_pct, stop_loss_pct, entry_end (HHMM), max_contracts (0 = no limit)
+# Per-bot config defaults — overridden by {bot}_config table if present
 BOT_CONFIG = {
-    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10},
-    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10},
-    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 0},  # 0 = no limit
+    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
+    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 0, "bp_pct": 0.85, "starting_capital": 10000.0},  # 0 = no limit
 }
+
+# DB field → BOT_CONFIG key mapping
+_DB_TO_CFG = {
+    "sd_multiplier": "sd",
+    "profit_target_pct": ("pt_pct", lambda v: float(v) / 100.0),  # DB stores 30.0 → we use 0.30
+    "stop_loss_pct": ("sl_mult", lambda v: float(v) / 100.0),     # DB stores 200.0 → we use 2.0
+    "max_contracts": "max_contracts",
+    "max_trades_per_day": "max_trades",
+    "buying_power_usage_pct": "bp_pct",
+    "starting_capital": "starting_capital",
+}
+
+
+def load_config_overrides() -> None:
+    """Read {bot}_config tables from Databricks and merge into BOT_CONFIG.
+
+    Runs once per scan cycle. Falls back silently to defaults if table
+    doesn't exist or query fails.
+    """
+    for bot_name, defaults in BOT_CONFIG.items():
+        dte = {"flame": "2DTE", "spark": "1DTE", "inferno": "0DTE"}[bot_name]
+        try:
+            rows = db_query(
+                f"SELECT * FROM {bot_table(bot_name, 'config')} "
+                f"WHERE dte_mode = '{dte}' LIMIT 1"
+            )
+            if not rows:
+                continue
+            row = rows[0]
+            for db_col, mapping in _DB_TO_CFG.items():
+                val = row.get(db_col)
+                if val is None:
+                    continue
+                if isinstance(mapping, tuple):
+                    cfg_key, transform = mapping
+                    defaults[cfg_key] = transform(val)
+                else:
+                    defaults[mapping] = float(val) if isinstance(val, (int, float)) else val
+            log.info(f"[{bot_name.upper()}] Config overrides loaded from DB: "
+                     f"sd={defaults['sd']}, bp_pct={defaults['bp_pct']}, "
+                     f"capital={defaults['starting_capital']}, max_contracts={defaults['max_contracts']}")
+        except Exception as e:
+            log.debug(f"[{bot_name.upper()}] Config table not found or read failed (using defaults): {e}")
+
 
 BOTS = [
     {"name": "flame",   "dte": "2DTE", "min_dte": 2},
@@ -1779,7 +1823,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     collateral_per = max(0, (spread_width - credits["totalCredit"]) * 100)
     if collateral_per <= 0:
         return "skip:bad_collateral"
-    usable_bp = buying_power * 0.85
+    usable_bp = buying_power * cfg.get("bp_pct", 0.85)
     bp_contracts = max(1, math.floor(usable_bp / collateral_per))
     contract_cap = cfg.get("max_contracts", 10)  # 0 = no limit
     max_contracts = bp_contracts if contract_cap == 0 else min(contract_cap, bp_contracts)
@@ -2288,6 +2332,12 @@ def scan_bot(bot: dict) -> None:
 
 def run_scan_cycle() -> None:
     """Run one scan cycle for all bots."""
+    # Load config overrides from Databricks {bot}_config tables
+    try:
+        load_config_overrides()
+    except Exception as e:
+        log.warning(f"Config override load failed (using defaults): {e}")
+
     for bot in BOTS:
         try:
             scan_bot(bot)

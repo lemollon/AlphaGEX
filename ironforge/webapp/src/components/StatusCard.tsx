@@ -98,9 +98,13 @@ export default function StatusCard({
   const [editingCapital, setEditingCapital] = useState(false)
   const [capitalDraft, setCapitalDraft] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
+  const [savedField, setSavedField] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   async function saveConfigField(field: string, value: number) {
     setConfigSaving(true)
+    setSavedField(null)
+    setSaveError(null)
     try {
       const res = await fetch(`/api/${bot}/config`, {
         method: 'PUT',
@@ -108,8 +112,12 @@ export default function StatusCard({
         body: JSON.stringify({ [field]: value }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setSavedField(field)
+      setTimeout(() => setSavedField(null), 2500)
     } catch (e: unknown) {
       console.error('Config save failed:', e)
+      setSaveError(field)
+      setTimeout(() => setSaveError(null), 3000)
     } finally {
       setConfigSaving(false)
       setEditingBP(false)
@@ -449,13 +457,21 @@ export default function StatusCard({
               <span className="text-xs text-gray-500">% BP</span>
             </span>
           ) : (
-            <button
-              onClick={() => { setBpDraft(String(((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0))); setEditingBP(true) }}
-              className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
-              title="Click to edit buying power allocation %"
-            >
-              {((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP
-            </button>
+            <span className="inline-flex items-center gap-1">
+              <button
+                onClick={() => { setBpDraft(String(((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0))); setEditingBP(true) }}
+                className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
+                title="Click to edit buying power allocation %"
+              >
+                {((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP
+              </button>
+              {savedField === 'buying_power_usage_pct' && (
+                <span className="text-emerald-400 text-[10px] font-medium animate-pulse">Saved</span>
+              )}
+              {saveError === 'buying_power_usage_pct' && (
+                <span className="text-red-400 text-[10px] font-medium">Failed</span>
+              )}
+            </span>
           )}
 
           {/* Editable Starting Capital */}
@@ -487,13 +503,21 @@ export default function StatusCard({
               <span className="text-xs text-gray-500">capital</span>
             </span>
           ) : (
-            <button
-              onClick={() => { setCapitalDraft(String(config.starting_capital ?? 10000)); setEditingCapital(true) }}
-              className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
-              title="Click to edit starting capital"
-            >
-              ${(config.starting_capital ?? 10000).toLocaleString()} capital
-            </button>
+            <span className="inline-flex items-center gap-1">
+              <button
+                onClick={() => { setCapitalDraft(String(config.starting_capital ?? 10000)); setEditingCapital(true) }}
+                className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
+                title="Click to edit starting capital"
+              >
+                ${(config.starting_capital ?? 10000).toLocaleString()} capital
+              </button>
+              {savedField === 'starting_capital' && (
+                <span className="text-emerald-400 text-[10px] font-medium animate-pulse">Saved</span>
+              )}
+              {saveError === 'starting_capital' && (
+                <span className="text-red-400 text-[10px] font-medium">Failed</span>
+              )}
+            </span>
           )}
 
           <span className="text-xs font-mono text-gray-400">PT {config.profit_target_pct ?? 30}%</span>
