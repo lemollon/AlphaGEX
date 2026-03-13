@@ -89,7 +89,7 @@ _mtm_failure_counts: dict[str, int] = {}
 BOT_CONFIG = {
     "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
     "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
-    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 0, "bp_pct": 0.85, "starting_capital": 10000.0},  # 0 = no limit
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 3, "bp_pct": 0.85, "starting_capital": 10000.0},
 }
 
 # DB field → BOT_CONFIG key mapping
@@ -1363,7 +1363,7 @@ def close_position(
     #   - Then close Matt/Logan (best-effort)
     # SPARK/INFERNO: no sandbox.
     # -------------------------------------------------------------------
-    if bot["name"] == "flame":
+    if bot["name"] == "flame" and not _flame_sandbox_paper_only:
         try:
             # Read per-account open info from the position's sandbox_order_id column
             sb_rows = db_query(f"""
@@ -1953,7 +1953,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             "tag": position_id[:255],
         }
 
-    if bot["name"] == "flame":
+    if bot["name"] == "flame" and not _flame_sandbox_paper_only:
         try:
             all_accounts = _get_sandbox_accounts_lazy()
             user_accounts = [a for a in all_accounts if a["name"] == "User"]
@@ -2678,6 +2678,88 @@ def _daily_sandbox_cleanup(ct: datetime) -> None:
         log.error(traceback.format_exc())
 
 
+_flame_sandbox_paper_only: bool = False
+
+
+def _prescan_sandbox_health_check() -> None:
+    """Check sandbox buying power BEFORE every scan cycle.
+
+    If ANY account has BP < $0: skip sandbox orders for that account (log WARNING).
+    If ALL accounts have BP < $0: switch FLAME to paper-only mode (log CRITICAL).
+    This prevents the death spiral: failed close → negative BP → more failed orders.
+    """
+    global _flame_sandbox_paper_only
+
+    accounts = _get_sandbox_accounts_lazy()
+    if not accounts:
+        return
+
+    negative_accounts = []
+    total_accounts = 0
+
+    for acct in accounts:
+        try:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+            total_accounts += 1
+            bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
+            if bp is not None and bp < 0:
+                negative_accounts.append({"name": acct["name"], "bp": bp})
+                log.warning(
+                    f"SANDBOX HEALTH: [{acct['name']}] buying power NEGATIVE: "
+                    f"${bp:.2f} — skipping sandbox orders for this account"
+                )
+        except Exception as e:
+            log.warning(f"SANDBOX HEALTH: [{acct['name']}] check failed: {e}")
+
+    if negative_accounts and len(negative_accounts) >= total_accounts:
+        if not _flame_sandbox_paper_only:
+            _flame_sandbox_paper_only = True
+            log.error(
+                "SANDBOX HEALTH CRITICAL: ALL sandbox accounts have negative BP — "
+                "switching FLAME to paper-only mode"
+            )
+            # Log to DB for triage
+            try:
+                details = json.dumps({
+                    "negative_accounts": negative_accounts,
+                    "action": "auto_paper_only",
+                    "source": "prescan_health_check",
+                }).replace("'", "''")
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(),
+                        'SANDBOX_HEALTH',
+                        'CRITICAL: ALL sandbox accounts negative BP — FLAME auto-switched to paper-only',
+                        '{details}',
+                        '2DTE'
+                    )
+                """)
+            except Exception:
+                pass
+    elif not negative_accounts and _flame_sandbox_paper_only:
+        # All accounts healthy again — re-enable sandbox
+        _flame_sandbox_paper_only = False
+        log.info("SANDBOX HEALTH: All accounts healthy — re-enabling sandbox mirroring")
+        try:
+            db_execute(f"""
+                INSERT INTO {bot_table('flame', 'logs')}
+                    (log_time, level, message, details, dte_mode)
+                VALUES (
+                    CURRENT_TIMESTAMP(),
+                    'SANDBOX_HEALTH',
+                    'RECOVERED: All sandbox accounts have positive BP — re-enabling sandbox',
+                    '{{"source": "prescan_health_check", "action": "re_enable_sandbox"}}',
+                    '2DTE'
+                )
+            """)
+        except Exception:
+            pass
+
+
 def run_scan_cycle() -> None:
     """Run one scan cycle for all bots."""
     # Load config overrides from Databricks {bot}_config tables
@@ -2692,6 +2774,12 @@ def run_scan_cycle() -> None:
         _daily_sandbox_cleanup(ct)
     except Exception as e:
         log.error(f"Daily sandbox cleanup failed (non-fatal): {e}")
+
+    # Pre-scan sandbox health check (every cycle — lightweight, one API call per account)
+    try:
+        _prescan_sandbox_health_check()
+    except Exception as e:
+        log.warning(f"Sandbox health check failed (non-fatal): {e}")
 
     for bot in BOTS:
         try:

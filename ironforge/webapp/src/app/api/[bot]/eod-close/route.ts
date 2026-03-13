@@ -107,11 +107,11 @@ export async function POST(
       const pnlPerContract = (totalCredit - effectivePrice) * 100
       const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
 
-      // Close the position
+      // Close the position (atomically — only if still open)
       const sandboxCloseJson = Object.keys(sandboxCloseInfo).length > 0
         ? `'${escapeSql(JSON.stringify(sandboxCloseInfo))}'`
         : 'NULL'
-      await dbExecute(
+      const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
          SET status = 'closed', close_time = CURRENT_TIMESTAMP(),
              close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
@@ -120,6 +120,18 @@ export async function POST(
          WHERE position_id = '${escapeSql(positionId)}' AND status = 'open'
            ${dteFilter}`,
       )
+
+      // Guard: skip paper_account update if position was already closed by scanner
+      if (rowsAffected === 0) {
+        await dbExecute(
+          `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
+           VALUES ('SKIP',
+                   '${escapeSql(`EOD SKIP: ${positionId} already closed (would have been $${realizedPnl.toFixed(2)})`)}',
+                   '${escapeSql(JSON.stringify({ position_id: positionId, skipped_pnl: realizedPnl, source: 'webapp_eod_close', skip_reason: 'already_closed' }))}',
+                   '${escapeSql(dte)}')`,
+        )
+        continue  // Skip to next position — don't double-count P&L
+      }
 
       // Log the close
       const logDetails = escapeSql(JSON.stringify({
