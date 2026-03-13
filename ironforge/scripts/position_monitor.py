@@ -76,7 +76,19 @@ def db_query(sql_str):
     return [dict(zip(result.columns, row)) for row in rows]
 
 def db_execute(sql_str):
-    spark.sql(sql_str)
+    """Execute a SQL statement (INSERT/UPDATE/DELETE).
+    Returns num_affected_rows for DML (UPDATE/DELETE/MERGE), 0 for DDL/INSERT.
+    """
+    result = spark.sql(sql_str)
+    try:
+        rows = result.collect()
+        if rows and len(rows) > 0 and len(rows[0]) > 0:
+            val = rows[0][0]
+            if isinstance(val, (int, float)):
+                return int(val)
+    except Exception:
+        pass
+    return 0
 
 def bot_table(bot_name, suffix):
     return f"{CATALOG}.{SCHEMA}.{bot_name}_{suffix}"
@@ -240,7 +252,15 @@ def _get_sandbox_fill_price(api_key, account_id, order_id, max_wait=45):
     return None
 
 def mirror_close_to_sandbox(bot, position_id, ticker, expiration, ps, pl, cs, cl, contracts):
-    """Close IC on all sandbox accounts. Returns User fill price if available."""
+    """Close IC on all sandbox accounts with cascade fallback.
+
+    Cascade close strategy (matches main scanner):
+      1. 4-leg multileg close (2 attempts)
+      2. 2 × 2-leg spread close (put spread + call spread)
+      3. 4 individual leg closes
+
+    Returns User fill price if available.
+    """
     if bot["name"] != "flame":
         return None
 
@@ -262,43 +282,157 @@ def mirror_close_to_sandbox(bot, position_id, ticker, expiration, ps, pl, cs, cl
         except (json.JSONDecodeError, TypeError):
             pass
 
+    occ_ps = build_occ_symbol(ticker, expiration, ps, "P")
+    occ_pl = build_occ_symbol(ticker, expiration, pl, "P")
+    occ_cs = build_occ_symbol(ticker, expiration, cs, "C")
+    occ_cl = build_occ_symbol(ticker, expiration, cl, "C")
+
     user_fill_price = None
+    failed_accounts = []
 
     for acct in accounts:
         acct_id = acct["account_id"]
+        acct_name = acct["name"]
         # Use per-account contract count if available, else use paper contracts
-        acct_info = sb_open_info.get(acct["name"], {})
+        acct_info = sb_open_info.get(acct_name, {})
         acct_contracts = acct_info.get("contracts", contracts) if isinstance(acct_info, dict) else contracts
 
-        body = {
+        close_ok = False
+
+        # --- Stage 1: 4-leg multileg close (2 attempts) ---
+        body_4leg = {
             "class": "multileg",
             "symbol": ticker,
             "type": "market",
             "duration": "day",
-            "option_symbol[0]": build_occ_symbol(ticker, expiration, ps, "P"),
-            "side[0]": "buy_to_close",
-            "quantity[0]": str(acct_contracts),
-            "option_symbol[1]": build_occ_symbol(ticker, expiration, pl, "P"),
-            "side[1]": "sell_to_close",
-            "quantity[1]": str(acct_contracts),
-            "option_symbol[2]": build_occ_symbol(ticker, expiration, cs, "C"),
-            "side[2]": "buy_to_close",
-            "quantity[2]": str(acct_contracts),
-            "option_symbol[3]": build_occ_symbol(ticker, expiration, cl, "C"),
-            "side[3]": "sell_to_close",
-            "quantity[3]": str(acct_contracts),
+            "option_symbol[0]": occ_ps, "side[0]": "buy_to_close",  "quantity[0]": str(acct_contracts),
+            "option_symbol[1]": occ_pl, "side[1]": "sell_to_close", "quantity[1]": str(acct_contracts),
+            "option_symbol[2]": occ_cs, "side[2]": "buy_to_close",  "quantity[2]": str(acct_contracts),
+            "option_symbol[3]": occ_cl, "side[3]": "sell_to_close", "quantity[3]": str(acct_contracts),
         }
-        result = _sandbox_post(f"/accounts/{acct_id}/orders", body, acct["api_key"])
-        if result:
-            order_id = result.get("order", {}).get("id")
-            log.info(f"  Sandbox [{acct['name']}] close order #{order_id}")
+        result = _sandbox_post(f"/accounts/{acct_id}/orders", body_4leg, acct["api_key"])
+        if result and result.get("order", {}).get("id"):
+            order_id = result["order"]["id"]
+            log.info(f"  Sandbox [{acct_name}] close order #{order_id} (4-leg)")
+            close_ok = True
+        else:
+            # Retry 4-leg after 1s
+            log.warning(f"  Sandbox [{acct_name}] 4-leg attempt 1 failed, retrying...")
+            time.sleep(1)
+            result = _sandbox_post(f"/accounts/{acct_id}/orders", body_4leg, acct["api_key"])
+            if result and result.get("order", {}).get("id"):
+                order_id = result["order"]["id"]
+                log.info(f"  Sandbox [{acct_name}] close order #{order_id} (4-leg retry)")
+                close_ok = True
 
-            # FLAME 1:1: Wait for User fill to use as paper close price
-            if acct["name"] == "User" and order_id:
-                fill = _get_sandbox_fill_price(acct["api_key"], acct_id, order_id)
-                if fill is not None and fill >= 0:
-                    user_fill_price = fill
-                    log.info(f"  FLAME 1:1: User fill ${fill:.4f}")
+        # --- Stage 2: 2 × 2-leg spread close ---
+        put_id = None
+        call_id = None
+        if not close_ok:
+            log.warning(f"  Sandbox [{acct_name}] 4-leg FAILED — falling back to 2x 2-leg spreads")
+            put_spread_body = {
+                "class": "multileg",
+                "symbol": ticker,
+                "type": "market",
+                "duration": "day",
+                "option_symbol[0]": occ_ps, "side[0]": "buy_to_close",  "quantity[0]": str(acct_contracts),
+                "option_symbol[1]": occ_pl, "side[1]": "sell_to_close", "quantity[1]": str(acct_contracts),
+            }
+            call_spread_body = {
+                "class": "multileg",
+                "symbol": ticker,
+                "type": "market",
+                "duration": "day",
+                "option_symbol[0]": occ_cs, "side[0]": "buy_to_close",  "quantity[0]": str(acct_contracts),
+                "option_symbol[1]": occ_cl, "side[1]": "sell_to_close", "quantity[1]": str(acct_contracts),
+            }
+            put_result = _sandbox_post(f"/accounts/{acct_id}/orders", put_spread_body, acct["api_key"])
+            call_result = _sandbox_post(f"/accounts/{acct_id}/orders", call_spread_body, acct["api_key"])
+            put_id = put_result.get("order", {}).get("id") if put_result else None
+            call_id = call_result.get("order", {}).get("id") if call_result else None
+
+            if put_id and call_id:
+                order_id = put_id
+                log.info(f"  Sandbox [{acct_name}] close OK (2x2-leg): put={put_id} call={call_id}")
+                close_ok = True
+
+        # --- Stage 3: 4 individual leg closes ---
+        if not close_ok:
+            log.warning(
+                f"  Sandbox [{acct_name}] 2-leg FAILED "
+                f"(put={'OK' if put_id else 'FAIL'}, call={'OK' if call_id else 'FAIL'}) — "
+                f"falling back to individual legs"
+            )
+            individual_legs = [
+                (occ_ps, "buy_to_close",  "put_short"),
+                (occ_pl, "sell_to_close", "put_long"),
+                (occ_cs, "buy_to_close",  "call_short"),
+                (occ_cl, "sell_to_close", "call_long"),
+            ]
+            any_leg_ok = False
+            for occ, side, label in individual_legs:
+                # Skip legs already closed by partial 2-leg success
+                if label.startswith("put") and put_id:
+                    continue
+                if label.startswith("call") and call_id:
+                    continue
+
+                leg_body = {
+                    "class": "option",
+                    "symbol": ticker,
+                    "option_symbol": occ,
+                    "side": side,
+                    "quantity": str(acct_contracts),
+                    "type": "market",
+                    "duration": "day",
+                }
+                leg_result = _sandbox_post(f"/accounts/{acct_id}/orders", leg_body, acct["api_key"])
+                leg_id = leg_result.get("order", {}).get("id") if leg_result else None
+                if leg_id:
+                    any_leg_ok = True
+                    log.info(f"  Sandbox [{acct_name}] leg close OK: {label} order_id={leg_id}")
+                else:
+                    log.error(f"  Sandbox [{acct_name}] leg close FAILED: {label}")
+
+            if any_leg_ok:
+                order_id = -1  # flag cascade used
+                close_ok = True
+                log.info(f"  Sandbox [{acct_name}] cascade completed (individual legs)")
+            else:
+                log.error(
+                    f"  Sandbox [{acct_name}] ALL close strategies FAILED — "
+                    f"sandbox ORPHAN likely for {position_id}"
+                )
+                failed_accounts.append(acct_name)
+
+        # FLAME 1:1: Wait for User fill to use as paper close price
+        if close_ok and acct_name == "User" and order_id and order_id > 0:
+            fill = _get_sandbox_fill_price(acct["api_key"], acct_id, order_id)
+            if fill is not None and fill >= 0:
+                user_fill_price = fill
+                log.info(f"  FLAME 1:1: User fill ${fill:.4f}")
+
+    # Log sandbox failures to DB for triage visibility
+    if failed_accounts:
+        fail_details = json.dumps({
+            "position_id": position_id,
+            "failed_accounts": failed_accounts,
+            "source": "position_monitor",
+        }).replace("'", "''")
+        try:
+            db_execute(f"""
+                INSERT INTO {bot_table('flame', 'logs')}
+                    (log_time, level, message, details, dte_mode)
+                VALUES (
+                    CURRENT_TIMESTAMP(),
+                    'SANDBOX_CLOSE_FAIL',
+                    'MONITOR: Sandbox close cascade FAILED for {position_id} on [{",".join(failed_accounts)}]',
+                    '{fail_details}',
+                    '{bot['dte']}'
+                )
+            """)
+        except Exception:
+            pass
 
     return user_fill_price
 
@@ -370,13 +504,34 @@ def close_position(bot, position_id, ticker, expiration, ps, pl, cs, cl,
                 log.info(f"FLAME 1:1 close: using sandbox fill ${fill:.4f}")
         except Exception as e:
             log.warning(f"Sandbox close failed for {position_id}: {e}")
+            # Log sandbox failure to DB so triage queries can find it
+            sb_fail_details = json.dumps({
+                "position_id": position_id,
+                "error": str(e)[:500],
+                "close_reason": reason,
+                "source": "position_monitor",
+            }).replace("'", "''")
+            try:
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(),
+                        'SANDBOX_CLOSE_FAIL',
+                        'MONITOR: Sandbox close failed for {position_id}: {str(e)[:200]}',
+                        '{sb_fail_details}',
+                        '{bot['dte']}'
+                    )
+                """)
+            except Exception:
+                pass  # Don't let logging failure block position close
 
     realized_pnl = round((entry_credit - price) * 100 * contracts, 2)
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_str = get_central_time().strftime("%Y-%m-%d")
 
-    # 1. Close the position
-    db_execute(f"""
+    # 1. Close the position (atomically — only if still open)
+    rows_affected = db_execute(f"""
         UPDATE {bot_table(bot['name'], 'positions')}
         SET status = 'closed',
             close_time = CAST('{now_ts}' AS TIMESTAMP),
@@ -388,6 +543,33 @@ def close_position(bot, position_id, ticker, expiration, ps, pl, cs, cl,
           AND status = 'open'
           AND dte_mode = '{bot['dte']}'
     """)
+
+    if rows_affected == 0:
+        log.warning(
+            f"{bot['name'].upper()} {position_id}: position UPDATE matched 0 rows "
+            f"(already closed by scanner or another monitor run). Skipping paper_account "
+            f"update to prevent double-counting. realized_pnl would have been ${realized_pnl:.2f}"
+        )
+        # Still log to activity log so we know the monitor tried
+        skip_details = json.dumps({
+            "position_id": position_id,
+            "skipped_pnl": realized_pnl,
+            "close_reason": reason,
+            "source": "position_monitor",
+            "skip_reason": "already_closed_by_another_process",
+        }).replace("'", "''")
+        db_execute(f"""
+            INSERT INTO {bot_table(bot['name'], 'logs')}
+                (log_time, level, message, details, dte_mode)
+            VALUES (
+                CURRENT_TIMESTAMP(),
+                'SKIP',
+                'MONITOR SKIP: {position_id} already closed — would have been ${realized_pnl:.2f} [{reason}]',
+                '{skip_details}',
+                '{bot['dte']}'
+            )
+        """)
+        return
 
     # 2. Reconcile collateral from actual remaining open positions
     pos_table = bot_table(bot['name'], 'positions')
