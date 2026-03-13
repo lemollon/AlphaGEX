@@ -1784,7 +1784,18 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
 
     acct = account_rows[0]
     paper_acct_id = acct["id"]  # save BEFORE sandbox loop overwrites 'acct'
-    buying_power = num(acct["buying_power"])
+
+    # Derive buying power from LIVE open position collateral (not stale paper_account cache).
+    # paper_account.collateral_in_use can drift if a close path fails to reconcile.
+    balance = num(acct["current_balance"])
+    live_collateral_rows = db_query(f"""
+        SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+        FROM {bot_table(bot['name'], 'positions')}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+    """)
+    live_collateral = num(live_collateral_rows[0]["total_collateral"]) if live_collateral_rows else 0.0
+    buying_power = balance - live_collateral
+
     if buying_power < 200:
         return f"skip:low_bp(${buying_power:.0f})"
 
@@ -2147,6 +2158,45 @@ def scan_bot(bot: dict) -> None:
     unrealized_pnl = 0.0
 
     try:
+        # ── Collateral reconciliation ─────────────────────────────────────
+        # Reconcile paper_account.collateral_in_use with actual open position
+        # collateral every scan cycle. This prevents stale collateral from
+        # blocking trades when a close path fails to update paper_account.
+        try:
+            pos_table = bot_table(bot["name"], "positions")
+            acct_table = bot_table(bot["name"], "paper_account")
+            live_coll = db_query(f"""
+                SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+                FROM {pos_table}
+                WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+            """)
+            actual_coll = num(live_coll[0]["total_collateral"]) if live_coll else 0.0
+            stored_acct = db_query(f"""
+                SELECT collateral_in_use, current_balance
+                FROM {acct_table}
+                WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
+                ORDER BY id DESC LIMIT 1
+            """)
+            if stored_acct:
+                stored_coll = num(stored_acct[0]["collateral_in_use"])
+                stored_bal = num(stored_acct[0]["current_balance"])
+                if abs(stored_coll - actual_coll) > 0.01:
+                    new_bp = stored_bal - actual_coll
+                    db_execute(f"""
+                        UPDATE {acct_table}
+                        SET collateral_in_use = {actual_coll},
+                            buying_power = {new_bp},
+                            updated_at = CURRENT_TIMESTAMP()
+                        WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
+                    """)
+                    log.info(
+                        f"{bot_name} COLLATERAL RECONCILED: "
+                        f"${stored_coll:.2f} -> ${actual_coll:.2f} "
+                        f"(BP: ${stored_bal - stored_coll:.2f} -> ${new_bp:.2f})"
+                    )
+        except Exception as coll_err:
+            log.warning(f"{bot_name} collateral reconciliation error: {coll_err}")
+
         # Auto-decrement PDT counter: recount actual day trades in rolling window
         # Respects manual resets: only counts trades AFTER last_reset_at
         try:
