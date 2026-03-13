@@ -13,7 +13,7 @@ It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE
 | Layer | Technology | Status |
 |-------|-----------|--------|
 | Frontend | Next.js 14 on **Vercel** | ACTIVE |
-| Database | **Databricks** (alpha_prime.default schema, Delta Lake) | ACTIVE |
+| Database | **Databricks** (alpha_prime.ironforge schema, Delta Lake) | ACTIVE |
 | DB Client | `@/lib/databricks-sql.ts` (dbQuery, dbExecute, escapeSql, sharedTable, botTable, validateBot, dteMode) | ACTIVE |
 | Scanner | `ironforge/databricks/ironforge_scanner.py` (runs on Databricks) | ACTIVE |
 | API | `ironforge/databricks/ironforge_api.py` (FastAPI on Databricks) | ACTIVE |
@@ -26,14 +26,16 @@ It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE
 1. If ANY file imports from `@/lib/db` — that file is **broken** and must be migrated to `@/lib/databricks-sql`
 2. If ANY reference to Render, PostgreSQL, `DATABASE_URL`, `pg`, or `Pool` exists — it is **dead code**
 3. Every database operation goes through `dbQuery()` or `dbExecute()` from `@/lib/databricks-sql.ts`
-4. Table names use `botTable(bot, 'tablename')` → `alpha_prime.default.{bot}_{tablename}`
-5. Shared tables use `sharedTable('tablename')` → `alpha_prime.default.{tablename}`
+4. Table names use `botTable(bot, 'tablename')` → `alpha_prime.ironforge.{bot}_{tablename}`
+5. Shared tables use `sharedTable('tablename')` → `alpha_prime.ironforge.{tablename}`
 6. All times are Central Time (America/Chicago)
 
 ### Vercel Environment Variables (required)
 - `DATABRICKS_SERVER_HOSTNAME` — SQL warehouse hostname
-- `DATABRICKS_HTTP_PATH` — warehouse HTTP path
+- `DATABRICKS_WAREHOUSE_ID` — SQL warehouse ID
 - `DATABRICKS_TOKEN` — personal access token or service principal token
+- `DATABRICKS_CATALOG` — must be `alpha_prime` (default)
+- `DATABRICKS_SCHEMA` — must be `ironforge` (default). **NEVER set to `default`** — that's a different schema with stale data
 - `TRADIER_API_KEY` — for live market data quotes
 
 ```
@@ -103,6 +105,11 @@ ironforge/
     │           ├── force-trade/route.ts
     │           ├── force-close/route.ts
     │           ├── logs/route.ts
+    │           ├── fix-collateral/route.ts # Fix stuck collateral (diagnose + repair)
+    │           ├── diagnose-trade/route.ts # Diagnose why bot isn't trading
+    │           ├── diagnose-pnl/route.ts  # Diagnose P&L discrepancies
+    │           ├── eod-close/route.ts     # Force close all positions (EOD)
+    │           ├── signals/route.ts       # Recent signals
     │           ├── pdt/route.ts         # ✅ Databricks — PDT status + toggle/reset
     │           └── pdt/audit/route.ts   # ✅ Databricks — PDT audit log
     └── .env.local.example
@@ -183,7 +190,7 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 | Data failure | 10 consecutive MTM failures |
 | Server restart | Force-close if market closed, resume if open |
 
-## Database Tables (Databricks Delta Lake — alpha_prime.default schema)
+## Database Tables (Databricks Delta Lake — alpha_prime.ironforge schema)
 
 Per-bot tables (prefix = `flame_`, `spark_`, or `inferno_`):
 - `{bot}_positions` — All positions (open, closed, expired). Key columns: strikes, credits, oracle data, wings_adjusted, status, realized_pnl
@@ -207,7 +214,7 @@ Shared tables:
 | Layer | Platform | Details |
 |-------|----------|---------|
 | Frontend + API routes | **Vercel** | Next.js 14, auto-deploys from main branch |
-| Database | **Databricks** | Delta Lake tables in `alpha_prime.default` schema |
+| Database | **Databricks** | Delta Lake tables in `alpha_prime.ironforge` schema |
 | Scanner | **Databricks** | `ironforge_scanner.py` runs on Databricks compute |
 | FastAPI | **Databricks** | `ironforge_api.py` serves additional endpoints |
 
@@ -235,6 +242,12 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `infe
 | `POST /api/{bot}/force-trade` | Force open IC position |
 | `POST /api/{bot}/force-close` | Force close position |
 | `GET /api/{bot}/logs` | Activity logs |
+| `GET /api/{bot}/fix-collateral` | Diagnose stuck collateral (read-only) |
+| `POST /api/{bot}/fix-collateral` | Fix stuck collateral (close stale positions + reconcile) |
+| `GET /api/{bot}/diagnose-trade` | Diagnose why bot isn't trading |
+| `GET /api/{bot}/diagnose-pnl` | Diagnose P&L discrepancies |
+| `POST /api/{bot}/eod-close` | Force close all positions (EOD safety) |
+| `GET /api/{bot}/signals` | Recent signals (scan activity) |
 | `GET /api/health` | Databricks connectivity check |
 
 ## Frontend Pages
@@ -279,3 +292,69 @@ npm run dev
 IronForge lives inside the AlphaGEX monorepo at `ironforge/` but is **completely independent**. It shares no code with the main AlphaGEX backend/frontend. It was designed as a lightweight, portable system that can run without the complexity of the full AlphaGEX infrastructure.
 
 The `ironforge/databricks/` directory contains the Databricks-native scanner and API. The `ironforge/webapp/` directory contains the Next.js dashboard deployed on Vercel.
+
+## HARD RULE: All Backend Fixes Must Live in the Webapp
+
+**ALL diagnostic tools, fix scripts, and backend operations MUST be implemented as API routes in `ironforge/webapp/src/app/api/`.** Do NOT create:
+- Standalone Python scripts in `ironforge/scripts/`
+- Databricks notebooks in `ironforge/databricks/`
+- Any backend code outside the webapp
+
+**Why:** The webapp is the only deployed backend. Vercel serves the Next.js API routes. There is no other backend server. Scripts and notebooks require manual Databricks access — the webapp API routes can be called from the browser or curl immediately.
+
+**Pattern for fix/diagnostic endpoints:**
+```
+GET  /api/{bot}/fix-{issue}  → Read-only diagnostic (safe to call anytime)
+POST /api/{bot}/fix-{issue}  → Apply the fix
+```
+
+## Known Issues & Fixes
+
+### Stuck Collateral (Collateral > 0 with 0 Open Positions)
+
+**Symptoms:** Dashboard shows non-zero collateral_in_use but 0 open positions. Buying power appears reduced.
+
+**Root Causes:**
+1. **Stale positions**: Positions past expiration or from a prior trading day still marked `status = 'open'`
+2. **Orphan positions**: Open positions with wrong/NULL `dte_mode` — invisible to the status API's dte filter but holding collateral
+3. **Paper account drift**: `paper_account.collateral_in_use` gets out of sync with actual open positions (e.g., position was closed but collateral wasn't released)
+4. **Schema mismatch**: Vercel `DATABRICKS_SCHEMA` env var pointing to `default` instead of `ironforge` — reads completely different stale data
+
+**Fix:**
+```
+# Diagnose (read-only)
+GET /api/inferno/fix-collateral
+
+# Apply fix (closes stale positions + reconciles paper_account)
+POST /api/inferno/fix-collateral
+```
+
+**How the status API prevents this (live reconciliation):**
+The `/api/{bot}/status` route does NOT read `paper_account.collateral_in_use`. Instead it recalculates:
+- `collateral` = SUM(collateral_required) FROM positions WHERE status='open' AND dte_mode='{dte}'
+- `realized_pnl` = SUM(realized_pnl) FROM positions WHERE status IN ('closed','expired') AND dte_mode='{dte}'
+- `balance` = starting_capital + realized_pnl
+- `buying_power` = balance - collateral
+
+If the dashboard still shows wrong values despite the database being correct, the issue is the **schema env var** — check Vercel Settings → Environment Variables → `DATABRICKS_SCHEMA` must be `ironforge`.
+
+### Balance Drift (P&L Doesn't Match Closed Trades)
+
+**Symptoms:** Dashboard balance doesn't equal `starting_capital + sum(realized_pnl from closed trades)`.
+
+**Root Cause:** `paper_account.current_balance` drifted due to double-counting (position P&L added twice) or missed updates.
+
+**Fix:** Same as stuck collateral — `POST /api/{bot}/fix-collateral` reconciles all values.
+
+### Schema Mismatch (Dashboard Shows Completely Wrong Numbers)
+
+**Symptoms:** Dashboard values (balance, P&L, trades, collateral) are ALL different from database values — not just slightly off, but completely different numbers.
+
+**Root Cause:** Vercel's `DATABRICKS_SCHEMA` env var is set to `default` instead of `ironforge`. The webapp queries `alpha_prime.default.*` tables (old/stale) instead of `alpha_prime.ironforge.*` tables (current).
+
+**Fix:**
+1. Go to Vercel → IronForge project → Settings → Environment Variables
+2. Set `DATABRICKS_SCHEMA` = `ironforge`
+3. Redeploy
+
+**Prevention:** The `DATABRICKS_SCHEMA` env var defaults to `ironforge` in code (`databricks-sql.ts`). Only set it if you need to override. Never set it to `default`.
