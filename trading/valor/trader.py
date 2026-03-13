@@ -320,6 +320,11 @@ class ValorTrader:
                 results["errors"].append(f"{ticker}: {e}")
 
         # ============================================================
+        # Stale Position Watchdog — force-close positions held too long
+        # ============================================================
+        self._cleanup_stale_positions()
+
+        # ============================================================
         # Correlation-Aware Position Logging
         # ============================================================
         self._log_correlation_exposure()
@@ -2123,6 +2128,69 @@ class ValorTrader:
                 return 'EXPIRED_LOSS'
             else:
                 return 'LOSS'
+
+    def _cleanup_stale_positions(self) -> None:
+        """
+        Force-close positions that have been open too long (stale position watchdog).
+
+        This prevents the scenario that killed VALOR on 2/26:
+        - Positions pile up (e.g., 20 CL in 17 minutes)
+        - Process crashes or redeploys
+        - Positions stay open forever, consuming all margin
+        - No new trades can execute → bot appears dead
+
+        Max hold times per instrument (from FUTURES_TICKERS config):
+        - MES/MNQ/RTY: 24 hours (index futures, highly liquid)
+        - CL/NG: 12 hours (commodity futures, less liquid overnight)
+        - MGC: 24 hours (gold, trades nearly 24h)
+
+        Fallback: 24 hours if no per-ticker config.
+        """
+        try:
+            all_positions = self.db.get_open_positions()
+            if not all_positions:
+                return
+
+            now = datetime.now(CENTRAL_TZ)
+            stale_closed = 0
+
+            for pos in all_positions:
+                pos_ticker = getattr(pos, 'ticker', 'MES')
+                ticker_cfg = get_ticker_config(pos_ticker)
+
+                # Max hold: per-ticker config or 24h default
+                max_hold_hours = ticker_cfg.get('max_hold_hours', 24)
+                hold_duration = (now - pos.open_time).total_seconds() / 3600
+
+                if hold_duration > max_hold_hours:
+                    # Try to get current price for accurate P&L
+                    quote = self.executor.get_mes_quote(ticker=pos_ticker)
+                    close_price = quote.get("last", 0) if quote else 0
+
+                    if close_price <= 0:
+                        # No price available — close at entry (P&L = $0)
+                        close_price = float(pos.entry_price)
+                        close_reason = f"STALE_WATCHDOG_{max_hold_hours}H_NO_QUOTE"
+                    else:
+                        close_reason = f"STALE_WATCHDOG_{max_hold_hours}H"
+
+                    logger.warning(
+                        f"VALOR WATCHDOG [{pos_ticker}]: Force-closing stale position "
+                        f"{pos.position_id} — held {hold_duration:.1f}h (max {max_hold_hours}h). "
+                        f"Entry={pos.entry_price}, Close={close_price}"
+                    )
+
+                    closed = self._close_position(
+                        pos, close_price, PositionStatus.CLOSED, close_reason
+                    )
+                    if closed:
+                        stale_closed += 1
+
+            if stale_closed > 0:
+                logger.info(f"VALOR WATCHDOG: Force-closed {stale_closed} stale position(s)")
+
+        except Exception as e:
+            logger.error(f"VALOR WATCHDOG error: {e}")
 
     def process_expired_positions(self) -> Dict[str, Any]:
         """
