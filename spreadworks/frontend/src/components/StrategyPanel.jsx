@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { Zap, Save, Send, Bell, Plus, X, Sparkles, AlertTriangle } from 'lucide-react';
 
 const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
@@ -38,328 +39,18 @@ const DEFAULT_LEGS = {
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-/* ── Design Tokens ── */
-const s = {
-  panel: {
-    width: 300,
-    minWidth: 300,
-    background: 'linear-gradient(180deg, #0c0c22 0%, #080818 100%)',
-    borderRight: '1px solid var(--border-subtle)',
-    padding: '20px 16px',
-    overflowY: 'auto',
-    fontFamily: 'var(--font-ui)',
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 14,
-    height: '100%',
-    boxShadow: 'var(--shadow-panel)',
-  },
-  logo: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 2,
-    marginBottom: 0,
-  },
-  logoIcon: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 32,
-    height: 32,
-    borderRadius: 'var(--radius-md)',
-    background: 'linear-gradient(135deg, var(--accent) 0%, #7c4dff 100%)',
-    marginRight: 10,
-    fontSize: 16,
-    color: '#fff',
-    fontWeight: 800,
-    boxShadow: '0 4px 16px rgba(68, 138, 255, 0.4), 0 0 30px rgba(68, 138, 255, 0.15)',
-  },
-  logoText: {
-    fontSize: 20,
-    fontWeight: 800,
-    letterSpacing: '-0.5px',
-    color: '#fff',
-  },
-  logoAccent: {
-    color: 'var(--accent)',
-  },
-  subtitle: {
-    color: 'var(--text-tertiary)',
-    fontSize: 11,
-    fontWeight: 500,
-    letterSpacing: '0.02em',
-  },
-  card: {
-    background: 'rgba(13, 13, 35, 0.7)',
-    backdropFilter: 'blur(8px)',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--radius-lg)',
-    padding: '14px',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.3)',
-  },
-  sectionLabel: {
-    color: 'var(--text-secondary)',
-    fontSize: 10,
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.12em',
-    marginBottom: 10,
-  },
-  toggleRow: {
-    display: 'flex',
-    gap: 3,
-    background: 'rgba(16, 16, 42, 0.8)',
-    borderRadius: 'var(--radius-md)',
-    padding: 3,
-    border: '1px solid rgba(30, 30, 70, 0.6)',
-  },
-  toggleBtn: (active) => ({
-    flex: 1,
-    padding: '8px 6px',
-    border: 'none',
-    borderRadius: 'var(--radius-sm)',
-    background: active
-      ? 'linear-gradient(135deg, var(--accent) 0%, #6366f1 100%)'
-      : 'transparent',
-    color: active ? '#fff' : 'var(--text-tertiary)',
-    cursor: 'pointer',
-    fontSize: 11,
-    fontFamily: 'var(--font-ui)',
-    fontWeight: active ? 700 : 500,
-    textAlign: 'center',
-    transition: 'all var(--transition-fast)',
-    boxShadow: active ? '0 2px 12px rgba(68, 138, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.1)' : 'none',
-  }),
-  spotRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '12px 14px',
-    background: 'linear-gradient(135deg, rgba(16, 16, 42, 0.8) 0%, rgba(13, 13, 35, 0.6) 100%)',
-    borderRadius: 'var(--radius-lg)',
-    border: '1px solid var(--border-subtle)',
-    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
-  },
-  spotLabel: {
-    color: 'var(--text-tertiary)',
-    fontSize: 11,
-    fontWeight: 600,
-  },
-  spotSymbol: {
-    color: '#fff',
-    fontWeight: 800,
-    fontSize: 15,
-    fontFamily: 'var(--font-mono)',
-  },
-  spotDot: {
-    width: 4,
-    height: 4,
-    borderRadius: '50%',
-    background: 'var(--border-default)',
-  },
-  spotValue: {
-    color: 'var(--accent-bright)',
-    fontWeight: 700,
-    fontSize: 15,
-    fontFamily: 'var(--font-mono)',
-    textShadow: '0 0 20px rgba(68, 138, 255, 0.3)',
-  },
-  sideLabel: (color) => ({
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    color: color,
-    fontSize: 10,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.1em',
-    marginTop: 4,
-    marginBottom: 6,
-  }),
-  sideLine: (color) => ({
-    flex: 1,
-    height: 1,
-    background: `${color}22`,
-  }),
-  fieldRow: {
-    display: 'flex',
-    gap: 8,
-    marginBottom: 6,
-  },
-  fieldCol: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  },
-  fieldLabel: (color) => ({
-    fontSize: 10,
-    color: color || 'var(--text-tertiary)',
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  }),
-  input: (borderColor) => ({
-    width: '100%',
-    padding: '8px 10px',
-    border: `1px solid ${borderColor || 'var(--border-subtle)'}`,
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--bg-elevated)',
-    color: 'var(--text-primary)',
-    fontSize: 13,
-    fontFamily: 'var(--font-mono)',
-    fontWeight: 500,
-    outline: 'none',
-    boxSizing: 'border-box',
-    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
-  }),
-  select: (borderColor) => ({
-    width: '100%',
-    padding: '8px 10px',
-    border: `1px solid ${borderColor || 'var(--border-subtle)'}`,
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--bg-elevated)',
-    color: 'var(--text-primary)',
-    fontSize: 13,
-    fontFamily: 'var(--font-mono)',
-    fontWeight: 500,
-    outline: 'none',
-    boxSizing: 'border-box',
-    transition: 'border-color var(--transition-fast)',
-  }),
-  calcBtn: {
-    width: '100%',
-    padding: '10px 12px',
-    border: 'none',
-    borderRadius: 'var(--radius-md)',
-    background: 'linear-gradient(135deg, var(--accent) 0%, #5c9bff 100%)',
-    color: '#fff',
-    fontWeight: 700,
-    fontSize: 13,
-    fontFamily: 'var(--font-ui)',
-    cursor: 'pointer',
-    transition: 'all var(--transition-fast)',
-    boxShadow: '0 2px 12px rgba(68, 138, 255, 0.3)',
-    letterSpacing: '0.03em',
-  },
-  calcBtnDisabled: {
-    opacity: 0.35,
-    cursor: 'not-allowed',
-    boxShadow: 'none',
-  },
-  actionBtn: (bg, color, borderColor) => ({
-    width: '100%',
-    padding: '9px 12px',
-    border: `1px solid ${borderColor}`,
-    borderRadius: 'var(--radius-md)',
-    background: bg,
-    color: color,
-    fontWeight: 600,
-    fontSize: 12,
-    fontFamily: 'var(--font-ui)',
-    cursor: 'pointer',
-    transition: 'all var(--transition-fast)',
-    letterSpacing: '0.02em',
-  }),
-  alertSection: {
-    marginTop: 4,
-  },
-  alertRow: {
-    display: 'flex',
-    gap: 6,
-    marginTop: 6,
-  },
-  alertSelect: {
-    width: 68,
-    padding: '6px 8px',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--bg-elevated)',
-    color: 'var(--text-secondary)',
-    fontSize: 12,
-    fontFamily: 'var(--font-ui)',
-    fontWeight: 500,
-  },
-  alertInput: {
-    flex: 1,
-    padding: '6px 10px',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--bg-elevated)',
-    color: 'var(--text-primary)',
-    fontSize: 12,
-    fontFamily: 'var(--font-mono)',
-    fontWeight: 500,
-    minWidth: 0,
-  },
-  alertAddBtn: {
-    padding: '6px 12px',
-    border: 'none',
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--accent)',
-    color: '#fff',
-    fontSize: 12,
-    fontFamily: 'var(--font-ui)',
-    fontWeight: 600,
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  },
-  alertList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: '6px 0 0 0',
-  },
-  alertItem: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '6px 8px',
-    borderRadius: 'var(--radius-sm)',
-    background: 'var(--bg-elevated)',
-    fontSize: 12,
-    fontFamily: 'var(--font-mono)',
-    marginBottom: 4,
-  },
-  alertDel: {
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-tertiary)',
-    cursor: 'pointer',
-    fontSize: 16,
-    padding: '0 4px',
-    lineHeight: 1,
-  },
-  gexBanner: {
-    background: 'linear-gradient(135deg, rgba(68, 138, 255, 0.08) 0%, rgba(124, 77, 255, 0.06) 100%)',
-    border: '1px solid var(--border-accent)',
-    borderRadius: 'var(--radius-md)',
-    padding: '10px 12px',
-    fontSize: 11,
-    color: 'var(--accent)',
-    animation: 'sw-fadeIn 0.3s ease',
-  },
-  error: {
-    background: 'var(--red-dim)',
-    border: '1px solid rgba(255, 82, 82, 0.3)',
-    borderRadius: 'var(--radius-md)',
-    padding: '8px 12px',
-    fontSize: 11,
-    color: 'var(--red)',
-    fontWeight: 500,
-  },
-};
-
 function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
-  const borderColor = color === '#00e676' ? 'rgba(0, 230, 118, 0.25)' : 'rgba(255, 82, 82, 0.25)';
+  const isGreen = color === '#00e676' || color === '#22c55e';
+  const borderCls = isGreen ? 'border-sw-green/25 focus:border-sw-green' : 'border-sw-red/25 focus:border-sw-red';
+  const labelCls = isGreen ? 'text-sw-green' : 'text-sw-red';
   const optionType = label.toLowerCase().includes('put') ? 'put' : 'call';
+
   if (inputMode === INPUT_MODES.LIVE_CHAIN && chainStrikes.length > 0) {
     return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel(color)}>{label}</span>
+      <div className="flex-1 flex flex-col gap-1">
+        <span className={`sw-label ${labelCls}`}>{label}</span>
         <select
-          style={s.select(borderColor)}
+          className={`sw-select ${borderCls}`}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         >
@@ -377,8 +68,8 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
     );
   }
   return (
-    <div style={s.fieldCol}>
-      <span style={s.fieldLabel(color)}>{label}</span>
+    <div className="flex-1 flex flex-col gap-1">
+      <span className={`sw-label ${labelCls}`}>{label}</span>
       <input
         type="text"
         inputMode="numeric"
@@ -387,7 +78,7 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        style={s.input(borderColor)}
+        className={`sw-input ${borderCls}`}
       />
     </div>
   );
@@ -396,10 +87,10 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
 function ExpirationInput({ label, value, inputMode, expirations, onChange, onFetchStrikes, disabled }) {
   if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
     return (
-      <div style={s.fieldCol}>
-        <span style={s.fieldLabel()}>{label}</span>
+      <div className="flex-1 flex flex-col gap-1">
+        <span className="sw-label">{label}</span>
         <select
-          style={s.select()}
+          className="sw-select"
           value={value}
           onChange={(e) => {
             onChange(e.target.value);
@@ -415,14 +106,14 @@ function ExpirationInput({ label, value, inputMode, expirations, onChange, onFet
     );
   }
   return (
-    <div style={s.fieldCol}>
-      <span style={s.fieldLabel()}>{label}</span>
+    <div className="flex-1 flex flex-col gap-1">
+      <span className="sw-label">{label}</span>
       <input
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
-        style={s.input()}
+        className="sw-input"
       />
     </div>
   );
@@ -758,75 +449,78 @@ export default function StrategyPanel({
   };
 
   return (
-    <div style={s.panel}>
+    <div className="w-[300px] min-w-[300px] border-r border-border-subtle px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-3.5 h-full"
+      style={{ background: 'linear-gradient(180deg, #0c0c22 0%, #080818 100%)', boxShadow: 'var(--shadow-panel)' }}>
+
       {/* Logo */}
       <div>
-        <div style={s.logo}>
-          <div style={s.logoIcon}>S</div>
-          <span style={s.logoText}>
-            Spread<span style={s.logoAccent}>Works</span>
+        <div className="flex items-center gap-0.5">
+          <div className="inline-flex items-center justify-center w-8 h-8 rounded-lg mr-2.5 text-base text-white font-extrabold"
+            style={{
+              background: 'linear-gradient(135deg, var(--color-accent) 0%, #d97706 100%)',
+              boxShadow: '0 4px 16px rgba(245, 158, 11, 0.4), 0 0 30px rgba(245, 158, 11, 0.15)',
+            }}>S</div>
+          <span className="text-xl font-extrabold text-white tracking-tight">
+            Spread<span className="text-accent">Works</span>
           </span>
         </div>
-        <div style={{ ...s.subtitle, marginTop: 2, marginLeft: 36 }}>Options Spread Analyzer</div>
+        <div className="text-text-tertiary text-[11px] font-medium tracking-wide mt-0.5 ml-[42px]">Options Spread Analyzer</div>
       </div>
 
       {/* Strategy */}
-      <div style={s.card}>
-        <div style={s.sectionLabel}>Strategy</div>
-        <div style={s.toggleRow}>
-          <button
-            style={s.toggleBtn(strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL)}
-            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_DIAGONAL)}
-          >Dbl Diagonal</button>
-          <button
-            style={s.toggleBtn(strategy === STRATEGY_TYPES.DOUBLE_CALENDAR)}
-            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}
-          >Dbl Calendar</button>
-          <button
-            style={s.toggleBtn(strategy === STRATEGY_TYPES.IRON_CONDOR)}
-            onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}
-          >Iron Condor</button>
+      <div className="sw-card p-3.5">
+        <div className="sw-label mb-2.5">Strategy</div>
+        <div className="sw-toggle-group">
+          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'active' : ''}`}
+            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_DIAGONAL)}>Dbl Diagonal</button>
+          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_CALENDAR ? 'active' : ''}`}
+            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}>Dbl Calendar</button>
+          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.IRON_CONDOR ? 'active' : ''}`}
+            onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}>Iron Condor</button>
         </div>
       </div>
 
       {/* Input Mode */}
-      <div style={s.card}>
-        <div style={s.sectionLabel}>Input Mode</div>
-        <div style={s.toggleRow}>
-          <button style={s.toggleBtn(inputMode === INPUT_MODES.LIVE_CHAIN)} onClick={() => setInputMode(INPUT_MODES.LIVE_CHAIN)}>Live Chain</button>
-          <button style={s.toggleBtn(inputMode === INPUT_MODES.MANUAL)} onClick={() => setInputMode(INPUT_MODES.MANUAL)}>Manual</button>
-          <button style={s.toggleBtn(inputMode === INPUT_MODES.GEX_SUGGEST)} onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
+      <div className="sw-card p-3.5">
+        <div className="sw-label mb-2.5">Input Mode</div>
+        <div className="sw-toggle-group">
+          <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.LIVE_CHAIN ? 'active' : ''}`}
+            onClick={() => setInputMode(INPUT_MODES.LIVE_CHAIN)}>Live Chain</button>
+          <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.MANUAL ? 'active' : ''}`}
+            onClick={() => setInputMode(INPUT_MODES.MANUAL)}>Manual</button>
+          <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.GEX_SUGGEST ? 'active' : ''}`}
+            onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
         </div>
       </div>
 
-      {(error || calcError) && <div style={s.error}>{error || calcError}</div>}
+      {/* Error */}
+      {(error || calcError) && (
+        <div className="flex items-center gap-2 bg-sw-red-dim border border-sw-red/30 rounded-lg px-3 py-2 text-[11px] text-sw-red font-medium animate-fade-in">
+          <AlertTriangle size={14} className="shrink-0" />
+          {error || calcError}
+        </div>
+      )}
 
       {/* GEX Suggestion */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
-        <div style={s.gexBanner}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 700, fontSize: 12 }}>GEX Suggestion</span>
+        <div className="bg-accent-dim border border-accent/20 rounded-lg px-3 py-2.5 text-[11px] text-accent animate-fade-in">
+          <div className="flex justify-between items-center">
+            <span className="font-bold text-xs flex items-center gap-1.5">
+              <Sparkles size={12} />
+              GEX Suggestion
+            </span>
             <button
               onClick={() => {
                 setGexSuggestion(null);
                 setLegs(DEFAULT_LEGS[strategy]);
                 setInputMode(INPUT_MODES.MANUAL);
               }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--red)',
-                cursor: 'pointer',
-                fontSize: 16,
-                fontFamily: 'var(--font-ui)',
-                padding: '0 2px',
-                lineHeight: 1,
-              }}
+              className="sw-btn-ghost p-0 text-sw-red hover:text-sw-red text-base leading-none"
               title="Dismiss suggestion and switch to Manual"
-            >&times;</button>
+            ><X size={14} /></button>
           </div>
           {gexSuggestion.rationale && (
-            <div style={{ color: 'var(--text-secondary)', marginTop: 4, fontSize: 11, lineHeight: 1.5 }}>
+            <div className="text-text-secondary mt-1 text-[11px] leading-relaxed">
               {gexSuggestion.rationale}
             </div>
           )}
@@ -834,110 +528,105 @@ export default function StrategyPanel({
       )}
 
       {/* Spot Price */}
-      <div style={s.spotRow}>
-        <span style={s.spotLabel}>Symbol</span>
-        <span style={s.spotSymbol}>{symbol}</span>
-        <span style={s.spotDot} />
-        <span style={s.spotLabel}>Spot</span>
-        <span style={s.spotValue}>{spotPrice ? `$${spotPrice.toFixed(2)}` : '--'}</span>
+      <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-border-subtle"
+        style={{ background: 'linear-gradient(135deg, rgba(16, 16, 42, 0.8) 0%, rgba(13, 13, 35, 0.6) 100%)', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}>
+        <span className="text-text-tertiary text-[11px] font-semibold">Symbol</span>
+        <span className="text-white font-extrabold text-[15px] font-[var(--font-mono)]">{symbol}</span>
+        <span className="w-1 h-1 rounded-full bg-border-default" />
+        <span className="text-text-tertiary text-[11px] font-semibold">Spot</span>
+        <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(245, 158, 11, 0.3)' }}>
+          {spotPrice ? `$${spotPrice.toFixed(2)}` : '--'}
+        </span>
       </div>
 
       {/* Strike Inputs */}
-      <div style={s.card}>
+      <div className="sw-card p-3.5">
         {strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? (
           <>
-            <div style={s.sideLabel('var(--green)')}>
+            <div className="sw-section-divider text-sw-green">
               <span>Put Side</span>
-              <div style={s.sideLine('var(--green)')} />
+              <div className="line bg-sw-green/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={s.sideLabel('var(--red)')}>
+            <div className="sw-section-divider text-sw-red">
               <span>Call Side</span>
-              <div style={s.sideLine('var(--red)')} />
+              <div className="line bg-sw-red/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={{ ...s.sideLabel('var(--text-tertiary)'), marginTop: 8 }}>
+            <div className="sw-section-divider text-text-tertiary mt-2">
               <span>Expirations</span>
-              <div style={s.sideLine('var(--text-tertiary)')} />
+              <div className="line bg-text-tertiary/20" />
             </div>
-            <div style={s.fieldRow}>
+            <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
           <>
-            <div style={s.sideLabel('var(--green)')}>
+            <div className="sw-section-divider text-sw-green">
               <span>Put Side</span>
-              <div style={s.sideLine('var(--green)')} />
+              <div className="line bg-sw-green/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={s.sideLabel('var(--red)')}>
+            <div className="sw-section-divider text-sw-red">
               <span>Call Side</span>
-              <div style={s.sideLine('var(--red)')} />
+              <div className="line bg-sw-red/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={{ ...s.sideLabel('var(--text-tertiary)'), marginTop: 8 }}>
+            <div className="sw-section-divider text-text-tertiary mt-2">
               <span>Expiration</span>
-              <div style={s.sideLine('var(--text-tertiary)')} />
+              <div className="line bg-text-tertiary/20" />
             </div>
-            <div style={s.fieldRow}>
+            <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : (
           <>
-            <div style={s.sideLabel('var(--red)')}>
+            <div className="sw-section-divider text-sw-red">
               <span>Put Calendar</span>
-              <div style={s.sideLine('var(--red)')} />
+              <div className="line bg-sw-red/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Put Strike" value={legs.putStrike} color="#ff5252" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Put Strike" value={legs.putStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, marginTop: -2 }}>
+            <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
               Sell @ Front Exp &middot; Buy @ Back Exp
             </div>
-            <div style={s.sideLabel('var(--green)')}>
+            <div className="sw-section-divider text-sw-green">
               <span>Call Calendar</span>
-              <div style={s.sideLine('var(--green)')} />
+              <div className="line bg-sw-green/15" />
             </div>
-            <div style={s.fieldRow}>
-              <StrikeInput label="Call Strike" value={legs.callStrike} color="#00e676" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Call Strike" value={legs.callStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 4, marginTop: -2 }}>
+            <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
               Sell @ Front Exp &middot; Buy @ Back Exp
             </div>
-            <div style={{ ...s.sideLabel('var(--accent)'), marginTop: 8 }}>
+            <div className="sw-section-divider text-accent mt-2">
               <span>Expirations</span>
-              <div style={s.sideLine('var(--accent)')} />
+              <div className="line bg-accent/15" />
             </div>
-            <div style={s.fieldRow}>
+            <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
-              <div style={{
-                background: 'var(--bg-elevated)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '8px 10px',
-                fontSize: 10,
-                color: 'var(--text-secondary)',
-                marginTop: 4,
-                fontFamily: 'var(--font-mono)',
-              }}>
-                <div style={{ color: 'var(--text-tertiary)', marginBottom: 4, fontWeight: 600, fontFamily: 'var(--font-ui)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>4 Legs:</div>
+              <div className="bg-bg-elevated rounded-md px-2.5 py-2 text-[10px] text-text-secondary mt-1 font-[var(--font-mono)]">
+                <div className="text-text-tertiary mb-1 font-semibold font-[var(--font-ui)] uppercase tracking-wider">4 Legs:</div>
                 <div>1. Sell Put ${legs.putStrike} ({legs.frontExpiration})</div>
                 <div>2. Buy Put ${legs.putStrike} ({legs.backExpiration})</div>
                 <div>3. Sell Call ${legs.callStrike} ({legs.frontExpiration})</div>
@@ -948,81 +637,73 @@ export default function StrategyPanel({
         )}
 
         {/* Contracts */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-          <span style={s.fieldLabel()}>Contracts</span>
+        <div className="flex items-center gap-2.5 mt-2">
+          <span className="sw-label">Contracts</span>
           <input
             type="number"
             min={1}
             max={100}
             value={contracts}
             onChange={(e) => setContracts(Math.max(1, parseInt(e.target.value, 10) || 1))}
-            style={{ ...s.input(), width: 60 }}
+            className="sw-input w-[60px]"
           />
         </div>
       </div>
 
       {/* Action Buttons */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="flex flex-col gap-1.5">
         <button
-          style={{ ...s.calcBtn, ...((!isFormValid() || calcLoading || loading) ? s.calcBtnDisabled : {}) }}
+          className="sw-btn-primary w-full flex items-center justify-center gap-2"
           onClick={handleCalculate}
           disabled={!isFormValid() || calcLoading || loading}
         >
-          {calcLoading || loading ? 'Calculating...' : '\u26A1 Calculate'}
+          <Zap size={14} />
+          {calcLoading || loading ? 'Calculating...' : 'Calculate'}
         </button>
 
         {calcResult && (
           <>
             <button
-              style={{
-                ...s.actionBtn('var(--green-dim)', 'var(--green)', 'rgba(0, 230, 118, 0.25)'),
-                ...(saving ? s.calcBtnDisabled : {}),
-              }}
+              className="sw-btn-secondary w-full flex items-center justify-center gap-2 !border-sw-green/25 !text-sw-green hover:!bg-sw-green-dim"
               onClick={handleSavePosition}
               disabled={saving}
+              style={saving ? { opacity: 0.35 } : {}}
             >
-              {saving ? 'Saving...' : '\uD83D\uDCBE Save Position'}
+              <Save size={14} />
+              {saving ? 'Saving...' : 'Save Position'}
             </button>
             <button
-              style={{
-                ...s.actionBtn('var(--purple-dim)', 'var(--purple)', 'rgba(124, 77, 255, 0.25)'),
-                ...(pushing ? s.calcBtnDisabled : {}),
-              }}
+              className="sw-btn-secondary w-full flex items-center justify-center gap-2 !border-sw-purple/25 !text-sw-purple hover:!bg-sw-purple-dim"
               onClick={handlePushDiscord}
               disabled={pushing}
+              style={pushing ? { opacity: 0.35 } : {}}
             >
-              {pushing ? 'Posting...' : '\uD83D\uDCE3 Push to Discord'}
+              <Send size={14} />
+              {pushing ? 'Posting...' : 'Push to Discord'}
             </button>
           </>
         )}
         {saveMsg && (
-          <div style={{
-            fontSize: 11,
-            color: saveMsg === 'Saved!' ? 'var(--green)' : 'var(--red)',
-            textAlign: 'center',
-            fontWeight: 500,
-          }}>
+          <div className={`text-[11px] text-center font-medium ${saveMsg === 'Saved!' ? 'text-sw-green' : 'text-sw-red'}`}>
             {saveMsg}
           </div>
         )}
         {pushMsg && (
-          <div style={{
-            fontSize: 11,
-            color: pushMsg === 'Posted!' ? 'var(--purple)' : 'var(--red)',
-            textAlign: 'center',
-            fontWeight: 500,
-          }}>
+          <div className={`text-[11px] text-center font-medium ${pushMsg === 'Posted!' ? 'text-sw-purple' : 'text-sw-red'}`}>
             {pushMsg}
           </div>
         )}
       </div>
 
       {/* Price Alerts */}
-      <div style={s.card}>
-        <div style={s.sectionLabel}>Price Alerts</div>
+      <div className="sw-card p-3.5">
+        <div className="sw-label mb-2.5 flex items-center gap-1.5">
+          <Bell size={12} />
+          Price Alerts
+        </div>
         <form onSubmit={handleAddAlert}>
-          <div style={s.alertRow}>
-            <select style={s.alertSelect} value={alertCondition} onChange={(e) => setAlertCondition(e.target.value)}>
+          <div className="flex gap-1.5 mt-1.5">
+            <select className="sw-select !w-[68px] !text-xs" value={alertCondition} onChange={(e) => setAlertCondition(e.target.value)}>
               <option value="above">Above</option>
               <option value="below">Below</option>
             </select>
@@ -1032,17 +713,22 @@ export default function StrategyPanel({
               placeholder="Price"
               value={alertPrice}
               onChange={(e) => setAlertPrice(e.target.value)}
-              style={s.alertInput}
+              className="sw-input !text-xs flex-1 min-w-0"
             />
-            <button type="submit" disabled={alertCreating || !alertPrice} style={s.alertAddBtn}>+Add</button>
+            <button type="submit" disabled={alertCreating || !alertPrice}
+              className="sw-btn-primary !px-3 !py-1.5 text-xs flex items-center gap-1">
+              <Plus size={12} />Add
+            </button>
           </div>
         </form>
         {alerts && alerts.length > 0 && (
-          <ul style={s.alertList}>
+          <ul className="list-none p-0 mt-1.5 space-y-1">
             {alerts.map((a) => (
-              <li key={a.id} style={{ ...s.alertItem, opacity: a.triggered ? 0.5 : 1 }}>
-                <span style={{ color: 'var(--text-secondary)' }}>{a.condition} ${a.price}{a.triggered ? ' \u26A1' : ''}</span>
-                <button style={s.alertDel} onClick={() => handleDeleteAlert(a.id)}>&times;</button>
+              <li key={a.id} className="flex items-center justify-between px-2 py-1.5 rounded-md bg-bg-elevated text-xs font-[var(--font-mono)] transition-all duration-150 hover:bg-bg-hover"
+                style={{ opacity: a.triggered ? 0.5 : 1 }}>
+                <span className="text-text-secondary">{a.condition} ${a.price}{a.triggered ? ' \u26A1' : ''}</span>
+                <button className="sw-btn-ghost !p-0 text-text-tertiary hover:text-sw-red text-base leading-none"
+                  onClick={() => handleDeleteAlert(a.id)}><X size={14} /></button>
               </li>
             ))}
           </ul>

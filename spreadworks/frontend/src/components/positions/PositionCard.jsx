@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { X, RotateCcw, Send, BarChart3 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -6,100 +7,6 @@ const STRAT_LABELS = {
   double_diagonal: 'DD',
   double_calendar: 'DC',
   iron_condor: 'IC',
-};
-
-const s = {
-  card: (pnl, status) => ({
-    background: 'var(--bg-card)',
-    border: `1px solid ${status === 'closed' ? 'var(--border-subtle)' : pnl > 0 ? 'rgba(0, 230, 118, 0.15)' : pnl < 0 ? 'rgba(255, 82, 82, 0.15)' : 'var(--border-subtle)'}`,
-    borderRadius: 'var(--radius-lg)',
-    padding: '16px 18px',
-    fontFamily: 'var(--font-ui)',
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    opacity: status === 'closed' ? 0.65 : 1,
-    transition: 'border-color var(--transition-default), box-shadow var(--transition-default)',
-  }),
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  title: { color: '#fff', fontWeight: 700, fontSize: 14 },
-  badge: (color) => ({
-    fontSize: 10,
-    padding: '3px 8px',
-    borderRadius: 20,
-    background: color + '18',
-    color: color,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-  }),
-  strikesRow: {
-    display: 'flex',
-    gap: 5,
-    marginBottom: 10,
-    flexWrap: 'wrap',
-  },
-  chip: (type) => ({
-    fontSize: 11,
-    padding: '3px 10px',
-    borderRadius: 'var(--radius-sm)',
-    fontWeight: 600,
-    fontFamily: 'var(--font-mono)',
-    background: type === 'long' ? 'var(--green-dim)' : 'var(--red-dim)',
-    border: `1px solid ${type === 'long' ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 82, 82, 0.2)'}`,
-    color: type === 'long' ? 'var(--green)' : 'var(--red)',
-  }),
-  metricsGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '3px 14px',
-    marginBottom: 10,
-  },
-  metric: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '4px 0',
-    fontSize: 12,
-  },
-  dim: { color: 'var(--text-tertiary)', fontWeight: 500 },
-  pnl: (v) => ({
-    fontWeight: 700,
-    fontFamily: 'var(--font-mono)',
-    color: v >= 0 ? 'var(--green)' : 'var(--red)',
-  }),
-  actions: {
-    display: 'flex',
-    gap: 6,
-    marginTop: 12,
-    borderTop: '1px solid var(--border-subtle)',
-    paddingTop: 10,
-  },
-  btn: (color) => ({
-    padding: '5px 12px',
-    border: `1px solid ${color}33`,
-    borderRadius: 'var(--radius-sm)',
-    background: 'transparent',
-    color: color,
-    fontSize: 11,
-    fontFamily: 'var(--font-ui)',
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'all var(--transition-fast)',
-  }),
-  btnDisabled: {
-    opacity: 0.3,
-    cursor: 'not-allowed',
-  },
-  expRow: {
-    fontSize: 11,
-    color: 'var(--text-tertiary)',
-    marginBottom: 10,
-    fontWeight: 500,
-  },
 };
 
 export default function PositionCard({ position, onClose, onDelete }) {
@@ -157,62 +64,71 @@ export default function PositionCard({ position, onClose, onDelete }) {
   const unrealized = pnl?.unrealized_pnl ?? 0;
   const currentValue = pnl?.current_value;
   const pnlPct = pnl?.pnl_pct ?? 0;
+  const displayPnl = isOpen ? unrealized : (position.realized_pnl || 0);
+
+  const borderColor = position.status === 'closed'
+    ? 'border-border-subtle'
+    : displayPnl > 0 ? 'border-sw-green/15' : displayPnl < 0 ? 'border-sw-red/15' : 'border-border-subtle';
 
   return (
-    <div style={s.card(isOpen ? unrealized : (position.realized_pnl || 0), position.status)}>
+    <div className={`sw-card ${borderColor} ${position.status === 'closed' ? 'opacity-65' : ''}`}>
       {/* Header */}
-      <div style={s.header}>
+      <div className="flex justify-between items-center mb-3">
         <div>
-          <span style={s.title}>{position.label || `#${position.id}`}</span>
-          <span style={{ color: 'var(--text-tertiary)', fontSize: 11, marginLeft: 8, fontWeight: 500 }}>{strat}</span>
+          <span className="text-white font-bold text-sm">{position.label || `#${position.id}`}</span>
+          <span className="text-text-tertiary text-[11px] ml-2 font-medium">{strat}</span>
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <div className="flex gap-1.5 items-center">
           {position.dte != null && (
-            <span style={s.badge('#448aff')}>{position.dte}DTE</span>
+            <span className="sw-badge">{position.dte}DTE</span>
           )}
-          <span style={s.badge(isOpen ? '#00e676' : '#888')}>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider ${
+            isOpen ? 'bg-sw-green/10 text-sw-green border border-sw-green/20' : 'bg-bg-elevated/30 text-text-tertiary border border-border-subtle'
+          }`}>
             {isOpen ? 'OPEN' : 'CLOSED'}
           </span>
         </div>
       </div>
 
       {/* Strike Chips */}
-      <div style={s.strikesRow}>
-        <span style={s.chip('long')}>LP {position.long_put}</span>
-        <span style={s.chip('short')}>SP {position.short_put}</span>
-        <span style={s.chip('short')}>SC {position.short_call}</span>
-        <span style={s.chip('long')}>LC {position.long_call}</span>
+      <div className="flex gap-1.5 mb-2.5 flex-wrap">
+        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-green-dim border border-sw-green/20 text-sw-green">LP {position.long_put}</span>
+        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-red-dim border border-sw-red/20 text-sw-red">SP {position.short_put}</span>
+        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-red-dim border border-sw-red/20 text-sw-red">SC {position.short_call}</span>
+        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-green-dim border border-sw-green/20 text-sw-green">LC {position.long_call}</span>
       </div>
 
       {/* Expirations */}
-      <div style={s.expRow}>
+      <div className="text-[11px] text-text-tertiary mb-2.5 font-medium">
         Short: {position.short_exp}
         {position.long_exp && ` | Long: ${position.long_exp}`}
       </div>
 
       {/* 7 Metrics */}
-      <div style={s.metricsGrid}>
-        <div style={s.metric}>
-          <span style={s.dim}>Entry Credit</span>
-          <span style={{ color: 'var(--green)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>+${position.entry_credit?.toFixed(2)}</span>
+      <div className="grid grid-cols-2 gap-x-3.5 gap-y-0.5 mb-2.5">
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">Entry Credit</span>
+          <span className="text-sw-green font-semibold font-[var(--font-mono)]">+${position.entry_credit?.toFixed(2)}</span>
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>Current Value</span>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>{currentValue != null ? `$${currentValue.toFixed(4)}` : '\u2014'}</span>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">Current Value</span>
+          <span className="font-[var(--font-mono)]">{currentValue != null ? `$${currentValue.toFixed(4)}` : '\u2014'}</span>
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>P&L $</span>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">P&L $</span>
           {isOpen ? (
-            <span style={s.pnl(unrealized)}>${unrealized >= 0 ? '+' : ''}{unrealized.toFixed(2)}</span>
+            <span className={`font-bold font-[var(--font-mono)] ${unrealized >= 0 ? 'text-sw-green' : 'text-sw-red'}`}>
+              ${unrealized >= 0 ? '+' : ''}{unrealized.toFixed(2)}
+            </span>
           ) : (
-            <span style={s.pnl(position.realized_pnl || 0)}>
+            <span className={`font-bold font-[var(--font-mono)] ${(position.realized_pnl || 0) >= 0 ? 'text-sw-green' : 'text-sw-red'}`}>
               ${(position.realized_pnl || 0) >= 0 ? '+' : ''}{(position.realized_pnl || 0).toFixed(2)}
             </span>
           )}
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>P&L %</span>
-          <span style={s.pnl(isOpen ? unrealized : (position.realized_pnl || 0))}>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">P&L %</span>
+          <span className={`font-bold font-[var(--font-mono)] ${displayPnl >= 0 ? 'text-sw-green' : 'text-sw-red'}`}>
             {isOpen
               ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`
               : position.max_profit
@@ -221,40 +137,32 @@ export default function PositionCard({ position, onClose, onDelete }) {
             }
           </span>
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>Max Profit</span>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>${position.max_profit != null ? position.max_profit.toFixed(2) : '\u2014'}</span>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">Max Profit</span>
+          <span className="font-[var(--font-mono)]">${position.max_profit != null ? position.max_profit.toFixed(2) : '\u2014'}</span>
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>Max Loss</span>
-          <span style={{ color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">Max Loss</span>
+          <span className="text-sw-red font-[var(--font-mono)]">
             ${position.max_loss != null ? position.max_loss.toFixed(2) : '\u2014'}
           </span>
         </div>
-        <div style={s.metric}>
-          <span style={s.dim}>Contracts</span>
-          <span style={{ fontFamily: 'var(--font-mono)' }}>{position.contracts}</span>
+        <div className="flex justify-between py-1 text-xs">
+          <span className="text-text-tertiary font-medium">Contracts</span>
+          <span className="font-[var(--font-mono)]">{position.contracts}</span>
         </div>
       </div>
 
       {/* Pricing source */}
       {isOpen && pnl?.pricing_source && (
-        <div style={{
-          fontSize: 10,
-          color: pnl.pricing_source === 'live_quotes' ? 'var(--green)' : 'var(--text-secondary)',
-          marginBottom: 8,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 5,
-          fontWeight: 500,
-        }}>
-          <span style={{
-            width: 5, height: 5, borderRadius: '50%',
-            background: pnl.pricing_source === 'live_quotes' ? 'var(--green)'
-              : pnl.pricing_source === 'black_scholes_live_iv' ? '#ffb300'
-              : 'var(--red)',
-            display: 'inline-block',
-          }} />
+        <div className="text-[10px] mb-2 flex items-center gap-1.5 font-medium"
+          style={{ color: pnl.pricing_source === 'live_quotes' ? 'var(--color-sw-green)' : 'var(--color-text-secondary)' }}>
+          <span className="w-1.5 h-1.5 rounded-full inline-block"
+            style={{
+              background: pnl.pricing_source === 'live_quotes' ? 'var(--color-sw-green)'
+                : pnl.pricing_source === 'black_scholes_live_iv' ? '#ffb300'
+                : 'var(--color-sw-red)',
+            }} />
           {pnl.pricing_source === 'live_quotes'
             ? 'P&L from live Tradier bid/ask'
             : pnl.pricing_source === 'black_scholes_live_iv'
@@ -265,54 +173,54 @@ export default function PositionCard({ position, onClose, onDelete }) {
 
       {/* Notes */}
       {position.notes && (
-        <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontStyle: 'italic', marginBottom: 8 }}>
+        <div className="text-[11px] text-text-tertiary italic mb-2">
           {position.notes}
         </div>
       )}
 
       {/* Date info */}
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 500 }}>
+      <div className="text-[11px] text-text-muted font-medium">
         Opened {position.entry_date || '\u2014'}
         {position.close_date && ` \u2022 Closed ${position.close_date}`}
       </div>
 
       {/* Actions */}
-      <div style={s.actions}>
+      <div className="flex gap-1.5 mt-3 border-t border-border-subtle pt-2.5">
         {isOpen && (
           <>
-            <button style={s.btn('var(--red)')} onClick={() => onClose(position)}>
-              \u2715 Close
+            <button className="sw-btn-danger !px-3 !py-1.5 !text-[11px] flex items-center gap-1" onClick={() => onClose(position)}>
+              <X size={11} /> Close
             </button>
-            <button style={s.btn('var(--text-tertiary)')} onClick={() => onDelete(position.id)}>
+            <button className="sw-btn-ghost !px-3 !py-1.5 !text-[11px]" onClick={() => onDelete(position.id)}>
               Delete
             </button>
-            <button style={{ ...s.btn('var(--text-tertiary)'), ...s.btnDisabled }} disabled title="Coming soon">
-              \u21bb Roll
+            <button className="sw-btn-ghost !px-3 !py-1.5 !text-[11px] opacity-30 cursor-not-allowed" disabled title="Coming soon">
+              <RotateCcw size={11} /> Roll
             </button>
           </>
         )}
         <button
-          style={s.btn('var(--purple)')}
+          className="sw-btn-ghost !px-3 !py-1.5 !text-[11px] text-sw-purple flex items-center gap-1"
           onClick={pushToDiscord}
           disabled={discordPushing}
           title="Push to Discord"
         >
-          {discordDone ? '\u2713 Sent' : discordPushing ? '...' : '\u21d2 Discord'}
+          {discordDone ? '\u2713 Sent' : discordPushing ? '...' : <><Send size={11} /> Discord</>}
         </button>
         <button
-          style={s.btn('var(--accent)')}
+          className="sw-btn-ghost !px-3 !py-1.5 !text-[11px] text-accent flex items-center gap-1"
           onClick={toggleChart}
           title="View payoff chart"
         >
-          {showChart ? '\u2715 Chart' : '\u25b6 Chart'}
+          {showChart ? <><X size={11} /> Chart</> : <><BarChart3 size={11} /> Chart</>}
         </button>
       </div>
 
       {/* Payoff Chart — SVG visualization untouched */}
       {showChart && (
-        <div style={{ marginTop: 10, borderTop: '1px solid var(--border-subtle)', paddingTop: 10, animation: 'sw-fadeIn 0.2s ease' }}>
+        <div className="mt-2.5 border-t border-border-subtle pt-2.5 animate-fade-in">
           {payoffLoading ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'center', padding: 16 }}>
+            <div className="text-text-muted text-[11px] text-center py-4">
               Loading payoff...
             </div>
           ) : payoff?.pnl_curve ? (
@@ -324,7 +232,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
               maxLoss={payoff.max_loss}
             />
           ) : (
-            <div style={{ color: 'var(--text-muted)', fontSize: 11, textAlign: 'center', padding: 16 }}>
+            <div className="text-text-muted text-[11px] text-center py-4">
               Unable to load payoff data
             </div>
           )}
@@ -404,11 +312,11 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
         stroke="#475569" strokeWidth="0.5" strokeDasharray="3,2" />
 
       {/* Fills */}
-      {profitFill && <path d={profitFill} fill="rgba(0,230,118,0.12)" />}
-      {lossFill && <path d={lossFill} fill="rgba(255,23,68,0.10)" />}
+      {profitFill && <path d={profitFill} fill="rgba(34, 197, 94, 0.12)" />}
+      {lossFill && <path d={lossFill} fill="rgba(239, 68, 68, 0.10)" />}
 
       {/* P&L line */}
-      <path d={svg.linePath} fill="none" stroke="#3b82f6" strokeWidth="1.5" />
+      <path d={svg.linePath} fill="none" stroke="#f59e0b" strokeWidth="1.5" />
 
       {/* Spot price */}
       {spotPrice && spotPrice >= svg.minP && spotPrice <= svg.maxP && (
@@ -450,17 +358,17 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
 
       {/* Max profit / loss labels */}
       {maxProfit != null && (
-        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#00e676" fontSize="8"
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#22c55e" fontSize="8"
           fontFamily="'JetBrains Mono', monospace">Max +${maxProfit.toFixed(0)}</text>
       )}
       {maxLoss != null && (
-        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#ff5252" fontSize="8"
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#ef4444" fontSize="8"
           fontFamily="'JetBrains Mono', monospace">Max ${maxLoss.toFixed(0)}</text>
       )}
 
       {/* Border */}
       <rect x={svg.pad.left} y={svg.pad.top} width={svg.plotW} height={svg.plotH}
-        fill="none" stroke="var(--border-subtle)" />
+        fill="none" stroke="var(--color-border-subtle)" />
     </svg>
   );
 }
