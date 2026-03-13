@@ -78,7 +78,7 @@ export default function PositionsPage() {
           </span>
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
           {positions.map((pos) => (
             <PositionCard
               key={pos.id}
