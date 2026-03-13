@@ -94,9 +94,27 @@ export async function GET(
       })
     } else if (openPositions.length > 0) {
       // Morning edge case: no snapshots yet today but positions are open.
-      // Create a synthetic snapshot so the intraday chart isn't blank.
+      // Create TWO synthetic snapshots so the chart draws a line, not a single dot.
+      // First point = market open baseline, second point = current live state.
+      const now = new Date()
+      const marketOpenToday = new Date(now)
+      marketOpenToday.setHours(now.getHours() - 1) // ~1h before current time as baseline
+      // Clamp to 8:30 AM CT equivalent (approximate — just needs to be before "now")
+      if (marketOpenToday.getTime() >= now.getTime()) {
+        marketOpenToday.setTime(now.getTime() - 300_000) // 5 min before now as fallback
+      }
+
       snapshots.push({
-        timestamp: new Date().toISOString(),
+        timestamp: marketOpenToday.toISOString(),
+        balance: startingCapital,
+        realized_pnl: 0,
+        unrealized_pnl: 0,
+        equity: startingCapital,
+        open_positions: openPositions.length,
+        note: 'synthetic_open',
+      })
+      snapshots.push({
+        timestamp: now.toISOString(),
         balance: startingCapital,
         realized_pnl: 0,
         unrealized_pnl: liveUnrealizedPnl,
