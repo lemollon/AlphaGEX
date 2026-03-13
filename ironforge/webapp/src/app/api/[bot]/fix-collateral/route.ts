@@ -229,18 +229,28 @@ export async function POST(
       if (bot === 'flame') {
         try {
           const posRows = await dbQuery(
-            `SELECT short_call, long_call, short_put, long_put
+            `SELECT ticker, expiration, put_short_strike, put_long_strike,
+                    call_short_strike, call_long_strike, sandbox_order_id
              FROM ${botTable(bot, 'positions')}
              WHERE position_id = '${escapeSql(String(pid))}'`,
           )
           if (posRows.length > 0) {
             const p = posRows[0]
+            let sandboxOpenInfo: Record<string, any> | null = null
+            if (p.sandbox_order_id) {
+              try { sandboxOpenInfo = JSON.parse(p.sandbox_order_id) } catch { /* malformed */ }
+            }
             await closeIcOrderAllAccounts(
-              String(p.short_call || ''),
-              String(p.long_call || ''),
-              String(p.short_put || ''),
-              String(p.long_put || ''),
+              String(p.ticker || 'SPY'),
+              String(p.expiration || '').slice(0, 10),
+              num(p.put_short_strike),
+              num(p.put_long_strike),
+              num(p.call_short_strike),
+              num(p.call_long_strike),
               contracts,
+              closePrice,
+              String(pid),
+              sandboxOpenInfo,
             )
           }
         } catch (sandboxErr) {
