@@ -99,33 +99,33 @@ function NavBar() {
 
       {/* Nav Links */}
       <NavLink to="/" end className={({ isActive }) =>
-        `flex items-center gap-1.5 px-4 h-full text-[13px] font-medium tracking-wide transition-all duration-200 no-underline border-b-2 ${
+        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
           isActive
-            ? 'text-white bg-accent/8 border-accent font-bold'
-            : 'text-text-tertiary border-transparent hover:text-text-secondary hover:bg-white/[0.02]'
+            ? 'text-white bg-accent/10 border-accent'
+            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
         }`
       }>
-        <Layers size={14} />
+        <Layers size={15} />
         Builder
       </NavLink>
       <NavLink to="/positions" className={({ isActive }) =>
-        `flex items-center gap-1.5 px-4 h-full text-[13px] font-medium tracking-wide transition-all duration-200 no-underline border-b-2 ${
+        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
           isActive
-            ? 'text-white bg-accent/8 border-accent font-bold'
-            : 'text-text-tertiary border-transparent hover:text-text-secondary hover:bg-white/[0.02]'
+            ? 'text-white bg-accent/10 border-accent'
+            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
         }`
       }>
-        <BarChart3 size={14} />
+        <BarChart3 size={15} />
         Positions
       </NavLink>
       <NavLink to="/gex-profile" className={({ isActive }) =>
-        `flex items-center gap-1.5 px-4 h-full text-[13px] font-medium tracking-wide transition-all duration-200 no-underline border-b-2 ${
+        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
           isActive
-            ? 'text-white bg-accent/8 border-accent font-bold'
-            : 'text-text-tertiary border-transparent hover:text-text-secondary hover:bg-white/[0.02]'
+            ? 'text-white bg-accent/10 border-accent'
+            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
         }`
       }>
-        <Activity size={14} />
+        <Activity size={15} />
         GEX Profile
       </NavLink>
 
