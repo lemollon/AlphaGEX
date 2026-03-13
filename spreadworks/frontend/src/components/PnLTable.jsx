@@ -85,7 +85,7 @@ export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
                 }`}
                 style={{
                   borderBottom: '1px solid #1a1a2e',
-                  borderRight: ts.is_expiry ? '2px solid rgba(245, 158, 11, 0.4)' : '1px solid #1a1a2e',
+                  borderRight: ts.is_expiry ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #1a1a2e',
                 }}>
                 {ts.label}
               </th>
@@ -112,8 +112,8 @@ export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
                       className="px-1.5 py-1 text-center text-white text-[10px] font-medium whitespace-nowrap"
                       style={{
                         background: bg,
-                        borderBottom: isSpot ? '2px solid rgba(245, 158, 11, 0.4)' : '1px solid #0a0a14',
-                        borderRight: time_slices[ci]?.is_expiry ? '2px solid rgba(245, 158, 11, 0.4)' : '1px solid #0a0a14',
+                        borderBottom: isSpot ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #0a0a14',
+                        borderRight: time_slices[ci]?.is_expiry ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #0a0a14',
                       }}>
                       {formatCell(cell, activeView)}
                     </td>

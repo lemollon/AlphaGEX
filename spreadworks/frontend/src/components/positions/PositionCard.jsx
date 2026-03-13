@@ -316,7 +316,7 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
       {lossFill && <path d={lossFill} fill="rgba(239, 68, 68, 0.10)" />}
 
       {/* P&L line */}
-      <path d={svg.linePath} fill="none" stroke="#f59e0b" strokeWidth="1.5" />
+      <path d={svg.linePath} fill="none" stroke="#448aff" strokeWidth="1.5" />
 
       {/* Spot price */}
       {spotPrice && spotPrice >= svg.minP && spotPrice <= svg.maxP && (

@@ -189,9 +189,9 @@ export default function CandleChart({
         {/* Current price line + badge */}
         {lastCandleX != null && spotY != null && (
           <>
-            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#f59e0b" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
-            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#f59e0b" />
-            <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#000" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
+            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
+            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#448aff" />
+            <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
               ${spotPrice?.toFixed(2)}
             </text>
           </>

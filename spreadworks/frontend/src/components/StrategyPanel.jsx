@@ -452,21 +452,6 @@ export default function StrategyPanel({
     <div className="w-[300px] min-w-[300px] border-r border-border-subtle px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-3.5 h-full"
       style={{ background: 'linear-gradient(180deg, #0c0c22 0%, #080818 100%)', boxShadow: 'var(--shadow-panel)' }}>
 
-      {/* Logo */}
-      <div>
-        <div className="flex items-center gap-0.5">
-          <div className="inline-flex items-center justify-center w-8 h-8 rounded-lg mr-2.5 text-base text-white font-extrabold"
-            style={{
-              background: 'linear-gradient(135deg, var(--color-accent) 0%, #d97706 100%)',
-              boxShadow: '0 4px 16px rgba(245, 158, 11, 0.4), 0 0 30px rgba(245, 158, 11, 0.15)',
-            }}>S</div>
-          <span className="text-xl font-extrabold text-white tracking-tight">
-            Spread<span className="text-accent">Works</span>
-          </span>
-        </div>
-        <div className="text-text-tertiary text-[11px] font-medium tracking-wide mt-0.5 ml-[42px]">Options Spread Analyzer</div>
-      </div>
-
       {/* Strategy */}
       <div className="sw-card p-3.5">
         <div className="sw-label mb-2.5">Strategy</div>
@@ -534,7 +519,7 @@ export default function StrategyPanel({
         <span className="text-white font-extrabold text-[15px] font-[var(--font-mono)]">{symbol}</span>
         <span className="w-1 h-1 rounded-full bg-border-default" />
         <span className="text-text-tertiary text-[11px] font-semibold">Spot</span>
-        <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(245, 158, 11, 0.3)' }}>
+        <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(68, 138, 255, 0.3)' }}>
           {spotPrice ? `$${spotPrice.toFixed(2)}` : '--'}
         </span>
       </div>
