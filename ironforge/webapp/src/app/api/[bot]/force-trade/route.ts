@@ -204,11 +204,18 @@ export async function POST(
       )
     }
 
-    // 7. Get paper account and calculate sizing
-    const accountRows = await dbQuery(
-      `SELECT id, current_balance, buying_power FROM ${botTable(bot, 'paper_account')}
-       WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
-    )
+    // 7. Get paper account and calculate sizing (derive BP from live collateral)
+    const [accountRows, liveCollRows] = await Promise.all([
+      dbQuery(
+        `SELECT id, current_balance, buying_power FROM ${botTable(bot, 'paper_account')}
+         WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
+      ),
+      dbQuery(
+        `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+         FROM ${botTable(bot, 'positions')}
+         WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+      ),
+    ])
     if (accountRows.length === 0) {
       return NextResponse.json(
         { error: 'No paper account found' },
@@ -218,7 +225,9 @@ export async function POST(
 
     const acct = accountRows[0]
     const acctId = acct.id
-    const buyingPower = num(acct.buying_power)
+    // Live buying power = balance - actual open position collateral (not stale paper_account cache)
+    const liveCollateral = num(liveCollRows[0]?.total_collateral)
+    const buyingPower = num(acct.current_balance) - liveCollateral
     const spreadWidth = strikes.putShort - strikes.putLong
     const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
     const usableBP = buyingPower * 0.85
