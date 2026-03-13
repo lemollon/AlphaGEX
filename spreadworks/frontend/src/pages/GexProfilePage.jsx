@@ -666,9 +666,10 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
     const maxGamma = visibleStrikes.length > 0
       ? Math.max(...visibleStrikes.map(ss => ss.abs_net_gamma), 0.001) : 1;
-    // GEX bars render in the right 15% of paper space. The x-axis domain is
-    // constrained to [0, 0.83] so candles don't overlap into the bar zone.
-    const barMaxWidth = 0.15;
+    // Layout: candles [0-0.78] | gap | GEX bars [0.82-0.98] | price axis in margin (r:70)
+    const barLeft = 0.82;   // bars start here (paper coords)
+    const barRight = 0.98;  // bars end here (leave room for price axis)
+    const barMaxWidth = barRight - barLeft; // 0.16
     const strikeSpacing = visibleStrikes.length > 1
       ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35 : 0.5;
 
@@ -678,7 +679,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
       const borderColor = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)';
       return {
         type: 'rect', xref: 'paper', yref: 'y',
-        x0: 1, x1: 1 - pct,
+        x0: barRight, x1: barRight - pct,
         y0: ss.strike - strikeSpacing, y1: ss.strike + strikeSpacing,
         fillcolor: color, line: { color: borderColor, width: 1 }, layer: 'above',
       };
@@ -688,7 +689,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
       .filter(ss => ss.abs_net_gamma / maxGamma > 0.15)
       .map(ss => ({
         xref: 'paper', yref: 'y',
-        x: 1 - (ss.abs_net_gamma / maxGamma) * barMaxWidth - 0.003,
+        x: barRight - (ss.abs_net_gamma / maxGamma) * barMaxWidth - 0.005,
         y: ss.strike,
         text: `${formatGex(ss.net_gamma, 1)} [$${ss.strike}]`,
         showarrow: false,
@@ -724,8 +725,8 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
     if (flip) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: flip, text: `FLIP $${flip.toFixed(0)}`, showarrow: false, font: { color: '#eab308', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
     if (cw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: cw, text: `CALL WALL $${cw.toFixed(0)}`, showarrow: false, font: { color: '#06b6d4', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
     if (pw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: pw, text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false, font: { color: '#a855f7', size: 10 }, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (upper_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.99, y: upper_1sd, text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (lower_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.99, y: lower_1sd, text: `-1σ $${lower_1sd.toFixed(0)}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
+    if (upper_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.77, y: upper_1sd, text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
+    if (lower_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.77, y: lower_1sd, text: `-1σ $${lower_1sd.toFixed(0)}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
 
     const traces = [];
     if (hasCandleData) {
@@ -766,7 +767,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
               type: 'date', gridcolor: '#1a1a2e', showgrid: true,
               rangeslider: { visible: false },
               hoverformat: '%I:%M %p CT', tickformat: '%I:%M %p',
-              domain: [0, 0.83],
+              domain: [0, 0.78],
             },
             yaxis: {
               gridcolor: '#1a1a2e', showgrid: true, side: 'right',
@@ -774,7 +775,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
             },
             shapes: plotData.shapes,
             annotations: plotData.annotations,
-            margin: { t: 10, b: 40, l: 10, r: 10 },
+            margin: { t: 10, b: 40, l: 10, r: 70 },
             hovermode: 'x unified',
             showlegend: false,
             transition: { duration: 300, easing: 'cubic-in-out' },
