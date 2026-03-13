@@ -15,7 +15,7 @@ const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
-  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-3.5 w-3.5 inline-block mr-1.5 align-[-1px]" />,
+  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
 }
 
 const botGlow: Record<string, string> = {
@@ -146,6 +146,19 @@ export default function Home() {
         </h1>
         <p className="text-forge-muted text-sm mb-3">
           SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+        </p>
+        <p style={{
+          color: '#FCD34D',
+          fontStyle: 'italic',
+          fontSize: '0.85rem',
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          letterSpacing: '0.05em',
+          textAlign: 'center',
+          maxWidth: '400px',
+          margin: '4px auto 0 auto',
+          textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.5)',
+        }}>
+          &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
         </p>
       </div>
 
