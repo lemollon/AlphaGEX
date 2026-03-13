@@ -81,55 +81,57 @@ function NextPostCountdown() {
 
 function NavBar() {
   return (
-    <nav className="flex items-center h-[52px] px-4 border-b border-border-subtle shadow-lg font-[var(--font-ui)] text-[13px]"
+    <nav className="flex items-center h-[48px] px-5 border-b border-border-subtle shadow-lg font-[var(--font-ui)] text-[13px]"
       style={{ background: 'linear-gradient(180deg, #0e0e28 0%, #0a0a1e 100%)' }}>
       {/* Logo */}
-      <div className="flex items-center gap-2.5 pr-5 mr-2 border-r border-border-subtle/50 h-full">
-        <div className="inline-flex items-center justify-center w-[30px] h-[30px] rounded-lg text-sm text-white font-extrabold"
+      <div className="flex items-center gap-2 pr-6 mr-4 border-r border-border-subtle/50 h-full">
+        <div className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-md text-xs text-white font-extrabold"
           style={{
             background: 'linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%)',
-            boxShadow: '0 4px 16px rgba(68, 138, 255, 0.4), 0 0 30px rgba(68, 138, 255, 0.15)',
+            boxShadow: '0 3px 12px rgba(68, 138, 255, 0.35)',
           }}>
           S
         </div>
-        <span className="font-extrabold text-[17px] text-white tracking-tight">
+        <span className="font-extrabold text-[15px] text-white tracking-tight">
           Spread<span className="text-accent">Works</span>
         </span>
       </div>
 
       {/* Nav Links */}
-      <NavLink to="/" end className={({ isActive }) =>
-        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
-          isActive
-            ? 'text-white bg-accent/10 border-accent'
-            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
-        }`
-      }>
-        <Layers size={15} />
-        Builder
-      </NavLink>
-      <NavLink to="/positions" className={({ isActive }) =>
-        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
-          isActive
-            ? 'text-white bg-accent/10 border-accent'
-            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
-        }`
-      }>
-        <BarChart3 size={15} />
-        Positions
-      </NavLink>
-      <NavLink to="/gex-profile" className={({ isActive }) =>
-        `flex items-center gap-1.5 px-5 h-full text-[14px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
-          isActive
-            ? 'text-white bg-accent/10 border-accent'
-            : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
-        }`
-      }>
-        <Activity size={15} />
-        GEX Profile
-      </NavLink>
+      <div className="flex items-center gap-1 h-full">
+        <NavLink to="/" end className={({ isActive }) =>
+          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+            isActive
+              ? 'text-white bg-accent/10 border-accent'
+              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+          }`
+        }>
+          <Layers size={14} />
+          Builder
+        </NavLink>
+        <NavLink to="/positions" className={({ isActive }) =>
+          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+            isActive
+              ? 'text-white bg-accent/10 border-accent'
+              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+          }`
+        }>
+          <BarChart3 size={14} />
+          Positions
+        </NavLink>
+        <NavLink to="/gex-profile" className={({ isActive }) =>
+          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+            isActive
+              ? 'text-white bg-accent/10 border-accent'
+              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+          }`
+        }>
+          <Activity size={14} />
+          GEX Profile
+        </NavLink>
+      </div>
 
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-4">
         <NextPostCountdown />
         <MarketStatusBadge />
       </div>

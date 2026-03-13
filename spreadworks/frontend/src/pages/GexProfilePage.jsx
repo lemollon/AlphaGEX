@@ -666,20 +666,31 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
     const maxGamma = visibleStrikes.length > 0
       ? Math.max(...visibleStrikes.map(ss => ss.abs_net_gamma), 0.001) : 1;
-    const barMaxWidth = 0.35;
+    // GEX bars occupy the rightmost 18% of the paper (inside the right margin)
+    // barAreaLeft = where bars start (left edge), 1.0 = right edge of paper
+    const barAreaLeft = 0.82;
+    const barMaxWidth = 1.0 - barAreaLeft; // 0.18
     const strikeSpacing = visibleStrikes.length > 1
       ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35 : 0.5;
 
     const gexShapes = visibleStrikes.map(ss => {
       const pct = (ss.abs_net_gamma / maxGamma) * barMaxWidth;
-      const color = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)';
-      const borderColor = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)';
+      const color = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.55)' : 'rgba(239,68,68,0.55)';
+      const borderColor = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.85)' : 'rgba(239,68,68,0.85)';
       return {
         type: 'rect', xref: 'paper', yref: 'y',
         x0: 1, x1: 1 - pct,
         y0: ss.strike - strikeSpacing, y1: ss.strike + strikeSpacing,
         fillcolor: color, line: { color: borderColor, width: 1 }, layer: 'above',
       };
+    });
+
+    // Separator line between candle area and GEX bar area
+    gexShapes.push({
+      type: 'line', xref: 'paper', yref: 'paper',
+      x0: barAreaLeft, x1: barAreaLeft, y0: 0, y1: 1,
+      line: { color: 'rgba(100,116,139,0.3)', width: 1, dash: 'dot' },
+      layer: 'above',
     });
 
     const gexAnnotations = visibleStrikes
@@ -764,15 +775,17 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
               type: 'date', gridcolor: '#1a1a2e', showgrid: true,
               rangeslider: { visible: false },
               hoverformat: '%I:%M %p CT', tickformat: '%I:%M %p',
+              domain: [0, 0.80], // candles use left 80%, GEX bars use right 20%
             },
             yaxis: {
               title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
               gridcolor: '#1a1a2e', showgrid: true, side: 'right',
               tickformat: '$,.0f', range: plotData.yRange, autorange: false,
+              anchor: 'free', position: 0.80, // price axis sits at boundary
             },
             shapes: plotData.shapes,
             annotations: plotData.annotations,
-            margin: { t: 10, b: 40, l: 10, r: 60 },
+            margin: { t: 10, b: 40, l: 10, r: 10 },
             hovermode: 'x unified',
             showlegend: false,
             transition: { duration: 300, easing: 'cubic-in-out' },
