@@ -358,3 +358,82 @@ If the dashboard still shows wrong values despite the database being correct, th
 3. Redeploy
 
 **Prevention:** The `DATABRICKS_SCHEMA` env var defaults to `ironforge` in code (`databricks-sql.ts`). Only set it if you need to override. Never set it to `default`.
+
+### Databricks SQL Warehouse Cache (Dashboard Shows Stale Data)
+
+**Symptoms:** Database has correct values (verified via SQL Editor) but the API returns old/stale values. The dashboard shows numbers from hours or days ago.
+
+**Root Cause:** The Databricks SQL Statement Execution API caches query results by statement hash. If the same SQL is sent repeatedly (same text), the warehouse returns cached results even after the underlying Delta Lake data changed. Cache can persist for up to 24 hours.
+
+**Fix (already implemented):** `databricks-sql.ts` appends `/* ts=<timestamp> */` to every SQL statement, making each request unique so the cache is always bypassed. If this cache-busting is ever removed, stale data will return.
+
+**Prevention:** NEVER remove the cache-busting comment from `dbQuery()` in `databricks-sql.ts`. If you see stale data on the dashboard:
+1. Check that `databricks-sql.ts` still has the `cacheBust` line
+2. Verify the Vercel deployment is current (check Vercel → Deployments)
+3. Hard refresh the browser (Ctrl+Shift+R)
+
+### Tradier Sandbox Positions Won't Close (400 Errors)
+
+**Symptoms:** Notebook or API trying to close Tradier sandbox positions gets 400 errors on all attempts (4-leg, 2x2-leg, individual).
+
+**Root Causes (in order of likelihood):**
+1. **Market is closed** — Options can only be traded during market hours (8:30 AM - 3:00 PM CT). Sandbox rejects orders outside this window.
+2. **Options expired** — 0DTE options (same-day expiration) can't be closed after ~2:45 PM CT. They auto-expire at settlement. Wait for overnight settlement, then collateral is released.
+3. **Negative buying power** — Even closing orders can be rejected when option buying power is deeply negative. Close smallest positions first to free margin, then close larger ones.
+4. **Sandbox quantity limits** — Very large orders (200+ contracts) may be rejected. Split into smaller batches.
+
+**Fix procedure:**
+1. Wait until next market day (after 8:30 AM CT)
+2. Expired options (0DTE) will have settled overnight — their collateral is released
+3. Close remaining open positions (March 16, March 17 expirations) during market hours
+4. If 400 errors persist, try smaller quantities or contact Tradier support for sandbox reset
+
+**Prevention:** The scanner's EOD close logic (`eod-close` API route + scanner `close_position()`) should close all positions before 2:45 PM CT daily. If positions are left open:
+- Check scanner heartbeat (is it running?)
+- Check scanner logs for close failures
+- Use `POST /api/{bot}/force-close` during market hours
+
+## Operations Runbook
+
+### Daily Health Check
+1. Visit each bot dashboard (FLAME, SPARK, INFERNO)
+2. Verify: open_positions matches collateral (0 positions = $0 collateral)
+3. Verify: balance = $10,000 + cumulative_pnl
+4. Check scanner heartbeat is recent (< 10 min old)
+
+### When Dashboard Shows Wrong Data
+```
+Step 1: Check database directly (Databricks SQL Editor)
+  → SELECT * FROM alpha_prime.ironforge.{bot}_paper_account WHERE is_active = TRUE
+
+Step 2: Check API directly (browser)
+  → ironforge-pi.vercel.app/api/{bot}/status
+
+Step 3: Compare database vs API
+  → If API matches database but dashboard is wrong → browser cache (Ctrl+Shift+R)
+  → If API differs from database → Databricks SQL cache issue (check cacheBust in databricks-sql.ts)
+  → If both are wrong → data needs reconciliation (POST /api/{bot}/fix-collateral)
+```
+
+### When Positions Are Stuck Open
+```
+Step 1: Check if market is open (8:30 AM - 3:00 PM CT, Mon-Fri)
+  → If closed: wait until next market day
+
+Step 2: Try force-close via webapp
+  → POST /api/{bot}/force-close
+
+Step 3: If force-close fails, use fix-collateral
+  → POST /api/{bot}/fix-collateral
+  (closes stale/expired/orphan positions in the database)
+
+Step 4: For Tradier sandbox positions, run close_all_tradier_positions notebook
+  → ONLY during market hours
+  → Expired options settle automatically overnight
+```
+
+### When Adding New Features or Fixes
+1. **ALL backend code goes in `ironforge/webapp/src/app/api/`** — no scripts, no notebooks
+2. **Create a PR to `main`** — Vercel auto-deploys from main
+3. **Verify deployment** — check Vercel Deployments page, then hit the API endpoint in browser
+4. **Test with GET first** — diagnostic endpoints should be read-only on GET, write on POST
