@@ -98,35 +98,35 @@ function NavBar() {
       </div>
 
       {/* Nav Links */}
-      <div className="flex items-center gap-1 h-full">
+      <div className="flex items-center gap-1.5 h-full">
         <NavLink to="/" end className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/10 border-accent'
-              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+              ? 'text-white bg-accent/15 border border-accent/40'
+              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
           }`
         }>
-          <Layers size={14} />
+          <Layers size={13} />
           Builder
         </NavLink>
         <NavLink to="/positions" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/10 border-accent'
-              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+              ? 'text-white bg-accent/15 border border-accent/40'
+              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
           }`
         }>
-          <BarChart3 size={14} />
+          <BarChart3 size={13} />
           Positions
         </NavLink>
         <NavLink to="/gex-profile" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 h-full text-[13px] font-semibold tracking-wide transition-all duration-200 no-underline border-b-2 ${
+          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/10 border-accent'
-              : 'text-text-secondary border-transparent hover:text-white hover:bg-white/[0.04]'
+              ? 'text-white bg-accent/15 border border-accent/40'
+              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
           }`
         }>
-          <Activity size={14} />
+          <Activity size={13} />
           GEX Profile
         </NavLink>
       </div>

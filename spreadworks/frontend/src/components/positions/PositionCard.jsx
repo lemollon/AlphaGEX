@@ -71,7 +71,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
     : displayPnl > 0 ? 'border-sw-green/15' : displayPnl < 0 ? 'border-sw-red/15' : 'border-border-subtle';
 
   return (
-    <div className={`sw-card ${borderColor} ${position.status === 'closed' ? 'opacity-65' : ''}`}>
+    <div className={`sw-card p-4 ${borderColor} ${position.status === 'closed' ? 'opacity-65' : ''}`}>
       {/* Header */}
       <div className="flex justify-between items-center mb-3">
         <div>
@@ -105,7 +105,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
       </div>
 
       {/* 7 Metrics */}
-      <div className="grid grid-cols-2 gap-x-3.5 gap-y-0.5 mb-2.5">
+      <div className="grid grid-cols-2 gap-x-5 gap-y-1 mb-3">
         <div className="flex justify-between py-1 text-xs">
           <span className="text-text-tertiary font-medium">Entry Credit</span>
           <span className="text-sw-green font-semibold font-[var(--font-mono)]">+${position.entry_credit?.toFixed(2)}</span>
