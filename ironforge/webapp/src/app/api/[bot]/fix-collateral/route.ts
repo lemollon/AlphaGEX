@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
+import { closeIcOrderAllAccounts } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -206,7 +207,7 @@ export async function POST(
         realizedPnl = 0
       }
 
-      await dbExecute(
+      const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
          SET status = 'closed',
              close_time = CURRENT_TIMESTAMP(),
@@ -218,6 +219,34 @@ export async function POST(
          WHERE position_id = '${escapeSql(String(pid))}'
            AND status = 'open'`,
       )
+
+      if (rowsAffected === 0) {
+        actions.push(`SKIP ${pid}: already closed by another process`)
+        continue
+      }
+
+      // FLAME: also close on sandbox accounts (cascade close)
+      if (bot === 'flame') {
+        try {
+          const posRows = await dbQuery(
+            `SELECT short_call, long_call, short_put, long_put
+             FROM ${botTable(bot, 'positions')}
+             WHERE position_id = '${escapeSql(String(pid))}'`,
+          )
+          if (posRows.length > 0) {
+            const p = posRows[0]
+            await closeIcOrderAllAccounts(
+              String(p.short_call || ''),
+              String(p.long_call || ''),
+              String(p.short_put || ''),
+              String(p.long_put || ''),
+              contracts,
+            )
+          }
+        } catch (sandboxErr) {
+          actions.push(`SANDBOX_WARN ${pid}: ${sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr)}`)
+        }
+      }
 
       actions.push(`Closed ${pid}: ${reason} (P&L=$${realizedPnl.toFixed(2)})`)
     }

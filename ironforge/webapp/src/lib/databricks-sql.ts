@@ -84,8 +84,11 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
 
 /**
  * Execute a SQL statement that doesn't return rows (INSERT, UPDATE, DELETE, MERGE).
+ *
+ * Returns num_affected_rows for DML (UPDATE/DELETE/MERGE), 0 for DDL/INSERT.
+ * Databricks returns a single-row result with the affected count for DML.
  */
-export async function dbExecute(sql: string): Promise<void> {
+export async function dbExecute(sql: string): Promise<number> {
   if (!HOSTNAME || !WAREHOUSE_ID || !TOKEN) {
     throw new Error('Databricks env vars not configured')
   }
@@ -104,6 +107,7 @@ export async function dbExecute(sql: string): Promise<void> {
       statement: sql,
       wait_timeout: '30s',
       disposition: 'INLINE',
+      format: 'JSON_ARRAY',
     }),
   })
 
@@ -117,6 +121,21 @@ export async function dbExecute(sql: string): Promise<void> {
   if (body.status?.state === 'FAILED') {
     throw new Error(`SQL error: ${body.status?.error?.message || 'Unknown error'}`)
   }
+
+  // Extract num_affected_rows from DML result (first value of first row)
+  try {
+    const dataArray: any[][] = body.result?.data_array || []
+    if (dataArray.length > 0 && dataArray[0].length > 0) {
+      const val = dataArray[0][0]
+      if (val != null) {
+        const n = parseInt(String(val), 10)
+        if (!isNaN(n)) return n
+      }
+    }
+  } catch {
+    // Non-fatal — return 0 for operations that don't report affected rows
+  }
+  return 0
 }
 
 /** Escape single quotes for Databricks SQL string literals. */

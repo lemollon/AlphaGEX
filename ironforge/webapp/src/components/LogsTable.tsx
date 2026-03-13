@@ -15,6 +15,10 @@ const levelColors: Record<string, string> = {
   RECOVERY: 'bg-amber-500/20 text-amber-400',
   INFO: 'bg-stone-600/30 text-gray-300',
   SCAN: 'bg-stone-600/30 text-gray-400',
+  SANDBOX_CLOSE_FAIL: 'bg-red-500/20 text-red-400',
+  SANDBOX_CLEANUP: 'bg-purple-500/20 text-purple-400',
+  SANDBOX_HEALTH: 'bg-purple-500/20 text-purple-400',
+  CONFIG: 'bg-stone-600/30 text-gray-300',
 }
 
 export default function LogsTable({ logs }: { logs: LogEntry[] }) {

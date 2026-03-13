@@ -302,7 +302,7 @@ export async function POST(
           `UPDATE ${botTable(bot, 'positions')}
            SET sandbox_order_id = '${escapeSql(JSON.stringify(sandboxOrderIds))}',
                updated_at = CURRENT_TIMESTAMP()
-           WHERE position_id = '${escapeSql(positionId)}'`,
+           WHERE position_id = '${escapeSql(positionId)}' AND status = 'open'`,
         )
       }
     } catch (sbErr: unknown) {

@@ -3,6 +3,10 @@
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 
+const SandboxKillSwitch = dynamic(() => import('@/components/SandboxKillSwitch'), {
+  ssr: false,
+})
+
 const LaunchCountdown = dynamic(() => import('@/components/LaunchCountdown'), {
   ssr: false,
   loading: () => (
@@ -164,6 +168,9 @@ export default function Home() {
 
       {/* Launch Countdown */}
       <LaunchCountdown />
+
+      {/* Sandbox Kill Switch — emergency controls */}
+      <SandboxKillSwitch />
 
       {/* Bot Cards */}
       <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-5">

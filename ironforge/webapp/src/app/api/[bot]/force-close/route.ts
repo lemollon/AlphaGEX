@@ -114,11 +114,11 @@ export async function POST(
     const pnlPerContract = (totalCredit - effectivePrice) * 100
     const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
 
-    // 6. Close the position
+    // 6. Close the position (atomically — only if still open)
     const sandboxCloseJson = Object.keys(sandboxCloseInfo).length > 0
       ? `'${escapeSql(JSON.stringify(sandboxCloseInfo))}'`
       : 'NULL'
-    await dbExecute(
+    const rowsAffected = await dbExecute(
       `UPDATE ${botTable(bot, 'positions')}
        SET status = 'closed', close_time = CURRENT_TIMESTAMP(),
            close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
@@ -127,6 +127,23 @@ export async function POST(
        WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
          AND dte_mode = '${escapeSql(dte)}'`,
     )
+
+    if (rowsAffected === 0) {
+      // Position was already closed by scanner or another process
+      await dbExecute(
+        `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
+         VALUES ('SKIP',
+                 '${escapeSql(`FORCE CLOSE SKIP: ${position_id} already closed (would have been $${realizedPnl.toFixed(2)})`)}',
+                 '${escapeSql(JSON.stringify({ position_id, skipped_pnl: realizedPnl, source: 'force_close_api', skip_reason: 'already_closed' }))}',
+                 '${escapeSql(dte)}')`,
+      )
+      return NextResponse.json({
+        success: false,
+        position_id,
+        error: 'Position already closed by another process',
+        skipped_pnl: realizedPnl,
+      })
+    }
 
     // 7. Update paper account — reconcile collateral from actual open positions
     const remainingCollateral = await dbQuery(

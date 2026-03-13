@@ -789,10 +789,15 @@ export async function getSandboxAccountPositions(
 /**
  * Close an Iron Condor in ALL configured sandbox accounts.
  *
+ * Cascade close strategy (matches Databricks scanner):
+ *   1. 4-leg multileg close (2 attempts)
+ *   2. 2 × 2-leg spread close (put spread + call spread)
+ *   3. 4 individual leg closes
+ *
  * Reads per-account contract counts from sandboxOpenInfo (stored at open time).
  * Falls back to the paper position's contracts if legacy format.
  *
- * Returns Record<accountName, orderId> for successful closes.
+ * Returns Record<accountName, SandboxCloseInfo> for successful closes.
  */
 export async function closeIcOrderAllAccounts(
   ticker: string,
@@ -826,7 +831,10 @@ export async function closeIcOrderAllAccounts(
           closeQty = acctInfo.contracts
         }
 
-        const orderBody: Record<string, string> = {
+        const tagStr = tag ? tag.slice(0, 255) : ''
+
+        // --- Stage 1: 4-leg multileg close (2 attempts) ---
+        const body4leg: Record<string, string> = {
           class: 'multileg',
           symbol: ticker,
           type: 'market',
@@ -836,29 +844,94 @@ export async function closeIcOrderAllAccounts(
           'option_symbol[2]': occCs, 'side[2]': 'buy_to_close',  'quantity[2]': String(closeQty),
           'option_symbol[3]': occCl, 'side[3]': 'sell_to_close', 'quantity[3]': String(closeQty),
         }
-        if (tag) orderBody.tag = tag.slice(0, 255)
+        if (tagStr) body4leg.tag = tagStr
 
-        const result = await sandboxPost(
-          `/accounts/${accountId}/orders`,
-          orderBody,
-          acct.apiKey,
-        )
+        let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
-          // Read back actual fill price
           let fillPrice: number | null = null
-          try {
-            fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id)
-          } catch {
-            // Non-fatal
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
+          return
+        }
+
+        // Retry 4-leg after 1s
+        await new Promise((r) => setTimeout(r, 1000))
+        result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
+        if (result?.order?.id) {
+          let fillPrice: number | null = null
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
+          return
+        }
+
+        // --- Stage 2: 2 × 2-leg spread close ---
+        console.warn(`Sandbox IC close 4-leg FAILED [${acct.name}] — falling back to 2x 2-leg spreads`)
+        const putSpreadBody: Record<string, string> = {
+          class: 'multileg', symbol: ticker, type: 'market', duration: 'day',
+          'option_symbol[0]': occPs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
+          'option_symbol[1]': occPl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
+        }
+        const callSpreadBody: Record<string, string> = {
+          class: 'multileg', symbol: ticker, type: 'market', duration: 'day',
+          'option_symbol[0]': occCs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
+          'option_symbol[1]': occCl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
+        }
+        if (tagStr) { putSpreadBody.tag = tagStr; callSpreadBody.tag = tagStr }
+
+        const [putResult, callResult] = await Promise.all([
+          sandboxPost(`/accounts/${accountId}/orders`, putSpreadBody, acct.apiKey),
+          sandboxPost(`/accounts/${accountId}/orders`, callSpreadBody, acct.apiKey),
+        ])
+        const putId = putResult?.order?.id
+        const callId = callResult?.order?.id
+
+        if (putId && callId) {
+          let fillPrice: number | null = null
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, putId) } catch { /* non-fatal */ }
+          results[acct.name] = { order_id: putId, contracts: closeQty, fill_price: fillPrice }
+          return
+        }
+
+        // --- Stage 3: 4 individual leg closes ---
+        console.warn(
+          `Sandbox IC close 2-leg FAILED [${acct.name}] ` +
+          `(put=${putId ? 'OK' : 'FAIL'}, call=${callId ? 'OK' : 'FAIL'}) — ` +
+          `falling back to individual legs`,
+        )
+        const legs: Array<{ occ: string; side: string; label: string }> = [
+          { occ: occPs, side: 'buy_to_close',  label: 'put_short' },
+          { occ: occPl, side: 'sell_to_close', label: 'put_long' },
+          { occ: occCs, side: 'buy_to_close',  label: 'call_short' },
+          { occ: occCl, side: 'sell_to_close', label: 'call_long' },
+        ]
+        let anyOk = false
+        for (const leg of legs) {
+          // Skip legs already closed by partial 2-leg success
+          if (leg.label.startsWith('put') && putId) continue
+          if (leg.label.startsWith('call') && callId) continue
+
+          const legBody: Record<string, string> = {
+            class: 'option', symbol: ticker, option_symbol: leg.occ,
+            side: leg.side, quantity: String(closeQty), type: 'market', duration: 'day',
           }
-          results[acct.name] = {
-            order_id: result.order.id,
-            contracts: closeQty,
-            fill_price: fillPrice,
+          if (tagStr) legBody.tag = tagStr
+
+          const legResult = await sandboxPost(`/accounts/${accountId}/orders`, legBody, acct.apiKey)
+          if (legResult?.order?.id) {
+            anyOk = true
+          } else {
+            console.error(`Sandbox leg CLOSE FAILED [${acct.name}]: ${leg.label}`)
           }
         }
-      } catch (err: any) {
-        console.warn(`Sandbox IC close failed [${acct.name}]: ${err.message}`)
+
+        if (anyOk) {
+          results[acct.name] = { order_id: -1, contracts: closeQty, fill_price: null }
+        } else {
+          console.error(`Sandbox IC close ALL strategies FAILED [${acct.name}] — orphan likely`)
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`Sandbox IC close failed [${acct.name}]: ${msg}`)
       }
     }),
   )
