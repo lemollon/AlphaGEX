@@ -1,262 +1,284 @@
 -- ============================================================
--- IronForge Deep Triage — March 13, 2026
+-- IRONFORGE TRIAGE QUERIES — March 13, 2026 (CORRECTED)
 -- ============================================================
--- Run ALL queries in Databricks SQL Editor.
--- Each query is self-contained. Run in order.
--- Save results for analysis.
+-- Schema: alpha_prime.ironforge
+-- Tables are PER-BOT: flame_positions, spark_positions, inferno_positions
+-- NOT shared: there is NO ironforge.positions table
+--
+-- Column names: position_id (not trade_id), open_time (not entry_time),
+--   close_time (not exit_time), total_credit (not entry_price),
+--   close_price (not exit_price), realized_pnl (not pnl)
+--
+-- Run in Databricks SQL Editor. Copy each result before moving to next.
 -- ============================================================
 
--- ── Q1: CURRENT STATE — Paper account balances + drift check ──
--- Shows stored balance vs expected balance (starting_capital + sum of realized PnL)
--- If drift != 0, the paper_account is out of sync
+
+-- ============================================================
+-- QUERY 0: SCHEMA DISCOVERY — What tables exist?
+-- Run this FIRST to verify table names
+-- ============================================================
+SHOW TABLES IN alpha_prime.ironforge;
+
+
+-- ============================================================
+-- QUERY 1: ALL positions from March 12-13 (all bots)
+-- Ground truth — what does the DB say happened?
+-- ============================================================
+SELECT 'FLAME' AS bot, position_id, dte_mode, status, open_time, close_time,
+       total_credit, close_price, realized_pnl, close_reason,
+       collateral_required, underlying_at_entry, vix_at_entry,
+       sandbox_order_id, sandbox_close_order_id
+FROM alpha_prime.ironforge.flame_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
+UNION ALL
+SELECT 'SPARK', position_id, dte_mode, status, open_time, close_time,
+       total_credit, close_price, realized_pnl, close_reason,
+       collateral_required, underlying_at_entry, vix_at_entry,
+       sandbox_order_id, sandbox_close_order_id
+FROM alpha_prime.ironforge.spark_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
+UNION ALL
+SELECT 'INFERNO', position_id, dte_mode, status, open_time, close_time,
+       total_credit, close_price, realized_pnl, close_reason,
+       collateral_required, underlying_at_entry, vix_at_entry,
+       sandbox_order_id, sandbox_close_order_id
+FROM alpha_prime.ironforge.inferno_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
+ORDER BY bot, open_time DESC;
+
+
+-- ============================================================
+-- QUERY 2: Position summary last 7 days (catch orphans)
+-- ============================================================
+SELECT 'FLAME' AS bot, dte_mode, status,
+       COUNT(*) AS position_count,
+       COALESCE(SUM(collateral_required), 0) AS total_collateral_held,
+       MIN(open_time) AS oldest_position,
+       MAX(open_time) AS newest_position
+FROM alpha_prime.ironforge.flame_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-06'
+GROUP BY dte_mode, status
+UNION ALL
+SELECT 'SPARK', dte_mode, status,
+       COUNT(*), COALESCE(SUM(collateral_required), 0),
+       MIN(open_time), MAX(open_time)
+FROM alpha_prime.ironforge.spark_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-06'
+GROUP BY dte_mode, status
+UNION ALL
+SELECT 'INFERNO', dte_mode, status,
+       COUNT(*), COALESCE(SUM(collateral_required), 0),
+       MIN(open_time), MAX(open_time)
+FROM alpha_prime.ironforge.inferno_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-06'
+GROUP BY dte_mode, status
+ORDER BY bot, status;
+
+
+-- ============================================================
+-- QUERY 3: Paper account balances + collateral drift check
+-- If collateral_drift != 0, there's a leak
+-- ============================================================
 SELECT
   'FLAME' AS bot,
   pa.dte_mode,
   pa.starting_capital,
-  pa.current_balance AS stored_balance,
-  pa.cumulative_pnl AS stored_pnl,
+  pa.current_balance,
+  pa.cumulative_pnl,
   pa.collateral_in_use AS stored_collateral,
-  pa.buying_power AS stored_bp,
-  COALESCE(p.total_pnl, 0) AS actual_pnl_from_positions,
-  COALESCE(c.actual_collateral, 0) AS actual_collateral_from_positions,
-  pa.starting_capital + COALESCE(p.total_pnl, 0) AS expected_balance,
-  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(p.total_pnl, 0)), 2) AS balance_drift,
-  ROUND(pa.collateral_in_use - COALESCE(c.actual_collateral, 0), 2) AS collateral_drift
+  pa.buying_power,
+  COALESCE(op.actual_collateral, 0) AS calculated_collateral,
+  ROUND(pa.collateral_in_use - COALESCE(op.actual_collateral, 0), 2) AS collateral_drift,
+  COALESCE(cl.actual_pnl, 0) AS pnl_from_positions,
+  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(cl.actual_pnl, 0)), 2) AS balance_drift
 FROM alpha_prime.ironforge.flame_paper_account pa
 LEFT JOIN (
-    SELECT dte_mode, SUM(realized_pnl) AS total_pnl
-    FROM alpha_prime.ironforge.flame_positions
-    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
-    GROUP BY dte_mode
-) p ON p.dte_mode = pa.dte_mode
-LEFT JOIN (
     SELECT dte_mode, SUM(collateral_required) AS actual_collateral
+    FROM alpha_prime.ironforge.flame_positions WHERE status = 'open' GROUP BY dte_mode
+) op ON op.dte_mode = pa.dte_mode
+LEFT JOIN (
+    SELECT dte_mode, SUM(realized_pnl) AS actual_pnl
     FROM alpha_prime.ironforge.flame_positions
-    WHERE status = 'open'
-    GROUP BY dte_mode
-) c ON c.dte_mode = pa.dte_mode
+    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL GROUP BY dte_mode
+) cl ON cl.dte_mode = pa.dte_mode
 WHERE pa.is_active = TRUE
 UNION ALL
 SELECT
   'SPARK', pa.dte_mode, pa.starting_capital, pa.current_balance, pa.cumulative_pnl,
   pa.collateral_in_use, pa.buying_power,
-  COALESCE(p.total_pnl, 0), COALESCE(c.actual_collateral, 0),
-  pa.starting_capital + COALESCE(p.total_pnl, 0),
-  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(p.total_pnl, 0)), 2),
-  ROUND(pa.collateral_in_use - COALESCE(c.actual_collateral, 0), 2)
+  COALESCE(op.actual_collateral, 0),
+  ROUND(pa.collateral_in_use - COALESCE(op.actual_collateral, 0), 2),
+  COALESCE(cl.actual_pnl, 0),
+  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(cl.actual_pnl, 0)), 2)
 FROM alpha_prime.ironforge.spark_paper_account pa
 LEFT JOIN (
-    SELECT dte_mode, SUM(realized_pnl) AS total_pnl
-    FROM alpha_prime.ironforge.spark_positions
-    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
-    GROUP BY dte_mode
-) p ON p.dte_mode = pa.dte_mode
-LEFT JOIN (
     SELECT dte_mode, SUM(collateral_required) AS actual_collateral
+    FROM alpha_prime.ironforge.spark_positions WHERE status = 'open' GROUP BY dte_mode
+) op ON op.dte_mode = pa.dte_mode
+LEFT JOIN (
+    SELECT dte_mode, SUM(realized_pnl) AS actual_pnl
     FROM alpha_prime.ironforge.spark_positions
-    WHERE status = 'open'
-    GROUP BY dte_mode
-) c ON c.dte_mode = pa.dte_mode
+    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL GROUP BY dte_mode
+) cl ON cl.dte_mode = pa.dte_mode
 WHERE pa.is_active = TRUE
 UNION ALL
 SELECT
   'INFERNO', pa.dte_mode, pa.starting_capital, pa.current_balance, pa.cumulative_pnl,
   pa.collateral_in_use, pa.buying_power,
-  COALESCE(p.total_pnl, 0), COALESCE(c.actual_collateral, 0),
-  pa.starting_capital + COALESCE(p.total_pnl, 0),
-  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(p.total_pnl, 0)), 2),
-  ROUND(pa.collateral_in_use - COALESCE(c.actual_collateral, 0), 2)
+  COALESCE(op.actual_collateral, 0),
+  ROUND(pa.collateral_in_use - COALESCE(op.actual_collateral, 0), 2),
+  COALESCE(cl.actual_pnl, 0),
+  ROUND(pa.current_balance - (pa.starting_capital + COALESCE(cl.actual_pnl, 0)), 2)
 FROM alpha_prime.ironforge.inferno_paper_account pa
 LEFT JOIN (
-    SELECT dte_mode, SUM(realized_pnl) AS total_pnl
-    FROM alpha_prime.ironforge.inferno_positions
-    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
-    GROUP BY dte_mode
-) p ON p.dte_mode = pa.dte_mode
-LEFT JOIN (
     SELECT dte_mode, SUM(collateral_required) AS actual_collateral
+    FROM alpha_prime.ironforge.inferno_positions WHERE status = 'open' GROUP BY dte_mode
+) op ON op.dte_mode = pa.dte_mode
+LEFT JOIN (
+    SELECT dte_mode, SUM(realized_pnl) AS actual_pnl
     FROM alpha_prime.ironforge.inferno_positions
-    WHERE status = 'open'
-    GROUP BY dte_mode
-) c ON c.dte_mode = pa.dte_mode
-WHERE pa.is_active = TRUE;
+    WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL GROUP BY dte_mode
+) cl ON cl.dte_mode = pa.dte_mode
+WHERE pa.is_active = TRUE
+ORDER BY bot;
 
 
--- ── Q2: ORPHAN POSITIONS — Any positions still 'open'? ────────
--- These hold collateral and may be from prior days
-SELECT 'FLAME' AS bot, position_id, dte_mode, status, open_time, expiration,
-       collateral_required, total_credit, underlying_at_entry
-FROM alpha_prime.ironforge.flame_positions WHERE status = 'open'
-UNION ALL
-SELECT 'SPARK', position_id, dte_mode, status, open_time, expiration,
-       collateral_required, total_credit, underlying_at_entry
-FROM alpha_prime.ironforge.spark_positions WHERE status = 'open'
-UNION ALL
-SELECT 'INFERNO', position_id, dte_mode, status, open_time, expiration,
-       collateral_required, total_credit, underlying_at_entry
-FROM alpha_prime.ironforge.inferno_positions WHERE status = 'open';
+-- ============================================================
+-- QUERY 4: SPARK March 13 position — the -$190 trade
+-- Full details including strikes, sandbox info
+-- ============================================================
+SELECT *
+FROM alpha_prime.ironforge.spark_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
+ORDER BY open_time DESC;
 
 
--- ── Q3: SPY PRICE CHECK — Heartbeat spot prices for all bots ──
--- Checks for the reported SPY price discrepancy between bots
+-- ============================================================
+-- QUERY 5: FLAME — did it open ANY position March 12-13?
+-- If empty, confirms sandbox_user_not_filled blocked everything
+-- ============================================================
+SELECT *
+FROM alpha_prime.ironforge.flame_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
+ORDER BY open_time DESC;
+
+
+-- ============================================================
+-- QUERY 6: INFERNO positions — find stuck collateral
+-- Flag suspicious states
+-- ============================================================
 SELECT
-  bot_name,
-  last_heartbeat,
-  GET_JSON_OBJECT(details, '$.spot') AS spy_price,
-  GET_JSON_OBJECT(details, '$.vix') AS vix,
-  GET_JSON_OBJECT(details, '$.action') AS action,
-  GET_JSON_OBJECT(details, '$.reason') AS reason
-FROM alpha_prime.ironforge.bot_heartbeats
-ORDER BY bot_name;
+  position_id, dte_mode, status, open_time, close_time,
+  total_credit, close_price, realized_pnl, close_reason,
+  collateral_required,
+  CASE
+    WHEN status IN ('closed', 'expired') AND collateral_required > 0
+      THEN 'INFO: closed positions always have collateral_required set (this is normal)'
+    WHEN status = 'open' AND close_time IS NOT NULL
+      THEN 'BUG: open but has close_time'
+    WHEN status = 'open'
+      AND CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) < '2026-03-13'
+      THEN 'STALE: open position from prior day'
+    WHEN dte_mode IS NULL
+      THEN 'ORPHAN: no dte_mode'
+    ELSE 'OK'
+  END AS health_check
+FROM alpha_prime.ironforge.inferno_positions
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-06'
+ORDER BY open_time DESC;
 
 
--- ── Q4: MARCH 13 COMPLETE LOG — FLAME (ALL entries, not truncated) ──
--- The screenshot only showed partial logs. Get everything.
-SELECT log_time, level, message,
-       GET_JSON_OBJECT(details, '$.action') AS action,
-       GET_JSON_OBJECT(details, '$.spot') AS spy_price,
-       GET_JSON_OBJECT(details, '$.vix') AS vix
+-- ============================================================
+-- QUERY 7: FLAME full log March 13
+-- THE KEY QUERY — shows whether sandbox orders were placed
+-- or if they failed at the buying power pre-check
+-- Look for: "BP insufficient", "IC OPEN submitted",
+--           "NOT FILLED", "TRADE ABORTED"
+-- ============================================================
+SELECT log_time, level, message, details
 FROM alpha_prime.ironforge.flame_logs
 WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = '2026-03-13'
 ORDER BY log_time;
 
 
--- ── Q5: MARCH 13 COMPLETE LOG — SPARK (ALL entries) ──────────
-SELECT log_time, level, message,
-       GET_JSON_OBJECT(details, '$.action') AS action,
-       GET_JSON_OBJECT(details, '$.spot') AS spy_price,
-       GET_JSON_OBJECT(details, '$.vix') AS vix
+-- ============================================================
+-- QUERY 8: RECOVERY events — all bots, last 7 days
+-- What drift was detected? How often?
+-- ============================================================
+SELECT 'FLAME' AS bot, log_time, message, details
+FROM alpha_prime.ironforge.flame_logs
+WHERE level = 'RECOVERY'
+  AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
+UNION ALL
+SELECT 'SPARK', log_time, message, details
 FROM alpha_prime.ironforge.spark_logs
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = '2026-03-13'
-ORDER BY log_time;
-
-
--- ── Q6: MARCH 13 COMPLETE LOG — INFERNO (ALL entries) ────────
-SELECT log_time, level, message,
-       GET_JSON_OBJECT(details, '$.action') AS action,
-       GET_JSON_OBJECT(details, '$.spot') AS spy_price,
-       GET_JSON_OBJECT(details, '$.vix') AS vix
+WHERE level = 'RECOVERY'
+  AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
+UNION ALL
+SELECT 'INFERNO', log_time, message, details
 FROM alpha_prime.ironforge.inferno_logs
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = '2026-03-13'
-ORDER BY log_time;
+WHERE level = 'RECOVERY'
+  AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
+ORDER BY log_time DESC;
 
 
--- ── Q7: MARCH 13 POSITIONS — All positions opened/closed on March 13 ──
-SELECT 'FLAME' AS bot, position_id, dte_mode, status, open_time, close_time,
-       total_credit, close_price, realized_pnl, close_reason,
-       underlying_at_entry, vix_at_entry, collateral_required,
-       sandbox_order_id, sandbox_close_order_id
-FROM alpha_prime.ironforge.flame_positions
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) = '2026-03-13'
-   OR CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', close_time) AS DATE) = '2026-03-13'
-UNION ALL
-SELECT 'SPARK', position_id, dte_mode, status, open_time, close_time,
-       total_credit, close_price, realized_pnl, close_reason,
-       underlying_at_entry, vix_at_entry, collateral_required,
-       sandbox_order_id, sandbox_close_order_id
-FROM alpha_prime.ironforge.spark_positions
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) = '2026-03-13'
-   OR CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', close_time) AS DATE) = '2026-03-13'
-UNION ALL
-SELECT 'INFERNO', position_id, dte_mode, status, open_time, close_time,
-       total_credit, close_price, realized_pnl, close_reason,
-       underlying_at_entry, vix_at_entry, collateral_required,
-       sandbox_order_id, sandbox_close_order_id
-FROM alpha_prime.ironforge.inferno_positions
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) = '2026-03-13'
-   OR CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', close_time) AS DATE) = '2026-03-13'
-ORDER BY bot, open_time;
-
-
--- ── Q8: SANDBOX FAILURE PATTERN — FLAME last 7 days ──────────
--- How many days has FLAME been blocked by sandbox_user_not_filled?
+-- ============================================================
+-- QUERY 9: FLAME sandbox failure pattern — last 14 days
+-- How many days has this been happening?
+-- bp_insufficient = failed BEFORE placing order
+-- sandbox_blocked = failed AFTER placing order (fill timeout)
+-- ============================================================
 SELECT
   CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) AS trade_date,
-  COUNT(*) AS total_scans,
-  SUM(CASE WHEN message LIKE '%sandbox_user_not_filled%' THEN 1 ELSE 0 END) AS sandbox_blocked,
+  SUM(CASE WHEN level = 'SCAN' THEN 1 ELSE 0 END) AS total_scans,
+  SUM(CASE WHEN message LIKE '%sandbox_user_not_filled%' THEN 1 ELSE 0 END) AS sandbox_not_filled,
+  SUM(CASE WHEN message LIKE '%BP%insufficient%' THEN 1 ELSE 0 END) AS bp_insufficient,
+  SUM(CASE WHEN message LIKE '%IC OPEN submitted%' THEN 1 ELSE 0 END) AS orders_submitted,
+  SUM(CASE WHEN message LIKE '%NOT FILLED%' THEN 1 ELSE 0 END) AS fill_timeouts,
   SUM(CASE WHEN level = 'TRADE_OPEN' THEN 1 ELSE 0 END) AS trades_opened,
-  SUM(CASE WHEN level = 'TRADE_CLOSE' THEN 1 ELSE 0 END) AS trades_closed,
-  SUM(CASE WHEN level = 'RECOVERY' THEN 1 ELSE 0 END) AS recoveries
+  SUM(CASE WHEN level = 'TRADE_CLOSE' THEN 1 ELSE 0 END) AS trades_closed
 FROM alpha_prime.ironforge.flame_logs
-WHERE log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
+WHERE log_time > DATEADD(DAY, -14, CURRENT_TIMESTAMP())
 GROUP BY 1
 ORDER BY 1 DESC;
 
 
--- ── Q9: RECOVERY EVENTS — All reconciliation events last 7 days ──
--- Shows when balance/collateral drift was detected and corrected
-SELECT 'FLAME' AS bot, log_time, message, details
-FROM alpha_prime.ironforge.flame_logs
-WHERE level = 'RECOVERY' AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
-UNION ALL
-SELECT 'SPARK', log_time, message, details
-FROM alpha_prime.ironforge.spark_logs
-WHERE level = 'RECOVERY' AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
-UNION ALL
-SELECT 'INFERNO', log_time, message, details
-FROM alpha_prime.ironforge.inferno_logs
-WHERE level = 'RECOVERY' AND log_time > DATEADD(DAY, -7, CURRENT_TIMESTAMP())
-ORDER BY log_time DESC;
-
-
--- ── Q10: TRADE HISTORY — Last 20 closed trades per bot ────────
--- Check for patterns: all eod_cutoff? Sandbox close results?
-SELECT 'FLAME' AS bot, position_id, close_reason, realized_pnl,
-       open_time, close_time, total_credit, close_price,
-       underlying_at_entry
-FROM alpha_prime.ironforge.flame_positions
-WHERE status IN ('closed', 'expired') AND close_time IS NOT NULL
-ORDER BY close_time DESC LIMIT 20;
-
-SELECT 'SPARK' AS bot, position_id, close_reason, realized_pnl,
-       open_time, close_time, total_credit, close_price,
-       underlying_at_entry
-FROM alpha_prime.ironforge.spark_positions
-WHERE status IN ('closed', 'expired') AND close_time IS NOT NULL
-ORDER BY close_time DESC LIMIT 20;
-
-SELECT 'INFERNO' AS bot, position_id, close_reason, realized_pnl,
-       open_time, close_time, total_credit, close_price,
-       underlying_at_entry
-FROM alpha_prime.ironforge.inferno_positions
-WHERE status IN ('closed', 'expired') AND close_time IS NOT NULL
-ORDER BY close_time DESC LIMIT 20;
-
-
--- ── Q11: EQUITY SNAPSHOTS — March 13 intraday data ────────────
--- Verify equity snapshots are being saved each cycle
-SELECT 'FLAME' AS bot, snapshot_time, balance, realized_pnl, unrealized_pnl,
-       open_positions, note
-FROM alpha_prime.ironforge.flame_equity_snapshots
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', snapshot_time) AS DATE) = '2026-03-13'
-ORDER BY snapshot_time
-LIMIT 200;
-
-SELECT 'SPARK' AS bot, snapshot_time, balance, realized_pnl, unrealized_pnl,
-       open_positions, note
-FROM alpha_prime.ironforge.spark_equity_snapshots
-WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', snapshot_time) AS DATE) = '2026-03-13'
-ORDER BY snapshot_time
-LIMIT 200;
-
-
--- ── Q12: INFERNO STUCK COLLATERAL — Check current state ───────
--- The reported issue: INFERNO had stuck collateral
+-- ============================================================
+-- QUERY 10: SPY price check — what did each bot see?
+-- Heartbeat stores spot price in details JSON
+-- ============================================================
 SELECT
-  pa.dte_mode,
-  pa.current_balance,
-  pa.collateral_in_use AS stored_collateral,
-  pa.buying_power,
-  COALESCE(oc.actual_collateral, 0) AS actual_collateral,
-  ROUND(pa.collateral_in_use - COALESCE(oc.actual_collateral, 0), 2) AS collateral_drift,
-  COALESCE(oc.open_count, 0) AS open_position_count
-FROM alpha_prime.ironforge.inferno_paper_account pa
-LEFT JOIN (
-    SELECT dte_mode,
-           SUM(collateral_required) AS actual_collateral,
-           COUNT(*) AS open_count
-    FROM alpha_prime.ironforge.inferno_positions
-    WHERE status = 'open'
-    GROUP BY dte_mode
-) oc ON oc.dte_mode = pa.dte_mode
-WHERE pa.is_active = TRUE;
+  bot_name,
+  last_heartbeat,
+  status,
+  details,
+  GET_JSON_OBJECT(details, '$.spot') AS spy_price,
+  GET_JSON_OBJECT(details, '$.vix') AS vix,
+  GET_JSON_OBJECT(details, '$.action') AS last_action,
+  GET_JSON_OBJECT(details, '$.reason') AS last_reason
+FROM alpha_prime.ironforge.bot_heartbeats
+ORDER BY bot_name;
+
+
+-- ============================================================
+-- QUERY 11: Position status distribution
+-- What states exist? Are there unexpected ones?
+-- ============================================================
+SELECT 'FLAME' AS bot, status, COUNT(*) AS cnt
+FROM alpha_prime.ironforge.flame_positions GROUP BY status
+UNION ALL
+SELECT 'SPARK', status, COUNT(*) FROM alpha_prime.ironforge.spark_positions GROUP BY status
+UNION ALL
+SELECT 'INFERNO', status, COUNT(*) FROM alpha_prime.ironforge.inferno_positions GROUP BY status
+ORDER BY bot, status;
+
+
+-- ============================================================
+-- QUERY 12: SPARK log March 13 — monitoring + close details
+-- Need to see the full monitoring chain and close event
+-- ============================================================
+SELECT log_time, level, message, details
+FROM alpha_prime.ironforge.spark_logs
+WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = '2026-03-13'
+  AND level IN ('TRADE_OPEN', 'TRADE_CLOSE', 'RECOVERY', 'ERROR')
+ORDER BY log_time;
