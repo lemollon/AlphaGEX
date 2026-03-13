@@ -27,21 +27,21 @@ SHOW TABLES IN alpha_prime.ironforge;
 SELECT 'FLAME' AS bot, position_id, dte_mode, status, open_time, close_time,
        total_credit, close_price, realized_pnl, close_reason,
        collateral_required, underlying_at_entry, vix_at_entry,
-       sandbox_order_id, sandbox_close_order_id
+       sandbox_order_id
 FROM alpha_prime.ironforge.flame_positions
 WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
 UNION ALL
 SELECT 'SPARK', position_id, dte_mode, status, open_time, close_time,
        total_credit, close_price, realized_pnl, close_reason,
        collateral_required, underlying_at_entry, vix_at_entry,
-       sandbox_order_id, sandbox_close_order_id
+       sandbox_order_id
 FROM alpha_prime.ironforge.spark_positions
 WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
 UNION ALL
 SELECT 'INFERNO', position_id, dte_mode, status, open_time, close_time,
        total_credit, close_price, realized_pnl, close_reason,
        collateral_required, underlying_at_entry, vix_at_entry,
-       sandbox_order_id, sandbox_close_order_id
+       sandbox_order_id
 FROM alpha_prime.ironforge.inferno_positions
 WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) >= '2026-03-12'
 ORDER BY bot, open_time DESC;
