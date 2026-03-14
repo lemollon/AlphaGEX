@@ -21,6 +21,7 @@ GET  /api/spreadworks/positions/{id}/pnl   Live unrealised P&L for a position
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -487,7 +488,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
 
 @router.get("/expirations")
 async def get_expirations(request: Request, symbol: str = "SPY"):
-    """Return available option expirations from Tradier."""
+    """Return available option expirations from Tradier with DTE labels."""
     data = await _tradier_get(
         request,
         "/markets/options/expirations",
@@ -499,7 +500,19 @@ async def get_expirations(request: Request, symbol: str = "SPY"):
     date_list = exps.get("date", [])
     if isinstance(date_list, str):
         date_list = [date_list]
-    return {"symbol": symbol, "expirations": date_list}
+
+    # Annotate each expiration with DTE
+    today = _today_ct()
+    annotated = []
+    for d in date_list:
+        try:
+            exp_date = datetime.strptime(d, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+            annotated.append({"date": d, "dte": dte})
+        except (ValueError, TypeError):
+            annotated.append({"date": d, "dte": None})
+
+    return {"symbol": symbol, "expirations": date_list, "expirations_with_dte": annotated}
 
 
 # ---------------------------------------------------------------------------
@@ -1782,7 +1795,11 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     open_positions = db.query(Position).filter(Position.status == "open").all()
     closed_positions = db.query(Position).filter(Position.status == "closed").all()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    total_collateral = sum(abs(p.max_loss or 0) for p in open_positions)
     total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
     slots_used = len(open_positions)
 
@@ -1801,7 +1818,9 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     return {
         "slots_used": slots_used,
         "slots_total": MAX_OPEN_POSITIONS,
-        "total_credit": round(total_credit, 2),
+        "total_credit": round(net_premium, 2),
+        "net_premium": round(net_premium, 2),
+        "total_collateral": round(total_collateral, 2),
         "total_unrealized": round(total_unrealized, 2),
         "total_realized": round(total_realized, 2),
         "open_count": slots_used,
@@ -2322,7 +2341,7 @@ def _discord_post_closed(pos: Position):
         "title": f"\u2705 POSITION CLOSED \u00b7 {pos.symbol} {strat_label}",
         "color": color,
         "fields": [
-            {"name": "Entry", "value": f"+${pos.entry_credit:,.2f}", "inline": True},
+            {"name": "Entry", "value": f"{'+'if pos.strategy in CREDIT_STRATEGIES else '-'}${pos.entry_credit:,.2f}", "inline": True},
             {"name": "Exit", "value": f"-${(pos.close_price or 0) * 100 * pos.contracts:,.2f}", "inline": True},
             {"name": "Realized P&L", "value": f"${pnl:+,.2f} ({pct_of_max:+.1f}% of max profit)", "inline": False},
             {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
@@ -2555,6 +2574,450 @@ async def discord_push_spread(body: DiscordPushSpread):
     return {"posted": True}
 
 
+# ---------------------------------------------------------------------------
+# GEX Profile → Discord chart generators + endpoints
+# ---------------------------------------------------------------------------
+
+
+def _generate_net_gex_chart(strikes: list[dict], header: dict, levels: dict) -> bytes | None:
+    """Generate a Net GEX horizontal bar chart as PNG bytes (mirrors frontend CSS bars)."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        if not strikes:
+            return None
+
+        price = header.get("price", 0)
+        sorted_s = sorted(strikes, key=lambda s: abs(s["strike"] - price))[:40]
+        sorted_s.sort(key=lambda s: s["strike"], reverse=True)
+
+        strike_labels = [f"${s['strike']:.0f}" for s in sorted_s]
+        net_gammas = [s["net_gamma"] for s in sorted_s]
+        colors = ["#22c55e" if g >= 0 else "#ef4444" for g in net_gammas]
+
+        fig, ax = plt.subplots(figsize=(8, max(len(sorted_s) * 0.22, 4)), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax.set_facecolor("#0d0d18")
+
+        ax.barh(range(len(sorted_s)), net_gammas, color=colors, height=0.7, alpha=0.8)
+
+        ax.set_yticks(range(len(sorted_s)))
+        ax.set_yticklabels(strike_labels, fontsize=8, color="#9ca3af", fontfamily="monospace")
+
+        # Mark key levels
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        for i, s in enumerate(sorted_s):
+            if price and abs(s["strike"] - price) <= 1:
+                ax.barh(i, net_gammas[i], color="#f59e0b", height=0.7, alpha=0.9)
+                ax.annotate("PRICE", xy=(0, i), fontsize=7, color="#f59e0b",
+                            fontweight="bold", va="center", ha="left")
+            elif flip and abs(s["strike"] - flip) <= 1:
+                ax.annotate("FLIP", xy=(0, i), fontsize=7, color="#eab308",
+                            fontweight="bold", va="center", ha="left")
+            elif cw and abs(s["strike"] - cw) <= 1:
+                ax.annotate("CALL WALL", xy=(0, i), fontsize=7, color="#06b6d4",
+                            fontweight="bold", va="center", ha="left")
+            elif pw and abs(s["strike"] - pw) <= 1:
+                ax.annotate("PUT WALL", xy=(0, i), fontsize=7, color="#a855f7",
+                            fontweight="bold", va="center", ha="left")
+
+        ax.axvline(x=0, color="#475569", linewidth=0.7, linestyle="--")
+        ax.set_xlabel("Net Gamma Exposure", color="#888", fontsize=9, fontfamily="monospace")
+        ax.set_title(
+            f"{header.get('symbol', 'SPY')} Net GEX by Strike · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax.tick_params(colors="#555", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_color("#1a1a2e")
+        ax.spines["left"].set_color("#1a1a2e")
+        ax.grid(axis="x", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+        ax.invert_yaxis()
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Net GEX chart generation failed: {e}")
+        return None
+
+
+def _generate_callput_gex_chart(strikes: list[dict], header: dict, levels: dict) -> bytes | None:
+    """Generate a bidirectional Call vs Put GEX bar chart as PNG bytes."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not strikes:
+            return None
+
+        price = header.get("price", 0)
+        sorted_s = sorted(strikes, key=lambda s: abs(s["strike"] - price))[:40]
+        sorted_s.sort(key=lambda s: s["strike"], reverse=True)
+
+        strike_labels = [f"${s['strike']:.0f}" for s in sorted_s]
+        call_gammas = [s.get("call_gamma", 0) for s in sorted_s]
+        put_gammas = [-(s.get("put_gamma", 0)) for s in sorted_s]  # negative for visual
+
+        y_pos = np.arange(len(sorted_s))
+
+        fig, ax = plt.subplots(figsize=(8, max(len(sorted_s) * 0.22, 4)), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax.set_facecolor("#0d0d18")
+
+        ax.barh(y_pos, call_gammas, height=0.4, color="#22c55e", alpha=0.75, label="Call Gamma")
+        ax.barh(y_pos, put_gammas, height=0.4, color="#ef4444", alpha=0.75, label="Put Gamma")
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(strike_labels, fontsize=8, color="#9ca3af", fontfamily="monospace")
+
+        # Reference lines for key levels
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        for i, s in enumerate(sorted_s):
+            if price and abs(s["strike"] - price) <= 1:
+                ax.axhline(y=i, color="#448aff", linewidth=1.5, alpha=0.6)
+            if flip and abs(s["strike"] - flip) <= 1:
+                ax.axhline(y=i, color="#eab308", linewidth=1.2, linestyle="--", alpha=0.6)
+            if cw and abs(s["strike"] - cw) <= 1:
+                ax.axhline(y=i, color="#06b6d4", linewidth=1.2, linestyle=":", alpha=0.6)
+            if pw and abs(s["strike"] - pw) <= 1:
+                ax.axhline(y=i, color="#a855f7", linewidth=1.2, linestyle=":", alpha=0.6)
+
+        ax.axvline(x=0, color="#475569", linewidth=0.7, linestyle="--")
+        ax.set_xlabel("Gamma Exposure", color="#888", fontsize=9, fontfamily="monospace")
+        ax.set_title(
+            f"{header.get('symbol', 'SPY')} Call vs Put GEX · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax.tick_params(colors="#555", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_color("#1a1a2e")
+        ax.spines["left"].set_color("#1a1a2e")
+        ax.grid(axis="x", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+        ax.legend(loc="lower right", fontsize=8, facecolor="#0d0d18", edgecolor="#1a1a2e",
+                  labelcolor="#9ca3af")
+        ax.invert_yaxis()
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Call vs Put chart generation failed: {e}")
+        return None
+
+
+def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
+                                  header: dict, levels: dict) -> bytes | None:
+    """Generate an intraday candlestick + GEX overlay chart as PNG bytes."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from datetime import datetime, timezone, timedelta
+
+        if not bars and not ticks:
+            return None
+
+        ct_offset = timedelta(hours=-6)  # CDT (CT during DST)
+
+        fig, ax1 = plt.subplots(figsize=(10, 4.5), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax1.set_facecolor("#0d0d18")
+
+        if bars:
+            times = []
+            for b in bars:
+                t = b.get("time", "")
+                try:
+                    dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                    times.append(dt + ct_offset)
+                except Exception:
+                    times.append(datetime.now())
+
+            opens = [b["open"] for b in bars]
+            highs = [b["high"] for b in bars]
+            lows = [b["low"] for b in bars]
+            closes = [b["close"] for b in bars]
+
+            bar_width = 0.002  # fraction of day
+            for i in range(len(bars)):
+                color = "#22c55e" if closes[i] >= opens[i] else "#ef4444"
+                ax1.plot([times[i], times[i]], [lows[i], highs[i]],
+                         color=color, linewidth=0.8)
+                ax1.bar(times[i], closes[i] - opens[i], bottom=min(opens[i], closes[i]),
+                        width=bar_width, color=color, alpha=0.8, edgecolor=color)
+        elif ticks:
+            times = []
+            prices = []
+            for t in ticks:
+                if t.get("spot_price") is None:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(t["time"].replace("Z", "+00:00"))
+                    times.append(dt + ct_offset)
+                    prices.append(t["spot_price"])
+                except Exception:
+                    pass
+            if times:
+                ax1.plot(times, prices, color="#3b82f6", linewidth=1.5)
+
+        # Reference lines
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        if flip:
+            ax1.axhline(y=flip, color="#eab308", linewidth=1.5, linestyle="--", alpha=0.7)
+            ax1.text(0.01, flip, f" FLIP ${flip:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#eab308", fontsize=8, fontfamily="monospace", va="bottom")
+        if cw:
+            ax1.axhline(y=cw, color="#06b6d4", linewidth=1.5, linestyle=":", alpha=0.7)
+            ax1.text(0.01, cw, f" CALL WALL ${cw:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#06b6d4", fontsize=8, fontfamily="monospace", va="bottom")
+        if pw:
+            ax1.axhline(y=pw, color="#a855f7", linewidth=1.5, linestyle=":", alpha=0.7)
+            ax1.text(0.01, pw, f" PUT WALL ${pw:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#a855f7", fontsize=8, fontfamily="monospace", va="top")
+
+        # GEX overlay on secondary y-axis
+        if ticks:
+            gex_times = []
+            gex_vals = []
+            for t in ticks:
+                ng = t.get("net_gamma")
+                if ng is None:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(t["time"].replace("Z", "+00:00"))
+                    gex_times.append(dt + ct_offset)
+                    gex_vals.append(ng)
+                except Exception:
+                    pass
+            if gex_times:
+                ax2 = ax1.twinx()
+                ax2.fill_between(gex_times, gex_vals, alpha=0.15, color="#3b82f6")
+                ax2.plot(gex_times, gex_vals, color="#3b82f6", linewidth=0.8, alpha=0.5)
+                ax2.set_ylabel("Net GEX", color="#3b82f6", fontsize=9, fontfamily="monospace")
+                ax2.tick_params(colors="#3b82f6", labelsize=7)
+                ax2.spines["right"].set_color("#1a1a2e")
+                ax2.spines["top"].set_visible(False)
+
+        price = header.get("price", 0)
+        symbol = header.get("symbol", "SPY")
+        ax1.set_title(
+            f"{symbol} Intraday 5m · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax1.set_ylabel("Price", color="#888", fontsize=9, fontfamily="monospace")
+        ax1.tick_params(colors="#555", labelsize=8)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%I:%M %p"))
+        ax1.spines["top"].set_visible(False)
+        ax1.spines["right"].set_color("#1a1a2e")
+        ax1.spines["bottom"].set_color("#1a1a2e")
+        ax1.spines["left"].set_color("#1a1a2e")
+        ax1.grid(axis="both", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Intraday chart generation failed: {e}")
+        return None
+
+
+def _format_gex(num: float) -> str:
+    """Format GEX value with B/M/K suffix."""
+    abs_val = abs(num)
+    if abs_val >= 1e9:
+        return f"{num / 1e9:.2f}B"
+    if abs_val >= 1e6:
+        return f"{num / 1e6:.2f}M"
+    if abs_val >= 1e3:
+        return f"{num / 1e3:.2f}K"
+    return f"{num:.2f}"
+
+
+async def _fetch_gex_data(request: Request, symbol: str) -> dict:
+    """Fetch GEX analysis data from AlphaGEX backend."""
+    http = request.app.state.http
+    resp = await http.get(
+        f"{ALPHAGEX_BASE_URL}/api/watchtower/gex-analysis",
+        params={"symbol": symbol},
+        timeout=20.0,
+    )
+    result = resp.json()
+    if not result.get("success"):
+        raise HTTPException(502, "GEX data unavailable")
+    return result["data"]
+
+
+async def _fetch_intraday_data(request: Request, symbol: str) -> tuple[list, list]:
+    """Fetch intraday ticks and bars from AlphaGEX backend."""
+    http = request.app.state.http
+    ticks_resp, bars_resp = await asyncio.gather(
+        http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-ticks",
+            params={"symbol": symbol, "interval": 5, "fallback": "true"},
+            timeout=20.0,
+        ),
+        http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-bars",
+            params={"symbol": symbol, "interval": "5min", "fallback": "true"},
+            timeout=20.0,
+        ),
+    )
+    ticks_json = ticks_resp.json()
+    bars_json = bars_resp.json()
+    ticks = ticks_json.get("data", {}).get("ticks", []) if ticks_json.get("success") else []
+    bars = bars_json.get("data", {}).get("bars", []) if bars_json.get("success") else []
+    return ticks, bars
+
+
+def _gex_header_embed_fields(header: dict, levels: dict) -> list[dict]:
+    """Build Discord embed fields from GEX header/levels data."""
+    price = header.get("price", 0)
+    net_gex = header.get("net_gex", 0)
+    gamma_form = header.get("gamma_form", "—")
+    rating = header.get("rating", "—")
+    flip = levels.get("gex_flip")
+    cw = levels.get("call_wall")
+    pw = levels.get("put_wall")
+
+    fields = [
+        {"name": "Price", "value": f"${price:,.2f}", "inline": True},
+        {"name": "Net GEX", "value": _format_gex(net_gex), "inline": True},
+        {"name": "Gamma Regime", "value": gamma_form, "inline": True},
+        {"name": "Rating", "value": rating, "inline": True},
+    ]
+    if flip:
+        dist = ((price - flip) / price * 100) if price else 0
+        fields.append({"name": "Flip Point", "value": f"${flip:,.2f} ({dist:+.1f}%)", "inline": True})
+    if cw:
+        dist = ((cw - price) / price * 100) if price else 0
+        fields.append({"name": "Call Wall", "value": f"${cw:,.2f} (+{dist:.1f}%)", "inline": True})
+    if pw:
+        dist = ((price - pw) / price * 100) if price else 0
+        fields.append({"name": "Put Wall", "value": f"${pw:,.2f} (-{dist:.1f}%)", "inline": True})
+    return fields
+
+
+@router.post("/discord/push-gex-net")
+async def discord_push_gex_net(request: Request, symbol: str = "SPY"):
+    """Push Net GEX bar chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+    strikes = gex_data.get("gex_chart", {}).get("strikes", [])
+
+    chart_bytes = _generate_net_gex_chart(strikes, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    embed = {
+        "title": f"\U0001f4ca {symbol} Net GEX by Strike · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": _gex_header_embed_fields(header, levels),
+        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
+@router.post("/discord/push-gex-callput")
+async def discord_push_gex_callput(request: Request, symbol: str = "SPY"):
+    """Push Call vs Put GEX chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+    strikes = gex_data.get("gex_chart", {}).get("strikes", [])
+
+    chart_bytes = _generate_callput_gex_chart(strikes, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    embed = {
+        "title": f"\U0001f4ca {symbol} Call vs Put GEX · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": _gex_header_embed_fields(header, levels),
+        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
+@router.post("/discord/push-gex-intraday")
+async def discord_push_gex_intraday(request: Request, symbol: str = "SPY"):
+    """Push Intraday 5m candlestick + GEX overlay chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+
+    ticks, bars = await _fetch_intraday_data(request, symbol)
+
+    chart_bytes = _generate_intraday_gex_chart(bars, ticks, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+
+    fields = _gex_header_embed_fields(header, levels)
+    fields.append({"name": "Candles", "value": f"{len(bars)} bars", "inline": True})
+
+    embed = {
+        "title": f"\U0001f4ca {symbol} Intraday 5m · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "SpreadWorks · GEX Profile · Intraday"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
 @router.post("/discord/post-open")
 async def discord_post_open(db: Session = Depends(get_db)):
     """Post open positions summary to Discord (like morning post)."""
@@ -2563,29 +3026,34 @@ async def discord_post_open(db: Session = Depends(get_db)):
         return {"posted": False, "reason": "No open positions"}
 
     today_str = _today_ct().strftime("%B %d, %Y")
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
 
     lines = []
     for pos in open_positions:
         strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
         dte = (pos.short_exp - _today_ct()).days if pos.short_exp else "?"
+        entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
         lines.append(
             f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-            f"Entry: +${pos.entry_credit:,.2f}\n"
+            f"Entry: {entry_sign}${pos.entry_credit:,.2f}\n"
             f"Max Profit: ${pos.max_profit:,.2f} | Max Loss: ${pos.max_loss:,.2f} | {dte}DTE"
             if pos.max_profit is not None and pos.max_loss is not None
             else f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-                 f"Entry: +${pos.entry_credit:,.2f} | {dte}DTE"
+                 f"Entry: {entry_sign}${pos.entry_credit:,.2f} | {dte}DTE"
         )
 
     positions_text = "\n\n".join(lines)
 
+    premium_sign = "+" if net_premium >= 0 else "-"
     embed = {
         "title": f"\U0001f4cb TODAY'S OPEN SPREADS \u00b7 {today_str}",
         "color": 0x448AFF,
         "description": positions_text,
         "fields": [
-            {"name": "Total Credit", "value": f"+${total_credit:,.2f}", "inline": True},
+            {"name": "Net Premium", "value": f"{premium_sign}${abs(net_premium):,.2f}", "inline": True},
             {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
         "footer": {"text": "Trade with discipline \U0001f64f"},
@@ -2645,6 +3113,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             "strategy": strat,
             "strikes": _strikes_str(pos),
             "entry_credit": pos.entry_credit,
+            "is_credit": pos.strategy in CREDIT_STRATEGIES,
             "unrealized_pnl": pnl,
             "dte": dte,
             "max_profit": pos.max_profit,
@@ -2657,8 +3126,11 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
         Position.close_date == today_date,
     ).count()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
-    pnl_pct = round(total_unrealized / total_credit * 100, 1) if total_credit else 0
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    pnl_pct = round(total_unrealized / abs(net_premium) * 100, 1) if net_premium else 0
 
     # Claude AI commentary
     commentary = ""
@@ -2676,7 +3148,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             for p in positions_for_ai:
                 prompt += (
                     f"- {p['symbol']} {p['strategy']} {p['strikes']}: "
-                    f"entry +${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
+                    f"entry {'+'if p.get('is_credit') else '-'}${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
                     f"{p['dte']}DTE, max profit ${p['max_profit']}, max loss ${p['max_loss']}\n"
                 )
             prompt += (
@@ -2709,7 +3181,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             {"name": "\u2501" * 20, "value": "\u200b", "inline": False},
             {
                 "name": "Portfolio P&L Today",
-                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of total credit)",
+                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of net premium)",
                 "inline": True,
             },
             {"name": "Open", "value": str(len(open_positions)), "inline": True},
@@ -2826,9 +3298,10 @@ async def discord_push_position(
     if dte is not None:
         fields.append({"name": "DTE", "value": str(dte), "inline": True})
 
+    entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
     fields.append({
-        "name": "Entry Credit",
-        "value": f"+${pos.entry_credit:,.2f}",
+        "name": "Entry Credit" if pos.strategy in CREDIT_STRATEGIES else "Entry Debit",
+        "value": f"{entry_sign}${pos.entry_credit:,.2f}",
         "inline": True,
     })
     if current_value is not None:
@@ -3033,12 +3506,19 @@ async def position_payoff(
             r, sigma, entry_cost, n,
         )
 
+    # Use stored max_profit/max_loss from position creation for consistency
+    # with the card display. The curve shape is recalculated dynamically
+    # (correct for time-dependent strategies like DD/DC), but the boundary
+    # labels should match the card values.
+    max_profit = pos.max_profit if pos.max_profit is not None else profile["max_profit"]
+    max_loss = pos.max_loss if pos.max_loss is not None else profile["max_loss"]
+
     return {
         "position_id": position_id,
         "spot_price": spot,
         "pnl_curve": profile["pnl_curve"],
-        "max_profit": profile["max_profit"],
-        "max_loss": profile["max_loss"],
+        "max_profit": max_profit,
+        "max_loss": max_loss,
         "breakevens": {
             "lower": profile["lower_breakeven"],
             "upper": profile["upper_breakeven"],
