@@ -1977,6 +1977,12 @@ async def position_live_pnl(
         current_value = round(val, 4)
         unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
 
+        # Cap P&L at theoretical max profit / max loss boundaries
+        if pos.max_profit is not None:
+            unrealized_pnl = min(unrealized_pnl, round(abs(pos.max_profit), 2))
+        if pos.max_loss is not None:
+            unrealized_pnl = max(unrealized_pnl, -round(abs(pos.max_loss), 2))
+
         if pos.max_profit and pos.max_profit != 0:
             pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 2)
 
@@ -2044,6 +2050,12 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
 
             dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
             unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+
+            # Cap P&L at theoretical max profit / max loss boundaries
+            if pos.max_profit is not None:
+                unrealized = min(unrealized, round(abs(pos.max_profit), 2))
+            if pos.max_loss is not None:
+                unrealized = max(unrealized, -round(abs(pos.max_loss), 2))
 
             mark = DailyMark(
                 position_id=pos.id,
