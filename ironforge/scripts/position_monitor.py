@@ -54,6 +54,43 @@ BOT_CONFIG = {
     "inferno": {"pt_pct": 0.50, "sl_mult": 3.0},   # SL at 3x credit = 200% loss
 }
 
+# DB field → BOT_CONFIG key mapping (mirrors scanner _DB_TO_CFG)
+_DB_TO_CFG = {
+    "profit_target_pct": ("pt_pct", lambda v: float(v) / 100.0),  # DB stores 30.0 → we use 0.30
+    "stop_loss_pct": ("sl_mult", lambda v: float(v) / 100.0),     # DB stores 200.0 → we use 2.0
+}
+
+def load_config_overrides() -> None:
+    """Read {bot}_config tables from Databricks and merge into BOT_CONFIG.
+
+    Mirrors the scanner's load_config_overrides() so PT/SL thresholds stay in sync.
+    Falls back silently to defaults if table doesn't exist or query fails.
+    """
+    dte_map = {"flame": "2DTE", "spark": "1DTE", "inferno": "0DTE"}
+    for bot_name, defaults in BOT_CONFIG.items():
+        dte = dte_map[bot_name]
+        try:
+            rows = db_query(
+                f"SELECT * FROM {bot_table(bot_name, 'config')} "
+                f"WHERE dte_mode = '{dte}' LIMIT 1"
+            )
+            if not rows:
+                continue
+            row = rows[0]
+            for db_col, mapping in _DB_TO_CFG.items():
+                val = row.get(db_col)
+                if val is None:
+                    continue
+                if isinstance(mapping, tuple):
+                    cfg_key, transform = mapping
+                    defaults[cfg_key] = transform(val)
+                else:
+                    defaults[mapping] = float(val) if isinstance(val, (int, float)) else val
+            log.info(f"[{bot_name.upper()}] Config overrides loaded: pt_pct={defaults['pt_pct']}, sl_mult={defaults['sl_mult']}")
+        except Exception as e:
+            log.debug(f"[{bot_name.upper()}] Config table not found (using defaults): {e}")
+
+
 BOTS = [
     {"name": "flame",   "dte": "2DTE"},
     {"name": "spark",   "dte": "1DTE"},
@@ -685,6 +722,12 @@ def close_position(bot, position_id, ticker, expiration, ps, pl, cs, cl,
 def monitor_all_bots():
     ct = get_central_time()
     print(f"Position monitor at {ct.strftime('%Y-%m-%d %H:%M:%S')} CT")
+
+    # Load config overrides from DB so PT/SL thresholds match the scanner
+    load_config_overrides()
+    for bot_name, cfg in BOT_CONFIG.items():
+        print(f"  {bot_name.upper()} config: pt_pct={cfg['pt_pct']}, sl_mult={cfg['sl_mult']}")
+
     total_closed = 0
 
     for bot in BOTS:
@@ -803,6 +846,38 @@ def monitor_all_bots():
         print(f"  CLOSED {total_closed} position(s)")
     else:
         print(f"  No exits triggered")
+
+    # Save equity snapshots for every bot (fills gaps when scanner isn't running)
+    for bot in BOTS:
+        try:
+            acct_rows = db_query(f"""
+                SELECT current_balance, cumulative_pnl
+                FROM {bot_table(bot['name'], 'paper_account')}
+                WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
+                ORDER BY id DESC LIMIT 1
+            """)
+            open_count = db_query(f"""
+                SELECT COUNT(*) as cnt
+                FROM {bot_table(bot['name'], 'positions')}
+                WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+            """)
+            if acct_rows:
+                bal = num(acct_rows[0]["current_balance"])
+                cum_pnl = num(acct_rows[0]["cumulative_pnl"])
+                open_cnt = to_int(open_count[0]["cnt"]) if open_count else 0
+                db_execute(f"""
+                    INSERT INTO {bot_table(bot['name'], 'equity_snapshots')}
+                        (snapshot_time, balance, realized_pnl, unrealized_pnl,
+                         open_positions, note, dte_mode, created_at)
+                    VALUES (
+                        CURRENT_TIMESTAMP(), {bal}, {cum_pnl},
+                        0, {open_cnt},
+                        'monitor_cycle', '{bot['dte']}',
+                        CURRENT_TIMESTAMP()
+                    )
+                """)
+        except Exception as snap_err:
+            log.warning(f"{bot['name'].upper()} equity snapshot failed: {snap_err}")
 
 print("Position monitor functions loaded")
 
