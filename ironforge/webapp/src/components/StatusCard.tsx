@@ -10,7 +10,7 @@ interface StatusData {
   account: {
     balance: number
     cumulative_pnl: number
-    unrealized_pnl: number
+    unrealized_pnl: number | null
     total_pnl: number
     return_pct: number
     buying_power: number
@@ -75,15 +75,19 @@ export default function StatusCard({
   accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
   bot: 'flame' | 'spark' | 'inferno'
-  liveUnrealizedPnl?: number
+  liveUnrealizedPnl?: number | null
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
   // Prefer position-monitor's live unrealized P&L (single source of truth with position cards)
-  const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl ?? 0
-  const unrealizedPositive = unrealized >= 0
-  const totalPnl = account.cumulative_pnl + unrealized
-  const totalPositive = totalPnl >= 0
+  // null means "unavailable" (MTM failed) — display "—" instead of $0
+  const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl
+  const unrealizedAvailable = unrealized != null
+  const unrealizedPositive = (unrealized ?? 0) >= 0
+  const totalPnl = unrealizedAvailable
+    ? account.cumulative_pnl + (unrealized ?? 0)
+    : null
+  const totalPositive = (totalPnl ?? 0) >= 0
 
   const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
   const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
@@ -360,32 +364,40 @@ export default function StatusCard({
           <p className="text-xs text-forge-muted">Unrealized P&L</p>
           <p
             className={`text-xl font-semibold ${
-              unrealized === 0
-                ? 'text-gray-400'
-                : unrealizedPositive
-                  ? 'text-emerald-400'
-                  : 'text-red-400'
+              !unrealizedAvailable
+                ? 'text-gray-500'
+                : unrealized === 0
+                  ? 'text-gray-400'
+                  : unrealizedPositive
+                    ? 'text-emerald-400'
+                    : 'text-red-400'
             }`}
           >
-            {unrealized === 0
-              ? '$0.00'
-              : `${unrealizedPositive ? '+' : ''}$${unrealized.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                })}`}
+            {!unrealizedAvailable
+              ? '—'
+              : unrealized === 0
+                ? '$0.00'
+                : `${unrealizedPositive ? '+' : ''}$${(unrealized ?? 0).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                  })}`}
           </p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Total P&L</p>
-          <p
-            className={`text-xl font-bold ${totalPositive ? 'text-emerald-400' : 'text-red-400'}`}
-          >
-            {totalPositive ? '+' : ''}$
-            {totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            <span className="text-sm ml-1">
-              ({totalPositive ? '+' : ''}
-              {account.return_pct.toFixed(1)}%)
-            </span>
-          </p>
+          {totalPnl != null ? (
+            <p
+              className={`text-xl font-bold ${totalPositive ? 'text-emerald-400' : 'text-red-400'}`}
+            >
+              {totalPositive ? '+' : ''}$
+              {totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              <span className="text-sm ml-1">
+                ({totalPositive ? '+' : ''}
+                {account.return_pct.toFixed(1)}%)
+              </span>
+            </p>
+          ) : (
+            <p className="text-xl font-bold text-gray-500">—</p>
+          )}
         </div>
       </div>
 

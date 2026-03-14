@@ -99,7 +99,7 @@ class TradingDatabase:
                     )
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to get paper account: {e}")
-        return PaperAccount()
+            raise RuntimeError(f"{self.bot_name}: Cannot load paper account from database: {e}") from e
 
     def update_paper_balance(self, realized_pnl: float = 0, collateral_change: float = 0) -> bool:
         try:
@@ -205,7 +205,7 @@ class TradingDatabase:
                     positions.append(pos)
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to load positions: {e}")
-        return positions
+            raise RuntimeError(f"{self.bot_name}: Cannot load positions from database: {e}") from e
 
     def save_position(self, pos: IronCondorPosition) -> bool:
         try:

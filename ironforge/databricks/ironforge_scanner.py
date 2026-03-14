@@ -2992,6 +2992,12 @@ def main() -> None:
             f"| Catalog: {CATALOG} | Schema: {SCHEMA} "
             f"| Tradier: {'OK' if is_tradier_configured() else 'MISSING'}"
         )
+        log.warning(
+            "GEX data source NOT configured — trading without gamma context. "
+            "All GEX fields (call_wall, put_wall, gex_regime, flip_point, net_gex) "
+            "are hardcoded to zero/UNKNOWN. Bots use SD-based strike selection only. "
+            "To integrate real GEX data, connect to AlphaGEX API and populate these fields."
+        )
 
         if not is_market_open(ct):
             if is_in_warmup_window(ct):

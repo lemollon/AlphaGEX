@@ -68,7 +68,10 @@ async function tradierGet(
   endpoint: string,
   params?: Record<string, string>,
 ): Promise<any> {
-  if (!TRADIER_API_KEY) return null
+  if (!TRADIER_API_KEY) {
+    console.error(`Tradier: API key not configured — cannot call ${endpoint}`)
+    return null
+  }
 
   const url = new URL(`${TRADIER_BASE_URL}${endpoint}`)
   if (params) {
@@ -83,7 +86,10 @@ async function tradierGet(
     cache: 'no-store',
   })
 
-  if (!res.ok) return null
+  if (!res.ok) {
+    console.error(`Tradier: ${endpoint} returned HTTP ${res.status} (${res.statusText})`)
+    return null
+  }
   return res.json()
 }
 
@@ -351,7 +357,15 @@ async function sandboxPost(
     cache: 'no-store',
   })
 
-  if (!res.ok) return null
+  if (!res.ok) {
+    const status = res.status
+    if (status === 401 || status === 403) {
+      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+    } else {
+      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+    }
+    return null
+  }
   return res.json()
 }
 
@@ -375,7 +389,15 @@ async function sandboxGet(
     cache: 'no-store',
   })
 
-  if (!res.ok) return null
+  if (!res.ok) {
+    const status = res.status
+    if (status === 401 || status === 403) {
+      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+    } else {
+      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+    }
+    return null
+  }
   return res.json()
 }
 

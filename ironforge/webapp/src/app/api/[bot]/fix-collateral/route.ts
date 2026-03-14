@@ -278,10 +278,19 @@ export async function POST(
        WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
     )
 
+    // Read starting_capital from paper_account (not hardcoded)
+    const startCapRows = await dbQuery(
+      `SELECT COALESCE(starting_capital, 10000) as starting_capital
+       FROM ${botTable(bot, 'paper_account')}
+       WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}'
+       ORDER BY id DESC LIMIT 1`,
+    )
+    const startingCapital = num(startCapRows[0]?.starting_capital) || 10000
+
     const actualPnl = num(pnlRows[0]?.total_pnl)
     const actualTrades = int(pnlRows[0]?.total_trades)
     const actualCollateral = num(openRows[0]?.total_collateral)
-    const expectedBalance = Math.round((10000 + actualPnl) * 100) / 100
+    const expectedBalance = Math.round((startingCapital + actualPnl) * 100) / 100
     const correctBp = Math.round((expectedBalance - actualCollateral) * 100) / 100
 
     await dbExecute(
