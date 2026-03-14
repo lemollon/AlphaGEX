@@ -34,7 +34,9 @@ print(f"Tradier: {'OK' if os.environ.get('TRADIER_API_KEY') else 'MISSING'}")
 # COMMAND ----------
 
 import json
+import math
 import time
+import random
 import logging
 import requests
 from datetime import datetime
@@ -226,6 +228,28 @@ def get_ic_mark_to_market(ticker, expiration, put_short, put_long, call_short, c
         "spread_width": spread_width,
         "raw_cost": round(raw_cost, 4),
     }
+
+# COMMAND ----------
+
+# ── Sandbox API helpers ──────────────────────────────────────────────────
+
+def _sandbox_get(endpoint, params, api_key):
+    """Authenticated GET to Tradier sandbox API."""
+    if not api_key:
+        return None
+    try:
+        resp = requests.get(
+            f"{SANDBOX_URL}{endpoint}",
+            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+            params=params or {},
+            timeout=15,
+        )
+        if resp.ok:
+            return resp.json()
+        log.warning(f"Sandbox GET {endpoint}: {resp.status_code}")
+    except Exception as e:
+        log.warning(f"Sandbox GET error: {e}")
+    return None
 
 # COMMAND ----------
 
@@ -472,6 +496,344 @@ def mirror_close_to_sandbox(bot, position_id, ticker, expiration, ps, pl, cs, cl
             pass
 
     return user_fill_price
+
+# COMMAND ----------
+
+# ── Orphan sandbox fill recovery (FLAME only) ────────────────────────────
+# If the scanner placed a sandbox order but timed out waiting for fill,
+# and the order filled AFTER the scanner moved on, we have a live Tradier
+# position with no matching paper position.  This function detects that
+# and creates the paper position retroactively using the sandbox fill data.
+# FLAME only trades once/day — same strikes on paper and sandbox.
+
+def parse_occ_symbol(symbol):
+    """Parse OCC symbol → (ticker, expiration, strike, opt_type).
+
+    Example: SPY260316C00684000 → ("SPY", "2026-03-16", 684.0, "C")
+    """
+    try:
+        ticker = symbol[:3]
+        yy = symbol[3:5]
+        mm = symbol[5:7]
+        dd = symbol[7:9]
+        opt_type = symbol[9]  # C or P
+        strike = int(symbol[10:]) / 1000.0
+        expiration = f"20{yy}-{mm}-{dd}"
+        return ticker, expiration, strike, opt_type
+    except (IndexError, ValueError):
+        return None, None, None, None
+
+
+def recover_orphan_sandbox_fills():
+    """Check if User sandbox has filled positions that paper doesn't know about.
+
+    FLAME trades once/day, so the logic is simple:
+    1. Query User sandbox for open SPY option positions
+    2. Group them by expiration into IC legs (should be 4 legs)
+    3. Check if FLAME has an open paper position with matching strikes
+    4. If not → create the paper position from the sandbox fill
+
+    Runs every monitor cycle — fast (1 API call + 1 DB query).
+    Only acts for FLAME (the only bot using sandbox).
+    """
+    bot = {"name": "flame", "dte": "2DTE"}
+    ct = get_central_time()
+    today_str = ct.strftime("%Y-%m-%d")
+
+    # Only during market hours — sandbox positions aren't meaningful after close
+    hhmm = ct.hour * 100 + ct.minute
+    if hhmm < 830 or hhmm > 1500:
+        return
+
+    # 1. Get User sandbox account
+    accounts = _get_sandbox_accounts()
+    user_acct = None
+    for a in accounts:
+        if a["name"] == "User":
+            user_acct = a
+            break
+    if not user_acct:
+        return
+
+    # 2. Query User sandbox positions
+    data = _sandbox_get(
+        f"/accounts/{user_acct['account_id']}/positions",
+        None, user_acct["api_key"]
+    )
+    if not data:
+        return
+
+    positions = data.get("positions", {})
+    if not positions or positions == "null":
+        return
+
+    pos_list = positions.get("position", [])
+    if isinstance(pos_list, dict):
+        pos_list = [pos_list]
+
+    # 3. Parse SPY option positions, group by expiration
+    #    An IC has 4 legs: sell put, buy put, sell call, buy call
+    legs_by_exp = {}
+    for p in pos_list:
+        symbol = p.get("symbol", "")
+        qty = p.get("quantity", 0)
+        if not symbol or qty == 0:
+            continue
+        ticker, expiration, strike, opt_type = parse_occ_symbol(symbol)
+        if ticker != "SPY" or not expiration:
+            continue
+        # Only care about today's or future expirations
+        if expiration < today_str:
+            continue
+        if expiration not in legs_by_exp:
+            legs_by_exp[expiration] = []
+        legs_by_exp[expiration].append({
+            "symbol": symbol,
+            "strike": strike,
+            "opt_type": opt_type,
+            "quantity": qty,
+            "cost_basis": float(p.get("cost_basis", 0)),
+        })
+
+    if not legs_by_exp:
+        return
+
+    # 4. For each expiration with 4 legs, check if we have a matching paper position
+    for expiration, legs in legs_by_exp.items():
+        if len(legs) != 4:
+            # Not a complete IC — skip (could be partial fill or individual legs)
+            log.debug(f"Orphan check: {expiration} has {len(legs)} legs (need 4), skipping")
+            continue
+
+        # Identify the IC structure:
+        #   Short put  (qty < 0, P), Long put  (qty > 0, P)
+        #   Short call (qty < 0, C), Long call (qty > 0, C)
+        puts = [l for l in legs if l["opt_type"] == "P"]
+        calls = [l for l in legs if l["opt_type"] == "C"]
+        if len(puts) != 2 or len(calls) != 2:
+            continue
+
+        short_put = next((l for l in puts if l["quantity"] < 0), None)
+        long_put = next((l for l in puts if l["quantity"] > 0), None)
+        short_call = next((l for l in calls if l["quantity"] < 0), None)
+        long_call = next((l for l in calls if l["quantity"] > 0), None)
+
+        if not all([short_put, long_put, short_call, long_call]):
+            continue
+
+        ps = short_put["strike"]
+        pl = long_put["strike"]
+        cs = short_call["strike"]
+        cl = long_call["strike"]
+        sandbox_contracts = abs(short_put["quantity"])
+
+        # 5. Check if FLAME already has a paper position with these strikes
+        existing = db_query(f"""
+            SELECT position_id FROM {bot_table('flame', 'positions')}
+            WHERE status = 'open' AND dte_mode = '2DTE'
+              AND put_short_strike = {ps} AND put_long_strike = {pl}
+              AND call_short_strike = {cs} AND call_long_strike = {cl}
+              AND expiration = CAST('{expiration}' AS DATE)
+        """)
+
+        if existing:
+            # Paper position already exists — everything is in sync
+            continue
+
+        # Also check: does FLAME already have ANY open position today?
+        # FLAME trades once/day — if there's already an open position, don't create another
+        any_open = db_query(f"""
+            SELECT position_id FROM {bot_table('flame', 'positions')}
+            WHERE status = 'open' AND dte_mode = '2DTE'
+              AND open_date = CAST('{today_str}' AS DATE)
+        """)
+        if any_open:
+            log.info(
+                f"ORPHAN RECOVERY SKIP: FLAME already has open position {any_open[0]['position_id']} "
+                f"today — sandbox has unmatched {ps}/{pl}P-{cs}/{cl}C but won't create duplicate"
+            )
+            continue
+
+        # 6. ORPHAN DETECTED — create paper position from sandbox fill
+        log.warning(
+            f"ORPHAN FILL DETECTED: Sandbox has {ps}/{pl}P-{cs}/{cl}C exp={expiration} "
+            f"x{sandbox_contracts} but no paper position — creating now"
+        )
+
+        # Get entry credit from sandbox cost basis
+        # Cost basis is total for all legs — net credit for an IC
+        total_cost_basis = sum(l["cost_basis"] for l in legs)
+        # Tradier cost_basis: negative = credit received, positive = debit paid
+        # For an IC, total should be negative (net credit)
+        entry_credit = abs(total_cost_basis) / (sandbox_contracts * 100)
+
+        # If cost basis is unreliable, get live MTM as fallback
+        if entry_credit < 0.01:
+            mtm = get_ic_mark_to_market("SPY", expiration, ps, pl, cs, cl)
+            if mtm:
+                entry_credit = mtm["cost_to_close"]
+            else:
+                entry_credit = 0.10  # absolute minimum fallback
+            log.warning(f"  Cost basis unreliable, using {'MTM' if mtm else 'minimum'}: ${entry_credit:.4f}")
+
+        # Paper uses its own contract sizing (max 10, from config)
+        cfg = BOT_CONFIG.get("flame", {"pt_pct": 0.30, "sl_mult": 2.0})
+        spread_width = round(ps - pl, 2)
+        collateral_per = max(0, (spread_width - entry_credit) * 100)
+
+        # Get paper account for sizing
+        acct_rows = db_query(f"""
+            SELECT id, current_balance, buying_power
+            FROM {bot_table('flame', 'paper_account')}
+            WHERE is_active = TRUE AND dte_mode = '2DTE'
+            ORDER BY id DESC LIMIT 1
+        """)
+        if not acct_rows:
+            log.error("ORPHAN RECOVERY FAILED: No paper account found")
+            continue
+
+        paper_acct = acct_rows[0]
+        paper_acct_id = paper_acct["id"]
+        balance = num(paper_acct["current_balance"])
+
+        # Recalculate buying power from live collateral
+        live_coll_rows = db_query(f"""
+            SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+            FROM {bot_table('flame', 'positions')}
+            WHERE status = 'open' AND dte_mode = '2DTE'
+        """)
+        live_collateral = num(live_coll_rows[0]["total_collateral"]) if live_coll_rows else 0.0
+        buying_power = balance - live_collateral
+
+        if collateral_per <= 0:
+            log.error(f"ORPHAN RECOVERY FAILED: bad collateral_per={collateral_per}")
+            continue
+
+        usable_bp = buying_power * 0.85
+        bp_contracts = max(1, math.floor(usable_bp / collateral_per))
+        max_contracts = min(10, bp_contracts)  # cap at 10 for paper
+
+        total_collateral = collateral_per * max_contracts
+        max_profit = entry_credit * 100 * max_contracts
+        max_loss = total_collateral
+
+        # Generate position ID
+        date_str = ct.strftime("%Y%m%d")
+        hex_str = format(random.randint(0, 0xFFFFFF), "06X")
+        position_id = f"FLAME-{date_str}-{hex_str}"
+        now_ts = ct.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Build sandbox_order_id JSON (we don't have the order_id, mark as recovered)
+        sandbox_json = json.dumps({
+            "User": {"recovered": True, "contracts": sandbox_contracts}
+        }).replace("'", "''")
+
+        # 7. INSERT paper position
+        db_execute(f"""
+            INSERT INTO {bot_table('flame', 'positions')} (
+                position_id, ticker, expiration,
+                put_short_strike, put_long_strike, put_credit,
+                call_short_strike, call_long_strike, call_credit,
+                contracts, spread_width, total_credit, max_loss, max_profit,
+                collateral_required,
+                underlying_at_entry, vix_at_entry, expected_move,
+                call_wall, put_wall, gex_regime,
+                flip_point, net_gex,
+                oracle_confidence, oracle_win_probability, oracle_advice,
+                oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
+                wings_adjusted, original_put_width, original_call_width,
+                put_order_id, call_order_id,
+                status, open_time, open_date, dte_mode,
+                sandbox_order_id, created_at, updated_at
+            ) VALUES (
+                '{position_id}', 'SPY', CAST('{expiration}' AS DATE),
+                {ps}, {pl}, 0,
+                {cs}, {cl}, 0,
+                {max_contracts}, {spread_width}, {entry_credit}, {max_loss}, {max_profit},
+                {total_collateral},
+                0, 0, 0,
+                0, 0, 'UNKNOWN',
+                0, 0,
+                0, 0, 'ORPHAN_RECOVERY',
+                'Position recovered from sandbox fill — scanner timed out waiting for fill', '', FALSE,
+                FALSE, {spread_width}, {spread_width},
+                'PAPER', 'PAPER',
+                'open', CAST('{now_ts}' AS TIMESTAMP), CAST('{today_str}' AS DATE), '2DTE',
+                '{sandbox_json}', CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+            )
+        """)
+
+        # 8. Update paper_account collateral
+        db_execute(f"""
+            UPDATE {bot_table('flame', 'paper_account')}
+            SET collateral_in_use = collateral_in_use + {total_collateral},
+                buying_power = buying_power - {total_collateral},
+                updated_at = CURRENT_TIMESTAMP()
+            WHERE id = {paper_acct_id}
+        """)
+
+        # 9. Log it
+        details = json.dumps({
+            "position_id": position_id,
+            "contracts_paper": max_contracts,
+            "contracts_sandbox": sandbox_contracts,
+            "entry_credit": entry_credit,
+            "collateral": total_collateral,
+            "source": "orphan_fill_recovery",
+            "strikes": f"{pl}/{ps}P-{cs}/{cl}C",
+            "expiration": expiration,
+        }).replace("'", "''")
+        db_execute(f"""
+            INSERT INTO {bot_table('flame', 'logs')}
+                (log_time, level, message, details, dte_mode)
+            VALUES (
+                CURRENT_TIMESTAMP(),
+                'ORPHAN_RECOVERY',
+                'MONITOR: Created paper position {position_id} from sandbox fill ({pl}/{ps}P-{cs}/{cl}C x{max_contracts})',
+                '{details}',
+                '2DTE'
+            )
+        """)
+
+        # 10. Equity snapshot
+        updated_acct = db_query(f"""
+            SELECT current_balance, cumulative_pnl
+            FROM {bot_table('flame', 'paper_account')}
+            WHERE id = {paper_acct_id}
+        """)
+        if updated_acct:
+            bal = num(updated_acct[0]["current_balance"])
+            cum_pnl = num(updated_acct[0]["cumulative_pnl"])
+            db_execute(f"""
+                INSERT INTO {bot_table('flame', 'equity_snapshots')}
+                    (snapshot_time, balance, realized_pnl, unrealized_pnl,
+                     open_positions, note, dte_mode, created_at)
+                VALUES (
+                    CURRENT_TIMESTAMP(), {bal}, {cum_pnl}, 0,
+                    1, 'orphan_recovery:{position_id}', '2DTE',
+                    CURRENT_TIMESTAMP()
+                )
+            """)
+
+        # 11. Daily perf — count as a trade
+        db_execute(f"""
+            MERGE INTO {bot_table('flame', 'daily_perf')} AS t
+            USING (SELECT CURRENT_DATE() AS trade_date) AS s
+            ON t.trade_date = s.trade_date
+            WHEN MATCHED THEN UPDATE SET
+                trades_executed = t.trades_executed + 1,
+                updated_at = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT
+                (trade_date, trades_executed, positions_closed, realized_pnl, updated_at)
+            VALUES (CURRENT_DATE(), 1, 0, 0, CURRENT_TIMESTAMP())
+        """)
+
+        log.info(
+            f"ORPHAN RECOVERY COMPLETE: {position_id} "
+            f"{pl}/{ps}P-{cs}/{cl}C x{max_contracts} (paper) / x{sandbox_contracts} (sandbox) "
+            f"@ ${entry_credit:.4f} exp={expiration}"
+        )
+
 
 # COMMAND ----------
 
@@ -727,6 +1089,13 @@ def monitor_all_bots():
     load_config_overrides()
     for bot_name, cfg in BOT_CONFIG.items():
         print(f"  {bot_name.upper()} config: pt_pct={cfg['pt_pct']}, sl_mult={cfg['sl_mult']}")
+
+    # FLAME: recover orphan sandbox fills before monitoring positions
+    # (if scanner timed out waiting for fill but Tradier filled after)
+    try:
+        recover_orphan_sandbox_fills()
+    except Exception as e:
+        log.warning(f"Orphan fill recovery error (non-fatal): {e}")
 
     total_closed = 0
 
