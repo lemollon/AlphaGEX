@@ -3049,12 +3049,19 @@ async def position_payoff(
             r, sigma, entry_cost, n,
         )
 
+    # Use stored max_profit/max_loss from position creation for consistency
+    # with the card display. The curve shape is recalculated dynamically
+    # (correct for time-dependent strategies like DD/DC), but the boundary
+    # labels should match the card values.
+    max_profit = pos.max_profit if pos.max_profit is not None else profile["max_profit"]
+    max_loss = pos.max_loss if pos.max_loss is not None else profile["max_loss"]
+
     return {
         "position_id": position_id,
         "spot_price": spot,
         "pnl_curve": profile["pnl_curve"],
-        "max_profit": profile["max_profit"],
-        "max_loss": profile["max_loss"],
+        "max_profit": max_profit,
+        "max_loss": max_loss,
         "breakevens": {
             "lower": profile["lower_breakeven"],
             "upper": profile["upper_breakeven"],
