@@ -46,8 +46,18 @@ def db_query(sql: str) -> list:
     return [dict(zip(columns, row)) for row in rows]
 
 
-def db_execute(sql: str):
-    spark.sql(sql)
+def db_execute(sql: str) -> int:
+    """Execute SQL statement. Returns num_affected_rows for UPDATE/DELETE, 0 otherwise."""
+    result = spark.sql(sql)
+    try:
+        rows = result.collect()
+        if rows and len(rows) > 0 and len(rows[0]) > 0:
+            val = rows[0][0]
+            if isinstance(val, (int, float)):
+                return int(val)
+    except Exception:
+        pass
+    return 0
 
 
 def num(val) -> float:
@@ -216,7 +226,8 @@ def close_stale_positions(bot: dict, execute: bool) -> int:
             continue
 
         # Close the position (use the POSITION's dte_mode, not the bot's)
-        db_execute(f"""
+        # Guard: only proceed with paper_account update if we actually changed the row
+        rows_affected = db_execute(f"""
             UPDATE {bot_table(bot['name'], 'positions')}
             SET status = 'closed',
                 close_time = CURRENT_TIMESTAMP(),
@@ -228,6 +239,11 @@ def close_stale_positions(bot: dict, execute: bool) -> int:
             WHERE position_id = '{pid}'
               AND status = 'open'
         """)
+
+        if rows_affected == 0:
+            print(f"      ⚠ SKIPPED: position already closed by another process (double-count prevented)")
+            closed_count += 1
+            continue
 
         # Update paper account balance (all rows for this dte)
         if realized_pnl != 0:
