@@ -467,10 +467,14 @@ try:
     print(f"A6: FLAME positions (last 7 days): {len(rows)} total, {len(warnings)} warnings")
 
     for r in rows:
-        health_marker = "⚠️" if r["health"] != "OK" else "  "
-        pnl_str = f"${r['realized_pnl']:.2f}" if r['realized_pnl'] is not None else "N/A"
-        has_sandbox = "SB:yes" if r.get("sandbox_order_id") else "SB:no"
-        print(f"  {health_marker} {r['position_id'][:20]:20s} {r['status']:8s} {str(r['close_reason'] or 'N/A'):20s} pnl={pnl_str:>10s} {has_sandbox} [{r['health']}]")
+        health = r["health"]
+        health_marker = "⚠️" if health != "OK" else "  "
+        rpnl = r["realized_pnl"]
+        pnl_str = f"${rpnl:.2f}" if rpnl is not None else "N/A"
+        sb_col = r["sandbox_order_id"] if "sandbox_order_id" in r.asDict() else None
+        has_sandbox = "SB:yes" if sb_col else "SB:no"
+        close_reason = r["close_reason"] or "N/A"
+        print(f"  {health_marker} {r['position_id'][:20]:20s} {r['status']:8s} {str(close_reason):20s} pnl={pnl_str:>10s} {has_sandbox} [{health}]")
 
     if warnings:
         results["A6"] = WARN
