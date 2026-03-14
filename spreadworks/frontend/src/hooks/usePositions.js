@@ -34,6 +34,8 @@ export default function usePositions(statusFilter = 'open') {
   useEffect(() => {
     fetchPositions();
     fetchSummary();
+    const interval = setInterval(fetchSummary, 60000);
+    return () => clearInterval(interval);
   }, [fetchPositions, fetchSummary]);
 
   const createPosition = async (payload) => {

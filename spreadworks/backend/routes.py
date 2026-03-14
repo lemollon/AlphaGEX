@@ -1782,7 +1782,11 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     open_positions = db.query(Position).filter(Position.status == "open").all()
     closed_positions = db.query(Position).filter(Position.status == "closed").all()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    total_collateral = sum(abs(p.max_loss or 0) for p in open_positions)
     total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
     slots_used = len(open_positions)
 
@@ -1801,7 +1805,9 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     return {
         "slots_used": slots_used,
         "slots_total": MAX_OPEN_POSITIONS,
-        "total_credit": round(total_credit, 2),
+        "total_credit": round(net_premium, 2),
+        "net_premium": round(net_premium, 2),
+        "total_collateral": round(total_collateral, 2),
         "total_unrealized": round(total_unrealized, 2),
         "total_realized": round(total_realized, 2),
         "open_count": slots_used,
@@ -2322,7 +2328,7 @@ def _discord_post_closed(pos: Position):
         "title": f"\u2705 POSITION CLOSED \u00b7 {pos.symbol} {strat_label}",
         "color": color,
         "fields": [
-            {"name": "Entry", "value": f"+${pos.entry_credit:,.2f}", "inline": True},
+            {"name": "Entry", "value": f"{'+'if pos.strategy in CREDIT_STRATEGIES else '-'}${pos.entry_credit:,.2f}", "inline": True},
             {"name": "Exit", "value": f"-${(pos.close_price or 0) * 100 * pos.contracts:,.2f}", "inline": True},
             {"name": "Realized P&L", "value": f"${pnl:+,.2f} ({pct_of_max:+.1f}% of max profit)", "inline": False},
             {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
@@ -2563,29 +2569,34 @@ async def discord_post_open(db: Session = Depends(get_db)):
         return {"posted": False, "reason": "No open positions"}
 
     today_str = _today_ct().strftime("%B %d, %Y")
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
 
     lines = []
     for pos in open_positions:
         strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
         dte = (pos.short_exp - _today_ct()).days if pos.short_exp else "?"
+        entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
         lines.append(
             f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-            f"Entry: +${pos.entry_credit:,.2f}\n"
+            f"Entry: {entry_sign}${pos.entry_credit:,.2f}\n"
             f"Max Profit: ${pos.max_profit:,.2f} | Max Loss: ${pos.max_loss:,.2f} | {dte}DTE"
             if pos.max_profit is not None and pos.max_loss is not None
             else f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-                 f"Entry: +${pos.entry_credit:,.2f} | {dte}DTE"
+                 f"Entry: {entry_sign}${pos.entry_credit:,.2f} | {dte}DTE"
         )
 
     positions_text = "\n\n".join(lines)
 
+    premium_sign = "+" if net_premium >= 0 else "-"
     embed = {
         "title": f"\U0001f4cb TODAY'S OPEN SPREADS \u00b7 {today_str}",
         "color": 0x448AFF,
         "description": positions_text,
         "fields": [
-            {"name": "Total Credit", "value": f"+${total_credit:,.2f}", "inline": True},
+            {"name": "Net Premium", "value": f"{premium_sign}${abs(net_premium):,.2f}", "inline": True},
             {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
         "footer": {"text": "Trade with discipline \U0001f64f"},
@@ -2645,6 +2656,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             "strategy": strat,
             "strikes": _strikes_str(pos),
             "entry_credit": pos.entry_credit,
+            "is_credit": pos.strategy in CREDIT_STRATEGIES,
             "unrealized_pnl": pnl,
             "dte": dte,
             "max_profit": pos.max_profit,
@@ -2657,8 +2669,11 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
         Position.close_date == today_date,
     ).count()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
-    pnl_pct = round(total_unrealized / total_credit * 100, 1) if total_credit else 0
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    pnl_pct = round(total_unrealized / abs(net_premium) * 100, 1) if net_premium else 0
 
     # Claude AI commentary
     commentary = ""
@@ -2676,7 +2691,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             for p in positions_for_ai:
                 prompt += (
                     f"- {p['symbol']} {p['strategy']} {p['strikes']}: "
-                    f"entry +${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
+                    f"entry {'+'if p.get('is_credit') else '-'}${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
                     f"{p['dte']}DTE, max profit ${p['max_profit']}, max loss ${p['max_loss']}\n"
                 )
             prompt += (
@@ -2709,7 +2724,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             {"name": "\u2501" * 20, "value": "\u200b", "inline": False},
             {
                 "name": "Portfolio P&L Today",
-                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of total credit)",
+                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of net premium)",
                 "inline": True,
             },
             {"name": "Open", "value": str(len(open_positions)), "inline": True},
@@ -2826,9 +2841,10 @@ async def discord_push_position(
     if dte is not None:
         fields.append({"name": "DTE", "value": str(dte), "inline": True})
 
+    entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
     fields.append({
-        "name": "Entry Credit",
-        "value": f"+${pos.entry_credit:,.2f}",
+        "name": "Entry Credit" if pos.strategy in CREDIT_STRATEGIES else "Entry Debit",
+        "value": f"{entry_sign}${pos.entry_credit:,.2f}",
         "inline": True,
     })
     if current_value is not None:
