@@ -1,17 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, RotateCcw, Send, BarChart3 } from 'lucide-react';
+import { STRAT_LABELS, isCreditStrategy } from '../../lib/strategies';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
-
-const STRAT_LABELS = {
-  double_diagonal: 'DD',
-  double_calendar: 'DC',
-  iron_condor: 'IC',
-  butterfly: 'BF',
-  iron_butterfly: 'IBF',
-};
-
-const CREDIT_STRATEGIES = new Set(['iron_condor', 'iron_butterfly']);
 
 export default function PositionCard({ position, onClose, onDelete }) {
   const [pnl, setPnl] = useState(null);
@@ -112,10 +103,10 @@ export default function PositionCard({ position, onClose, onDelete }) {
       <div className="grid grid-cols-2 gap-x-5 gap-y-1 mb-3">
         <div className="flex justify-between py-1 text-xs">
           <span className="text-text-tertiary font-medium">
-            {CREDIT_STRATEGIES.has(position.strategy) ? 'Entry Credit' : 'Entry Debit'}
+            {isCreditStrategy(position.strategy) ? 'Entry Credit' : 'Entry Debit'}
           </span>
-          <span className={`font-semibold font-[var(--font-mono)] ${CREDIT_STRATEGIES.has(position.strategy) ? 'text-sw-green' : 'text-sw-red'}`}>
-            {CREDIT_STRATEGIES.has(position.strategy) ? '+' : '-'}${position.entry_credit?.toFixed(2)}
+          <span className={`font-semibold font-[var(--font-mono)] ${isCreditStrategy(position.strategy) ? 'text-sw-green' : 'text-sw-red'}`}>
+            {isCreditStrategy(position.strategy) ? '+' : '-'}${position.entry_credit?.toFixed(2)}
           </span>
         </div>
         <div className="flex justify-between py-1 text-xs">

@@ -1,18 +1,9 @@
 import { useState } from 'react';
-
-const CREDIT_STRATEGIES = new Set(['iron_condor', 'iron_butterfly']);
-
-const STRAT_LABELS = {
-  double_diagonal: 'DD',
-  double_calendar: 'DC',
-  iron_condor: 'IC',
-  butterfly: 'BF',
-  iron_butterfly: 'IBF',
-};
+import { STRAT_LABELS, isCreditStrategy } from '../../lib/strategies';
 
 export default function ClosePositionModal({ position, onConfirm, onCancel }) {
   const [closePrice, setClosePrice] = useState('');
-  const isCredit = CREDIT_STRATEGIES.has(position.strategy);
+  const isCredit = isCreditStrategy(position.strategy);
 
   const cp = parseFloat(closePrice) || 0;
   // Credit strategies: P&L = credit - cost_to_close = entry_price - cp
