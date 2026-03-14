@@ -1,21 +1,45 @@
 import { useState } from 'react';
 
+const CREDIT_STRATEGIES = new Set(['iron_condor', 'iron_butterfly']);
+
+const STRAT_LABELS = {
+  double_diagonal: 'DD',
+  double_calendar: 'DC',
+  iron_condor: 'IC',
+  butterfly: 'BF',
+  iron_butterfly: 'IBF',
+};
+
 export default function ClosePositionModal({ position, onConfirm, onCancel }) {
   const [closePrice, setClosePrice] = useState('');
+  const isCredit = CREDIT_STRATEGIES.has(position.strategy);
 
   const cp = parseFloat(closePrice) || 0;
-  const realizedPnl = (position.entry_price - cp) * 100 * position.contracts;
+  // Credit strategies: P&L = credit - cost_to_close = entry_price - cp
+  // Debit strategies: P&L = sell_price - cost_paid = -(entry_price + cp_as_val)
+  // But close_price goes through _compute_unrealized_pnl on the backend,
+  // so we just mirror the correct formula here for preview.
+  const realizedPnl = isCredit
+    ? (position.entry_price - cp) * 100 * position.contracts
+    : -(cp + position.entry_price) * 100 * position.contracts;
   const pctOfMax = position.max_profit
     ? (realizedPnl / Math.abs(position.max_profit) * 100)
     : 0;
+
+  // Cap preview at max profit/max loss
+  const cappedPnl = position.max_profit != null
+    ? Math.min(realizedPnl, Math.abs(position.max_profit))
+    : realizedPnl;
+  const displayPnl = position.max_loss != null
+    ? Math.max(cappedPnl, -Math.abs(position.max_loss))
+    : cappedPnl;
 
   const handleConfirm = () => {
     if (!closePrice || cp <= 0) return;
     onConfirm(position.id, cp);
   };
 
-  const strat = position.strategy === 'double_diagonal' ? 'DD'
-    : position.strategy === 'double_calendar' ? 'DC' : 'IC';
+  const strat = STRAT_LABELS[position.strategy] || position.strategy;
 
   return (
     <div
@@ -32,7 +56,9 @@ export default function ClosePositionModal({ position, onConfirm, onCancel }) {
           {position.symbol} {strat} {position.long_put}/{position.short_put}/{position.short_call}/{position.long_call}
         </div>
 
-        <label className="sw-label block mb-1.5">Enter debit to close (per contract)</label>
+        <label className="sw-label block mb-1.5">
+          {isCredit ? 'Enter debit to close (per share)' : 'Enter spread value to close (per share)'}
+        </label>
         <input
           type="number"
           step="0.01"
@@ -46,12 +72,12 @@ export default function ClosePositionModal({ position, onConfirm, onCancel }) {
 
         {closePrice && (
           <div className={`rounded-lg px-3.5 py-3 mb-4 text-[15px] font-bold font-[var(--font-mono)] text-center border ${
-            realizedPnl >= 0
+            displayPnl >= 0
               ? 'bg-sw-green-dim border-sw-green/20 text-sw-green'
               : 'bg-sw-red-dim border-sw-red/20 text-sw-red'
           }`}>
-            Realized P&L: {realizedPnl >= 0 ? '+' : ''}${realizedPnl.toFixed(2)}
-            {position.max_profit ? ` (${pctOfMax >= 0 ? '+' : ''}${pctOfMax.toFixed(1)}% of max profit)` : ''}
+            Realized P&L: {displayPnl >= 0 ? '+' : ''}${displayPnl.toFixed(2)}
+            {position.max_profit ? ` (${(displayPnl / Math.abs(position.max_profit) * 100).toFixed(1)}% of max)` : ''}
           </div>
         )}
 

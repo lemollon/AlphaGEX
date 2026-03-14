@@ -1561,7 +1561,58 @@ STRATEGY_LABELS = {
     "double_diagonal": "Double Diagonal",
     "double_calendar": "Double Calendar",
     "iron_condor": "Iron Condor",
+    "butterfly": "Butterfly",
+    "iron_butterfly": "Iron Butterfly",
 }
+
+# Strategies where entry_price represents a credit received (entry_cost < 0).
+# For debit strategies, entry_price = |debit per share| (positive), but
+# the P&L formula must negate it.
+CREDIT_STRATEGIES = {"iron_condor", "iron_butterfly"}
+
+
+def _compute_unrealized_pnl(
+    entry_price: float,
+    val: float,
+    contracts: int,
+    strategy: str,
+    max_profit: float | None = None,
+    max_loss: float | None = None,
+) -> float:
+    """Compute unrealized P&L with correct sign handling for credit vs debit strategies.
+
+    For CREDIT strategies (IC, Iron Butterfly):
+        P&L = (entry_price - val) * 100 * contracts
+        entry_price = credit per share (positive), val = cost to close (positive, shrinks to 0)
+
+    For DEBIT strategies (DD, DC, Butterfly):
+        P&L = -(entry_price + val) * 100 * contracts
+        entry_price = |debit per share| (positive), val = short - long (negative when profitable)
+    """
+    if strategy in CREDIT_STRATEGIES:
+        raw = (entry_price - val) * 100 * contracts
+    else:
+        # Debit: you paid |entry_price|. Current value of position = -val.
+        # P&L = current_value - cost = (-val) - entry_price = -(val + entry_price)
+        raw = -(val + entry_price) * 100 * contracts
+
+    pnl = round(raw, 2)
+
+    # Cap at theoretical boundaries and log violations for monitoring
+    if max_profit is not None and pnl > abs(max_profit):
+        logger.warning(
+            "P&L sanity violation: raw=%.2f exceeds max_profit=%.2f for %s (entry_price=%.4f, val=%.4f)",
+            pnl, max_profit, strategy, entry_price, val,
+        )
+        pnl = round(abs(max_profit), 2)
+    if max_loss is not None and pnl < -abs(max_loss):
+        logger.warning(
+            "P&L sanity violation: raw=%.2f exceeds max_loss=%.2f for %s (entry_price=%.4f, val=%.4f)",
+            pnl, max_loss, strategy, entry_price, val,
+        )
+        pnl = -round(abs(max_loss), 2)
+
+    return pnl
 
 
 def _pos_to_dict(pos: Position) -> dict:
@@ -1712,6 +1763,15 @@ async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"Failed to save position: {e}")
         raise HTTPException(500, f"Failed to save position: {e}")
+
+    # Guardrail: warn if max_profit/max_loss boundaries are missing
+    if pos.max_profit is None or pos.max_loss is None:
+        logger.warning(
+            "Position %d saved without P&L boundaries: max_profit=%s, max_loss=%s. "
+            "P&L cap guardrails will not function.",
+            pos.id, pos.max_profit, pos.max_loss,
+        )
+
     return _pos_to_dict(pos)
 
 
@@ -1790,7 +1850,10 @@ async def close_position(
     if pos.status == "closed":
         raise HTTPException(409, "Position already closed")
 
-    realized = round((pos.entry_price - body.close_price) * 100 * pos.contracts, 2)
+    realized = _compute_unrealized_pnl(
+        pos.entry_price, body.close_price, pos.contracts, pos.strategy,
+        pos.max_profit, pos.max_loss,
+    )
 
     pos.status = "closed"
     pos.close_date = _today_ct()
@@ -1915,7 +1978,19 @@ def _bs_spread_val(pos, current_price: float, leg_ivs: dict[str, float | None] |
             - _bs_price(current_price, pos.long_put, T_back, r, iv_for("long_put"), False)
             - _bs_price(current_price, pos.long_call, T_back, r, iv_for("long_call"), True)
         )
+    elif pos.strategy == "butterfly":
+        # Butterfly: all legs are same type (calls by default since we don't store option_type).
+        # Stored as: long_put=lower, short_put=middle, short_call=middle, long_call=upper.
+        # val = 2*BS(middle) - BS(lower) - BS(upper)  (short minus long)
+        T = tte(pos.short_exp)
+        mid_iv = (iv_for("short_put") + iv_for("short_call")) / 2  # same strike, avg IVs
+        return (
+            2 * _bs_price(current_price, pos.short_put, T, r, mid_iv, True)
+            - _bs_price(current_price, pos.long_put, T, r, iv_for("long_put"), True)
+            - _bs_price(current_price, pos.long_call, T, r, iv_for("long_call"), True)
+        )
     else:
+        # Iron Condor and Iron Butterfly: 4 legs with correct put/call types
         T = tte(pos.short_exp)
         return (
             _bs_price(current_price, pos.short_put, T, r, iv_for("short_put"), False)
@@ -1923,6 +1998,30 @@ def _bs_spread_val(pos, current_price: float, leg_ivs: dict[str, float | None] |
             - _bs_price(current_price, pos.long_put, T, r, iv_for("long_put"), False)
             - _bs_price(current_price, pos.long_call, T, r, iv_for("long_call"), True)
         )
+
+
+def _build_leg_list(pos, short_exp_str: str | None, long_exp_str: str | None) -> list[dict]:
+    """Build leg descriptor list with correct option_types per strategy.
+
+    For butterfly, all legs are the same type (calls).
+    For iron_condor/iron_butterfly/DD/DC, puts are puts and calls are calls.
+    """
+    if pos.strategy == "butterfly":
+        # Butterfly: long_put=lower, short_put=middle, short_call=middle, long_call=upper
+        # All legs are the same option type (call by default)
+        return [
+            {"strike": pos.short_put, "exp": short_exp_str, "option_type": "call", "key": "short_put"},
+            {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
+            {"strike": pos.long_put, "exp": short_exp_str, "option_type": "call", "key": "long_put"},
+            {"strike": pos.long_call, "exp": short_exp_str, "option_type": "call", "key": "long_call"},
+        ]
+    # Default: standard put/call mapping for IC, IB, DD, DC
+    return [
+        {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
+        {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
+        {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
+        {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
+    ]
 
 
 # --- GET /positions/{id}/pnl (live unrealised P&L) ---
@@ -1948,12 +2047,7 @@ async def position_live_pnl(
         short_exp_str = str(pos.short_exp) if pos.short_exp else None
         long_exp_str = str(pos.long_exp) if pos.long_exp else None
 
-        legs = [
-            {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-            {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-            {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-            {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-        ]
+        legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
         val = None
         leg_quotes = None
@@ -1975,13 +2069,10 @@ async def position_live_pnl(
             pricing_source = "black_scholes_live_iv" if leg_ivs and any(v is not None for v in leg_ivs.values()) else "black_scholes"
 
         current_value = round(val, 4)
-        unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
-
-        # Cap P&L at theoretical max profit / max loss boundaries
-        if pos.max_profit is not None:
-            unrealized_pnl = min(unrealized_pnl, round(abs(pos.max_profit), 2))
-        if pos.max_loss is not None:
-            unrealized_pnl = max(unrealized_pnl, -round(abs(pos.max_loss), 2))
+        unrealized_pnl = _compute_unrealized_pnl(
+            pos.entry_price, val, pos.contracts, pos.strategy,
+            pos.max_profit, pos.max_loss,
+        )
 
         if pos.max_profit and pos.max_profit != 0:
             pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 2)
@@ -2004,6 +2095,8 @@ async def position_live_pnl(
         "entry_credit": pos.entry_credit,
         "entry_price": pos.entry_price,
         "max_profit": pos.max_profit,
+        "max_loss": pos.max_loss,
+        "is_credit": pos.strategy in CREDIT_STRATEGIES,
         "last_mark": _mark_to_dict(latest_mark) if latest_mark else None,
     }
 
@@ -2028,12 +2121,7 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
             # Try live option quotes first, fall back to BS
             short_exp_str = str(pos.short_exp) if pos.short_exp else None
             long_exp_str = str(pos.long_exp) if pos.long_exp else None
-            legs = [
-                {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-                {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-                {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-                {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-            ]
+            legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
             val = None
             leg_quotes = None
@@ -2049,13 +2137,10 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
                 val = _bs_spread_val(pos, current_price, leg_ivs)
 
             dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
-            unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
-
-            # Cap P&L at theoretical max profit / max loss boundaries
-            if pos.max_profit is not None:
-                unrealized = min(unrealized, round(abs(pos.max_profit), 2))
-            if pos.max_loss is not None:
-                unrealized = max(unrealized, -round(abs(pos.max_loss), 2))
+            unrealized = _compute_unrealized_pnl(
+                pos.entry_price, val, pos.contracts, pos.strategy,
+                pos.max_profit, pos.max_loss,
+            )
 
             mark = DailyMark(
                 position_id=pos.id,
@@ -2680,12 +2765,7 @@ async def discord_push_position(
                 # Try live option quotes first
                 short_exp_str = str(pos.short_exp) if pos.short_exp else None
                 long_exp_str = str(pos.long_exp) if pos.long_exp else None
-                legs = [
-                    {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-                    {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-                    {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-                    {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-                ]
+                legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
                 val = None
                 leg_quotes = None
@@ -2701,7 +2781,10 @@ async def discord_push_position(
                     val = _bs_spread_val(pos, spot, leg_ivs)
 
                 current_value = round(val, 4)
-                unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+                unrealized_pnl = _compute_unrealized_pnl(
+                    pos.entry_price, val, pos.contracts, pos.strategy,
+                    pos.max_profit, pos.max_loss,
+                )
 
                 if pos.max_profit and pos.max_profit != 0:
                     pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 1)
@@ -2892,11 +2975,17 @@ async def position_payoff(
 
     lp, sp = pos.long_put, pos.short_put
     sc, lc = pos.short_call, pos.long_call
-    entry = pos.entry_price  # per-contract net credit/debit
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = _today_ct()
+
+    # Convert entry_price (always positive) back to entry_cost convention:
+    # Credit strategies: entry_cost = -entry_price (negative = credit received)
+    # Debit strategies: entry_cost = +entry_price (positive = debit paid)
+    if pos.strategy in CREDIT_STRATEGIES:
+        entry_cost = -pos.entry_price
+    else:
+        entry_cost = pos.entry_price
 
     # Get spot price for the marker
     spot = None
@@ -2906,79 +2995,53 @@ async def position_payoff(
     except Exception:
         pass
 
-    # For DD/DC with remaining time value, use _scan_pnl_profile
-    if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
-        if pos.strategy == "double_diagonal":
-            profile = _scan_pnl_profile(
-                "double_diagonal", spot or ((sp + sc) / 2),
-                {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
-                {"short": str(pos.short_exp), "long": str(pos.long_exp)},
-                r, sigma, entry, n,
-            )
-        else:
-            profile = _scan_pnl_profile(
-                "double_calendar", spot or ((sp + sc) / 2),
-                {"ps": sp, "cs": sc},
-                {"front": str(pos.short_exp), "back": str(pos.long_exp)},
-                r, sigma, entry, n,
-            )
-        return {
-            "position_id": position_id,
-            "spot_price": spot,
-            "pnl_curve": profile["pnl_curve"],
-            "max_profit": profile["max_profit"],
-            "max_loss": profile["max_loss"],
-            "breakevens": {
-                "lower": profile["lower_breakeven"],
-                "upper": profile["upper_breakeven"],
-            },
-        }
-
-    # Iron Condor: at-expiration payoff (intrinsic value)
-    scan_lo = lp - 10
-    scan_hi = lc + 10
-    curve = []
-    max_profit = 0.0
-    max_loss = 0.0
-    lower_be = None
-    upper_be = None
-    prev_pnl = None
-
-    for px_int in range(int(scan_lo * 10), int(scan_hi * 10) + 1):
-        px = px_int / 10.0
-        # IC at expiration: short put + short call - long put - long call
-        pnl_per_contract = (
-            -max(0, sp - px) + max(0, lp - px)   # put side
-            - max(0, px - sc) + max(0, px - lc)   # call side
-            + entry                                 # net credit received
+    # Route to _scan_pnl_profile for strategies with time value or known payoff
+    if pos.strategy == "double_diagonal" and pos.long_exp:
+        profile = _scan_pnl_profile(
+            "double_diagonal", spot or ((sp + sc) / 2),
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"short": str(pos.short_exp), "long": str(pos.long_exp)},
+            r, sigma, entry_cost, n,
         )
-        pnl = round(pnl_per_contract * 100 * n, 2)
-
-        if px_int % 10 == 0:
-            curve.append({"price": px, "pnl": pnl})
-
-        if pnl > max_profit:
-            max_profit = pnl
-        if pnl < max_loss:
-            max_loss = pnl
-
-        if prev_pnl is not None:
-            if prev_pnl < 0 <= pnl or prev_pnl >= 0 > pnl:
-                if lower_be is None:
-                    lower_be = px
-                else:
-                    upper_be = px
-        prev_pnl = pnl
+    elif pos.strategy == "double_calendar" and pos.long_exp:
+        profile = _scan_pnl_profile(
+            "double_calendar", spot or ((sp + sc) / 2),
+            {"ps": sp, "cs": sc},
+            {"front": str(pos.short_exp), "back": str(pos.long_exp)},
+            r, sigma, entry_cost, n,
+        )
+    elif pos.strategy == "butterfly":
+        profile = _scan_pnl_profile(
+            "butterfly", spot or sp,
+            {"lower": lp, "middle": sp, "upper": lc, "is_call": True},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
+    elif pos.strategy == "iron_butterfly":
+        profile = _scan_pnl_profile(
+            "iron_butterfly", spot or sp,
+            {"lp": lp, "short": sp, "lc": lc},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
+    else:
+        # Iron Condor
+        profile = _scan_pnl_profile(
+            "iron_condor", spot or ((sp + sc) / 2),
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
 
     return {
         "position_id": position_id,
         "spot_price": spot,
-        "pnl_curve": curve,
-        "max_profit": round(max_profit, 2),
-        "max_loss": round(max_loss, 2),
+        "pnl_curve": profile["pnl_curve"],
+        "max_profit": profile["max_profit"],
+        "max_loss": profile["max_loss"],
         "breakevens": {
-            "lower": round(lower_be, 2) if lower_be else None,
-            "upper": round(upper_be, 2) if upper_be else None,
+            "lower": profile["lower_breakeven"],
+            "upper": profile["upper_breakeven"],
         },
     }
 

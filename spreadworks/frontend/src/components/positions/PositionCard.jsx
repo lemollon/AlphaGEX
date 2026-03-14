@@ -7,7 +7,11 @@ const STRAT_LABELS = {
   double_diagonal: 'DD',
   double_calendar: 'DC',
   iron_condor: 'IC',
+  butterfly: 'BF',
+  iron_butterfly: 'IBF',
 };
+
+const CREDIT_STRATEGIES = new Set(['iron_condor', 'iron_butterfly']);
 
 export default function PositionCard({ position, onClose, onDelete }) {
   const [pnl, setPnl] = useState(null);
@@ -107,8 +111,12 @@ export default function PositionCard({ position, onClose, onDelete }) {
       {/* 7 Metrics */}
       <div className="grid grid-cols-2 gap-x-5 gap-y-1 mb-3">
         <div className="flex justify-between py-1 text-xs">
-          <span className="text-text-tertiary font-medium">Entry Credit</span>
-          <span className="text-sw-green font-semibold font-[var(--font-mono)]">+${position.entry_credit?.toFixed(2)}</span>
+          <span className="text-text-tertiary font-medium">
+            {CREDIT_STRATEGIES.has(position.strategy) ? 'Entry Credit' : 'Entry Debit'}
+          </span>
+          <span className={`font-semibold font-[var(--font-mono)] ${CREDIT_STRATEGIES.has(position.strategy) ? 'text-sw-green' : 'text-sw-red'}`}>
+            {CREDIT_STRATEGIES.has(position.strategy) ? '+' : '-'}${position.entry_credit?.toFixed(2)}
+          </span>
         </div>
         <div className="flex justify-between py-1 text-xs">
           <span className="text-text-tertiary font-medium">Current Value</span>
