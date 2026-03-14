@@ -5,6 +5,8 @@ const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
   DOUBLE_CALENDAR: 'double_calendar',
   IRON_CONDOR: 'iron_condor',
+  BUTTERFLY: 'butterfly',
+  IRON_BUTTERFLY: 'iron_butterfly',
 };
 
 const INPUT_MODES = {
@@ -32,6 +34,19 @@ const DEFAULT_LEGS = {
     longPutStrike: '',
     shortPutStrike: '',
     shortCallStrike: '',
+    longCallStrike: '',
+    expiration: '',
+  },
+  [STRATEGY_TYPES.BUTTERFLY]: {
+    lowerStrike: '',
+    middleStrike: '',
+    upperStrike: '',
+    optionType: 'call',
+    expiration: '',
+  },
+  [STRATEGY_TYPES.IRON_BUTTERFLY]: {
+    longPutStrike: '',
+    shortStrike: '',
     longCallStrike: '',
     expiration: '',
   },
@@ -183,6 +198,20 @@ export default function StrategyPanel({
         long_call = parseFloat(legs.longCallStrike) || 0;
         short_exp = legs.expiration;
         long_exp = null;
+      } else if (strategy === STRATEGY_TYPES.BUTTERFLY) {
+        long_put = parseFloat(legs.lowerStrike) || 0;
+        short_put = parseFloat(legs.middleStrike) || 0;
+        short_call = parseFloat(legs.middleStrike) || 0;
+        long_call = parseFloat(legs.upperStrike) || 0;
+        short_exp = legs.expiration;
+        long_exp = null;
+      } else if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY) {
+        long_put = parseFloat(legs.longPutStrike) || 0;
+        short_put = parseFloat(legs.shortStrike) || 0;
+        short_call = parseFloat(legs.shortStrike) || 0;
+        long_call = parseFloat(legs.longCallStrike) || 0;
+        short_exp = legs.expiration;
+        long_exp = null;
       } else {
         long_put = parseFloat(legs.putStrike) || 0;
         short_put = parseFloat(legs.putStrike) || 0;
@@ -255,6 +284,24 @@ export default function StrategyPanel({
         };
         shortExp = legs.expiration;
         longExp = null;
+      } else if (strategy === STRATEGY_TYPES.BUTTERFLY) {
+        legPayload = {
+          long_put: parseFloat(legs.lowerStrike) || 0,
+          short_put: parseFloat(legs.middleStrike) || 0,
+          short_call: parseFloat(legs.middleStrike) || 0,
+          long_call: parseFloat(legs.upperStrike) || 0,
+        };
+        shortExp = legs.expiration;
+        longExp = null;
+      } else if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY) {
+        legPayload = {
+          long_put: parseFloat(legs.longPutStrike) || 0,
+          short_put: parseFloat(legs.shortStrike) || 0,
+          short_call: parseFloat(legs.shortStrike) || 0,
+          long_call: parseFloat(legs.longCallStrike) || 0,
+        };
+        shortExp = legs.expiration;
+        longExp = null;
       } else {
         legPayload = {
           long_put: parseFloat(legs.putStrike) || 0,
@@ -270,6 +317,8 @@ export default function StrategyPanel({
         [STRATEGY_TYPES.DOUBLE_DIAGONAL]: 'Dbl Diagonal',
         [STRATEGY_TYPES.DOUBLE_CALENDAR]: 'Dbl Calendar',
         [STRATEGY_TYPES.IRON_CONDOR]: 'Iron Condor',
+        [STRATEGY_TYPES.BUTTERFLY]: 'Butterfly',
+        [STRATEGY_TYPES.IRON_BUTTERFLY]: 'Iron Butterfly',
       };
 
       const res = await fetch(`${API_URL}/api/spreadworks/discord/push-spread`, {
@@ -380,6 +429,21 @@ export default function StrategyPanel({
           frontExpiration: data.legs.front_expiration ?? '',
           backExpiration: data.legs.back_expiration ?? '',
         });
+      } else if (strategy === STRATEGY_TYPES.BUTTERFLY && data.legs) {
+        setLegs({
+          lowerStrike: data.legs.lower_strike ?? '',
+          middleStrike: data.legs.middle_strike ?? '',
+          upperStrike: data.legs.upper_strike ?? '',
+          optionType: data.legs.option_type ?? 'call',
+          expiration: data.legs.expiration ?? '',
+        });
+      } else if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY && data.legs) {
+        setLegs({
+          longPutStrike: data.legs.long_put_strike ?? '',
+          shortStrike: data.legs.short_strike ?? '',
+          longCallStrike: data.legs.long_call_strike ?? '',
+          expiration: data.legs.expiration ?? '',
+        });
       }
     } catch (err) {
       setError(`GEX Suggest: ${err.message}`);
@@ -416,6 +480,12 @@ export default function StrategyPanel({
     }
     if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
       return legs.longPutStrike && legs.shortPutStrike && legs.shortCallStrike && legs.longCallStrike && legs.expiration;
+    }
+    if (strategy === STRATEGY_TYPES.BUTTERFLY) {
+      return legs.lowerStrike && legs.middleStrike && legs.upperStrike && legs.expiration;
+    }
+    if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY) {
+      return legs.longPutStrike && legs.shortStrike && legs.longCallStrike && legs.expiration;
     }
     return legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration;
   };
@@ -455,13 +525,17 @@ export default function StrategyPanel({
       {/* Strategy */}
       <div className="sw-card p-3.5">
         <div className="sw-label mb-2.5">Strategy</div>
-        <div className="sw-toggle-group">
+        <div className="sw-toggle-group flex-wrap">
           <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_DIAGONAL)}>Dbl Diagonal</button>
           <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_CALENDAR ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}>Dbl Calendar</button>
           <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.IRON_CONDOR ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}>Iron Condor</button>
+          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.BUTTERFLY ? 'active' : ''}`}
+            onClick={() => setStrategy(STRATEGY_TYPES.BUTTERFLY)}>Butterfly</button>
+          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? 'active' : ''}`}
+            onClick={() => setStrategy(STRATEGY_TYPES.IRON_BUTTERFLY)}>Iron Fly</button>
         </div>
       </div>
 
@@ -551,6 +625,62 @@ export default function StrategyPanel({
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+          </>
+        ) : strategy === STRATEGY_TYPES.BUTTERFLY ? (
+          <>
+            <div className="sw-section-divider text-accent">
+              <span>Butterfly Strikes</span>
+              <div className="line bg-accent/15" />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Lower (Buy)" value={legs.lowerStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('lowerStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Middle (Sell 2x)" value={legs.middleStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('middleStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Upper (Buy)" value={legs.upperStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('upperStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div className="sw-section-divider text-text-tertiary mt-2">
+              <span>Type &amp; Expiration</span>
+              <div className="line bg-text-tertiary/20" />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <div className="flex-1 flex flex-col gap-1">
+                <span className="sw-label">Option Type</span>
+                <select className="sw-select" value={legs.optionType} onChange={(e) => updateLeg('optionType', e.target.value)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST}>
+                  <option value="call">Calls</option>
+                  <option value="put">Puts</option>
+                </select>
+              </div>
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+          </>
+        ) : strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? (
+          <>
+            <div className="sw-section-divider text-sw-green">
+              <span>Wings (Buy)</span>
+              <div className="line bg-sw-green/15" />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div className="sw-section-divider text-sw-red">
+              <span>Body ATM (Sell)</span>
+              <div className="line bg-sw-red/15" />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <StrikeInput label="Short Strike (ATM)" value={legs.shortStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+            </div>
+            <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
+              Sell 1 Put + 1 Call at same strike (ATM)
+            </div>
+            <div className="sw-section-divider text-text-tertiary mt-2">
+              <span>Expiration</span>
+              <div className="line bg-text-tertiary/20" />
+            </div>
+            <div className="flex gap-2 mb-1.5">
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (

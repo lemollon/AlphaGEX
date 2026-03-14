@@ -642,6 +642,14 @@ async def gex_suggest(
     front_exp = (today + timedelta(days=days_until_friday)).isoformat()
     back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
+    # Credit strategies (IC, Iron Butterfly) use 0DTE when market is open
+    credit_strategies = {"iron_condor", "iron_butterfly"}
+    is_credit = strategy in credit_strategies
+    now_ct = _now_ct()
+    market_open = now_ct.weekday() < 5 and 8 <= now_ct.hour < 16
+    zero_dte_exp = today.isoformat()
+    credit_exp = zero_dte_exp if (is_credit and market_open) else front_exp
+
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 
     if strategy == "double_diagonal":
@@ -675,13 +683,51 @@ async def gex_suggest(
             "short_put_strike": short_put,
             "short_call_strike": short_call,
             "long_call_strike": long_call,
-            "expiration": front_exp,
+            "expiration": credit_exp,
         }
+        dte_note = "0DTE" if credit_exp == zero_dte_exp and market_open else f"exp {credit_exp}"
         rationale = (
             f"Iron Condor: short strikes at GEX walls "
             f"(put wall ${short_put}, call wall ${short_call}). "
             f"Long wings ${wing_offset} wide. "
-            f"Single exp {front_exp}. "
+            f"{dte_note}. "
+            f"Regime: {regime or 'UNKNOWN'}."
+        )
+    elif strategy == "butterfly":
+        # Butterfly centered at flip point (neutral bet on pin)
+        center = _round_strike(flip)
+        lower_strike = _round_strike(center - wing_offset)
+        upper_strike = _round_strike(center + wing_offset)
+
+        legs = {
+            "lower_strike": lower_strike,
+            "middle_strike": center,
+            "upper_strike": upper_strike,
+            "option_type": "call",
+            "expiration": front_exp,
+        }
+        rationale = (
+            f"Butterfly centered at GEX flip point ${center}. "
+            f"Wings ${wing_offset} wide (${lower_strike}/${center}/${upper_strike}). "
+            f"Exp {front_exp}. Regime: {regime or 'UNKNOWN'}."
+        )
+    elif strategy == "iron_butterfly":
+        # Iron Butterfly: short straddle at flip, wings at walls
+        short_strike = _round_strike(flip)
+        lp_strike = _round_strike(short_strike - wing_offset)
+        lc_strike = _round_strike(short_strike + wing_offset)
+
+        legs = {
+            "long_put_strike": lp_strike,
+            "short_strike": short_strike,
+            "long_call_strike": lc_strike,
+            "expiration": credit_exp,
+        }
+        dte_note = "0DTE" if credit_exp == zero_dte_exp and market_open else f"exp {credit_exp}"
+        rationale = (
+            f"Iron Butterfly: short straddle at flip ${short_strike}, "
+            f"wings at ${lp_strike}/${lc_strike}. "
+            f"{dte_note}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
     else:  # double_calendar
@@ -794,6 +840,19 @@ def _scan_pnl_profile(
         T_exp = _tte(expirations["exp"])
         scan_lo = min(lp, sp, sc, lc) - 20
         scan_hi = max(lp, sp, sc, lc) + 20
+    elif strategy == "butterfly":
+        lower, middle, upper = strikes["lower"], strikes["middle"], strikes["upper"]
+        is_call = strikes.get("is_call", True)
+        T_exp = _tte(expirations["exp"])
+        scan_lo = lower - 20
+        scan_hi = upper + 20
+    elif strategy == "iron_butterfly":
+        lp = strikes["lp"]
+        short = strikes["short"]
+        lc = strikes["lc"]
+        T_exp = _tte(expirations["exp"])
+        scan_lo = lp - 20
+        scan_hi = lc + 20
     else:
         ps, cs = strikes["ps"], strikes["cs"]
         T_front = _tte(expirations["front"])
@@ -824,14 +883,37 @@ def _scan_pnl_profile(
             ) * 100 * n
         elif strategy == "iron_condor":
             # Iron Condor at expiration: all intrinsic
-            # entry_cost is negative for credit spreads (you receive premium)
-            # P&L = intrinsic payoff - cost to open (subtracting a negative = adding credit)
             pnl = (
                 max(0, lp - px)   # long put payoff
                 - max(0, sp - px)  # short put payoff
                 - max(0, px - sc)  # short call payoff
                 + max(0, px - lc)  # long call payoff
-                - entry_cost       # subtract entry_cost (negative = add credit received)
+                - entry_cost
+            ) * 100 * n
+        elif strategy == "butterfly":
+            # Butterfly: buy 1 lower, sell 2 middle, buy 1 upper (same type)
+            if is_call:
+                pnl = (
+                    max(0, px - lower)       # long lower call
+                    - 2 * max(0, px - middle) # short 2x middle call
+                    + max(0, px - upper)      # long upper call
+                    - entry_cost
+                ) * 100 * n
+            else:
+                pnl = (
+                    max(0, lower - px)       # long lower put (OTM)
+                    - 2 * max(0, middle - px) # short 2x middle put
+                    + max(0, upper - px)      # long upper put (ITM)
+                    - entry_cost
+                ) * 100 * n
+        elif strategy == "iron_butterfly":
+            # Iron Butterfly: long put wing, short ATM put+call, long call wing
+            pnl = (
+                max(0, lp - px)       # long put payoff
+                - max(0, short - px)  # short ATM put
+                - max(0, px - short)  # short ATM call
+                + max(0, px - lc)     # long call payoff
+                - entry_cost
             ) * 100 * n
         else:
             pnl = (
@@ -897,7 +979,7 @@ def _build_pnl_grid(
     if strategy == "double_diagonal":
         front_exp = _parse_exp(expirations["short"])
         back_exp = _parse_exp(expirations["long"])
-    elif strategy == "iron_condor":
+    elif strategy in ("iron_condor", "butterfly", "iron_butterfly"):
         front_exp = _parse_exp(expirations["exp"])
         back_exp = front_exp
     else:  # double_calendar
@@ -927,7 +1009,7 @@ def _build_pnl_grid(
             time_slices.append({"label": label, "dte_frac": dte, "is_expiry": is_exp})
 
     # Build price levels: 20 prices centered on spot
-    all_strikes = list(strikes.values())
+    all_strikes = [v for v in strikes.values() if isinstance(v, (int, float))]
     strike_spread = max(all_strikes) - min(all_strikes) if all_strikes else 10
     step = 2.0 if strike_spread > 20 else 1.0
     n_levels = 10  # 10 above + 10 below + spot = 21 rows
@@ -955,7 +1037,6 @@ def _build_pnl_grid(
                 ) * 100 * n
             elif strategy == "iron_condor":
                 if T <= 0:
-                    # At expiration — intrinsic only
                     pnl = (
                         max(0, strikes["lp"] - px)
                         - max(0, strikes["sp"] - px)
@@ -968,6 +1049,37 @@ def _build_pnl_grid(
                         _bs_price(px, strikes["lp"], T, r, sigma, False)
                         - _bs_price(px, strikes["sp"], T, r, sigma, False)
                         - _bs_price(px, strikes["sc"], T, r, sigma, True)
+                        + _bs_price(px, strikes["lc"], T, r, sigma, True)
+                        - entry_cost
+                    ) * 100 * n
+            elif strategy == "butterfly":
+                is_call_bf = strikes.get("is_call", True)
+                if T <= 0:
+                    if is_call_bf:
+                        pnl = (max(0, px - strikes["lower"]) - 2 * max(0, px - strikes["middle"]) + max(0, px - strikes["upper"]) - entry_cost) * 100 * n
+                    else:
+                        pnl = (max(0, strikes["lower"] - px) - 2 * max(0, strikes["middle"] - px) + max(0, strikes["upper"] - px) - entry_cost) * 100 * n
+                else:
+                    pnl = (
+                        _bs_price(px, strikes["lower"], T, r, sigma, is_call_bf)
+                        - 2 * _bs_price(px, strikes["middle"], T, r, sigma, is_call_bf)
+                        + _bs_price(px, strikes["upper"], T, r, sigma, is_call_bf)
+                        - entry_cost
+                    ) * 100 * n
+            elif strategy == "iron_butterfly":
+                if T <= 0:
+                    pnl = (
+                        max(0, strikes["lp"] - px)
+                        - max(0, strikes["short"] - px)
+                        - max(0, px - strikes["short"])
+                        + max(0, px - strikes["lc"])
+                        - entry_cost
+                    ) * 100 * n
+                else:
+                    pnl = (
+                        _bs_price(px, strikes["lp"], T, r, sigma, False)
+                        - _bs_price(px, strikes["short"], T, r, sigma, False)
+                        - _bs_price(px, strikes["short"], T, r, sigma, True)
                         + _bs_price(px, strikes["lc"], T, r, sigma, True)
                         - entry_cost
                     ) * 100 * n
@@ -1227,6 +1339,96 @@ async def calculate_spread(request: Request, body: CalcRequest):
             {"leg": "Short Front Call", "type": "short", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4), "theoretical": theo_fc, "greeks": {k: round(v, 6) for k, v in g_fc.items()}},
             {"leg": "Long Back Call", "type": "long", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4), "theoretical": theo_bc, "greeks": {k: round(v, 6) for k, v in g_bc.items()}},
         ]
+    elif body.strategy == "butterfly":
+        lower = float(legs.get("lowerStrike") or legs.get("lower_strike", 0))
+        middle = float(legs.get("middleStrike") or legs.get("middle_strike", 0))
+        upper = float(legs.get("upperStrike") or legs.get("upper_strike", 0))
+        opt_type = str(legs.get("optionType") or legs.get("option_type", "call"))
+        exp = str(legs.get("expiration") or "")
+        is_call = opt_type.lower() == "call"
+
+        if not all([lower, middle, upper, exp]):
+            raise HTTPException(422, "All 3 strikes and expiration required for Butterfly")
+
+        T_exp = _tte(exp)
+
+        p_lower, iv_lower, theo_lower = _price_or_bs(lower, T_exp, is_call, exp)
+        p_middle, iv_middle, theo_middle = _price_or_bs(middle, T_exp, is_call, exp)
+        p_upper, iv_upper, theo_upper = _price_or_bs(upper, T_exp, is_call, exp)
+
+        # Buy 1 lower + Buy 1 upper - Sell 2 middle
+        entry_cost = p_lower + p_upper - 2 * p_middle
+        net_debit = entry_cost * 100 * n
+
+        g_lower = _bs_greeks(S, lower, T_exp, r, iv_lower, is_call)
+        g_middle = _bs_greeks(S, middle, T_exp, r, iv_middle, is_call)
+        g_upper = _bs_greeks(S, upper, T_exp, r, iv_upper, is_call)
+
+        greeks = {
+            k: round((g_lower[k] - 2 * g_middle[k] + g_upper[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lower, iv_middle, iv_middle, iv_upper]) / 4
+        profile = _scan_pnl_profile(
+            "butterfly", S,
+            {"lower": lower, "middle": middle, "upper": upper, "is_call": is_call},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        type_label = "Call" if is_call else "Put"
+        leg_detail = [
+            {"leg": f"Long {type_label} (Lower)", "type": "long", "strike": lower, "exp": exp, "price": round(p_lower, 4), "iv": round(iv_lower, 4), "theoretical": theo_lower, "greeks": {k: round(v, 6) for k, v in g_lower.items()}},
+            {"leg": f"Short {type_label} x2 (Middle)", "type": "short", "strike": middle, "exp": exp, "price": round(p_middle * 2, 4), "iv": round(iv_middle, 4), "theoretical": theo_middle, "greeks": {k: round(v * 2, 6) for k, v in g_middle.items()}},
+            {"leg": f"Long {type_label} (Upper)", "type": "long", "strike": upper, "exp": exp, "price": round(p_upper, 4), "iv": round(iv_upper, 4), "theoretical": theo_upper, "greeks": {k: round(v, 6) for k, v in g_upper.items()}},
+        ]
+
+    elif body.strategy == "iron_butterfly":
+        lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
+        short = float(legs.get("shortStrike") or legs.get("short_strike", 0))
+        lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
+        exp = str(legs.get("expiration") or "")
+
+        if not all([lp, short, lc, exp]):
+            raise HTTPException(422, "Long put, short strike, long call, and expiration required for Iron Butterfly")
+
+        T_exp = _tte(exp)
+
+        p_lp, iv_lp, theo_lp = _price_or_bs(lp, T_exp, False, exp)
+        p_sp, iv_sp, theo_sp = _price_or_bs(short, T_exp, False, exp)
+        p_sc, iv_sc, theo_sc = _price_or_bs(short, T_exp, True, exp)
+        p_lc, iv_lc, theo_lc = _price_or_bs(lc, T_exp, True, exp)
+
+        # Credit strategy: sell ATM straddle, buy wings
+        entry_cost = p_lp + p_lc - p_sp - p_sc  # negative = net credit
+        net_debit = entry_cost * 100 * n
+
+        g_lp = _bs_greeks(S, lp, T_exp, r, iv_lp, False)
+        g_sp = _bs_greeks(S, short, T_exp, r, iv_sp, False)
+        g_sc = _bs_greeks(S, short, T_exp, r, iv_sc, True)
+        g_lc = _bs_greeks(S, lc, T_exp, r, iv_lc, True)
+
+        greeks = {
+            k: round((g_lp[k] - g_sp[k] - g_sc[k] + g_lc[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lp, iv_sp, iv_sc, iv_lc]) / 4
+        profile = _scan_pnl_profile(
+            "iron_butterfly", S,
+            {"lp": lp, "short": short, "lc": lc},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        leg_detail = [
+            {"leg": "Long Put (Wing)", "type": "long", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp, "greeks": {k: round(v, 6) for k, v in g_lp.items()}},
+            {"leg": "Short Put (ATM)", "type": "short", "strike": short, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp, "greeks": {k: round(v, 6) for k, v in g_sp.items()}},
+            {"leg": "Short Call (ATM)", "type": "short", "strike": short, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc, "greeks": {k: round(v, 6) for k, v in g_sc.items()}},
+            {"leg": "Long Call (Wing)", "type": "long", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc, "greeks": {k: round(v, 6) for k, v in g_lc.items()}},
+        ]
+
     else:
         raise HTTPException(400, f"Unknown strategy: {body.strategy}")
 
@@ -1242,6 +1444,12 @@ async def calculate_spread(request: Request, body: CalcRequest):
         grid_exps = {"short": short_exp, "long": long_exp}
     elif body.strategy == "iron_condor":
         grid_strikes = {"lp": lp, "sp": sp, "sc": sc, "lc": lc}
+        grid_exps = {"exp": exp}
+    elif body.strategy == "butterfly":
+        grid_strikes = {"lower": lower, "middle": middle, "upper": upper, "is_call": is_call}
+        grid_exps = {"exp": exp}
+    elif body.strategy == "iron_butterfly":
+        grid_strikes = {"lp": lp, "short": short, "lc": lc}
         grid_exps = {"exp": exp}
     else:
         grid_strikes = {"ps": ps, "cs": cs}
