@@ -291,6 +291,69 @@ else
 fi
 echo ""
 
+# ── TEST 10: API Response Headers (no-cache) ─────────────────────────
+
+echo "━━━ TEST 10: API Cache Headers ━━━"
+echo ""
+
+for BOT in spark flame inferno; do
+  HEADERS=$(curl -sI --max-time 15 "$API/$BOT/status" 2>/dev/null)
+  CACHE=$(echo "$HEADERS" | grep -i "cache-control" | head -1 | tr -d '\r')
+  VERCEL_CACHE=$(echo "$HEADERS" | grep -i "x-vercel-cache" | head -1 | tr -d '\r')
+  AGE=$(echo "$HEADERS" | grep -i "^age:" | head -1 | tr -d '\r')
+
+  echo "  ${BOT^^}:"
+  echo "    ${CACHE:-cache-control: (not set)}"
+  echo "    ${VERCEL_CACHE:-x-vercel-cache: (not set)}"
+  echo "    ${AGE:-age: (not set)}"
+
+  if echo "$CACHE" | grep -qi "no-store\|no-cache\|max-age=0"; then
+    pass "Cache headers correct"
+  elif [ -z "$CACHE" ]; then
+    warn "No cache-control header — Vercel may cache responses"
+  else
+    warn "Unexpected cache-control: $CACHE"
+  fi
+  echo ""
+done
+
+# ── TEST 11: Null Display Test (B2) ──────────────────────────────────
+
+echo "━━━ TEST 11: Null/Zero Handling (INV-12) ━━━"
+echo ""
+
+for BOT in spark flame inferno; do
+  RESP=$(curl -s --max-time 15 "$API/$BOT/status" 2>/dev/null)
+  echo "  ${BOT^^}:"
+  python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+acct = d.get('account', {})
+urpnl = acct.get('unrealized_pnl')
+open_pos = d.get('open_positions', 0)
+
+if open_pos == 0 and urpnl == 0:
+    print('    PASS: unrealized_pnl=0 with 0 open positions (correct)')
+elif open_pos == 0 and urpnl is None:
+    print('    PASS: unrealized_pnl=null with 0 open positions (acceptable)')
+elif open_pos > 0 and urpnl is None:
+    print('    INFO: unrealized_pnl=null with open positions (Tradier not configured or market closed — frontend should show \"—\")')
+elif open_pos > 0 and urpnl == 0:
+    print('    WARN: unrealized_pnl=0 with open positions — is this real zero or masked error?')
+else:
+    print(f'    INFO: unrealized_pnl={urpnl} open_positions={open_pos}')
+
+# Check no field is unexpectedly missing
+for field in ['balance', 'cumulative_pnl', 'collateral_in_use', 'buying_power', 'total_trades']:
+    val = acct.get(field)
+    if val is None:
+        print(f'    FAIL: {field} is null — should always have a value')
+    elif val == 'MISSING':
+        print(f'    FAIL: {field} is missing from response')
+" <<< "$RESP" 2>/dev/null
+  echo ""
+done
+
 echo "═══════════════════════════════════════════════════════════"
 echo "  Validation Complete"
 echo "═══════════════════════════════════════════════════════════"
@@ -298,5 +361,6 @@ echo ""
 echo "NEXT STEPS:"
 echo "  1. Run ironforge/databricks/pre_market_validation.py in Databricks"
 echo "  2. Open each bot dashboard and compare values with Test 3 output"
-echo "  3. Fill in the confidence report with actual test results"
+echo "  3. If all pass → merge to main: git checkout main && git merge claude/setup-databricks-notebook-Y3OXC && git push origin main"
+echo "  4. Fill in the confidence report with actual test results"
 echo ""

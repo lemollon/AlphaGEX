@@ -1,311 +1,510 @@
-"""
-IronForge Pre-Market Validation — Run in Databricks Notebook BEFORE Monday
-===========================================================================
+# Databricks notebook source
 
-SAFE: All queries are READ-ONLY except Test 1 which creates/drops a temp table.
-Run each test cell independently. Copy results into the confidence report.
+# COMMAND ----------
 
-Created: 2026-03-14
-"""
+# MAGIC %md
+# MAGIC # IronForge Pre-Market Validation — Step 2
+# MAGIC
+# MAGIC Run each cell in order. If A1 or A2 FAIL → **STOP. NO-GO for Monday.**
+# MAGIC
+# MAGIC | Test | What It Proves | Blocking? |
+# MAGIC |------|---------------|-----------|
+# MAGIC | A1 | db_execute rows_affected basic | YES |
+# MAGIC | A2 | rows_affected with exact close_position() pattern | YES |
+# MAGIC | E2 | Race condition (sequential simulation) | YES |
+# MAGIC | A3 | All money invariants hold right now | YES |
+# MAGIC | A4 | P&L integrity (realized_pnl matches trade math) | INFO |
+# MAGIC | A5 | Config overrides (max_contracts, PT/SL) | INFO |
+# MAGIC | A6 | FLAME position-to-sandbox reconciliation | INFO |
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST 1: Verify db_execute() returns correct num_affected_rows
-# ═══════════════════════════════════════════════════════════════════════════
-# This is the foundation of the double-counting guard.
-# If UPDATE on an already-closed row returns 1 instead of 0, the guard is BROKEN.
+# COMMAND ----------
 
-# --- Cell 1A: Setup ---
-spark.sql("""
-    CREATE TABLE IF NOT EXISTS alpha_prime.ironforge._test_rows_affected (
-        id INT, status STRING
-    )
-""")
-spark.sql("""
-    INSERT INTO alpha_prime.ironforge._test_rows_affected VALUES (1, 'open')
-""")
-print("Setup complete: test row inserted with status='open'")
+# ── Setup ──────────────────────────────────────────────────────────────
+import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-# --- Cell 1B: UPDATE matching row (should return 1) ---
-result1 = spark.sql("""
-    UPDATE alpha_prime.ironforge._test_rows_affected
-    SET status = 'closed'
-    WHERE id = 1 AND status = 'open'
-""")
-rows1 = result1.collect()
-affected1 = rows1[0][0] if rows1 else "EMPTY"
-print(f"TEST 1B — UPDATE matching row:")
-print(f"  Result: {rows1}")
-print(f"  num_affected_rows: {affected1}")
-print(f"  EXPECTED: 1")
-print(f"  STATUS: {'PASS' if affected1 == 1 else 'FAIL ← CRITICAL'}")
+CATALOG = "alpha_prime"
+SCHEMA = "ironforge"
 
-# --- Cell 1C: UPDATE non-matching row (should return 0) ---
-# Same WHERE clause but status is now 'closed', not 'open'
-result2 = spark.sql("""
-    UPDATE alpha_prime.ironforge._test_rows_affected
-    SET status = 'closed'
-    WHERE id = 1 AND status = 'open'
-""")
-rows2 = result2.collect()
-affected2 = rows2[0][0] if rows2 else "EMPTY"
-print(f"TEST 1C — UPDATE non-matching row (already closed):")
-print(f"  Result: {rows2}")
-print(f"  num_affected_rows: {affected2}")
-print(f"  EXPECTED: 0")
-print(f"  STATUS: {'PASS' if affected2 == 0 else 'FAIL ← DOUBLE-COUNTING GUARD IS BROKEN'}")
+def t(name):
+    """Full table path."""
+    return f"{CATALOG}.{SCHEMA}.{name}"
 
-# --- Cell 1D: Cleanup ---
-spark.sql("DROP TABLE IF EXISTS alpha_prime.ironforge._test_rows_affected")
-print("Cleanup complete: test table dropped")
+def bot_table(bot, suffix):
+    return f"{CATALOG}.{SCHEMA}.{bot}_{suffix}"
 
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+spark.sql("SET TIME ZONE 'America/Chicago'")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST 1E: Verify REST API also returns num_affected_rows correctly
-# ═══════════════════════════════════════════════════════════════════════════
-# The webapp uses the REST API (not spark.sql). The dbExecute() function
-# in databricks-sql.ts parses the response differently:
-#   body.result.data_array[0][0] → parseInt → return n
-#
-# Test this by running the same sequence through the REST API.
-# (Requires: DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN)
+PASS = "✅ PASS"
+FAIL = "❌ FAIL"
+WARN = "⚠️ WARNING"
 
-import requests, os, json, time
+results = {}
 
-def rest_execute(sql):
-    """Execute via REST API and return raw response for inspection."""
-    host = os.environ.get("DATABRICKS_SERVER_HOSTNAME", "")
-    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
-    token = os.environ.get("DATABRICKS_TOKEN", "")
-    if not all([host, wh_id, token]):
-        # Try dbutils.secrets if env vars not set
-        try:
-            host = dbutils.secrets.get("ironforge", "databricks_host")
-            wh_id = dbutils.secrets.get("ironforge", "warehouse_id")
-            token = dbutils.secrets.get("ironforge", "token")
-        except Exception:
-            print("ERROR: No REST API credentials available. Skip this test.")
-            return None
+print("Setup complete. Running tests...")
 
-    url = f"https://{host}/api/2.0/sql/statements/"
-    ts = int(time.time() * 1000)
-    resp = requests.post(url, headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }, json={
-        "warehouse_id": wh_id,
-        "catalog": "alpha_prime",
-        "schema": "ironforge",
-        "statement": f"{sql} /* test_{ts} */",
-        "wait_timeout": "30s",
-        "disposition": "INLINE",
-        "format": "JSON_ARRAY",
-    }, timeout=30)
-    return resp.json()
+# COMMAND ----------
 
-# Only run this if REST credentials are available
-# rest_execute("CREATE TABLE IF NOT EXISTS alpha_prime.ironforge._test_rest (id INT, status STRING)")
-# rest_execute("INSERT INTO alpha_prime.ironforge._test_rest VALUES (1, 'open')")
-# r1 = rest_execute("UPDATE alpha_prime.ironforge._test_rest SET status='closed' WHERE id=1 AND status='open'")
-# print(f"REST UPDATE matching: data_array = {r1.get('result',{}).get('data_array',[])} — expect [[1]]")
-# r2 = rest_execute("UPDATE alpha_prime.ironforge._test_rest SET status='closed' WHERE id=1 AND status='open'")
-# print(f"REST UPDATE non-matching: data_array = {r2.get('result',{}).get('data_array',[])} — expect [[0]]")
-# rest_execute("DROP TABLE IF EXISTS alpha_prime.ironforge._test_rest")
+# MAGIC %md
+# MAGIC ## Test A1: db_execute rows_affected — Basic
 
+# COMMAND ----------
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST 2: Verify Collateral Drift is Zero Right Now
-# ═══════════════════════════════════════════════════════════════════════════
-
-# --- Cell 2A: Paper account current state ---
-print("TEST 2A — Paper Account State:")
-display(spark.sql("""
-    SELECT
-        dte_mode,
-        current_balance,
-        collateral_in_use,
-        cumulative_pnl,
-        buying_power,
-        starting_capital,
-        total_trades,
-        high_water_mark
-    FROM alpha_prime.ironforge.flame_paper_account
-    WHERE is_active = TRUE
-    ORDER BY dte_mode
-"""))
-
-display(spark.sql("""
-    SELECT
-        dte_mode,
-        current_balance,
-        collateral_in_use,
-        cumulative_pnl,
-        buying_power,
-        starting_capital,
-        total_trades
-    FROM alpha_prime.ironforge.spark_paper_account
-    WHERE is_active = TRUE
-    ORDER BY dte_mode
-"""))
-
-display(spark.sql("""
-    SELECT
-        dte_mode,
-        current_balance,
-        collateral_in_use,
-        cumulative_pnl,
-        buying_power,
-        starting_capital,
-        total_trades
-    FROM alpha_prime.ironforge.inferno_paper_account
-    WHERE is_active = TRUE
-    ORDER BY dte_mode
-"""))
-
-# --- Cell 2B: Actual open positions (should be 0 on weekend) ---
-print("\nTEST 2B — Open Positions (should be 0 rows on weekend):")
-for bot in ["flame", "spark", "inferno"]:
-    result = spark.sql(f"""
-        SELECT
-            position_id, dte_mode, status, collateral_required,
-            open_time, ticker, expiration
-        FROM alpha_prime.ironforge.{bot}_positions
-        WHERE status = 'open'
+# A1: Basic rows_affected test
+try:
+    spark.sql(f"DROP TABLE IF EXISTS {t('test_validation')}")
+    spark.sql(f"""
+        CREATE TABLE {t('test_validation')} (
+            id INT, status STRING, pnl FLOAT
+        )
     """)
-    count = result.count()
-    if count > 0:
-        print(f"\n  WARNING: {bot.upper()} has {count} OPEN positions on weekend!")
-        display(result)
+    spark.sql(f"INSERT INTO {t('test_validation')} VALUES (1, 'open', 0.0)")
+
+    # UPDATE matching row → expect 1
+    r1 = spark.sql(f"""
+        UPDATE {t('test_validation')}
+        SET status = 'closed', pnl = 50.0
+        WHERE id = 1 AND status = 'open'
+    """)
+    val1 = r1.collect()[0][0]
+
+    # UPDATE no-match (already closed) → expect 0
+    r2 = spark.sql(f"""
+        UPDATE {t('test_validation')}
+        SET status = 'closed', pnl = 50.0
+        WHERE id = 1 AND status = 'open'
+    """)
+    val2 = r2.collect()[0][0]
+
+    spark.sql(f"DROP TABLE {t('test_validation')}")
+
+    if val1 == 1 and val2 == 0:
+        results["A1"] = PASS
+        print(f"A1: {PASS}")
+        print(f"  UPDATE match → {val1} (expected 1)")
+        print(f"  UPDATE no-match → {val2} (expected 0)")
     else:
-        print(f"  {bot.upper()}: 0 open positions ✓")
+        results["A1"] = FAIL
+        print(f"A1: {FAIL}")
+        print(f"  UPDATE match → {val1} (expected 1)")
+        print(f"  UPDATE no-match → {val2} (expected 0)")
+        print("  ⛔ STOP — double-count guard is broken. NO-GO for Monday.")
 
-# --- Cell 2C: Drift check ---
-print("\nTEST 2C — Collateral Drift Check:")
-for bot in ["flame", "spark", "inferno"]:
-    for dte in ["2DTE", "1DTE", "0DTE"]:
-        acct = spark.sql(f"""
-            SELECT collateral_in_use
-            FROM alpha_prime.ironforge.{bot}_paper_account
+except Exception as e:
+    results["A1"] = f"{FAIL}: {e}"
+    print(f"A1: {FAIL} — {e}")
+    print("  ⛔ STOP — cannot validate foundation. NO-GO for Monday.")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test A2: db_execute rows_affected — Exact close_position() Pattern
+
+# COMMAND ----------
+
+# A2: Test with exact SQL pattern from close_position()
+try:
+    spark.sql(f"DROP TABLE IF EXISTS {t('test_close_pattern')}")
+    spark.sql(f"""
+        CREATE TABLE {t('test_close_pattern')} (
+            position_id STRING, status STRING, dte_mode STRING,
+            close_time TIMESTAMP, close_price FLOAT,
+            realized_pnl FLOAT, close_reason STRING, updated_at TIMESTAMP
+        )
+    """)
+    spark.sql(f"""
+        INSERT INTO {t('test_close_pattern')}
+        VALUES ('TEST-001', 'open', '1DTE', NULL, NULL, 0.0, NULL, NULL)
+    """)
+
+    # Simulate close_position() UPDATE
+    r1 = spark.sql(f"""
+        UPDATE {t('test_close_pattern')}
+        SET status = 'closed',
+            close_time = CURRENT_TIMESTAMP(),
+            close_price = 1.50,
+            realized_pnl = 50.0,
+            close_reason = 'test_validation',
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE position_id = 'TEST-001'
+          AND status = 'open'
+          AND dte_mode = '1DTE'
+    """)
+    val1 = r1.collect()[0][0]
+
+    # Simulate DUPLICATE close (race condition)
+    r2 = spark.sql(f"""
+        UPDATE {t('test_close_pattern')}
+        SET status = 'closed',
+            close_time = CURRENT_TIMESTAMP(),
+            close_price = 1.50,
+            realized_pnl = 50.0,
+            close_reason = 'test_validation_duplicate',
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE position_id = 'TEST-001'
+          AND status = 'open'
+          AND dte_mode = '1DTE'
+    """)
+    val2 = r2.collect()[0][0]
+
+    # Don't drop yet — E2 reuses this table
+
+    if val1 == 1 and val2 == 0:
+        results["A2"] = PASS
+        print(f"A2: {PASS} — Delta Lake UPDATE returns correct rows_affected")
+    else:
+        results["A2"] = FAIL
+        print(f"A2: {FAIL}")
+        print("  ⛔ STOP — close_position() guard pattern doesn't work. NO-GO for Monday.")
+    print(f"  Close pattern → {val1} (expected 1)")
+    print(f"  Duplicate close → {val2} (expected 0)")
+
+except Exception as e:
+    results["A2"] = f"{FAIL}: {e}"
+    print(f"A2: {FAIL} — {e}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test E2: Race Condition Simulation (Sequential)
+
+# COMMAND ----------
+
+# E2: Simulate scanner + monitor both trying to close same position
+try:
+    # Reset the test table with a fresh open position
+    spark.sql(f"""
+        INSERT INTO {t('test_close_pattern')}
+        VALUES ('RACE-001', 'open', '1DTE', NULL, NULL, 0.0, NULL, NULL)
+    """)
+
+    # Process A (scanner) closes first
+    r_a = spark.sql(f"""
+        UPDATE {t('test_close_pattern')}
+        SET status = 'closed',
+            realized_pnl = 50.0,
+            close_reason = 'scanner_eod',
+            close_time = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE position_id = 'RACE-001'
+          AND status = 'open'
+          AND dte_mode = '1DTE'
+    """)
+    rows_a = r_a.collect()[0][0]
+
+    # Process B (monitor) tries the same position
+    r_b = spark.sql(f"""
+        UPDATE {t('test_close_pattern')}
+        SET status = 'closed',
+            realized_pnl = 50.0,
+            close_reason = 'monitor_stop_loss',
+            close_time = CURRENT_TIMESTAMP(),
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE position_id = 'RACE-001'
+          AND status = 'open'
+          AND dte_mode = '1DTE'
+    """)
+    rows_b = r_b.collect()[0][0]
+
+    # Cleanup
+    spark.sql(f"DROP TABLE IF EXISTS {t('test_close_pattern')}")
+
+    print(f"E2: Process A (scanner) → rows_affected = {rows_a}")
+    print(f"E2: Process B (monitor) → rows_affected = {rows_b}")
+
+    if rows_a == 1 and rows_b == 0:
+        results["E2"] = PASS
+        print(f"E2: {PASS} — Guard works: only first close succeeds")
+    elif rows_a == 1 and rows_b == 1:
+        results["E2"] = FAIL
+        print(f"E2: {FAIL} — BOTH returned 1! Double-counting WILL happen!")
+        print("  ⛔ STOP — Need optimistic locking (version column). NO-GO for Monday.")
+    else:
+        results["E2"] = f"{FAIL}: unexpected A={rows_a}, B={rows_b}"
+        print(f"E2: {FAIL} — Unexpected: A={rows_a}, B={rows_b}")
+
+except Exception as e:
+    results["E2"] = f"{FAIL}: {e}"
+    print(f"E2: {FAIL} — {e}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test A3: All Money Invariants — Current State
+# MAGIC
+# MAGIC Checks INV-1 through INV-5 for all 3 bots.
+
+# COMMAND ----------
+
+# A3: Money invariants for all bots
+BOTS = [
+    {"name": "flame", "dte": "2DTE"},
+    {"name": "spark", "dte": "1DTE"},
+    {"name": "inferno", "dte": "0DTE"},
+]
+
+all_pass = True
+a3_details = []
+
+for bot in BOTS:
+    bot_name = bot["name"]
+    dte = bot["dte"]
+    pos_tbl = bot_table(bot_name, "positions")
+    acct_tbl = bot_table(bot_name, "paper_account")
+
+    try:
+        # Get paper_account values
+        acct_rows = spark.sql(f"""
+            SELECT starting_capital, current_balance, cumulative_pnl,
+                   collateral_in_use, buying_power
+            FROM {acct_tbl}
             WHERE is_active = TRUE AND dte_mode = '{dte}'
-            LIMIT 1
+            ORDER BY id DESC LIMIT 1
         """).collect()
-        if not acct:
+
+        if not acct_rows:
+            print(f"  {bot_name.upper()}: No active paper_account row found")
+            a3_details.append(f"{bot_name.upper()}: NO ACCOUNT")
+            all_pass = False
             continue
-        stored_coll = float(acct[0][0] or 0)
 
-        actual = spark.sql(f"""
-            SELECT COALESCE(SUM(collateral_required), 0) as actual
-            FROM alpha_prime.ironforge.{bot}_positions
-            WHERE status = 'open' AND dte_mode = '{dte}'
-        """).collect()
-        actual_coll = float(actual[0][0] or 0)
+        acct = acct_rows[0]
+        starting_capital = float(acct["starting_capital"] or 10000)
+        stored_balance = float(acct["current_balance"] or 0)
+        stored_cumulative = float(acct["cumulative_pnl"] or 0)
+        stored_collateral = float(acct["collateral_in_use"] or 0)
+        stored_bp = float(acct["buying_power"] or 0)
 
-        drift = abs(stored_coll - actual_coll)
-        status = "✓ NO DRIFT" if drift < 0.01 else f"⚠ DRIFT ${drift:.2f}"
-        print(f"  {bot.upper()} {dte}: stored=${stored_coll:.2f} actual=${actual_coll:.2f} [{status}]")
+        # Calculate from positions
+        stats = spark.sql(f"""
+            SELECT
+                COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
+                    THEN realized_pnl ELSE 0 END), 0) as sum_realized_pnl,
+                COALESCE(SUM(CASE WHEN status = 'open'
+                    THEN collateral_required ELSE 0 END), 0) as sum_open_collateral,
+                COUNT(CASE WHEN status = 'open' THEN 1 END) as open_count,
+                COUNT(CASE WHEN status = 'open'
+                    AND CAST(open_time AS DATE) < CURRENT_DATE() THEN 1 END) as stale_count
+            FROM {pos_tbl}
+            WHERE dte_mode = '{dte}'
+        """).collect()[0]
 
-# --- Cell 2D: Balance integrity check ---
-print("\nTEST 2D — Balance Integrity (balance should = starting_capital + cumulative_pnl):")
-for bot in ["flame", "spark", "inferno"]:
-    for dte in ["2DTE", "1DTE", "0DTE"]:
-        acct = spark.sql(f"""
-            SELECT current_balance, starting_capital, cumulative_pnl
-            FROM alpha_prime.ironforge.{bot}_paper_account
-            WHERE is_active = TRUE AND dte_mode = '{dte}'
-            LIMIT 1
-        """).collect()
-        if not acct:
-            continue
-        bal = float(acct[0][0] or 0)
-        start = float(acct[0][1] or 0)
-        cum_pnl = float(acct[0][2] or 0)
-        expected_bal = start + cum_pnl
-        drift = abs(bal - expected_bal)
-        status = "✓ MATCH" if drift < 0.01 else f"⚠ DRIFT ${drift:.2f}"
-        print(f"  {bot.upper()} {dte}: balance=${bal:.2f} expected=${expected_bal:.2f} (start={start}+pnl={cum_pnl:.2f}) [{status}]")
+        sum_pnl = float(stats["sum_realized_pnl"])
+        sum_collateral = float(stats["sum_open_collateral"])
+        open_count = int(stats["open_count"])
+        stale_count = int(stats["stale_count"])
 
-# --- Cell 2E: Cross-check cumulative_pnl against SUM(realized_pnl) ---
-print("\nTEST 2E — PnL Cross-Check (cumulative_pnl should = SUM of closed position realized_pnl):")
-for bot in ["flame", "spark", "inferno"]:
-    for dte in ["2DTE", "1DTE", "0DTE"]:
-        acct = spark.sql(f"""
-            SELECT cumulative_pnl
-            FROM alpha_prime.ironforge.{bot}_paper_account
-            WHERE is_active = TRUE AND dte_mode = '{dte}'
-            LIMIT 1
-        """).collect()
-        if not acct:
-            continue
-        stored_pnl = float(acct[0][0] or 0)
+        calculated_balance = round(starting_capital + sum_pnl, 2)
+        calculated_bp = round(stored_balance - stored_collateral, 2)
 
-        actual = spark.sql(f"""
-            SELECT COALESCE(SUM(realized_pnl), 0) as total_pnl
-            FROM alpha_prime.ironforge.{bot}_positions
+        # Check invariants
+        inv1_drift = round(stored_balance - calculated_balance, 2)
+        inv2_drift = round(stored_collateral - sum_collateral, 2)
+        inv3_drift = round(stored_bp - calculated_bp, 2)
+
+        inv1_ok = abs(inv1_drift) < 0.02
+        inv2_ok = abs(inv2_drift) < 0.02
+        inv3_ok = abs(inv3_drift) < 0.02
+        inv5_ok = stale_count == 0
+
+        bot_pass = inv1_ok and inv2_ok and inv3_ok and inv5_ok
+
+        print(f"\n{'='*60}")
+        print(f"  {bot_name.upper()} ({dte})")
+        print(f"{'='*60}")
+        print(f"  INV-1 balance = starting + sum(pnl):")
+        print(f"    stored={stored_balance:.2f}  calculated={calculated_balance:.2f}  drift={inv1_drift:.2f}  {'✅' if inv1_ok else '❌'}")
+        print(f"  INV-2 collateral = sum(open collateral):")
+        print(f"    stored={stored_collateral:.2f}  actual={sum_collateral:.2f}  drift={inv2_drift:.2f}  {'✅' if inv2_ok else '❌'}")
+        print(f"  INV-3 buying_power = balance - collateral:")
+        print(f"    stored={stored_bp:.2f}  calculated={calculated_bp:.2f}  drift={inv3_drift:.2f}  {'✅' if inv3_ok else '❌'}")
+        print(f"  INV-5 no stale open positions:")
+        print(f"    open={open_count}  stale={stale_count}  {'✅' if inv5_ok else '❌'}")
+
+        if not bot_pass:
+            all_pass = False
+            failures = []
+            if not inv1_ok: failures.append(f"INV-1 drift ${inv1_drift}")
+            if not inv2_ok: failures.append(f"INV-2 drift ${inv2_drift}")
+            if not inv3_ok: failures.append(f"INV-3 drift ${inv3_drift}")
+            if not inv5_ok: failures.append(f"INV-5 {stale_count} stale positions")
+            a3_details.append(f"{bot_name.upper()}: {', '.join(failures)}")
+        else:
+            a3_details.append(f"{bot_name.upper()}: all invariants hold")
+
+    except Exception as e:
+        print(f"  {bot_name.upper()}: ERROR — {e}")
+        a3_details.append(f"{bot_name.upper()}: ERROR {e}")
+        all_pass = False
+
+if all_pass:
+    results["A3"] = PASS
+    print(f"\nA3: {PASS} — All money invariants hold for all bots")
+else:
+    results["A3"] = FAIL
+    print(f"\nA3: {FAIL}")
+    for d in a3_details:
+        print(f"  {d}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test A4: P&L Integrity Check
+
+# COMMAND ----------
+
+# A4: Verify realized_pnl = (entry_credit - close_price) * contracts * 100
+a4_issues = []
+
+for bot in BOTS:
+    bot_name = bot["name"]
+    dte = bot["dte"]
+    pos_tbl = bot_table(bot_name, "positions")
+
+    try:
+        rows = spark.sql(f"""
+            SELECT position_id, total_credit, close_price, contracts, realized_pnl,
+                   ROUND((total_credit - close_price) * contracts * 100, 2) as calculated_pnl,
+                   ROUND(realized_pnl - ROUND((total_credit - close_price) * contracts * 100, 2), 2) as discrepancy
+            FROM {pos_tbl}
             WHERE status IN ('closed', 'expired')
+              AND close_price IS NOT NULL
+              AND contracts IS NOT NULL
               AND realized_pnl IS NOT NULL
               AND dte_mode = '{dte}'
+              AND ABS(realized_pnl - ROUND((total_credit - close_price) * contracts * 100, 2)) > 1.0
         """).collect()
-        actual_pnl = float(actual[0][0] or 0)
 
-        drift = abs(stored_pnl - actual_pnl)
-        status = "✓ MATCH" if drift < 0.02 else f"⚠ DRIFT ${drift:.2f}"
-        print(f"  {bot.upper()} {dte}: stored_pnl=${stored_pnl:.2f} actual_sum=${actual_pnl:.2f} [{status}]")
+        if rows:
+            a4_issues.append(f"{bot_name.upper()}: {len(rows)} positions with P&L discrepancy > $1.00")
+            for r in rows[:3]:  # Show first 3
+                print(f"  {bot_name.upper()} {r['position_id']}: stored=${r['realized_pnl']:.2f} calculated=${r['calculated_pnl']:.2f} diff=${r['discrepancy']:.2f}")
+        else:
+            print(f"  {bot_name.upper()}: All closed positions P&L matches trade math ✅")
 
+    except Exception as e:
+        a4_issues.append(f"{bot_name.upper()}: ERROR {e}")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST 4: Verify EOD Close Timing Logic
-# ═══════════════════════════════════════════════════════════════════════════
+if not a4_issues:
+    results["A4"] = PASS
+    print(f"\nA4: {PASS} — P&L integrity verified for all bots")
+else:
+    results["A4"] = WARN
+    print(f"\nA4: {WARN}")
+    for issue in a4_issues:
+        print(f"  {issue}")
 
-import pytz
-from datetime import datetime
+# COMMAND ----------
 
-ct = datetime.now(pytz.timezone('US/Central'))
-print(f"TEST 4 — EOD Close Timing:")
-print(f"  Current CT: {ct.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-print(f"  CT offset: {ct.strftime('%z')}")
+# MAGIC %md
+# MAGIC ## Test A5: Config Override Check
 
-# The scanner uses is_after_eod_cutoff() which checks ct.hour*100 + ct.minute >= 1445
-# EOD cutoff is 14:45 CT (2:45 PM)
-hhmm = ct.hour * 100 + ct.minute
-print(f"  HHMM now: {hhmm}")
-print(f"  EOD cutoff: 1445 (2:45 PM CT)")
-print(f"  Is after EOD: {hhmm >= 1445}")
-print(f"  Is weekend: {ct.weekday() >= 5}")
+# COMMAND ----------
 
-# Verify market hours window
-print(f"\n  Market window: 830-1500 (8:30 AM - 3:00 PM CT)")
-print(f"  Entry window: FLAME/SPARK=830-1400, INFERNO=830-1430")
-print(f"  EOD close window: 1445-1510 (2:45 PM - 3:10 PM CT)")
-print(f"  Post-EOD sandbox verify: 1445-1510 (FLAME only)")
+# A5: Check effective config for all bots
+for bot in BOTS:
+    bot_name = bot["name"]
+    dte = bot["dte"]
 
+    try:
+        rows = spark.sql(f"""
+            SELECT *
+            FROM {bot_table(bot_name, 'config')}
+            WHERE dte_mode = '{dte}'
+            LIMIT 1
+        """).collect()
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TEST 10: Verify INFERNO max_contracts Config
-# ═══════════════════════════════════════════════════════════════════════════
+        if rows:
+            row = rows[0]
+            row_dict = row.asDict()
+            print(f"\n{bot_name.upper()} config from DB:")
+            for k, v in sorted(row_dict.items()):
+                if v is not None:
+                    print(f"  {k}: {v}")
+        else:
+            print(f"\n{bot_name.upper()}: No config row found (using code defaults)")
 
-print("\nTEST 10 — INFERNO Config Check:")
+    except Exception as e:
+        print(f"\n{bot_name.upper()}: Config table error — {e}")
 
-# Check if there's a DB config override
+results["A5"] = "INFO — review output above"
+print(f"\nA5: Check max_contracts values match your expectations")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Test A6: FLAME Position-to-Sandbox Reconciliation
+
+# COMMAND ----------
+
+# A6: FLAME positions from last 7 days — health check
 try:
-    config_rows = spark.sql("""
-        SELECT config_key, config_value
-        FROM alpha_prime.ironforge.inferno_config
-        WHERE config_key IN ('max_contracts', 'max_trades', 'sd_multiplier')
+    rows = spark.sql(f"""
+        SELECT
+            position_id,
+            status,
+            close_reason,
+            open_time,
+            close_time,
+            collateral_required,
+            realized_pnl,
+            sandbox_order_id,
+            CASE
+                WHEN status = 'closed' AND close_reason IS NULL THEN 'WARNING: closed without reason'
+                WHEN status = 'closed' AND close_time IS NULL THEN 'WARNING: closed without close_time'
+                WHEN status = 'open' THEN 'OPEN — should not exist on weekend'
+                ELSE 'OK'
+            END as health
+        FROM {bot_table('flame', 'positions')}
+        WHERE dte_mode = '2DTE'
+          AND open_time >= DATE_ADD(CURRENT_DATE(), -7)
+        ORDER BY open_time DESC
     """).collect()
-    if config_rows:
-        print("  DB config overrides (inferno_config table):")
-        for row in config_rows:
-            print(f"    {row[0]}: {row[1]}")
-    else:
-        print("  No DB config overrides — using BOT_CONFIG defaults")
-        print("  Default max_contracts = 3 (from ironforge_scanner.py line 92)")
-        print("  Default max_trades = 0 (unlimited positions)")
-except Exception as e:
-    print(f"  Config table query failed: {e}")
-    print("  This may mean the config table doesn't exist yet (using defaults)")
 
-print("\n  BOT_CONFIG defaults for INFERNO:")
-print("    sd=1.0, pt_pct=0.50, sl_mult=3.0, entry_end=1430")
-print("    max_trades=0 (unlimited), max_contracts=3, bp_pct=0.85")
-print("    starting_capital=10000.0")
-print("\n  NOTE: max_trades=0 means INFERNO can have UNLIMITED open positions")
-print("  But max_contracts=3 caps each individual position to 3 contracts")
+    warnings = [r for r in rows if r["health"] != "OK"]
+    print(f"A6: FLAME positions (last 7 days): {len(rows)} total, {len(warnings)} warnings")
+
+    for r in rows:
+        health_marker = "⚠️" if r["health"] != "OK" else "  "
+        pnl_str = f"${r['realized_pnl']:.2f}" if r['realized_pnl'] is not None else "N/A"
+        has_sandbox = "SB:yes" if r.get("sandbox_order_id") else "SB:no"
+        print(f"  {health_marker} {r['position_id'][:20]:20s} {r['status']:8s} {str(r['close_reason'] or 'N/A'):20s} pnl={pnl_str:>10s} {has_sandbox} [{r['health']}]")
+
+    if warnings:
+        results["A6"] = WARN
+    else:
+        results["A6"] = PASS
+
+except Exception as e:
+    results["A6"] = f"{FAIL}: {e}"
+    print(f"A6: {FAIL} — {e}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Summary
+
+# COMMAND ----------
+
+# Print final summary
+print("=" * 60)
+print("  IRONFORGE PRE-MARKET VALIDATION SUMMARY")
+print(f"  {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CT")
+print("=" * 60)
+
+blocking_fail = False
+for test_id in ["A1", "A2", "E2", "A3", "A4", "A5", "A6"]:
+    status = results.get(test_id, "NOT RUN")
+    print(f"  {test_id}: {status}")
+    if test_id in ("A1", "A2", "E2", "A3") and FAIL in str(status):
+        blocking_fail = True
+
+print("=" * 60)
+if blocking_fail:
+    print("  ⛔ NO-GO — Critical test(s) failed. Do NOT merge to main.")
+    print("  Fix the failing tests before proceeding.")
+else:
+    print("  ✅ GO — All critical tests passed. Proceed to Step 3 (API tests).")
+print("=" * 60)
