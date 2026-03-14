@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import Plotly from 'plotly.js-dist-min';
 import createPlotlyComponent from 'react-plotly.js/factory';
-import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp } from 'lucide-react';
+import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send } from 'lucide-react';
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -88,6 +88,33 @@ export default function GexProfilePage() {
   const [isLive, setIsLive] = useState(false);
   const [sessionDate, setSessionDate] = useState(null);
   const [hoveredStrike, setHoveredStrike] = useState(null);
+  const [discordMsg, setDiscordMsg] = useState('');
+  const [discordPushing, setDiscordPushing] = useState(false);
+
+  const pushToDiscord = useCallback(async (view) => {
+    const endpointMap = {
+      net: 'push-gex-net',
+      split: 'push-gex-callput',
+      intraday: 'push-gex-intraday',
+    };
+    const endpoint = endpointMap[view];
+    if (!endpoint) return;
+    try {
+      setDiscordPushing(true);
+      setDiscordMsg('');
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/${endpoint}?symbol=${symbol}`, {
+        method: 'POST',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to post');
+      setDiscordMsg('Posted!');
+    } catch (err) {
+      setDiscordMsg(err.message);
+    } finally {
+      setDiscordPushing(false);
+      setTimeout(() => setDiscordMsg(''), 3000);
+    }
+  }, [symbol]);
 
   // ── Fetch ─────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym, clearFirst = false) => {
@@ -435,16 +462,32 @@ export default function GexProfilePage() {
                   </span>
                 )}
               </div>
-              <div className="sw-toggle-group">
-                {['net', 'split', 'intraday'].map(view => (
-                  <button
-                    key={view}
-                    onClick={() => setChartView(view)}
-                    className={`sw-toggle-btn ${chartView === view ? 'active' : ''}`}
-                  >
-                    {view === 'net' ? 'Net GEX' : view === 'split' ? 'Call vs Put' : 'Intraday 5m'}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2.5">
+                <div className="sw-toggle-group">
+                  {['net', 'split', 'intraday'].map(view => (
+                    <button
+                      key={view}
+                      onClick={() => setChartView(view)}
+                      className={`sw-toggle-btn ${chartView === view ? 'active' : ''}`}
+                    >
+                      {view === 'net' ? 'Net GEX' : view === 'split' ? 'Call vs Put' : 'Intraday 5m'}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => pushToDiscord(chartView)}
+                  disabled={discordPushing}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.3)] bg-[rgba(88,101,242,0.1)] text-[#7289da] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.2)] hover:border-[rgba(88,101,242,0.5)] disabled:opacity-50"
+                  title="Share to Discord"
+                >
+                  <Send size={12} />
+                  {discordPushing ? 'Sending...' : 'Discord'}
+                </button>
+                {discordMsg && (
+                  <span className={`text-[11px] font-semibold ${discordMsg === 'Posted!' ? 'text-sw-green' : 'text-sw-red'}`}>
+                    {discordMsg}
+                  </span>
+                )}
               </div>
             </div>
 
