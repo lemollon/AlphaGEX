@@ -487,7 +487,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
 
 @router.get("/expirations")
 async def get_expirations(request: Request, symbol: str = "SPY"):
-    """Return available option expirations from Tradier."""
+    """Return available option expirations from Tradier with DTE labels."""
     data = await _tradier_get(
         request,
         "/markets/options/expirations",
@@ -499,7 +499,19 @@ async def get_expirations(request: Request, symbol: str = "SPY"):
     date_list = exps.get("date", [])
     if isinstance(date_list, str):
         date_list = [date_list]
-    return {"symbol": symbol, "expirations": date_list}
+
+    # Annotate each expiration with DTE
+    today = _today_ct()
+    annotated = []
+    for d in date_list:
+        try:
+            exp_date = datetime.strptime(d, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+            annotated.append({"date": d, "dte": dte})
+        except (ValueError, TypeError):
+            annotated.append({"date": d, "dte": None})
+
+    return {"symbol": symbol, "expirations": date_list, "expirations_with_dte": annotated}
 
 
 # ---------------------------------------------------------------------------

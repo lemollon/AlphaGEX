@@ -99,8 +99,15 @@ function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOption
   );
 }
 
-function ExpirationInput({ label, value, inputMode, expirations, onChange, onFetchStrikes, disabled }) {
+function ExpirationInput({ label, value, inputMode, expirations, expirationsWithDte, onChange, onFetchStrikes, disabled }) {
   if (inputMode === INPUT_MODES.LIVE_CHAIN && expirations.length > 0) {
+    // Build a DTE lookup map from annotated data
+    const dteMap = {};
+    if (expirationsWithDte) {
+      for (const item of expirationsWithDte) {
+        dteMap[item.date] = item.dte;
+      }
+    }
     return (
       <div className="flex-1 flex flex-col gap-1">
         <span className="sw-label">{label}</span>
@@ -113,9 +120,15 @@ function ExpirationInput({ label, value, inputMode, expirations, onChange, onFet
           }}
         >
           <option value="">--</option>
-          {expirations.map((exp) => (
-            <option key={exp} value={exp}>{exp}</option>
-          ))}
+          {expirations.map((exp) => {
+            const dte = dteMap[exp];
+            const dteLabel = dte === 0 ? '0DTE' : dte != null ? `${dte}DTE` : '';
+            return (
+              <option key={exp} value={exp}>
+                {exp}{dteLabel ? ` (${dteLabel})` : ''}
+              </option>
+            );
+          })}
         </select>
       </div>
     );
@@ -150,6 +163,7 @@ export default function StrategyPanel({
   const [legs, setLegs] = useState(DEFAULT_LEGS[STRATEGY_TYPES.DOUBLE_DIAGONAL]);
   const [contracts, setContracts] = useState(1);
   const [expirations, setExpirations] = useState([]);
+  const [expirationsWithDte, setExpirationsWithDte] = useState([]);
   const [chainStrikes, setChainStrikes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -371,6 +385,7 @@ export default function StrategyPanel({
         if (!res.ok) throw new Error('Failed to fetch expirations');
         const data = await res.json();
         setExpirations(data.expirations || []);
+        setExpirationsWithDte(data.expirations_with_dte || []);
       } catch (err) {
         setError(`Expirations: ${err.message}`);
       }
@@ -623,8 +638,8 @@ export default function StrategyPanel({
               <div className="line bg-text-tertiary/20" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : strategy === STRATEGY_TYPES.BUTTERFLY ? (
@@ -652,7 +667,7 @@ export default function StrategyPanel({
                   <option value="put">Puts</option>
                 </select>
               </div>
-              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? (
@@ -680,7 +695,7 @@ export default function StrategyPanel({
               <div className="line bg-text-tertiary/20" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : strategy === STRATEGY_TYPES.IRON_CONDOR ? (
@@ -706,7 +721,7 @@ export default function StrategyPanel({
               <div className="line bg-text-tertiary/20" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
           </>
         ) : (
@@ -736,8 +751,8 @@ export default function StrategyPanel({
               <div className="line bg-accent/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             {legs.putStrike && legs.callStrike && legs.frontExpiration && legs.backExpiration && (
               <div className="bg-bg-elevated rounded-md px-2.5 py-2 text-[10px] text-text-secondary mt-1 font-[var(--font-mono)]">
