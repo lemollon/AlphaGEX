@@ -642,13 +642,19 @@ async def gex_suggest(
     front_exp = (today + timedelta(days=days_until_friday)).isoformat()
     back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
-    # Credit strategies (IC, Iron Butterfly) use 0DTE when market is open
+    # Credit strategies (IC, Iron Butterfly) always suggest 0DTE as the
+    # nearest trading day so users can explore them anytime (weekends use
+    # next Monday).  Non-credit strategies keep the next-Friday pattern.
     credit_strategies = {"iron_condor", "iron_butterfly"}
     is_credit = strategy in credit_strategies
-    now_ct = _now_ct()
-    market_open = now_ct.weekday() < 5 and 8 <= now_ct.hour < 16
-    zero_dte_exp = today.isoformat()
-    credit_exp = zero_dte_exp if (is_credit and market_open) else front_exp
+    if is_credit:
+        # Find nearest weekday (today if Mon-Fri, else next Monday)
+        dte_date = today
+        while dte_date.weekday() >= 5:  # Sat=5, Sun=6
+            dte_date += timedelta(days=1)
+        credit_exp = dte_date.isoformat()
+    else:
+        credit_exp = front_exp
 
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 
@@ -685,7 +691,8 @@ async def gex_suggest(
             "long_call_strike": long_call,
             "expiration": credit_exp,
         }
-        dte_note = "0DTE" if credit_exp == zero_dte_exp and market_open else f"exp {credit_exp}"
+        is_0dte = credit_exp == today.isoformat()
+        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
         rationale = (
             f"Iron Condor: short strikes at GEX walls "
             f"(put wall ${short_put}, call wall ${short_call}). "
@@ -723,7 +730,8 @@ async def gex_suggest(
             "long_call_strike": lc_strike,
             "expiration": credit_exp,
         }
-        dte_note = "0DTE" if credit_exp == zero_dte_exp and market_open else f"exp {credit_exp}"
+        is_0dte = credit_exp == today.isoformat()
+        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
         rationale = (
             f"Iron Butterfly: short straddle at flip ${short_strike}, "
             f"wings at ${lp_strike}/${lc_strike}. "
