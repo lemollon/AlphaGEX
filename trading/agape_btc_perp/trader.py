@@ -75,8 +75,47 @@ class AgapeBtcPerpTrader:
         self.loss_streak_pause_until: Optional[datetime] = None
         self._liquidated: bool = False
         self._direction_tracker = get_agape_btc_perp_direction_tracker(self.config)
+        self._startup_recovery()
         self.db.log("INFO", "INIT", f"AGAPE-BTC-PERP trader initialized AGGRESSIVE (mode={self.config.mode.value})")
         logger.info(f"AGAPE-BTC-PERP Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
+
+    def _startup_recovery(self):
+        """On startup, force-close positions stuck open longer than 2x max_hold_hours."""
+        try:
+            open_pos = self.db.get_open_positions()
+            if not open_pos:
+                return
+            now = datetime.now(CENTRAL_TZ)
+            stale_threshold_hours = self.config.max_hold_hours * 2
+            current_price = self.executor.get_current_price()
+            stale_closed = 0
+            for pos in open_pos:
+                open_time_str = pos.get("open_time")
+                if not open_time_str:
+                    continue
+                try:
+                    ot = datetime.fromisoformat(open_time_str) if isinstance(open_time_str, str) else open_time_str
+                    if ot.tzinfo is None:
+                        ot = ot.replace(tzinfo=CENTRAL_TZ)
+                    age_hours = (now - ot).total_seconds() / 3600
+                    if age_hours >= stale_threshold_hours:
+                        close_price = current_price or pos["entry_price"]
+                        direction = 1 if pos["side"] == "long" else -1
+                        qty = pos.get("quantity", self.config.default_quantity)
+                        pnl = round((close_price - pos["entry_price"]) * qty * direction, 2)
+                        self.db.close_position(pos["position_id"], close_price, pnl, "STALE_RECOVERY")
+                        stale_closed += 1
+                        logger.warning(
+                            f"AGAPE-BTC-PERP: Startup recovery closed stale position "
+                            f"{pos['position_id']} (age={age_hours:.0f}h, P&L=${pnl:+.2f})"
+                        )
+                except (ValueError, TypeError):
+                    continue
+            if stale_closed > 0:
+                self.db.log("WARNING", "STALE_RECOVERY",
+                    f"Startup recovery: closed {stale_closed} stale positions (>{stale_threshold_hours}h old)")
+        except Exception as e:
+            logger.error(f"AGAPE-BTC-PERP: Startup recovery failed: {e}")
 
     def run_cycle(self, close_only: bool = False) -> Dict[str, Any]:
         self._cycle_count += 1
