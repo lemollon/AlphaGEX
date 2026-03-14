@@ -32,20 +32,39 @@ export async function dbQuery<T = Record<string, any>>(sql: string): Promise<T[]
     throw new Error('Databricks env vars not configured (DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN)')
   }
 
-  // Bust Databricks SQL warehouse result cache (persists up to 24h, survives
-  // warehouse restarts on serverless).  The result cache is keyed on the full
-  // SQL statement text — any change in the text causes a cache miss.
+  // ──────────────────────────────────────────────────────────────────────
+  // CACHE BYPASS — WHY THIS IS THE ONLY OPTION
   //
-  // The Statement Execution API has NO request-level parameter to disable
-  // caching.  `use_cached_result = false` is a session-level SET command, but
-  // the REST API is stateless (no persistent session), so we cannot use it.
+  // The Databricks SQL warehouse caches query results for up to 24 hours
+  // (remote result cache survives warehouse restarts on serverless).
+  // The cache key is a hash of the SQL statement text.
   //
-  // Adding a unique timestamp comment to every query is the documented
-  // workaround: each request produces a different statement hash, guaranteeing
-  // a cache miss every time.
+  // We investigated three alternatives — NONE of them work:
+  //
+  //   1. Request-level parameter: The Statement Execution API body
+  //      supports warehouse_id, catalog, schema, statement, wait_timeout,
+  //      disposition, format, byte_limit, row_limit, parameters, query_tags.
+  //      There is NO cache disable parameter.
+  //
+  //   2. SET use_cached_result = false: This is a session-level command,
+  //      but the REST API is stateless (no persistent session between
+  //      calls). Sending it as a separate API call has no effect on
+  //      subsequent requests. Multi-statement (semicolons) is also not
+  //      supported by the Statement Execution API.
+  //
+  //   3. Warehouse-level setting: There is no global "disable cache"
+  //      toggle on the warehouse configuration. Cache can only be
+  //      disabled at the session level (which doesn't exist in REST).
+  //
+  // SOLUTION: Append a unique timestamp comment to every query. Since the
+  // cache key is the SQL text hash, a different comment = different hash
+  // = guaranteed cache miss.
   //
   // Ref: https://docs.databricks.com/aws/en/sql/user/queries/query-caching
+  //   "Both the local and the remote caches have a life cycle of 24 hours"
   // Ref: https://community.databricks.com/t5/data-engineering/control-query-caching-using-sql-statement-execution-api/td-p/3561
+  //   Community confirms REST API has no per-request cache control
+  // ──────────────────────────────────────────────────────────────────────
   const cacheBust = `/* ts=${Date.now()} */`
   const statement = `${sql} ${cacheBust}`
 
