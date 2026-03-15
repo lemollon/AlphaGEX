@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import Plotly from 'plotly.js-dist-min';
 import createPlotlyComponent from 'react-plotly.js/factory';
-import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send, Download } from 'lucide-react';
+import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send } from 'lucide-react';
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -126,8 +126,6 @@ export default function GexProfilePage() {
     }
   }, [symbol, chartView, data, API_URL]);
 
-
-
   // ── Fetch ─────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym, clearFirst = false) => {
     try {
@@ -155,13 +153,13 @@ export default function GexProfilePage() {
     try {
       if (clearFirst) { setIntradayTicks([]); setIntradayBars([]); }
       setIntradayLoading(true);
-      // Always use fallback to ensure we show the last trading session's data
+      const fb = useFallback ? '&fallback=true' : '';
       const [ticksRes, barsRes] = await Promise.all([
-        fetch(`${API_URL}/api/spreadworks/intraday-ticks?symbol=${sym}&interval=5&fallback=true`).then(r => r.json()),
-        fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min&fallback=true`).then(r => r.json()),
+        fetch(`${API_URL}/api/spreadworks/intraday-ticks?symbol=${sym}&interval=5${fb}`).then(r => r.json()),
+        fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min${fb}`).then(r => r.json()),
       ]);
-      if (ticksRes?.success && ticksRes?.data?.ticks?.length > 0) setIntradayTicks(ticksRes.data.ticks);
-      if (barsRes?.success && barsRes?.data?.bars?.length > 0) {
+      if (ticksRes?.success && ticksRes?.data?.ticks) setIntradayTicks(ticksRes.data.ticks);
+      if (barsRes?.success && barsRes?.data?.bars) {
         setIntradayBars(barsRes.data.bars);
         if (barsRes.data.session_date) setSessionDate(barsRes.data.session_date);
       }
@@ -174,15 +172,13 @@ export default function GexProfilePage() {
 
   const refreshBars = useCallback(async (sym) => {
     try {
-      const res = await fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min&fallback=true`);
+      const res = await fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min`);
       const json = await res.json();
-      if (json?.success && json?.data?.bars?.length > 0) setIntradayBars(json.data.bars);
+      if (json?.success && json?.data?.bars) setIntradayBars(json.data.bars);
     } catch { /* silent */ }
   }, []);
 
   // Initial load + symbol change
-  // GEX: uses TradingVolatility next-day data when market closed (Monday's profile on weekends)
-  // Candles: uses Tradier fallback to show last session (Friday's candles on weekends)
   useEffect(() => {
     fetchGexData(symbol, true);
     fetchIntradayTicks(symbol, true, true);
@@ -319,7 +315,7 @@ export default function GexProfilePage() {
 
   if (loading && !data) {
     return (
-      <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+      <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
         <div className="flex items-center justify-center h-[60vh] text-text-muted gap-2.5 text-sm">
           <span className="inline-block animate-[sw-spin_1s_linear_infinite]">&#8635;</span>
           Loading GEX data...
@@ -329,7 +325,7 @@ export default function GexProfilePage() {
   }
 
   return (
-    <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+    <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
       {/* Title */}
       <div className="flex items-center gap-2.5 text-[22px] font-extrabold text-white tracking-tight mb-1">
         <Activity size={28} className="text-accent" />
@@ -491,14 +487,14 @@ export default function GexProfilePage() {
                 <button
                   onClick={postScreenshotToDiscord}
                   disabled={screenshotting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.4)] bg-[rgba(88,101,242,0.15)] text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.25)] hover:border-[rgba(88,101,242,0.6)] disabled:opacity-50"
-                  title="Post chart screenshot to Discord"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.3)] bg-[rgba(88,101,242,0.1)] text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.2)] hover:border-[rgba(88,101,242,0.5)] disabled:opacity-50"
+                  title="Post screenshot to Discord"
                 >
-                  <Send size={14} />
-                  {screenshotting ? 'Posting...' : 'Push to Discord'}
+                  <Send size={12} />
+                  {screenshotting ? 'Posting...' : 'Discord'}
                 </button>
                 {discordMsg && (
-                  <span className={`text-[12px] font-semibold ${discordMsg.includes('Posted') || discordMsg.includes('Discord') ? 'text-sw-green' : 'text-sw-red'}`}>
+                  <span className={`text-[11px] font-semibold ${discordMsg.includes('Posted') ? 'text-sw-green' : 'text-sw-red'}`}>
                     {discordMsg}
                   </span>
                 )}

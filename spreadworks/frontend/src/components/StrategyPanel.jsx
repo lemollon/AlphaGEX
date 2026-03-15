@@ -159,7 +159,7 @@ export default function StrategyPanel({
   onRefreshAlerts,
 }) {
   const [strategy, setStrategy] = useState(STRATEGY_TYPES.DOUBLE_DIAGONAL);
-  const [inputMode, setInputMode] = useState(INPUT_MODES.LIVE_CHAIN);
+  const [inputMode, setInputMode] = useState(INPUT_MODES.MANUAL);
   const [legs, setLegs] = useState(DEFAULT_LEGS[STRATEGY_TYPES.DOUBLE_DIAGONAL]);
   const [contracts, setContracts] = useState(1);
   const [expirations, setExpirations] = useState([]);
@@ -172,16 +172,12 @@ export default function StrategyPanel({
   const [saveMsg, setSaveMsg] = useState('');
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState('');
-  const [discordPostType, setDiscordPostType] = useState('pnl'); // 'pnl' or 'gex_profile'
-  const [gexUse0dte, setGexUse0dte] = useState(false);
 
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
-  const [chainOptions, setChainOptions] = useState({});
 
   const prevSymbolRef = useRef(symbol);
-  const hasAutoSelectedExp = useRef(false);
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
       prevSymbolRef.current = symbol;
@@ -363,7 +359,6 @@ export default function StrategyPanel({
           gex_suggestion: gexSuggestion?.rationale || '',
           pricing_mode: calcResult.pricing_mode || '',
           pnl_curve: calcResult.pnl_curve || [],
-          post_type: discordPostType,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -398,34 +393,7 @@ export default function StrategyPanel({
     fetchExpirations();
   }, [inputMode, symbol]);
 
-  // Auto-select first expiration (0DTE preferred) when expirations load
-  useEffect(() => {
-    if (inputMode !== INPUT_MODES.LIVE_CHAIN || expirations.length === 0 || hasAutoSelectedExp.current) return;
-    hasAutoSelectedExp.current = true;
-    const zeroDte = expirationsWithDte?.find(e => e.dte === 0);
-    const target = zeroDte?.date || expirations[0];
-    if (!target) return;
-    setLegs(prev => {
-      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) return { ...prev, shortExpiration: prev.shortExpiration || target };
-      if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR) return { ...prev, frontExpiration: prev.frontExpiration || target };
-      return { ...prev, expiration: prev.expiration || target };
-    });
-    // Fetch strikes for the auto-selected expiration
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/api/spreadworks/chain?symbol=${symbol}&expiration=${target}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        setChainStrikes(data.strikes || []);
-        setChainOptions(data.options || {});
-      } catch { /* silent */ }
-    })();
-  }, [expirations, expirationsWithDte, inputMode, strategy, symbol]);
-
-  // Reset auto-select when symbol changes
-  useEffect(() => {
-    hasAutoSelectedExp.current = false;
-  }, [symbol]);
+  const [chainOptions, setChainOptions] = useState({});
 
   const fetchStrikes = useCallback(async (expiration) => {
     if (!expiration) return;
@@ -446,10 +414,8 @@ export default function StrategyPanel({
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ symbol, strategy });
-      if (gexUse0dte) params.set('use_0dte', 'true');
       const res = await fetch(
-        `${API_URL}/api/spreadworks/gex-suggest?${params}`
+        `${API_URL}/api/spreadworks/gex-suggest?symbol=${symbol}&strategy=${strategy}`
       );
       if (!res.ok) throw new Error('Failed to fetch GEX suggestion');
       const data = await res.json();
@@ -499,7 +465,7 @@ export default function StrategyPanel({
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategy, gexUse0dte]);
+  }, [symbol, strategy]);
 
   useEffect(() => {
     if (inputMode === INPUT_MODES.GEX_SUGGEST) {
@@ -600,19 +566,6 @@ export default function StrategyPanel({
             onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
         </div>
       </div>
-
-      {/* 0DTE Toggle — shown when GEX Suggest is active */}
-      {inputMode === INPUT_MODES.GEX_SUGGEST && (
-        <div className="sw-card p-3 flex items-center gap-2.5">
-          <button
-            className={`sw-toggle-btn px-3 py-1.5 text-[11px] font-bold ${gexUse0dte ? 'active' : ''}`}
-            onClick={() => setGexUse0dte(!gexUse0dte)}
-          >0DTE</button>
-          <span className="text-[11px] text-text-secondary">
-            {gexUse0dte ? 'Using 0DTE expiration (next trading day)' : 'Using weekly expirations (default)'}
-          </span>
-        </div>
-      )}
 
       {/* Error */}
       {(error || calcError) && (
@@ -849,19 +802,6 @@ export default function StrategyPanel({
               <Save size={14} />
               {saving ? 'Saving...' : 'Save Position'}
             </button>
-            <div className="flex flex-col gap-1">
-              <div className="sw-label text-[10px] text-text-tertiary">Discord Chart Type</div>
-              <div className="sw-toggle-group">
-                <button
-                  className={`sw-toggle-btn text-[10px] ${discordPostType === 'pnl' ? 'active' : ''}`}
-                  onClick={() => setDiscordPostType('pnl')}
-                >P&L Chart</button>
-                <button
-                  className={`sw-toggle-btn text-[10px] ${discordPostType === 'gex_profile' ? 'active' : ''}`}
-                  onClick={() => setDiscordPostType('gex_profile')}
-                >GEX Profile</button>
-              </div>
-            </div>
             <button
               className="sw-btn-secondary w-full flex items-center justify-center gap-2 !border-sw-purple/25 !text-sw-purple hover:!bg-sw-purple-dim"
               onClick={handlePushDiscord}

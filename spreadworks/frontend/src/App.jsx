@@ -267,19 +267,19 @@ function BuilderPage() {
                 {screenshotMsg}
               </span>
             )}
-            {!isOpen && dataAsOf && (
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
-                Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
-                  timeZone: 'America/New_York',
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                  hour12: true,
-                })} ET
-              </span>
-            )}
+          {!isOpen && dataAsOf && (
+            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
+              Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+              })} ET
+            </span>
+          )}
           </div>
         </div>
 
