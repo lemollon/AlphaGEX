@@ -89,8 +89,19 @@ export async function GET(
        WHERE status = 'open' ${dteFilter}`,
     )
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery])
+    // Pending order count (FLAME only — graceful fallback if table doesn't exist)
+    const pendingCountQuery = bot === 'flame'
+      ? dbQuery(
+          `SELECT COUNT(*) as cnt
+           FROM ${botTable(bot, 'pending_orders')}
+           WHERE status = 'pending'
+             AND created_date = ${CT_TODAY}
+             ${dteFilter}`,
+        ).catch(() => [{ cnt: 0 }])
+      : Promise.resolve([{ cnt: 0 }])
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery])
 
     const acct = accountRows[0]
     const startingCapital = num(acct?.starting_capital) || 10000
@@ -156,11 +167,14 @@ export async function GET(
       }
     }
 
+    const pendingOrderCount = int(pendingCountRows[0]?.cnt)
+
     // Derive bot_state from heartbeat status + action
     const hbStatus = hb?.status || 'unknown'
     const hbAction = hbDetails.action || ''
     const botState =
       hbStatus === 'error' ? 'error'
+      : hbAction === 'awaiting_fill' || hbAction === 'pending_fill' ? 'awaiting_fill'
       : hbAction === 'monitoring' ? 'monitoring'
       : hbAction === 'traded' || hbAction === 'closed' ? 'traded'
       : hbAction === 'outside_window' || hbAction === 'outside_entry_window' ? 'market_closed'
@@ -193,6 +207,7 @@ export async function GET(
         max_drawdown: num(acct?.max_drawdown),
       },
       open_positions: int(positionCountRows[0]?.cnt),
+      pending_order_count: pendingOrderCount,
       last_scan: hb?.last_heartbeat || null,
       last_snapshot: snapshotRows[0]?.snapshot_time || null,
       scan_count: int(hb?.scan_count),
