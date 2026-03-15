@@ -641,9 +641,21 @@ async def gex_suggest(
             "GEX data incomplete — flip_point and spot_price required for suggestions",
         )
 
-    if not call_wall:
+    # GEX data often comes from SPX options (~10x SPY price).
+    # Detect and scale down to SPY level when needed.
+    def _maybe_scale(level: float) -> float:
+        if spot and level and level > spot * 5:
+            return level / 10.0
+        return level
+
+    flip = _maybe_scale(flip)
+    if call_wall:
+        call_wall = _maybe_scale(call_wall)
+    else:
         call_wall = spot + (spot * 0.01)
-    if not put_wall:
+    if put_wall:
+        put_wall = _maybe_scale(put_wall)
+    else:
         put_wall = spot - (spot * 0.01)
 
     def _round_strike(v: float) -> float:

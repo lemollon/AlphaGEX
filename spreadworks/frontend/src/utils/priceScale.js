@@ -21,7 +21,17 @@ export function computePriceRange(candles, strikes, _gexData, bufferPct = 0.005)
     }
   }
 
-  if (strikes) {
+  // Include strikes only if they're within a reasonable range of candle prices.
+  // GEX suggest can return SPX-level strikes (~6600) for SPY (~660) — skip those.
+  if (strikes && prices.length > 0) {
+    const candleMid = (Math.min(...prices) + Math.max(...prices)) / 2;
+    for (const s of Object.values(strikes)) {
+      const n = Number(s);
+      if (s && !isNaN(n) && isFinite(n) && Math.abs(n - candleMid) < candleMid * 0.15) {
+        prices.push(n);
+      }
+    }
+  } else if (strikes) {
     for (const s of Object.values(strikes)) {
       const n = Number(s);
       if (s && !isNaN(n) && isFinite(n)) prices.push(n);
