@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { STRAT_LABELS } from '../lib/strategies';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -58,7 +57,8 @@ export default function PositionTracker() {
     }
   };
 
-  const stratLabel = (s) => STRAT_LABELS[s] || s;
+  const stratLabel = (s) =>
+    s === 'double_diagonal' ? 'DD' : s === 'double_calendar' ? 'DC' : s;
 
   return (
     <div className="panel position-panel">

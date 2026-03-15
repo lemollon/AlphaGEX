@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -22,17 +21,29 @@ const CHART_HEIGHT = 500;
 function MarketStatusBadge() {
   const { isOpen, statusText } = useMarketHours();
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all duration-150 ${
-      isOpen
-        ? 'bg-sw-green-dim border-sw-green/20 text-sw-green'
-        : 'bg-sw-red-dim border-sw-red/15 text-sw-red'
-    }`}>
-      <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-        isOpen
-          ? 'bg-sw-green animate-pulse-dot shadow-[0_0_6px_rgba(34,197,94,0.5)]'
-          : 'bg-sw-red'
-      }`} />
-      {isOpen ? 'Market Open' : statusText}
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '4px 10px',
+      borderRadius: 20,
+      background: isOpen ? 'var(--green-dim)' : 'rgba(255, 82, 82, 0.08)',
+      border: `1px solid ${isOpen ? 'rgba(0, 230, 118, 0.2)' : 'rgba(255, 82, 82, 0.15)'}`,
+    }}>
+      <span style={{
+        display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+        background: isOpen ? 'var(--green)' : 'var(--red)',
+        boxShadow: isOpen ? '0 0 6px rgba(0, 230, 118, 0.5)' : 'none',
+        animation: isOpen ? 'sw-pulse 2s ease-in-out infinite' : 'none',
+      }} />
+      <span style={{
+        color: isOpen ? 'var(--green)' : 'var(--red)',
+        fontSize: 11,
+        fontWeight: 600,
+        fontFamily: 'var(--font-ui)',
+      }}>
+        {isOpen ? 'Market Open' : statusText}
+      </span>
     </div>
   );
 }
@@ -72,66 +83,80 @@ function NextPostCountdown() {
 
   if (!text) return null;
   return (
-    <span className="flex items-center gap-1.5 text-text-muted text-[11px] font-medium font-[var(--font-ui)]">
-      <Clock size={12} className="opacity-60" />
+    <span style={{
+      color: 'var(--text-muted)',
+      fontSize: 11,
+      fontFamily: 'var(--font-ui)',
+      fontWeight: 500,
+    }}>
       {text}
     </span>
   );
 }
 
 function NavBar() {
+  const navLinkStyle = ({ isActive }) => ({
+    padding: '0 18px',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    color: isActive ? '#fff' : 'var(--text-tertiary)',
+    background: isActive ? 'rgba(68, 138, 255, 0.08)' : 'transparent',
+    borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+    textDecoration: 'none',
+    fontWeight: isActive ? 700 : 500,
+    fontSize: 13,
+    letterSpacing: '0.01em',
+    transition: 'all 0.2s ease',
+  });
+
   return (
-    <nav className="flex items-center h-[48px] px-5 border-b border-border-subtle shadow-lg font-[var(--font-ui)] text-[13px]"
-      style={{ background: 'linear-gradient(180deg, #0e0e28 0%, #0a0a1e 100%)' }}>
+    <nav style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 0,
+      background: 'linear-gradient(180deg, #0e0e28 0%, #0a0a1e 100%)',
+      borderBottom: '1px solid var(--border-subtle)',
+      fontFamily: 'var(--font-ui)',
+      fontSize: 13,
+      padding: '0 16px',
+      height: 52,
+      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.4)',
+    }}>
       {/* Logo */}
-      <div className="flex items-center gap-2 pr-6 mr-4 border-r border-border-subtle/50 h-full">
-        <div className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-md text-xs text-white font-extrabold"
-          style={{
-            background: 'linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%)',
-            boxShadow: '0 3px 12px rgba(68, 138, 255, 0.35)',
-          }}>
-          S
-        </div>
-        <span className="font-extrabold text-[15px] text-white tracking-tight">
-          Spread<span className="text-accent">Works</span>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '0 20px 0 0',
+        marginRight: 8,
+        borderRight: '1px solid rgba(30, 30, 70, 0.5)',
+        height: '100%',
+      }}>
+        <div style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 30,
+          height: 30,
+          borderRadius: 8,
+          background: 'linear-gradient(135deg, var(--accent) 0%, #7c4dff 100%)',
+          fontSize: 14,
+          color: '#fff',
+          fontWeight: 800,
+          boxShadow: '0 4px 16px rgba(68, 138, 255, 0.4), 0 0 30px rgba(68, 138, 255, 0.15)',
+        }}>S</div>
+        <span style={{ fontWeight: 800, fontSize: 17, color: '#fff', letterSpacing: '-0.5px' }}>
+          Spread<span style={{ color: 'var(--accent-bright)' }}>Works</span>
         </span>
       </div>
 
       {/* Nav Links */}
-      <div className="flex items-center gap-1.5 h-full">
-        <NavLink to="/" end className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
-          }`
-        }>
-          <Layers size={13} />
-          Builder
-        </NavLink>
-        <NavLink to="/positions" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
-          }`
-        }>
-          <BarChart3 size={13} />
-          Positions
-        </NavLink>
-        <NavLink to="/gex-profile" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
-          }`
-        }>
-          <Activity size={13} />
-          GEX Profile
-        </NavLink>
-      </div>
+      <NavLink to="/" end style={navLinkStyle}>Builder</NavLink>
+      <NavLink to="/positions" style={navLinkStyle}>Positions</NavLink>
+      <NavLink to="/gex-profile" style={navLinkStyle}>GEX Profile</NavLink>
 
-      <div className="ml-auto flex items-center gap-4">
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14 }}>
         <NextPostCountdown />
         <MarketStatusBadge />
       </div>
@@ -190,7 +215,7 @@ function BuilderPage() {
   };
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
       <StrategyPanel
         symbol={symbol}
         spotPrice={spotPrice}
@@ -202,23 +227,46 @@ function BuilderPage() {
         alerts={alerts}
         onRefreshAlerts={fetchAlerts}
       />
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
         {/* Chart Header */}
-        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border-subtle font-[var(--font-ui)] text-[13px]"
-          style={{ background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '10px 16px',
+          background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)',
+          borderBottom: '1px solid var(--border-subtle)',
+          fontFamily: 'var(--font-ui)',
+          fontSize: 13,
+        }}>
           <SymbolSelector value={symbol} onChange={handleSymbolChange} />
-          <span className="text-text-muted text-xs font-medium">
+          <span style={{ color: 'var(--text-muted)', fontSize: 12, fontWeight: 500 }}>
             {interval === '15min' ? '15M' : interval === '1h' ? '1H' : '4H'}
           </span>
-          <span className="text-text-muted">&middot;</span>
-          <span className="text-text-secondary font-medium">Price + Spread Payoff</span>
+          <span style={{ color: 'var(--text-muted)' }}>&middot;</span>
+          <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Price + Spread Payoff</span>
           {spotPrice && (
-            <span className="text-accent font-bold text-sm font-[var(--font-mono)] ml-1">
+            <span style={{
+              color: 'var(--accent)',
+              fontWeight: 700,
+              fontSize: 14,
+              fontFamily: 'var(--font-mono)',
+              marginLeft: 4,
+            }}>
               ${spotPrice.toFixed(2)}
             </span>
           )}
           {!isOpen && dataAsOf && (
-            <span className="ml-auto px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
+            <span style={{
+              marginLeft: 'auto',
+              padding: '3px 10px',
+              background: 'var(--yellow-dim)',
+              border: '1px solid rgba(255, 214, 0, 0.2)',
+              borderRadius: 20,
+              color: 'var(--yellow)',
+              fontSize: 11,
+              fontWeight: 600,
+            }}>
               Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
                 timeZone: 'America/New_York',
                 weekday: 'short',
@@ -232,8 +280,8 @@ function BuilderPage() {
           )}
         </div>
 
-        {/* Chart Area */}
-        <div className="flex-1 min-h-0 flex relative">
+        {/* Chart Area — UNTOUCHED */}
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', position: 'relative' }}>
           {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
@@ -262,7 +310,11 @@ function BuilderPage() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex flex-col h-screen w-full bg-bg-base overflow-hidden">
+      <div style={{
+        display: 'flex', flexDirection: 'column',
+        height: '100vh', width: '100%',
+        background: 'var(--bg-base)', overflow: 'hidden',
+      }}>
         <NavBar />
         <Routes>
           <Route path="/" element={<BuilderPage />} />

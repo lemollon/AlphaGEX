@@ -5,6 +5,68 @@ const SUPPORTED_SYMBOLS = [
   'AMZN', 'META', 'GOOGL', 'MSFT', 'AMD', 'DIA', 'XSP',
 ];
 
+const s = {
+  wrapper: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+  },
+  input: {
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-sm)',
+    color: '#fff',
+    fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
+    fontSize: 14,
+    padding: '4px 10px',
+    width: 76,
+    outline: 'none',
+    textTransform: 'uppercase',
+    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
+  },
+  inputFocused: {
+    borderColor: 'var(--accent)',
+    boxShadow: '0 0 0 2px var(--accent-glow)',
+  },
+  dropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 4,
+    background: 'var(--bg-elevated)',
+    border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-md)',
+    zIndex: 100,
+    maxHeight: 220,
+    overflowY: 'auto',
+    minWidth: 76,
+    boxShadow: 'var(--shadow-lg)',
+    animation: 'sw-fadeIn 0.15s ease',
+  },
+  option: (isHighlighted) => ({
+    padding: '7px 12px',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 13,
+    fontWeight: 600,
+    color: isHighlighted ? '#fff' : 'var(--text-secondary)',
+    background: isHighlighted ? 'rgba(68, 138, 255, 0.15)' : 'transparent',
+    transition: 'background var(--transition-fast)',
+  }),
+  error: {
+    color: 'var(--red)',
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 500,
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 4,
+    whiteSpace: 'nowrap',
+  },
+};
+
 export default function SymbolSelector({ value, onChange }) {
   const [inputVal, setInputVal] = useState(value);
   const [open, setOpen] = useState(false);
@@ -101,27 +163,23 @@ export default function SymbolSelector({ value, onChange }) {
   };
 
   return (
-    <div ref={wrapperRef} className="relative inline-flex items-center">
+    <div ref={wrapperRef} style={s.wrapper}>
       <input
         value={inputVal}
         onChange={handleInput}
         onKeyDown={handleKeyDown}
         onFocus={handleFocus}
         onBlur={handleBlur}
-        className={`bg-bg-elevated border rounded-md text-white font-bold font-[var(--font-mono)] text-sm px-2.5 py-1 w-[76px] outline-none uppercase transition-all duration-150 ${
-          focused ? 'border-accent shadow-[0_0_0_2px_var(--color-accent-glow)]' : 'border-border-default'
-        }`}
+        style={{ ...s.input, ...(focused ? s.inputFocused : {}) }}
         spellCheck={false}
         aria-label="Symbol"
       />
       {open && filtered.length > 0 && (
-        <div className="absolute top-full left-0 mt-1 bg-bg-elevated border border-border-default rounded-lg z-[100] max-h-[220px] overflow-y-auto min-w-[76px] shadow-lg animate-fade-in">
+        <div style={s.dropdown}>
           {filtered.map((sym, i) => (
             <div
               key={sym}
-              className={`px-3 py-1.5 cursor-pointer font-[var(--font-mono)] text-[13px] font-semibold transition-colors duration-150 ${
-                i === highlighted ? 'text-white bg-accent/15' : 'text-text-secondary hover:bg-bg-hover'
-              }`}
+              style={s.option(i === highlighted)}
               onMouseDown={(e) => {
                 e.preventDefault();
                 commitSymbol(sym);
@@ -133,11 +191,7 @@ export default function SymbolSelector({ value, onChange }) {
           ))}
         </div>
       )}
-      {error && !open && (
-        <span className="absolute top-full left-0 mt-1 text-sw-red text-[11px] font-[var(--font-ui)] font-medium whitespace-nowrap">
-          {error}
-        </span>
-      )}
+      {error && !open && <span style={s.error}>{error}</span>}
     </div>
   );
 }
