@@ -25,22 +25,7 @@ export default function PayoffPanel({
   const plotH = height - 10 - 28; // match candle chart top/bottom padding
   const topPad = 10;
 
-  // If pnl_curve prices are completely outside the candle price range
-  // (e.g. SPX-level strikes on a SPY chart), use the pnl_curve's own
-  // price range so the payoff diagram is still visible.
-  const effectiveRange = useMemo(() => {
-    if (!pnlCurve || pnlCurve.length === 0) return { min: minPrice, max: maxPrice };
-    const curveMin = pnlCurve[0].price;
-    const curveMax = pnlCurve[pnlCurve.length - 1].price;
-    // Check if curve overlaps with the candle range
-    const overlaps = curveMax >= minPrice && curveMin <= maxPrice;
-    if (overlaps) return { min: minPrice, max: maxPrice };
-    // No overlap — use the curve's own range with buffer
-    const buf = (curveMax - curveMin) * 0.05;
-    return { min: curveMin - buf, max: curveMax + buf };
-  }, [pnlCurve, minPrice, maxPrice]);
-
-  const pToY = (p) => topPad + priceToY(p, effectiveRange.min, effectiveRange.max, plotH);
+  const pToY = (p) => topPad + priceToY(p, minPrice, maxPrice, plotH);
 
   const paths = useMemo(() => {
     if (!pnlCurve || pnlCurve.length === 0) return null;
@@ -69,26 +54,26 @@ export default function PayoffPanel({
     const longPrices = [strikes.longPutStrike, strikes.longCallStrike].filter(Boolean).map(Number);
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
     longPrices.forEach(p => {
-      if (p >= effectiveRange.min && p <= effectiveRange.max) {
+      if (p >= minPrice && p <= maxPrice) {
         lines.push({ y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
       }
     });
     shortPrices.forEach(p => {
-      if (p >= effectiveRange.min && p <= effectiveRange.max) {
+      if (p >= minPrice && p <= maxPrice) {
         lines.push({ y: pToY(p), color: '#ef4444', dash: '5,4' });
       }
     });
     return lines;
-  }, [strikes, effectiveRange, height]);
+  }, [strikes, minPrice, maxPrice, height]);
 
   const spotY = spotPrice ? pToY(spotPrice) : null;
 
-  // Price axis ticks (same as candle chart, but uses effectiveRange)
-  const range = effectiveRange.max - effectiveRange.min;
-  const step = range > 100 ? 20 : range > 30 ? 5 : range > 15 ? 2 : 1;
-  const startP = Math.ceil(effectiveRange.min / step) * step;
+  // Price axis ticks (same as candle chart)
+  const range = maxPrice - minPrice;
+  const step = range > 30 ? 5 : range > 15 ? 2 : 1;
+  const startP = Math.ceil(minPrice / step) * step;
   const priceTicks = [];
-  for (let p = startP; p <= effectiveRange.max; p += step) {
+  for (let p = startP; p <= maxPrice; p += step) {
     priceTicks.push({ price: p, y: pToY(p) });
   }
 
