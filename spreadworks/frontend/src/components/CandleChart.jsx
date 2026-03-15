@@ -1,295 +1,209 @@
 import { useMemo } from 'react';
-import Plotly from 'plotly.js-dist-min';
-import createPlotlyComponent from 'react-plotly.js/factory';
-
-const Plot = createPlotlyComponent(Plotly);
+import { priceToY } from '../utils/priceScale';
 
 /**
- * Plotly-based candlestick chart with GEX overlay — matches AlphaGEX GEX Profile.
+ * Pure SVG candlestick chart. Renders OHLCV bars, volume histogram,
+ * strike lines, GEX lines, and current price marker.
+ * Shares the same price scale with PayoffPanel via minPrice/maxPrice props.
  *
- * Features:
- *   - 5-min OHLC candlesticks (from intraday-bars)
- *   - Per-strike GEX bars on the right side (horizontal rectangles)
- *   - Reference lines: flip point (yellow), call wall (cyan), put wall (purple)
- *   - ±1σ expected move band (orange)
- *   - Strategy strike overlay lines (green = long, red = short)
- *   - Current price badge
+ * Layout constants:
+ *   CHART_LEFT_MARGIN (50px) — price axis labels
+ *   CHART_RIGHT_MARGIN (80px) — always empty, separates candles from payoff panel
+ *   CANDLE_SPACING (9px) — center-to-center distance between candles
  *
- * Props:
- *   intradayBars  — Array of { time, open, high, low, close, volume }
- *   sortedStrikes — Array of { strike, net_gamma, abs_net_gamma }
- *   levels        — { gex_flip, call_wall, put_wall, upper_1sd, lower_1sd, expected_move }
- *   strikes       — Strategy strikes { longPutStrike, shortPutStrike, shortCallStrike, longCallStrike }
- *   spotPrice     — Current spot price
- *   height        — Chart height in pixels
- *   sessionDate   — Session date label
- *   yRangeOut     — Callback to pass computed [yMin, yMax] to parent for PayoffPanel sync
+ * If more candles than fit, older ones are clipped on the LEFT — never the right.
+ * The 80px right margin zone is always clean: no candle body, wick, volume bar,
+ * or date label enters it. Only the current-price dashed vertical line and
+ * $XXX.XX badge sit in that zone.
  */
 
-function toCentralPlotly(iso) {
-  const d = new Date(iso);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Chicago',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).formatToParts(d);
-  const get = (t) => parts.find(p => p.type === t)?.value ?? '00';
-  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
-}
-
-function formatGex(num, decimals = 1) {
-  const abs = Math.abs(num);
-  if (abs >= 1e9) return `${(num / 1e9).toFixed(decimals)}B`;
-  if (abs >= 1e6) return `${(num / 1e6).toFixed(decimals)}M`;
-  if (abs >= 1e3) return `${(num / 1e3).toFixed(decimals)}K`;
-  return num.toFixed(decimals);
-}
+const CHART_LEFT_MARGIN = 50;
+const CHART_RIGHT_MARGIN = 80;
+const CANDLE_SPACING = 9;
+const BAR_WIDTH = 6;
+const TOP_PAD = 10;
+const BOTTOM_PAD = 28;
 
 export default function CandleChart({
-  intradayBars = [],
-  sortedStrikes = [],
-  levels,
+  candles,
+  minPrice,
+  maxPrice,
+  height,
   strikes,
+  gexData,
   spotPrice,
-  height = 500,
-  sessionDate,
-  yRangeOut,
 }) {
-  const plotData = useMemo(() => {
-    const hasBars = intradayBars.length > 0;
+  const chartData = useMemo(() => {
+    if (!candles || candles.length === 0) return null;
 
-    // Candlestick data
-    const candleTimes = hasBars ? intradayBars.map(b => toCentralPlotly(b.time)) : [];
-    const priceValues = hasBars
-      ? [...intradayBars.map(b => b.high), ...intradayBars.map(b => b.low)]
-      : spotPrice ? [spotPrice] : [];
+    const svgWidth = 900;
+    const availableWidth = svgWidth - CHART_LEFT_MARGIN - CHART_RIGHT_MARGIN;
+    const maxCandles = Math.floor(availableWidth / CANDLE_SPACING);
+    const visibleCandles = candles.slice(-maxCandles);
 
-    const priceMin = priceValues.length > 0 ? Math.min(...priceValues) : 0;
-    const priceMax = priceValues.length > 0 ? Math.max(...priceValues) : 0;
-    const priceRange = priceMax - priceMin || 1;
+    const plotH = height - TOP_PAD - BOTTOM_PAD;
+    const maxVol = Math.max(...visibleCandles.map(c => c.volume || 0), 1);
+    const pToY = (p) => TOP_PAD + priceToY(p, minPrice, maxPrice, plotH);
+    const lastCandleX = CHART_LEFT_MARGIN + (visibleCandles.length - 1) * CANDLE_SPACING;
 
-    // Filter strikes to visible price range
-    const visibleStrikes = sortedStrikes.filter(ss =>
-      ss.strike >= priceMin - priceRange * 1.5 && ss.strike <= priceMax + priceRange * 1.5
-    );
+    const bars = visibleCandles.map((c, i) => {
+      const x = CHART_LEFT_MARGIN + i * CANDLE_SPACING - BAR_WIDTH / 2;
+      const centerX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
+      const isUp = c.close >= c.open;
+      const color = isUp ? '#26a69a' : '#ef5350';
+      const bodyTop = pToY(Math.max(c.open, c.close));
+      const bodyBottom = pToY(Math.min(c.open, c.close));
+      const bodyHeight = Math.max(bodyBottom - bodyTop, 1);
+      const wickTop = pToY(c.high);
+      const wickBottom = pToY(c.low);
+      const volH = ((c.volume || 0) / maxVol) * 40;
+      const volY = height - BOTTOM_PAD - volH;
 
-    const maxGamma = visibleStrikes.length > 0
-      ? Math.max(...visibleStrikes.map(ss => ss.abs_net_gamma), 0.001) : 1;
-
-    // Layout: candles [0 – 0.78] | gap | GEX bars [0.82 – 0.98] | price axis in r margin
-    const barLeft = 0.82;
-    const barRight = 0.98;
-    const barMaxWidth = barRight - barLeft;
-    const strikeSpacing = visibleStrikes.length > 1
-      ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35 : 0.5;
-
-    // GEX bar shapes
-    const gexShapes = visibleStrikes.map(ss => {
-      const pct = (ss.abs_net_gamma / maxGamma) * barMaxWidth;
-      const color = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)';
-      const borderColor = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)';
       return {
-        type: 'rect', xref: 'paper', yref: 'y',
-        x0: barRight, x1: barRight - pct,
-        y0: ss.strike - strikeSpacing, y1: ss.strike + strikeSpacing,
-        fillcolor: color, line: { color: borderColor, width: 1 }, layer: 'above',
+        x, centerX, bodyTop, bodyHeight, wickTop, wickBottom,
+        color, volH, volY, volColor: isUp ? '#26a69a44' : '#ef535044',
+        time: c.time,
       };
     });
 
-    // GEX value annotations
-    const gexAnnotations = visibleStrikes
-      .filter(ss => ss.abs_net_gamma / maxGamma > 0.15)
-      .map(ss => ({
-        xref: 'paper', yref: 'y',
-        x: barRight - (ss.abs_net_gamma / maxGamma) * barMaxWidth - 0.005,
-        y: ss.strike,
-        text: `${formatGex(ss.net_gamma)} [$${ss.strike}]`,
-        showarrow: false,
-        font: { color: ss.net_gamma >= 0 ? '#22c55e' : '#ef4444', size: 9, family: 'monospace' },
-        xanchor: 'right', yanchor: 'middle',
-      }));
-
-    // Reference lines
-    const refLines = [];
-    const flip = levels?.gex_flip;
-    const cw = levels?.call_wall;
-    const pw = levels?.put_wall;
-    const upper_1sd = levels?.upper_1sd;
-    const lower_1sd = levels?.lower_1sd;
-    const expected_move = levels?.expected_move;
-
-    if (flip) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: flip, y1: flip, line: { color: '#eab308', width: 2.5, dash: 'dash' } });
-    if (cw) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: cw, y1: cw, line: { color: '#06b6d4', width: 2.5, dash: 'dot' } });
-    if (pw) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: pw, y1: pw, line: { color: '#a855f7', width: 2.5, dash: 'dot' } });
-    if (upper_1sd) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: upper_1sd, y1: upper_1sd, line: { color: '#f97316', width: 1.5, dash: 'dashdot' } });
-    if (lower_1sd) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: lower_1sd, y1: lower_1sd, line: { color: '#f97316', width: 1.5, dash: 'dashdot' } });
-    if (upper_1sd && lower_1sd) refLines.push({
-      type: 'rect', xref: 'paper', yref: 'y',
-      x0: 0, x1: 1, y0: lower_1sd, y1: upper_1sd,
-      fillcolor: 'rgba(249,115,22,0.06)', line: { width: 0 }, layer: 'below',
-    });
-
-    // Strategy strike lines (from spread builder)
-    const strategyLines = [];
-    if (strikes) {
-      const longPrices = [strikes.longPutStrike, strikes.longCallStrike].filter(Boolean).map(Number);
-      const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
-      longPrices.forEach(p => {
-        if (!isNaN(p)) strategyLines.push({
-          type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: p, y1: p,
-          line: { color: '#22c55e', width: 1.5, dash: 'dash' },
-        });
-      });
-      shortPrices.forEach(p => {
-        if (!isNaN(p)) strategyLines.push({
-          type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: p, y1: p,
-          line: { color: '#ef4444', width: 1.5, dash: 'dash' },
-        });
-      });
+    const dateLabels = [];
+    for (let i = 0; i < visibleCandles.length; i += 20) {
+      const c = visibleCandles[i];
+      const labelX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
+      if (c && c.time && labelX < svgWidth - CHART_RIGHT_MARGIN) {
+        const d = new Date(c.time);
+        const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        dateLabels.push({ x: labelX, label });
+      }
     }
 
-    // Compute Y range
-    const yPoints = [...priceValues];
-    if (flip) yPoints.push(flip);
-    if (cw) yPoints.push(cw);
-    if (pw) yPoints.push(pw);
-    if (upper_1sd) yPoints.push(upper_1sd);
-    if (lower_1sd) yPoints.push(lower_1sd);
-    // Include strategy strikes
-    if (strikes) {
-      [strikes.longPutStrike, strikes.shortPutStrike, strikes.shortCallStrike, strikes.longCallStrike]
-        .filter(Boolean).map(Number).filter(n => !isNaN(n)).forEach(n => yPoints.push(n));
-    }
-    const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0;
-    const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0;
-    const yPad = (yMax - yMin) * 0.15 || 4;
-    const yRange = [yMin - yPad, yMax + yPad];
-
-    // Reference level annotations
-    const refAnnotations = [];
-    if (flip) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: flip, text: `FLIP $${flip.toFixed(0)}`, showarrow: false, font: { color: '#eab308', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (cw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: cw, text: `CALL WALL $${cw.toFixed(0)}`, showarrow: false, font: { color: '#06b6d4', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (pw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: pw, text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false, font: { color: '#a855f7', size: 10 }, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (upper_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.77, y: upper_1sd, text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-    if (lower_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.77, y: lower_1sd, text: `-1σ $${lower_1sd.toFixed(0)}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
-
-    // Strategy strike annotations
-    const strikeAnnotations = [];
-    if (strikes) {
-      const longPrices = [strikes.longPutStrike, strikes.longCallStrike].filter(Boolean).map(Number);
-      const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
-      longPrices.forEach(p => {
-        if (!isNaN(p)) strikeAnnotations.push({
-          xref: 'paper', yref: 'y', x: 0.77, y: p,
-          text: `Long $${p}`, showarrow: false,
-          font: { color: '#22c55e', size: 9 }, xanchor: 'right', yanchor: 'bottom',
-          bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
-        });
-      });
-      shortPrices.forEach(p => {
-        if (!isNaN(p)) strikeAnnotations.push({
-          xref: 'paper', yref: 'y', x: 0.77, y: p,
-          text: `Short $${p}`, showarrow: false,
-          font: { color: '#ef4444', size: 9 }, xanchor: 'right', yanchor: 'top',
-          bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
-        });
-      });
+    const priceTicks = [];
+    const range = maxPrice - minPrice;
+    const step = range > 30 ? 5 : range > 15 ? 2 : 1;
+    const startP = Math.ceil(minPrice / step) * step;
+    for (let p = startP; p <= maxPrice; p += step) {
+      priceTicks.push({ price: p, y: pToY(p) });
     }
 
-    // Candlestick trace
-    const traces = [];
-    if (hasBars) {
-      traces.push({
-        x: candleTimes,
-        open: intradayBars.map(b => b.open),
-        high: intradayBars.map(b => b.high),
-        low: intradayBars.map(b => b.low),
-        close: intradayBars.map(b => b.close),
-        type: 'candlestick',
-        increasing: { line: { color: '#22c55e' }, fillcolor: 'rgba(34,197,94,0.3)' },
-        decreasing: { line: { color: '#ef4444' }, fillcolor: 'rgba(239,68,68,0.8)' },
-        name: 'Price',
-        hoverinfo: 'x+text',
-        text: intradayBars.map(b =>
-          `O:${b.open.toFixed(2)} H:${b.high.toFixed(2)} L:${b.low.toFixed(2)} C:${b.close.toFixed(2)}<br>Vol:${(b.volume || 0).toLocaleString()}`
-        ),
-      });
-    } else if (spotPrice) {
-      // Fallback: single price marker
-      traces.push({
-        x: [new Date().toISOString()],
-        y: [spotPrice],
-        type: 'scatter',
-        mode: 'markers',
-        marker: { color: '#448aff', size: 8 },
-        name: 'Spot',
-      });
-    }
+    return { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX };
+  }, [candles, minPrice, maxPrice, height]);
 
-    return {
-      traces,
-      shapes: [...gexShapes, ...refLines, ...strategyLines],
-      annotations: [...gexAnnotations, ...refAnnotations, ...strikeAnnotations],
-      yRange,
-      hasBars,
-    };
-  }, [intradayBars, sortedStrikes, levels, strikes, spotPrice]);
-
-  // Sync yRange to parent for PayoffPanel alignment
-  useMemo(() => {
-    if (yRangeOut && plotData.yRange) {
-      yRangeOut(plotData.yRange);
-    }
-  }, [plotData.yRange, yRangeOut]);
-
-  if (!plotData.hasBars && !spotPrice) {
+  if (!chartData) {
     return (
       <div className="flex-[3] flex flex-col items-center justify-center text-text-muted font-[var(--font-mono)] text-xs bg-bg-base gap-1.5">
         <span>No candle data available</span>
         <span className="text-[10px] text-text-muted/60">
-          Data loads from AlphaGEX — check connection during market hours.
+          Load SpreadWorks during market hours to populate the cache for offline use.
         </span>
       </div>
     );
   }
 
+  const { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX } = chartData;
+
+  // Strike overlay lines
+  const strikeLines = [];
+  if (strikes) {
+    const longPrices = [strikes.longPutStrike, strikes.longCallStrike].filter(Boolean).map(Number);
+    const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
+    longPrices.forEach(p => {
+      if (p >= minPrice && p <= maxPrice) {
+        strikeLines.push({ price: p, y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
+      }
+    });
+    shortPrices.forEach(p => {
+      if (p >= minPrice && p <= maxPrice) {
+        strikeLines.push({ price: p, y: pToY(p), color: '#ef4444', dash: '5,4', label: `$${p}` });
+      }
+    });
+  }
+
+  // GEX overlay lines
+  const gexLines = [];
+  if (gexData) {
+    if (gexData.flip_point && gexData.flip_point >= minPrice && gexData.flip_point <= maxPrice) {
+      gexLines.push({ y: pToY(gexData.flip_point), color: '#ffd600', dash: '7,5', label: `$${gexData.flip_point.toFixed(0)}` });
+    }
+    if (gexData.call_wall && gexData.call_wall >= minPrice && gexData.call_wall <= maxPrice) {
+      gexLines.push({ y: pToY(gexData.call_wall), color: '#00bcd4', dash: '7,5', label: `$${gexData.call_wall.toFixed(0)}` });
+    }
+    if (gexData.put_wall && gexData.put_wall >= minPrice && gexData.put_wall <= maxPrice) {
+      gexLines.push({ y: pToY(gexData.put_wall), color: '#c855ff', dash: '7,5', label: `$${gexData.put_wall.toFixed(0)}` });
+    }
+  }
+
+  const spotY = spotPrice ? pToY(spotPrice) : null;
+
   return (
     <div className="flex-[3] overflow-hidden bg-bg-base">
-      <Plot
-        data={plotData.traces}
-        layout={{
-          height,
-          paper_bgcolor: '#0a0a14',
-          plot_bgcolor: '#0f0f1e',
-          font: { color: '#9ca3af', family: 'Inter, Arial, sans-serif', size: 11 },
-          xaxis: {
-            type: 'date',
-            gridcolor: '#1a1a2e',
-            showgrid: true,
-            rangeslider: { visible: false },
-            hoverformat: '%I:%M %p CT',
-            tickformat: '%I:%M %p',
-            domain: [0, 0.78],
-          },
-          yaxis: {
-            gridcolor: '#1a1a2e',
-            showgrid: true,
-            side: 'right',
-            tickformat: '$,.0f',
-            range: plotData.yRange,
-            autorange: false,
-          },
-          shapes: plotData.shapes,
-          annotations: plotData.annotations,
-          margin: { t: 10, b: 40, l: 10, r: 70 },
-          hovermode: 'x unified',
-          showlegend: false,
-          transition: { duration: 300, easing: 'cubic-in-out' },
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: '100%', height: '100%' }}
-      />
+      <svg
+        width="100%"
+        height={height}
+        viewBox={`0 0 ${svgWidth} ${height}`}
+        preserveAspectRatio="none"
+        style={{ display: 'block' }}
+      >
+        {/* Grid lines */}
+        {priceTicks.map((t, i) => (
+          <g key={i}>
+            <line x1={CHART_LEFT_MARGIN} y1={t.y} x2={svgWidth} y2={t.y} stroke="#1a1a2e" strokeWidth="0.5" />
+            <text x={CHART_LEFT_MARGIN - 6} y={t.y + 3} textAnchor="end" fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
+              ${t.price}
+            </text>
+          </g>
+        ))}
+
+        {/* Strike lines */}
+        {strikeLines.map((sl, i) => (
+          <g key={`strike-${i}`}>
+            <line x1={CHART_LEFT_MARGIN} y1={sl.y} x2={svgWidth} y2={sl.y} stroke={sl.color} strokeWidth="1" strokeDasharray={sl.dash} opacity="0.7" />
+            <text x={CHART_LEFT_MARGIN + 4} y={sl.y - 3} fill={sl.color} fontSize="10" fontWeight="600" fontFamily="'Courier New', monospace">
+              {sl.label}
+            </text>
+          </g>
+        ))}
+
+        {/* GEX lines */}
+        {gexLines.map((gl, i) => (
+          <g key={`gex-${i}`}>
+            <line x1={CHART_LEFT_MARGIN} y1={gl.y} x2={svgWidth} y2={gl.y} stroke={gl.color} strokeWidth="1" strokeDasharray={gl.dash} opacity="0.5" />
+            <text x={CHART_LEFT_MARGIN + 4} y={gl.y + 12} fill={gl.color} fontSize="9" fontFamily="'Courier New', monospace" opacity="0.7">
+              {gl.label}
+            </text>
+          </g>
+        ))}
+
+        {/* Volume bars */}
+        {bars.map((b, i) => (
+          <rect key={`vol-${i}`} x={b.x} y={b.volY} width={BAR_WIDTH} height={b.volH} fill={b.volColor} />
+        ))}
+
+        {/* Candlestick bars */}
+        {bars.map((b, i) => (
+          <g key={`candle-${i}`}>
+            <line x1={b.centerX} y1={b.wickTop} x2={b.centerX} y2={b.wickBottom} stroke={b.color} strokeWidth="1" />
+            <rect x={b.x} y={b.bodyTop} width={BAR_WIDTH} height={b.bodyHeight} fill={b.color} />
+          </g>
+        ))}
+
+        {/* Current price line + badge */}
+        {lastCandleX != null && spotY != null && (
+          <>
+            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
+            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#448aff" />
+            <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
+              ${spotPrice?.toFixed(2)}
+            </text>
+          </>
+        )}
+
+        {/* Date labels */}
+        {dateLabels.map((dl, i) => (
+          <text key={`date-${i}`} x={dl.x} y={height - 6} fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
+            {dl.label}
+          </text>
+        ))}
+      </svg>
     </div>
   );
 }

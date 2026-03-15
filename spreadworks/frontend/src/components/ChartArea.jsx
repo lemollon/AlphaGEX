@@ -1,32 +1,38 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo } from 'react';
 import CandleChart from './CandleChart';
 import PayoffPanel from './PayoffPanel';
+import { computePriceRange } from '../utils/priceScale';
 
 /**
- * Container that renders CandleChart (Plotly) and PayoffPanel side-by-side.
- *
- * The Plotly chart computes its own Y range from intraday bars + GEX levels.
- * That range is passed to PayoffPanel via a callback so strike lines align.
+ * Container that renders CandleChart and PayoffPanel side-by-side
+ * with a shared price scale (minPrice/maxPrice).
  */
 export default function ChartArea({
-  intradayBars,
-  sortedStrikes,
-  levels,
+  candles,
   spotPrice,
+  gexData,
   strikes,
   calcResult,
   height = 500,
-  sessionDate,
+  rangePct = 2.2,
 }) {
-  // yRange synced from CandleChart's Plotly layout
-  const [yRange, setYRange] = useState(null);
+  // Compute shared price range from candles + strikes + GEX
+  const { minPrice, maxPrice } = useMemo(() => {
+    const base = computePriceRange(candles, strikes, gexData, 0.005);
 
-  const handleYRange = useCallback((range) => {
-    setYRange(range);
-  }, []);
+    // If user set a range %, override based on spot price
+    if (spotPrice && rangePct) {
+      const rangeAmt = spotPrice * (rangePct / 100);
+      const rMin = spotPrice - rangeAmt;
+      const rMax = spotPrice + rangeAmt;
+      return {
+        minPrice: Math.min(base.minPrice, rMin),
+        maxPrice: Math.max(base.maxPrice, rMax),
+      };
+    }
 
-  const minPrice = yRange ? yRange[0] : (spotPrice ? spotPrice - 15 : 550);
-  const maxPrice = yRange ? yRange[1] : (spotPrice ? spotPrice + 15 : 590);
+    return base;
+  }, [candles, strikes, gexData, spotPrice, rangePct]);
 
   const breakevens = calcResult ? {
     lower: calcResult.lower_breakeven,
@@ -36,14 +42,13 @@ export default function ChartArea({
   return (
     <div className="flex flex-1 min-h-0">
       <CandleChart
-        intradayBars={intradayBars}
-        sortedStrikes={sortedStrikes}
-        levels={levels}
-        strikes={strikes}
-        spotPrice={spotPrice}
+        candles={candles}
+        minPrice={minPrice}
+        maxPrice={maxPrice}
         height={height}
-        sessionDate={sessionDate}
-        yRangeOut={handleYRange}
+        strikes={strikes}
+        gexData={gexData}
+        spotPrice={spotPrice}
       />
       <PayoffPanel
         pnlCurve={calcResult?.pnl_curve}
