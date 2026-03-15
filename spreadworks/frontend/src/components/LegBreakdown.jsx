@@ -1,6 +1,58 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
 import { formatCurrency2, formatPct, formatGreek, formatGreekDollar } from '../utils/format';
+
+const s = {
+  wrapper: {
+    background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)',
+    borderTop: '1px solid var(--border-subtle)',
+    fontFamily: 'var(--font-ui)',
+    fontSize: 12,
+  },
+  toggleBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--text-tertiary)',
+    cursor: 'pointer',
+    padding: '8px 16px',
+    fontSize: 11,
+    fontFamily: 'var(--font-ui)',
+    fontWeight: 600,
+    width: '100%',
+    textAlign: 'left',
+    transition: 'color var(--transition-fast)',
+    letterSpacing: '0.03em',
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'separate',
+    borderSpacing: '0 2px',
+  },
+  th: {
+    padding: '8px 10px',
+    color: 'var(--text-tertiary)',
+    fontSize: 10,
+    fontWeight: 600,
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+    textAlign: 'right',
+    borderBottom: '1px solid rgba(30, 30, 70, 0.5)',
+  },
+  td: (isLong) => ({
+    padding: '8px 10px',
+    textAlign: 'right',
+    fontSize: 12,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)',
+    background: isLong ? 'rgba(0, 230, 118, 0.04)' : 'rgba(255, 82, 82, 0.04)',
+    borderBottom: '1px solid rgba(16, 16, 42, 0.5)',
+  }),
+  legName: (isLong) => ({
+    textAlign: 'left',
+    color: isLong ? 'var(--green)' : 'var(--red)',
+    fontWeight: 600,
+    fontFamily: 'var(--font-ui)',
+  }),
+};
 
 export default function LegBreakdown({ calcResult }) {
   const [open, setOpen] = useState(false);
@@ -12,44 +64,51 @@ export default function LegBreakdown({ calcResult }) {
   const tilde = isTheoretical ? '~' : '';
 
   return (
-    <div className="border-t border-border-subtle font-[var(--font-ui)] text-xs"
-      style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+    <div style={s.wrapper}>
       <button
-        className="sw-btn-ghost w-full text-left px-4 py-2 text-[11px] font-semibold tracking-wider text-text-tertiary hover:text-text-secondary flex items-center gap-1.5"
+        style={s.toggleBtn}
         onClick={() => setOpen(!open)}
+        onMouseEnter={(e) => e.target.style.color = 'var(--text-secondary)'}
+        onMouseLeave={(e) => e.target.style.color = 'var(--text-tertiary)'}
       >
-        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-        Legs ({legs.length} legs)
+        {open ? 'Legs \u25B4' : 'Legs \u25BE'} ({legs.length} legs)
       </button>
       {open && (
-        <div className="px-3 pb-2.5 animate-fade-in">
-          <table className="w-full" style={{ borderCollapse: 'separate', borderSpacing: '0 2px' }}>
+        <div style={{ padding: '0 12px 10px', animation: 'sw-fadeIn 0.2s ease' }}>
+          <table style={s.table}>
             <thead>
               <tr>
-                {['Leg', 'Strike', 'Exp', 'Mid', 'IV', '\u0394', '\u0398'].map((h, i) => (
-                  <th key={i} className={`sw-label px-2.5 py-2 border-b border-border-subtle/50 ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
-                ))}
+                <th style={{ ...s.th, textAlign: 'left' }}>Leg</th>
+                <th style={s.th}>Strike</th>
+                <th style={s.th}>Exp</th>
+                <th style={s.th}>Mid</th>
+                <th style={s.th}>IV</th>
+                <th style={s.th}>{'\u0394'}</th>
+                <th style={s.th}>{'\u0398'}</th>
               </tr>
             </thead>
             <tbody>
               {legs.map((leg, i) => {
                 const isLong = leg.type === 'long';
                 const greeks = leg.greeks || {};
-                const priceStr = leg.price != null ? `${tilde}${formatCurrency2(leg.price)}` : '--';
-                const ivStr = leg.iv != null ? formatPct(leg.iv) : '--';
+                const priceStr = leg.price != null
+                  ? `${tilde}${formatCurrency2(leg.price)}`
+                  : '--';
+                const ivStr = leg.iv != null
+                  ? formatPct(leg.iv)
+                  : '--';
                 const deltaStr = formatGreek(greeks.delta, 3);
                 const thetaStr = formatGreekDollar(greeks.theta);
-                const rowBg = isLong ? 'bg-sw-green/[0.04]' : 'bg-sw-red/[0.04]';
 
                 return (
                   <tr key={i}>
-                    <td className={`px-2.5 py-2 text-left font-semibold font-[var(--font-ui)] border-b border-bg-elevated/50 ${rowBg} ${isLong ? 'text-sw-green' : 'text-sw-red'}`}>{leg.leg}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>${leg.strike}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>{leg.exp}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>{priceStr}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>{ivStr}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>{deltaStr}</td>
-                    <td className={`px-2.5 py-2 text-right font-[var(--font-mono)] text-text-primary border-b border-bg-elevated/50 ${rowBg}`}>{thetaStr}</td>
+                    <td style={{ ...s.td(isLong), ...s.legName(isLong) }}>{leg.leg}</td>
+                    <td style={s.td(isLong)}>${leg.strike}</td>
+                    <td style={s.td(isLong)}>{leg.exp}</td>
+                    <td style={s.td(isLong)}>{priceStr}</td>
+                    <td style={s.td(isLong)}>{ivStr}</td>
+                    <td style={s.td(isLong)}>{deltaStr}</td>
+                    <td style={s.td(isLong)}>{thetaStr}</td>
                   </tr>
                 );
               })}

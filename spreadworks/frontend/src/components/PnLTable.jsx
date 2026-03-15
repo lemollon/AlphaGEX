@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { formatDollarPnl, formatSignedPct, formatCurrency } from '../utils/format';
 
+const font = "var(--font-mono)";
+
 const VIEW_MODES = {
   PNL_DOLLAR: 'pnl_dollar',
   PNL_PCT: 'pnl_pct',
@@ -34,6 +36,70 @@ function formatCell(cell, viewMode) {
   }
 }
 
+const s = {
+  wrapper: {
+    flex: 1,
+    overflow: 'auto',
+    background: 'var(--bg-base)',
+    fontFamily: font,
+    fontSize: 11,
+  },
+  table: {
+    borderCollapse: 'collapse',
+    width: '100%',
+    minWidth: 400,
+  },
+  th: (isExpiry) => ({
+    padding: '6px 8px',
+    background: 'var(--bg-surface)',
+    color: isExpiry ? '#ffd600' : '#888',
+    fontWeight: isExpiry ? 700 : 600,
+    fontSize: 10,
+    textAlign: 'center',
+    borderBottom: '1px solid #1a1a2e',
+    borderRight: isExpiry ? '2px solid #ffd60066' : '1px solid #1a1a2e',
+    position: 'sticky',
+    top: 0,
+    zIndex: 2,
+    whiteSpace: 'nowrap',
+  }),
+  priceCell: (isSpot) => ({
+    padding: '4px 8px',
+    background: isSpot ? '#448aff22' : 'var(--bg-surface)',
+    color: isSpot ? '#448aff' : '#aaa',
+    fontWeight: isSpot ? 700 : 600,
+    fontSize: 11,
+    textAlign: 'right',
+    borderRight: '1px solid #1a1a2e',
+    borderBottom: '1px solid #1a1a2e',
+    position: 'sticky',
+    left: 0,
+    zIndex: 1,
+    whiteSpace: 'nowrap',
+  }),
+  dataCell: (bgColor, isSpotRow, isExpiry) => ({
+    padding: '4px 6px',
+    textAlign: 'center',
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 500,
+    background: bgColor,
+    borderBottom: isSpotRow ? '2px solid #448aff66' : '1px solid #0a0a14',
+    borderRight: isExpiry ? '2px solid #ffd60066' : '1px solid #0a0a14',
+    whiteSpace: 'nowrap',
+  }),
+  empty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+    color: '#555',
+    fontFamily: font,
+    fontSize: 12,
+    padding: 40,
+  },
+};
+
 export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
   const grid = calcResult?.pnl_grid;
 
@@ -52,43 +118,23 @@ export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
   }, [grid]);
 
   if (!grid) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-text-muted font-[var(--font-mono)] text-xs p-10">
-        Run Calculate to generate the P&amp;L table
-      </div>
-    );
+    return <div style={s.empty}>Run Calculate to generate the P&amp;L table</div>;
   }
 
   if (!grid.rows || grid.rows.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center text-text-muted font-[var(--font-mono)] text-xs p-10">
-        No grid data available
-      </div>
-    );
+    return <div style={s.empty}>No grid data available</div>;
   }
 
   const { time_slices, price_levels, rows, max_profit, max_loss } = grid;
 
   return (
-    <div className="flex-1 overflow-auto bg-bg-base font-[var(--font-mono)] text-[11px]">
-      <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 400 }}>
+    <div style={s.wrapper}>
+      <table style={s.table}>
         <thead>
           <tr>
-            <th className="px-2 py-1.5 bg-bg-surface text-text-muted font-semibold text-[10px] text-center whitespace-nowrap sticky top-0 left-0 z-[3]"
-              style={{ borderBottom: '1px solid #1a1a2e', borderRight: '1px solid #1a1a2e' }}>
-              Price
-            </th>
+            <th style={{ ...s.th(false), position: 'sticky', left: 0, zIndex: 3 }}>Price</th>
             {time_slices.map((ts, ci) => (
-              <th key={ci}
-                className={`px-2 py-1.5 bg-bg-surface font-semibold text-[10px] text-center whitespace-nowrap sticky top-0 z-[2] ${
-                  ts.is_expiry ? 'text-accent-bright font-bold' : 'text-text-muted'
-                }`}
-                style={{
-                  borderBottom: '1px solid #1a1a2e',
-                  borderRight: ts.is_expiry ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #1a1a2e',
-                }}>
-                {ts.label}
-              </th>
+              <th key={ci} style={s.th(ts.is_expiry)}>{ts.label}</th>
             ))}
           </tr>
         </thead>
@@ -97,24 +143,14 @@ export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
             const isSpot = ri === spotIdx;
             return (
               <tr key={ri}>
-                <td
-                  className={`px-2 py-1 text-right font-semibold text-[11px] whitespace-nowrap sticky left-0 z-[1] ${
-                    isSpot ? 'bg-accent/[0.13] text-accent font-bold' : 'bg-bg-surface text-text-secondary'
-                  }`}
-                  style={{ borderRight: '1px solid #1a1a2e', borderBottom: '1px solid #1a1a2e' }}>
+                <td style={s.priceCell(isSpot)}>
                   ${price_levels[ri].toFixed(0)}
-                  {isSpot && <span className="text-accent text-[9px] ml-0.5">&#9668;</span>}
+                  {isSpot && <span style={{ color: '#448aff', fontSize: 9, marginLeft: 3 }}>&#9668;</span>}
                 </td>
                 {row.map((cell, ci) => {
                   const bg = cellColor(cell.pnl, max_profit, max_loss);
                   return (
-                    <td key={ci}
-                      className="px-1.5 py-1 text-center text-white text-[10px] font-medium whitespace-nowrap"
-                      style={{
-                        background: bg,
-                        borderBottom: isSpot ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #0a0a14',
-                        borderRight: time_slices[ci]?.is_expiry ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #0a0a14',
-                      }}>
+                    <td key={ci} style={s.dataCell(bg, isSpot, time_slices[ci]?.is_expiry)}>
                       {formatCell(cell, activeView)}
                     </td>
                   );

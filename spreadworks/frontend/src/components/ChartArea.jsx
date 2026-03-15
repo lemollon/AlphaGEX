@@ -40,7 +40,7 @@ export default function ChartArea({
   } : null;
 
   return (
-    <div className="flex flex-1 min-h-0">
+    <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       <CandleChart
         candles={candles}
         minPrice={minPrice}
