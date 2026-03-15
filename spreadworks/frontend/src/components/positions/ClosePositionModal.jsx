@@ -6,13 +6,11 @@ export default function ClosePositionModal({ position, onConfirm, onCancel }) {
   const isCredit = isCreditStrategy(position.strategy);
 
   const cp = parseFloat(closePrice) || 0;
-  // Credit strategies: P&L = credit - cost_to_close = entry_price - cp
-  // Debit strategies: P&L = sell_price - cost_paid = -(entry_price + cp_as_val)
-  // But close_price goes through _compute_unrealized_pnl on the backend,
-  // so we just mirror the correct formula here for preview.
+  // Credit strategies: P&L = credit_received - cost_to_close = entry_price - cp
+  // Debit strategies: P&L = sell_price - cost_paid = cp - entry_price
   const realizedPnl = isCredit
-    ? (position.entry_price - cp) * 100 * position.contracts
-    : -(cp + position.entry_price) * 100 * position.contracts;
+    ? (position.entry_price - cp) * 100 * (position.contracts || 1)
+    : (cp - position.entry_price) * 100 * (position.contracts || 1);
   const pctOfMax = position.max_profit
     ? (realizedPnl / Math.abs(position.max_profit) * 100)
     : 0;

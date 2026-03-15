@@ -62,7 +62,7 @@ export default function PositionsPage() {
 
       {error && (
         <div className="bg-sw-red-dim border border-sw-red/30 rounded-lg px-4 py-2.5 text-[13px] text-sw-red font-medium mb-3.5">
-          Unable to connect to database. Check that DATABASE_URL is set in Render environment variables.
+          {error}
         </div>
       )}
       <PortfolioSummary summary={summary} />

@@ -2,9 +2,11 @@ export default function PortfolioSummary({ summary }) {
   if (!summary) return null;
 
   const netPremium = summary.net_premium ?? summary.total_credit ?? 0;
+  const totalUnrealized = summary.total_unrealized ?? 0;
+  const totalRealized = summary.total_realized ?? 0;
   const premiumColor = netPremium >= 0 ? 'text-sw-green' : 'text-sw-red';
-  const unrealColor = summary.total_unrealized >= 0 ? 'text-sw-green' : 'text-sw-red';
-  const realColor = summary.total_realized >= 0 ? 'text-sw-green' : 'text-sw-red';
+  const unrealColor = totalUnrealized >= 0 ? 'text-sw-green' : 'text-sw-red';
+  const realColor = totalRealized >= 0 ? 'text-sw-green' : 'text-sw-red';
 
   return (
     <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-3 mb-5">
@@ -29,13 +31,13 @@ export default function PortfolioSummary({ summary }) {
       <div className="sw-card px-4 py-3 text-center">
         <div className="sw-label mb-2">Unrealized</div>
         <div className={`text-lg font-bold font-[var(--font-mono)] ${unrealColor}`}>
-          {summary.total_unrealized >= 0 ? '+' : ''}${summary.total_unrealized?.toFixed(2)}
+          {totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toFixed(2)}
         </div>
       </div>
       <div className="sw-card px-4 py-3 text-center">
         <div className="sw-label mb-2">Realized</div>
         <div className={`text-lg font-bold font-[var(--font-mono)] ${realColor}`}>
-          {summary.total_realized >= 0 ? '+' : ''}${summary.total_realized?.toFixed(2)}
+          {totalRealized >= 0 ? '+' : ''}${totalRealized.toFixed(2)}
         </div>
       </div>
       <div className="sw-card px-4 py-3 text-center">

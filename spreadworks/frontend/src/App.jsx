@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X } from 'lucide-react';
+import { Layers, BarChart3, Activity, Clock, Menu, X, Camera } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -149,8 +149,37 @@ function BuilderPage() {
   const [viewMode, setViewMode] = useState('graph');
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
+  const [screenshotting, setScreenshotting] = useState(false);
+  const chartAreaRef = useRef(null);
 
   const API_URL = import.meta.env.VITE_API_URL || '';
+
+  const [screenshotMsg, setScreenshotMsg] = useState('');
+
+  const handleScreenshot = useCallback(async () => {
+    if (!chartAreaRef.current) return;
+    try {
+      setScreenshotting(true);
+      setScreenshotMsg('');
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(chartAreaRef.current, {
+        backgroundColor: '#0a0a1e',
+        scale: 2,
+        useCORS: true,
+      });
+      const link = document.createElement('a');
+      link.download = `${symbol}-builder-${new Date().toISOString().split('T')[0]}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+      setScreenshotMsg('Downloaded!');
+      setTimeout(() => setScreenshotMsg(''), 3000);
+    } catch (err) {
+      setScreenshotMsg(`Failed: ${err.message}`);
+      setTimeout(() => setScreenshotMsg(''), 5000);
+    } finally {
+      setScreenshotting(false);
+    }
+  }, [symbol]);
 
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
@@ -217,23 +246,39 @@ function BuilderPage() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
-          {!isOpen && dataAsOf && (
-            <span className="ml-auto px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
-              Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
-                timeZone: 'America/New_York',
-                weekday: 'short',
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true,
-              })} ET
-            </span>
-          )}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={handleScreenshot}
+              disabled={screenshotting}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-border-default bg-bg-elevated text-text-secondary cursor-pointer transition-all duration-150 hover:bg-white/[0.08] hover:text-white hover:border-accent/40 disabled:opacity-50"
+              title="Download chart as PNG"
+            >
+              <Camera size={13} />
+              {screenshotting ? 'Capturing...' : 'Screenshot'}
+            </button>
+            {screenshotMsg && (
+              <span className={`text-[11px] font-semibold ${screenshotMsg === 'Downloaded!' ? 'text-sw-green' : 'text-sw-red'}`}>
+                {screenshotMsg}
+              </span>
+            )}
+            {!isOpen && dataAsOf && (
+              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
+                Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
+                  timeZone: 'America/New_York',
+                  weekday: 'short',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                })} ET
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Chart Area */}
-        <div className="flex-1 min-h-0 flex relative">
+        <div className="flex-1 min-h-0 flex relative" ref={chartAreaRef}>
           {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
