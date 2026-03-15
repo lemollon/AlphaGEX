@@ -533,3 +533,19 @@ class AgapeShibPerpDatabase:
         finally:
             cursor.close()
             conn.close()
+
+    def get_scan_count(self) -> int:
+        """Get total number of scan cycles from scan_activity table."""
+        conn = self._get_conn()
+        if not conn:
+            return 0
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM agape_shib_perp_scan_activity")
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        except Exception:
+            return 0
+        finally:
+            cursor.close()
+            conn.close()

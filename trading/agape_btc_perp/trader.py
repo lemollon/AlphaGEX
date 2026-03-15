@@ -588,7 +588,7 @@ class AgapeBtcPerpTrader:
             "bot_name": "AGAPE_BTC_PERP", "status": status,
             "mode": self.config.mode.value, "ticker": self.config.ticker,
             "instrument": self.config.instrument, "exchange": "perpetual",
-            "cycle_count": self._cycle_count, "open_positions": len(open_positions),
+            "cycle_count": self._cycle_count or self.db.get_scan_count(), "open_positions": len(open_positions),
             "max_positions": self.config.max_open_positions,
             "current_btc_price": current_price,
             "total_unrealized_pnl": round(total_unrealized, 2),
