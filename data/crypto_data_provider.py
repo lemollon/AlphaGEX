@@ -954,4 +954,19 @@ class CryptoDataProvider:
         if leverage == "OVERLEVERAGED" and squeeze == "HIGH":
             return ("WAIT", "HIGH")
 
+        # ---- LAST RESORT: Price momentum for coins with no GEX/CoinGlass data ----
+        # (XRP, DOGE, SHIB have no Deribit options data and CoinGlass may not cover them)
+        # Use cached previous snapshot to detect short-term price direction.
+        if spot > 0:
+            prev = self._snapshot_cache.get(snapshot.symbol)
+            if prev and prev.spot_price > 0:
+                price_change_pct = (spot - prev.spot_price) / prev.spot_price
+                if abs(price_change_pct) > 0.002:  # >0.2% move since last snapshot
+                    if price_change_pct > 0:
+                        return ("LONG", "LOW")  # Momentum following
+                    else:
+                        return ("SHORT", "LOW")
+                # Small move: range-bound
+                return ("RANGE_BOUND", "LOW")
+
         return ("WAIT", "LOW")

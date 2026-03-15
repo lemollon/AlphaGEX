@@ -416,7 +416,7 @@ class AgapeShibPerpTrader:
         return {
             "bot_name": "AGAPE_SHIB_PERP", "status": status,
             "mode": self.config.mode.value, "ticker": "SHIB", "instrument": "SHIB-PERP",
-            "exchange": "perpetual", "cycle_count": self._cycle_count,
+            "exchange": "perpetual", "cycle_count": self._cycle_count or self.db.get_scan_count(),
             "open_positions": len(open_pos), "current_shib_price": cp,
             "total_unrealized_pnl": round(total_unr, 2),
             "starting_capital": self.config.starting_capital,
