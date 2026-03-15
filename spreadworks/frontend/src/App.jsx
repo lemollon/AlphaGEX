@@ -150,11 +150,10 @@ function BuilderPage() {
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
   const [screenshotting, setScreenshotting] = useState(false);
+  const [screenshotMsg, setScreenshotMsg] = useState('');
   const chartAreaRef = useRef(null);
 
   const API_URL = import.meta.env.VITE_API_URL || '';
-
-  const [screenshotMsg, setScreenshotMsg] = useState('');
 
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);

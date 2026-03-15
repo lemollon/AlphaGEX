@@ -178,8 +178,10 @@ export default function StrategyPanel({
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
   const [alertCreating, setAlertCreating] = useState(false);
+  const [chainOptions, setChainOptions] = useState({});
 
   const prevSymbolRef = useRef(symbol);
+  const hasAutoSelectedExp = useRef(false);
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
       prevSymbolRef.current = symbol;
@@ -395,9 +397,6 @@ export default function StrategyPanel({
     }
     fetchExpirations();
   }, [inputMode, symbol]);
-
-  const [chainOptions, setChainOptions] = useState({});
-  const hasAutoSelectedExp = useRef(false);
 
   // Auto-select first expiration (0DTE preferred) when expirations load
   useEffect(() => {
