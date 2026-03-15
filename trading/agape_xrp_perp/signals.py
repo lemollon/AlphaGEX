@@ -306,6 +306,12 @@ class AgapeXrpPerpSignalGenerator:
                 score += 0.5
             elif max_pain < spot * 0.995:
                 score -= 0.5
+        # Crypto GEX tiebreaker when CoinGlass L/S data is unavailable
+        crypto_gex = market_data.get("crypto_gex", 0)
+        if crypto_gex > 0:
+            score += 0.3
+        elif crypto_gex < 0:
+            score -= 0.3
         if score > 0:
             skip, reason = tracker.should_skip_direction("LONG")
             return (SignalAction.WAIT, None, f"RANGE_BLOCKED_{reason}") if skip else (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
@@ -319,22 +325,43 @@ class AgapeXrpPerpSignalGenerator:
         squeeze_risk = market_data.get("squeeze_risk", "LOW")
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
         if squeeze_risk == "HIGH":
-            if ls_bias == "SHORT_HEAVY":
+            if ls_bias in ("SHORT_HEAVY", "EXTREME_SHORT", "SHORT_BIASED"):
                 skip, _ = tracker.should_skip_direction("LONG")
                 if not skip:
                     return (SignalAction.LONG, "long", self._build_reasoning("SQUEEZE_LONG", market_data))
-            elif ls_bias == "LONG_HEAVY":
+            elif ls_bias in ("LONG_HEAVY", "EXTREME_LONG", "LONG_BIASED"):
                 skip, _ = tracker.should_skip_direction("SHORT")
                 if not skip:
                     return (SignalAction.SHORT, "short", self._build_reasoning("SQUEEZE_SHORT", market_data))
-        if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
+        if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT"):
             skip, _ = tracker.should_skip_direction("LONG")
             if not skip:
                 return (SignalAction.LONG, "long", self._build_reasoning("FUNDING_LONG", market_data))
-        elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
+        elif funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG"):
             skip, _ = tracker.should_skip_direction("SHORT")
             if not skip:
                 return (SignalAction.SHORT, "short", self._build_reasoning("FUNDING_SHORT", market_data))
+        # GEX momentum fallback
+        crypto_gex = market_data.get("crypto_gex", 0)
+        crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
+        if crypto_gex_regime == "NEGATIVE" and crypto_gex != 0:
+            if crypto_gex > 0:
+                skip, _ = tracker.should_skip_direction("LONG")
+                if not skip:
+                    return (SignalAction.LONG, "long", self._build_reasoning("GEX_MOMENTUM_LONG", market_data))
+            else:
+                skip, _ = tracker.should_skip_direction("SHORT")
+                if not skip:
+                    return (SignalAction.SHORT, "short", self._build_reasoning("GEX_MOMENTUM_SHORT", market_data))
+        # Mild funding fallback
+        if funding_regime == "MILD_SHORT_BIAS":
+            skip, _ = tracker.should_skip_direction("LONG")
+            if not skip:
+                return (SignalAction.LONG, "long", self._build_reasoning("MILD_FUNDING_LONG", market_data))
+        elif funding_regime == "MILD_LONG_BIAS":
+            skip, _ = tracker.should_skip_direction("SHORT")
+            if not skip:
+                return (SignalAction.SHORT, "short", self._build_reasoning("MILD_FUNDING_SHORT", market_data))
         return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
 
     def _build_reasoning(self, direction, market_data):
