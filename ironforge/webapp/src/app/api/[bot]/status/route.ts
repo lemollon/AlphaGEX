@@ -174,7 +174,8 @@ export async function GET(
     const hbAction = hbDetails.action || ''
     const botState =
       hbStatus === 'error' ? 'error'
-      : hbAction === 'awaiting_fill' || hbAction === 'pending_fill' ? 'awaiting_fill'
+      : hbAction === 'pending_fill' ? 'pending_fill'
+      : hbAction === 'awaiting_fill' ? 'awaiting_fill'
       : hbAction === 'monitoring' ? 'monitoring'
       : hbAction === 'traded' || hbAction === 'closed' ? 'traded'
       : hbAction === 'outside_window' || hbAction === 'outside_entry_window' ? 'market_closed'

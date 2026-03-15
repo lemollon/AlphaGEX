@@ -3073,6 +3073,18 @@ def check_pending_fills(bot: dict) -> Optional[str]:
         None if no pending fills found (or no pending orders at all).
     """
     tbl = bot_table(bot["name"], "pending_orders")
+
+    # Expire stale pending orders from prior days (market closed, options expired)
+    try:
+        db_execute(f"""
+            UPDATE {tbl}
+            SET status = 'expired', resolved_at = CURRENT_TIMESTAMP()
+            WHERE status = 'pending'
+              AND created_date < CURRENT_DATE()
+        """)
+    except Exception:
+        pass  # Non-fatal — cleanup only
+
     try:
         pending_rows = db_query(f"""
             SELECT *
@@ -3125,7 +3137,30 @@ def check_pending_fills(bot: dict) -> Optional[str]:
         if status != "filled":
             continue
 
-        # ── ORDER FILLED — extract fill price ──
+        # ── ORDER FILLED — guard against duplicate position creation ──
+        # If a prior cycle already created this position (but the pending UPDATE
+        # failed), skip it to avoid duplicates.
+        existing_pos = db_query(f"""
+            SELECT position_id FROM {bot_table(bot['name'], 'positions')}
+            WHERE position_id = '{position_id}' AND dte_mode = '{bot["dte"]}'
+            LIMIT 1
+        """)
+        if existing_pos:
+            log.info(
+                f"Pending order {pending_id}: position {position_id} already exists, "
+                f"marking as filled (recovery from partial update)"
+            )
+            try:
+                db_execute(f"""
+                    UPDATE {tbl}
+                    SET status = 'filled', resolved_at = CURRENT_TIMESTAMP()
+                    WHERE pending_id = '{pending_id}'
+                """)
+            except Exception:
+                pass
+            continue
+
+        # ── Extract fill price ──
         fill_price = None
         avg_fill = order.get("avg_fill_price")
         if avg_fill is not None:
