@@ -159,7 +159,7 @@ export default function StrategyPanel({
   onRefreshAlerts,
 }) {
   const [strategy, setStrategy] = useState(STRATEGY_TYPES.DOUBLE_DIAGONAL);
-  const [inputMode, setInputMode] = useState(INPUT_MODES.MANUAL);
+  const [inputMode, setInputMode] = useState(INPUT_MODES.LIVE_CHAIN);
   const [legs, setLegs] = useState(DEFAULT_LEGS[STRATEGY_TYPES.DOUBLE_DIAGONAL]);
   const [contracts, setContracts] = useState(1);
   const [expirations, setExpirations] = useState([]);
@@ -394,6 +394,36 @@ export default function StrategyPanel({
   }, [inputMode, symbol]);
 
   const [chainOptions, setChainOptions] = useState({});
+  const hasAutoSelectedExp = useRef(false);
+
+  // Auto-select first expiration (0DTE preferred) when expirations load
+  useEffect(() => {
+    if (inputMode !== INPUT_MODES.LIVE_CHAIN || expirations.length === 0 || hasAutoSelectedExp.current) return;
+    hasAutoSelectedExp.current = true;
+    const zeroDte = expirationsWithDte?.find(e => e.dte === 0);
+    const target = zeroDte?.date || expirations[0];
+    if (!target) return;
+    setLegs(prev => {
+      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) return { ...prev, shortExpiration: prev.shortExpiration || target };
+      if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR) return { ...prev, frontExpiration: prev.frontExpiration || target };
+      return { ...prev, expiration: prev.expiration || target };
+    });
+    // Fetch strikes for the auto-selected expiration
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/spreadworks/chain?symbol=${symbol}&expiration=${target}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        setChainStrikes(data.strikes || []);
+        setChainOptions(data.options || {});
+      } catch { /* silent */ }
+    })();
+  }, [expirations, expirationsWithDte, inputMode, strategy, symbol]);
+
+  // Reset auto-select when symbol changes
+  useEffect(() => {
+    hasAutoSelectedExp.current = false;
+  }, [symbol]);
 
   const fetchStrikes = useCallback(async (expiration) => {
     if (!expiration) return;

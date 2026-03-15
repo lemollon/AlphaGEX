@@ -9,13 +9,13 @@
  * Plus: price-to-wall gauge, flow diagnostics, skew measures, market interpretation.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import Plotly from 'plotly.js-dist-min';
 import createPlotlyComponent from 'react-plotly.js/factory';
-import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send } from 'lucide-react';
+import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send, Camera, Download } from 'lucide-react';
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -90,6 +90,30 @@ export default function GexProfilePage() {
   const [hoveredStrike, setHoveredStrike] = useState(null);
   const [discordMsg, setDiscordMsg] = useState('');
   const [discordPushing, setDiscordPushing] = useState(false);
+  const [screenshotting, setScreenshotting] = useState(false);
+  const chartSectionRef = useRef(null);
+
+  const downloadScreenshot = useCallback(async () => {
+    if (!chartSectionRef.current) return;
+    try {
+      setScreenshotting(true);
+      const html2canvas = (await import('html2canvas')).default;
+      const canvas = await html2canvas(chartSectionRef.current, {
+        backgroundColor: '#0a0a14',
+        scale: 2,
+        useCORS: true,
+      });
+      const link = document.createElement('a');
+      const viewLabel = chartView === 'intraday' ? 'intraday' : chartView === 'net' ? 'net-gex' : 'call-vs-put';
+      link.download = `${symbol}-${viewLabel}-${new Date().toISOString().split('T')[0]}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Screenshot failed:', err);
+    } finally {
+      setScreenshotting(false);
+    }
+  }, [symbol, chartView]);
 
   const pushToDiscord = useCallback(async (view) => {
     const endpointMap = {
@@ -305,7 +329,7 @@ export default function GexProfilePage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+      <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-6 py-5 font-[var(--font-ui)]">
         <div className="flex items-center justify-center h-[60vh] text-text-muted gap-2.5 text-sm">
           <span className="inline-block animate-[sw-spin_1s_linear_infinite]">&#8635;</span>
           Loading GEX data...
@@ -315,7 +339,7 @@ export default function GexProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-6 py-5 font-[var(--font-ui)]">
       {/* Title */}
       <div className="flex items-center gap-2.5 text-[22px] font-extrabold text-white tracking-tight mb-1">
         <Activity size={28} className="text-accent" />
@@ -438,7 +462,7 @@ export default function GexProfilePage() {
           </div>
 
           {/* Chart Section */}
-          <div className="sw-card p-4 mb-4">
+          <div className="sw-card p-4 mb-4" ref={chartSectionRef}>
             <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
                 <Activity size={14} className="text-accent" />
@@ -475,16 +499,25 @@ export default function GexProfilePage() {
                   ))}
                 </div>
                 <button
+                  onClick={downloadScreenshot}
+                  disabled={screenshotting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-border-default bg-bg-elevated text-text-secondary cursor-pointer transition-all duration-150 hover:bg-white/[0.08] hover:text-white hover:border-accent/40 disabled:opacity-50"
+                  title="Download chart as PNG"
+                >
+                  <Camera size={14} />
+                  Screenshot
+                </button>
+                <button
                   onClick={() => pushToDiscord(chartView)}
                   disabled={discordPushing}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.3)] bg-[rgba(88,101,242,0.1)] text-[#7289da] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.2)] hover:border-[rgba(88,101,242,0.5)] disabled:opacity-50"
-                  title="Share to Discord"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.4)] bg-[rgba(88,101,242,0.15)] text-[#7289da] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.25)] hover:border-[rgba(88,101,242,0.6)] disabled:opacity-50"
+                  title="Push chart to Discord"
                 >
-                  <Send size={12} />
-                  {discordPushing ? 'Sending...' : 'Discord'}
+                  <Send size={14} />
+                  {discordPushing ? 'Sending...' : 'Push to Discord'}
                 </button>
                 {discordMsg && (
-                  <span className={`text-[11px] font-semibold ${discordMsg === 'Posted!' ? 'text-sw-green' : 'text-sw-red'}`}>
+                  <span className={`text-[12px] font-semibold ${discordMsg === 'Posted!' ? 'text-sw-green' : 'text-sw-red'}`}>
                     {discordMsg}
                   </span>
                 )}
