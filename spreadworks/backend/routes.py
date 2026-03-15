@@ -2617,6 +2617,46 @@ async def discord_push_spread(body: DiscordPushSpread, request: Request):
     return {"posted": True}
 
 
+@router.post("/discord/push-screenshot")
+async def discord_push_screenshot(request: Request):
+    """Post a browser-captured screenshot directly to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    body = await request.json()
+    image_b64 = body.get("image")  # base64-encoded PNG (no data: prefix)
+    caption = body.get("caption", "SpreadWorks Screenshot")
+
+    if not image_b64:
+        raise HTTPException(400, "Missing 'image' field (base64 PNG)")
+
+    import base64 as b64mod
+    # Strip data URL prefix if present
+    if "," in image_b64:
+        image_b64 = image_b64.split(",", 1)[1]
+    image_bytes = b64mod.b64decode(image_b64)
+
+    embed = {
+        "title": f"\U0001f4f8 {caption}",
+        "color": 0x7C3AED,
+        "image": {"url": "attachment://screenshot.png"},
+        "footer": {"text": "SpreadWorks \u00b7 Builder Screenshot"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    import requests as req
+    payload = json.dumps({"embeds": [embed]})
+    resp = req.post(
+        _discord_url(),
+        data={"payload_json": payload},
+        files=[("files[0]", ("screenshot.png", image_bytes, "image/png"))],
+        timeout=15,
+    )
+    if resp.status_code not in (200, 204):
+        raise HTTPException(502, f"Discord post failed: {resp.status_code}")
+    return {"posted": True}
+
+
 # ---------------------------------------------------------------------------
 # GEX Profile → Discord chart generators + endpoints
 # ---------------------------------------------------------------------------

@@ -600,18 +600,20 @@ export default function StrategyPanel({
           <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.GEX_SUGGEST ? 'active' : ''}`}
             onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
         </div>
-        {inputMode === INPUT_MODES.GEX_SUGGEST && (
-          <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-border-subtle">
-            <button
-              className={`sw-toggle-btn text-[10px] px-2.5 py-1 ${gexUse0dte ? 'active' : ''}`}
-              onClick={() => setGexUse0dte(!gexUse0dte)}
-            >0DTE</button>
-            <span className="text-[10px] text-text-tertiary">
-              {gexUse0dte ? 'Using today\'s expiration' : 'Using default expirations'}
-            </span>
-          </div>
-        )}
       </div>
+
+      {/* 0DTE Toggle — shown when GEX Suggest is active */}
+      {inputMode === INPUT_MODES.GEX_SUGGEST && (
+        <div className="sw-card p-3 flex items-center gap-2.5">
+          <button
+            className={`sw-toggle-btn px-3 py-1.5 text-[11px] font-bold ${gexUse0dte ? 'active' : ''}`}
+            onClick={() => setGexUse0dte(!gexUse0dte)}
+          >0DTE</button>
+          <span className="text-[11px] text-text-secondary">
+            {gexUse0dte ? 'Using 0DTE expiration (next trading day)' : 'Using weekly expirations (default)'}
+          </span>
+        </div>
+      )}
 
       {/* Error */}
       {(error || calcError) && (
