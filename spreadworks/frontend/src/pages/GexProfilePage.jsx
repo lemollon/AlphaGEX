@@ -97,6 +97,7 @@ export default function GexProfilePage() {
     if (!chartSectionRef.current) return;
     try {
       setScreenshotting(true);
+      setDiscordMsg('');
       const html2canvas = (await import('html2canvas')).default;
       const canvas = await html2canvas(chartSectionRef.current, {
         backgroundColor: '#0a0a14',
@@ -108,8 +109,11 @@ export default function GexProfilePage() {
       link.download = `${symbol}-${viewLabel}-${new Date().toISOString().split('T')[0]}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
+      setDiscordMsg('Downloaded!');
+      setTimeout(() => setDiscordMsg(''), 3000);
     } catch (err) {
-      console.error('Screenshot failed:', err);
+      setDiscordMsg(`Screenshot failed: ${err.message}`);
+      setTimeout(() => setDiscordMsg(''), 5000);
     } finally {
       setScreenshotting(false);
     }

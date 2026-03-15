@@ -154,10 +154,13 @@ function BuilderPage() {
 
   const API_URL = import.meta.env.VITE_API_URL || '';
 
+  const [screenshotMsg, setScreenshotMsg] = useState('');
+
   const handleScreenshot = useCallback(async () => {
     if (!chartAreaRef.current) return;
     try {
       setScreenshotting(true);
+      setScreenshotMsg('');
       const html2canvas = (await import('html2canvas')).default;
       const canvas = await html2canvas(chartAreaRef.current, {
         backgroundColor: '#0a0a1e',
@@ -168,8 +171,11 @@ function BuilderPage() {
       link.download = `${symbol}-builder-${new Date().toISOString().split('T')[0]}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
+      setScreenshotMsg('Downloaded!');
+      setTimeout(() => setScreenshotMsg(''), 3000);
     } catch (err) {
-      console.error('Screenshot failed:', err);
+      setScreenshotMsg(`Failed: ${err.message}`);
+      setTimeout(() => setScreenshotMsg(''), 5000);
     } finally {
       setScreenshotting(false);
     }
@@ -250,6 +256,11 @@ function BuilderPage() {
               <Camera size={13} />
               {screenshotting ? 'Capturing...' : 'Screenshot'}
             </button>
+            {screenshotMsg && (
+              <span className={`text-[11px] font-semibold ${screenshotMsg === 'Downloaded!' ? 'text-sw-green' : 'text-sw-red'}`}>
+                {screenshotMsg}
+              </span>
+            )}
             {!isOpen && dataAsOf && (
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
                 Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
