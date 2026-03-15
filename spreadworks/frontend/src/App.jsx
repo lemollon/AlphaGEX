@@ -156,6 +156,10 @@ function BuilderPage() {
 
   const [screenshotMsg, setScreenshotMsg] = useState('');
 
+  const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
+  const { gexData, refetch: refetchGex } = useGex(symbol);
+  const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
+
   const handleScreenshot = useCallback(async () => {
     if (!chartAreaRef.current) return;
     try {
@@ -187,10 +191,6 @@ function BuilderPage() {
       setScreenshotting(false);
     }
   }, [symbol, spotPrice, API_URL]);
-
-  const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
-  const { gexData, refetch: refetchGex } = useGex(symbol);
-  const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
 
   const handleSymbolChange = useCallback((newSymbol) => {
     setSymbol(newSymbol);
