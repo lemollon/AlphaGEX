@@ -28,10 +28,11 @@ export function computePriceRange(candles, strikes, gexData, bufferPct = 0.005) 
     }
   }
 
-  // GEX levels (flip_point, call_wall, put_wall) are intentionally excluded
-  // from the price range. They render as overlay lines only when they fall
-  // within the candle/strike range — otherwise they stretch the Y-axis and
-  // squish the candlesticks into a thin band.
+  if (gexData) {
+    if (gexData.flip_point) prices.push(gexData.flip_point);
+    if (gexData.call_wall) prices.push(gexData.call_wall);
+    if (gexData.put_wall) prices.push(gexData.put_wall);
+  }
 
   if (prices.length === 0) return { minPrice: 550, maxPrice: 590 };
 

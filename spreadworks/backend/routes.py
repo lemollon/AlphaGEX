@@ -431,11 +431,11 @@ async def get_gex(request: Request, symbol: str = "SPY"):
             d = body.get("data", {})
             ms = d.get("market_structure", {})
             fp_obj = ms.get("flip_point", {})
-            gw = ms.get("gamma_walls", {})
+            walls = ms.get("walls", {})
             result = {
                 "flip_point": fp_obj.get("current") if isinstance(fp_obj, dict) else fp_obj,
-                "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
-                "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
+                "call_wall": walls.get("current_call_wall") if isinstance(walls, dict) else None,
+                "put_wall": walls.get("current_put_wall") if isinstance(walls, dict) else None,
                 "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
@@ -641,21 +641,9 @@ async def gex_suggest(
             "GEX data incomplete — flip_point and spot_price required for suggestions",
         )
 
-    # GEX data often comes from SPX options (~10x SPY price).
-    # Detect and scale down to SPY level when needed.
-    def _maybe_scale(level: float) -> float:
-        if spot and level and level > spot * 5:
-            return level / 10.0
-        return level
-
-    flip = _maybe_scale(flip)
-    if call_wall:
-        call_wall = _maybe_scale(call_wall)
-    else:
+    if not call_wall:
         call_wall = spot + (spot * 0.01)
-    if put_wall:
-        put_wall = _maybe_scale(put_wall)
-    else:
+    if not put_wall:
         put_wall = spot - (spot * 0.01)
 
     def _round_strike(v: float) -> float:
