@@ -530,10 +530,20 @@ def recover_orphan_sandbox_fills():
     FLAME trades once/day, so the logic is simple:
     1. Query User sandbox for open SPY option positions
     2. Group them by expiration into IC legs (should be 4 legs)
-    3. Check if FLAME has an open paper position with matching strikes
-    4. If not → create the paper position from the sandbox fill
+    3. Check if FLAME has a matching paper position (open OR closed today)
+    4. Check PDT budget + max_trades_per_day before creating
+    5. If unmatched + budget allows → create paper position from sandbox fill
 
-    Runs every monitor cycle — fast (1 API call + 1 DB query).
+    Invariants enforced:
+    - INV-31: Check open AND closed positions for de-dup
+    - INV-32: Max 1 orphan recovery per day (hard ceiling)
+    - INV-33: Check PDT before creating (same-day position = potential day trade)
+    - INV-34: Partial fills (< 4 legs) = alert only, no auto-close
+    - INV-35: Only same-day positions (ignore stale/expired)
+    - INV-36: Paper account sizing, not sandbox quantities
+    - INV-37: Respect max_trades_per_day from scanner config
+
+    Runs every monitor cycle — fast (1 API call + a few DB queries).
     Only acts for FLAME (the only bot using sandbox).
     """
     bot = {"name": "flame", "dte": "2DTE"}
@@ -544,6 +554,17 @@ def recover_orphan_sandbox_fills():
     hhmm = ct.hour * 100 + ct.minute
     if hhmm < 830 or hhmm > 1500:
         return
+
+    # INV-32: Hard limit — max 1 orphan recovery per day
+    # Check if we already recovered today (via logs table)
+    already_recovered = db_query(f"""
+        SELECT COUNT(*) as cnt FROM {bot_table('flame', 'logs')}
+        WHERE level = 'ORPHAN_RECOVERY'
+          AND CAST(log_time AS DATE) = CURRENT_DATE()
+          AND dte_mode = '2DTE'
+    """)
+    if to_int(already_recovered[0].get("cnt") if already_recovered else 0) > 0:
+        return  # Already recovered once today — hard ceiling
 
     # 1. Get User sandbox account
     accounts = _get_sandbox_accounts()
@@ -582,7 +603,7 @@ def recover_orphan_sandbox_fills():
         ticker, expiration, strike, opt_type = parse_occ_symbol(symbol)
         if ticker != "SPY" or not expiration:
             continue
-        # Only care about today's or future expirations
+        # INV-35: Only same-day or future expirations — ignore stale/expired
         if expiration < today_str:
             continue
         if expiration not in legs_by_exp:
@@ -598,11 +619,31 @@ def recover_orphan_sandbox_fills():
     if not legs_by_exp:
         return
 
-    # 4. For each expiration with 4 legs, check if we have a matching paper position
+    # 4. For each expiration group, identify IC or alert on partial fills
     for expiration, legs in legs_by_exp.items():
         if len(legs) != 4:
-            # Not a complete IC — skip (could be partial fill or individual legs)
-            log.debug(f"Orphan check: {expiration} has {len(legs)} legs (need 4), skipping")
+            # INV-34: Partial fill — alert only, never auto-close
+            if 0 < len(legs) < 4:
+                leg_details = json.dumps([
+                    {"symbol": l["symbol"], "qty": l["quantity"], "strike": l["strike"],
+                     "type": l["opt_type"]}
+                    for l in legs
+                ]).replace("'", "''")
+                log.warning(
+                    f"PARTIAL FILL DETECTED: Sandbox has {len(legs)} legs for exp={expiration} "
+                    f"(need 4 for IC) — operator must decide"
+                )
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(),
+                        'PARTIAL_FILL_DETECTED',
+                        'MONITOR: Sandbox has {len(legs)}/4 IC legs for exp={expiration} — manual review required',
+                        '{leg_details}',
+                        '2DTE'
+                    )
+                """)
             continue
 
         # Identify the IC structure:
@@ -627,44 +668,80 @@ def recover_orphan_sandbox_fills():
         cl = long_call["strike"]
         sandbox_contracts = abs(short_put["quantity"])
 
-        # 5. Check if FLAME already has a paper position with these strikes
+        # 5. INV-31: Check BOTH open AND closed positions for de-dup
         existing = db_query(f"""
-            SELECT position_id FROM {bot_table('flame', 'positions')}
-            WHERE status = 'open' AND dte_mode = '2DTE'
+            SELECT position_id, status FROM {bot_table('flame', 'positions')}
+            WHERE dte_mode = '2DTE'
               AND put_short_strike = {ps} AND put_long_strike = {pl}
               AND call_short_strike = {cs} AND call_long_strike = {cl}
               AND expiration = CAST('{expiration}' AS DATE)
+              AND (status = 'open' OR open_date = CAST('{today_str}' AS DATE))
         """)
 
         if existing:
-            # Paper position already exists — everything is in sync
+            # Paper position already exists (open or closed today) — in sync
             continue
 
         # Also check: does FLAME already have ANY open position today?
         # FLAME trades once/day — if there's already an open position, don't create another
-        any_open = db_query(f"""
+        any_open_today = db_query(f"""
             SELECT position_id FROM {bot_table('flame', 'positions')}
             WHERE status = 'open' AND dte_mode = '2DTE'
               AND open_date = CAST('{today_str}' AS DATE)
         """)
-        if any_open:
+        if any_open_today:
             log.info(
-                f"ORPHAN RECOVERY SKIP: FLAME already has open position {any_open[0]['position_id']} "
+                f"ORPHAN RECOVERY SKIP: FLAME already has open position {any_open_today[0]['position_id']} "
                 f"today — sandbox has unmatched {ps}/{pl}P-{cs}/{cl}C but won't create duplicate"
             )
             continue
 
-        # 6. ORPHAN DETECTED — create paper position from sandbox fill
+        # 6. INV-37 + INV-33: Check PDT budget + max_trades_per_day
+        #    Mirrors scanner's try_open_trade() checks (ironforge_scanner.py:1821-1849)
+        pdt_cfg_rows = db_query(f"""
+            SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
+            FROM {shared_table('ironforge_pdt_config')}
+            WHERE bot_name = 'FLAME'
+            LIMIT 1
+        """)
+        pdt_cfg = pdt_cfg_rows[0] if pdt_cfg_rows else {}
+        pdt_enabled = pdt_cfg.get("pdt_enabled", True) not in (False, 0, "false")
+        pdt_count = to_int(pdt_cfg.get("day_trade_count", 0))
+        max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3))  # rolling window
+        max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # daily limit
+
+        # Check max_trades_per_day (scanner uses pdt_log count)
+        if pdt_enabled and max_trades_per_day > 0:
+            today_trades = db_query(f"""
+                SELECT COUNT(*) as cnt
+                FROM {bot_table('flame', 'pdt_log')}
+                WHERE trade_date = CURRENT_DATE() AND dte_mode = '2DTE'
+            """)
+            today_count = to_int(today_trades[0].get("cnt") if today_trades else 0)
+            if today_count >= max_trades_per_day:
+                log.info(
+                    f"ORPHAN RECOVERY SKIP: max_trades_per_day reached "
+                    f"({today_count}/{max_trades_per_day}) — sandbox orphan not recovered"
+                )
+                continue
+
+        # Check PDT rolling window
+        if pdt_enabled and max_day_trades > 0 and pdt_count >= max_day_trades:
+            log.info(
+                f"ORPHAN RECOVERY SKIP: PDT blocked "
+                f"({pdt_count}/{max_day_trades} day trades in rolling window)"
+            )
+            continue
+
+        # 7. ORPHAN DETECTED — all gates passed, create paper position
         log.warning(
             f"ORPHAN FILL DETECTED: Sandbox has {ps}/{pl}P-{cs}/{cl}C exp={expiration} "
             f"x{sandbox_contracts} but no paper position — creating now"
         )
 
         # Get entry credit from sandbox cost basis
-        # Cost basis is total for all legs — net credit for an IC
         total_cost_basis = sum(l["cost_basis"] for l in legs)
         # Tradier cost_basis: negative = credit received, positive = debit paid
-        # For an IC, total should be negative (net credit)
         entry_credit = abs(total_cost_basis) / (sandbox_contracts * 100)
 
         # If cost basis is unreliable, get live MTM as fallback
@@ -676,8 +753,7 @@ def recover_orphan_sandbox_fills():
                 entry_credit = 0.10  # absolute minimum fallback
             log.warning(f"  Cost basis unreliable, using {'MTM' if mtm else 'minimum'}: ${entry_credit:.4f}")
 
-        # Paper uses its own contract sizing (max 10, from config)
-        cfg = BOT_CONFIG.get("flame", {"pt_pct": 0.30, "sl_mult": 2.0})
+        # INV-36: Paper sizing (matches scanner ironforge_scanner.py:1909-1916)
         spread_width = round(ps - pl, 2)
         collateral_per = max(0, (spread_width - entry_credit) * 100)
 
@@ -696,7 +772,7 @@ def recover_orphan_sandbox_fills():
         paper_acct_id = paper_acct["id"]
         balance = num(paper_acct["current_balance"])
 
-        # Recalculate buying power from live collateral
+        # Recalculate buying power from live collateral (matches scanner)
         live_coll_rows = db_query(f"""
             SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
             FROM {bot_table('flame', 'positions')}
@@ -707,6 +783,10 @@ def recover_orphan_sandbox_fills():
 
         if collateral_per <= 0:
             log.error(f"ORPHAN RECOVERY FAILED: bad collateral_per={collateral_per}")
+            continue
+
+        if buying_power < 200:
+            log.warning(f"ORPHAN RECOVERY SKIP: low buying power (${buying_power:.0f})")
             continue
 
         usable_bp = buying_power * 0.85
@@ -728,7 +808,7 @@ def recover_orphan_sandbox_fills():
             "User": {"recovered": True, "contracts": sandbox_contracts}
         }).replace("'", "''")
 
-        # 7. INSERT paper position
+        # 8. INSERT paper position
         db_execute(f"""
             INSERT INTO {bot_table('flame', 'positions')} (
                 position_id, ticker, expiration,
@@ -763,7 +843,7 @@ def recover_orphan_sandbox_fills():
             )
         """)
 
-        # 8. Update paper_account collateral
+        # 9. Update paper_account collateral
         db_execute(f"""
             UPDATE {bot_table('flame', 'paper_account')}
             SET collateral_in_use = collateral_in_use + {total_collateral},
@@ -772,7 +852,19 @@ def recover_orphan_sandbox_fills():
             WHERE id = {paper_acct_id}
         """)
 
-        # 9. Log it
+        # 10. PDT log — record this trade so scanner's daily count stays accurate
+        db_execute(f"""
+            INSERT INTO {bot_table('flame', 'pdt_log')} (
+                trade_date, symbol, position_id, opened_at,
+                contracts, entry_credit, dte_mode, created_at
+            ) VALUES (
+                CURRENT_DATE(), 'SPY', '{position_id}', CURRENT_TIMESTAMP(),
+                {max_contracts}, {entry_credit}, '2DTE',
+                CURRENT_TIMESTAMP()
+            )
+        """)
+
+        # 11. Log it
         details = json.dumps({
             "position_id": position_id,
             "contracts_paper": max_contracts,
@@ -782,6 +874,8 @@ def recover_orphan_sandbox_fills():
             "source": "orphan_fill_recovery",
             "strikes": f"{pl}/{ps}P-{cs}/{cl}C",
             "expiration": expiration,
+            "pdt_count": pdt_count,
+            "max_trades_per_day": max_trades_per_day,
         }).replace("'", "''")
         db_execute(f"""
             INSERT INTO {bot_table('flame', 'logs')}
@@ -795,7 +889,7 @@ def recover_orphan_sandbox_fills():
             )
         """)
 
-        # 10. Equity snapshot
+        # 12. Equity snapshot
         updated_acct = db_query(f"""
             SELECT current_balance, cumulative_pnl
             FROM {bot_table('flame', 'paper_account')}
@@ -815,7 +909,7 @@ def recover_orphan_sandbox_fills():
                 )
             """)
 
-        # 11. Daily perf — count as a trade
+        # 13. Daily perf — count as a trade
         db_execute(f"""
             MERGE INTO {bot_table('flame', 'daily_perf')} AS t
             USING (SELECT CURRENT_DATE() AS trade_date) AS s

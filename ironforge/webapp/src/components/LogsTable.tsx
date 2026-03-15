@@ -19,6 +19,8 @@ const levelColors: Record<string, string> = {
   SANDBOX_CLEANUP: 'bg-purple-500/20 text-purple-400',
   SANDBOX_HEALTH: 'bg-purple-500/20 text-purple-400',
   CONFIG: 'bg-stone-600/30 text-gray-300',
+  ORPHAN_RECOVERY: 'bg-amber-500/20 text-amber-400',
+  PARTIAL_FILL_DETECTED: 'bg-orange-500/20 text-orange-400',
 }
 
 export default function LogsTable({ logs }: { logs: LogEntry[] }) {
