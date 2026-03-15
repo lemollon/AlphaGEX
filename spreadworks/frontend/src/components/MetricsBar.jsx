@@ -6,81 +6,10 @@ const currFmt = new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 0,
 });
 
-const st = {
-  bar: {
-    display: 'flex',
-    gap: 2,
-    padding: '6px 10px',
-    background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)',
-    borderTop: '1px solid var(--border-subtle)',
-    fontFamily: 'var(--font-ui)',
-    fontSize: 12,
-  },
-  cell: {
-    flex: 1,
-    padding: '10px 14px',
-    background: 'rgba(13, 13, 35, 0.6)',
-    backdropFilter: 'blur(6px)',
-    border: '1px solid rgba(30, 30, 70, 0.4)',
-    borderRadius: 'var(--radius-md)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-    transition: 'all var(--transition-fast)',
-  },
-  cellHover: {
-    borderColor: 'rgba(68, 138, 255, 0.2)',
-    background: 'rgba(16, 16, 42, 0.7)',
-  },
-  label: {
-    color: 'var(--text-tertiary)',
-    fontSize: 10,
-    fontWeight: 600,
-    textTransform: 'uppercase',
-    letterSpacing: '0.08em',
-  },
-  value: (color) => ({
-    color: color || 'var(--text-primary)',
-    fontWeight: 700,
-    fontSize: 15,
-    fontFamily: 'var(--font-mono)',
-    textShadow: color && color !== 'var(--text-primary)'
-      ? `0 0 12px ${color}33`
-      : 'none',
-  }),
-  greekValue: (color) => ({
-    color: color || 'var(--text-primary)',
-    fontWeight: 600,
-    fontSize: 14,
-    fontFamily: 'var(--font-mono)',
-  }),
-  tooltip: {
-    position: 'absolute',
-    bottom: '100%',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    marginBottom: 8,
-    background: 'rgba(16, 16, 42, 0.95)',
-    backdropFilter: 'blur(12px)',
-    border: '1px solid var(--border-default)',
-    borderRadius: 'var(--radius-md)',
-    padding: '8px 12px',
-    color: 'var(--text-secondary)',
-    fontSize: 11,
-    lineHeight: 1.4,
-    fontFamily: 'var(--font-ui)',
-    whiteSpace: 'nowrap',
-    zIndex: 10,
-    pointerEvents: 'none',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.05)',
-    animation: 'sw-fadeIn 0.15s ease',
-  },
-};
-
 const GREEK_TOOLTIPS = {
   delta: 'How much the position value changes per $1 move in the underlying',
-  gamma: 'Rate of change of delta — how fast your directional risk shifts',
-  theta: 'Daily time decay — positive means you earn from time passing',
+  gamma: 'Rate of change of delta \u2014 how fast your directional risk shifts',
+  theta: 'Daily time decay \u2014 positive means you earn from time passing',
   vega: 'Sensitivity to a 1% change in implied volatility',
 };
 
@@ -88,26 +17,33 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      style={{ ...st.cell, position: 'relative', cursor: 'default', ...(hovered ? st.cellHover : {}) }}
+      className={`flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-lg border transition-all duration-150 relative cursor-default backdrop-blur-sm ${
+        hovered ? 'border-accent/20 bg-bg-card-hover' : 'border-border-subtle/40 bg-bg-card/60'
+      }`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <span style={st.label}>{symbol} {label}</span>
-      <span style={st.greekValue(color)}>{value}</span>
-      {hovered && tooltip && <div style={st.tooltip}>{tooltip}</div>}
+      <span className="sw-label">{symbol} {label}</span>
+      <span className="font-semibold text-sm font-[var(--font-mono)]" style={{ color: color || 'var(--color-text-primary)' }}>{value}</span>
+      {hovered && tooltip && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg text-[11px] leading-snug text-text-secondary whitespace-nowrap z-10 pointer-events-none animate-fade-in backdrop-blur-xl"
+          style={{ background: 'rgba(16, 16, 42, 0.95)', border: '1px solid var(--color-border-default)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)' }}>
+          {tooltip}
+        </div>
+      )}
     </div>
   );
 }
 
 function deltaColor(val) {
-  if (val == null) return 'var(--text-tertiary)';
-  if (Math.abs(val) < 0.05) return 'var(--text-secondary)';
-  return val > 0 ? 'var(--green)' : 'var(--red)';
+  if (val == null) return 'var(--color-text-tertiary)';
+  if (Math.abs(val) < 0.05) return 'var(--color-text-secondary)';
+  return val > 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)';
 }
 
 function thetaColor(val) {
-  if (val == null) return 'var(--text-tertiary)';
-  return val >= 0 ? 'var(--green)' : 'var(--red)';
+  if (val == null) return 'var(--color-text-tertiary)';
+  return val >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)';
 }
 
 function getInitialUnit() {
@@ -132,7 +68,7 @@ export default function MetricsBar({ calcResult }) {
   const isCredit = r.net_debit != null && r.net_debit < 0;
   const displayAmount = Math.abs(r.net_debit ?? 0);
   const creditLabel = isCredit ? 'NET CREDIT' : 'NET DEBIT';
-  const creditColor = isCredit ? 'var(--green)' : 'var(--red)';
+  const creditColor = isCredit ? 'var(--color-sw-green)' : 'var(--color-sw-red)';
   const isTheoretical = r.pricing_mode === 'black_scholes';
   const tilde = isTheoretical ? '~' : '';
 
@@ -162,113 +98,58 @@ export default function MetricsBar({ calcResult }) {
 
   const beLower = r.lower_breakeven != null ? r.lower_breakeven.toFixed(2) : '--';
   const beUpper = r.upper_breakeven != null ? r.upper_breakeven.toFixed(2) : '--';
-  const iv = r.implied_vol != null
-    ? formatPct(r.implied_vol)
-    : '--';
+  const iv = r.implied_vol != null ? formatPct(r.implied_vol) : '--';
 
-  const unitBtnStyle = (active) => ({
-    padding: '3px 8px',
-    border: `1px solid ${active ? 'var(--accent)' : 'rgba(30, 30, 70, 0.6)'}`,
-    borderRadius: 'var(--radius-sm)',
-    background: active ? 'rgba(68, 138, 255, 0.2)' : 'transparent',
-    color: active ? 'var(--accent-bright)' : 'var(--text-muted)',
-    cursor: 'pointer',
-    fontSize: 10,
-    fontFamily: 'var(--font-mono)',
-    fontWeight: 600,
-    lineHeight: 1,
-    transition: 'all var(--transition-fast)',
-  });
-
-  const cellWithHover = (idx) => ({
-    ...st.cell,
-    ...(hoveredIdx === idx ? st.cellHover : {}),
-  });
+  const cellCls = (idx) => `flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-lg border transition-all duration-150 backdrop-blur-sm ${
+    hoveredIdx === idx ? 'border-accent/20 bg-bg-card-hover' : 'border-border-subtle/40 bg-bg-card/60'
+  }`;
 
   return (
     <div>
       {/* Row 1: P&L Metrics */}
-      <div style={st.bar}>
-        <div
-          style={cellWithHover(0)}
-          onMouseEnter={() => setHoveredIdx(0)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={st.label}>{creditLabel}</span>
-            <button style={unitBtnStyle(!isPct)} onClick={toggleUnit}>$</button>
-            <button style={unitBtnStyle(isPct)} onClick={toggleUnit}>%</button>
+      <div className="flex gap-0.5 px-2.5 py-1.5 border-t border-border-subtle font-[var(--font-ui)] text-xs"
+        style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+        <div className={cellCls(0)} onMouseEnter={() => setHoveredIdx(0)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <div className="flex items-center gap-1.5">
+            <span className="sw-label">{creditLabel}</span>
+            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-all duration-150 border cursor-pointer ${
+              !isPct ? 'border-accent bg-accent/20 text-accent-bright' : 'border-border-subtle/60 bg-transparent text-text-muted'
+            }`} onClick={toggleUnit}>$</button>
+            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-all duration-150 border cursor-pointer ${
+              isPct ? 'border-accent bg-accent/20 text-accent-bright' : 'border-border-subtle/60 bg-transparent text-text-muted'
+            }`} onClick={toggleUnit}>%</button>
           </div>
-          <span style={st.value(creditColor)}>{creditVal}</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)]" style={{ color: creditColor, textShadow: `0 0 12px ${creditColor}33` }}>{creditVal}</span>
         </div>
-        <div
-          style={cellWithHover(1)}
-          onMouseEnter={() => setHoveredIdx(1)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <span style={st.label}>Max Profit</span>
-          <span style={st.value('var(--green)')}>{maxProfitStr}</span>
+        <div className={cellCls(1)} onMouseEnter={() => setHoveredIdx(1)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <span className="sw-label">Max Profit</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-green" style={{ textShadow: '0 0 12px rgba(34,197,94,0.3)' }}>{maxProfitStr}</span>
         </div>
-        <div
-          style={cellWithHover(2)}
-          onMouseEnter={() => setHoveredIdx(2)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <span style={st.label}>Max Loss</span>
-          <span style={st.value('var(--red)')}>{maxLossStr}</span>
+        <div className={cellCls(2)} onMouseEnter={() => setHoveredIdx(2)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <span className="sw-label">Max Loss</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-red" style={{ textShadow: '0 0 12px rgba(239,68,68,0.3)' }}>{maxLossStr}</span>
         </div>
-        <div
-          style={cellWithHover(3)}
-          onMouseEnter={() => setHoveredIdx(3)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <span style={st.label}>Chance of Profit</span>
-          <span style={st.value('var(--accent-bright)')}>{cop}</span>
+        <div className={cellCls(3)} onMouseEnter={() => setHoveredIdx(3)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <span className="sw-label">Chance of Profit</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-accent-bright" style={{ textShadow: '0 0 12px rgba(245,158,11,0.3)' }}>{cop}</span>
         </div>
-        <div
-          style={cellWithHover(4)}
-          onMouseEnter={() => setHoveredIdx(4)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <span style={st.label}>Breakevens</span>
-          <span style={st.value()}>${beLower} &mdash; ${beUpper}</span>
+        <div className={cellCls(4)} onMouseEnter={() => setHoveredIdx(4)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <span className="sw-label">Breakevens</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-text-primary">${beLower} &mdash; ${beUpper}</span>
         </div>
-        <div
-          style={{ ...cellWithHover(5) }}
-          onMouseEnter={() => setHoveredIdx(5)}
-          onMouseLeave={() => setHoveredIdx(-1)}
-        >
-          <span style={st.label}>Implied Vol</span>
-          <span style={st.value()}>{iv}</span>
+        <div className={cellCls(5)} onMouseEnter={() => setHoveredIdx(5)} onMouseLeave={() => setHoveredIdx(-1)}>
+          <span className="sw-label">Implied Vol</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-text-primary">{iv}</span>
         </div>
       </div>
       {/* Row 2: Greeks */}
-      <div style={{ ...st.bar, borderTop: 'none' }}>
-        <GreekCell
-          label="Delta" symbol={'\u0394'}
-          value={formatGreek(g.delta)}
-          color={deltaColor(g.delta)}
-          tooltip={GREEK_TOOLTIPS.delta}
-        />
-        <GreekCell
-          label="Gamma" symbol={'\u0393'}
-          value={formatGreek(g.gamma, 5)}
-          color="var(--text-secondary)"
-          tooltip={GREEK_TOOLTIPS.gamma}
-        />
-        <GreekCell
-          label="Theta" symbol={'\u0398'}
-          value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'}
-          color={thetaColor(g.theta)}
-          tooltip={GREEK_TOOLTIPS.theta}
-        />
-        <GreekCell
-          label="Vega" symbol={'\u03BD'}
-          value={formatGreekDollar(g.vega)}
-          color="var(--text-secondary)"
-          tooltip={GREEK_TOOLTIPS.vega}
-        />
-        <div style={{ ...st.cell, flex: 2, opacity: 0 }} />
+      <div className="flex gap-0.5 px-2.5 py-1.5 font-[var(--font-ui)] text-xs"
+        style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+        <GreekCell label="Delta" symbol={'\u0394'} value={formatGreek(g.delta)} color={deltaColor(g.delta)} tooltip={GREEK_TOOLTIPS.delta} />
+        <GreekCell label="Gamma" symbol={'\u0393'} value={formatGreek(g.gamma, 5)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.gamma} />
+        <GreekCell label="Theta" symbol={'\u0398'} value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'} color={thetaColor(g.theta)} tooltip={GREEK_TOOLTIPS.theta} />
+        <GreekCell label="Vega" symbol={'\u03BD'} value={formatGreekDollar(g.vega)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.vega} />
+        <div className="flex-[2] opacity-0" />
       </div>
     </div>
   );

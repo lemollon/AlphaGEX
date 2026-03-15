@@ -55,12 +55,12 @@ export default function PayoffPanel({
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
     longPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        lines.push({ y: pToY(p), color: '#00e676', dash: '5,4', label: `$${p}` });
+        lines.push({ y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
       }
     });
     shortPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        lines.push({ y: pToY(p), color: '#ff5252', dash: '5,4' });
+        lines.push({ y: pToY(p), color: '#ef4444', dash: '5,4' });
       }
     });
     return lines;
@@ -78,13 +78,7 @@ export default function PayoffPanel({
   }
 
   return (
-    <div style={{
-      width: 220,
-      minWidth: 220,
-      background: 'var(--bg-base)',
-      borderLeft: '1px solid #1e2038',
-      position: 'relative',
-    }}>
+    <div className="w-[220px] min-w-[220px] bg-bg-base border-l border-border-subtle relative">
       <svg
         width="100%"
         height={height}
@@ -94,12 +88,12 @@ export default function PayoffPanel({
       >
         <defs>
           <linearGradient id="profitGrad" x1="1" y1="0" x2="0" y2="0">
-            <stop offset="0%" stopColor="#00e676" stopOpacity="0" />
-            <stop offset="100%" stopColor="#00e676" stopOpacity="0.5" />
+            <stop offset="0%" stopColor="#22c55e" stopOpacity="0" />
+            <stop offset="100%" stopColor="#22c55e" stopOpacity="0.5" />
           </linearGradient>
           <linearGradient id="lossGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#ff1744" stopOpacity="0" />
-            <stop offset="100%" stopColor="#ff1744" stopOpacity="0.5" />
+            <stop offset="0%" stopColor="#ef4444" stopOpacity="0" />
+            <stop offset="100%" stopColor="#ef4444" stopOpacity="0.5" />
           </linearGradient>
         </defs>
 
@@ -119,16 +113,13 @@ export default function PayoffPanel({
         {/* Payoff shape */}
         {paths && (
           <>
-            {/* Profit fill */}
             {paths.profitFill && (
               <path d={paths.profitFill} fill="url(#profitGrad)" />
             )}
-            {/* Loss fill */}
             {paths.lossFill && (
               <path d={paths.lossFill} fill="url(#lossGrad)" />
             )}
-            {/* Main curve */}
-            <path d={paths.mainPath} fill="none" stroke="#00e676" strokeWidth="2.5" />
+            <path d={paths.mainPath} fill="none" stroke="#22c55e" strokeWidth="2.5" />
           </>
         )}
 
@@ -136,7 +127,7 @@ export default function PayoffPanel({
         {spotY != null && (
           <>
             <line x1={0} y1={spotY} x2={VIEW_WIDTH} y2={spotY} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.5" />
-            <rect x={VIEW_WIDTH - 48} y={spotY - 8} width={46} height={16} rx={3} fill="#448aff22" stroke="#448aff" strokeWidth="0.5" />
+            <rect x={VIEW_WIDTH - 48} y={spotY - 8} width={46} height={16} rx={3} fill="rgba(68, 138, 255, 0.13)" stroke="#448aff" strokeWidth="0.5" />
             <text x={VIEW_WIDTH - 25} y={spotY + 3} textAnchor="middle" fill="#448aff" fontSize="8" fontFamily="'Courier New', monospace">
               ${spotPrice?.toFixed(0)}
             </text>
@@ -159,7 +150,6 @@ export default function PayoffPanel({
 
         {/* Current P&L badge at spot price */}
         {paths && spotY != null && spotPrice && pnlCurve && pnlCurve.length > 0 && (() => {
-          // Interpolate P&L at spot
           let pnlAtSpot = null;
           for (let i = 0; i < pnlCurve.length - 1; i++) {
             const a = pnlCurve[i], b = pnlCurve[i + 1];
@@ -175,17 +165,16 @@ export default function PayoffPanel({
           const pctOfRisk = maxRisk > 0 ? (pnlAtSpot / maxRisk) * 100 : 0;
           const isProfit = pnlAtSpot > 0;
           const nearBreakeven = Math.abs(pctOfRisk) < 10;
-          const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#00e676' : '#ff5252';
-          const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#00e67622' : '#ff525222';
+          const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#22c55e' : '#ef4444';
+          const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#22c55e22' : '#ef444422';
 
           const label = `Now: ${formatDollarPnl(pnlAtSpot)} (${formatSignedPct(pctOfRisk)})`;
 
-          // Position badge: clamp Y so it doesn't clip
           const badgeW = 140;
           const badgeH = 18;
           const rawX = 4;
           let badgeY = spotY - badgeH / 2;
-          badgeY = Math.max(topPad, Math.min(badgeY, height - 28 - badgeH));
+          badgeY = Math.max(10, Math.min(badgeY, height - 28 - badgeH));
 
           return (
             <g>
