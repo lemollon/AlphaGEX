@@ -21,6 +21,7 @@ GET  /api/spreadworks/positions/{id}/pnl   Live unrealised P&L for a position
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -487,7 +488,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
 
 @router.get("/expirations")
 async def get_expirations(request: Request, symbol: str = "SPY"):
-    """Return available option expirations from Tradier."""
+    """Return available option expirations from Tradier with DTE labels."""
     data = await _tradier_get(
         request,
         "/markets/options/expirations",
@@ -499,7 +500,19 @@ async def get_expirations(request: Request, symbol: str = "SPY"):
     date_list = exps.get("date", [])
     if isinstance(date_list, str):
         date_list = [date_list]
-    return {"symbol": symbol, "expirations": date_list}
+
+    # Annotate each expiration with DTE
+    today = _today_ct()
+    annotated = []
+    for d in date_list:
+        try:
+            exp_date = datetime.strptime(d, "%Y-%m-%d").date()
+            dte = (exp_date - today).days
+            annotated.append({"date": d, "dte": dte})
+        except (ValueError, TypeError):
+            annotated.append({"date": d, "dte": None})
+
+    return {"symbol": symbol, "expirations": date_list, "expirations_with_dte": annotated}
 
 
 # ---------------------------------------------------------------------------
@@ -642,6 +655,20 @@ async def gex_suggest(
     front_exp = (today + timedelta(days=days_until_friday)).isoformat()
     back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
+    # Credit strategies (IC, Iron Butterfly) always suggest 0DTE as the
+    # nearest trading day so users can explore them anytime (weekends use
+    # next Monday).  Non-credit strategies keep the next-Friday pattern.
+    credit_strategies = {"iron_condor", "iron_butterfly"}
+    is_credit = strategy in credit_strategies
+    if is_credit:
+        # Find nearest weekday (today if Mon-Fri, else next Monday)
+        dte_date = today
+        while dte_date.weekday() >= 5:  # Sat=5, Sun=6
+            dte_date += timedelta(days=1)
+        credit_exp = dte_date.isoformat()
+    else:
+        credit_exp = front_exp
+
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 
     if strategy == "double_diagonal":
@@ -675,13 +702,53 @@ async def gex_suggest(
             "short_put_strike": short_put,
             "short_call_strike": short_call,
             "long_call_strike": long_call,
-            "expiration": front_exp,
+            "expiration": credit_exp,
         }
+        is_0dte = credit_exp == today.isoformat()
+        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
         rationale = (
             f"Iron Condor: short strikes at GEX walls "
             f"(put wall ${short_put}, call wall ${short_call}). "
             f"Long wings ${wing_offset} wide. "
-            f"Single exp {front_exp}. "
+            f"{dte_note}. "
+            f"Regime: {regime or 'UNKNOWN'}."
+        )
+    elif strategy == "butterfly":
+        # Butterfly centered at flip point (neutral bet on pin)
+        center = _round_strike(flip)
+        lower_strike = _round_strike(center - wing_offset)
+        upper_strike = _round_strike(center + wing_offset)
+
+        legs = {
+            "lower_strike": lower_strike,
+            "middle_strike": center,
+            "upper_strike": upper_strike,
+            "option_type": "call",
+            "expiration": front_exp,
+        }
+        rationale = (
+            f"Butterfly centered at GEX flip point ${center}. "
+            f"Wings ${wing_offset} wide (${lower_strike}/${center}/${upper_strike}). "
+            f"Exp {front_exp}. Regime: {regime or 'UNKNOWN'}."
+        )
+    elif strategy == "iron_butterfly":
+        # Iron Butterfly: short straddle at flip, wings at walls
+        short_strike = _round_strike(flip)
+        lp_strike = _round_strike(short_strike - wing_offset)
+        lc_strike = _round_strike(short_strike + wing_offset)
+
+        legs = {
+            "long_put_strike": lp_strike,
+            "short_strike": short_strike,
+            "long_call_strike": lc_strike,
+            "expiration": credit_exp,
+        }
+        is_0dte = credit_exp == today.isoformat()
+        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
+        rationale = (
+            f"Iron Butterfly: short straddle at flip ${short_strike}, "
+            f"wings at ${lp_strike}/${lc_strike}. "
+            f"{dte_note}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
     else:  # double_calendar
@@ -794,6 +861,19 @@ def _scan_pnl_profile(
         T_exp = _tte(expirations["exp"])
         scan_lo = min(lp, sp, sc, lc) - 20
         scan_hi = max(lp, sp, sc, lc) + 20
+    elif strategy == "butterfly":
+        lower, middle, upper = strikes["lower"], strikes["middle"], strikes["upper"]
+        is_call = strikes.get("is_call", True)
+        T_exp = _tte(expirations["exp"])
+        scan_lo = lower - 20
+        scan_hi = upper + 20
+    elif strategy == "iron_butterfly":
+        lp = strikes["lp"]
+        short = strikes["short"]
+        lc = strikes["lc"]
+        T_exp = _tte(expirations["exp"])
+        scan_lo = lp - 20
+        scan_hi = lc + 20
     else:
         ps, cs = strikes["ps"], strikes["cs"]
         T_front = _tte(expirations["front"])
@@ -824,14 +904,37 @@ def _scan_pnl_profile(
             ) * 100 * n
         elif strategy == "iron_condor":
             # Iron Condor at expiration: all intrinsic
-            # entry_cost is negative for credit spreads (you receive premium)
-            # P&L = intrinsic payoff - cost to open (subtracting a negative = adding credit)
             pnl = (
                 max(0, lp - px)   # long put payoff
                 - max(0, sp - px)  # short put payoff
                 - max(0, px - sc)  # short call payoff
                 + max(0, px - lc)  # long call payoff
-                - entry_cost       # subtract entry_cost (negative = add credit received)
+                - entry_cost
+            ) * 100 * n
+        elif strategy == "butterfly":
+            # Butterfly: buy 1 lower, sell 2 middle, buy 1 upper (same type)
+            if is_call:
+                pnl = (
+                    max(0, px - lower)       # long lower call
+                    - 2 * max(0, px - middle) # short 2x middle call
+                    + max(0, px - upper)      # long upper call
+                    - entry_cost
+                ) * 100 * n
+            else:
+                pnl = (
+                    max(0, lower - px)       # long lower put (OTM)
+                    - 2 * max(0, middle - px) # short 2x middle put
+                    + max(0, upper - px)      # long upper put (ITM)
+                    - entry_cost
+                ) * 100 * n
+        elif strategy == "iron_butterfly":
+            # Iron Butterfly: long put wing, short ATM put+call, long call wing
+            pnl = (
+                max(0, lp - px)       # long put payoff
+                - max(0, short - px)  # short ATM put
+                - max(0, px - short)  # short ATM call
+                + max(0, px - lc)     # long call payoff
+                - entry_cost
             ) * 100 * n
         else:
             pnl = (
@@ -897,7 +1000,7 @@ def _build_pnl_grid(
     if strategy == "double_diagonal":
         front_exp = _parse_exp(expirations["short"])
         back_exp = _parse_exp(expirations["long"])
-    elif strategy == "iron_condor":
+    elif strategy in ("iron_condor", "butterfly", "iron_butterfly"):
         front_exp = _parse_exp(expirations["exp"])
         back_exp = front_exp
     else:  # double_calendar
@@ -927,7 +1030,7 @@ def _build_pnl_grid(
             time_slices.append({"label": label, "dte_frac": dte, "is_expiry": is_exp})
 
     # Build price levels: 20 prices centered on spot
-    all_strikes = list(strikes.values())
+    all_strikes = [v for v in strikes.values() if isinstance(v, (int, float))]
     strike_spread = max(all_strikes) - min(all_strikes) if all_strikes else 10
     step = 2.0 if strike_spread > 20 else 1.0
     n_levels = 10  # 10 above + 10 below + spot = 21 rows
@@ -955,7 +1058,6 @@ def _build_pnl_grid(
                 ) * 100 * n
             elif strategy == "iron_condor":
                 if T <= 0:
-                    # At expiration — intrinsic only
                     pnl = (
                         max(0, strikes["lp"] - px)
                         - max(0, strikes["sp"] - px)
@@ -968,6 +1070,37 @@ def _build_pnl_grid(
                         _bs_price(px, strikes["lp"], T, r, sigma, False)
                         - _bs_price(px, strikes["sp"], T, r, sigma, False)
                         - _bs_price(px, strikes["sc"], T, r, sigma, True)
+                        + _bs_price(px, strikes["lc"], T, r, sigma, True)
+                        - entry_cost
+                    ) * 100 * n
+            elif strategy == "butterfly":
+                is_call_bf = strikes.get("is_call", True)
+                if T <= 0:
+                    if is_call_bf:
+                        pnl = (max(0, px - strikes["lower"]) - 2 * max(0, px - strikes["middle"]) + max(0, px - strikes["upper"]) - entry_cost) * 100 * n
+                    else:
+                        pnl = (max(0, strikes["lower"] - px) - 2 * max(0, strikes["middle"] - px) + max(0, strikes["upper"] - px) - entry_cost) * 100 * n
+                else:
+                    pnl = (
+                        _bs_price(px, strikes["lower"], T, r, sigma, is_call_bf)
+                        - 2 * _bs_price(px, strikes["middle"], T, r, sigma, is_call_bf)
+                        + _bs_price(px, strikes["upper"], T, r, sigma, is_call_bf)
+                        - entry_cost
+                    ) * 100 * n
+            elif strategy == "iron_butterfly":
+                if T <= 0:
+                    pnl = (
+                        max(0, strikes["lp"] - px)
+                        - max(0, strikes["short"] - px)
+                        - max(0, px - strikes["short"])
+                        + max(0, px - strikes["lc"])
+                        - entry_cost
+                    ) * 100 * n
+                else:
+                    pnl = (
+                        _bs_price(px, strikes["lp"], T, r, sigma, False)
+                        - _bs_price(px, strikes["short"], T, r, sigma, False)
+                        - _bs_price(px, strikes["short"], T, r, sigma, True)
                         + _bs_price(px, strikes["lc"], T, r, sigma, True)
                         - entry_cost
                     ) * 100 * n
@@ -1227,6 +1360,96 @@ async def calculate_spread(request: Request, body: CalcRequest):
             {"leg": "Short Front Call", "type": "short", "strike": cs, "exp": front_exp, "price": round(p_fc, 4), "iv": round(iv_fc, 4), "theoretical": theo_fc, "greeks": {k: round(v, 6) for k, v in g_fc.items()}},
             {"leg": "Long Back Call", "type": "long", "strike": cs, "exp": back_exp, "price": round(p_bc, 4), "iv": round(iv_bc, 4), "theoretical": theo_bc, "greeks": {k: round(v, 6) for k, v in g_bc.items()}},
         ]
+    elif body.strategy == "butterfly":
+        lower = float(legs.get("lowerStrike") or legs.get("lower_strike", 0))
+        middle = float(legs.get("middleStrike") or legs.get("middle_strike", 0))
+        upper = float(legs.get("upperStrike") or legs.get("upper_strike", 0))
+        opt_type = str(legs.get("optionType") or legs.get("option_type", "call"))
+        exp = str(legs.get("expiration") or "")
+        is_call = opt_type.lower() == "call"
+
+        if not all([lower, middle, upper, exp]):
+            raise HTTPException(422, "All 3 strikes and expiration required for Butterfly")
+
+        T_exp = _tte(exp)
+
+        p_lower, iv_lower, theo_lower = _price_or_bs(lower, T_exp, is_call, exp)
+        p_middle, iv_middle, theo_middle = _price_or_bs(middle, T_exp, is_call, exp)
+        p_upper, iv_upper, theo_upper = _price_or_bs(upper, T_exp, is_call, exp)
+
+        # Buy 1 lower + Buy 1 upper - Sell 2 middle
+        entry_cost = p_lower + p_upper - 2 * p_middle
+        net_debit = entry_cost * 100 * n
+
+        g_lower = _bs_greeks(S, lower, T_exp, r, iv_lower, is_call)
+        g_middle = _bs_greeks(S, middle, T_exp, r, iv_middle, is_call)
+        g_upper = _bs_greeks(S, upper, T_exp, r, iv_upper, is_call)
+
+        greeks = {
+            k: round((g_lower[k] - 2 * g_middle[k] + g_upper[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lower, iv_middle, iv_middle, iv_upper]) / 4
+        profile = _scan_pnl_profile(
+            "butterfly", S,
+            {"lower": lower, "middle": middle, "upper": upper, "is_call": is_call},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        type_label = "Call" if is_call else "Put"
+        leg_detail = [
+            {"leg": f"Long {type_label} (Lower)", "type": "long", "strike": lower, "exp": exp, "price": round(p_lower, 4), "iv": round(iv_lower, 4), "theoretical": theo_lower, "greeks": {k: round(v, 6) for k, v in g_lower.items()}},
+            {"leg": f"Short {type_label} x2 (Middle)", "type": "short", "strike": middle, "exp": exp, "price": round(p_middle * 2, 4), "iv": round(iv_middle, 4), "theoretical": theo_middle, "greeks": {k: round(v * 2, 6) for k, v in g_middle.items()}},
+            {"leg": f"Long {type_label} (Upper)", "type": "long", "strike": upper, "exp": exp, "price": round(p_upper, 4), "iv": round(iv_upper, 4), "theoretical": theo_upper, "greeks": {k: round(v, 6) for k, v in g_upper.items()}},
+        ]
+
+    elif body.strategy == "iron_butterfly":
+        lp = float(legs.get("longPutStrike") or legs.get("long_put_strike", 0))
+        short = float(legs.get("shortStrike") or legs.get("short_strike", 0))
+        lc = float(legs.get("longCallStrike") or legs.get("long_call_strike", 0))
+        exp = str(legs.get("expiration") or "")
+
+        if not all([lp, short, lc, exp]):
+            raise HTTPException(422, "Long put, short strike, long call, and expiration required for Iron Butterfly")
+
+        T_exp = _tte(exp)
+
+        p_lp, iv_lp, theo_lp = _price_or_bs(lp, T_exp, False, exp)
+        p_sp, iv_sp, theo_sp = _price_or_bs(short, T_exp, False, exp)
+        p_sc, iv_sc, theo_sc = _price_or_bs(short, T_exp, True, exp)
+        p_lc, iv_lc, theo_lc = _price_or_bs(lc, T_exp, True, exp)
+
+        # Credit strategy: sell ATM straddle, buy wings
+        entry_cost = p_lp + p_lc - p_sp - p_sc  # negative = net credit
+        net_debit = entry_cost * 100 * n
+
+        g_lp = _bs_greeks(S, lp, T_exp, r, iv_lp, False)
+        g_sp = _bs_greeks(S, short, T_exp, r, iv_sp, False)
+        g_sc = _bs_greeks(S, short, T_exp, r, iv_sc, True)
+        g_lc = _bs_greeks(S, lc, T_exp, r, iv_lc, True)
+
+        greeks = {
+            k: round((g_lp[k] - g_sp[k] - g_sc[k] + g_lc[k]) * n, 6)
+            for k in ("delta", "gamma", "theta", "vega")
+        }
+
+        avg_sigma = sum([iv_lp, iv_sp, iv_sc, iv_lc]) / 4
+        profile = _scan_pnl_profile(
+            "iron_butterfly", S,
+            {"lp": lp, "short": short, "lc": lc},
+            {"exp": exp},
+            r, avg_sigma, entry_cost, n,
+        )
+
+        leg_detail = [
+            {"leg": "Long Put (Wing)", "type": "long", "strike": lp, "exp": exp, "price": round(p_lp, 4), "iv": round(iv_lp, 4), "theoretical": theo_lp, "greeks": {k: round(v, 6) for k, v in g_lp.items()}},
+            {"leg": "Short Put (ATM)", "type": "short", "strike": short, "exp": exp, "price": round(p_sp, 4), "iv": round(iv_sp, 4), "theoretical": theo_sp, "greeks": {k: round(v, 6) for k, v in g_sp.items()}},
+            {"leg": "Short Call (ATM)", "type": "short", "strike": short, "exp": exp, "price": round(p_sc, 4), "iv": round(iv_sc, 4), "theoretical": theo_sc, "greeks": {k: round(v, 6) for k, v in g_sc.items()}},
+            {"leg": "Long Call (Wing)", "type": "long", "strike": lc, "exp": exp, "price": round(p_lc, 4), "iv": round(iv_lc, 4), "theoretical": theo_lc, "greeks": {k: round(v, 6) for k, v in g_lc.items()}},
+        ]
+
     else:
         raise HTTPException(400, f"Unknown strategy: {body.strategy}")
 
@@ -1242,6 +1465,12 @@ async def calculate_spread(request: Request, body: CalcRequest):
         grid_exps = {"short": short_exp, "long": long_exp}
     elif body.strategy == "iron_condor":
         grid_strikes = {"lp": lp, "sp": sp, "sc": sc, "lc": lc}
+        grid_exps = {"exp": exp}
+    elif body.strategy == "butterfly":
+        grid_strikes = {"lower": lower, "middle": middle, "upper": upper, "is_call": is_call}
+        grid_exps = {"exp": exp}
+    elif body.strategy == "iron_butterfly":
+        grid_strikes = {"lp": lp, "short": short, "lc": lc}
         grid_exps = {"exp": exp}
     else:
         grid_strikes = {"ps": ps, "cs": cs}
@@ -1345,7 +1574,58 @@ STRATEGY_LABELS = {
     "double_diagonal": "Double Diagonal",
     "double_calendar": "Double Calendar",
     "iron_condor": "Iron Condor",
+    "butterfly": "Butterfly",
+    "iron_butterfly": "Iron Butterfly",
 }
+
+# Strategies where entry_price represents a credit received (entry_cost < 0).
+# For debit strategies, entry_price = |debit per share| (positive), but
+# the P&L formula must negate it.
+CREDIT_STRATEGIES = {"iron_condor", "iron_butterfly"}
+
+
+def _compute_unrealized_pnl(
+    entry_price: float,
+    val: float,
+    contracts: int,
+    strategy: str,
+    max_profit: float | None = None,
+    max_loss: float | None = None,
+) -> float:
+    """Compute unrealized P&L with correct sign handling for credit vs debit strategies.
+
+    For CREDIT strategies (IC, Iron Butterfly):
+        P&L = (entry_price - val) * 100 * contracts
+        entry_price = credit per share (positive), val = cost to close (positive, shrinks to 0)
+
+    For DEBIT strategies (DD, DC, Butterfly):
+        P&L = -(entry_price + val) * 100 * contracts
+        entry_price = |debit per share| (positive), val = short - long (negative when profitable)
+    """
+    if strategy in CREDIT_STRATEGIES:
+        raw = (entry_price - val) * 100 * contracts
+    else:
+        # Debit: you paid |entry_price|. Current value of position = -val.
+        # P&L = current_value - cost = (-val) - entry_price = -(val + entry_price)
+        raw = -(val + entry_price) * 100 * contracts
+
+    pnl = round(raw, 2)
+
+    # Cap at theoretical boundaries and log violations for monitoring
+    if max_profit is not None and pnl > abs(max_profit):
+        logger.warning(
+            "P&L sanity violation: raw=%.2f exceeds max_profit=%.2f for %s (entry_price=%.4f, val=%.4f)",
+            pnl, max_profit, strategy, entry_price, val,
+        )
+        pnl = round(abs(max_profit), 2)
+    if max_loss is not None and pnl < -abs(max_loss):
+        logger.warning(
+            "P&L sanity violation: raw=%.2f exceeds max_loss=%.2f for %s (entry_price=%.4f, val=%.4f)",
+            pnl, max_loss, strategy, entry_price, val,
+        )
+        pnl = -round(abs(max_loss), 2)
+
+    return pnl
 
 
 def _pos_to_dict(pos: Position) -> dict:
@@ -1496,6 +1776,15 @@ async def create_position(body: PositionCreate, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"Failed to save position: {e}")
         raise HTTPException(500, f"Failed to save position: {e}")
+
+    # Guardrail: warn if max_profit/max_loss boundaries are missing
+    if pos.max_profit is None or pos.max_loss is None:
+        logger.warning(
+            "Position %d saved without P&L boundaries: max_profit=%s, max_loss=%s. "
+            "P&L cap guardrails will not function.",
+            pos.id, pos.max_profit, pos.max_loss,
+        )
+
     return _pos_to_dict(pos)
 
 
@@ -1506,7 +1795,11 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     open_positions = db.query(Position).filter(Position.status == "open").all()
     closed_positions = db.query(Position).filter(Position.status == "closed").all()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    total_collateral = sum(abs(p.max_loss or 0) for p in open_positions)
     total_realized = sum(p.realized_pnl or 0 for p in closed_positions)
     slots_used = len(open_positions)
 
@@ -1525,7 +1818,9 @@ async def positions_summary(request: Request, db: Session = Depends(get_db)):
     return {
         "slots_used": slots_used,
         "slots_total": MAX_OPEN_POSITIONS,
-        "total_credit": round(total_credit, 2),
+        "total_credit": round(net_premium, 2),
+        "net_premium": round(net_premium, 2),
+        "total_collateral": round(total_collateral, 2),
         "total_unrealized": round(total_unrealized, 2),
         "total_realized": round(total_realized, 2),
         "open_count": slots_used,
@@ -1574,7 +1869,10 @@ async def close_position(
     if pos.status == "closed":
         raise HTTPException(409, "Position already closed")
 
-    realized = round((pos.entry_price - body.close_price) * 100 * pos.contracts, 2)
+    realized = _compute_unrealized_pnl(
+        pos.entry_price, body.close_price, pos.contracts, pos.strategy,
+        pos.max_profit, pos.max_loss,
+    )
 
     pos.status = "closed"
     pos.close_date = _today_ct()
@@ -1699,7 +1997,19 @@ def _bs_spread_val(pos, current_price: float, leg_ivs: dict[str, float | None] |
             - _bs_price(current_price, pos.long_put, T_back, r, iv_for("long_put"), False)
             - _bs_price(current_price, pos.long_call, T_back, r, iv_for("long_call"), True)
         )
+    elif pos.strategy == "butterfly":
+        # Butterfly: all legs are same type (calls by default since we don't store option_type).
+        # Stored as: long_put=lower, short_put=middle, short_call=middle, long_call=upper.
+        # val = 2*BS(middle) - BS(lower) - BS(upper)  (short minus long)
+        T = tte(pos.short_exp)
+        mid_iv = (iv_for("short_put") + iv_for("short_call")) / 2  # same strike, avg IVs
+        return (
+            2 * _bs_price(current_price, pos.short_put, T, r, mid_iv, True)
+            - _bs_price(current_price, pos.long_put, T, r, iv_for("long_put"), True)
+            - _bs_price(current_price, pos.long_call, T, r, iv_for("long_call"), True)
+        )
     else:
+        # Iron Condor and Iron Butterfly: 4 legs with correct put/call types
         T = tte(pos.short_exp)
         return (
             _bs_price(current_price, pos.short_put, T, r, iv_for("short_put"), False)
@@ -1707,6 +2017,30 @@ def _bs_spread_val(pos, current_price: float, leg_ivs: dict[str, float | None] |
             - _bs_price(current_price, pos.long_put, T, r, iv_for("long_put"), False)
             - _bs_price(current_price, pos.long_call, T, r, iv_for("long_call"), True)
         )
+
+
+def _build_leg_list(pos, short_exp_str: str | None, long_exp_str: str | None) -> list[dict]:
+    """Build leg descriptor list with correct option_types per strategy.
+
+    For butterfly, all legs are the same type (calls).
+    For iron_condor/iron_butterfly/DD/DC, puts are puts and calls are calls.
+    """
+    if pos.strategy == "butterfly":
+        # Butterfly: long_put=lower, short_put=middle, short_call=middle, long_call=upper
+        # All legs are the same option type (call by default)
+        return [
+            {"strike": pos.short_put, "exp": short_exp_str, "option_type": "call", "key": "short_put"},
+            {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
+            {"strike": pos.long_put, "exp": short_exp_str, "option_type": "call", "key": "long_put"},
+            {"strike": pos.long_call, "exp": short_exp_str, "option_type": "call", "key": "long_call"},
+        ]
+    # Default: standard put/call mapping for IC, IB, DD, DC
+    return [
+        {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
+        {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
+        {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
+        {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
+    ]
 
 
 # --- GET /positions/{id}/pnl (live unrealised P&L) ---
@@ -1732,12 +2066,7 @@ async def position_live_pnl(
         short_exp_str = str(pos.short_exp) if pos.short_exp else None
         long_exp_str = str(pos.long_exp) if pos.long_exp else None
 
-        legs = [
-            {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-            {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-            {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-            {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-        ]
+        legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
         val = None
         leg_quotes = None
@@ -1759,7 +2088,10 @@ async def position_live_pnl(
             pricing_source = "black_scholes_live_iv" if leg_ivs and any(v is not None for v in leg_ivs.values()) else "black_scholes"
 
         current_value = round(val, 4)
-        unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+        unrealized_pnl = _compute_unrealized_pnl(
+            pos.entry_price, val, pos.contracts, pos.strategy,
+            pos.max_profit, pos.max_loss,
+        )
 
         if pos.max_profit and pos.max_profit != 0:
             pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 2)
@@ -1782,6 +2114,8 @@ async def position_live_pnl(
         "entry_credit": pos.entry_credit,
         "entry_price": pos.entry_price,
         "max_profit": pos.max_profit,
+        "max_loss": pos.max_loss,
+        "is_credit": pos.strategy in CREDIT_STRATEGIES,
         "last_mark": _mark_to_dict(latest_mark) if latest_mark else None,
     }
 
@@ -1806,12 +2140,7 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
             # Try live option quotes first, fall back to BS
             short_exp_str = str(pos.short_exp) if pos.short_exp else None
             long_exp_str = str(pos.long_exp) if pos.long_exp else None
-            legs = [
-                {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-                {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-                {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-                {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-            ]
+            legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
             val = None
             leg_quotes = None
@@ -1827,7 +2156,10 @@ async def mark_all_positions(request: Request, db: Session = Depends(get_db)):
                 val = _bs_spread_val(pos, current_price, leg_ivs)
 
             dte_val = (pos.short_exp - today_date).days if pos.short_exp else None
-            unrealized = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+            unrealized = _compute_unrealized_pnl(
+                pos.entry_price, val, pos.contracts, pos.strategy,
+                pos.max_profit, pos.max_loss,
+            )
 
             mark = DailyMark(
                 position_id=pos.id,
@@ -2009,7 +2341,7 @@ def _discord_post_closed(pos: Position):
         "title": f"\u2705 POSITION CLOSED \u00b7 {pos.symbol} {strat_label}",
         "color": color,
         "fields": [
-            {"name": "Entry", "value": f"+${pos.entry_credit:,.2f}", "inline": True},
+            {"name": "Entry", "value": f"{'+'if pos.strategy in CREDIT_STRATEGIES else '-'}${pos.entry_credit:,.2f}", "inline": True},
             {"name": "Exit", "value": f"-${(pos.close_price or 0) * 100 * pos.contracts:,.2f}", "inline": True},
             {"name": "Realized P&L", "value": f"${pnl:+,.2f} ({pct_of_max:+.1f}% of max profit)", "inline": False},
             {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
@@ -2242,6 +2574,450 @@ async def discord_push_spread(body: DiscordPushSpread):
     return {"posted": True}
 
 
+# ---------------------------------------------------------------------------
+# GEX Profile → Discord chart generators + endpoints
+# ---------------------------------------------------------------------------
+
+
+def _generate_net_gex_chart(strikes: list[dict], header: dict, levels: dict) -> bytes | None:
+    """Generate a Net GEX horizontal bar chart as PNG bytes (mirrors frontend CSS bars)."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        if not strikes:
+            return None
+
+        price = header.get("price", 0)
+        sorted_s = sorted(strikes, key=lambda s: abs(s["strike"] - price))[:40]
+        sorted_s.sort(key=lambda s: s["strike"], reverse=True)
+
+        strike_labels = [f"${s['strike']:.0f}" for s in sorted_s]
+        net_gammas = [s["net_gamma"] for s in sorted_s]
+        colors = ["#22c55e" if g >= 0 else "#ef4444" for g in net_gammas]
+
+        fig, ax = plt.subplots(figsize=(8, max(len(sorted_s) * 0.22, 4)), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax.set_facecolor("#0d0d18")
+
+        ax.barh(range(len(sorted_s)), net_gammas, color=colors, height=0.7, alpha=0.8)
+
+        ax.set_yticks(range(len(sorted_s)))
+        ax.set_yticklabels(strike_labels, fontsize=8, color="#9ca3af", fontfamily="monospace")
+
+        # Mark key levels
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        for i, s in enumerate(sorted_s):
+            if price and abs(s["strike"] - price) <= 1:
+                ax.barh(i, net_gammas[i], color="#f59e0b", height=0.7, alpha=0.9)
+                ax.annotate("PRICE", xy=(0, i), fontsize=7, color="#f59e0b",
+                            fontweight="bold", va="center", ha="left")
+            elif flip and abs(s["strike"] - flip) <= 1:
+                ax.annotate("FLIP", xy=(0, i), fontsize=7, color="#eab308",
+                            fontweight="bold", va="center", ha="left")
+            elif cw and abs(s["strike"] - cw) <= 1:
+                ax.annotate("CALL WALL", xy=(0, i), fontsize=7, color="#06b6d4",
+                            fontweight="bold", va="center", ha="left")
+            elif pw and abs(s["strike"] - pw) <= 1:
+                ax.annotate("PUT WALL", xy=(0, i), fontsize=7, color="#a855f7",
+                            fontweight="bold", va="center", ha="left")
+
+        ax.axvline(x=0, color="#475569", linewidth=0.7, linestyle="--")
+        ax.set_xlabel("Net Gamma Exposure", color="#888", fontsize=9, fontfamily="monospace")
+        ax.set_title(
+            f"{header.get('symbol', 'SPY')} Net GEX by Strike · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax.tick_params(colors="#555", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_color("#1a1a2e")
+        ax.spines["left"].set_color("#1a1a2e")
+        ax.grid(axis="x", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+        ax.invert_yaxis()
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Net GEX chart generation failed: {e}")
+        return None
+
+
+def _generate_callput_gex_chart(strikes: list[dict], header: dict, levels: dict) -> bytes | None:
+    """Generate a bidirectional Call vs Put GEX bar chart as PNG bytes."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        if not strikes:
+            return None
+
+        price = header.get("price", 0)
+        sorted_s = sorted(strikes, key=lambda s: abs(s["strike"] - price))[:40]
+        sorted_s.sort(key=lambda s: s["strike"], reverse=True)
+
+        strike_labels = [f"${s['strike']:.0f}" for s in sorted_s]
+        call_gammas = [s.get("call_gamma", 0) for s in sorted_s]
+        put_gammas = [-(s.get("put_gamma", 0)) for s in sorted_s]  # negative for visual
+
+        y_pos = np.arange(len(sorted_s))
+
+        fig, ax = plt.subplots(figsize=(8, max(len(sorted_s) * 0.22, 4)), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax.set_facecolor("#0d0d18")
+
+        ax.barh(y_pos, call_gammas, height=0.4, color="#22c55e", alpha=0.75, label="Call Gamma")
+        ax.barh(y_pos, put_gammas, height=0.4, color="#ef4444", alpha=0.75, label="Put Gamma")
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(strike_labels, fontsize=8, color="#9ca3af", fontfamily="monospace")
+
+        # Reference lines for key levels
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        for i, s in enumerate(sorted_s):
+            if price and abs(s["strike"] - price) <= 1:
+                ax.axhline(y=i, color="#448aff", linewidth=1.5, alpha=0.6)
+            if flip and abs(s["strike"] - flip) <= 1:
+                ax.axhline(y=i, color="#eab308", linewidth=1.2, linestyle="--", alpha=0.6)
+            if cw and abs(s["strike"] - cw) <= 1:
+                ax.axhline(y=i, color="#06b6d4", linewidth=1.2, linestyle=":", alpha=0.6)
+            if pw and abs(s["strike"] - pw) <= 1:
+                ax.axhline(y=i, color="#a855f7", linewidth=1.2, linestyle=":", alpha=0.6)
+
+        ax.axvline(x=0, color="#475569", linewidth=0.7, linestyle="--")
+        ax.set_xlabel("Gamma Exposure", color="#888", fontsize=9, fontfamily="monospace")
+        ax.set_title(
+            f"{header.get('symbol', 'SPY')} Call vs Put GEX · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax.tick_params(colors="#555", labelsize=8)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["bottom"].set_color("#1a1a2e")
+        ax.spines["left"].set_color("#1a1a2e")
+        ax.grid(axis="x", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+        ax.legend(loc="lower right", fontsize=8, facecolor="#0d0d18", edgecolor="#1a1a2e",
+                  labelcolor="#9ca3af")
+        ax.invert_yaxis()
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Call vs Put chart generation failed: {e}")
+        return None
+
+
+def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
+                                  header: dict, levels: dict) -> bytes | None:
+    """Generate an intraday candlestick + GEX overlay chart as PNG bytes."""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.dates as mdates
+        from datetime import datetime, timezone, timedelta
+
+        if not bars and not ticks:
+            return None
+
+        ct_offset = timedelta(hours=-6)  # CDT (CT during DST)
+
+        fig, ax1 = plt.subplots(figsize=(10, 4.5), dpi=150)
+        fig.patch.set_facecolor("#0d0d18")
+        ax1.set_facecolor("#0d0d18")
+
+        if bars:
+            times = []
+            for b in bars:
+                t = b.get("time", "")
+                try:
+                    dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                    times.append(dt + ct_offset)
+                except Exception:
+                    times.append(datetime.now())
+
+            opens = [b["open"] for b in bars]
+            highs = [b["high"] for b in bars]
+            lows = [b["low"] for b in bars]
+            closes = [b["close"] for b in bars]
+
+            bar_width = 0.002  # fraction of day
+            for i in range(len(bars)):
+                color = "#22c55e" if closes[i] >= opens[i] else "#ef4444"
+                ax1.plot([times[i], times[i]], [lows[i], highs[i]],
+                         color=color, linewidth=0.8)
+                ax1.bar(times[i], closes[i] - opens[i], bottom=min(opens[i], closes[i]),
+                        width=bar_width, color=color, alpha=0.8, edgecolor=color)
+        elif ticks:
+            times = []
+            prices = []
+            for t in ticks:
+                if t.get("spot_price") is None:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(t["time"].replace("Z", "+00:00"))
+                    times.append(dt + ct_offset)
+                    prices.append(t["spot_price"])
+                except Exception:
+                    pass
+            if times:
+                ax1.plot(times, prices, color="#3b82f6", linewidth=1.5)
+
+        # Reference lines
+        flip = levels.get("gex_flip")
+        cw = levels.get("call_wall")
+        pw = levels.get("put_wall")
+        if flip:
+            ax1.axhline(y=flip, color="#eab308", linewidth=1.5, linestyle="--", alpha=0.7)
+            ax1.text(0.01, flip, f" FLIP ${flip:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#eab308", fontsize=8, fontfamily="monospace", va="bottom")
+        if cw:
+            ax1.axhline(y=cw, color="#06b6d4", linewidth=1.5, linestyle=":", alpha=0.7)
+            ax1.text(0.01, cw, f" CALL WALL ${cw:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#06b6d4", fontsize=8, fontfamily="monospace", va="bottom")
+        if pw:
+            ax1.axhline(y=pw, color="#a855f7", linewidth=1.5, linestyle=":", alpha=0.7)
+            ax1.text(0.01, pw, f" PUT WALL ${pw:.0f}", transform=ax1.get_yaxis_transform(),
+                     color="#a855f7", fontsize=8, fontfamily="monospace", va="top")
+
+        # GEX overlay on secondary y-axis
+        if ticks:
+            gex_times = []
+            gex_vals = []
+            for t in ticks:
+                ng = t.get("net_gamma")
+                if ng is None:
+                    continue
+                try:
+                    dt = datetime.fromisoformat(t["time"].replace("Z", "+00:00"))
+                    gex_times.append(dt + ct_offset)
+                    gex_vals.append(ng)
+                except Exception:
+                    pass
+            if gex_times:
+                ax2 = ax1.twinx()
+                ax2.fill_between(gex_times, gex_vals, alpha=0.15, color="#3b82f6")
+                ax2.plot(gex_times, gex_vals, color="#3b82f6", linewidth=0.8, alpha=0.5)
+                ax2.set_ylabel("Net GEX", color="#3b82f6", fontsize=9, fontfamily="monospace")
+                ax2.tick_params(colors="#3b82f6", labelsize=7)
+                ax2.spines["right"].set_color("#1a1a2e")
+                ax2.spines["top"].set_visible(False)
+
+        price = header.get("price", 0)
+        symbol = header.get("symbol", "SPY")
+        ax1.set_title(
+            f"{symbol} Intraday 5m · Spot ${price:,.2f}",
+            color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
+        )
+        ax1.set_ylabel("Price", color="#888", fontsize=9, fontfamily="monospace")
+        ax1.tick_params(colors="#555", labelsize=8)
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%I:%M %p"))
+        ax1.spines["top"].set_visible(False)
+        ax1.spines["right"].set_color("#1a1a2e")
+        ax1.spines["bottom"].set_color("#1a1a2e")
+        ax1.spines["left"].set_color("#1a1a2e")
+        ax1.grid(axis="both", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+
+        plt.tight_layout()
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception as e:
+        logger.error(f"[Discord] Intraday chart generation failed: {e}")
+        return None
+
+
+def _format_gex(num: float) -> str:
+    """Format GEX value with B/M/K suffix."""
+    abs_val = abs(num)
+    if abs_val >= 1e9:
+        return f"{num / 1e9:.2f}B"
+    if abs_val >= 1e6:
+        return f"{num / 1e6:.2f}M"
+    if abs_val >= 1e3:
+        return f"{num / 1e3:.2f}K"
+    return f"{num:.2f}"
+
+
+async def _fetch_gex_data(request: Request, symbol: str) -> dict:
+    """Fetch GEX analysis data from AlphaGEX backend."""
+    http = request.app.state.http
+    resp = await http.get(
+        f"{ALPHAGEX_BASE_URL}/api/watchtower/gex-analysis",
+        params={"symbol": symbol},
+        timeout=20.0,
+    )
+    result = resp.json()
+    if not result.get("success"):
+        raise HTTPException(502, "GEX data unavailable")
+    return result["data"]
+
+
+async def _fetch_intraday_data(request: Request, symbol: str) -> tuple[list, list]:
+    """Fetch intraday ticks and bars from AlphaGEX backend."""
+    http = request.app.state.http
+    ticks_resp, bars_resp = await asyncio.gather(
+        http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-ticks",
+            params={"symbol": symbol, "interval": 5, "fallback": "true"},
+            timeout=20.0,
+        ),
+        http.get(
+            f"{ALPHAGEX_BASE_URL}/api/watchtower/intraday-bars",
+            params={"symbol": symbol, "interval": "5min", "fallback": "true"},
+            timeout=20.0,
+        ),
+    )
+    ticks_json = ticks_resp.json()
+    bars_json = bars_resp.json()
+    ticks = ticks_json.get("data", {}).get("ticks", []) if ticks_json.get("success") else []
+    bars = bars_json.get("data", {}).get("bars", []) if bars_json.get("success") else []
+    return ticks, bars
+
+
+def _gex_header_embed_fields(header: dict, levels: dict) -> list[dict]:
+    """Build Discord embed fields from GEX header/levels data."""
+    price = header.get("price", 0)
+    net_gex = header.get("net_gex", 0)
+    gamma_form = header.get("gamma_form", "—")
+    rating = header.get("rating", "—")
+    flip = levels.get("gex_flip")
+    cw = levels.get("call_wall")
+    pw = levels.get("put_wall")
+
+    fields = [
+        {"name": "Price", "value": f"${price:,.2f}", "inline": True},
+        {"name": "Net GEX", "value": _format_gex(net_gex), "inline": True},
+        {"name": "Gamma Regime", "value": gamma_form, "inline": True},
+        {"name": "Rating", "value": rating, "inline": True},
+    ]
+    if flip:
+        dist = ((price - flip) / price * 100) if price else 0
+        fields.append({"name": "Flip Point", "value": f"${flip:,.2f} ({dist:+.1f}%)", "inline": True})
+    if cw:
+        dist = ((cw - price) / price * 100) if price else 0
+        fields.append({"name": "Call Wall", "value": f"${cw:,.2f} (+{dist:.1f}%)", "inline": True})
+    if pw:
+        dist = ((price - pw) / price * 100) if price else 0
+        fields.append({"name": "Put Wall", "value": f"${pw:,.2f} (-{dist:.1f}%)", "inline": True})
+    return fields
+
+
+@router.post("/discord/push-gex-net")
+async def discord_push_gex_net(request: Request, symbol: str = "SPY"):
+    """Push Net GEX bar chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+    strikes = gex_data.get("gex_chart", {}).get("strikes", [])
+
+    chart_bytes = _generate_net_gex_chart(strikes, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    embed = {
+        "title": f"\U0001f4ca {symbol} Net GEX by Strike · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": _gex_header_embed_fields(header, levels),
+        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
+@router.post("/discord/push-gex-callput")
+async def discord_push_gex_callput(request: Request, symbol: str = "SPY"):
+    """Push Call vs Put GEX chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+    strikes = gex_data.get("gex_chart", {}).get("strikes", [])
+
+    chart_bytes = _generate_callput_gex_chart(strikes, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    embed = {
+        "title": f"\U0001f4ca {symbol} Call vs Put GEX · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": _gex_header_embed_fields(header, levels),
+        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
+@router.post("/discord/push-gex-intraday")
+async def discord_push_gex_intraday(request: Request, symbol: str = "SPY"):
+    """Push Intraday 5m candlestick + GEX overlay chart to Discord."""
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+
+    gex_data = await _fetch_gex_data(request, symbol)
+    header = gex_data.get("header", {})
+    header["symbol"] = symbol
+    levels = gex_data.get("levels", {})
+
+    ticks, bars = await _fetch_intraday_data(request, symbol)
+
+    chart_bytes = _generate_intraday_gex_chart(bars, ticks, header, levels)
+
+    net_gex = header.get("net_gex", 0)
+    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+
+    fields = _gex_header_embed_fields(header, levels)
+    fields.append({"name": "Candles", "value": f"{len(bars)} bars", "inline": True})
+
+    embed = {
+        "title": f"\U0001f4ca {symbol} Intraday 5m · ${header.get('price', 0):,.2f}",
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "SpreadWorks · GEX Profile · Intraday"},
+        "timestamp": _now_ct().isoformat(),
+    }
+
+    ok = _send_discord_embed(embed, image_bytes=chart_bytes)
+    if not ok:
+        raise HTTPException(502, "Failed to post to Discord")
+    return {"posted": True}
+
+
 @router.post("/discord/post-open")
 async def discord_post_open(db: Session = Depends(get_db)):
     """Post open positions summary to Discord (like morning post)."""
@@ -2250,29 +3026,34 @@ async def discord_post_open(db: Session = Depends(get_db)):
         return {"posted": False, "reason": "No open positions"}
 
     today_str = _today_ct().strftime("%B %d, %Y")
-    total_credit = sum(p.entry_credit for p in open_positions)
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
 
     lines = []
     for pos in open_positions:
         strat_label = STRATEGY_LABELS.get(pos.strategy, pos.strategy)
         dte = (pos.short_exp - _today_ct()).days if pos.short_exp else "?"
+        entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
         lines.append(
             f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-            f"Entry: +${pos.entry_credit:,.2f}\n"
+            f"Entry: {entry_sign}${pos.entry_credit:,.2f}\n"
             f"Max Profit: ${pos.max_profit:,.2f} | Max Loss: ${pos.max_loss:,.2f} | {dte}DTE"
             if pos.max_profit is not None and pos.max_loss is not None
             else f"{pos.symbol} {strat_label} \u00b7 {_strikes_str(pos)} \u00b7 "
-                 f"Entry: +${pos.entry_credit:,.2f} | {dte}DTE"
+                 f"Entry: {entry_sign}${pos.entry_credit:,.2f} | {dte}DTE"
         )
 
     positions_text = "\n\n".join(lines)
 
+    premium_sign = "+" if net_premium >= 0 else "-"
     embed = {
         "title": f"\U0001f4cb TODAY'S OPEN SPREADS \u00b7 {today_str}",
         "color": 0x448AFF,
         "description": positions_text,
         "fields": [
-            {"name": "Total Credit", "value": f"+${total_credit:,.2f}", "inline": True},
+            {"name": "Net Premium", "value": f"{premium_sign}${abs(net_premium):,.2f}", "inline": True},
             {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
         ],
         "footer": {"text": "Trade with discipline \U0001f64f"},
@@ -2332,6 +3113,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             "strategy": strat,
             "strikes": _strikes_str(pos),
             "entry_credit": pos.entry_credit,
+            "is_credit": pos.strategy in CREDIT_STRATEGIES,
             "unrealized_pnl": pnl,
             "dte": dte,
             "max_profit": pos.max_profit,
@@ -2344,8 +3126,11 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
         Position.close_date == today_date,
     ).count()
 
-    total_credit = sum(p.entry_credit for p in open_positions)
-    pnl_pct = round(total_unrealized / total_credit * 100, 1) if total_credit else 0
+    net_premium = sum(
+        p.entry_credit if p.strategy in CREDIT_STRATEGIES else -p.entry_credit
+        for p in open_positions
+    )
+    pnl_pct = round(total_unrealized / abs(net_premium) * 100, 1) if net_premium else 0
 
     # Claude AI commentary
     commentary = ""
@@ -2363,7 +3148,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             for p in positions_for_ai:
                 prompt += (
                     f"- {p['symbol']} {p['strategy']} {p['strikes']}: "
-                    f"entry +${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
+                    f"entry {'+'if p.get('is_credit') else '-'}${p['entry_credit']:,.2f}, unrealized ${p['unrealized_pnl']:+,.2f}, "
                     f"{p['dte']}DTE, max profit ${p['max_profit']}, max loss ${p['max_loss']}\n"
                 )
             prompt += (
@@ -2396,7 +3181,7 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
             {"name": "\u2501" * 20, "value": "\u200b", "inline": False},
             {
                 "name": "Portfolio P&L Today",
-                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of total credit)",
+                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of net premium)",
                 "inline": True,
             },
             {"name": "Open", "value": str(len(open_positions)), "inline": True},
@@ -2452,12 +3237,7 @@ async def discord_push_position(
                 # Try live option quotes first
                 short_exp_str = str(pos.short_exp) if pos.short_exp else None
                 long_exp_str = str(pos.long_exp) if pos.long_exp else None
-                legs = [
-                    {"strike": pos.short_put, "exp": short_exp_str, "option_type": "put", "key": "short_put"},
-                    {"strike": pos.short_call, "exp": short_exp_str, "option_type": "call", "key": "short_call"},
-                    {"strike": pos.long_put, "exp": long_exp_str or short_exp_str, "option_type": "put", "key": "long_put"},
-                    {"strike": pos.long_call, "exp": long_exp_str or short_exp_str, "option_type": "call", "key": "long_call"},
-                ]
+                legs = _build_leg_list(pos, short_exp_str, long_exp_str)
 
                 val = None
                 leg_quotes = None
@@ -2473,7 +3253,10 @@ async def discord_push_position(
                     val = _bs_spread_val(pos, spot, leg_ivs)
 
                 current_value = round(val, 4)
-                unrealized_pnl = round((pos.entry_price - val) * 100 * pos.contracts, 2)
+                unrealized_pnl = _compute_unrealized_pnl(
+                    pos.entry_price, val, pos.contracts, pos.strategy,
+                    pos.max_profit, pos.max_loss,
+                )
 
                 if pos.max_profit and pos.max_profit != 0:
                     pnl_pct = round(unrealized_pnl / abs(pos.max_profit) * 100, 1)
@@ -2515,9 +3298,10 @@ async def discord_push_position(
     if dte is not None:
         fields.append({"name": "DTE", "value": str(dte), "inline": True})
 
+    entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
     fields.append({
-        "name": "Entry Credit",
-        "value": f"+${pos.entry_credit:,.2f}",
+        "name": "Entry Credit" if pos.strategy in CREDIT_STRATEGIES else "Entry Debit",
+        "value": f"{entry_sign}${pos.entry_credit:,.2f}",
         "inline": True,
     })
     if current_value is not None:
@@ -2664,11 +3448,17 @@ async def position_payoff(
 
     lp, sp = pos.long_put, pos.short_put
     sc, lc = pos.short_call, pos.long_call
-    entry = pos.entry_price  # per-contract net credit/debit
     n = pos.contracts
     sigma = 0.20
     r = RISK_FREE_RATE
-    today_date = _today_ct()
+
+    # Convert entry_price (always positive) back to entry_cost convention:
+    # Credit strategies: entry_cost = -entry_price (negative = credit received)
+    # Debit strategies: entry_cost = +entry_price (positive = debit paid)
+    if pos.strategy in CREDIT_STRATEGIES:
+        entry_cost = -pos.entry_price
+    else:
+        entry_cost = pos.entry_price
 
     # Get spot price for the marker
     spot = None
@@ -2678,79 +3468,60 @@ async def position_payoff(
     except Exception:
         pass
 
-    # For DD/DC with remaining time value, use _scan_pnl_profile
-    if pos.strategy in ("double_diagonal", "double_calendar") and pos.long_exp:
-        if pos.strategy == "double_diagonal":
-            profile = _scan_pnl_profile(
-                "double_diagonal", spot or ((sp + sc) / 2),
-                {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
-                {"short": str(pos.short_exp), "long": str(pos.long_exp)},
-                r, sigma, entry, n,
-            )
-        else:
-            profile = _scan_pnl_profile(
-                "double_calendar", spot or ((sp + sc) / 2),
-                {"ps": sp, "cs": sc},
-                {"front": str(pos.short_exp), "back": str(pos.long_exp)},
-                r, sigma, entry, n,
-            )
-        return {
-            "position_id": position_id,
-            "spot_price": spot,
-            "pnl_curve": profile["pnl_curve"],
-            "max_profit": profile["max_profit"],
-            "max_loss": profile["max_loss"],
-            "breakevens": {
-                "lower": profile["lower_breakeven"],
-                "upper": profile["upper_breakeven"],
-            },
-        }
-
-    # Iron Condor: at-expiration payoff (intrinsic value)
-    scan_lo = lp - 10
-    scan_hi = lc + 10
-    curve = []
-    max_profit = 0.0
-    max_loss = 0.0
-    lower_be = None
-    upper_be = None
-    prev_pnl = None
-
-    for px_int in range(int(scan_lo * 10), int(scan_hi * 10) + 1):
-        px = px_int / 10.0
-        # IC at expiration: short put + short call - long put - long call
-        pnl_per_contract = (
-            -max(0, sp - px) + max(0, lp - px)   # put side
-            - max(0, px - sc) + max(0, px - lc)   # call side
-            + entry                                 # net credit received
+    # Route to _scan_pnl_profile for strategies with time value or known payoff
+    if pos.strategy == "double_diagonal" and pos.long_exp:
+        profile = _scan_pnl_profile(
+            "double_diagonal", spot or ((sp + sc) / 2),
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"short": str(pos.short_exp), "long": str(pos.long_exp)},
+            r, sigma, entry_cost, n,
         )
-        pnl = round(pnl_per_contract * 100 * n, 2)
+    elif pos.strategy == "double_calendar" and pos.long_exp:
+        profile = _scan_pnl_profile(
+            "double_calendar", spot or ((sp + sc) / 2),
+            {"ps": sp, "cs": sc},
+            {"front": str(pos.short_exp), "back": str(pos.long_exp)},
+            r, sigma, entry_cost, n,
+        )
+    elif pos.strategy == "butterfly":
+        profile = _scan_pnl_profile(
+            "butterfly", spot or sp,
+            {"lower": lp, "middle": sp, "upper": lc, "is_call": True},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
+    elif pos.strategy == "iron_butterfly":
+        profile = _scan_pnl_profile(
+            "iron_butterfly", spot or sp,
+            {"lp": lp, "short": sp, "lc": lc},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
+    else:
+        # Iron Condor
+        profile = _scan_pnl_profile(
+            "iron_condor", spot or ((sp + sc) / 2),
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": str(pos.short_exp)},
+            r, sigma, entry_cost, n,
+        )
 
-        if px_int % 10 == 0:
-            curve.append({"price": px, "pnl": pnl})
-
-        if pnl > max_profit:
-            max_profit = pnl
-        if pnl < max_loss:
-            max_loss = pnl
-
-        if prev_pnl is not None:
-            if prev_pnl < 0 <= pnl or prev_pnl >= 0 > pnl:
-                if lower_be is None:
-                    lower_be = px
-                else:
-                    upper_be = px
-        prev_pnl = pnl
+    # Use stored max_profit/max_loss from position creation for consistency
+    # with the card display. The curve shape is recalculated dynamically
+    # (correct for time-dependent strategies like DD/DC), but the boundary
+    # labels should match the card values.
+    max_profit = pos.max_profit if pos.max_profit is not None else profile["max_profit"]
+    max_loss = pos.max_loss if pos.max_loss is not None else profile["max_loss"]
 
     return {
         "position_id": position_id,
         "spot_price": spot,
-        "pnl_curve": curve,
-        "max_profit": round(max_profit, 2),
-        "max_loss": round(max_loss, 2),
+        "pnl_curve": profile["pnl_curve"],
+        "max_profit": max_profit,
+        "max_loss": max_loss,
         "breakevens": {
-            "lower": round(lower_be, 2) if lower_be else None,
-            "upper": round(upper_be, 2) if upper_be else None,
+            "lower": profile["lower_breakeven"],
+            "upper": profile["upper_breakeven"],
         },
     }
 

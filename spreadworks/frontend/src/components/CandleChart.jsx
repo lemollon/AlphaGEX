@@ -18,7 +18,7 @@ import { priceToY } from '../utils/priceScale';
  */
 
 const CHART_LEFT_MARGIN = 50;
-const CHART_RIGHT_MARGIN = 80; // always empty — separates candles from payoff panel
+const CHART_RIGHT_MARGIN = 80;
 const CANDLE_SPACING = 9;
 const BAR_WIDTH = 6;
 const TOP_PAD = 10;
@@ -36,20 +36,14 @@ export default function CandleChart({
   const chartData = useMemo(() => {
     if (!candles || candles.length === 0) return null;
 
-    // Fixed SVG width — viewBox controls scaling
     const svgWidth = 900;
     const availableWidth = svgWidth - CHART_LEFT_MARGIN - CHART_RIGHT_MARGIN;
     const maxCandles = Math.floor(availableWidth / CANDLE_SPACING);
-
-    // Clip older candles on the left if there are more than fit
     const visibleCandles = candles.slice(-maxCandles);
 
     const plotH = height - TOP_PAD - BOTTOM_PAD;
     const maxVol = Math.max(...visibleCandles.map(c => c.volume || 0), 1);
-
     const pToY = (p) => TOP_PAD + priceToY(p, minPrice, maxPrice, plotH);
-
-    // Last candle X — this is where the candle zone ends
     const lastCandleX = CHART_LEFT_MARGIN + (visibleCandles.length - 1) * CANDLE_SPACING;
 
     const bars = visibleCandles.map((c, i) => {
@@ -62,8 +56,6 @@ export default function CandleChart({
       const bodyHeight = Math.max(bodyBottom - bodyTop, 1);
       const wickTop = pToY(c.high);
       const wickBottom = pToY(c.low);
-
-      // Volume bar
       const volH = ((c.volume || 0) / maxVol) * 40;
       const volY = height - BOTTOM_PAD - volH;
 
@@ -74,7 +66,6 @@ export default function CandleChart({
       };
     });
 
-    // Date labels (every ~20 bars) — must not enter the right margin zone
     const dateLabels = [];
     for (let i = 0; i < visibleCandles.length; i += 20) {
       const c = visibleCandles[i];
@@ -86,7 +77,6 @@ export default function CandleChart({
       }
     }
 
-    // Price axis ticks
     const priceTicks = [];
     const range = maxPrice - minPrice;
     const step = range > 30 ? 5 : range > 15 ? 2 : 1;
@@ -100,13 +90,9 @@ export default function CandleChart({
 
   if (!chartData) {
     return (
-      <div style={{
-        flex: 3, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        color: '#555', fontFamily: "'Courier New', monospace", fontSize: 12,
-        background: 'var(--bg-base)', gap: 6,
-      }}>
+      <div className="flex-[3] flex flex-col items-center justify-center text-text-muted font-[var(--font-mono)] text-xs bg-bg-base gap-1.5">
         <span>No candle data available</span>
-        <span style={{ fontSize: 10, color: '#444' }}>
+        <span className="text-[10px] text-text-muted/60">
           Load SpreadWorks during market hours to populate the cache for offline use.
         </span>
       </div>
@@ -115,9 +101,6 @@ export default function CandleChart({
 
   const { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX } = chartData;
 
-  // Candle zone boundary — strike/GEX lines extend to here, not into right margin
-  const candleZoneRight = svgWidth - CHART_RIGHT_MARGIN;
-
   // Strike overlay lines
   const strikeLines = [];
   if (strikes) {
@@ -125,12 +108,12 @@ export default function CandleChart({
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
     longPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        strikeLines.push({ price: p, y: pToY(p), color: '#00e676', dash: '5,4', label: `$${p}` });
+        strikeLines.push({ price: p, y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
       }
     });
     shortPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        strikeLines.push({ price: p, y: pToY(p), color: '#ff5252', dash: '5,4', label: `$${p}` });
+        strikeLines.push({ price: p, y: pToY(p), color: '#ef4444', dash: '5,4', label: `$${p}` });
       }
     });
   }
@@ -152,7 +135,7 @@ export default function CandleChart({
   const spotY = spotPrice ? pToY(spotPrice) : null;
 
   return (
-    <div style={{ flex: 3, overflow: 'hidden', background: 'var(--bg-base)' }}>
+    <div className="flex-[3] overflow-hidden bg-bg-base">
       <svg
         width="100%"
         height={height}
@@ -160,7 +143,7 @@ export default function CandleChart({
         preserveAspectRatio="none"
         style={{ display: 'block' }}
       >
-        {/* Grid lines — span full width including right margin for visual continuity */}
+        {/* Grid lines */}
         {priceTicks.map((t, i) => (
           <g key={i}>
             <line x1={CHART_LEFT_MARGIN} y1={t.y} x2={svgWidth} y2={t.y} stroke="#1a1a2e" strokeWidth="0.5" />
@@ -170,7 +153,7 @@ export default function CandleChart({
           </g>
         ))}
 
-        {/* Strike lines — span to candle zone edge, then through right margin */}
+        {/* Strike lines */}
         {strikeLines.map((sl, i) => (
           <g key={`strike-${i}`}>
             <line x1={CHART_LEFT_MARGIN} y1={sl.y} x2={svgWidth} y2={sl.y} stroke={sl.color} strokeWidth="1" strokeDasharray={sl.dash} opacity="0.7" />
@@ -190,12 +173,12 @@ export default function CandleChart({
           </g>
         ))}
 
-        {/* Volume bars — within candle zone only */}
+        {/* Volume bars */}
         {bars.map((b, i) => (
           <rect key={`vol-${i}`} x={b.x} y={b.volY} width={BAR_WIDTH} height={b.volH} fill={b.volColor} />
         ))}
 
-        {/* Candlestick bars — within candle zone only */}
+        {/* Candlestick bars */}
         {bars.map((b, i) => (
           <g key={`candle-${i}`}>
             <line x1={b.centerX} y1={b.wickTop} x2={b.centerX} y2={b.wickBottom} stroke={b.color} strokeWidth="1" />
@@ -203,11 +186,10 @@ export default function CandleChart({
           </g>
         ))}
 
-        {/* Current price dashed vertical line — sits at lastCandleX in the margin zone */}
+        {/* Current price line + badge */}
         {lastCandleX != null && spotY != null && (
           <>
             <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
-            {/* Price badge — positioned in the right margin zone */}
             <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#448aff" />
             <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="'Courier New', monospace">
               ${spotPrice?.toFixed(2)}
@@ -215,7 +197,7 @@ export default function CandleChart({
           </>
         )}
 
-        {/* Date labels — within candle zone only */}
+        {/* Date labels */}
         {dateLabels.map((dl, i) => (
           <text key={`date-${i}`} x={dl.x} y={height - 6} fill="#555" fontSize="9" fontFamily="'Courier New', monospace">
             {dl.label}
