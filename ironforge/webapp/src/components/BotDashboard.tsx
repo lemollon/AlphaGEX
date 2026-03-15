@@ -152,6 +152,13 @@ export default function BotDashboard({
     { refreshInterval: DATA_REFRESH },
   )
 
+  /* ---- Pending orders (FLAME only — lightweight, always fetched with status) ---- */
+  const { data: pendingData } = useSWR(
+    bot === 'flame' ? `/api/${bot}/pending-orders` : null,
+    fetcher,
+    { refreshInterval: STATUS_REFRESH },
+  )
+
   /* ---- PDT ---- */
   const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
     tab === 'PDT' ? `/api/${bot}/pdt` : null,
@@ -232,6 +239,7 @@ export default function BotDashboard({
           config={config}
           bot={bot}
           liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
+          pendingOrderCount={status?.pending_order_count ?? pendingData?.pending_count}
         />
       )}
 

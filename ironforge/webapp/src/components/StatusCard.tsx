@@ -70,12 +70,14 @@ export default function StatusCard({
   config,
   bot,
   liveUnrealizedPnl,
+  pendingOrderCount,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
   config?: ConfigData | null
   bot: 'flame' | 'spark' | 'inferno'
   liveUnrealizedPnl?: number | null
+  pendingOrderCount?: number
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
@@ -405,7 +407,14 @@ export default function StatusCard({
       <div className="grid grid-cols-6 gap-4 text-sm">
         <div>
           <p className="text-xs text-forge-muted">Open</p>
-          <p className="font-medium">{data.open_positions}</p>
+          <p className="font-medium">
+            {data.open_positions}
+            {(pendingOrderCount ?? 0) > 0 && (
+              <span className="ml-1 text-xs text-yellow-400" title="Pending sandbox orders awaiting fill">
+                (+{pendingOrderCount} pending)
+              </span>
+            )}
+          </p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Total Trades</p>
