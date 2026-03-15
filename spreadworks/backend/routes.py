@@ -623,6 +623,7 @@ async def gex_suggest(
     request: Request,
     symbol: str = "SPY",
     strategy: str = "double_diagonal",
+    use_0dte: bool = False,
 ):
     """Auto-generate strike suggestions from GEX levels."""
     gex = await get_gex(request, symbol)
@@ -649,25 +650,30 @@ async def gex_suggest(
         return round(v * 2) / 2
 
     today = _today_ct()
+    days_until_friday = (4 - today.weekday()) % 7
+    if days_until_friday == 0:
+        days_until_friday = 7
+    front_exp = (today + timedelta(days=days_until_friday)).isoformat()
+    back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
-    # Find nearest weekday (today if Mon-Fri, else next Monday) for 0DTE
+    # Credit strategies (IC, Iron Butterfly) default to 0DTE.
+    # All strategies can be overridden to 0DTE via use_0dte flag.
+    credit_strategies = {"iron_condor", "iron_butterfly"}
+    is_credit = strategy in credit_strategies
+
+    # Find nearest weekday (today if Mon-Fri, else next Monday)
     dte_date = today
     while dte_date.weekday() >= 5:  # Sat=5, Sun=6
         dte_date += timedelta(days=1)
     zero_dte_exp = dte_date.isoformat()
 
-    # Next Friday for weekly expirations
-    days_until_friday = (4 - today.weekday()) % 7
-    if days_until_friday == 0:
-        days_until_friday = 7
-    next_friday_exp = (today + timedelta(days=days_until_friday)).isoformat()
-    back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
-
-    # All strategies default to 0DTE for short/front leg.
-    # Multi-expiration strategies (diagonals, calendars) use next Friday
-    # for the back/long leg.
-    front_exp = zero_dte_exp
-    credit_exp = zero_dte_exp
+    if is_credit or use_0dte:
+        credit_exp = zero_dte_exp
+        # When 0DTE is requested, override front_exp too for multi-exp strategies
+        if use_0dte:
+            front_exp = zero_dte_exp
+    else:
+        credit_exp = front_exp
 
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 

@@ -173,6 +173,7 @@ export default function StrategyPanel({
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState('');
   const [discordPostType, setDiscordPostType] = useState('pnl'); // 'pnl' or 'gex_profile'
+  const [gexUse0dte, setGexUse0dte] = useState(false);
 
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
@@ -446,8 +447,10 @@ export default function StrategyPanel({
     setLoading(true);
     setError(null);
     try {
+      const params = new URLSearchParams({ symbol, strategy });
+      if (gexUse0dte) params.set('use_0dte', 'true');
       const res = await fetch(
-        `${API_URL}/api/spreadworks/gex-suggest?symbol=${symbol}&strategy=${strategy}`
+        `${API_URL}/api/spreadworks/gex-suggest?${params}`
       );
       if (!res.ok) throw new Error('Failed to fetch GEX suggestion');
       const data = await res.json();
@@ -497,7 +500,7 @@ export default function StrategyPanel({
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategy]);
+  }, [symbol, strategy, gexUse0dte]);
 
   useEffect(() => {
     if (inputMode === INPUT_MODES.GEX_SUGGEST) {
@@ -597,6 +600,17 @@ export default function StrategyPanel({
           <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.GEX_SUGGEST ? 'active' : ''}`}
             onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
         </div>
+        {inputMode === INPUT_MODES.GEX_SUGGEST && (
+          <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-border-subtle">
+            <button
+              className={`sw-toggle-btn text-[10px] px-2.5 py-1 ${gexUse0dte ? 'active' : ''}`}
+              onClick={() => setGexUse0dte(!gexUse0dte)}
+            >0DTE</button>
+            <span className="text-[10px] text-text-tertiary">
+              {gexUse0dte ? 'Using today\'s expiration' : 'Using default expirations'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Error */}
