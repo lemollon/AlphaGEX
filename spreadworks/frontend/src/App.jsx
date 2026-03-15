@@ -12,7 +12,6 @@ import PositionsPage from './pages/PositionsPage';
 import GexProfilePage from './pages/GexProfilePage';
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
-import useGexAnalysis from './hooks/useGexAnalysis';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 import SymbolSelector from './components/SymbolSelector';
@@ -158,7 +157,6 @@ function BuilderPage() {
 
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
-  const { intradayBars, sortedStrikes, levels, sessionDate } = useGexAnalysis(symbol);
   const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
 
   const handleScreenshot = useCallback(async () => {
@@ -291,10 +289,8 @@ function BuilderPage() {
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
           ) : (
-            <ChartArea intradayBars={intradayBars} sortedStrikes={sortedStrikes}
-              levels={levels} spotPrice={spotPrice}
-              strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT}
-              sessionDate={sessionDate} />
+            <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
+              strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
           )}
         </div>
 
@@ -308,7 +304,7 @@ function BuilderPage() {
           tableViewMode={tableViewMode} onTableViewModeChange={setTableViewMode} />
         {calcLoading ? <MetricsBarSkeleton /> : <MetricsBar calcResult={calcResult} />}
         <LegBreakdown calcResult={calcResult} />
-        <Legend barCount={intradayBars.length} sessionDate={sessionDate} />
+        <Legend interval={interval} barCount={Math.min(candles.length, 80)} />
       </div>
     </div>
   );
