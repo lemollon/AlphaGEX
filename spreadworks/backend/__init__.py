@@ -966,9 +966,10 @@ async def health():
 
 
 # --- Serve frontend static files ---
-# Mount /assets if directory exists at startup
-if FRONTEND_DIST.exists() and (FRONTEND_DIST / "assets").exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="static")
+# Assets are served by the catch-all route below (serve_frontend).
+# We previously used app.mount("/assets", StaticFiles(...)) but it returned
+# 404 for the JS bundle on Render despite the file existing on disk.
+# The catch-all's FileResponse approach works reliably for all file sizes.
 
 
 def _frontend_index() -> Path | None:
