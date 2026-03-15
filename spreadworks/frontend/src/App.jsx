@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X, Camera } from 'lucide-react';
+import { Layers, BarChart3, Activity, Clock, Menu, X, Send } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -167,11 +167,18 @@ function BuilderPage() {
         scale: 2,
         useCORS: true,
       });
-      const link = document.createElement('a');
-      link.download = `${symbol}-builder-${new Date().toISOString().split('T')[0]}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-      setScreenshotMsg('Downloaded!');
+      const imageB64 = canvas.toDataURL('image/png');
+      const caption = `${symbol} Builder · $${spotPrice?.toFixed(2) || '?'}`;
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageB64, caption }),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || res.statusText);
+      }
+      setScreenshotMsg('Posted to Discord!');
       setTimeout(() => setScreenshotMsg(''), 3000);
     } catch (err) {
       setScreenshotMsg(`Failed: ${err.message}`);
@@ -179,7 +186,7 @@ function BuilderPage() {
     } finally {
       setScreenshotting(false);
     }
-  }, [symbol]);
+  }, [symbol, spotPrice, API_URL]);
 
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
@@ -250,14 +257,14 @@ function BuilderPage() {
             <button
               onClick={handleScreenshot}
               disabled={screenshotting}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-border-default bg-bg-elevated text-text-secondary cursor-pointer transition-all duration-150 hover:bg-white/[0.08] hover:text-white hover:border-accent/40 disabled:opacity-50"
-              title="Download chart as PNG"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[#5865F2]/40 bg-[#5865F2]/15 text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[#5865F2]/25 hover:border-[#5865F2]/60 disabled:opacity-50"
+              title="Post chart screenshot to Discord"
             >
-              <Camera size={13} />
-              {screenshotting ? 'Capturing...' : 'Screenshot'}
+              <Send size={13} />
+              {screenshotting ? 'Posting...' : 'Discord'}
             </button>
             {screenshotMsg && (
-              <span className={`text-[11px] font-semibold ${screenshotMsg === 'Downloaded!' ? 'text-sw-green' : 'text-sw-red'}`}>
+              <span className={`text-[11px] font-semibold ${screenshotMsg.includes('Posted') ? 'text-sw-green' : 'text-sw-red'}`}>
                 {screenshotMsg}
               </span>
             )}
