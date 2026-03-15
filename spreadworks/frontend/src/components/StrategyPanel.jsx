@@ -172,6 +172,8 @@ export default function StrategyPanel({
   const [saveMsg, setSaveMsg] = useState('');
   const [pushing, setPushing] = useState(false);
   const [pushMsg, setPushMsg] = useState('');
+  const [discordPostType, setDiscordPostType] = useState('pnl'); // 'pnl' or 'gex_profile'
+  const [gexUse0dte, setGexUse0dte] = useState(false);
 
   const [alertPrice, setAlertPrice] = useState('');
   const [alertCondition, setAlertCondition] = useState('above');
@@ -359,6 +361,7 @@ export default function StrategyPanel({
           gex_suggestion: gexSuggestion?.rationale || '',
           pricing_mode: calcResult.pricing_mode || '',
           pnl_curve: calcResult.pnl_curve || [],
+          post_type: discordPostType,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -444,8 +447,10 @@ export default function StrategyPanel({
     setLoading(true);
     setError(null);
     try {
+      const params = new URLSearchParams({ symbol, strategy });
+      if (gexUse0dte) params.set('use_0dte', 'true');
       const res = await fetch(
-        `${API_URL}/api/spreadworks/gex-suggest?symbol=${symbol}&strategy=${strategy}`
+        `${API_URL}/api/spreadworks/gex-suggest?${params}`
       );
       if (!res.ok) throw new Error('Failed to fetch GEX suggestion');
       const data = await res.json();
@@ -495,7 +500,7 @@ export default function StrategyPanel({
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategy]);
+  }, [symbol, strategy, gexUse0dte]);
 
   useEffect(() => {
     if (inputMode === INPUT_MODES.GEX_SUGGEST) {
@@ -595,6 +600,17 @@ export default function StrategyPanel({
           <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.GEX_SUGGEST ? 'active' : ''}`}
             onClick={() => setInputMode(INPUT_MODES.GEX_SUGGEST)}>GEX Suggest</button>
         </div>
+        {inputMode === INPUT_MODES.GEX_SUGGEST && (
+          <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-border-subtle">
+            <button
+              className={`sw-toggle-btn text-[10px] px-2.5 py-1 ${gexUse0dte ? 'active' : ''}`}
+              onClick={() => setGexUse0dte(!gexUse0dte)}
+            >0DTE</button>
+            <span className="text-[10px] text-text-tertiary">
+              {gexUse0dte ? 'Using today\'s expiration' : 'Using default expirations'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Error */}
@@ -832,6 +848,19 @@ export default function StrategyPanel({
               <Save size={14} />
               {saving ? 'Saving...' : 'Save Position'}
             </button>
+            <div className="flex flex-col gap-1">
+              <div className="sw-label text-[10px] text-text-tertiary">Discord Chart Type</div>
+              <div className="sw-toggle-group">
+                <button
+                  className={`sw-toggle-btn text-[10px] ${discordPostType === 'pnl' ? 'active' : ''}`}
+                  onClick={() => setDiscordPostType('pnl')}
+                >P&L Chart</button>
+                <button
+                  className={`sw-toggle-btn text-[10px] ${discordPostType === 'gex_profile' ? 'active' : ''}`}
+                  onClick={() => setDiscordPostType('gex_profile')}
+                >GEX Profile</button>
+              </div>
+            </div>
             <button
               className="sw-btn-secondary w-full flex items-center justify-center gap-2 !border-sw-purple/25 !text-sw-purple hover:!bg-sw-purple-dim"
               onClick={handlePushDiscord}
