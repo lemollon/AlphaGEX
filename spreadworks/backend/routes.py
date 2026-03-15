@@ -3662,13 +3662,20 @@ async def position_payoff(
 
 
 @router.get("/gex-analysis")
-async def proxy_gex_analysis(request: Request, symbol: str = "SPY"):
+async def proxy_gex_analysis(
+    request: Request,
+    symbol: str = "SPY",
+    expiration: str | None = None,
+):
     """Proxy to AlphaGEX /api/watchtower/gex-analysis."""
     http = request.app.state.http
+    params: dict[str, Any] = {"symbol": symbol}
+    if expiration:
+        params["expiration"] = expiration
     try:
         resp = await http.get(
             f"{ALPHAGEX_BASE_URL}/api/watchtower/gex-analysis",
-            params={"symbol": symbol},
+            params=params,
             timeout=20.0,
         )
         return resp.json()
