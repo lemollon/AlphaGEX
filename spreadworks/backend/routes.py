@@ -3665,17 +3665,17 @@ async def position_payoff(
 async def proxy_gex_analysis(
     request: Request,
     symbol: str = "SPY",
-    expiration: str | None = None,
 ):
-    """Proxy to AlphaGEX /api/watchtower/gex-analysis."""
+    """Proxy to AlphaGEX /api/watchtower/gex-analysis.
+
+    When market is closed, AlphaGEX returns next-day positioning from
+    TradingVolatility (e.g. Monday's GEX profile over the weekend).
+    """
     http = request.app.state.http
-    params: dict[str, Any] = {"symbol": symbol}
-    if expiration:
-        params["expiration"] = expiration
     try:
         resp = await http.get(
             f"{ALPHAGEX_BASE_URL}/api/watchtower/gex-analysis",
-            params=params,
+            params={"symbol": symbol},
             timeout=20.0,
         )
         return resp.json()

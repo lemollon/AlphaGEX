@@ -153,13 +153,11 @@ export default function GexProfilePage() {
   }, [symbol]);
 
   // ── Fetch ─────────────────────────────────────────────────
-  const fetchGexData = useCallback(async (sym, clearFirst = false, expiration = null) => {
+  const fetchGexData = useCallback(async (sym, clearFirst = false) => {
     try {
       if (clearFirst) { setData(null); setLoading(true); }
       setError(null);
-      let url = `${API_URL}/api/spreadworks/gex-analysis?symbol=${sym}`;
-      if (expiration) url += `&expiration=${expiration}`;
-      const res = await fetch(url);
+      const res = await fetch(`${API_URL}/api/spreadworks/gex-analysis?symbol=${sym}`);
       const result = await res.json();
       if (result?.success) {
         setData(result.data);
@@ -207,44 +205,12 @@ export default function GexProfilePage() {
   }, []);
 
   // Initial load + symbol change
-  // When market is closed, fetch bars first to get the last session date,
-  // then use that date as expiration for GEX analysis so levels match the candles.
+  // GEX: uses TradingVolatility next-day data when market closed (Monday's profile on weekends)
+  // Candles: uses Tradier fallback to show last session (Friday's candles on weekends)
   useEffect(() => {
-    const load = async () => {
-      setData(null);
-      setLoading(true);
-      setIntradayTicks([]);
-      setIntradayBars([]);
-      setIntradayLoading(true);
-
-      // Always fetch bars/ticks with fallback to get last session data
-      let sessionExp = null;
-      try {
-        const [ticksRes, barsRes] = await Promise.all([
-          fetch(`${API_URL}/api/spreadworks/intraday-ticks?symbol=${symbol}&interval=5&fallback=true`).then(r => r.json()),
-          fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${symbol}&interval=5min&fallback=true`).then(r => r.json()),
-        ]);
-        if (ticksRes?.success && ticksRes?.data?.ticks?.length > 0) setIntradayTicks(ticksRes.data.ticks);
-        if (barsRes?.success && barsRes?.data?.bars?.length > 0) {
-          setIntradayBars(barsRes.data.bars);
-          if (barsRes.data.session_date) {
-            setSessionDate(barsRes.data.session_date);
-            // When market is closed, use the session date as expiration
-            // so GEX analysis uses Tradier cached data (matching the candles)
-            if (!isMarketOpen()) sessionExp = barsRes.data.session_date;
-          }
-        }
-      } catch (err) {
-        console.error('Intraday fetch error:', err);
-      } finally {
-        setIntradayLoading(false);
-      }
-
-      // Fetch GEX analysis — pass expiration when market closed to get matching data
-      fetchGexData(symbol, false, sessionExp);
-    };
-    load();
-  }, [symbol, fetchGexData]);
+    fetchGexData(symbol, true);
+    fetchIntradayTicks(symbol, true, true);
+  }, [symbol, fetchGexData, fetchIntradayTicks]);
 
   // Auto-refresh: bars every 10s, full GEX every 30s
   useEffect(() => {
