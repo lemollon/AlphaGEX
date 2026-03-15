@@ -3662,8 +3662,15 @@ async def position_payoff(
 
 
 @router.get("/gex-analysis")
-async def proxy_gex_analysis(request: Request, symbol: str = "SPY"):
-    """Proxy to AlphaGEX /api/watchtower/gex-analysis."""
+async def proxy_gex_analysis(
+    request: Request,
+    symbol: str = "SPY",
+):
+    """Proxy to AlphaGEX /api/watchtower/gex-analysis.
+
+    When market is closed, AlphaGEX returns next-day positioning from
+    TradingVolatility (e.g. Monday's GEX profile over the weekend).
+    """
     http = request.app.state.http
     try:
         resp = await http.get(

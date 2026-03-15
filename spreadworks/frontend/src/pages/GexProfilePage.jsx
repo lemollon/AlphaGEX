@@ -179,13 +179,13 @@ export default function GexProfilePage() {
     try {
       if (clearFirst) { setIntradayTicks([]); setIntradayBars([]); }
       setIntradayLoading(true);
-      const fb = useFallback ? '&fallback=true' : '';
+      // Always use fallback to ensure we show the last trading session's data
       const [ticksRes, barsRes] = await Promise.all([
-        fetch(`${API_URL}/api/spreadworks/intraday-ticks?symbol=${sym}&interval=5${fb}`).then(r => r.json()),
-        fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min${fb}`).then(r => r.json()),
+        fetch(`${API_URL}/api/spreadworks/intraday-ticks?symbol=${sym}&interval=5&fallback=true`).then(r => r.json()),
+        fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min&fallback=true`).then(r => r.json()),
       ]);
-      if (ticksRes?.success && ticksRes?.data?.ticks) setIntradayTicks(ticksRes.data.ticks);
-      if (barsRes?.success && barsRes?.data?.bars) {
+      if (ticksRes?.success && ticksRes?.data?.ticks?.length > 0) setIntradayTicks(ticksRes.data.ticks);
+      if (barsRes?.success && barsRes?.data?.bars?.length > 0) {
         setIntradayBars(barsRes.data.bars);
         if (barsRes.data.session_date) setSessionDate(barsRes.data.session_date);
       }
@@ -198,13 +198,15 @@ export default function GexProfilePage() {
 
   const refreshBars = useCallback(async (sym) => {
     try {
-      const res = await fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min`);
+      const res = await fetch(`${API_URL}/api/spreadworks/intraday-bars?symbol=${sym}&interval=5min&fallback=true`);
       const json = await res.json();
-      if (json?.success && json?.data?.bars) setIntradayBars(json.data.bars);
+      if (json?.success && json?.data?.bars?.length > 0) setIntradayBars(json.data.bars);
     } catch { /* silent */ }
   }, []);
 
   // Initial load + symbol change
+  // GEX: uses TradingVolatility next-day data when market closed (Monday's profile on weekends)
+  // Candles: uses Tradier fallback to show last session (Friday's candles on weekends)
   useEffect(() => {
     fetchGexData(symbol, true);
     fetchIntradayTicks(symbol, true, true);
