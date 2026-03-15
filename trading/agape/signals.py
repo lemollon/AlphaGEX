@@ -585,6 +585,7 @@ class AgapeSignalGenerator:
         - Funding rate bias (negative funding = shorts paying longs = bullish)
         - Long/Short ratio extreme (crowded trade = fade the crowd)
         - Max pain distance (price tends to drift toward max pain)
+        - Crypto GEX net direction (positive = dealers long gamma = bullish)
         """
         funding_rate = market_data.get("funding_rate", 0)
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
@@ -614,6 +615,14 @@ class AgapeSignalGenerator:
             elif max_pain < spot * 0.995:
                 score -= 0.5  # Max pain below = bearish drift
 
+        # Crypto GEX net: positive GEX = dealers long gamma = mean reversion = bullish bias
+        # This acts as a tiebreaker when CoinGlass L/S data is unavailable
+        crypto_gex = market_data.get("crypto_gex", 0)
+        if crypto_gex > 0:
+            score += 0.3  # Mild bullish from positive GEX
+        elif crypto_gex < 0:
+            score -= 0.3  # Mild bearish from negative GEX
+
         if score > 0:
             should_skip, reason = tracker.should_skip_direction("LONG")
             if should_skip:
@@ -642,6 +651,12 @@ class AgapeSignalGenerator:
         """Derive direction from individual microstructure signals when combined is WAIT.
 
         Aggressive fallback: if any single signal is strong enough, trade it.
+
+        Funding regime values from CoinGlass:
+          EXTREME_LONG, OVERLEVERAGED_LONG  → shorts paying longs → bearish (fade)
+          EXTREME_SHORT, OVERLEVERAGED_SHORT → longs paying shorts → bullish (fade)
+          MILD_LONG_BIAS, MILD_SHORT_BIAS   → mild imbalance
+          BALANCED                           → no signal
         """
         funding_regime = market_data.get("funding_regime", "NEUTRAL")
         squeeze_risk = market_data.get("squeeze_risk", "LOW")
@@ -651,27 +666,56 @@ class AgapeSignalGenerator:
         # Strong single-signal trades
         if squeeze_risk == "HIGH":
             # High squeeze risk = strong directional move coming
-            if ls_bias == "SHORT_HEAVY":
+            if ls_bias in ("SHORT_HEAVY", "EXTREME_SHORT", "SHORT_BIASED"):
                 should_skip, reason = tracker.should_skip_direction("LONG")
                 if not should_skip:
                     reasoning = self._build_reasoning("SQUEEZE_LONG", market_data)
                     return (SignalAction.LONG, "long", reasoning)
-            elif ls_bias == "LONG_HEAVY":
+            elif ls_bias in ("LONG_HEAVY", "EXTREME_LONG", "LONG_BIASED"):
                 should_skip, reason = tracker.should_skip_direction("SHORT")
                 if not should_skip:
                     reasoning = self._build_reasoning("SQUEEZE_SHORT", market_data)
                     return (SignalAction.SHORT, "short", reasoning)
 
-        # Funding regime extreme
-        if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
+        # Funding regime extreme: overleveraged longs = SHORT, overleveraged shorts = LONG
+        # (FundingRate.regime uses EXTREME_SHORT/OVERLEVERAGED_SHORT naming)
+        if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT"):
             should_skip, reason = tracker.should_skip_direction("LONG")
             if not should_skip:
                 reasoning = self._build_reasoning("FUNDING_LONG", market_data)
                 return (SignalAction.LONG, "long", reasoning)
-        elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
+        elif funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG"):
             should_skip, reason = tracker.should_skip_direction("SHORT")
             if not should_skip:
                 reasoning = self._build_reasoning("FUNDING_SHORT", market_data)
+                return (SignalAction.SHORT, "short", reasoning)
+
+        # Crypto GEX direction as last-resort fallback (weaker signal)
+        crypto_gex = market_data.get("crypto_gex", 0)
+        if crypto_gex_regime == "NEGATIVE" and crypto_gex != 0:
+            # Negative gamma = momentum follows price movement
+            # Use GEX net sign as direction hint
+            if crypto_gex > 0:
+                should_skip, reason = tracker.should_skip_direction("LONG")
+                if not should_skip:
+                    reasoning = self._build_reasoning("GEX_MOMENTUM_LONG", market_data)
+                    return (SignalAction.LONG, "long", reasoning)
+            else:
+                should_skip, reason = tracker.should_skip_direction("SHORT")
+                if not should_skip:
+                    reasoning = self._build_reasoning("GEX_MOMENTUM_SHORT", market_data)
+                    return (SignalAction.SHORT, "short", reasoning)
+
+        # Mild funding imbalance as final fallback
+        if funding_regime == "MILD_SHORT_BIAS":
+            should_skip, reason = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                reasoning = self._build_reasoning("MILD_FUNDING_LONG", market_data)
+                return (SignalAction.LONG, "long", reasoning)
+        elif funding_regime == "MILD_LONG_BIAS":
+            should_skip, reason = tracker.should_skip_direction("SHORT")
+            if not should_skip:
+                reasoning = self._build_reasoning("MILD_FUNDING_SHORT", market_data)
                 return (SignalAction.SHORT, "short", reasoning)
 
         logger.info(

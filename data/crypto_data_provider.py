@@ -872,11 +872,26 @@ class CryptoDataProvider:
 
         # CoinGlass data availability check
         has_coinglass = funding_regime not in ("UNKNOWN", "") and funding_regime is not None
+        # Check if we have REAL L/S and liquidation data (not just defaults)
+        has_ls_data = snapshot.ls_ratio is not None
+        has_liq_data = len(snapshot.liquidation_clusters) > 0
 
         # ---- HIGH CONVICTION: CoinGlass + GEX agree ----
         if has_coinglass:
+            # Only claim HIGH confidence RANGE_BOUND when we have FULL data
+            # (L/S ratio + liquidations). Without them, bias="NEUTRAL" and
+            # squeeze="LOW" are just defaults, not measured values.
             if funding_regime == "BALANCED" and bias == "NEUTRAL" and squeeze == "LOW":
-                return ("RANGE_BOUND", "HIGH")
+                if has_ls_data and has_liq_data:
+                    return ("RANGE_BOUND", "HIGH")
+                # Degraded data: funding-only RANGE_BOUND is lower confidence
+                # and should use GEX direction if available
+                if has_gex and gex_net != 0:
+                    if gex_net > 0:
+                        return ("LONG", "LOW")
+                    else:
+                        return ("SHORT", "LOW")
+                return ("RANGE_BOUND", "LOW")
 
             if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG") and bias == "BEARISH":
                 if squeeze in ("HIGH", "ELEVATED"):
@@ -887,6 +902,19 @@ class CryptoDataProvider:
                 if squeeze in ("HIGH", "ELEVATED"):
                     return ("LONG", "HIGH")
                 return ("LONG", "MEDIUM")
+
+            # Funding-only directional signals (when L/S data is unavailable)
+            if not has_ls_data:
+                if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG"):
+                    return ("SHORT", "LOW")
+                if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT"):
+                    return ("LONG", "LOW")
+                if funding_regime in ("MILD_LONG_BIAS",):
+                    if has_gex and gex_net < -10000:
+                        return ("SHORT", "LOW")
+                if funding_regime in ("MILD_SHORT_BIAS",):
+                    if has_gex and gex_net > 10000:
+                        return ("LONG", "LOW")
 
         # ---- MEDIUM CONVICTION: Deribit GEX alone ----
         if has_gex and gex_regime == "NEGATIVE" and abs(gex_net) > 50000:
