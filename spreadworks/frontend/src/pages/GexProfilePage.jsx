@@ -89,7 +89,6 @@ export default function GexProfilePage() {
   const [sessionDate, setSessionDate] = useState(null);
   const [hoveredStrike, setHoveredStrike] = useState(null);
   const [discordMsg, setDiscordMsg] = useState('');
-  const [discordPushing, setDiscordPushing] = useState(false);
   const [screenshotting, setScreenshotting] = useState(false);
   const chartSectionRef = useRef(null);
 
@@ -127,30 +126,7 @@ export default function GexProfilePage() {
     }
   }, [symbol, chartView, data, API_URL]);
 
-  const pushToDiscord = useCallback(async (view) => {
-    const endpointMap = {
-      net: 'push-gex-net',
-      split: 'push-gex-callput',
-      intraday: 'push-gex-intraday',
-    };
-    const endpoint = endpointMap[view];
-    if (!endpoint) return;
-    try {
-      setDiscordPushing(true);
-      setDiscordMsg('');
-      const res = await fetch(`${API_URL}/api/spreadworks/discord/${endpoint}?symbol=${symbol}`, {
-        method: 'POST',
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Failed to post');
-      setDiscordMsg('Posted!');
-    } catch (err) {
-      setDiscordMsg(err.message);
-    } finally {
-      setDiscordPushing(false);
-      setTimeout(() => setDiscordMsg(''), 3000);
-    }
-  }, [symbol]);
+
 
   // ── Fetch ─────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym, clearFirst = false) => {
@@ -519,19 +495,10 @@ export default function GexProfilePage() {
                   title="Post chart screenshot to Discord"
                 >
                   <Send size={14} />
-                  {screenshotting ? 'Posting...' : 'Screenshot'}
-                </button>
-                <button
-                  onClick={() => pushToDiscord(chartView)}
-                  disabled={discordPushing}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.4)] bg-[rgba(88,101,242,0.15)] text-[#7289da] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.25)] hover:border-[rgba(88,101,242,0.6)] disabled:opacity-50"
-                  title="Push chart to Discord"
-                >
-                  <Send size={14} />
-                  {discordPushing ? 'Sending...' : 'Push to Discord'}
+                  {screenshotting ? 'Posting...' : 'Push to Discord'}
                 </button>
                 {discordMsg && (
-                  <span className={`text-[12px] font-semibold ${discordMsg === 'Posted!' ? 'text-sw-green' : 'text-sw-red'}`}>
+                  <span className={`text-[12px] font-semibold ${discordMsg.includes('Posted') || discordMsg.includes('Discord') ? 'text-sw-green' : 'text-sw-red'}`}>
                     {discordMsg}
                   </span>
                 )}
