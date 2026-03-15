@@ -9,7 +9,7 @@
  * Plus: price-to-wall gauge, flow diagnostics, skew measures, market interpretation.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
@@ -89,42 +89,32 @@ export default function GexProfilePage() {
   const [sessionDate, setSessionDate] = useState(null);
   const [hoveredStrike, setHoveredStrike] = useState(null);
   const [discordMsg, setDiscordMsg] = useState('');
-  const [screenshotting, setScreenshotting] = useState(false);
-  const chartSectionRef = useRef(null);
+  const [discordPushing, setDiscordPushing] = useState(false);
 
-  const postScreenshotToDiscord = useCallback(async () => {
-    if (!chartSectionRef.current) return;
+  const pushToDiscord = useCallback(async (view) => {
+    const endpointMap = {
+      net: 'push-gex-net',
+      split: 'push-gex-callput',
+      intraday: 'push-gex-intraday',
+    };
+    const endpoint = endpointMap[view];
+    if (!endpoint) return;
     try {
-      setScreenshotting(true);
+      setDiscordPushing(true);
       setDiscordMsg('');
-      const html2canvas = (await import('html2canvas')).default;
-      const canvas = await html2canvas(chartSectionRef.current, {
-        backgroundColor: '#0a0a14',
-        scale: 2,
-        useCORS: true,
-      });
-      const imageB64 = canvas.toDataURL('image/png');
-      const viewLabel = chartView === 'intraday' ? 'Intraday 5m' : chartView === 'net' ? 'Net GEX' : 'Call vs Put';
-      const price = data?.header?.price;
-      const caption = `${symbol} GEX Profile · ${viewLabel} · $${price?.toFixed(2) || '?'}`;
-      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-screenshot`, {
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/${endpoint}?symbol=${symbol}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageB64, caption }),
       });
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || res.statusText);
-      }
-      setDiscordMsg('Posted to Discord!');
-      setTimeout(() => setDiscordMsg(''), 3000);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || 'Failed to post');
+      setDiscordMsg('Posted!');
     } catch (err) {
-      setDiscordMsg(`Failed: ${err.message}`);
-      setTimeout(() => setDiscordMsg(''), 5000);
+      setDiscordMsg(err.message);
     } finally {
-      setScreenshotting(false);
+      setDiscordPushing(false);
+      setTimeout(() => setDiscordMsg(''), 3000);
     }
-  }, [symbol, chartView, data, API_URL]);
+  }, [symbol]);
 
   // ── Fetch ─────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym, clearFirst = false) => {
@@ -448,7 +438,7 @@ export default function GexProfilePage() {
           </div>
 
           {/* Chart Section */}
-          <div className="sw-card p-4 mb-4" ref={chartSectionRef}>
+          <div className="sw-card p-4 mb-4">
             <div className="flex flex-wrap items-center justify-between gap-2.5 mb-3.5">
               <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
                 <Activity size={14} className="text-accent" />
@@ -485,16 +475,16 @@ export default function GexProfilePage() {
                   ))}
                 </div>
                 <button
-                  onClick={postScreenshotToDiscord}
-                  disabled={screenshotting}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.3)] bg-[rgba(88,101,242,0.1)] text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.2)] hover:border-[rgba(88,101,242,0.5)] disabled:opacity-50"
-                  title="Post screenshot to Discord"
+                  onClick={() => pushToDiscord(chartView)}
+                  disabled={discordPushing}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.3)] bg-[rgba(88,101,242,0.1)] text-[#7289da] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.2)] hover:border-[rgba(88,101,242,0.5)] disabled:opacity-50"
+                  title="Share to Discord"
                 >
                   <Send size={12} />
-                  {screenshotting ? 'Posting...' : 'Discord'}
+                  {discordPushing ? 'Sending...' : 'Discord'}
                 </button>
                 {discordMsg && (
-                  <span className={`text-[11px] font-semibold ${discordMsg.includes('Posted') ? 'text-sw-green' : 'text-sw-red'}`}>
+                  <span className={`text-[11px] font-semibold ${discordMsg === 'Posted!' ? 'text-sw-green' : 'text-sw-red'}`}>
                     {discordMsg}
                   </span>
                 )}

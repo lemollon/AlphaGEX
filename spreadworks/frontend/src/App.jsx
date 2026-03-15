@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X, Send } from 'lucide-react';
+import { Layers, BarChart3, Activity, Clock, Menu, X } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -149,47 +149,12 @@ function BuilderPage() {
   const [viewMode, setViewMode] = useState('graph');
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
-  const [screenshotting, setScreenshotting] = useState(false);
-  const [screenshotMsg, setScreenshotMsg] = useState('');
-  const chartAreaRef = useRef(null);
 
   const API_URL = import.meta.env.VITE_API_URL || '';
 
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
   const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
-
-  const handleScreenshot = useCallback(async () => {
-    if (!chartAreaRef.current) return;
-    try {
-      setScreenshotting(true);
-      setScreenshotMsg('');
-      const html2canvas = (await import('html2canvas')).default;
-      const canvas = await html2canvas(chartAreaRef.current, {
-        backgroundColor: '#0a0a1e',
-        scale: 2,
-        useCORS: true,
-      });
-      const imageB64 = canvas.toDataURL('image/png');
-      const caption = `${symbol} Builder · $${spotPrice?.toFixed(2) || '?'}`;
-      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-screenshot`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imageB64, caption }),
-      });
-      if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || res.statusText);
-      }
-      setScreenshotMsg('Posted to Discord!');
-      setTimeout(() => setScreenshotMsg(''), 3000);
-    } catch (err) {
-      setScreenshotMsg(`Failed: ${err.message}`);
-      setTimeout(() => setScreenshotMsg(''), 5000);
-    } finally {
-      setScreenshotting(false);
-    }
-  }, [symbol, spotPrice, API_URL]);
 
   const handleSymbolChange = useCallback((newSymbol) => {
     setSymbol(newSymbol);
@@ -252,23 +217,8 @@ function BuilderPage() {
               ${spotPrice.toFixed(2)}
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={handleScreenshot}
-              disabled={screenshotting}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-[var(--radius-sm)] border border-[#5865F2]/40 bg-[#5865F2]/15 text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[#5865F2]/25 hover:border-[#5865F2]/60 disabled:opacity-50"
-              title="Post chart screenshot to Discord"
-            >
-              <Send size={13} />
-              {screenshotting ? 'Posting...' : 'Discord'}
-            </button>
-            {screenshotMsg && (
-              <span className={`text-[11px] font-semibold ${screenshotMsg.includes('Posted') ? 'text-sw-green' : 'text-sw-red'}`}>
-                {screenshotMsg}
-              </span>
-            )}
           {!isOpen && dataAsOf && (
-            <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
+            <span className="ml-auto px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
               Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
                 timeZone: 'America/New_York',
                 weekday: 'short',
@@ -280,11 +230,10 @@ function BuilderPage() {
               })} ET
             </span>
           )}
-          </div>
         </div>
 
         {/* Chart Area */}
-        <div className="flex-1 min-h-0 flex relative" ref={chartAreaRef}>
+        <div className="flex-1 min-h-0 flex relative">
           {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
