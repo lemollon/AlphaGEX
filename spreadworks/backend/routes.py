@@ -649,25 +649,25 @@ async def gex_suggest(
         return round(v * 2) / 2
 
     today = _today_ct()
+
+    # Find nearest weekday (today if Mon-Fri, else next Monday) for 0DTE
+    dte_date = today
+    while dte_date.weekday() >= 5:  # Sat=5, Sun=6
+        dte_date += timedelta(days=1)
+    zero_dte_exp = dte_date.isoformat()
+
+    # Next Friday for weekly expirations
     days_until_friday = (4 - today.weekday()) % 7
     if days_until_friday == 0:
         days_until_friday = 7
-    front_exp = (today + timedelta(days=days_until_friday)).isoformat()
+    next_friday_exp = (today + timedelta(days=days_until_friday)).isoformat()
     back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
-    # Credit strategies (IC, Iron Butterfly) always suggest 0DTE as the
-    # nearest trading day so users can explore them anytime (weekends use
-    # next Monday).  Non-credit strategies keep the next-Friday pattern.
-    credit_strategies = {"iron_condor", "iron_butterfly"}
-    is_credit = strategy in credit_strategies
-    if is_credit:
-        # Find nearest weekday (today if Mon-Fri, else next Monday)
-        dte_date = today
-        while dte_date.weekday() >= 5:  # Sat=5, Sun=6
-            dte_date += timedelta(days=1)
-        credit_exp = dte_date.isoformat()
-    else:
-        credit_exp = front_exp
+    # All strategies default to 0DTE for short/front leg.
+    # Multi-expiration strategies (diagonals, calendars) use next Friday
+    # for the back/long leg.
+    front_exp = zero_dte_exp
+    credit_exp = zero_dte_exp
 
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 
@@ -685,10 +685,12 @@ async def gex_suggest(
             "short_expiration": front_exp,
             "long_expiration": back_exp,
         }
+        is_0dte = front_exp == today.isoformat()
+        front_note = "0DTE" if is_0dte else f"front exp {front_exp}"
         rationale = (
             f"Short strikes at GEX walls (put wall ${short_put}, call wall ${short_call}). "
             f"Long wings ${wing_offset} wide. "
-            f"Front exp {front_exp}, back exp {back_exp}. "
+            f"{front_note}, back exp {back_exp}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
     elif strategy == "iron_condor":
@@ -726,10 +728,12 @@ async def gex_suggest(
             "option_type": "call",
             "expiration": front_exp,
         }
+        is_0dte = front_exp == today.isoformat()
+        dte_note = "0DTE" if is_0dte else f"exp {front_exp}"
         rationale = (
             f"Butterfly centered at GEX flip point ${center}. "
             f"Wings ${wing_offset} wide (${lower_strike}/${center}/${upper_strike}). "
-            f"Exp {front_exp}. Regime: {regime or 'UNKNOWN'}."
+            f"{dte_note}. Regime: {regime or 'UNKNOWN'}."
         )
     elif strategy == "iron_butterfly":
         # Iron Butterfly: short straddle at flip, wings at walls
@@ -761,9 +765,11 @@ async def gex_suggest(
             "front_expiration": front_exp,
             "back_expiration": back_exp,
         }
+        is_0dte = front_exp == today.isoformat()
+        front_note = "0DTE" if is_0dte else f"front {front_exp}"
         rationale = (
             f"Calendar strikes at GEX walls (put ${put_strike}, call ${call_strike}). "
-            f"Front {front_exp}, back {back_exp}. "
+            f"{front_note}, back {back_exp}. "
             f"Regime: {regime or 'UNKNOWN'}."
         )
 
@@ -2369,6 +2375,8 @@ class DiscordPushSpread(BaseModel):
     gex_suggestion: str = ""
     pricing_mode: str = ""
     pnl_curve: list[dict] = []
+    # "pnl" = payoff chart (default), "gex_profile" = intraday GEX chart
+    post_type: str = "pnl"
 
 
 @router.post("/discord/test")
@@ -2500,8 +2508,13 @@ async def discord_test_daily():
 
 
 @router.post("/discord/push-spread")
-async def discord_push_spread(body: DiscordPushSpread):
-    """Push current spread analysis to Discord as a rich embed."""
+async def discord_push_spread(body: DiscordPushSpread, request: Request):
+    """Push current spread analysis to Discord as a rich embed.
+
+    post_type controls the attached chart:
+      - "pnl"         → P&L payoff curve (default)
+      - "gex_profile"  → Intraday candlestick + GEX levels overlay
+    """
     if not _discord_url():
         raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
 
@@ -2539,17 +2552,41 @@ async def discord_push_spread(body: DiscordPushSpread):
     if body.gex_suggestion:
         fields.append({"name": "GEX Signal", "value": body.gex_suggestion[:1024], "inline": False})
 
+    chart_type_label = "GEX Profile" if body.post_type == "gex_profile" else "GEX Suggest"
     embed = {
         "title": f"\U0001f4ca {body.symbol} {strat_label} \u00b7 Spot ${body.spot:,.2f}" if body.spot else f"\U0001f4ca {body.symbol} {strat_label}",
         "color": color,
         "fields": fields,
-        "footer": {"text": f"SpreadWorks \u00b7 {footer_source}"},
+        "footer": {"text": f"SpreadWorks \u00b7 {chart_type_label}"},
         "timestamp": _now_ct().isoformat(),
     }
 
-    # Generate payoff chart if curve data provided
     chart_bytes = None
-    if body.pnl_curve:
+    if body.post_type == "gex_profile":
+        # Attach GEX Profile intraday chart instead of P&L curve
+        try:
+            gex_data = await _fetch_gex_data(request, body.symbol)
+            header = gex_data.get("header", {})
+            header["symbol"] = body.symbol
+            levels = gex_data.get("levels", {})
+            ticks, bars = await _fetch_intraday_data(request, body.symbol)
+
+            # Add spread strike overlay lines to the intraday chart
+            spread_strikes = {
+                "short_put": legs.get("short_put"),
+                "long_put": legs.get("long_put"),
+                "short_call": legs.get("short_call"),
+                "long_call": legs.get("long_call"),
+            }
+            chart_bytes = _generate_intraday_gex_chart(
+                bars, ticks, header, levels, spread_strikes=spread_strikes,
+            )
+        except Exception as e:
+            logger.warning(f"[Discord] GEX Profile chart failed, falling back to P&L: {e}")
+            # Fall back to P&L chart
+            body.post_type = "pnl"
+
+    if body.post_type == "pnl" and body.pnl_curve:
         be_dict = None
         if body.breakevens:
             be_dict = {
@@ -2725,8 +2762,13 @@ def _generate_callput_gex_chart(strikes: list[dict], header: dict, levels: dict)
 
 
 def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
-                                  header: dict, levels: dict) -> bytes | None:
-    """Generate an intraday candlestick + GEX overlay chart as PNG bytes."""
+                                  header: dict, levels: dict,
+                                  spread_strikes: dict | None = None) -> bytes | None:
+    """Generate an intraday candlestick + GEX overlay chart as PNG bytes.
+
+    spread_strikes: optional dict with short_put, long_put, short_call, long_call
+    to overlay spread legs on the chart.
+    """
     try:
         import io
         import matplotlib
@@ -2740,9 +2782,9 @@ def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
 
         ct_offset = timedelta(hours=-6)  # CDT (CT during DST)
 
-        fig, ax1 = plt.subplots(figsize=(10, 4.5), dpi=150)
-        fig.patch.set_facecolor("#0d0d18")
-        ax1.set_facecolor("#0d0d18")
+        fig, ax1 = plt.subplots(figsize=(12, 5.5), dpi=180)
+        fig.patch.set_facecolor("#0a0a14")
+        ax1.set_facecolor("#0a0a14")
 
         if bars:
             times = []
@@ -2759,13 +2801,27 @@ def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
             lows = [b["low"] for b in bars]
             closes = [b["close"] for b in bars]
 
-            bar_width = 0.002  # fraction of day
+            bar_width = 0.0022  # fraction of day
             for i in range(len(bars)):
                 color = "#22c55e" if closes[i] >= opens[i] else "#ef4444"
                 ax1.plot([times[i], times[i]], [lows[i], highs[i]],
-                         color=color, linewidth=0.8)
+                         color=color, linewidth=0.7)
                 ax1.bar(times[i], closes[i] - opens[i], bottom=min(opens[i], closes[i]),
-                        width=bar_width, color=color, alpha=0.8, edgecolor=color)
+                        width=bar_width, color=color, alpha=0.9, edgecolor=color)
+
+            # Spot price annotation on last candle
+            if closes:
+                last_price = closes[-1]
+                last_time = times[-1]
+                price_color = "#22c55e" if closes[-1] >= opens[-1] else "#ef4444"
+                ax1.annotate(
+                    f"${last_price:,.2f}",
+                    xy=(last_time, last_price),
+                    xytext=(15, 0), textcoords="offset points",
+                    fontsize=9, fontfamily="monospace", fontweight="bold",
+                    color="#fff",
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor=price_color, alpha=0.85, edgecolor="none"),
+                )
         elif ticks:
             times = []
             prices = []
@@ -2821,24 +2877,52 @@ def _generate_intraday_gex_chart(bars: list[dict], ticks: list[dict],
                 ax2.spines["right"].set_color("#1a1a2e")
                 ax2.spines["top"].set_visible(False)
 
+        # Spread strike overlay lines (when posting from Builder)
+        if spread_strikes:
+            strike_colors = {
+                "short_put": ("#ef4444", "--", "SP"),
+                "long_put": ("#22c55e", "-.", "LP"),
+                "short_call": ("#ef4444", "--", "SC"),
+                "long_call": ("#22c55e", "-.", "LC"),
+            }
+            for key, (clr, ls, lbl) in strike_colors.items():
+                val = spread_strikes.get(key)
+                if val and isinstance(val, (int, float)) and val > 0:
+                    ax1.axhline(y=val, color=clr, linewidth=1.0, linestyle=ls, alpha=0.6)
+                    ax1.text(0.99, val, f"{lbl} ${val:.0f} ", transform=ax1.get_yaxis_transform(),
+                             color=clr, fontsize=7, fontfamily="monospace", va="bottom", ha="right")
+
         price = header.get("price", 0)
         symbol = header.get("symbol", "SPY")
         ax1.set_title(
             f"{symbol} Intraday 5m · Spot ${price:,.2f}",
             color="#fff", fontsize=11, fontfamily="monospace", fontweight="bold", pad=10,
         )
-        ax1.set_ylabel("Price", color="#888", fontsize=9, fontfamily="monospace")
+        ax1.set_ylabel("Price ($)", color="#666", fontsize=9, fontfamily="monospace")
         ax1.tick_params(colors="#555", labelsize=8)
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"${x:,.0f}"))
         ax1.xaxis.set_major_formatter(mdates.DateFormatter("%I:%M %p"))
         ax1.spines["top"].set_visible(False)
         ax1.spines["right"].set_color("#1a1a2e")
         ax1.spines["bottom"].set_color("#1a1a2e")
         ax1.spines["left"].set_color("#1a1a2e")
-        ax1.grid(axis="both", color="#1a1a2e", linewidth=0.5, alpha=0.5)
+        ax1.grid(axis="both", color="#1a1a2e", linewidth=0.5, alpha=0.4)
+
+        # Add legend for reference lines
+        legend_items = []
+        if levels.get("gex_flip"):
+            legend_items.append(plt.Line2D([0], [0], color="#eab308", linestyle="--", label="Flip"))
+        if levels.get("call_wall"):
+            legend_items.append(plt.Line2D([0], [0], color="#06b6d4", linestyle=":", label="Call Wall"))
+        if levels.get("put_wall"):
+            legend_items.append(plt.Line2D([0], [0], color="#a855f7", linestyle=":", label="Put Wall"))
+        if legend_items:
+            ax1.legend(handles=legend_items, loc="upper left", fontsize=7,
+                       facecolor="#0a0a14", edgecolor="#1a1a2e", labelcolor="#888")
 
         plt.tight_layout()
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", facecolor="#0d0d18", edgecolor="none")
+        fig.savefig(buf, format="png", facecolor="#0a0a14", edgecolor="none")
         plt.close(fig)
         buf.seek(0)
         return buf.read()
