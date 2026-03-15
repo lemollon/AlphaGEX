@@ -15,7 +15,7 @@ import {
 } from 'recharts';
 import Plotly from 'plotly.js-dist-min';
 import createPlotlyComponent from 'react-plotly.js/factory';
-import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send, Camera, Download } from 'lucide-react';
+import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send, Download } from 'lucide-react';
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -93,7 +93,7 @@ export default function GexProfilePage() {
   const [screenshotting, setScreenshotting] = useState(false);
   const chartSectionRef = useRef(null);
 
-  const downloadScreenshot = useCallback(async () => {
+  const postScreenshotToDiscord = useCallback(async () => {
     if (!chartSectionRef.current) return;
     try {
       setScreenshotting(true);
@@ -104,20 +104,28 @@ export default function GexProfilePage() {
         scale: 2,
         useCORS: true,
       });
-      const link = document.createElement('a');
-      const viewLabel = chartView === 'intraday' ? 'intraday' : chartView === 'net' ? 'net-gex' : 'call-vs-put';
-      link.download = `${symbol}-${viewLabel}-${new Date().toISOString().split('T')[0]}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-      setDiscordMsg('Downloaded!');
+      const imageB64 = canvas.toDataURL('image/png');
+      const viewLabel = chartView === 'intraday' ? 'Intraday 5m' : chartView === 'net' ? 'Net GEX' : 'Call vs Put';
+      const price = data?.header?.price;
+      const caption = `${symbol} GEX Profile · ${viewLabel} · $${price?.toFixed(2) || '?'}`;
+      const res = await fetch(`${API_URL}/api/spreadworks/discord/push-screenshot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: imageB64, caption }),
+      });
+      if (!res.ok) {
+        const detail = await res.text();
+        throw new Error(detail || res.statusText);
+      }
+      setDiscordMsg('Posted to Discord!');
       setTimeout(() => setDiscordMsg(''), 3000);
     } catch (err) {
-      setDiscordMsg(`Screenshot failed: ${err.message}`);
+      setDiscordMsg(`Failed: ${err.message}`);
       setTimeout(() => setDiscordMsg(''), 5000);
     } finally {
       setScreenshotting(false);
     }
-  }, [symbol, chartView]);
+  }, [symbol, chartView, data, API_URL]);
 
   const pushToDiscord = useCallback(async (view) => {
     const endpointMap = {
@@ -503,13 +511,13 @@ export default function GexProfilePage() {
                   ))}
                 </div>
                 <button
-                  onClick={downloadScreenshot}
+                  onClick={postScreenshotToDiscord}
                   disabled={screenshotting}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-border-default bg-bg-elevated text-text-secondary cursor-pointer transition-all duration-150 hover:bg-white/[0.08] hover:text-white hover:border-accent/40 disabled:opacity-50"
-                  title="Download chart as PNG"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[var(--radius-sm)] border border-[rgba(88,101,242,0.4)] bg-[rgba(88,101,242,0.15)] text-[#5865F2] cursor-pointer transition-all duration-150 hover:bg-[rgba(88,101,242,0.25)] hover:border-[rgba(88,101,242,0.6)] disabled:opacity-50"
+                  title="Post chart screenshot to Discord"
                 >
-                  <Camera size={14} />
-                  Screenshot
+                  <Send size={14} />
+                  {screenshotting ? 'Posting...' : 'Screenshot'}
                 </button>
                 <button
                   onClick={() => pushToDiscord(chartView)}
