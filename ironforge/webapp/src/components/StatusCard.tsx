@@ -251,6 +251,8 @@ export default function StatusCard({
           className={`text-xs px-2 py-0.5 rounded ${
             data.bot_state === 'monitoring'
               ? 'bg-blue-500/20 text-blue-400'
+              : data.bot_state === 'awaiting_fill' || data.bot_state === 'pending_fill'
+                ? 'bg-yellow-500/20 text-yellow-400'
               : data.bot_state === 'scanning' || data.bot_state === 'traded'
                 ? 'bg-emerald-500/20 text-emerald-400'
               : data.bot_state === 'error'
@@ -262,7 +264,9 @@ export default function StatusCard({
                 : 'bg-gray-600/20 text-gray-400'
           }`}
         >
-          {data.bot_state === 'monitoring' ? 'MONITORING'
+          {data.bot_state === 'awaiting_fill' ? 'AWAITING FILL'
+            : data.bot_state === 'pending_fill' ? 'PENDING FILL'
+            : data.bot_state === 'monitoring' ? 'MONITORING'
             : data.bot_state === 'scanning' ? 'SCANNING'
             : data.bot_state === 'traded' ? 'TRADED'
             : data.bot_state === 'error' ? 'ERROR'
