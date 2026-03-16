@@ -764,7 +764,7 @@ def open_ic_sandbox_per_account(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per_contract)))
+            acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per_contract)))
 
             log.info(
                 f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
@@ -1987,7 +1987,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                         continue
 
                     acct_usable = acct_bp * 0.85
-                    acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
+                    acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per)))
                     log.info(
                         f"Sandbox [User]: BP=${acct_bp:,.0f} → "
                         f"usable=${acct_usable:,.0f} → {acct_contracts} contracts"
@@ -3487,7 +3487,7 @@ def _place_secondary_sandbox_orders(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
+            acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per)))
 
             order_body = {
                 "class": "multileg",
