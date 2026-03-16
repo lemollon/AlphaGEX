@@ -151,7 +151,9 @@ function validateMtmQuotes(
       issues.push(`${label}: inverted market (bid ${bid} > ask ${ask})`)
     }
     const mid = (bid + ask) / 2
-    if (mid > 0 && (ask - bid) > 0.50 * mid) {
+    // Match scanner threshold: only check wide spreads when mid > $0.05
+    // Cheap near-expiry options (mid $0.01-$0.05) naturally have wide relative spreads
+    if (mid > 0.05 && (ask - bid) > 0.50 * mid) {
       issues.push(`${label}: wide spread (${(ask - bid).toFixed(2)} > 50% of mid ${mid.toFixed(2)})`)
     }
   }
