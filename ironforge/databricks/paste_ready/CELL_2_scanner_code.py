@@ -27,13 +27,74 @@ log = logging.getLogger("ironforge")
 #  Constants
 # ---------------------------------------------------------------------------
 
-SCAN_INTERVAL = 300  # 5 minutes
+SCAN_INTERVAL = 60  # 1 minute
+MAX_CONSECUTIVE_MTM_FAILURES = 10  # Force-close at entry credit after 10 consecutive MTM failures
 CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
 
+# Track consecutive MTM failures per position_id (resets on success or close)
+_mtm_failure_counts: dict[str, int] = {}
+_pending_orders_table_ready = False
+
+# Per-bot config defaults — overridden by {bot}_config table if present
+BOT_CONFIG = {
+    "flame":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
+    "spark":   {"sd": 1.2, "pt_pct": 0.30, "sl_mult": 2.0, "entry_end": 1400, "max_trades": 1, "max_contracts": 10, "bp_pct": 0.85, "starting_capital": 10000.0},
+    "inferno": {"sd": 1.0, "pt_pct": 0.50, "sl_mult": 3.0, "entry_end": 1430, "max_trades": 0, "max_contracts": 3, "bp_pct": 0.85, "starting_capital": 10000.0},
+}
+
+# DB field → BOT_CONFIG key mapping
+_DB_TO_CFG = {
+    "sd_multiplier": "sd",
+    "profit_target_pct": ("pt_pct", lambda v: float(v) / 100.0),  # DB stores 30.0 → we use 0.30
+    "stop_loss_pct": ("sl_mult", lambda v: float(v) / 100.0),     # DB stores 200.0 → we use 2.0
+    "max_contracts": "max_contracts",
+    "max_trades_per_day": "max_trades",
+    "buying_power_usage_pct": "bp_pct",
+    "starting_capital": "starting_capital",
+}
+
+
+def load_config_overrides() -> None:
+    """Read {bot}_config tables from Databricks and merge into BOT_CONFIG.
+
+    Runs once per scan cycle. Falls back silently to defaults if table
+    doesn't exist or query fails.
+    """
+    for bot_name, defaults in BOT_CONFIG.items():
+        dte = {"flame": "2DTE", "spark": "1DTE", "inferno": "0DTE"}[bot_name]
+        try:
+            rows = db_query(
+                f"SELECT * FROM {bot_table(bot_name, 'config')} "
+                f"WHERE dte_mode = '{dte}' LIMIT 1"
+            )
+            if not rows:
+                continue
+            row = rows[0]
+            for db_col, mapping in _DB_TO_CFG.items():
+                val = row.get(db_col)
+                if val is None:
+                    continue
+                if isinstance(mapping, tuple):
+                    cfg_key, transform = mapping
+                    defaults[cfg_key] = transform(val)
+                else:
+                    defaults[mapping] = float(val)
+            log.info(f"[{bot_name.upper()}] Config overrides loaded from DB: "
+                     f"sd={defaults['sd']}, bp_pct={defaults['bp_pct']}, "
+                     f"capital={defaults['starting_capital']}, max_contracts={defaults['max_contracts']}")
+        except Exception as e:
+            log.debug(f"[{bot_name.upper()}] Config table not found or read failed (using defaults): {e}")
+        # Sanitize: Databricks returns Decimal objects — force all numeric config to float
+        for k, v in defaults.items():
+            if hasattr(v, '__float__') and not isinstance(v, (int, float)):
+                defaults[k] = float(v)
+
+
 BOTS = [
-    {"name": "flame", "dte": "2DTE", "min_dte": 2},
-    {"name": "spark", "dte": "1DTE", "min_dte": 1},
+    {"name": "flame",   "dte": "2DTE", "min_dte": 2},
+    {"name": "spark",   "dte": "1DTE", "min_dte": 1},
+    {"name": "inferno", "dte": "0DTE", "min_dte": 0},
 ]
 
 # ---------------------------------------------------------------------------
@@ -53,6 +114,14 @@ except NameError:
         "(not 'Python script') so Databricks injects the spark session."
     )
 
+# Fix CURRENT_DATE() / CURRENT_TIMESTAMP() to return Central Time (not UTC)
+if _HAS_SPARK:
+    try:
+        spark.sql("SET TIME ZONE 'America/Chicago'")  # noqa: F821
+        log.info("Spark session timezone set to America/Chicago")
+    except Exception as e:
+        log.error(f"Failed to set Spark timezone: {e} — CURRENT_DATE may return UTC")
+
 
 def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
     """Execute a SQL query and return rows as list of dicts."""
@@ -70,12 +139,25 @@ def db_query(sql_str: str, params: Optional[dict] = None) -> list[dict]:
         raise
 
 
-def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
-    """Execute a SQL statement (INSERT/UPDATE/DELETE) without returning rows."""
+def db_execute(sql_str: str, params: Optional[dict] = None) -> int:
+    """Execute a SQL statement (INSERT/UPDATE/DELETE).
+
+    Returns num_affected_rows for DML (UPDATE/DELETE/MERGE), 0 for DDL/INSERT.
+    """
     if not _HAS_SPARK:
         raise RuntimeError("spark not available — use Notebook task type")
     try:
-        spark.sql(sql_str)  # noqa: F821
+        result = spark.sql(sql_str)  # noqa: F821
+        # Databricks DML returns a single-row DataFrame with num_affected_rows
+        try:
+            rows = result.collect()
+            if rows and len(rows) > 0 and len(rows[0]) > 0:
+                val = rows[0][0]
+                if isinstance(val, (int, float)):
+                    return int(val)
+        except Exception:
+            pass
+        return 0
     except Exception as e:
         log.error(f"DB execute error: {e}\nSQL: {sql_str[:200]}")
         raise
@@ -84,6 +166,11 @@ def db_execute(sql_str: str, params: Optional[dict] = None) -> None:
 def bot_table(bot_name: str, suffix: str) -> str:
     """Build fully-qualified table name: alpha_prime.ironforge.{bot}_{suffix}."""
     return f"{CATALOG}.{SCHEMA}.{bot_name}_{suffix}"
+
+
+def shared_table(name: str) -> str:
+    """Build fully-qualified shared table name: alpha_prime.ironforge.{name}."""
+    return f"{CATALOG}.{SCHEMA}.{name}"
 
 
 def num(val: Any) -> float:
@@ -271,9 +358,17 @@ def get_ic_mark_to_market(
     if not all([ps_q, pl_q, cs_q, cl_q]):
         return None
 
-    cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
+    # Raw cost: buy back shorts at ask, sell longs at bid
+    raw_cost = ps_q["ask"] + cs_q["ask"] - pl_q["bid"] - cl_q["bid"]
+
+    # Cap at spread width — an IC's cost to close can NEVER exceed this.
+    # Without this cap, illiquid long legs (bid≈$0) inflate cost_to_close
+    # far beyond reality, causing false stop-loss triggers.
+    spread_width = round(put_short - put_long, 2)  # same as call_long - call_short
+    cost = min(max(0, raw_cost), spread_width)
+
     return {
-        "cost_to_close": max(0, round(cost, 4)),
+        "cost_to_close": round(cost, 4),
         "put_short_bid": ps_q["bid"],
         "put_short_ask": ps_q["ask"],
         "put_long_bid": pl_q["bid"],
@@ -288,11 +383,17 @@ def get_ic_mark_to_market(
 
 def validate_mtm(mtm: dict, entry_credit: float) -> tuple:
     """Validate MTM quotes are sane. Returns (is_valid, reason)."""
-    # Check for zero/negative values on all legs
-    for key in ["put_short_ask", "call_short_ask", "put_long_bid", "call_long_bid"]:
+    # Short leg asks MUST be positive (we need to buy these back to close)
+    for key in ["put_short_ask", "call_short_ask"]:
         val = mtm.get(key, 0)
         if val is None or val <= 0:
             return False, f"{key} is zero/negative/None: {val}"
+    # Long leg bids CAN be zero — deep OTM wings on 0DTE often have no bid.
+    # We only need them for P&L calculation; $0 bid just means no exit value.
+    for key in ["put_long_bid", "call_long_bid"]:
+        val = mtm.get(key)
+        if val is None or val < 0:
+            return False, f"{key} is negative/None: {val}"
 
     # Check cost_to_close bounds (should be between 0 and 3x entry)
     ctc = mtm.get("cost_to_close", 0)
@@ -613,7 +714,7 @@ def open_ic_sandbox_per_account(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = max(1, math.floor(acct_usable / collateral_per_contract))
+            acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per_contract)))
 
             log.info(
                 f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
@@ -849,20 +950,28 @@ def close_ic_sandbox_per_account(
     return results
 
 
-def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) -> Optional[float]:
+def _get_sandbox_order_fill_price(
+    api_key: str, account_id: str, order_id: int, max_wait: int = 45,
+) -> Optional[float]:
     """Query a sandbox order and return the average fill price.
 
-    Tries up to 3 times with 1-second delay between attempts,
-    because sandbox orders may take a moment to fill.
+    Waits up to max_wait seconds with progressive backoff (1, 2, 3, 5, 5, 5...)
+    for the order to fill.  FLAME depends on this for 1:1 paper↔sandbox sync.
     """
-    for attempt in range(3):
+    BACKOFF = [1, 2, 3, 5, 5, 5, 5, 5, 5, 5]  # ~44s total
+    elapsed = 0
+    for attempt, delay in enumerate(BACKOFF):
+        if elapsed >= max_wait:
+            break
+
         data = _sandbox_get(
             f"/accounts/{account_id}/orders/{order_id}",
             None,
             api_key,
         )
         if not data:
-            time.sleep(1)
+            time.sleep(delay)
+            elapsed += delay
             continue
 
         order = data.get("order", {})
@@ -872,6 +981,10 @@ def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) 
             # For multileg orders, avg_fill_price is on the order level
             avg_fill = order.get("avg_fill_price")
             if avg_fill is not None:
+                log.info(
+                    f"Sandbox order {order_id} filled after {elapsed}s "
+                    f"(attempt {attempt + 1}): ${abs(float(avg_fill)):.4f}"
+                )
                 return abs(float(avg_fill))
 
             # Fallback: calculate from leg fills
@@ -887,22 +1000,38 @@ def _get_sandbox_order_fill_price(api_key: str, account_id: str, order_id: int) 
                         total += fill  # credit
                     else:
                         total -= fill  # debit
-                return abs(total) if total != 0 else None
+                if total != 0:
+                    log.info(
+                        f"Sandbox order {order_id} filled (leg calc) after {elapsed}s: "
+                        f"${abs(total):.4f}"
+                    )
+                    return abs(total)
+                return None
 
         if status in ("pending", "open", "partially_filled"):
-            time.sleep(1)
+            log.info(
+                f"Sandbox order {order_id} still {status} after {elapsed}s "
+                f"(attempt {attempt + 1}/{len(BACKOFF)})"
+            )
+            time.sleep(delay)
+            elapsed += delay
             continue
 
         # rejected, canceled, expired — no fill
         log.warning(f"Sandbox order {order_id} status={status}, no fill price")
         return None
 
-    log.warning(f"Sandbox order {order_id} not filled after 3 attempts")
+    log.warning(f"Sandbox order {order_id} not filled after {elapsed}s ({len(BACKOFF)} attempts)")
     return None
 
 
 def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
-    """Get the available buying power from a Tradier sandbox account."""
+    """Get the available OPTION buying power from a Tradier sandbox account.
+
+    IMPORTANT: Must use option_buying_power, NOT day_trade_buying_power or
+    stock_buying_power. Day trade BP ($226K) is ~3x option BP ($84K) and
+    causes orders far larger than the account can support.
+    """
     data = _sandbox_get(
         f"/accounts/{account_id}/balances",
         None,
@@ -911,13 +1040,15 @@ def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
     if not data:
         return None
     balances = data.get("balances", {})
-    # PDT accounts nest buying power under "pdt" sub-object
-    pdt = balances.get("pdt", {})
-    bp = (
-        pdt.get("option_buying_power")
-        or balances.get("option_buying_power")
-        or balances.get("buying_power")
-    )
+    # Prefer top-level option_buying_power (most accurate for options)
+    bp = balances.get("option_buying_power")
+    if bp is None:
+        # PDT accounts may nest it under "pdt" sub-object
+        pdt = balances.get("pdt", {})
+        bp = pdt.get("option_buying_power")
+    if bp is None:
+        # Last resort — stock_buying_power is closer to option BP than day_trade BP
+        bp = balances.get("stock_buying_power")
     if bp is not None:
         return float(bp)
     return None
@@ -958,13 +1089,13 @@ def is_in_warmup_window(ct: datetime) -> bool:
     return WARMUP_START <= hhmm <= WARMUP_END
 
 
-def is_in_entry_window(ct: datetime) -> bool:
-    """Check if within entry window: weekday, 8:30 AM - 2:00 PM CT."""
+def is_in_entry_window(ct: datetime, entry_end: int = 1400) -> bool:
+    """Check if within entry window: weekday, 8:30 AM - entry_end CT."""
     dow = ct.weekday()
     if dow >= 5:
         return False
     hhmm = ct.hour * 100 + ct.minute
-    return 830 <= hhmm <= 1400
+    return 830 <= hhmm <= entry_end
 
 
 def is_after_eod_cutoff(ct: datetime) -> bool:
@@ -973,26 +1104,38 @@ def is_after_eod_cutoff(ct: datetime) -> bool:
     return hhmm >= 1445
 
 
-def get_sliding_profit_target(ct: datetime) -> tuple:
+def get_sliding_profit_target(ct: datetime, base_pt: float = 0.30, bot_name: str = "") -> tuple:
     """
     Return (profit_target_fraction, tier_label) based on current CT time.
 
     The profit target slides DOWN as the day progresses — based on CURRENT
     time, not when the trade was opened.
 
-    Schedule (CT):
+    For FLAME/SPARK (base_pt=0.30):
         8:30 AM – 10:29 AM  → 30%  (MORNING)
         10:30 AM – 12:59 PM → 20%  (MIDDAY)
         1:00 PM – 2:44 PM   → 15%  (AFTERNOON)
-        2:45 PM+            → handled by EOD cutoff (close at any P&L)
+
+    For INFERNO (base_pt=0.50):
+        8:30 AM – 10:29 AM  → 50%  (MORNING)
+        10:30 AM – 12:59 PM → 30%  (MIDDAY)
+        1:00 PM – 2:44 PM   → 10%  (AFTERNOON)
+
+    2:45 PM+ → handled by EOD cutoff (close at any P&L)
     """
     time_minutes = ct.hour * 60 + ct.minute
+    is_inferno = bot_name == "inferno"
+
     if time_minutes < 630:       # before 10:30 AM CT
-        return 0.30, "MORNING"
+        return base_pt, "MORNING"
     elif time_minutes < 780:     # before 1:00 PM CT
-        return 0.20, "MIDDAY"
+        if is_inferno:
+            return 0.30, "MIDDAY"
+        return max(0.10, base_pt - 0.10), "MIDDAY"
     else:
-        return 0.15, "AFTERNOON"
+        if is_inferno:
+            return 0.10, "AFTERNOON"
+        return max(0.10, base_pt - 0.15), "AFTERNOON"
 
 
 # ---------------------------------------------------------------------------
@@ -1064,6 +1207,10 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
         a = 0.03
         win_prob += a
         factors.append(("DTE_2DAY_DECAY", a))
+    elif dte_mode == "0DTE":
+        a = -0.05
+        win_prob += a
+        factors.append(("DTE_0DAY_AGGRESSIVE", a))
     else:
         a = -0.02
         win_prob += a
@@ -1107,9 +1254,9 @@ def evaluate_advisor(vix: float, spot: float, expected_move: float, dte_mode: st
 # ---------------------------------------------------------------------------
 
 
-def calculate_strikes(spot: float, expected_move: float) -> dict:
-    """Calculate IC strikes using 1.2x SD, $5 width."""
-    SD = 1.2
+def calculate_strikes(spot: float, expected_move: float, sd_mult: float = 1.2) -> dict:
+    """Calculate IC strikes using SD multiplier, $5 width."""
+    SD = sd_mult
     WIDTH = 5
 
     min_em = spot * 0.005
@@ -1175,15 +1322,16 @@ def close_position(
         price = mtm["cost_to_close"] if mtm else 0.0
 
     price_source = "calculated"
-    sandbox_fill_price = None  # track sandbox fill separately (never overwrites paper price)
+    sandbox_fill_price = None
 
     # -------------------------------------------------------------------
-    # For FLAME: close each sandbox account with its OWN contract count
-    # (read from sandbox_order_id stored at open).  Uses cascade close:
-    # 4-leg → 2×2-leg → 4 individual legs.
-    # For SPARK: no sandbox.
+    # FLAME: Tradier sandbox is SOURCE OF TRUTH (1:1 sync).
+    #   - Close User sandbox first, WAIT for fill
+    #   - Use User fill price for paper P&L (overrides calculated MTM)
+    #   - Then close Matt/Logan (best-effort)
+    # SPARK/INFERNO: no sandbox.
     # -------------------------------------------------------------------
-    if bot["name"] == "flame":
+    if bot["name"] == "flame" and not _flame_sandbox_paper_only:
         try:
             # Read per-account open info from the position's sandbox_order_id column
             sb_rows = db_query(f"""
@@ -1213,7 +1361,38 @@ def close_position(
                 tag=position_id,
             )
 
-            # Get actual fill price from User's close order (do NOT overwrite paper price)
+            # Log sandbox close results to DB — critical for diagnosing stale positions
+            all_accts = [a["name"] for a in _get_sandbox_accounts_lazy()]
+            closed_accts = list(close_results.keys())
+            failed_accts = [a for a in all_accts if a not in closed_accts]
+            if failed_accts:
+                fail_detail = json.dumps({
+                    "event": "sandbox_close_partial_failure",
+                    "position_id": position_id,
+                    "closed": closed_accts,
+                    "failed": failed_accts,
+                    "expiration": expiration,
+                }).replace("'", "''")
+                try:
+                    db_execute(f"""
+                        INSERT INTO {bot_table(bot['name'], 'logs')}
+                            (log_time, level, message, details, dte_mode)
+                        VALUES (
+                            CURRENT_TIMESTAMP(), 'SANDBOX_CLOSE_FAIL',
+                            'Sandbox close FAILED for accounts: {", ".join(failed_accts)} on {position_id}',
+                            '{fail_detail}',
+                            '{bot["dte"]}'
+                        )
+                    """)
+                except Exception:
+                    pass  # Don't let log failure break the close path
+                log.error(
+                    f"FLAME SANDBOX CLOSE INCOMPLETE: {position_id} "
+                    f"closed={closed_accts} failed={failed_accts} "
+                    f"— stale sandbox positions will block future trades!"
+                )
+
+            # FLAME 1:1: Use User sandbox fill price as paper close price
             user_order_id = close_results.get("User")
             if user_order_id and user_order_id > 0:
                 try:
@@ -1227,19 +1406,42 @@ def close_position(
                             )
                             if fill_price is not None and fill_price >= 0:
                                 sandbox_fill_price = fill_price
-                                delta_pct = (
-                                    round(abs(fill_price - price) / price * 100, 1)
-                                    if price > 0 else 0
-                                )
+                                # FLAME: sandbox fill IS the paper price (1:1)
+                                price = fill_price
+                                price_source = "sandbox_fill"
                                 log.info(
-                                    f"Sandbox fill: ${fill_price:.4f} vs "
-                                    f"scanner MTM: ${price:.4f} "
-                                    f"(delta: {delta_pct}%)"
+                                    f"FLAME 1:1 close: using sandbox fill ${fill_price:.4f} "
+                                    f"(MTM was ${close_price or 0:.4f})"
+                                )
+                            else:
+                                log.warning(
+                                    f"FLAME close: User fill not available, "
+                                    f"using MTM ${price:.4f} as fallback"
                                 )
                 except Exception as e:
                     log.warning(f"Could not get User sandbox fill price: {e}")
         except Exception as e:
             log.warning(f"Sandbox close failed for {position_id}: {e}")
+            # Log the total failure to DB so triage queries can find it
+            try:
+                err_detail = json.dumps({
+                    "event": "sandbox_close_total_failure",
+                    "position_id": position_id,
+                    "error": str(e)[:500],
+                    "expiration": expiration,
+                }).replace("'", "''")
+                db_execute(f"""
+                    INSERT INTO {bot_table(bot['name'], 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(), 'SANDBOX_CLOSE_FAIL',
+                        'Sandbox close TOTAL FAILURE for {position_id}: {str(e)[:200]}',
+                        '{err_detail}',
+                        '{bot["dte"]}'
+                    )
+                """)
+            except Exception:
+                pass
 
     pnl_per_contract = (entry_credit - price) * 100
     realized_pnl = round(pnl_per_contract * contracts, 2)
@@ -1247,7 +1449,7 @@ def close_position(
     now_ts = get_central_time().strftime("%Y-%m-%d %H:%M:%S")
     today_str = get_central_time().strftime("%Y-%m-%d")
 
-    db_execute(f"""
+    rows_affected = db_execute(f"""
         UPDATE {bot_table(bot['name'], 'positions')}
         SET status = 'closed',
             close_time = CAST('{now_ts}' AS TIMESTAMP),
@@ -1260,13 +1462,37 @@ def close_position(
           AND dte_mode = '{bot['dte']}'
     """)
 
+    # CRITICAL: Only update paper_account if the position UPDATE actually changed a row.
+    # Without this guard, overlapping scanner runs can double-count P&L:
+    #   Scan A closes position (1 row) → paper_account += pnl
+    #   Scan B tries to close same position (0 rows) → paper_account += pnl AGAIN
+    if rows_affected == 0:
+        log.warning(
+            f"{bot['name'].upper()} {position_id}: position UPDATE matched 0 rows "
+            f"(already closed by another scan). Skipping paper_account update to prevent "
+            f"double-counting. realized_pnl would have been ${realized_pnl:.2f}"
+        )
+        return
+
+    # Reconcile collateral from actual open positions (prevents stuck collateral)
+    # Instead of relying on collateral_required from the closed position,
+    # recalculate collateral_in_use from all remaining open positions.
+    pos_table = bot_table(bot['name'], 'positions')
+    acct_table = bot_table(bot['name'], 'paper_account')
+    remaining = db_query(f"""
+        SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+        FROM {pos_table}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+    """)
+    actual_collateral = num(remaining[0]["total_collateral"]) if remaining else 0.0
+
     db_execute(f"""
-        UPDATE {bot_table(bot['name'], 'paper_account')}
+        UPDATE {acct_table}
         SET current_balance = current_balance + {realized_pnl},
             cumulative_pnl = cumulative_pnl + {realized_pnl},
             total_trades = total_trades + 1,
-            collateral_in_use = GREATEST(0, collateral_in_use - {collateral}),
-            buying_power = buying_power + {collateral} + {realized_pnl},
+            collateral_in_use = {actual_collateral},
+            buying_power = current_balance + {realized_pnl} - {actual_collateral},
             high_water_mark = GREATEST(high_water_mark, current_balance + {realized_pnl}),
             max_drawdown = GREATEST(max_drawdown,
                 GREATEST(high_water_mark, current_balance + {realized_pnl}) - (current_balance + {realized_pnl})),
@@ -1284,6 +1510,48 @@ def close_position(
         WHERE position_id = '{position_id}'
           AND dte_mode = '{bot['dte']}'
     """)
+
+    # Post-close: if same-day open+close = day trade, increment PDT counter
+    try:
+        pos_row = db_query(f"""
+            SELECT open_time
+            FROM {bot_table(bot['name'], 'positions')}
+            WHERE position_id = '{position_id}' AND dte_mode = '{bot['dte']}'
+            LIMIT 1
+        """)
+        open_date_str = str(pos_row[0]["open_time"])[:10] if pos_row else None
+        if open_date_str == today_str:
+            bot_upper = bot["name"].upper()
+            pdt_row = db_query(f"""
+                SELECT day_trade_count
+                FROM {shared_table('ironforge_pdt_config')}
+                WHERE bot_name = '{bot_upper}'
+                LIMIT 1
+            """)
+            old_count = to_int(pdt_row[0]["day_trade_count"]) if pdt_row else 0
+            new_count = old_count + 1
+            db_execute(f"""
+                UPDATE {shared_table('ironforge_pdt_config')}
+                SET day_trade_count = {new_count},
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE bot_name = '{bot_upper}'
+            """)
+            old_json = json.dumps({"day_trade_count": old_count}).replace("'", "''")
+            new_json = json.dumps({"day_trade_count": new_count}).replace("'", "''")
+            reason_txt = f"Day trade: {position_id} opened+closed on {today_str}".replace("'", "''")
+            db_execute(f"""
+                INSERT INTO {shared_table('ironforge_pdt_log')}
+                    (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
+                VALUES (
+                    UUID(), '{bot_upper}', 'day_trade_recorded',
+                    '{old_json}', '{new_json}',
+                    '{reason_txt}', 'scanner',
+                    CURRENT_TIMESTAMP()
+                )
+            """)
+            log.info(f"{bot_upper} PDT: day trade recorded, count {old_count}→{new_count}")
+    except Exception as pdt_err:
+        log.warning(f"PDT counter update failed: {pdt_err}")
 
     fill_delta_pct = (
         round(abs(sandbox_fill_price - price) / price * 100, 1)
@@ -1335,29 +1603,15 @@ def close_position(
 # ---------------------------------------------------------------------------
 
 
-def monitor_position(bot: dict, ct: datetime) -> dict:
-    """Monitor open position for PT/SL/EOD/stale holdover close."""
-    positions = db_query(f"""
-        SELECT position_id, ticker, expiration,
-               put_short_strike, put_long_strike,
-               call_short_strike, call_long_strike,
-               contracts, total_credit, max_loss,
-               collateral_required, open_time
-        FROM {bot_table(bot['name'], 'positions')}
-        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
-        ORDER BY open_time DESC
-    """)
-
-    if not positions:
-        return {"status": "no_position", "unrealizedPnl": 0}
-
-    pos = positions[0]
+def _monitor_single_position(bot: dict, pos: dict, ct: datetime) -> dict:
+    """Monitor a single open position for PT/SL/EOD/stale holdover close."""
+    cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
     entry_credit = num(pos["total_credit"])
     contracts = to_int(pos["contracts"])
     collateral = num(pos["collateral_required"])
-    pt_pct, pt_tier = get_sliding_profit_target(ct)
+    pt_pct, pt_tier = get_sliding_profit_target(ct, cfg["pt_pct"], bot["name"])
     profit_target_price = round(entry_credit * (1 - pt_pct), 4)
-    stop_loss_price = round(entry_credit * 2.0, 4)
+    stop_loss_price = round(entry_credit * cfg["sl_mult"], 4)
     ticker = pos.get("ticker") or "SPY"
     exp_raw = pos.get("expiration")
     expiration = str(exp_raw)[:10] if exp_raw else ""
@@ -1369,17 +1623,29 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
 
     if is_after_eod_cutoff(ct) or is_stale_holdover:
         close_reason = "stale_holdover" if is_stale_holdover else "eod_cutoff"
-        close_position(
-            bot, pos["position_id"], ticker, expiration,
-            num(pos["put_short_strike"]), num(pos["put_long_strike"]),
-            num(pos["call_short_strike"]), num(pos["call_long_strike"]),
-            contracts, entry_credit, collateral, close_reason,
-        )
+        try:
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+            )
+        except Exception as e:
+            # Fallback: close at entry credit (break-even) if Tradier/sandbox unavailable
+            log.warning(f"{bot['name'].upper()} Force-close failed, retrying at entry credit: {e}")
+            close_position(
+                bot, pos["position_id"], ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, close_reason,
+                close_price=entry_credit,
+            )
         return {"status": f"closed:{close_reason}", "unrealizedPnl": 0}
 
     if not is_tradier_configured():
         return {"status": "monitoring:no_tradier", "unrealizedPnl": 0}
 
+    pid = pos["position_id"]
     mtm = get_ic_mark_to_market(
         ticker, expiration,
         num(pos["put_short_strike"]), num(pos["put_long_strike"]),
@@ -1387,16 +1653,50 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     )
 
     if not mtm:
-        return {"status": "monitoring:mtm_failed", "unrealizedPnl": 0}
+        _mtm_failure_counts[pid] = _mtm_failure_counts.get(pid, 0) + 1
+        fail_count = _mtm_failure_counts[pid]
+        if fail_count >= MAX_CONSECUTIVE_MTM_FAILURES:
+            log.error(
+                f"{bot['name'].upper()} {pid}: {fail_count} consecutive MTM failures "
+                f"— force-closing at entry credit ${entry_credit:.4f}"
+            )
+            close_position(
+                bot, pid, ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, "data_feed_failure",
+                close_price=entry_credit,
+            )
+            _mtm_failure_counts.pop(pid, None)
+            return {"status": f"closed:data_feed_failure({fail_count})", "unrealizedPnl": 0}
+        return {"status": f"monitoring:mtm_failed({fail_count}/{MAX_CONSECUTIVE_MTM_FAILURES})", "unrealizedPnl": 0}
 
     is_valid, invalid_reason = validate_mtm(mtm, entry_credit)
     if not is_valid:
+        _mtm_failure_counts[pid] = _mtm_failure_counts.get(pid, 0) + 1
+        fail_count = _mtm_failure_counts[pid]
+        if fail_count >= MAX_CONSECUTIVE_MTM_FAILURES:
+            log.error(
+                f"{bot['name'].upper()} {pid}: {fail_count} consecutive MTM validation failures "
+                f"— force-closing at entry credit ${entry_credit:.4f}"
+            )
+            close_position(
+                bot, pid, ticker, expiration,
+                num(pos["put_short_strike"]), num(pos["put_long_strike"]),
+                num(pos["call_short_strike"]), num(pos["call_long_strike"]),
+                contracts, entry_credit, collateral, "data_feed_failure",
+                close_price=entry_credit,
+            )
+            _mtm_failure_counts.pop(pid, None)
+            return {"status": f"closed:data_feed_failure({fail_count})", "unrealizedPnl": 0}
         log.warning(
             f"{bot['name'].upper()} MTM validation failed: {invalid_reason} "
-            f"— skipping PT/SL check this cycle"
+            f"— skipping PT/SL check this cycle ({fail_count}/{MAX_CONSECUTIVE_MTM_FAILURES})"
         )
         return {"status": f"monitoring:mtm_invalid({invalid_reason})", "unrealizedPnl": 0}
 
+    # MTM succeeded — reset failure counter
+    _mtm_failure_counts.pop(pid, None)
     cost_to_close = mtm["cost_to_close"]
 
     if cost_to_close <= profit_target_price:
@@ -1416,6 +1716,13 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
         }
 
     if cost_to_close >= stop_loss_price:
+        log.info(
+            f"{bot['name'].upper()} STOP LOSS TRIGGER: "
+            f"cost_to_close=${cost_to_close:.4f} >= threshold=${stop_loss_price:.4f} "
+            f"(entry=${entry_credit:.4f} × sl_mult={cfg['sl_mult']}) "
+            f"legs: PS_ask={mtm['put_short_ask']:.4f} PL_bid={mtm['put_long_bid']:.4f} "
+            f"CS_ask={mtm['call_short_ask']:.4f} CL_bid={mtm['call_long_bid']:.4f}"
+        )
         close_position(
             bot, pos["position_id"], ticker, expiration,
             num(pos["put_short_strike"]), num(pos["put_long_strike"]),
@@ -1434,6 +1741,41 @@ def monitor_position(bot: dict, ct: datetime) -> dict:
     }
 
 
+def monitor_position(bot: dict, ct: datetime) -> dict:
+    """Monitor ALL open positions for PT/SL/EOD/stale holdover close.
+
+    For multi-trade bots (INFERNO), iterates through every open position.
+    For single-trade bots (FLAME/SPARK), behaves the same as before.
+    """
+    positions = db_query(f"""
+        SELECT position_id, ticker, expiration,
+               put_short_strike, put_long_strike,
+               call_short_strike, call_long_strike,
+               contracts, total_credit, max_loss,
+               collateral_required, open_time
+        FROM {bot_table(bot['name'], 'positions')}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+        ORDER BY open_time DESC
+    """)
+
+    if not positions:
+        return {"status": "no_position", "unrealizedPnl": 0}
+
+    total_unrealized = 0.0
+    statuses: list[str] = []
+
+    for pos in positions:
+        result = _monitor_single_position(bot, pos, ct)
+        statuses.append(result["status"])
+        total_unrealized += result["unrealizedPnl"]
+
+    # Summarize: if any closed, report it; otherwise report monitoring
+    closed = [s for s in statuses if s.startswith("closed:")]
+    if closed:
+        return {"status": closed[0], "unrealizedPnl": total_unrealized}
+    return {"status": statuses[0], "unrealizedPnl": total_unrealized}
+
+
 # ---------------------------------------------------------------------------
 #  Try Open Trade
 # ---------------------------------------------------------------------------
@@ -1444,29 +1786,35 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     if vix > 32:
         return f"skip:vix_too_high({vix:.1f})"
 
-    # Check 1: Already traded today? (max 1 trade/day)
-    today_trades = db_query(f"""
-        SELECT COUNT(*) as cnt
-        FROM {bot_table(bot['name'], 'pdt_log')}
-        WHERE trade_date = CURRENT_DATE() AND dte_mode = '{bot['dte']}'
+    # PDT config check — read enforcement state from pdt_config table
+    bot_upper = bot["name"].upper()
+    pdt_cfg_rows = db_query(f"""
+        SELECT pdt_enabled, day_trade_count, max_day_trades, max_trades_per_day
+        FROM {shared_table('ironforge_pdt_config')}
+        WHERE bot_name = '{bot_upper}'
+        LIMIT 1
     """)
-    if to_int(today_trades[0].get("cnt") if today_trades else 0) >= 1:
-        return "skip:already_traded_today"
+    pdt_cfg = pdt_cfg_rows[0] if pdt_cfg_rows else {}
+    pdt_enabled = pdt_cfg.get("pdt_enabled", True) not in (False, 0, "false")
+    pdt_count = to_int(pdt_cfg.get("day_trade_count", 0))
+    max_day_trades = to_int(pdt_cfg.get("max_day_trades", 3))  # 0 = disabled/unlimited
+    max_trades_per_day = to_int(pdt_cfg.get("max_trades_per_day", 1))  # 0 = unlimited
 
-    # Check 2: PDT rolling 5-day window (3 day trades in 5 business days = blocked)
-    # Paper accounts ARE subject to PDT. If PDT blocked, skip BOTH paper AND sandbox.
-    pdt_rows = db_query(f"""
-        SELECT COUNT(*) as cnt
-        FROM {bot_table(bot['name'], 'pdt_log')}
-        WHERE is_day_trade = TRUE
-        AND dte_mode = '{bot['dte']}'
-        AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
-        AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
-    """)
-    pdt_count = to_int(pdt_rows[0].get("cnt") if pdt_rows else 0)
-    if pdt_count >= 3:
-        log.info(f"{bot['name'].upper()} PDT BLOCKED: {pdt_count}/3 day trades in rolling 5 biz days")
-        return f"skip:pdt_blocked({pdt_count}/3)"
+    # Check 1: Already traded today? (max per-day limit from config, 0 = unlimited)
+    # When PDT is off, daily trade limit is also bypassed
+    if pdt_enabled and max_trades_per_day > 0:
+        today_trades = db_query(f"""
+            SELECT COUNT(*) as cnt
+            FROM {bot_table(bot['name'], 'pdt_log')}
+            WHERE trade_date = CURRENT_DATE() AND dte_mode = '{bot['dte']}'
+        """)
+        if to_int(today_trades[0].get("cnt") if today_trades else 0) >= max_trades_per_day:
+            return "skip:already_traded_today"
+
+    # Check 2: PDT rolling window (only if enforcement is ON and limit > 0)
+    if pdt_enabled and max_day_trades > 0 and pdt_count >= max_day_trades:
+        log.info(f"{bot_upper} PDT BLOCKED: {pdt_count}/{max_day_trades} day trades in rolling window")
+        return f"skip:pdt_blocked({pdt_count}/{max_day_trades})"
 
     account_rows = db_query(f"""
         SELECT id, current_balance, buying_power
@@ -1479,8 +1827,19 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         return "skip:no_paper_account"
 
     acct = account_rows[0]
-    paper_acct_id = acct["id"]  # save BEFORE sandbox loop overwrites 'acct'
-    buying_power = num(acct["buying_power"])
+    paper_acct_id = to_int(acct["id"])  # save BEFORE sandbox loop overwrites 'acct'
+
+    # Derive buying power from LIVE open position collateral (not stale paper_account cache).
+    # paper_account.collateral_in_use can drift if a close path fails to reconcile.
+    balance = num(acct["current_balance"])
+    live_collateral_rows = db_query(f"""
+        SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+        FROM {bot_table(bot['name'], 'positions')}
+        WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+    """)
+    live_collateral = num(live_collateral_rows[0]["total_collateral"]) if live_collateral_rows else 0.0
+    buying_power = balance - live_collateral
+
     if buying_power < 200:
         return f"skip:low_bp(${buying_power:.0f})"
 
@@ -1504,7 +1863,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                 nearest = exp
         expiration = nearest
 
-    strikes = calculate_strikes(spot, expected_move)
+    cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
+    strikes = calculate_strikes(spot, expected_move, sd_mult=cfg["sd"])
     credits = get_ic_entry_credit(
         "SPY", expiration,
         strikes["putShort"], strikes["putLong"],
@@ -1518,8 +1878,10 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     collateral_per = max(0, (spread_width - credits["totalCredit"]) * 100)
     if collateral_per <= 0:
         return "skip:bad_collateral"
-    usable_bp = buying_power * 0.85
-    max_contracts = min(10, max(1, math.floor(usable_bp / collateral_per)))
+    usable_bp = buying_power * cfg.get("bp_pct", 0.85)
+    bp_contracts = max(1, math.floor(usable_bp / collateral_per))
+    contract_cap = cfg.get("max_contracts", 10)  # 0 = no limit
+    max_contracts = bp_contracts if contract_cap == 0 else min(contract_cap, bp_contracts)
 
     now = datetime.now()
     date_str = now.strftime("%Y%m%d")
@@ -1531,11 +1893,14 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     today_date = get_central_time().strftime("%Y-%m-%d")
 
     # -------------------------------------------------------------------
-    # For FLAME: each sandbox account sizes independently based on its
-    # OWN buying power.  USER goes first to get the actual fill price.
-    # For SPARK (paper-only): use calculated credit from bid/ask.
+    # FLAME: Tradier sandbox is the SOURCE OF TRUTH (1:1 sync).
+    #   - Place User sandbox order, save as pending order
+    #   - Return immediately (no 45s blocking wait)
+    #   - check_pending_fills() picks up the fill on next scan cycle
+    #   - Matt/Logan orders placed after User fill confirmed
+    # SPARK/INFERNO: paper-only, use calculated credit from bid/ask.
     # -------------------------------------------------------------------
-    actual_credit = credits["totalCredit"]  # fallback for SPARK or if sandbox fails
+    actual_credit = credits["totalCredit"]  # fallback for SPARK/INFERNO
     sandbox_order_ids: dict[str, dict] = {}  # {"User": {"order_id": 123, "contracts": 85}, ...}
 
     # Build OCC symbols once (shared by all accounts — same strikes)
@@ -1557,37 +1922,32 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
             "tag": position_id[:255],
         }
 
-    if bot["name"] == "flame":
+    if bot["name"] == "flame" and not _flame_sandbox_paper_only:
+        # ── ASYNC FILL: Place User order, save pending, return immediately ──
         try:
-            # Process accounts in order: User first (for fill price), then others
             all_accounts = _get_sandbox_accounts_lazy()
             user_accounts = [a for a in all_accounts if a["name"] == "User"]
-            other_accounts = [a for a in all_accounts if a["name"] != "User"]
-            ordered_accounts = user_accounts + other_accounts
 
-            for acct in ordered_accounts:
+            order_placed = False
+            for acct in user_accounts:
                 try:
                     acct_id = _get_account_id_for_key(acct["api_key"])
                     if not acct_id:
                         continue
 
-                    # Query this account's own buying power
                     acct_bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
                     if acct_bp is None or acct_bp < collateral_per:
                         log.warning(
-                            f"Sandbox [{acct['name']}]: BP=${acct_bp} insufficient "
+                            f"Sandbox [User]: BP=${acct_bp} insufficient "
                             f"(need ${collateral_per:.2f}/contract)"
                         )
                         continue
 
-                    # Size based on THIS account's buying power — NO max cap
                     acct_usable = acct_bp * 0.85
-                    acct_contracts = max(1, math.floor(acct_usable / collateral_per))
-
+                    acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per)))
                     log.info(
-                        f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
-                        f"usable=${acct_usable:,.0f} → {acct_contracts} contracts "
-                        f"(collateral/contract=${collateral_per:.2f})"
+                        f"Sandbox [User]: BP=${acct_bp:,.0f} → "
+                        f"usable=${acct_usable:,.0f} → {acct_contracts} contracts"
                     )
 
                     order_body = _build_ic_open_body(acct_contracts)
@@ -1597,42 +1957,92 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                         acct["api_key"],
                     )
 
-                    if result and result.get("order", {}).get("id"):
-                        order_id = result["order"]["id"]
-                        sandbox_order_ids[acct["name"]] = {
-                            "order_id": order_id,
-                            "contracts": acct_contracts,
-                        }
-                        log.info(
-                            f"Sandbox IC OPEN OK [{acct['name']}]: "
-                            f"order_id={order_id} x{acct_contracts}"
-                        )
+                    if not result or not result.get("order", {}).get("id"):
+                        log.error("Sandbox [User] IC OPEN: no order ID returned")
+                        continue
 
-                        # Get actual fill price from USER (first account)
-                        if acct["name"] == "User":
-                            fill_price = _get_sandbox_order_fill_price(
-                                acct["api_key"], acct_id, order_id
-                            )
-                            if fill_price is not None and fill_price > 0:
-                                log.info(
-                                    f"Actual fill price from USER sandbox: ${fill_price:.4f} "
-                                    f"(calculated was ${credits['totalCredit']:.4f})"
-                                )
-                                actual_credit = fill_price
-                            else:
-                                log.warning(
-                                    f"Could not get fill price for order {order_id}, "
-                                    f"using calculated: ${credits['totalCredit']:.4f}"
-                                )
-                    else:
-                        log.warning(
-                            f"Sandbox IC OPEN FAILED [{acct['name']}]: "
-                            f"no order ID returned"
+                    order_id = result["order"]["id"]
+                    log.info(
+                        f"Sandbox [User] IC OPEN submitted: order_id={order_id} "
+                        f"x{acct_contracts} — saving as pending order"
+                    )
+
+                    # Save advisor context for position creation on fill
+                    adv_json = json.dumps(adv).replace("'", "''")
+
+                    # Save pending order — no blocking wait
+                    pending_id = f"PO-{position_id}-{format(random.randint(0, 0xFFFF), '04X')}"
+                    pending_tbl = bot_table(bot["name"], "pending_orders")
+                    db_execute(f"""
+                        INSERT INTO {pending_tbl} (
+                            pending_id, position_id, bot_name, dte_mode,
+                            order_type, sandbox_account, sandbox_api_key,
+                            sandbox_account_id, tradier_order_id, sandbox_contracts,
+                            ticker, expiration, put_short, put_long, call_short, call_long,
+                            paper_contracts, total_credit, spread_width, collateral_per,
+                            max_profit, max_loss,
+                            spot_price, vix, expected_move,
+                            advisor_json, sandbox_order_ids_json,
+                            status, created_at, created_date
+                        ) VALUES (
+                            '{pending_id}', '{position_id}', '{bot_name}', '{bot["dte"]}',
+                            'open', 'User', '{acct["api_key"]}',
+                            '{acct_id}', {order_id}, {acct_contracts},
+                            'SPY', '{expiration}', {strikes['putShort']}, {strikes['putLong']},
+                            {strikes['callShort']}, {strikes['callLong']},
+                            {max_contracts}, {credits['totalCredit']}, {spread_width}, {collateral_per},
+                            {credits['totalCredit'] * 100 * max_contracts},
+                            {max(0, (spread_width - credits['totalCredit']) * 100) * max_contracts},
+                            {spot}, {vix}, {expected_move},
+                            '{adv_json}', '',
+                            'pending', CURRENT_TIMESTAMP(), CURRENT_DATE()
                         )
+                    """)
+
+                    order_placed = True
+                    log.info(
+                        f"FLAME PENDING ORDER SAVED: {pending_id} "
+                        f"order_id={order_id} — will check for fill next cycle"
+                    )
+
+                    # Log the pending submission
+                    pending_detail = json.dumps({
+                        "pending_id": pending_id,
+                        "position_id": position_id,
+                        "tradier_order_id": order_id,
+                        "sandbox_contracts": acct_contracts,
+                        "paper_contracts": max_contracts,
+                        "calculated_credit": credits["totalCredit"],
+                    }).replace("'", "''")
+                    db_execute(f"""
+                        INSERT INTO {bot_table(bot['name'], 'logs')}
+                            (log_time, level, message, details, dte_mode)
+                        VALUES (
+                            CURRENT_TIMESTAMP(),
+                            'PENDING_ORDER',
+                            'Sandbox order submitted, awaiting fill: {pending_id} order_id={order_id}',
+                            '{pending_detail}',
+                            '{bot['dte']}'
+                        )
+                    """)
+
+                    break  # Only need one User account
+
                 except Exception as e:
-                    log.warning(f"Sandbox order failed [{acct['name']}]: {e}")
+                    log.error(f"Sandbox [User] order failed: {e}")
+
+            if not order_placed:
+                log.error(
+                    f"FLAME: Could not place User sandbox order for {position_id}."
+                )
+                return "skip:sandbox_order_failed"
+
+            # Return "pending" — position will be created when fill is detected
+            return f"pending:{position_id}"
+
         except Exception as e:
-            log.warning(f"Sandbox open failed for {position_id}: {e}")
+            log.error(f"Sandbox open failed for {position_id}: {e}")
+            return "skip:sandbox_open_error"
 
     # Recalculate financials with actual credit (matches what Tradier filled)
     # Paper position uses paper max_contracts, not sandbox contract counts
@@ -1791,14 +2201,115 @@ def scan_bot(bot: dict) -> None:
     unrealized_pnl = 0.0
 
     try:
+        # ── Collateral reconciliation ─────────────────────────────────────
+        # Reconcile paper_account.collateral_in_use with actual open position
+        # collateral every scan cycle. This prevents stale collateral from
+        # blocking trades when a close path fails to update paper_account.
+        try:
+            pos_table = bot_table(bot["name"], "positions")
+            acct_table = bot_table(bot["name"], "paper_account")
+            live_coll = db_query(f"""
+                SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+                FROM {pos_table}
+                WHERE status = 'open' AND dte_mode = '{bot['dte']}'
+            """)
+            actual_coll = num(live_coll[0]["total_collateral"]) if live_coll else 0.0
+            stored_acct = db_query(f"""
+                SELECT collateral_in_use, current_balance
+                FROM {acct_table}
+                WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
+                ORDER BY id DESC LIMIT 1
+            """)
+            if stored_acct:
+                stored_coll = num(stored_acct[0]["collateral_in_use"])
+                stored_bal = num(stored_acct[0]["current_balance"])
+                if abs(stored_coll - actual_coll) > 0.01:
+                    new_bp = stored_bal - actual_coll
+                    db_execute(f"""
+                        UPDATE {acct_table}
+                        SET collateral_in_use = {actual_coll},
+                            buying_power = {new_bp},
+                            updated_at = CURRENT_TIMESTAMP()
+                        WHERE is_active = TRUE AND dte_mode = '{bot['dte']}'
+                    """)
+                    log.info(
+                        f"{bot_name} COLLATERAL RECONCILED: "
+                        f"${stored_coll:.2f} -> ${actual_coll:.2f} "
+                        f"(BP: ${stored_bal - stored_coll:.2f} -> ${new_bp:.2f})"
+                    )
+        except Exception as coll_err:
+            log.warning(f"{bot_name} collateral reconciliation error: {coll_err}")
+
+        # Auto-decrement PDT counter: recount actual day trades in rolling window
+        # Respects manual resets: only counts trades AFTER last_reset_at
+        try:
+            # Read last_reset_at so we don't overwrite manual resets
+            pdt_cfg_row = db_query(f"""
+                SELECT day_trade_count, last_reset_at
+                FROM {shared_table('ironforge_pdt_config')}
+                WHERE bot_name = '{bot_name}'
+                LIMIT 1
+            """)
+            stored_count = to_int(pdt_cfg_row[0]["day_trade_count"]) if pdt_cfg_row else 0
+            last_reset_at = pdt_cfg_row[0].get("last_reset_at") if pdt_cfg_row else None
+
+            # Build the rolling window query: 5 business days = DATE_ADD(-6)
+            # Also filter by last_reset_at if a manual reset was performed
+            reset_filter = ""
+            if last_reset_at is not None:
+                reset_filter = f" AND closed_at >= CAST('{last_reset_at}' AS TIMESTAMP)"
+
+            pdt_actual = db_query(f"""
+                SELECT COUNT(*) as cnt FROM {bot_table(bot['name'], 'pdt_log')}
+                WHERE is_day_trade = TRUE AND dte_mode = '{bot['dte']}'
+                  AND trade_date >= DATE_ADD(CURRENT_DATE(), -6)
+                  AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+                  {reset_filter}
+            """)
+            actual_count = to_int(pdt_actual[0]["cnt"]) if pdt_actual else 0
+            if stored_count != actual_count:
+                db_execute(f"""
+                    UPDATE {shared_table('ironforge_pdt_config')}
+                    SET day_trade_count = {actual_count}, updated_at = CURRENT_TIMESTAMP()
+                    WHERE bot_name = '{bot_name}'
+                """)
+                if actual_count < stored_count:
+                    old_val = json.dumps({"day_trade_count": stored_count}).replace("'", "''")
+                    new_val = json.dumps({"day_trade_count": actual_count}).replace("'", "''")
+                    reason_str = f"Rolling window update: old trades dropped off ({stored_count}->{actual_count})"
+                    db_execute(f"""
+                        INSERT INTO {shared_table('ironforge_pdt_log')}
+                            (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
+                        VALUES (UUID(), '{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
+                                '{reason_str}', 'scanner', CURRENT_TIMESTAMP())
+                    """)
+        except Exception as pdt_sync_err:
+            log.warning(f"{bot_name} PDT sync error: {pdt_sync_err}")
+
+        cfg = BOT_CONFIG.get(bot["name"], BOT_CONFIG["flame"])
+        max_trades = cfg["max_trades"]
+        entry_end = cfg["entry_end"]
+
+        # ── Check pending orders for fills (async listener) ──
+        # Runs every cycle BEFORE signal generation. Only looks for fills.
+        try:
+            fill_result = check_pending_fills(bot)
+            if fill_result:
+                action = "traded"
+                reason = fill_result
+                log.info(f"{bot_name} PENDING FILL: {fill_result}")
+        except Exception as pf_err:
+            log.warning(f"{bot_name} check_pending_fills error: {pf_err}")
+
         open_rows = db_query(f"""
             SELECT position_id
             FROM {bot_table(bot['name'], 'positions')}
             WHERE status = 'open' AND dte_mode = '{bot['dte']}'
-            LIMIT 1
         """)
-        has_open_position = len(open_rows) > 0
+        open_count = len(open_rows)
+        has_open_position = open_count > 0
 
+        # Always monitor ALL open positions first
         if has_open_position:
             monitor_result = monitor_position(bot, ct)
             if monitor_result["status"].startswith("closed:"):
@@ -1808,11 +2319,107 @@ def scan_bot(bot: dict) -> None:
             reason = monitor_result["status"]
             unrealized_pnl = monitor_result["unrealizedPnl"]
 
+        # Post-EOD sandbox verification for FLAME:
+        # If we just closed positions at EOD, verify sandbox positions are also closed.
+        # If sandbox still has positions, attempt immediate retry.
+        hhmm_check = ct.hour * 100 + ct.minute
+        if (bot["name"] == "flame"
+                and action == "closed"
+                and is_after_eod_cutoff(ct)
+                and hhmm_check <= 1510):  # Only in the 2:45-3:10 PM CT window
+            try:
+                accounts = _get_sandbox_accounts_lazy()
+                for acct in accounts:
+                    acct_id = _get_account_id_for_key(acct["api_key"])
+                    if not acct_id:
+                        continue
+                    data = _sandbox_get(
+                        f"/accounts/{acct_id}/positions", None, acct["api_key"]
+                    )
+                    if not data:
+                        continue
+                    positions = data.get("positions", {})
+                    if positions == "null" or not positions:
+                        continue
+                    pos_list = positions.get("position", [])
+                    if isinstance(pos_list, dict):
+                        pos_list = [pos_list]
+
+                    # Filter to today's positions (not yet expired)
+                    today_str_check = ct.strftime("%y%m%d")  # YYMMDD for OCC symbol
+                    today_positions = [
+                        p for p in pos_list
+                        if p.get("symbol", "")[3:9] >= today_str_check
+                        and p.get("quantity", 0) != 0
+                    ]
+                    if today_positions:
+                        log.error(
+                            f"POST-EOD SANDBOX CHECK [{acct['name']}]: "
+                            f"{len(today_positions)} positions still open after EOD close! "
+                            f"Attempting emergency close..."
+                        )
+                        for p in today_positions:
+                            symbol = p.get("symbol", "")
+                            qty = p.get("quantity", 0)
+                            if not symbol or qty == 0:
+                                continue
+                            side = "sell_to_close" if qty > 0 else "buy_to_close"
+                            close_body = {
+                                "class": "option",
+                                "symbol": symbol.split(" ")[0] if " " in symbol else "SPY",
+                                "option_symbol": symbol,
+                                "side": side,
+                                "quantity": str(abs(qty)),
+                                "type": "market",
+                                "duration": "day",
+                            }
+                            result = _sandbox_post(
+                                f"/accounts/{acct_id}/orders",
+                                close_body,
+                                acct["api_key"],
+                            )
+                            oid = result.get("order", {}).get("id") if result else None
+                            if oid:
+                                log.info(
+                                    f"POST-EOD EMERGENCY CLOSE [{acct['name']}]: "
+                                    f"{symbol} {side} x{abs(qty)} → order_id={oid}"
+                                )
+                            else:
+                                log.error(
+                                    f"POST-EOD EMERGENCY CLOSE FAILED [{acct['name']}]: "
+                                    f"{symbol} {side} x{abs(qty)}"
+                                )
+            except Exception as eod_err:
+                log.error(f"Post-EOD sandbox verification error: {eod_err}")
+
+        # For multi-trade bots, check if we can open more positions
+        # For single-trade bots, only open if no position is open
+        # max_trades: 0 = unlimited, 1 = single trade, >1 = multi-trade with cap
+        can_open_more = (max_trades == 0) or (max_trades > 1 and open_count < max_trades) or (max_trades == 1 and not has_open_position)
+
+        # Block new trades if there's a pending order awaiting fill (FLAME only)
+        if can_open_more and bot["name"] == "flame":
+            try:
+                pending_count = db_query(f"""
+                    SELECT COUNT(*) AS cnt
+                    FROM {bot_table(bot['name'], 'pending_orders')}
+                    WHERE status = 'pending'
+                      AND created_date = CURRENT_DATE()
+                      AND dte_mode = '{bot["dte"]}'
+                """)
+                if pending_count and to_int(pending_count[0].get("cnt", 0)) > 0:
+                    can_open_more = False
+                    if action == "scan":
+                        action = "awaiting_fill"
+                        reason = "Pending order awaiting sandbox fill"
+            except Exception:
+                pass  # Table might not exist yet on first run
+
         if not is_market_open(ct):
             if not has_open_position:
                 action = "outside_window"
                 reason = f"Market closed ({ct.hour}:{ct.minute:02d} CT)"
-        elif not has_open_position and is_in_entry_window(ct):
+        elif can_open_more and is_in_entry_window(ct, entry_end):
             if not is_tradier_configured():
                 action = "skip"
                 reason = "tradier_not_configured"
@@ -1832,12 +2439,14 @@ def scan_bot(bot: dict) -> None:
                     trade_result = try_open_trade(bot, spot, vix)
                     if trade_result.startswith("traded:"):
                         action = "traded"
+                    elif trade_result.startswith("pending:"):
+                        action = "pending_fill"
                     else:
                         action = "no_trade"
                     reason = trade_result
         elif not has_open_position:
             action = "outside_entry_window"
-            reason = f"Past entry cutoff ({ct.hour}:{ct.minute:02d} CT, cutoff 14:00)"
+            reason = f"Past entry cutoff ({ct.hour}:{ct.minute:02d} CT, cutoff {entry_end})"
 
         # Equity snapshot every cycle
         try:
@@ -1918,8 +2527,258 @@ def scan_bot(bot: dict) -> None:
     log.info(f"{bot_name}: {action} | {reason}")
 
 
+_last_sandbox_cleanup_date: Optional[str] = None
+
+
+def _daily_sandbox_cleanup(ct: datetime) -> None:
+    """Run sandbox orphan cleanup once per trading day at market open.
+
+    Detects stale/expired sandbox positions from previous days and closes them.
+    Only runs for FLAME (the only bot that uses sandbox).
+    Logs results to flame_logs for triage visibility.
+    """
+    global _last_sandbox_cleanup_date
+    today_str = ct.strftime("%Y-%m-%d")
+
+    # Only run once per day, only during first 15 minutes of market (8:30-8:45 CT)
+    if _last_sandbox_cleanup_date == today_str:
+        return
+    hhmm = ct.hour * 100 + ct.minute
+    if hhmm < 830 or hhmm > 845:
+        return
+
+    _last_sandbox_cleanup_date = today_str
+    log.info("DAILY SANDBOX CLEANUP: Starting stale position scan...")
+
+    try:
+        accounts = _get_sandbox_accounts_lazy()
+        if not accounts:
+            log.info("DAILY SANDBOX CLEANUP: No sandbox accounts configured, skipping")
+            return
+
+        total_stale = 0
+        total_closed = 0
+        cleanup_details = {}
+
+        for acct in accounts:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+
+            data = _sandbox_get(f"/accounts/{acct_id}/positions", None, acct["api_key"])
+            if not data:
+                continue
+
+            positions = data.get("positions", {})
+            if positions == "null" or not positions:
+                cleanup_details[acct["name"]] = {"stale": 0, "closed": 0}
+                continue
+
+            pos_list = positions.get("position", [])
+            if isinstance(pos_list, dict):
+                pos_list = [pos_list]
+
+            # Find stale positions: expiration < today
+            stale_positions = []
+            for p in pos_list:
+                symbol = p.get("symbol", "")
+                qty = p.get("quantity", 0)
+                # Extract expiration from OCC symbol (e.g., "SPY260313C00691000" → 2026-03-13)
+                # OCC format: SYMBOL + YYMMDD + C/P + STRIKE
+                if len(symbol) >= 15 and qty != 0:
+                    try:
+                        date_part = symbol[3:9]  # YYMMDD after "SPY"
+                        exp_date = f"20{date_part[:2]}-{date_part[2:4]}-{date_part[4:6]}"
+                        if exp_date < today_str:
+                            stale_positions.append(p)
+                    except (ValueError, IndexError):
+                        pass
+
+            acct_stale = len(stale_positions)
+            acct_closed = 0
+            total_stale += acct_stale
+
+            if stale_positions:
+                log.warning(
+                    f"SANDBOX CLEANUP [{acct['name']}]: Found {acct_stale} stale "
+                    f"positions (expired before {today_str})"
+                )
+
+            for p in stale_positions:
+                symbol = p.get("symbol", "")
+                qty = p.get("quantity", 0)
+                if not symbol or qty == 0:
+                    continue
+
+                side = "sell_to_close" if qty > 0 else "buy_to_close"
+                close_qty = abs(qty)
+
+                close_body = {
+                    "class": "option",
+                    "symbol": symbol.split(" ")[0] if " " in symbol else "SPY",
+                    "option_symbol": symbol,
+                    "side": side,
+                    "quantity": str(close_qty),
+                    "type": "market",
+                    "duration": "day",
+                }
+
+                result = _sandbox_post(
+                    f"/accounts/{acct_id}/orders", close_body, acct["api_key"],
+                )
+                order_id = result.get("order", {}).get("id") if result else None
+                if order_id:
+                    acct_closed += 1
+                    total_closed += 1
+                    log.info(
+                        f"SANDBOX CLEANUP [{acct['name']}]: Closed stale "
+                        f"{symbol} {side} x{close_qty} → order_id={order_id}"
+                    )
+                else:
+                    log.error(
+                        f"SANDBOX CLEANUP [{acct['name']}]: FAILED to close "
+                        f"{symbol} {side} x{close_qty}"
+                    )
+
+            cleanup_details[acct["name"]] = {"stale": acct_stale, "closed": acct_closed}
+
+        # Log results to DB for triage queries
+        if total_stale > 0:
+            detail_json = json.dumps({
+                "event": "daily_sandbox_cleanup",
+                "date": today_str,
+                "total_stale": total_stale,
+                "total_closed": total_closed,
+                "per_account": cleanup_details,
+            }).replace("'", "''")
+            try:
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(), 'SANDBOX_CLEANUP',
+                        'Daily sandbox cleanup: {total_stale} stale positions found, {total_closed} closed',
+                        '{detail_json}',
+                        '2DTE'
+                    )
+                """)
+            except Exception:
+                pass
+
+        log.info(
+            f"DAILY SANDBOX CLEANUP COMPLETE: "
+            f"{total_stale} stale, {total_closed} closed, "
+            f"details={cleanup_details}"
+        )
+
+    except Exception as e:
+        log.error(f"DAILY SANDBOX CLEANUP ERROR: {e}")
+        log.error(traceback.format_exc())
+
+
+_flame_sandbox_paper_only: bool = False
+
+
+def _prescan_sandbox_health_check() -> None:
+    """Check sandbox buying power BEFORE every scan cycle.
+
+    If ANY account has BP < $0: skip sandbox orders for that account (log WARNING).
+    If ALL accounts have BP < $0: switch FLAME to paper-only mode (log CRITICAL).
+    This prevents the death spiral: failed close → negative BP → more failed orders.
+    """
+    global _flame_sandbox_paper_only
+
+    accounts = _get_sandbox_accounts_lazy()
+    if not accounts:
+        return
+
+    negative_accounts = []
+    total_accounts = 0
+
+    for acct in accounts:
+        try:
+            acct_id = _get_account_id_for_key(acct["api_key"])
+            if not acct_id:
+                continue
+            total_accounts += 1
+            bp = _get_sandbox_buying_power(acct["api_key"], acct_id)
+            if bp is not None and bp < 0:
+                negative_accounts.append({"name": acct["name"], "bp": bp})
+                log.warning(
+                    f"SANDBOX HEALTH: [{acct['name']}] buying power NEGATIVE: "
+                    f"${bp:.2f} — skipping sandbox orders for this account"
+                )
+        except Exception as e:
+            log.warning(f"SANDBOX HEALTH: [{acct['name']}] check failed: {e}")
+
+    if negative_accounts and len(negative_accounts) >= total_accounts:
+        if not _flame_sandbox_paper_only:
+            _flame_sandbox_paper_only = True
+            log.error(
+                "SANDBOX HEALTH CRITICAL: ALL sandbox accounts have negative BP — "
+                "switching FLAME to paper-only mode"
+            )
+            # Log to DB for triage
+            try:
+                details = json.dumps({
+                    "negative_accounts": negative_accounts,
+                    "action": "auto_paper_only",
+                    "source": "prescan_health_check",
+                }).replace("'", "''")
+                db_execute(f"""
+                    INSERT INTO {bot_table('flame', 'logs')}
+                        (log_time, level, message, details, dte_mode)
+                    VALUES (
+                        CURRENT_TIMESTAMP(),
+                        'SANDBOX_HEALTH',
+                        'CRITICAL: ALL sandbox accounts negative BP — FLAME auto-switched to paper-only',
+                        '{details}',
+                        '2DTE'
+                    )
+                """)
+            except Exception:
+                pass
+    elif not negative_accounts and _flame_sandbox_paper_only:
+        # All accounts healthy again — re-enable sandbox
+        _flame_sandbox_paper_only = False
+        log.info("SANDBOX HEALTH: All accounts healthy — re-enabling sandbox mirroring")
+        try:
+            db_execute(f"""
+                INSERT INTO {bot_table('flame', 'logs')}
+                    (log_time, level, message, details, dte_mode)
+                VALUES (
+                    CURRENT_TIMESTAMP(),
+                    'SANDBOX_HEALTH',
+                    'RECOVERED: All sandbox accounts have positive BP — re-enabling sandbox',
+                    '{{"source": "prescan_health_check", "action": "re_enable_sandbox"}}',
+                    '2DTE'
+                )
+            """)
+        except Exception:
+            pass
+
+
 def run_scan_cycle() -> None:
     """Run one scan cycle for all bots."""
+    # Load config overrides from Databricks {bot}_config tables
+    try:
+        load_config_overrides()
+    except Exception as e:
+        log.warning(f"Config override load failed (using defaults): {e}")
+
+    # Run daily sandbox orphan cleanup at market open (once per day)
+    ct = get_central_time()
+    try:
+        _daily_sandbox_cleanup(ct)
+    except Exception as e:
+        log.error(f"Daily sandbox cleanup failed (non-fatal): {e}")
+
+    # Pre-scan sandbox health check (every cycle — lightweight, one API call per account)
+    try:
+        _prescan_sandbox_health_check()
+    except Exception as e:
+        log.warning(f"Sandbox health check failed (non-fatal): {e}")
+
     for bot in BOTS:
         try:
             scan_bot(bot)
@@ -1929,4 +2788,3 @@ def run_scan_cycle() -> None:
 
 
 print("Scanner code loaded")
-
