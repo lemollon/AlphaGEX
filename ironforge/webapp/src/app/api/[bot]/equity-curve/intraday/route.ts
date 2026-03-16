@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +26,7 @@ export async function GET(
         `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
                open_positions, note
          FROM ${botTable(bot, 'equity_snapshots')}
-         WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', snapshot_time) AS DATE) = ${CT_TODAY}
+         WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
            ${dteFilter}
          ORDER BY snapshot_time ASC`,
       ),

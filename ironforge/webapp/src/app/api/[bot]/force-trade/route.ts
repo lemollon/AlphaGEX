@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, sharedTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, sharedTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/db'
 import {
   getQuote,
   getOptionExpirations,
@@ -283,7 +283,7 @@ export async function POST(
         '${escapeSql(adv.reasoning)}', '${topFactorsJson}', FALSE,
         FALSE, ${spreadWidth}, ${spreadWidth},
         'PAPER', 'PAPER',
-        'open', CURRENT_TIMESTAMP(), ${CT_TODAY}, '${escapeSql(dte)}'
+        'open', NOW(), ${CT_TODAY}, '${escapeSql(dte)}'
       )`,
     )
 
@@ -301,7 +301,7 @@ export async function POST(
         await dbExecute(
           `UPDATE ${botTable(bot, 'positions')}
            SET sandbox_order_id = '${escapeSql(JSON.stringify(sandboxOrderIds))}',
-               updated_at = CURRENT_TIMESTAMP()
+               updated_at = NOW()
            WHERE position_id = '${escapeSql(positionId)}' AND status = 'open'`,
         )
       }
@@ -315,7 +315,7 @@ export async function POST(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET collateral_in_use = collateral_in_use + ${totalCollateral},
            buying_power = buying_power - ${totalCollateral},
-           updated_at = CURRENT_TIMESTAMP()
+           updated_at = NOW()
        WHERE id = '${escapeSql(String(acctId))}'`,
     )
 
@@ -357,7 +357,7 @@ export async function POST(
       `INSERT INTO ${botTable(bot, 'pdt_log')} (
         trade_date, symbol, position_id, opened_at,
         contracts, entry_credit, dte_mode
-      ) VALUES (${CT_TODAY}, 'SPY', '${escapeSql(positionId)}', CURRENT_TIMESTAMP(),
+      ) VALUES (${CT_TODAY}, 'SPY', '${escapeSql(positionId)}', NOW(),
                 ${maxContracts}, ${credits.totalCredit}, '${escapeSql(dte)}')`,
     )
 
@@ -375,29 +375,24 @@ export async function POST(
                '${escapeSql(`force_trade:${positionId}`)}', '${escapeSql(dte)}')`,
     )
 
-    // 15. Daily perf (MERGE upsert)
+    // 15. Daily perf upsert
     const dailyTable = botTable(bot, 'daily_perf')
     await dbExecute(
-      `MERGE INTO ${dailyTable} AS t
-       USING (SELECT ${CT_TODAY} AS trade_date) AS s
-       ON t.trade_date = s.trade_date
-       WHEN MATCHED THEN UPDATE SET t.trades_executed = t.trades_executed + 1
-       WHEN NOT MATCHED THEN INSERT (trade_date, trades_executed, positions_closed, realized_pnl)
-         VALUES (${CT_TODAY}, 1, 0, 0)`,
+      `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl)
+       VALUES (${CT_TODAY}, 1, 0, 0)
+       ON CONFLICT (trade_date) DO UPDATE SET
+         trades_executed = ${dailyTable}.trades_executed + 1`,
     )
 
-    // 16. Heartbeat (MERGE upsert)
+    // 16. Heartbeat upsert
     const hbTable = sharedTable('bot_heartbeats')
     const hbDetails = escapeSql(JSON.stringify({ last_action: 'force_trade' }))
     await dbExecute(
-      `MERGE INTO ${hbTable} AS t
-       USING (SELECT '${escapeSql(botName)}' AS bot_name) AS s
-       ON t.bot_name = s.bot_name
-       WHEN MATCHED THEN UPDATE SET
-         t.last_heartbeat = CURRENT_TIMESTAMP(), t.status = 'active',
-         t.scan_count = t.scan_count + 1, t.details = '${hbDetails}'
-       WHEN NOT MATCHED THEN INSERT (bot_name, last_heartbeat, status, scan_count, details)
-         VALUES ('${escapeSql(botName)}', CURRENT_TIMESTAMP(), 'active', 1, '${hbDetails}')`,
+      `INSERT INTO ${hbTable} (bot_name, last_heartbeat, status, scan_count, details)
+       VALUES ('${escapeSql(botName)}', NOW(), 'active', 1, '${hbDetails}')
+       ON CONFLICT (bot_name) DO UPDATE SET
+         last_heartbeat = NOW(), status = 'active',
+         scan_count = ${hbTable}.scan_count + 1, details = '${hbDetails}'`,
     )
 
     return NextResponse.json({

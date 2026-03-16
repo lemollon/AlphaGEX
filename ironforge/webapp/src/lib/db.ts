@@ -77,7 +77,19 @@ CREATE TABLE IF NOT EXISTS bot_heartbeats (
   scan_count BIGINT DEFAULT 0,
   details TEXT
 );
-` + ['flame', 'spark'].map(bot => `
+` + `
+CREATE TABLE IF NOT EXISTS ironforge_accounts (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  person TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  api_key TEXT NOT NULL,
+  bot TEXT NOT NULL,
+  type TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+` + ['flame', 'spark', 'inferno'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   starting_capital NUMERIC(12,2) NOT NULL,
@@ -431,9 +443,41 @@ export function int(val: any): number {
   return isNaN(n) ? 0 : n
 }
 
-/** Validate bot name parameter — only flame or spark allowed. */
+/** Shared table name — for PostgreSQL, just the table name (no catalog/schema prefix). */
+export function sharedTable(name: string): string {
+  return name
+}
+
+/** Escape single quotes for SQL string literals. */
+export function escapeSql(val: string): string {
+  return val.replace(/'/g, "''")
+}
+
+/** Validate bot name parameter — only flame, spark, or inferno allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
   if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
   return b
+}
+
+// ---- Databricks-compatible aliases ----
+// These match the export names from the old databricks-sql.ts client
+// so API route files only need an import path change.
+
+/** Alias for query() — matches databricks-sql.ts API surface. */
+export const dbQuery = query
+
+/**
+ * Execute a SQL statement and return the number of affected rows.
+ * Matches databricks-sql.ts dbExecute() API surface.
+ */
+export async function dbExecute(sql: string, params?: any[]): Promise<number> {
+  await ensureTables()
+  const client = await getPool().connect()
+  try {
+    const result = await client.query(sql, params)
+    return result.rowCount ?? 0
+  } finally {
+    client.release()
+  }
 }

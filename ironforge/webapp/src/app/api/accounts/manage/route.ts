@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
       VALUES (
         '${escapeSql(person)}', '${escapeSql(account_id)}', '${escapeSql(api_key)}',
         '${escapeSql(bot)}', '${escapeSql(type)}',
-        TRUE, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+        TRUE, NOW(), NOW()
       )
     `)
 

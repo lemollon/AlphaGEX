@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,8 +29,8 @@ function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null):
   const table = botTable(bot, 'pdt_log')
   let sql = `SELECT COUNT(*) as cnt FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
-     AND trade_date >= DATE_SUB(CURRENT_DATE(), 6)
-     AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6`
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
     sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
@@ -44,8 +44,8 @@ function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): 
   const table = botTable(bot, 'pdt_log')
   let sql = `SELECT trade_date, position_id FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
-     AND trade_date >= DATE_SUB(CURRENT_DATE(), 6)
-     AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6`
+     AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+     AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
     sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
@@ -140,15 +140,15 @@ async function handleToggle(
   if (enabled) {
     await dbExecute(
       `UPDATE ${PDT_CONFIG}
-       SET pdt_enabled = ${enabled}, updated_at = CURRENT_TIMESTAMP()
+       SET pdt_enabled = ${enabled}, updated_at = NOW()
        WHERE bot_name = '${escapeSql(botName)}'`,
     )
   } else {
     await dbExecute(
       `UPDATE ${PDT_CONFIG}
        SET pdt_enabled = FALSE, day_trade_count = 0,
-           last_reset_at = CURRENT_TIMESTAMP(), last_reset_by = 'pdt_toggle_off',
-           updated_at = CURRENT_TIMESTAMP()
+           last_reset_at = NOW(), last_reset_by = 'pdt_toggle_off',
+           updated_at = NOW()
        WHERE bot_name = '${escapeSql(botName)}'`,
     )
     // Clear pdt_log flags (best-effort)
@@ -172,7 +172,7 @@ async function handleToggle(
     `INSERT INTO ${botTable(bot, 'pdt_audit_log')}
        (bot_name, action, old_value, new_value, reason, performed_by, created_at)
      VALUES ('${escapeSql(botName)}', '${enabled ? 'toggle_on' : 'toggle_off'}',
-             '${oldJson}', '${newJson}', '${escapeSql(reason)}', 'user', CURRENT_TIMESTAMP())`,
+             '${oldJson}', '${newJson}', '${escapeSql(reason)}', 'user', NOW())`,
   )
 
   return await buildStatusResponse(bot, botName, dteMode(bot)!)
@@ -208,9 +208,9 @@ async function handleReset(
   await dbExecute(
     `UPDATE ${PDT_CONFIG}
      SET day_trade_count = 0,
-         last_reset_at = CURRENT_TIMESTAMP(),
+         last_reset_at = NOW(),
          last_reset_by = 'manual',
-         updated_at = CURRENT_TIMESTAMP()
+         updated_at = NOW()
      WHERE bot_name = '${escapeSql(botName)}'`,
   )
 
@@ -232,7 +232,7 @@ async function handleReset(
      VALUES ('${escapeSql(botName)}', 'reset',
              '${oldJson}', '${newJson}',
              'Manual reset — trades before reset timestamp excluded from count',
-             'user', CURRENT_TIMESTAMP())`,
+             'user', NOW())`,
   )
 
   return await buildStatusResponse(bot, botName, dte)
