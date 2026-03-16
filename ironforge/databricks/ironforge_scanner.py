@@ -433,11 +433,17 @@ def get_ic_mark_to_market(
 
 def validate_mtm(mtm: dict, entry_credit: float) -> tuple:
     """Validate MTM quotes are sane. Returns (is_valid, reason)."""
-    # Check for zero/negative values on all legs
-    for key in ["put_short_ask", "call_short_ask", "put_long_bid", "call_long_bid"]:
+    # Short leg asks MUST be positive (we need to buy these back to close)
+    for key in ["put_short_ask", "call_short_ask"]:
         val = mtm.get(key, 0)
         if val is None or val <= 0:
             return False, f"{key} is zero/negative/None: {val}"
+    # Long leg bids CAN be zero — deep OTM wings on 0DTE often have no bid.
+    # We only need them for P&L calculation; $0 bid just means no exit value.
+    for key in ["put_long_bid", "call_long_bid"]:
+        val = mtm.get(key)
+        if val is None or val < 0:
+            return False, f"{key} is negative/None: {val}"
 
     # Check cost_to_close bounds (should be between 0 and 3x entry)
     ctc = mtm.get("cost_to_close", 0)
