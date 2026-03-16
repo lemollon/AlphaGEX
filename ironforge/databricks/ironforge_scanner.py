@@ -129,7 +129,7 @@ def load_config_overrides() -> None:
                     cfg_key, transform = mapping
                     defaults[cfg_key] = transform(val)
                 else:
-                    defaults[mapping] = float(val) if isinstance(val, (int, float)) else val
+                    defaults[mapping] = float(val)
             log.info(f"[{bot_name.upper()}] Config overrides loaded from DB: "
                      f"sd={defaults['sd']}, bp_pct={defaults['bp_pct']}, "
                      f"capital={defaults['starting_capital']}, max_contracts={defaults['max_contracts']}")

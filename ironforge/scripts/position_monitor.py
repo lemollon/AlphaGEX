@@ -87,7 +87,7 @@ def load_config_overrides() -> None:
                     cfg_key, transform = mapping
                     defaults[cfg_key] = transform(val)
                 else:
-                    defaults[mapping] = float(val) if isinstance(val, (int, float)) else val
+                    defaults[mapping] = float(val)
             log.info(f"[{bot_name.upper()}] Config overrides loaded: pt_pct={defaults['pt_pct']}, sl_mult={defaults['sl_mult']}")
         except Exception as e:
             log.debug(f"[{bot_name.upper()}] Config table not found (using defaults): {e}")
