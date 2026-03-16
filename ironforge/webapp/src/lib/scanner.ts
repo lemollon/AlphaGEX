@@ -751,7 +751,86 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const botName = bot.name.toUpperCase()
   const positionId = `${botName}-${dateStr}-${hex}`
 
-  // Insert position
+  // ── FLAME Tradier-fill-only mode ──────────────────────────────────
+  // FLAME only records trades that Tradier actually fills.
+  // Place sandbox order FIRST; if User's account doesn't fill, reject.
+  // Use actual fill price + actual contract count as the paper position.
+  // SPARK/INFERNO still use paper-first (traditional) mode.
+  const isFlameFillOnly = bot.name === 'flame'
+
+  let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
+  let effectiveCredit = credits.totalCredit
+  let effectiveContracts = maxContracts
+  let effectiveCollateral = totalCollateral
+
+  if (isFlameFillOnly) {
+    // FLAME: place sandbox order first — paper position depends on fill
+    if (_sandboxPaperOnly) {
+      return 'skip:flame_requires_tradier(paper_only_mode)'
+    }
+
+    try {
+      sandboxOrderIds = await placeIcOrderAllAccounts(
+        'SPY', expiration,
+        strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+        maxContracts, credits.totalCredit, positionId,
+      )
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.warn(`[scanner] FLAME sandbox order failed — trade rejected: ${msg}`)
+      // Log the rejected signal
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'signals')} (
+          spot_price, vix, expected_move, call_wall, put_wall,
+          gex_regime, put_short, put_long, call_short, call_long,
+          total_credit, confidence, was_executed, skip_reason, reasoning,
+          wings_adjusted, dte_mode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [
+          spot, vix, expectedMove, 0, 0,
+          'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+          credits.totalCredit, adv.confidence, false, 'sandbox_order_failed', `Auto scan | ${adv.reasoning}`,
+          false, bot.dte,
+        ],
+      )
+      return `skip:flame_sandbox_failed(${msg})`
+    }
+
+    // Check User fill — FLAME requires it
+    const userFill = sandboxOrderIds['User']
+    if (!userFill || !userFill.fill_price || userFill.fill_price <= 0) {
+      console.warn(`[scanner] FLAME: User sandbox did not fill — trade rejected (got: ${JSON.stringify(userFill)})`)
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'signals')} (
+          spot_price, vix, expected_move, call_wall, put_wall,
+          gex_regime, put_short, put_long, call_short, call_long,
+          total_credit, confidence, was_executed, skip_reason, reasoning,
+          wings_adjusted, dte_mode
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+        [
+          spot, vix, expectedMove, 0, 0,
+          'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+          credits.totalCredit, adv.confidence, false, 'user_no_fill', `Auto scan | ${adv.reasoning}`,
+          false, bot.dte,
+        ],
+      )
+      return 'skip:flame_user_no_fill'
+    }
+
+    // Use Tradier's actual fill values
+    effectiveCredit = userFill.fill_price
+    effectiveContracts = userFill.contracts
+    effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
+    console.log(
+      `[scanner] FLAME Tradier-fill-only: User filled ${effectiveContracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `(estimated was $${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
+    )
+  }
+
+  const effectiveMaxLoss = effectiveCollateral
+  const effectiveMaxProfit = effectiveCredit * 100 * effectiveContracts
+
+  // Insert position (FLAME uses Tradier fill values, others use paper estimates)
   await query(
     `INSERT INTO ${botTable(bot.name, 'positions')} (
       position_id, ticker, expiration,
@@ -775,10 +854,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     )`,
     [
       positionId, 'SPY', expiration,
-      strikes.putShort, strikes.putLong, credits.putCredit,
-      strikes.callShort, strikes.callLong, credits.callCredit,
-      maxContracts, spreadWidth, credits.totalCredit, maxLoss, maxProfit,
-      totalCollateral,
+      strikes.putShort, strikes.putLong, isFlameFillOnly ? effectiveCredit / 2 : credits.putCredit,
+      strikes.callShort, strikes.callLong, isFlameFillOnly ? effectiveCredit / 2 : credits.callCredit,
+      effectiveContracts, spreadWidth, effectiveCredit, effectiveMaxLoss, effectiveMaxProfit,
+      effectiveCollateral,
       spot, vix, expectedMove,
       0, 0, 'UNKNOWN',
       0, 0,
@@ -790,27 +869,28 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     ],
   )
 
-  // Mirror to sandbox (unless paper-only mode)
-  let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
-  if (!_sandboxPaperOnly) {
+  // SPARK/INFERNO: mirror to sandbox after position insert (traditional mode)
+  if (!isFlameFillOnly && !_sandboxPaperOnly) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
         maxContracts, credits.totalCredit, positionId,
       )
-      if (Object.keys(sandboxOrderIds).length > 0) {
-        await query(
-          `UPDATE ${botTable(bot.name, 'positions')}
-           SET sandbox_order_id = $1, updated_at = NOW()
-           WHERE position_id = $2`,
-          [JSON.stringify(sandboxOrderIds), positionId],
-        )
-      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`[scanner] Sandbox open failed for ${positionId}: ${msg}`)
     }
+  }
+
+  // Store sandbox order IDs on position
+  if (Object.keys(sandboxOrderIds).length > 0) {
+    await query(
+      `UPDATE ${botTable(bot.name, 'positions')}
+       SET sandbox_order_id = $1, updated_at = NOW()
+       WHERE position_id = $2`,
+      [JSON.stringify(sandboxOrderIds), positionId],
+    )
   }
 
   // Deduct collateral
@@ -820,7 +900,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
          buying_power = buying_power - $1,
          updated_at = NOW()
      WHERE id = $2`,
-    [totalCollateral, acct.id],
+    [effectiveCollateral, acct.id],
   )
 
   // Signal log
@@ -834,7 +914,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [
       spot, vix, expectedMove, 0, 0,
       'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-      credits.totalCredit, adv.confidence, true, `Auto scan | ${adv.reasoning}`,
+      effectiveCredit, adv.confidence, true,
+      `Auto scan${isFlameFillOnly ? ' [Tradier-fill]' : ''} | ${adv.reasoning}`,
       false, bot.dte,
     ],
   )
@@ -845,11 +926,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
      VALUES ($1, $2, $3, $4)`,
     [
       'TRADE_OPEN',
-      `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${maxContracts} @ $${credits.totalCredit.toFixed(4)}`,
+      `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)}${isFlameFillOnly ? ' [Tradier-fill]' : ''}`,
       JSON.stringify({
-        position_id: positionId, contracts: maxContracts,
-        credit: credits.totalCredit, collateral: totalCollateral,
-        source: 'scanner', sandbox_order_ids: sandboxOrderIds,
+        position_id: positionId, contracts: effectiveContracts,
+        credit: effectiveCredit, collateral: effectiveCollateral,
+        source: isFlameFillOnly ? 'tradier_fill' : 'scanner',
+        estimated_credit: credits.totalCredit,
+        sandbox_order_ids: sandboxOrderIds,
         config: { sd: botCfg.sd, pt_pct: botCfg.pt_pct, sl_mult: botCfg.sl_mult },
       }),
       bot.dte,
@@ -862,7 +945,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       trade_date, symbol, position_id, opened_at,
       contracts, entry_credit, dte_mode
     ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5)`,
-    ['SPY', positionId, maxContracts, credits.totalCredit, bot.dte],
+    ['SPY', positionId, effectiveContracts, effectiveCredit, bot.dte],
   )
 
   // Equity snapshot
@@ -885,7 +968,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
        trades_executed = ${botTable(bot.name, 'daily_perf')}.trades_executed + 1`,
   )
 
-  console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${maxContracts} @ $${credits.totalCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]`)
+  console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isFlameFillOnly ? ' [Tradier-fill-only]' : ''}`)
   return `traded:${positionId}`
 }
 
@@ -1425,3 +1508,25 @@ async function runAllScans(): Promise<void> {
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
   console.log(`[scanner] === scan cycle #${_scanCount} complete (${elapsed}s) ===`)
 }
+
+/* ------------------------------------------------------------------ */
+/*  @internal — exported for testing only                              */
+/* ------------------------------------------------------------------ */
+
+export const _testing = {
+  getCentralTime,
+  ctHHMM,
+  isMarketOpen,
+  isInEntryWindow,
+  isAfterEodCutoff,
+  getSlidingProfitTarget,
+  evaluateAdvisor,
+  calculateStrikes,
+  getTargetExpiration,
+  cfg,
+  DEFAULT_CONFIG,
+  BOTS,
+  MAX_CONSECUTIVE_MTM_FAILURES,
+  _botConfig,
+  _mtmFailureCounts,
+} as const
