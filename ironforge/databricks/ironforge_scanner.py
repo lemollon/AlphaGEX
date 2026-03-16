@@ -617,6 +617,8 @@ def place_ic_order_all_accounts(
 ) -> dict[str, int]:
     """Place an Iron Condor in ALL configured sandbox accounts."""
     results: dict[str, int] = {}
+    # Failsafe: Tradier sandbox rejects orders > ~200 contracts
+    safe_contracts = min(200, max(1, contracts))
     order_body = {
         "class": "multileg",
         "symbol": ticker,
@@ -624,16 +626,16 @@ def place_ic_order_all_accounts(
         "duration": "day",
         "option_symbol[0]": build_occ_symbol(ticker, expiration, put_short, "P"),
         "side[0]": "sell_to_open",
-        "quantity[0]": str(contracts),
+        "quantity[0]": str(safe_contracts),
         "option_symbol[1]": build_occ_symbol(ticker, expiration, put_long, "P"),
         "side[1]": "buy_to_open",
-        "quantity[1]": str(contracts),
+        "quantity[1]": str(safe_contracts),
         "option_symbol[2]": build_occ_symbol(ticker, expiration, call_short, "C"),
         "side[2]": "sell_to_open",
-        "quantity[2]": str(contracts),
+        "quantity[2]": str(safe_contracts),
         "option_symbol[3]": build_occ_symbol(ticker, expiration, call_long, "C"),
         "side[3]": "buy_to_open",
-        "quantity[3]": str(contracts),
+        "quantity[3]": str(safe_contracts),
     }
     if tag:
         order_body["tag"] = tag[:255]
@@ -671,6 +673,8 @@ def close_ic_order_all_accounts(
 ) -> dict[str, int]:
     """Close an Iron Condor in ALL configured sandbox accounts."""
     results: dict[str, int] = {}
+    # Failsafe: Tradier sandbox rejects orders > ~200 contracts
+    safe_contracts = min(200, max(1, contracts))
     order_body = {
         "class": "multileg",
         "symbol": ticker,
@@ -678,16 +682,16 @@ def close_ic_order_all_accounts(
         "duration": "day",
         "option_symbol[0]": build_occ_symbol(ticker, expiration, put_short, "P"),
         "side[0]": "buy_to_close",
-        "quantity[0]": str(contracts),
+        "quantity[0]": str(safe_contracts),
         "option_symbol[1]": build_occ_symbol(ticker, expiration, put_long, "P"),
         "side[1]": "sell_to_close",
-        "quantity[1]": str(contracts),
+        "quantity[1]": str(safe_contracts),
         "option_symbol[2]": build_occ_symbol(ticker, expiration, call_short, "C"),
         "side[2]": "buy_to_close",
-        "quantity[2]": str(contracts),
+        "quantity[2]": str(safe_contracts),
         "option_symbol[3]": build_occ_symbol(ticker, expiration, call_long, "C"),
         "side[3]": "sell_to_close",
-        "quantity[3]": str(contracts),
+        "quantity[3]": str(safe_contracts),
     }
     if tag:
         order_body["tag"] = tag[:255]
@@ -852,6 +856,8 @@ def close_ic_sandbox_per_account(
             else:
                 # Legacy format: {"User": 12345} (just order_id)
                 close_qty = paper_contracts
+            # Failsafe: Tradier sandbox rejects orders > ~200 contracts
+            close_qty = min(200, max(1, close_qty))
 
             log.info(
                 f"Sandbox close attempting [{acct['name']}]: "
@@ -1932,6 +1938,8 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     bp_contracts = max(1, math.floor(usable_bp / collateral_per))
     contract_cap = cfg.get("max_contracts", 10)  # 0 = no limit
     max_contracts = bp_contracts if contract_cap == 0 else min(contract_cap, bp_contracts)
+    # Failsafe: cap paper contracts at 200 to match sandbox limits
+    max_contracts = min(200, max_contracts)
 
     now = datetime.now()
     date_str = now.strftime("%Y%m%d")
@@ -1960,15 +1968,17 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
     _occ_cl = build_occ_symbol("SPY", expiration, strikes["callLong"], "C")
 
     def _build_ic_open_body(qty: int) -> dict:
+        # Failsafe: Tradier sandbox rejects orders > ~200 contracts
+        safe_qty = min(200, max(1, qty))
         return {
             "class": "multileg",
             "symbol": "SPY",
             "type": "market",
             "duration": "day",
-            "option_symbol[0]": _occ_ps, "side[0]": "sell_to_open", "quantity[0]": str(qty),
-            "option_symbol[1]": _occ_pl, "side[1]": "buy_to_open",  "quantity[1]": str(qty),
-            "option_symbol[2]": _occ_cs, "side[2]": "sell_to_open", "quantity[2]": str(qty),
-            "option_symbol[3]": _occ_cl, "side[3]": "buy_to_open",  "quantity[3]": str(qty),
+            "option_symbol[0]": _occ_ps, "side[0]": "sell_to_open", "quantity[0]": str(safe_qty),
+            "option_symbol[1]": _occ_pl, "side[1]": "buy_to_open",  "quantity[1]": str(safe_qty),
+            "option_symbol[2]": _occ_cs, "side[2]": "sell_to_open", "quantity[2]": str(safe_qty),
+            "option_symbol[3]": _occ_cl, "side[3]": "buy_to_open",  "quantity[3]": str(safe_qty),
             "tag": position_id[:255],
         }
 
