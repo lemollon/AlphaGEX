@@ -91,6 +91,10 @@ def load_config_overrides() -> None:
             log.info(f"[{bot_name.upper()}] Config overrides loaded: pt_pct={defaults['pt_pct']}, sl_mult={defaults['sl_mult']}")
         except Exception as e:
             log.debug(f"[{bot_name.upper()}] Config table not found (using defaults): {e}")
+        # Sanitize: Databricks returns Decimal objects — force all numeric config to float
+        for k, v in defaults.items():
+            if hasattr(v, '__float__') and not isinstance(v, (int, float)):
+                defaults[k] = float(v)
 
 
 BOTS = [

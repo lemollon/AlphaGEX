@@ -135,6 +135,10 @@ def load_config_overrides() -> None:
                      f"capital={defaults['starting_capital']}, max_contracts={defaults['max_contracts']}")
         except Exception as e:
             log.debug(f"[{bot_name.upper()}] Config table not found or read failed (using defaults): {e}")
+        # Sanitize: Databricks returns Decimal objects — force all numeric config to float
+        for k, v in defaults.items():
+            if hasattr(v, '__float__') and not isinstance(v, (int, float)):
+                defaults[k] = float(v)
 
 
 BOTS = [
