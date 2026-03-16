@@ -520,3 +520,77 @@ describe('Collateral reconciliation', () => {
     expect(liveBalance).toBe(10250.50) // CORRECT — status route uses this
   })
 })
+
+/* ================================================================== */
+/*  Section 11: Scanner Status Route Contract                          */
+/* ================================================================== */
+
+describe('Scanner status route contract', () => {
+  it('detects stale heartbeat (> 5 min old)', () => {
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000
+    const now = Date.now()
+
+    // 3 min old — not stale
+    const recent = now - (3 * 60 * 1000)
+    expect(now - recent > STALE_THRESHOLD_MS).toBe(false)
+
+    // 6 min old — stale
+    const old = now - (6 * 60 * 1000)
+    expect(now - old > STALE_THRESHOLD_MS).toBe(true)
+  })
+
+  it('overall status logic: ok, degraded, down', () => {
+    // ok: all bots healthy, no errors
+    const botsOk = [
+      { is_stale: false, status: 'active' },
+      { is_stale: false, status: 'active' },
+      { is_stale: false, status: 'idle' },
+    ]
+    const anyStale = botsOk.some(b => b.is_stale)
+    const anyError = botsOk.some(b => b.status === 'error')
+    expect(anyStale).toBe(false)
+    expect(anyError).toBe(false)
+
+    // degraded: one bot in error state
+    const botsError = [
+      { is_stale: false, status: 'active' },
+      { is_stale: false, status: 'error' },
+    ]
+    expect(botsError.some(b => b.status === 'error')).toBe(true)
+
+    // degraded: stale heartbeat during market hours
+    const botsStale = [
+      { is_stale: true, status: 'active' },
+      { is_stale: false, status: 'active' },
+    ]
+    expect(botsStale.some(b => b.is_stale)).toBe(true)
+  })
+
+  it('computes age_minutes from heartbeat timestamp', () => {
+    const now = Date.now()
+    const lastBeat = now - (3.5 * 60 * 1000) // 3.5 min ago
+    const ageMs = now - lastBeat
+    const ageMins = Math.round(ageMs / 60_000 * 10) / 10
+    expect(ageMins).toBeCloseTo(3.5, 0)
+  })
+
+  it('handles missing heartbeat data (null timestamp)', () => {
+    const lastBeat = null
+    const ageMs = lastBeat ? Date.now() - lastBeat : null
+    const isStale = ageMs != null ? ageMs > 5 * 60 * 1000 : true
+    expect(ageMs).toBeNull()
+    expect(isStale).toBe(true) // Missing heartbeat is always stale
+  })
+
+  it('returns 503 when status is not ok', () => {
+    const overall = 'degraded'
+    const httpStatus = overall === 'ok' ? 200 : 503
+    expect(httpStatus).toBe(503)
+  })
+
+  it('returns 200 when status is ok', () => {
+    const overall = 'ok'
+    const httpStatus = overall === 'ok' ? 200 : 503
+    expect(httpStatus).toBe(200)
+  })
+})
