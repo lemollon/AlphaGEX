@@ -53,6 +53,7 @@ import sys
 import json
 import math
 import time
+import uuid
 import random
 import logging
 import traceback
@@ -81,6 +82,11 @@ SCAN_INTERVAL = 60  # 1 minute
 MAX_CONSECUTIVE_MTM_FAILURES = 10  # Force-close at entry credit after 10 consecutive MTM failures
 CATALOG = os.environ.get("DATABRICKS_CATALOG", "alpha_prime")
 SCHEMA = os.environ.get("DATABRICKS_SCHEMA", "ironforge")
+
+# FORCE_TRADE mode: bypass market-hours and entry-window checks so the
+# scanner can attempt a trade on weekends / after hours (for testing).
+# Set in Cell 1: os.environ["FORCE_TRADE"] = "true"
+FORCE_TRADE = os.environ.get("FORCE_TRADE", "").lower() in ("true", "1", "yes")
 
 # Track consecutive MTM failures per position_id (resets on success or close)
 _mtm_failure_counts: dict[str, int] = {}
@@ -1122,6 +1128,8 @@ def get_central_time() -> datetime:
 
 def is_market_open(ct: datetime) -> bool:
     """Check if within monitoring window: weekday, 8:30 AM - 3:00 PM CT."""
+    if FORCE_TRADE:
+        return True
     dow = ct.weekday()
     if dow >= 5:
         return False
@@ -1147,6 +1155,8 @@ def is_in_warmup_window(ct: datetime) -> bool:
 
 def is_in_entry_window(ct: datetime, entry_end: int = 1400) -> bool:
     """Check if within entry window: weekday, 8:30 AM - entry_end CT."""
+    if FORCE_TRADE:
+        return True
     dow = ct.weekday()
     if dow >= 5:
         return False
@@ -1599,7 +1609,7 @@ def close_position(
                 INSERT INTO {shared_table('ironforge_pdt_log')}
                     (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
                 VALUES (
-                    UUID(), '{bot_upper}', 'day_trade_recorded',
+                    '{uuid.uuid4()}', '{bot_upper}', 'day_trade_recorded',
                     '{old_json}', '{new_json}',
                     '{reason_txt}', 'scanner',
                     CURRENT_TIMESTAMP()
@@ -2340,7 +2350,7 @@ def scan_bot(bot: dict) -> None:
                     db_execute(f"""
                         INSERT INTO {shared_table('ironforge_pdt_log')}
                             (log_id, bot_name, action, old_value, new_value, reason, performed_by, created_at)
-                        VALUES (UUID(), '{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
+                        VALUES ('{uuid.uuid4()}', '{bot_name}', 'auto_decrement', '{old_val}', '{new_val}',
                                 '{reason_str}', 'scanner', CURRENT_TIMESTAMP())
                     """)
         except Exception as pdt_sync_err:
