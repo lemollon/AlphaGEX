@@ -186,50 +186,74 @@ def _ensure_pdt_tables() -> None:
 def _ensure_pending_orders_table() -> None:
     """Create {bot}_pending_orders table for each bot if it doesn't exist.
 
+    If the table exists but has a stale schema (missing required columns like
+    pending_id), drop and recreate it. This handles the case where an older
+    version of the code created the table with a simpler schema.
+
     Runs once per scanner process. Safe to call repeatedly.
     """
     global _pending_orders_table_ready
     if _pending_orders_table_ready:
         return
+
+    _PENDING_DDL = """(
+        pending_id STRING NOT NULL,
+        position_id STRING NOT NULL,
+        bot_name STRING NOT NULL,
+        dte_mode STRING NOT NULL,
+        order_type STRING NOT NULL,
+        sandbox_account STRING NOT NULL,
+        sandbox_api_key STRING,
+        sandbox_account_id STRING,
+        tradier_order_id BIGINT NOT NULL,
+        sandbox_contracts INT,
+        ticker STRING,
+        expiration STRING,
+        put_short DOUBLE,
+        put_long DOUBLE,
+        call_short DOUBLE,
+        call_long DOUBLE,
+        paper_contracts INT,
+        total_credit DOUBLE,
+        spread_width DOUBLE,
+        collateral_per DOUBLE,
+        max_profit DOUBLE,
+        max_loss DOUBLE,
+        spot_price DOUBLE,
+        vix DOUBLE,
+        expected_move DOUBLE,
+        advisor_json STRING,
+        sandbox_order_ids_json STRING,
+        status STRING NOT NULL,
+        fill_price DOUBLE,
+        resolved_at TIMESTAMP,
+        created_at TIMESTAMP,
+        created_date DATE
+    ) USING DELTA"""
+
     try:
         for bot in BOTS:
             tbl = bot_table(bot["name"], "pending_orders")
-            db_execute(f"""
-                CREATE TABLE IF NOT EXISTS {tbl} (
-                    pending_id STRING NOT NULL,
-                    position_id STRING NOT NULL,
-                    bot_name STRING NOT NULL,
-                    dte_mode STRING NOT NULL,
-                    order_type STRING NOT NULL,
-                    sandbox_account STRING NOT NULL,
-                    sandbox_api_key STRING,
-                    sandbox_account_id STRING,
-                    tradier_order_id BIGINT NOT NULL,
-                    sandbox_contracts INT,
-                    ticker STRING,
-                    expiration STRING,
-                    put_short DOUBLE,
-                    put_long DOUBLE,
-                    call_short DOUBLE,
-                    call_long DOUBLE,
-                    paper_contracts INT,
-                    total_credit DOUBLE,
-                    spread_width DOUBLE,
-                    collateral_per DOUBLE,
-                    max_profit DOUBLE,
-                    max_loss DOUBLE,
-                    spot_price DOUBLE,
-                    vix DOUBLE,
-                    expected_move DOUBLE,
-                    advisor_json STRING,
-                    sandbox_order_ids_json STRING,
-                    status STRING NOT NULL,
-                    fill_price DOUBLE,
-                    resolved_at TIMESTAMP,
-                    created_at TIMESTAMP,
-                    created_date DATE
-                ) USING DELTA
-            """)
+
+            # Check if table exists with stale schema (missing pending_id column)
+            needs_recreate = False
+            try:
+                cols = db_query(f"DESCRIBE TABLE {tbl}")
+                col_names = {r["col_name"] for r in cols} if cols else set()
+                if col_names and "pending_id" not in col_names:
+                    log.warning(
+                        f"{tbl} has stale schema (missing pending_id). "
+                        f"Existing columns: {sorted(col_names)}. Dropping and recreating."
+                    )
+                    needs_recreate = True
+            except Exception:
+                pass  # Table doesn't exist yet — CREATE TABLE will handle it
+
+            if needs_recreate:
+                db_execute(f"DROP TABLE IF EXISTS {tbl}")
+
+            db_execute(f"CREATE TABLE IF NOT EXISTS {tbl} {_PENDING_DDL}")
+
         _pending_orders_table_ready = True
         log.info("Pending orders tables verified/created")
     except Exception as e:
