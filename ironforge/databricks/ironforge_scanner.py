@@ -1076,7 +1076,12 @@ def _get_sandbox_order_fill_price(
 
 
 def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
-    """Get the available buying power from a Tradier sandbox account."""
+    """Get the available OPTION buying power from a Tradier sandbox account.
+
+    IMPORTANT: Must use option_buying_power, NOT day_trade_buying_power or
+    stock_buying_power. Day trade BP ($226K) is ~3x option BP ($84K) and
+    causes orders far larger than the account can support.
+    """
     data = _sandbox_get(
         f"/accounts/{account_id}/balances",
         None,
@@ -1085,13 +1090,15 @@ def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
     if not data:
         return None
     balances = data.get("balances", {})
-    # PDT accounts nest buying power under "pdt" sub-object
-    pdt = balances.get("pdt", {})
-    bp = (
-        pdt.get("option_buying_power")
-        or balances.get("option_buying_power")
-        or balances.get("buying_power")
-    )
+    # Prefer top-level option_buying_power (most accurate for options)
+    bp = balances.get("option_buying_power")
+    if bp is None:
+        # PDT accounts may nest it under "pdt" sub-object
+        pdt = balances.get("pdt", {})
+        bp = pdt.get("option_buying_power")
+    if bp is None:
+        # Last resort — stock_buying_power is closer to option BP than day_trade BP
+        bp = balances.get("stock_buying_power")
     if bp is not None:
         return float(bp)
     return None
