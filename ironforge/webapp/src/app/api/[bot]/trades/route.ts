@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
+import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, escapeSql, dteMode } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, num, escapeSql, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120 // Allow up to 2 minutes for this endpoint
@@ -279,9 +279,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const credit = num(pos.total_credit)
       const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
-         SET status = 'closed', close_time = CURRENT_TIMESTAMP(),
+         SET status = 'closed', close_time = NOW(),
              close_price = ${credit}, realized_pnl = 0,
-             close_reason = 'emergency_kill_switch', updated_at = CURRENT_TIMESTAMP()
+             close_reason = 'emergency_kill_switch', updated_at = NOW()
          WHERE position_id = '${escapeSql(pos.position_id)}' AND status = 'open'
            AND dte_mode = '${escapeSql(dte)}'`,
       )
@@ -307,14 +307,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
            collateral_in_use = 0,
            buying_power = ${balance},
            total_trades = ${actualTrades},
-           updated_at = CURRENT_TIMESTAMP()
+           updated_at = NOW()
        WHERE dte_mode = '${escapeSql(dte)}'`,
     )
 
     // Log the emergency action
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (log_time, level, message, details, dte_mode)
-       VALUES (CURRENT_TIMESTAMP(), 'RECOVERY',
+       VALUES (NOW(), 'RECOVERY',
                '${escapeSql(`EMERGENCY KILL SWITCH: ${openPositions.length} positions force-closed`)}',
                '${escapeSql(JSON.stringify({ positions_closed: openPositions.length, source: 'emergency_kill_switch', paper_only: paperOnly }))}',
                '${escapeSql(dte)}')`,

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -141,7 +141,7 @@ export async function PUT(
       return NextResponse.json({ error: 'spread_width must be positive' }, { status: 422 })
     }
 
-    // Build MERGE upsert for Databricks
+    // Build INSERT ... ON CONFLICT upsert for PostgreSQL
     const keys = Object.keys(filtered)
     const insertCols = ['dte_mode', ...keys].join(', ')
     const insertVals = [`'${escapeSql(dte)}'`, ...keys.map(k =>
@@ -149,17 +149,14 @@ export async function PUT(
     )].join(', ')
     const updateSet = keys.map(k =>
       typeof filtered[k] === 'string'
-        ? `t.${k} = '${escapeSql(filtered[k] as string)}'`
-        : `t.${k} = ${filtered[k]}`
-    ).concat(['t.updated_at = CURRENT_TIMESTAMP()']).join(', ')
+        ? `${k} = '${escapeSql(filtered[k] as string)}'`
+        : `${k} = ${filtered[k]}`
+    ).concat(['updated_at = NOW()']).join(', ')
 
     const table = botTable(bot, 'config')
     await dbExecute(
-      `MERGE INTO ${table} AS t
-       USING (SELECT '${escapeSql(dte)}' AS dte_mode) AS s
-       ON t.dte_mode = s.dte_mode
-       WHEN MATCHED THEN UPDATE SET ${updateSet}
-       WHEN NOT MATCHED THEN INSERT (${insertCols}) VALUES (${insertVals})`,
+      `INSERT INTO ${table} (${insertCols}) VALUES (${insertVals})
+       ON CONFLICT (dte_mode) DO UPDATE SET ${updateSet}`,
     )
 
     // Log

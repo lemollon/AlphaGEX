@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, escapeSql, validateBot, dteMode, heartbeatName } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, escapeSql, validateBot, dteMode, heartbeatName } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +29,7 @@ export async function POST(
     const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : 'WHERE is_active IS NOT NULL'
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
-       SET is_active = ${active}, updated_at = CURRENT_TIMESTAMP()
+       SET is_active = ${active}, updated_at = NOW()
        ${dteFilter}`,
     )
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, dteMode, heartbeatName, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, dteMode, heartbeatName, CT_TODAY } from '@/lib/db'
 import { isConfigured, getQuote } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -86,7 +86,7 @@ export async function GET(
       dbQuery(
         `SELECT timestamp, action, reason, details
          FROM ${botTable(bot, 'logs')}
-         WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', timestamp) AS DATE) = ${CT_TODAY}
+         WHERE (timestamp AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
          ORDER BY timestamp DESC
          LIMIT 30`,
       ),
@@ -95,7 +95,7 @@ export async function GET(
       dbQuery(
         `SELECT COUNT(*) as cnt
          FROM ${botTable(bot, 'positions')}
-         WHERE CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', open_time) AS DATE) = ${CT_TODAY}
+         WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
            ${dteFilter}`,
       ),
     ])

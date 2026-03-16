@@ -2,7 +2,7 @@
 
 ## What Is IronForge
 
-IronForge is a **standalone SPY Iron Condor paper trading system** that runs independently from the main AlphaGEX platform. It uses **Databricks (Delta Lake)** for all data storage and a **Vercel-hosted Next.js dashboard** for the frontend.
+IronForge is a **standalone SPY Iron Condor paper trading system** that runs independently from the main AlphaGEX platform. It uses **PostgreSQL on Render** for all data storage and runs as a **Render-hosted Next.js web service** (dashboard + scanner in one process).
 
 It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE) — that trade SPY Iron Condors using real Tradier market data with paper execution. INFERNO is a FORTRESS-style aggressive bot that allows unlimited trades/day with multiple simultaneous positions.
 
@@ -12,40 +12,35 @@ It runs three bots — **FLAME** (2DTE), **SPARK** (1DTE), and **INFERNO** (0DTE
 
 | Layer | Technology | Status |
 |-------|-----------|--------|
-| Frontend | Next.js 14 on **Vercel** | ACTIVE |
-| Database | **Databricks** (alpha_prime.ironforge schema, Delta Lake) | ACTIVE |
-| DB Client | `@/lib/databricks-sql.ts` (dbQuery, dbExecute, escapeSql, sharedTable, botTable, validateBot, dteMode) | ACTIVE |
-| Scanner | `ironforge/databricks/ironforge_scanner.py` (runs on Databricks) | ACTIVE |
-| API | `ironforge/databricks/ironforge_api.py` (FastAPI on Databricks) | ACTIVE |
-| PostgreSQL | **DEAD** — suspended, no data, never use | NEVER |
-| Render | **DEAD** — never used for IronForge | NEVER |
-| `@/lib/db.ts` | **DEAD** — PostgreSQL client from failed migration attempt | NEVER IMPORT |
-| `setup_tables.py` | **DEAD** — PostgreSQL DDL script | NEVER TOUCH |
+| Frontend + API + Scanner | Next.js 14 on **Render** (single web service) | ACTIVE |
+| Database | **PostgreSQL** on Render | ACTIVE |
+| DB Client | `@/lib/db.ts` (dbQuery, dbExecute, query, escapeSql, sharedTable, botTable, validateBot, dteMode) | ACTIVE |
+| Scanner | `@/lib/scanner.ts` (runs inside Next.js process, 1-min interval) | ACTIVE |
+| DDL Script | `setup_tables.py` (PostgreSQL table creation) | ACTIVE |
+| Databricks | **DEAD** — too expensive, migrated to Render | NEVER |
+| `@/lib/databricks-sql.ts` | **DEAD** — Databricks REST API client | NEVER IMPORT |
+| `ironforge/databricks/` | **DEAD** — Databricks scanner and API | NEVER TOUCH |
 
 ### Architecture enforcement:
-1. If ANY file imports from `@/lib/db` — that file is **broken** and must be migrated to `@/lib/databricks-sql`
-2. If ANY reference to Render, PostgreSQL, `DATABASE_URL`, `pg`, or `Pool` exists — it is **dead code**
-3. Every database operation goes through `dbQuery()` or `dbExecute()` from `@/lib/databricks-sql.ts`
-4. Table names use `botTable(bot, 'tablename')` → `alpha_prime.ironforge.{bot}_{tablename}`
-5. Shared tables use `sharedTable('tablename')` → `alpha_prime.ironforge.{tablename}`
-6. All times are Central Time (America/Chicago)
+1. If ANY file imports from `@/lib/databricks-sql` — that file is **broken** and must use `@/lib/db`
+2. Every database operation goes through `dbQuery()`, `dbExecute()`, or `query()` from `@/lib/db.ts`
+3. Table names use `botTable(bot, 'tablename')` → `{bot}_{tablename}`
+4. Shared tables use `sharedTable('tablename')` → `{tablename}`
+5. All times are Central Time (America/Chicago)
+6. Upserts use PostgreSQL `INSERT ... ON CONFLICT ... DO UPDATE SET` (NOT Databricks `MERGE INTO`)
 
-### Vercel Environment Variables (required)
-- `DATABRICKS_SERVER_HOSTNAME` — SQL warehouse hostname
-- `DATABRICKS_WAREHOUSE_ID` — SQL warehouse ID
-- `DATABRICKS_TOKEN` — personal access token or service principal token
-- `DATABRICKS_CATALOG` — must be `alpha_prime` (default)
-- `DATABRICKS_SCHEMA` — must be `ironforge` (default). **NEVER set to `default`** — that's a different schema with stale data
+### Render Environment Variables (required)
+- `DATABASE_URL` — PostgreSQL connection string (from Render database)
 - `TRADIER_API_KEY` — for live market data quotes
+- `TRADIER_SANDBOX_KEY_USER` — sandbox account key (User)
+- `TRADIER_SANDBOX_KEY_MATT` — sandbox account key (Matt)
+- `TRADIER_SANDBOX_KEY_LOGAN` — sandbox account key (Logan)
 
 ```
 ironforge/
-├── databricks/                # Databricks-native backend
-│   ├── ironforge_scanner.py   # Trading scanner (runs on Databricks compute)
-│   ├── ironforge_api.py       # FastAPI endpoints (runs on Databricks)
-│   └── sql/                   # DDL scripts for Delta Lake tables
+├── databricks/                # ⚠️ DEAD — Databricks-native backend (deprecated)
 │
-├── trading/                   # Python trading engine (shared by all bots)
+├── trading/                   # Python trading engine (reference only — scanner.ts is active)
 │   ├── models.py              # BotConfig, IronCondorPosition, IronCondorSignal, PaperAccount
 │   ├── trader.py              # Trader orchestrator (run_cycle, position management, exit logic)
 │   ├── signals.py             # SignalGenerator (Tradier quotes, SD-based strikes, symmetric wings)
@@ -53,21 +48,18 @@ ironforge/
 │   ├── db.py                  # TradingDatabase (all SQL: positions, PDT, signals, equity, logs)
 │   └── tradier_client.py      # Standalone Tradier API client (quotes, chains, VIX)
 │
-├── jobs/                      # Entry points for bot workers
-│   ├── run_flame.py           # FLAME (2DTE) — runs every 5 min
-│   ├── run_spark.py           # SPARK (1DTE) — runs every 5 min
-│   └── run_inferno.py         # INFERNO (0DTE) — runs every 5 min
+├── jobs/                      # Python entry points (reference only — scanner.ts runs in webapp)
 │
-└── webapp/                    # Next.js 14 dashboard (App Router) — deployed on Vercel
+└── webapp/                    # Next.js 14 dashboard (App Router) — deployed on Render
     ├── package.json           # next 14.2, react 18, recharts, swr, tailwind
     ├── src/
     │   ├── lib/
-    │   │   ├── databricks-sql.ts  # Databricks SQL client (dbQuery, dbExecute, botTable, sharedTable, validateBot, dteMode)
-    │   │   ├── db.ts              # ⚠️ DEAD — PostgreSQL client, do NOT import
+    │   │   ├── db.ts              # PostgreSQL client (dbQuery, dbExecute, query, botTable, sharedTable, validateBot, dteMode)
+    │   │   ├── databricks-sql.ts  # ⚠️ DEAD — Databricks REST API client, do NOT import
     │   │   ├── fetcher.ts         # SWR fetcher
     │   │   ├── format.ts          # Number/date formatters
     │   │   ├── pt-tiers.ts        # Market hours, CT time helpers
-    │   │   ├── scanner.ts         # Scanner status helpers
+    │   │   ├── scanner.ts         # Trading scanner (1-min interval, all 3 bots)
     │   │   └── tradier.ts         # Server-side Tradier client for position monitor
     │   ├── components/
     │   │   ├── BotDashboard.tsx    # Main bot dashboard (tabs: Equity, Performance, Positions, Trades, Logs)
@@ -115,9 +107,10 @@ ironforge/
     └── .env.local.example
 ```
 
-### Migration Status — ✅ COMPLETE
+### Migration Status — ✅ COMPLETE (Render/PostgreSQL)
 
-All API routes migrated to Databricks (`@/lib/databricks-sql`). Zero imports from `@/lib/db` remain.
+All API routes use PostgreSQL via `@/lib/db`. Zero imports from `@/lib/databricks-sql` remain.
+Scanner runs inside the Next.js process via `@/lib/scanner.ts`.
 
 - `api/[bot]/pdt/route.ts` — PDT status, toggle, reset
 - `api/[bot]/pdt/audit/route.ts` — PDT audit log
@@ -130,12 +123,12 @@ All API routes migrated to Databricks (`@/lib/databricks-sql`). Zero imports fro
 - `api/[bot]/trades/route.ts` — Closed trade history
 - `api/[bot]/performance/route.ts` — Win rate, P&L stats
 - `api/[bot]/daily-perf/route.ts` — Daily performance summary
-- `api/[bot]/config/route.ts` — Config read/upsert (MERGE)
+- `api/[bot]/config/route.ts` — Config read/upsert (ON CONFLICT)
 - `api/[bot]/toggle/route.ts` — Enable/disable bot
 - `api/[bot]/force-trade/route.ts` — Force open IC position
 - `api/[bot]/force-close/route.ts` — Force close position
 - `api/[bot]/logs/route.ts` — Activity logs
-- `api/health/route.ts` — Databricks connectivity check
+- `api/health/route.ts` — PostgreSQL + Tradier connectivity check
 - `api/accounts/manage/route.ts` — Account CRUD
 - `api/accounts/manage/[id]/route.ts` — Account update/delete
 - `api/accounts/test-all/route.ts` — Account connectivity test
@@ -190,7 +183,7 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 | Data failure | 10 consecutive MTM failures |
 | Server restart | Force-close if market closed, resume if open |
 
-## Database Tables (Databricks Delta Lake — alpha_prime.ironforge schema)
+## Database Tables (PostgreSQL on Render)
 
 Per-bot tables (prefix = `flame_`, `spark_`, or `inferno_`):
 - `{bot}_positions` — All positions (open, closed, expired). Key columns: strikes, credits, oracle data, wings_adjusted, status, realized_pnl
@@ -213,10 +206,8 @@ Shared tables:
 
 | Layer | Platform | Details |
 |-------|----------|---------|
-| Frontend + API routes | **Vercel** | Next.js 14, auto-deploys from main branch |
-| Database | **Databricks** | Delta Lake tables in `alpha_prime.ironforge` schema |
-| Scanner | **Databricks** | `ironforge_scanner.py` runs on Databricks compute |
-| FastAPI | **Databricks** | `ironforge_api.py` serves additional endpoints |
+| Frontend + API + Scanner | **Render** | Next.js 14 standalone, single web service |
+| Database | **Render PostgreSQL** | Auto-created tables via `db.ts` on first use |
 
 ## API Routes
 
@@ -267,31 +258,31 @@ All routes are dynamic: `/api/[bot]/...` where bot is `flame`, `spark`, or `infe
 2. **Unified code for all bots** — Trader, SignalGenerator, PaperExecutor, TradingDatabase all parameterized by BotConfig (FLAME/SPARK differ only by `min_dte`; INFERNO adds `max_trades_per_day=0` (unlimited) and FORTRESS-style parameters)
 3. **Real market data, paper execution** — Tradier production/sandbox API for quotes and option chains, but no actual orders placed
 4. **Conservative fills** — sells at bid, buys at ask (worst-case paper fills)
-5. **Databricks Delta Lake** — all persistence via Databricks SQL warehouse. Next.js API routes use `@/lib/databricks-sql.ts` client
+5. **PostgreSQL on Render** — all persistence via PostgreSQL. Next.js API routes use `@/lib/db.ts` client. Tables auto-created on first use.
 6. **Oracle fields stored but not yet wired** — position table has oracle_confidence, oracle_win_probability, etc. but signal generator doesn't call Oracle yet
 
 ## Running Locally
 
 ```bash
-# Frontend
+# Frontend + Scanner
 cd ironforge/webapp
 npm install
 
-# Set Databricks credentials in .env.local:
-# DATABRICKS_SERVER_HOSTNAME=...
-# DATABRICKS_HTTP_PATH=...
-# DATABRICKS_TOKEN=...
+# Set PostgreSQL + Tradier credentials in .env.local:
+# DATABASE_URL=postgresql://localhost:5432/ironforge
 # TRADIER_API_KEY=...
+# TRADIER_SANDBOX_KEY_USER=...
 
 npm run dev
 # → http://localhost:3000
+# Scanner auto-starts on first DB connection
 ```
 
 ## Relationship to AlphaGEX
 
 IronForge lives inside the AlphaGEX monorepo at `ironforge/` but is **completely independent**. It shares no code with the main AlphaGEX backend/frontend. It was designed as a lightweight, portable system that can run without the complexity of the full AlphaGEX infrastructure.
 
-The `ironforge/databricks/` directory contains the Databricks-native scanner and API. The `ironforge/webapp/` directory contains the Next.js dashboard deployed on Vercel.
+The `ironforge/webapp/` directory contains the Next.js dashboard + scanner, deployed on Render as a single web service.
 
 ## HARD RULE: All Backend Fixes Must Live in the Webapp
 
@@ -336,7 +327,7 @@ The `/api/{bot}/status` route does NOT read `paper_account.collateral_in_use`. I
 - `balance` = starting_capital + realized_pnl
 - `buying_power` = balance - collateral
 
-If the dashboard still shows wrong values despite the database being correct, the issue is the **schema env var** — check Vercel Settings → Environment Variables → `DATABRICKS_SCHEMA` must be `ironforge`.
+If the dashboard still shows wrong values despite the database being correct, check that `DATABASE_URL` points to the correct PostgreSQL instance.
 
 ### Balance Drift (P&L Doesn't Match Closed Trades)
 
@@ -345,32 +336,6 @@ If the dashboard still shows wrong values despite the database being correct, th
 **Root Cause:** `paper_account.current_balance` drifted due to double-counting (position P&L added twice) or missed updates.
 
 **Fix:** Same as stuck collateral — `POST /api/{bot}/fix-collateral` reconciles all values.
-
-### Schema Mismatch (Dashboard Shows Completely Wrong Numbers)
-
-**Symptoms:** Dashboard values (balance, P&L, trades, collateral) are ALL different from database values — not just slightly off, but completely different numbers.
-
-**Root Cause:** Vercel's `DATABRICKS_SCHEMA` env var is set to `default` instead of `ironforge`. The webapp queries `alpha_prime.default.*` tables (old/stale) instead of `alpha_prime.ironforge.*` tables (current).
-
-**Fix:**
-1. Go to Vercel → IronForge project → Settings → Environment Variables
-2. Set `DATABRICKS_SCHEMA` = `ironforge`
-3. Redeploy
-
-**Prevention:** The `DATABRICKS_SCHEMA` env var defaults to `ironforge` in code (`databricks-sql.ts`). Only set it if you need to override. Never set it to `default`.
-
-### Databricks SQL Warehouse Cache (Dashboard Shows Stale Data)
-
-**Symptoms:** Database has correct values (verified via SQL Editor) but the API returns old/stale values. The dashboard shows numbers from hours or days ago.
-
-**Root Cause:** The Databricks SQL Statement Execution API caches query results by statement hash. If the same SQL is sent repeatedly (same text), the warehouse returns cached results even after the underlying Delta Lake data changed. Cache can persist for up to 24 hours.
-
-**Fix (already implemented):** `databricks-sql.ts` appends `/* ts=<timestamp> */` to every SQL statement, making each request unique so the cache is always bypassed. If this cache-busting is ever removed, stale data will return.
-
-**Prevention:** NEVER remove the cache-busting comment from `dbQuery()` in `databricks-sql.ts`. If you see stale data on the dashboard:
-1. Check that `databricks-sql.ts` still has the `cacheBust` line
-2. Verify the Vercel deployment is current (check Vercel → Deployments)
-3. Hard refresh the browser (Ctrl+Shift+R)
 
 ### Tradier Sandbox Positions Won't Close (400 Errors)
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 import { closeIcOrderAllAccounts } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -210,12 +210,12 @@ export async function POST(
       const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
          SET status = 'closed',
-             close_time = CURRENT_TIMESTAMP(),
+             close_time = NOW(),
              close_price = ${closePrice},
              realized_pnl = ${realizedPnl},
              close_reason = '${reason}',
              dte_mode = '${escapeSql(dte)}',
-             updated_at = CURRENT_TIMESTAMP()
+             updated_at = NOW()
          WHERE position_id = '${escapeSql(String(pid))}'
            AND status = 'open'`,
       )
@@ -301,7 +301,7 @@ export async function POST(
            buying_power = ${correctBp},
            total_trades = ${actualTrades},
            high_water_mark = GREATEST(high_water_mark, ${expectedBalance}),
-           updated_at = CURRENT_TIMESTAMP()
+           updated_at = NOW()
        WHERE dte_mode = '${escapeSql(dte)}'`,
     )
 
@@ -311,7 +311,7 @@ export async function POST(
     try {
       await dbExecute(
         `INSERT INTO ${botTable(bot, 'logs')} (log_time, level, message, details, dte_mode)
-         VALUES (CURRENT_TIMESTAMP(), 'RECOVERY',
+         VALUES (NOW(), 'RECOVERY',
                  'fix-collateral API: ${actions.length} actions',
                  '${escapeSql(JSON.stringify({ actions, source: 'fix-collateral-api' }))}',
                  '${escapeSql(dte)}')`,

@@ -77,7 +77,33 @@ CREATE TABLE IF NOT EXISTS bot_heartbeats (
   scan_count BIGINT DEFAULT 0,
   details TEXT
 );
-` + ['flame', 'spark'].map(bot => `
+` + `
+CREATE TABLE IF NOT EXISTS ironforge_accounts (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  person TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  api_key TEXT NOT NULL,
+  bot TEXT NOT NULL,
+  type TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+` + `
+CREATE TABLE IF NOT EXISTS ironforge_pdt_config (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  bot_name TEXT NOT NULL,
+  pdt_enabled BOOLEAN DEFAULT TRUE,
+  day_trade_count INT DEFAULT 0,
+  max_day_trades INT DEFAULT 4,
+  window_days INT DEFAULT 5,
+  max_trades_per_day INT DEFAULT 1,
+  last_reset_at TIMESTAMPTZ,
+  last_reset_by TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+` + ['flame', 'spark', 'inferno'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   starting_capital NUMERIC(12,2) NOT NULL,
@@ -229,6 +255,22 @@ CREATE TABLE IF NOT EXISTS ${bot}_pdt_audit_log (
   performed_by TEXT DEFAULT 'user',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ${bot}_pending_orders (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  position_id TEXT NOT NULL,
+  ticker TEXT NOT NULL,
+  expiration DATE NOT NULL,
+  put_short_strike NUMERIC(10,2),
+  put_long_strike NUMERIC(10,2),
+  call_short_strike NUMERIC(10,2),
+  call_long_strike NUMERIC(10,2),
+  contracts INT NOT NULL,
+  total_credit NUMERIC(10,4),
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  dte_mode TEXT
+);
 CREATE TABLE IF NOT EXISTS ${bot}_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   dte_mode TEXT NOT NULL UNIQUE,
@@ -287,7 +329,26 @@ async function ensureTables(): Promise<void> {
         )
       }
     }
-    // Seed PDT config if empty
+    // Seed shared ironforge_pdt_config if empty
+    for (const [botName, maxDT, maxPerDay] of [
+      ['FLAME', 3, 1],
+      ['SPARK', 3, 1],
+      ['INFERNO', 0, 0],
+    ] as const) {
+      const sharedPdtRes = await client.query(
+        `SELECT id FROM ironforge_pdt_config WHERE bot_name = $1 LIMIT 1`,
+        [botName],
+      )
+      if (sharedPdtRes.rows.length === 0) {
+        await client.query(
+          `INSERT INTO ironforge_pdt_config (bot_name, pdt_enabled, day_trade_count, max_day_trades, window_days, max_trades_per_day)
+           VALUES ($1, $2, 0, $3, 5, $4)`,
+          [botName, maxDT > 0, maxDT, maxPerDay],
+        )
+      }
+    }
+
+    // Seed per-bot PDT config if empty
     // INFERNO (0DTE) has PDT disabled (max_day_trades=0) and unlimited trades per day
     for (const [bot, dte, maxDT, maxPerDay] of [
       ['flame', '2DTE', 3, 1],
@@ -431,9 +492,41 @@ export function int(val: any): number {
   return isNaN(n) ? 0 : n
 }
 
-/** Validate bot name parameter — only flame or spark allowed. */
+/** Shared table name — for PostgreSQL, just the table name (no catalog/schema prefix). */
+export function sharedTable(name: string): string {
+  return name
+}
+
+/** Escape single quotes for SQL string literals. */
+export function escapeSql(val: string): string {
+  return val.replace(/'/g, "''")
+}
+
+/** Validate bot name parameter — only flame, spark, or inferno allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
   if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
   return b
+}
+
+// ---- Databricks-compatible aliases ----
+// These match the export names from the old databricks-sql.ts client
+// so API route files only need an import path change.
+
+/** Alias for query() — matches databricks-sql.ts API surface. */
+export const dbQuery = query
+
+/**
+ * Execute a SQL statement and return the number of affected rows.
+ * Matches databricks-sql.ts dbExecute() API surface.
+ */
+export async function dbExecute(sql: string, params?: any[]): Promise<number> {
+  await ensureTables()
+  const client = await getPool().connect()
+  try {
+    const result = await client.query(sql, params)
+    return result.rowCount ?? 0
+  } finally {
+    client.release()
+  }
 }

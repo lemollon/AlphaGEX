@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,7 +46,7 @@ export async function PUT(
       return NextResponse.json({ success: true, message: 'No changes' })
     }
 
-    updates.push('updated_at = CURRENT_TIMESTAMP()')
+    updates.push('updated_at = NOW()')
 
     await dbExecute(`
       UPDATE ${TABLE}
@@ -81,7 +81,7 @@ export async function DELETE(
 
     await dbExecute(`
       UPDATE ${TABLE}
-      SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP()
+      SET is_active = FALSE, updated_at = NOW()
       WHERE id = ${id}
     `)
 

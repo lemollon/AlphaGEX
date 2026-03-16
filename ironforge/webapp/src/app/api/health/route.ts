@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { dbQuery } from '@/lib/databricks-sql'
+import { dbQuery } from '@/lib/db'
 import { isConfigured, getQuote } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -7,18 +7,18 @@ export const dynamic = 'force-dynamic'
 /**
  * GET /api/health
  *
- * Health check endpoint. Tests Databricks and Tradier connectivity.
+ * Health check endpoint. Tests PostgreSQL and Tradier connectivity.
  */
 export async function GET() {
   const checks: Record<string, { status: string; detail?: string }> = {}
 
-  // Databricks connectivity
+  // PostgreSQL connectivity
   try {
-    const rows = await dbQuery('SELECT CURRENT_TIMESTAMP() as ts')
-    checks.databricks = { status: 'ok', detail: rows[0]?.ts }
+    const rows = await dbQuery('SELECT NOW() as ts')
+    checks.database = { status: 'ok', detail: rows[0]?.ts }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    checks.databricks = { status: 'error', detail: msg }
+    checks.database = { status: 'error', detail: msg }
   }
 
   // Tradier connectivity

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -120,9 +120,9 @@ export async function POST(
       : 'NULL'
     const rowsAffected = await dbExecute(
       `UPDATE ${botTable(bot, 'positions')}
-       SET status = 'closed', close_time = CURRENT_TIMESTAMP(),
+       SET status = 'closed', close_time = NOW(),
            close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
-           close_reason = 'manual_close', updated_at = CURRENT_TIMESTAMP(),
+           close_reason = 'manual_close', updated_at = NOW(),
            sandbox_close_order_id = ${sandboxCloseJson}
        WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
          AND dte_mode = '${escapeSql(dte)}'`,
@@ -162,16 +162,16 @@ export async function POST(
            high_water_mark = GREATEST(high_water_mark, current_balance + ${realizedPnl}),
            max_drawdown = GREATEST(max_drawdown,
              GREATEST(high_water_mark, current_balance + ${realizedPnl}) - (current_balance + ${realizedPnl})),
-           updated_at = CURRENT_TIMESTAMP()
+           updated_at = NOW()
        WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'`,
     )
 
     // 8. Update PDT log
     await dbExecute(
       `UPDATE ${botTable(bot, 'pdt_log')}
-       SET closed_at = CURRENT_TIMESTAMP(), exit_cost = ${effectivePrice}, pnl = ${realizedPnl},
+       SET closed_at = NOW(), exit_cost = ${effectivePrice}, pnl = ${realizedPnl},
            close_reason = 'manual_close',
-           is_day_trade = (CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', opened_at) AS DATE) = ${CT_TODAY})
+           is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
        WHERE position_id = '${escapeSql(position_id)}' AND dte_mode = '${escapeSql(dte)}'`,
     )
 
@@ -212,17 +212,14 @@ export async function POST(
                '${escapeSql(dte)}')`,
     )
 
-    // 11. Daily perf (MERGE upsert)
+    // 11. Daily perf upsert
     const dailyTable = botTable(bot, 'daily_perf')
     await dbExecute(
-      `MERGE INTO ${dailyTable} AS t
-       USING (SELECT ${CT_TODAY} AS trade_date) AS s
-       ON t.trade_date = s.trade_date
-       WHEN MATCHED THEN UPDATE SET
-         t.positions_closed = t.positions_closed + 1,
-         t.realized_pnl = t.realized_pnl + ${realizedPnl}
-       WHEN NOT MATCHED THEN INSERT (trade_date, trades_executed, positions_closed, realized_pnl)
-         VALUES (${CT_TODAY}, 0, 1, ${realizedPnl})`,
+      `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl)
+       VALUES (${CT_TODAY}, 0, 1, ${realizedPnl})
+       ON CONFLICT (trade_date) DO UPDATE SET
+         positions_closed = ${dailyTable}.positions_closed + 1,
+         realized_pnl = ${dailyTable}.realized_pnl + ${realizedPnl}`,
     )
 
     return NextResponse.json({

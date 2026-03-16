@@ -149,7 +149,7 @@ export default function Home() {
           </span>
         </h1>
         <p className="text-forge-muted text-sm mb-3">
-          SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+          SPY Iron Condor Paper Trading &middot; Render + Tradier
         </p>
         <p style={{
           color: '#FCD34D',
@@ -345,7 +345,7 @@ export default function Home() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm pb-4">
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Platform</p>
-          <p className="font-medium">Databricks</p>
+          <p className="font-medium">Render</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Data Source</p>

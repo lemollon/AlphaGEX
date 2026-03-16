@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -69,7 +69,7 @@ export async function GET(
       `SELECT COUNT(*) as cnt
        FROM ${botTable(bot, 'logs')}
        WHERE level = 'SCAN'
-         AND CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', log_time) AS DATE) = ${CT_TODAY}
+         AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
          ${dteFilter}`,
     )
 

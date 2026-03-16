@@ -49,6 +49,16 @@ interface MtmValidation {
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
+/** Default timeout for all Tradier API calls (5 seconds). */
+const API_TIMEOUT_MS = 5_000
+
+/** Create an AbortSignal that fires after `ms` milliseconds. */
+function timeoutSignal(ms: number = API_TIMEOUT_MS): AbortSignal {
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), ms)
+  return controller.signal
+}
+
 /** Build OCC option symbol: SPY260226P00585000 */
 export function buildOccSymbol(
   ticker: string,
@@ -78,13 +88,25 @@ async function tradierGet(
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   }
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${TRADIER_API_KEY}`,
-      Accept: 'application/json',
-    },
-    cache: 'no-store',
-  })
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${TRADIER_API_KEY}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+      signal: timeoutSignal(),
+    })
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error(`Tradier: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`Tradier: ${endpoint} fetch failed: ${msg}`)
+    }
+    return null
+  }
 
   if (!res.ok) {
     console.error(`Tradier: ${endpoint} returned HTTP ${res.status} (${res.statusText})`)
@@ -351,16 +373,28 @@ async function sandboxPost(
 
   const url = `${SANDBOX_URL}${endpoint}`
 
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams(body).toString(),
-    cache: 'no-store',
-  })
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams(body).toString(),
+      cache: 'no-store',
+      signal: timeoutSignal(),
+    })
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error(`Tradier sandbox: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`Tradier sandbox: ${endpoint} fetch failed: ${msg}`)
+    }
+    return null
+  }
 
   if (!res.ok) {
     const status = res.status
@@ -386,13 +420,25 @@ async function sandboxGet(
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   }
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      Accept: 'application/json',
-    },
-    cache: 'no-store',
-  })
+  let res: Response
+  try {
+    res = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+      signal: timeoutSignal(),
+    })
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      console.error(`Tradier sandbox: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`Tradier sandbox: ${endpoint} fetch failed: ${msg}`)
+    }
+    return null
+  }
 
   if (!res.ok) {
     const status = res.status

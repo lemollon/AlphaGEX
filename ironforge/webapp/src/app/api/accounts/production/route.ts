@@ -4,7 +4,7 @@ import {
   getLoadedSandboxAccounts,
   getSandboxPositionSymbols,
 } from '@/lib/tradier'
-import { dbQuery, botTable, num, escapeSql, dteMode, CT_TODAY } from '@/lib/databricks-sql'
+import { dbQuery, botTable, num, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -75,7 +75,7 @@ export async function GET() {
               `SELECT COALESCE(SUM(realized_pnl), 0) as pnl
               FROM ${tbl}
               WHERE status IN ('closed', 'expired')
-                AND CAST(CONVERT_TIMEZONE('UTC', 'America/Chicago', close_time) AS DATE) = ${CT_TODAY}
+                AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
                 ${dteFilter}`,
             )
             const dayPnl = num(todayPnlRows[0]?.pnl)
