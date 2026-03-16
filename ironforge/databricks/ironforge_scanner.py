@@ -135,6 +135,10 @@ def load_config_overrides() -> None:
                      f"capital={defaults['starting_capital']}, max_contracts={defaults['max_contracts']}")
         except Exception as e:
             log.debug(f"[{bot_name.upper()}] Config table not found or read failed (using defaults): {e}")
+        # Sanitize: Databricks returns Decimal objects — force all numeric config to float
+        for k, v in defaults.items():
+            if hasattr(v, '__float__') and not isinstance(v, (int, float)):
+                defaults[k] = float(v)
 
 
 BOTS = [
@@ -429,11 +433,17 @@ def get_ic_mark_to_market(
 
 def validate_mtm(mtm: dict, entry_credit: float) -> tuple:
     """Validate MTM quotes are sane. Returns (is_valid, reason)."""
-    # Check for zero/negative values on all legs
-    for key in ["put_short_ask", "call_short_ask", "put_long_bid", "call_long_bid"]:
+    # Short leg asks MUST be positive (we need to buy these back to close)
+    for key in ["put_short_ask", "call_short_ask"]:
         val = mtm.get(key, 0)
         if val is None or val <= 0:
             return False, f"{key} is zero/negative/None: {val}"
+    # Long leg bids CAN be zero — deep OTM wings on 0DTE often have no bid.
+    # We only need them for P&L calculation; $0 bid just means no exit value.
+    for key in ["put_long_bid", "call_long_bid"]:
+        val = mtm.get(key)
+        if val is None or val < 0:
+            return False, f"{key} is negative/None: {val}"
 
     # Check cost_to_close bounds (should be between 0 and 3x entry)
     ctc = mtm.get("cost_to_close", 0)
@@ -754,7 +764,7 @@ def open_ic_sandbox_per_account(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per_contract)))
+            acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per_contract)))
 
             log.info(
                 f"Sandbox [{acct['name']}]: BP=${acct_bp:,.0f} → "
@@ -1066,7 +1076,12 @@ def _get_sandbox_order_fill_price(
 
 
 def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
-    """Get the available buying power from a Tradier sandbox account."""
+    """Get the available OPTION buying power from a Tradier sandbox account.
+
+    IMPORTANT: Must use option_buying_power, NOT day_trade_buying_power or
+    stock_buying_power. Day trade BP ($226K) is ~3x option BP ($84K) and
+    causes orders far larger than the account can support.
+    """
     data = _sandbox_get(
         f"/accounts/{account_id}/balances",
         None,
@@ -1075,13 +1090,15 @@ def _get_sandbox_buying_power(api_key: str, account_id: str) -> Optional[float]:
     if not data:
         return None
     balances = data.get("balances", {})
-    # PDT accounts nest buying power under "pdt" sub-object
-    pdt = balances.get("pdt", {})
-    bp = (
-        pdt.get("option_buying_power")
-        or balances.get("option_buying_power")
-        or balances.get("buying_power")
-    )
+    # Prefer top-level option_buying_power (most accurate for options)
+    bp = balances.get("option_buying_power")
+    if bp is None:
+        # PDT accounts may nest it under "pdt" sub-object
+        pdt = balances.get("pdt", {})
+        bp = pdt.get("option_buying_power")
+    if bp is None:
+        # Last resort — stock_buying_power is closer to option BP than day_trade BP
+        bp = balances.get("stock_buying_power")
     if bp is not None:
         return float(bp)
     return None
@@ -1860,7 +1877,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         return "skip:no_paper_account"
 
     acct = account_rows[0]
-    paper_acct_id = acct["id"]  # save BEFORE sandbox loop overwrites 'acct'
+    paper_acct_id = to_int(acct["id"])  # save BEFORE sandbox loop overwrites 'acct'
 
     # Derive buying power from LIVE open position collateral (not stale paper_account cache).
     # paper_account.collateral_in_use can drift if a close path fails to reconcile.
@@ -1977,7 +1994,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
                         continue
 
                     acct_usable = acct_bp * 0.85
-                    acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
+                    acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per)))
                     log.info(
                         f"Sandbox [User]: BP=${acct_bp:,.0f} → "
                         f"usable=${acct_usable:,.0f} → {acct_contracts} contracts"
@@ -3291,7 +3308,7 @@ def _create_position_from_pending(
     """)
     if not acct_rows:
         raise RuntimeError(f"No paper account found for {bot['name']}")
-    paper_acct_id = acct_rows[0]["id"]
+    paper_acct_id = to_int(acct_rows[0]["id"])
 
     # INSERT position
     db_execute(f"""
@@ -3477,7 +3494,7 @@ def _place_secondary_sandbox_orders(
                 continue
 
             acct_usable = acct_bp * 0.85
-            acct_contracts = min(500, max(1, math.floor(acct_usable / collateral_per)))
+            acct_contracts = min(200, max(1, math.floor(acct_usable / collateral_per)))
 
             order_body = {
                 "class": "multileg",
