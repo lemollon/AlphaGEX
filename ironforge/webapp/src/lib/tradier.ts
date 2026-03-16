@@ -141,8 +141,11 @@ function validateMtmQuotes(
   const issues: string[] = []
 
   for (const { label, bid, ask } of legs) {
-    if (bid <= 0 && ask <= 0) {
-      issues.push(`${label}: zero bid/ask (bid=${bid}, ask=${ask})`)
+    // Short legs (PS, CS) must have positive asks (we buy these back to close).
+    // Long legs (PL, CL) can have zero bid/ask — deep OTM 0DTE wings often do.
+    const isShortLeg = label === 'PS' || label === 'CS'
+    if (isShortLeg && ask <= 0) {
+      issues.push(`${label}: zero ask (ask=${ask})`)
     }
     if (bid > ask && ask > 0) {
       issues.push(`${label}: inverted market (bid ${bid} > ask ${ask})`)
