@@ -1864,7 +1864,7 @@ def try_open_trade(bot: dict, spot: float, vix: float) -> str:
         return "skip:no_paper_account"
 
     acct = account_rows[0]
-    paper_acct_id = acct["id"]  # save BEFORE sandbox loop overwrites 'acct'
+    paper_acct_id = to_int(acct["id"])  # save BEFORE sandbox loop overwrites 'acct'
 
     # Derive buying power from LIVE open position collateral (not stale paper_account cache).
     # paper_account.collateral_in_use can drift if a close path fails to reconcile.
@@ -3295,7 +3295,7 @@ def _create_position_from_pending(
     """)
     if not acct_rows:
         raise RuntimeError(f"No paper account found for {bot['name']}")
-    paper_acct_id = acct_rows[0]["id"]
+    paper_acct_id = to_int(acct_rows[0]["id"])
 
     # INSERT position
     db_execute(f"""
