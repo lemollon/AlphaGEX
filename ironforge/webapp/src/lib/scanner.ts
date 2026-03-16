@@ -323,13 +323,21 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
 
   if (positions.length === 0) return { status: 'no_position', unrealizedPnl: 0 }
 
-  // Monitor ALL positions (multi-position for INFERNO)
+  // Monitor ALL positions in PARALLEL (multi-position for INFERNO)
+  // This eliminates the sequential-per-position latency bottleneck.
+  const results = await Promise.allSettled(
+    positions.map(pos => monitorSinglePosition(bot, ct, pos)),
+  )
+
   let totalUnrealized = 0
   let anyAction = 'monitoring'
-  for (const pos of positions) {
-    const monResult = await monitorSinglePosition(bot, ct, pos)
-    totalUnrealized += monResult.unrealizedPnl
-    if (monResult.status.startsWith('closed:')) anyAction = monResult.status
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      totalUnrealized += r.value.unrealizedPnl
+      if (r.value.status.startsWith('closed:')) anyAction = r.value.status
+    } else {
+      console.error(`[scanner] ${bot.name.toUpperCase()}: position monitor error:`, r.reason)
+    }
   }
   return { status: anyAction, unrealizedPnl: totalUnrealized }
 }
@@ -1430,20 +1438,38 @@ let _intervalId: ReturnType<typeof setInterval> | null = null
 let _started = false
 let _scanCount = 0
 let _running = false
+let _scanStartedAt: number | null = null
 
-/** Fire-and-forget wrapper — skips if previous cycle still running. */
+/** Max time a single scan cycle can run before being considered stuck (5 minutes). */
+const MAX_SCAN_DURATION_MS = 5 * 60 * 1000
+
+/** Fire-and-forget wrapper — skips if previous cycle still running, detects stuck scans. */
 function safeRunAllScans(): void {
   if (_running) {
-    console.log('[scanner] previous cycle still running, skipping this tick')
-    return
+    // Check if the running scan is stuck (exceeded MAX_SCAN_DURATION_MS)
+    if (_scanStartedAt && Date.now() - _scanStartedAt > MAX_SCAN_DURATION_MS) {
+      const stuckMinutes = ((Date.now() - _scanStartedAt) / 60_000).toFixed(1)
+      console.error(
+        `[scanner] STUCK SCAN DETECTED — running for ${stuckMinutes}m (limit: ${MAX_SCAN_DURATION_MS / 60_000}m). ` +
+        `Force-resetting _running flag to unblock next cycle.`,
+      )
+      _running = false
+      _scanStartedAt = null
+      // Fall through to start a new scan
+    } else {
+      console.log('[scanner] previous cycle still running, skipping this tick')
+      return
+    }
   }
   _running = true
+  _scanStartedAt = Date.now()
   runAllScans()
     .catch(err => {
       console.error('[scanner] scan cycle error (interval continues):', err)
     })
     .finally(() => {
       _running = false
+      _scanStartedAt = null
     })
 }
 
@@ -1527,6 +1553,11 @@ export const _testing = {
   DEFAULT_CONFIG,
   BOTS,
   MAX_CONSECUTIVE_MTM_FAILURES,
+  MAX_SCAN_DURATION_MS,
   _botConfig,
   _mtmFailureCounts,
+  get _running() { return _running },
+  set _running(v: boolean) { _running = v },
+  get _scanStartedAt() { return _scanStartedAt },
+  set _scanStartedAt(v: number | null) { _scanStartedAt = v },
 } as const
