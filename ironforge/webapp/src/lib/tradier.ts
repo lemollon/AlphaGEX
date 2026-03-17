@@ -350,7 +350,7 @@ interface SandboxAccount {
 }
 
 /** Load all configured sandbox accounts from env vars. */
-function getSandboxAccounts(): SandboxAccount[] {
+function getSandboxAccountsFromEnv(): SandboxAccount[] {
   const accounts: SandboxAccount[] = []
   const userKey = process.env.TRADIER_SANDBOX_KEY_USER || ''
   const mattKey = process.env.TRADIER_SANDBOX_KEY_MATT || ''
@@ -362,7 +362,46 @@ function getSandboxAccounts(): SandboxAccount[] {
   return accounts
 }
 
-const _sandboxAccounts = getSandboxAccounts()
+let _sandboxAccounts = getSandboxAccountsFromEnv()
+let _sandboxAccountsLoadedFromDb = false
+
+/**
+ * Load sandbox accounts from the ironforge_accounts database table.
+ * Called once on first use if env vars yielded zero accounts.
+ * This bridges the gap: accounts added via the UI (/accounts page)
+ * are stored in the DB, not in env vars.
+ */
+async function ensureSandboxAccountsLoaded(): Promise<void> {
+  if (_sandboxAccounts.length > 0 || _sandboxAccountsLoadedFromDb) return
+  _sandboxAccountsLoadedFromDb = true
+
+  try {
+    // Dynamic import to avoid circular dependency (db.ts imports nothing from tradier)
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT person, api_key FROM ironforge_accounts
+       WHERE is_active = TRUE ORDER BY person`,
+    )
+    if (rows.length > 0) {
+      const seen = new Set<string>()
+      for (const row of rows) {
+        const key = row.api_key?.trim()
+        if (!key || seen.has(key)) continue
+        seen.add(key)
+        _sandboxAccounts.push({ name: row.person || 'DB', apiKey: key })
+      }
+      if (_sandboxAccounts.length > 0) {
+        console.log(
+          `[tradier] Loaded ${_sandboxAccounts.length} sandbox account(s) from DB: ` +
+          _sandboxAccounts.map(a => a.name).join(', '),
+        )
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] Failed to load sandbox accounts from DB: ${msg}`)
+  }
+}
 
 async function sandboxPost(
   endpoint: string,
@@ -502,6 +541,7 @@ export interface SandboxAccountBalance {
  * Returns one entry per account. Values are null when Tradier API is unreachable.
  */
 export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance[]> {
+  await ensureSandboxAccountsLoaded()
   const results: SandboxAccountBalance[] = []
 
   await Promise.all(
@@ -667,6 +707,7 @@ export async function placeIcOrderAllAccounts(
   totalCredit: number,
   tag?: string,
 ): Promise<Record<string, SandboxOrderInfo>> {
+  await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
   // Shared OCC symbols — same strikes for all accounts
@@ -824,6 +865,12 @@ export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string
   return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
 }
 
+/** Async version that ensures DB accounts are loaded first. */
+export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string }>> {
+  await ensureSandboxAccountsLoaded()
+  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+}
+
 /**
  * Fetch positions from a sandbox account and filter to the given OCC symbols.
  */
@@ -884,6 +931,7 @@ export async function closeIcOrderAllAccounts(
   tag?: string,
   sandboxOpenInfo?: Record<string, SandboxOrderInfo | number> | null,
 ): Promise<Record<string, SandboxCloseInfo>> {
+  await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxCloseInfo> = {}
 
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
