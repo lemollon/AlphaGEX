@@ -31,7 +31,7 @@ export async function GET(
     const positions = rows.map((r) => ({
       position_id: r.position_id,
       ticker: r.ticker,
-      expiration: r.expiration ? String(r.expiration).slice(0, 10) : null,
+      expiration: r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : null),
       put_short_strike: num(r.put_short_strike),
       put_long_strike: num(r.put_long_strike),
       put_credit: num(r.put_credit),

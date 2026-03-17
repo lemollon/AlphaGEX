@@ -48,7 +48,7 @@ export async function GET(
         const contracts = int(r.contracts)
         const entryCredit = num(r.total_credit)
         const ticker = r.ticker || 'SPY'
-        const expiration = r.expiration ? String(r.expiration).slice(0, 10) : ''
+        const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
         const profitTargetPrice = Math.round(entryCredit * 0.7 * 10000) / 10000
         const stopLossPrice = Math.round(entryCredit * 2.0 * 10000) / 10000

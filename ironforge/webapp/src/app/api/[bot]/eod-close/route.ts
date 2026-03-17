@@ -61,7 +61,7 @@ export async function POST(
       const totalCredit = num(pos.total_credit)
       const contracts = int(pos.contracts)
       const ticker = pos.ticker || 'SPY'
-      const expiration = pos.expiration ? String(pos.expiration).slice(0, 10) : ''
+      const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || (pos.expiration ? String(pos.expiration).slice(0, 10) : '')
 
       // Get MTM close price
       let closePrice = 0

@@ -65,7 +65,7 @@ export async function POST(
     } else if (isConfigured()) {
       const mtm = await getIcMarkToMarket(
         pos.ticker,
-        String(pos.expiration).slice(0, 10),
+        pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10),
         num(pos.put_short_strike),
         num(pos.put_long_strike),
         num(pos.call_short_strike),
@@ -88,7 +88,7 @@ export async function POST(
     try {
       sandboxCloseInfo = await closeIcOrderAllAccounts(
         pos.ticker,
-        String(pos.expiration).slice(0, 10),
+        pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10),
         num(pos.put_short_strike),
         num(pos.put_long_strike),
         num(pos.call_short_strike),
