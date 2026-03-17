@@ -576,7 +576,19 @@ async function getSandboxBuyingPower(
   )
   if (!data) return null
   const balances = data.balances || {}
-  const bp = balances.option_buying_power ?? balances.buying_power
+  // PDT accounts nest buying power under balances.pdt.*
+  // Margin accounts nest under balances.margin.*
+  // Cash accounts have it at balances.* directly
+  const pdt = balances.pdt || {}
+  const margin = balances.margin || {}
+  const bp =
+    pdt.option_buying_power ??
+    margin.option_buying_power ??
+    balances.option_buying_power ??
+    pdt.stock_buying_power ??
+    margin.stock_buying_power ??
+    balances.buying_power ??
+    balances.total_cash
   return bp != null ? parseFloat(bp) : null
 }
 
@@ -623,8 +635,12 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       ])
 
       const bal = balData?.balances || {}
+      const pdt = bal.pdt || {}
+      const margin = bal.margin || {}
       const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
-      const bp = bal.option_buying_power ?? bal.buying_power
+      const bp =
+        pdt.option_buying_power ?? margin.option_buying_power ??
+        bal.option_buying_power ?? bal.buying_power ?? bal.total_cash
       const optionBp = bp != null ? parseFloat(bp) : null
 
       // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
