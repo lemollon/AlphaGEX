@@ -33,6 +33,7 @@ import {
   placeIcOrderAllAccounts,
   closeIcOrderAllAccounts,
   getLoadedSandboxAccounts,
+  getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
@@ -1047,7 +1048,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
   console.log('[scanner] DAILY SANDBOX CLEANUP: Starting stale position scan...')
 
   try {
-    const accounts = getLoadedSandboxAccounts()
+    const accounts = await getLoadedSandboxAccountsAsync()
     if (accounts.length === 0) {
       console.log('[scanner] DAILY SANDBOX CLEANUP: No sandbox accounts configured, skipping')
       return
@@ -1109,7 +1110,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 async function prescanSandboxHealthCheck(): Promise<void> {
-  const accounts = getLoadedSandboxAccounts()
+  const accounts = await getLoadedSandboxAccountsAsync()
   if (accounts.length === 0) return
 
   let negativeCount = 0
@@ -1172,7 +1173,7 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
   // Only run in the 2:45-3:10 PM CT window
   if (hhmm < 1445 || hhmm > 1510) return
 
-  const accounts = getLoadedSandboxAccounts()
+  const accounts = await getLoadedSandboxAccountsAsync()
   if (accounts.length === 0) return
 
   const todayYYMMDD = ct.toISOString().slice(2, 10).replace(/-/g, '') // YYMMDD
