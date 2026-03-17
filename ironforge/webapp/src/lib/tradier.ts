@@ -378,22 +378,38 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
   try {
     // Dynamic import to avoid circular dependency (db.ts imports nothing from tradier)
     const { query: dbq } = await import('./db')
-    const rows = await dbq(
-      `SELECT person, api_key FROM ironforge_accounts
-       WHERE is_active = TRUE ORDER BY person`,
+
+    // Try sandbox-type accounts first; if none, try all accounts.
+    // IronForge sends all orders to sandbox.tradier.com regardless of type,
+    // so production-type keys stored here are still sandbox keys
+    // (the "type" field just indicates how the user categorized them).
+    let rows = await dbq(
+      `SELECT person, api_key, account_id FROM ironforge_accounts
+       WHERE is_active = TRUE AND type = 'sandbox' ORDER BY person`,
     )
+    if (rows.length === 0) {
+      rows = await dbq(
+        `SELECT person, api_key, account_id FROM ironforge_accounts
+         WHERE is_active = TRUE ORDER BY person`,
+      )
+    }
     if (rows.length > 0) {
       const seen = new Set<string>()
+      let isFirst = true
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
         seen.add(key)
-        _sandboxAccounts.push({ name: row.person || 'DB', apiKey: key })
+        // First account gets name 'User' so FLAME fill-only mode works
+        // (FLAME requires sandboxOrderIds['User'] to be present)
+        const name = isFirst ? 'User' : (row.person || 'DB')
+        _sandboxAccounts.push({ name, apiKey: key })
+        isFirst = false
       }
       if (_sandboxAccounts.length > 0) {
         console.log(
           `[tradier] Loaded ${_sandboxAccounts.length} sandbox account(s) from DB: ` +
-          _sandboxAccounts.map(a => a.name).join(', '),
+          _sandboxAccounts.map(a => `${a.name} (${a.apiKey.slice(0, 4)}...)`).join(', '),
         )
       }
     }
