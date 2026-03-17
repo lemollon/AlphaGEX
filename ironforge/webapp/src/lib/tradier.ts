@@ -1022,11 +1022,31 @@ export async function closeIcOrderAllAccounts(
         const accountId = await getAccountIdForKey(acct.apiKey)
         if (!accountId) return
 
-        // Determine how many contracts this account opened
+        // Query Tradier for ACTUAL position quantities (not paper count).
+        // This prevents quantity mismatches from pileup (multiple opens without closes).
         let closeQty = paperContracts
-        const acctInfo = sandboxOpenInfo?.[acct.name]
-        if (acctInfo && typeof acctInfo === 'object' && 'contracts' in acctInfo) {
-          closeQty = acctInfo.contracts
+        try {
+          const positions = await getSandboxAccountPositions(acct.apiKey)
+          // Find the short put leg to determine actual quantity
+          const shortPutPos = positions.find(p => p.symbol === occPs && p.quantity < 0)
+          if (shortPutPos) {
+            const actualQty = Math.abs(shortPutPos.quantity)
+            if (actualQty !== closeQty) {
+              console.warn(
+                `[tradier] ${acct.name}: Tradier has ${actualQty} contracts (paper=${paperContracts}) ` +
+                `for ${occPs} — using Tradier quantity`,
+              )
+              closeQty = actualQty
+            }
+          }
+        } catch (posErr: unknown) {
+          // Fall back to paper count / sandbox open info
+          const acctInfo = sandboxOpenInfo?.[acct.name]
+          if (acctInfo && typeof acctInfo === 'object' && 'contracts' in acctInfo) {
+            closeQty = acctInfo.contracts
+          }
+          const msg = posErr instanceof Error ? posErr.message : String(posErr)
+          console.warn(`[tradier] ${acct.name}: Position query failed, using paper count ${closeQty}: ${msg}`)
         }
 
         const tagStr = tag ? tag.slice(0, 255) : ''
