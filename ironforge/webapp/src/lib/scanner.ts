@@ -36,6 +36,7 @@ import {
   getLoadedSandboxAccounts,
   getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
+  emergencyCloseSandboxPositions,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -471,26 +472,79 @@ async function closePosition(
     estimatedPrice = mtm?.cost_to_close ?? 0
   }
 
-  // Mirror close to sandbox FIRST (unless paper-only mode)
+  // Mirror close to sandbox — FLAME requires sandbox close to succeed (1:1 sync).
+  // SPARK/INFERNO: best-effort sandbox mirroring.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  if (!_sandboxPaperOnly) {
-    try {
-      const sbRows = await query(
-        `SELECT sandbox_order_id FROM ${botTable(bot.name, 'positions')}
-         WHERE position_id = $1 AND dte_mode = $2`,
-        [positionId, bot.dte],
-      )
-      let sandboxOpenInfo: Record<string, any> | null = null
-      if (sbRows[0]?.sandbox_order_id) {
-        try { sandboxOpenInfo = JSON.parse(sbRows[0].sandbox_order_id) } catch { /* ignore */ }
+  const isFlameBotClose = bot.name === 'flame'
+
+  // Even if _sandboxPaperOnly, FLAME must attempt sandbox close — positions are real.
+  const shouldCloseSandbox = !_sandboxPaperOnly || isFlameBotClose
+
+  if (shouldCloseSandbox) {
+    const sbRows = await query(
+      `SELECT sandbox_order_id FROM ${botTable(bot.name, 'positions')}
+       WHERE position_id = $1 AND dte_mode = $2`,
+      [positionId, bot.dte],
+    )
+    let sandboxOpenInfo: Record<string, any> | null = null
+    if (sbRows[0]?.sandbox_order_id) {
+      try { sandboxOpenInfo = JSON.parse(sbRows[0].sandbox_order_id) } catch { /* ignore */ }
+    }
+
+    // Attempt sandbox close with retries (3 attempts with 2s backoff)
+    const MAX_CLOSE_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_CLOSE_ATTEMPTS; attempt++) {
+      try {
+        sandboxCloseInfo = await closeIcOrderAllAccounts(
+          ticker, expiration, putShort, putLong, callShort, callLong,
+          contracts, estimatedPrice, positionId, sandboxOpenInfo,
+        )
+
+        // Check if User account actually closed (FLAME requirement)
+        if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+          console.error(
+            `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +
+            `(attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}) — ${positionId}`,
+          )
+          if (attempt < MAX_CLOSE_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 2000 * attempt))
+            continue
+          }
+        } else {
+          break // Success
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error(
+          `[scanner] ${isFlameBotClose ? 'FLAME' : bot.name.toUpperCase()} ` +
+          `SANDBOX CLOSE FAILED (attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}): ${positionId} — ${msg}`,
+        )
+        if (attempt < MAX_CLOSE_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, 2000 * attempt))
+        }
       }
-      sandboxCloseInfo = await closeIcOrderAllAccounts(
-        ticker, expiration, putShort, putLong, callShort, callLong,
-        contracts, estimatedPrice, positionId, sandboxOpenInfo,
+    }
+
+    // FLAME: log critical error if sandbox close still failed
+    if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+      console.error(
+        `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
+        `Position ${positionId} closed on paper but Tradier positions may still be open!`,
       )
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.warn(`[scanner] Sandbox close failed for ${positionId}: ${msg}`)
+      await query(
+        `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          'CRITICAL',
+          `SANDBOX CLOSE FAILED: ${positionId} — paper closed but Tradier may be open`,
+          JSON.stringify({
+            position_id: positionId, reason, attempts: MAX_CLOSE_ATTEMPTS,
+            sandbox_close_info: sandboxCloseInfo,
+            sandbox_paper_only: _sandboxPaperOnly,
+          }),
+          bot.dte,
+        ],
+      )
     }
   }
 
@@ -1193,19 +1247,22 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
       if (todayPositions.length > 0) {
         console.error(
           `[scanner] POST-EOD SANDBOX CHECK [${acct.name}]: ` +
-          `${todayPositions.length} positions still open after EOD close!`,
+          `${todayPositions.length} positions still open — EMERGENCY CLOSING!`,
         )
-        // Log for triage — actual emergency close would require sandboxPost
-        // which is internal to tradier.ts. The next daily cleanup will handle it.
+
+        // Actually close the stranded positions instead of just logging
+        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+
         await query(
           `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
            VALUES ($1, $2, $3, $4)`,
           [
-            'POST_EOD_CHECK',
-            `POST-EOD: ${todayPositions.length} sandbox positions still open [${acct.name}]`,
+            result.failed > 0 ? 'CRITICAL' : 'POST_EOD_CHECK',
+            `POST-EOD EMERGENCY CLOSE [${acct.name}]: ${result.closed} closed, ${result.failed} failed`,
             JSON.stringify({
               account: acct.name,
               positions: todayPositions.map(p => ({ symbol: p.symbol, qty: p.quantity })),
+              close_result: result,
             }),
             '2DTE',
           ],

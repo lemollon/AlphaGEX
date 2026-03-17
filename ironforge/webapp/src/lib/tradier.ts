@@ -1136,3 +1136,70 @@ export async function closeIcOrderAllAccounts(
 
   return results
 }
+
+/**
+ * Emergency close all open option positions on a sandbox account.
+ * Queries Tradier for current positions and market-sells each one.
+ * Used by post-EOD verification as a last resort.
+ */
+export async function emergencyCloseSandboxPositions(
+  apiKey: string,
+  accountName: string,
+): Promise<{ closed: number; failed: number; details: string[] }> {
+  const details: string[] = []
+  let closed = 0
+  let failed = 0
+
+  try {
+    const accountId = await getAccountIdForKey(apiKey)
+    if (!accountId) {
+      details.push(`No account ID found for ${accountName}`)
+      return { closed, failed: 1, details }
+    }
+
+    const positions = await getSandboxAccountPositions(apiKey)
+    const openPositions = positions.filter(p => p.quantity !== 0)
+
+    if (openPositions.length === 0) {
+      details.push(`${accountName}: No open positions`)
+      return { closed, failed, details }
+    }
+
+    details.push(`${accountName}: Found ${openPositions.length} open positions to close`)
+
+    for (const pos of openPositions) {
+      const qty = Math.abs(pos.quantity)
+      const side = pos.quantity > 0 ? 'sell_to_close' : 'buy_to_close'
+
+      try {
+        const body: Record<string, string> = {
+          class: 'option',
+          symbol: pos.symbol.slice(0, 3), // ticker from OCC
+          option_symbol: pos.symbol,
+          side,
+          quantity: String(qty),
+          type: 'market',
+          duration: 'day',
+        }
+        const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey)
+        if (result?.order?.id) {
+          closed++
+          details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${result.order.id}`)
+        } else {
+          failed++
+          details.push(`${accountName}: FAILED to close ${pos.symbol} x${qty}`)
+        }
+      } catch (err: unknown) {
+        failed++
+        const msg = err instanceof Error ? err.message : String(err)
+        details.push(`${accountName}: ERROR closing ${pos.symbol}: ${msg}`)
+      }
+    }
+  } catch (err: unknown) {
+    failed++
+    const msg = err instanceof Error ? err.message : String(err)
+    details.push(`${accountName}: Fatal error: ${msg}`)
+  }
+
+  return { closed, failed, details }
+}
