@@ -576,7 +576,19 @@ async function getSandboxBuyingPower(
   )
   if (!data) return null
   const balances = data.balances || {}
-  const bp = balances.option_buying_power ?? balances.buying_power
+  // PDT accounts nest buying power under balances.pdt.*
+  // Margin accounts nest under balances.margin.*
+  // Cash accounts have it at balances.* directly
+  const pdt = balances.pdt || {}
+  const margin = balances.margin || {}
+  const bp =
+    pdt.option_buying_power ??
+    margin.option_buying_power ??
+    balances.option_buying_power ??
+    pdt.stock_buying_power ??
+    margin.stock_buying_power ??
+    balances.buying_power ??
+    balances.total_cash
   return bp != null ? parseFloat(bp) : null
 }
 
@@ -623,8 +635,12 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       ])
 
       const bal = balData?.balances || {}
+      const pdt = bal.pdt || {}
+      const margin = bal.margin || {}
       const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
-      const bp = bal.option_buying_power ?? bal.buying_power
+      const bp =
+        pdt.option_buying_power ?? margin.option_buying_power ??
+        bal.option_buying_power ?? bal.buying_power ?? bal.total_cash
       const optionBp = bp != null ? parseFloat(bp) : null
 
       // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
@@ -747,9 +763,9 @@ async function getOrderFillPrice(
 /**
  * Place an Iron Condor in ALL configured sandbox accounts.
  *
- * Each account sizes independently based on its OWN buying power:
- * - Query account balance → compute usable BP (85%)
- * - max_contracts = floor(usableBP / collateralPer) — NO cap
+ * Sizing: uses the SMALLER of the paper-sized contract count and
+ * what the sandbox account's buying power supports.
+ * This keeps sandbox trades aligned with the paper account's capital.
  *
  * Returns Record<accountName, {order_id, contracts}> for successful placements.
  */
@@ -760,7 +776,7 @@ export async function placeIcOrderAllAccounts(
   putLong: number,
   callShort: number,
   callLong: number,
-  _paperContracts: number,
+  paperContracts: number,
   totalCredit: number,
   tag?: string,
 ): Promise<Record<string, SandboxOrderInfo>> {
@@ -796,12 +812,15 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size based on THIS account's BP — NO max cap
+      // Size: min of paper-sized count and what this account's BP supports
       const usableBP = bp * 0.85
-      const acctContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+      const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+      const acctContracts = paperContracts > 0
+        ? Math.min(paperContracts, bpContracts)
+        : bpContracts
 
       console.log(
-        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → usable=$${usableBP.toFixed(0)} → ${acctContracts} contracts`,
+        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → bpMax=${bpContracts} → capped at ${acctContracts} (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
