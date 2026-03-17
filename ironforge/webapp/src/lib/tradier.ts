@@ -763,9 +763,9 @@ async function getOrderFillPrice(
 /**
  * Place an Iron Condor in ALL configured sandbox accounts.
  *
- * Each account sizes independently based on its OWN buying power:
- * - Query account balance → compute usable BP (85%)
- * - max_contracts = floor(usableBP / collateralPer) — NO cap
+ * Sizing: uses the SMALLER of the paper-sized contract count and
+ * what the sandbox account's buying power supports.
+ * This keeps sandbox trades aligned with the paper account's capital.
  *
  * Returns Record<accountName, {order_id, contracts}> for successful placements.
  */
@@ -776,7 +776,7 @@ export async function placeIcOrderAllAccounts(
   putLong: number,
   callShort: number,
   callLong: number,
-  _paperContracts: number,
+  paperContracts: number,
   totalCredit: number,
   tag?: string,
 ): Promise<Record<string, SandboxOrderInfo>> {
@@ -812,12 +812,15 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size based on THIS account's BP — NO max cap
+      // Size: min of paper-sized count and what this account's BP supports
       const usableBP = bp * 0.85
-      const acctContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+      const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+      const acctContracts = paperContracts > 0
+        ? Math.min(paperContracts, bpContracts)
+        : bpContracts
 
       console.log(
-        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → usable=$${usableBP.toFixed(0)} → ${acctContracts} contracts`,
+        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → bpMax=${bpContracts} → capped at ${acctContracts} (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
