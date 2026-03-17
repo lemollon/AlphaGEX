@@ -3,13 +3,45 @@
  *
  * The webapp calls Tradier directly so the Positions tab can show
  * real-time unrealized P&L without waiting for the notebook to run.
+ *
+ * KEY DESIGN: When TRADIER_API_KEY env var is not set, we auto-load
+ * the first sandbox account key from the DB. This ensures the scanner
+ * can fetch quotes even when all keys are managed via the /accounts UI.
  */
 
-const TRADIER_API_KEY = process.env.TRADIER_API_KEY || ''
-// Use production Tradier for QUOTES (read-only, accurate pricing).
-// Sandbox orders go through SANDBOX_URL (line 222) with per-account sandbox keys.
+let _tradierApiKey = process.env.TRADIER_API_KEY || ''
+let _tradierApiKeyLoadedFromDb = false
+
+// If TRADIER_BASE_URL is not explicitly set AND TRADIER_API_KEY is not set,
+// default to sandbox (since DB accounts are sandbox keys).
+// If TRADIER_API_KEY IS set, user controls the base URL explicitly.
 const TRADIER_BASE_URL =
-  process.env.TRADIER_BASE_URL || 'https://api.tradier.com/v1'
+  process.env.TRADIER_BASE_URL ||
+  (_tradierApiKey ? 'https://api.tradier.com/v1' : 'https://sandbox.tradier.com/v1')
+
+/**
+ * Ensure we have an API key for quotes — load from DB if env var is empty.
+ * Called lazily before the first quote request.
+ */
+async function ensureQuoteApiKey(): Promise<void> {
+  if (_tradierApiKey || _tradierApiKeyLoadedFromDb) return
+  _tradierApiKeyLoadedFromDb = true
+
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT api_key FROM ironforge_accounts
+       WHERE is_active = TRUE ORDER BY id LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].api_key) {
+      _tradierApiKey = rows[0].api_key.trim()
+      console.log(`[tradier] Quote API key loaded from DB (${_tradierApiKey.slice(0, 4)}...) — using ${TRADIER_BASE_URL}`)
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] Failed to load quote API key from DB: ${msg}`)
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -78,8 +110,11 @@ async function tradierGet(
   endpoint: string,
   params?: Record<string, string>,
 ): Promise<any> {
-  if (!TRADIER_API_KEY) {
-    console.error(`Tradier: API key not configured — cannot call ${endpoint}`)
+  // Lazy-load API key from DB if env var wasn't set
+  await ensureQuoteApiKey()
+
+  if (!_tradierApiKey) {
+    console.error(`Tradier: API key not configured (no env var, no DB accounts) — cannot call ${endpoint}`)
     return null
   }
 
@@ -92,7 +127,7 @@ async function tradierGet(
   try {
     res = await fetch(url.toString(), {
       headers: {
-        Authorization: `Bearer ${TRADIER_API_KEY}`,
+        Authorization: `Bearer ${_tradierApiKey}`,
         Accept: 'application/json',
       },
       cache: 'no-store',
@@ -329,9 +364,15 @@ export async function getIcEntryCredit(
   }
 }
 
-/** Whether the Tradier API key is configured. */
+/** Whether the Tradier API key is configured (env var or DB). */
 export function isConfigured(): boolean {
-  return !!TRADIER_API_KEY
+  return !!_tradierApiKey
+}
+
+/** Async version — ensures DB key is loaded before checking. */
+export async function isConfiguredAsync(): Promise<boolean> {
+  await ensureQuoteApiKey()
+  return !!_tradierApiKey
 }
 
 /* ------------------------------------------------------------------ */
@@ -825,7 +866,8 @@ export interface LegQuote {
 export async function getBatchOptionQuotes(
   occSymbols: string[],
 ): Promise<Record<string, LegQuote>> {
-  if (!TRADIER_API_KEY || occSymbols.length === 0) return {}
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey || occSymbols.length === 0) return {}
 
   const data = await tradierGet('/markets/quotes', {
     symbols: occSymbols.join(','),
