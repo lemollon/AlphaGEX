@@ -186,9 +186,9 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   return hhmm >= 830 && hhmm <= entryEnd
 }
 
-/** EOD cutoff at 2:45 PM CT (Fix 6 — was 3:45 PM) */
+/** EOD cutoff at 2:50 PM CT (was 2:45, originally 3:45 PM) */
 function isAfterEodCutoff(ct: Date): boolean {
-  return ctHHMM(ct) >= 1445
+  return ctHHMM(ct) >= 1450
 }
 
 /* ------------------------------------------------------------------ */
@@ -1171,8 +1171,8 @@ async function prescanSandboxHealthCheck(): Promise<void> {
 
 async function postEodSandboxVerify(ct: Date): Promise<void> {
   const hhmm = ctHHMM(ct)
-  // Only run in the 2:45-3:10 PM CT window
-  if (hhmm < 1445 || hhmm > 1510) return
+  // Only run in the 2:50-3:10 PM CT window
+  if (hhmm < 1450 || hhmm > 1510) return
 
   const accounts = await getLoadedSandboxAccountsAsync()
   if (accounts.length === 0) return
@@ -1214,6 +1214,73 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] Post-EOD sandbox check failed [${acct.name}]: ${msg}`)
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  EOD safety net — force-close ALL open positions across ALL bots    */
+/*  Runs at 2:55 PM CT as a backstop in case the normal EOD close     */
+/*  was missed (scanner restart, MTM failure, etc.)                    */
+/* ------------------------------------------------------------------ */
+
+let _lastSafetyNetDate = ''
+
+async function eodSafetyNetSweep(ct: Date): Promise<void> {
+  const hhmm = ctHHMM(ct)
+  // Only run between 2:55-3:05 PM CT
+  if (hhmm < 1455 || hhmm > 1505) return
+
+  // Only run once per day
+  const todayStr = ct.toISOString().slice(0, 10)
+  if (_lastSafetyNetDate === todayStr) return
+  _lastSafetyNetDate = todayStr
+
+  console.log('[scanner] EOD SAFETY NET: Checking all bots for stranded positions...')
+
+  for (const bot of BOTS) {
+    try {
+      const openRows = await query(
+        `SELECT position_id, ticker, expiration,
+                put_short_strike, put_long_strike,
+                call_short_strike, call_long_strike,
+                contracts, total_credit, collateral_required
+         FROM ${botTable(bot.name, 'positions')}
+         WHERE status = 'open' AND dte_mode = $1`,
+        [bot.dte],
+      )
+
+      if (openRows.length === 0) continue
+
+      console.error(
+        `[scanner] EOD SAFETY NET: ${bot.name.toUpperCase()} has ${openRows.length} ` +
+        `open position(s) at ${hhmm} CT — force-closing!`,
+      )
+
+      for (const pos of openRows) {
+        const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
+        try {
+          await closePosition(
+            bot,
+            pos.position_id,
+            pos.ticker || 'SPY',
+            expiration,
+            num(pos.put_short_strike), num(pos.put_long_strike),
+            num(pos.call_short_strike), num(pos.call_long_strike),
+            int(pos.contracts),
+            num(pos.total_credit),
+            num(pos.collateral_required),
+            'eod_safety_net',
+          )
+          console.log(`[scanner] EOD SAFETY NET: Closed ${pos.position_id} [${bot.name}]`)
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error(`[scanner] EOD SAFETY NET: Failed to close ${pos.position_id}: ${msg}`)
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[scanner] EOD SAFETY NET: Error checking ${bot.name}: ${msg}`)
     }
   }
 }
@@ -1533,6 +1600,17 @@ async function runAllScans(): Promise<void> {
       }),
     ),
   )
+
+  // EOD safety net: at 2:55 PM CT, sweep ALL bots for any stranded positions
+  // This catches positions that survived the normal EOD close (scanner restart,
+  // MTM failure, etc.). Runs once per day across all bots.
+  try {
+    await eodSafetyNetSweep(ct)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error(`[scanner] EOD safety net sweep failed: ${msg}`)
+  }
+
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
   console.log(`[scanner] === scan cycle #${_scanCount} complete (${elapsed}s) ===`)
 }
