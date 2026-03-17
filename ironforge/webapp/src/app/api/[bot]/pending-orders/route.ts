@@ -34,7 +34,7 @@ export async function GET(
               status, fill_price, resolved_at,
               created_at, created_date
        FROM ${botTable(bot, 'pending_orders')}
-       WHERE created_date = CURRENT_DATE()
+       WHERE created_date = CURRENT_DATE
          ${dteFilter}
        ORDER BY created_at DESC
        LIMIT 50`,

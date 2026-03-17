@@ -207,7 +207,7 @@ export default function Home() {
           <span className="text-amber-400">Strategy</span> Configuration
         </h2>
         <p className="text-xs text-forge-muted mb-5">
-          Shared parameters for both FLAME and SPARK &mdash; only DTE differs
+          Shared parameters for FLAME, SPARK &amp; INFERNO &mdash; DTE and aggressiveness differ
         </p>
 
         <div className="grid md:grid-cols-2 gap-5">
@@ -299,7 +299,7 @@ export default function Home() {
       {/* DTE Comparison */}
       <section>
         <h2 className="text-xl font-bold mb-4">
-          <span className="text-amber-400">FLAME</span> vs <span className="text-blue-400">SPARK</span>
+          <span className="text-amber-400">FLAME</span> vs <span className="text-blue-400">SPARK</span> vs <span className="text-red-400">INFERNO</span>
         </h2>
         <div className="rounded-xl border border-forge-border bg-forge-card/60 overflow-hidden">
           <table className="w-full text-sm">
@@ -308,20 +308,24 @@ export default function Home() {
                 <th className="text-left py-3 px-4 text-forge-muted font-medium">Parameter</th>
                 <th className="text-center py-3 px-4 text-amber-400 font-semibold">FLAME</th>
                 <th className="text-center py-3 px-4 text-blue-400 font-semibold">SPARK</th>
+                <th className="text-center py-3 px-4 text-red-400 font-semibold">INFERNO</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-forge-border/50">
               {[
-                { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', diff: true },
-                { param: 'Spread Width', flame: '$5.00', spark: '$5.00', diff: false },
-                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', diff: false },
-                { param: 'Stop Loss', flame: '100%', spark: '100%', diff: false },
-                { param: 'Max Contracts', flame: '10', spark: '10', diff: false },
-                { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', diff: false },
-                { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', diff: true },
-                { param: 'Max Trades/Day', flame: '1', spark: '1', diff: false },
-                { param: 'Premium', flame: 'Higher', spark: 'Lower', diff: true },
-                { param: 'Resolution', flame: '~2 days', spark: '~1 day', diff: true },
+                { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', inferno: '0 DTE', diff: true },
+                { param: 'Spread Width', flame: '$5.00', spark: '$5.00', inferno: '$5.00', diff: false },
+                { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', inferno: '1.0x', diff: true },
+                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', inferno: '50%', diff: true },
+                { param: 'Stop Loss', flame: '100%', spark: '100%', inferno: '200%', diff: true },
+                { param: 'Max Contracts', flame: '10', spark: '10', inferno: '10', diff: false },
+                { param: 'Max Trades/Day', flame: '1', spark: '1', inferno: 'Unlimited', diff: true },
+                { param: 'Max Positions', flame: '1', spark: '1', inferno: '3', diff: true },
+                { param: 'PDT Enforcement', flame: 'Yes (3/5)', spark: 'Yes (3/5)', inferno: 'No', diff: true },
+                { param: 'Entry Window', flame: '8:30–2:00', spark: '8:30–2:00', inferno: '8:30–2:30', diff: true },
+                { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', inferno: 'Fastest', diff: true },
+                { param: 'Premium', flame: 'Higher', spark: 'Lower', inferno: 'Lowest', diff: true },
+                { param: 'Resolution', flame: '~2 days', spark: '~1 day', inferno: 'Same day', diff: true },
               ].map((row) => (
                 <tr key={row.param}>
                   <td className="py-2.5 px-4 text-gray-400">{row.param}</td>
@@ -330,6 +334,9 @@ export default function Home() {
                   </td>
                   <td className={`py-2.5 px-4 text-center font-medium ${row.diff ? 'text-blue-400' : 'text-gray-300'}`}>
                     {row.spark}
+                  </td>
+                  <td className={`py-2.5 px-4 text-center font-medium ${row.diff ? 'text-red-400' : 'text-gray-300'}`}>
+                    {row.inferno}
                   </td>
                 </tr>
               ))}

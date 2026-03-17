@@ -72,12 +72,12 @@ export async function GET(
               collateral_required, open_time,
               CAST(expiration AS DATE) AS exp_date,
               CAST(open_time AS DATE) AS open_date,
-              CURRENT_DATE() AS today
+              CURRENT_DATE AS today
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open'
          AND (
-           CAST(expiration AS DATE) < CURRENT_DATE()
-           OR CAST(open_time AS DATE) < CURRENT_DATE()
+           CAST(expiration AS DATE) < CURRENT_DATE
+           OR CAST(open_time AS DATE) < CURRENT_DATE
            OR dte_mode IS NULL
            OR dte_mode != '${escapeSql(dte)}'
          )
@@ -167,12 +167,12 @@ export async function POST(
               collateral_required,
               CAST(expiration AS DATE) AS exp_date,
               CAST(open_time AS DATE) AS open_date,
-              CURRENT_DATE() AS today
+              CURRENT_DATE AS today
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open'
          AND (
-           CAST(expiration AS DATE) < CURRENT_DATE()
-           OR CAST(open_time AS DATE) < CURRENT_DATE()
+           CAST(expiration AS DATE) < CURRENT_DATE
+           OR CAST(open_time AS DATE) < CURRENT_DATE
            OR dte_mode IS NULL
            OR dte_mode != '${escapeSql(dte)}'
          )

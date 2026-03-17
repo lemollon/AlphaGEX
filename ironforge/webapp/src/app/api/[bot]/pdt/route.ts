@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -315,7 +315,7 @@ async function buildStatusResponse(
   const todayRows = await dbQuery(
     `SELECT COUNT(*) as cnt, MIN(opened_at) as first_trade_time
      FROM ${botTable(bot, 'pdt_log')}
-     WHERE trade_date = CURRENT_DATE() AND dte_mode = '${escapeSql(dte)}'`,
+     WHERE trade_date = ${CT_TODAY} AND dte_mode = '${escapeSql(dte)}'`,
   )
   const todayTradesCount = toInt(todayRows[0]?.cnt)
   const tradedToday = maxTradesPerDay > 0 && todayTradesCount >= maxTradesPerDay
