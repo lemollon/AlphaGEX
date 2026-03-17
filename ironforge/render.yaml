@@ -16,8 +16,8 @@ services:
     runtime: node
     plan: free
     rootDir: ironforge/webapp
-    buildCommand: npm install && npm run build
-    startCommand: node .next/standalone/server.js
+    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: node start.js
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
