@@ -89,7 +89,7 @@ export async function GET(
             const entryCredit = num(pos.total_credit)
             const mtm = await getIcMarkToMarket(
               pos.ticker || 'SPY',
-              String(pos.expiration).slice(0, 10),
+              pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10),
               num(pos.put_short_strike),
               num(pos.put_long_strike),
               num(pos.call_short_strike),

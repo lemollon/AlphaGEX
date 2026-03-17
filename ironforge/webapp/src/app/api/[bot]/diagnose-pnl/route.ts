@@ -66,7 +66,7 @@ export async function GET(
         const entryCredit = num(r.total_credit)
         const spreadWidth = num(r.spread_width) || Math.round((ps - pl) * 100) / 100
         const ticker = r.ticker || 'SPY'
-        const expiration = r.expiration ? String(r.expiration).slice(0, 10) : ''
+        const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
         // Method A: getIcMarkToMarket (used by position-monitor & status)
         let methodA: Record<string, unknown> = { error: 'Tradier not configured' }

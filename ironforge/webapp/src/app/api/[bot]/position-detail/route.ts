@@ -55,7 +55,7 @@ export async function GET(
         const callCredit = num(r.call_credit)
         const collateral = num(r.collateral_required)
         const ticker = r.ticker || 'SPY'
-        const expiration = r.expiration ? String(r.expiration).slice(0, 10) : ''
+        const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
         const occPs = buildOccSymbol(ticker, expiration, ps, 'P')
         const occPl = buildOccSymbol(ticker, expiration, pl, 'P')
