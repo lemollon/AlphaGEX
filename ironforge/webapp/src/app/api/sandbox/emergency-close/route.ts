@@ -120,7 +120,14 @@ export async function GET(): Promise<NextResponse> {
         sandboxGet(`/accounts/${accountId}/positions`, acct.apiKey),
       ])
 
-      const bp = balData?.balances?.option_buying_power ?? balData?.balances?.buying_power
+      // Tradier nests buying power differently for margin/PDT/cash accounts
+      const bal = balData?.balances || {}
+      const pdt = bal.pdt || {}
+      const margin = bal.margin || {}
+      const bp =
+        pdt.option_buying_power ?? margin.option_buying_power ??
+        bal.option_buying_power ?? pdt.stock_buying_power ??
+        margin.stock_buying_power ?? bal.buying_power ?? bal.total_cash
       let positions = posData?.positions?.position
       if (!positions) positions = []
       if (!Array.isArray(positions)) positions = [positions]
@@ -184,9 +191,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           return
         }
 
-        // Get current buying power
+        // Get current buying power (Tradier nests under margin/pdt for non-cash accounts)
         const balBefore = await sandboxGet(`/accounts/${accountId}/balances`, acct.apiKey)
-        const bpBefore = balBefore?.balances?.option_buying_power ?? balBefore?.balances?.buying_power
+        const balB = balBefore?.balances || {}
+        const pdtB = balB.pdt || {}; const marginB = balB.margin || {}
+        const bpBefore = pdtB.option_buying_power ?? marginB.option_buying_power ??
+          balB.option_buying_power ?? marginB.stock_buying_power ?? balB.buying_power ?? balB.total_cash
         const bpBeforeNum = bpBefore != null ? parseFloat(bpBefore) : null
 
         // Get all positions
@@ -239,7 +249,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         // Re-check buying power after closes
         const balAfter = await sandboxGet(`/accounts/${accountId}/balances`, acct.apiKey)
-        const bpAfter = balAfter?.balances?.option_buying_power ?? balAfter?.balances?.buying_power
+        const balA = balAfter?.balances || {}
+        const pdtA = balA.pdt || {}; const marginA = balA.margin || {}
+        const bpAfter = pdtA.option_buying_power ?? marginA.option_buying_power ??
+          balA.option_buying_power ?? marginA.stock_buying_power ?? balA.buying_power ?? balA.total_cash
         const bpAfterNum = bpAfter != null ? parseFloat(bpAfter) : null
 
         accountResults.push({

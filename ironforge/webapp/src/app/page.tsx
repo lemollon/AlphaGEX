@@ -44,7 +44,7 @@ const sharedConfig = {
   minCredit: '$0.05',
   buyingPowerUsage: '85%',
   pdtLimit: '3 / 5 rolling days',
-  eodCutoff: '2:45 PM CT',
+  eodCutoff: '2:50 PM CT',
   entryWindow: '8:30 AM – 2:00 PM CT',
   scanFrequency: 'Every 1 min',
   mtmFailLimit: 10,
@@ -129,7 +129,7 @@ const exitRules = [
   { trigger: 'PT (Midday)', condition: '20%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
   { trigger: 'PT (Afternoon)', condition: '15%  1:00–2:44 PM CT', color: 'text-orange-400' },
   { trigger: 'Stop Loss', condition: '100%  Cost ≥ 200% of credit', color: 'text-red-400' },
-  { trigger: 'EOD Cutoff', condition: '2:45 PM CT', color: 'text-amber-400' },
+  { trigger: 'EOD Cutoff', condition: '2:50 PM CT', color: 'text-amber-400' },
   { trigger: 'Stale/Expired', condition: 'Position from prior day', color: 'text-amber-400' },
   { trigger: 'Data Failure', condition: '10 MTM failures', color: 'text-red-400' },
 ]
