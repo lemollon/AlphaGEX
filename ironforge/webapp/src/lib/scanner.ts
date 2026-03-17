@@ -30,6 +30,7 @@ import {
   getIcEntryCredit,
   getIcMarkToMarket,
   isConfigured,
+  isConfiguredAsync,
   placeIcOrderAllAccounts,
   closeIcOrderAllAccounts,
   getLoadedSandboxAccounts,
@@ -1329,7 +1330,7 @@ async function scanBot(bot: BotDef): Promise<void> {
         (maxTrades === 1 && !hasOpenPosition)
 
       if (canOpenMore) {
-        if (!isConfigured()) {
+        if (!(await isConfiguredAsync())) {
           action = 'skip'
           reason = 'tradier_not_configured'
         } else {
