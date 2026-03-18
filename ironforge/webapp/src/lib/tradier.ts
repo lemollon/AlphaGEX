@@ -391,18 +391,44 @@ interface SandboxAccount {
 }
 
 /**
- * Bot → sandbox account mapping.
- * User: all 3 bots.  Matt & Logan: FLAME + INFERNO only.
+ * Bot → sandbox account mapping with BP share allocation.
+ *
+ * Each bot gets a fixed percentage of the account's buying power.
+ * This prevents one bot from consuming all BP on a shared account.
+ *
+ * User (3 bots):  FLAME=33%, SPARK=33%, INFERNO=33%
+ * Matt (2 bots):  FLAME=50%, INFERNO=50%
+ * Logan (2 bots): FLAME=50%, INFERNO=50%
  */
-const BOT_ACCOUNTS: Record<string, string[]> = {
-  flame:   ['User', 'Matt', 'Logan'],
-  spark:   ['User'],
-  inferno: ['User', 'Matt', 'Logan'],
+interface BotAccountConfig {
+  accounts: string[]
+  /** BP share per account name (0-1). e.g., 0.33 = 33% of account BP */
+  bpShare: Record<string, number>
+}
+
+const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
+  flame: {
+    accounts: ['User', 'Matt', 'Logan'],
+    bpShare:  { User: 0.33, Matt: 0.50, Logan: 0.50 },
+  },
+  spark: {
+    accounts: ['User'],
+    bpShare:  { User: 0.33 },
+  },
+  inferno: {
+    accounts: ['User', 'Matt', 'Logan'],
+    bpShare:  { User: 0.33, Matt: 0.50, Logan: 0.50 },
+  },
 }
 
 /** Get sandbox accounts that a specific bot trades on. */
 export function getAccountsForBot(botName: string): string[] {
-  return BOT_ACCOUNTS[botName] ?? ['User']
+  return BOT_ACCOUNTS[botName]?.accounts ?? ['User']
+}
+
+/** Get this bot's BP share for a specific account (0-1). */
+export function getBpShareForBot(botName: string, accountName: string): number {
+  return BOT_ACCOUNTS[botName]?.bpShare[accountName] ?? 1.0
 }
 
 /** Load all configured sandbox accounts from env vars. */
@@ -834,16 +860,17 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size relative to this account's own buying power (85% usage).
-      // Each account trades proportionally to its capital — paper and sandbox
-      // will have different contract counts if their balances differ.
+      // Size using this bot's share of the account's buying power.
+      // On shared accounts, BP is split: User (3 bots) = 33% each,
+      // Matt/Logan (2 bots) = 50% each.  Prevents one bot hogging all BP.
       const SANDBOX_MAX_CONTRACTS = 200
-      const usableBP = bp * 0.85
+      const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
+      const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
       const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       console.log(
-        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → bpMax=${bpContracts} → capped at ${acctContracts} (paper=${paperContracts})`,
+        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} × ${(botShare * 100).toFixed(0)}% share → ${acctContracts} contracts (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
