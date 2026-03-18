@@ -9,7 +9,7 @@
 #   bash ironforge/webapp/scripts/smoke-test-v2.sh https://your-app.onrender.com
 #   bash ironforge/webapp/scripts/smoke-test-v2.sh http://localhost:3000
 #
-set -euo pipefail
+set -uo pipefail
 
 BASE_URL="${1:?Usage: $0 <base-url>}"
 BASE_URL="${BASE_URL%/}"
