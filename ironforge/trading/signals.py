@@ -164,11 +164,10 @@ class SignalGenerator:
             return target_expiration
 
     def calculate_strikes(
-        self, spot_price: float, expected_move: float
+        self, spot_price: float, expected_move: float, sd_override: float = 0.0,
     ) -> Dict[str, float]:
         """Calculate Iron Condor strikes using SD-based math."""
-        MIN_SD_FLOOR = 1.2
-        sd = max(self.config.sd_multiplier, MIN_SD_FLOOR)
+        sd = sd_override if sd_override > 0 else self.config.sd_multiplier
         width = self.config.spread_width
 
         min_expected_move = spot_price * 0.005
@@ -403,9 +402,6 @@ class SignalGenerator:
                 reasoning="No valid expiration with options available",
             )
 
-        # Calculate strikes
-        strikes = self.calculate_strikes(spot, expected_move)
-
         # Get available strikes from chain for validation
         available_strikes = None
         if self.tradier:
@@ -416,14 +412,61 @@ class SignalGenerator:
             except Exception:
                 pass
 
-        # Enforce symmetric wings
-        symmetric = self.enforce_symmetric_wings(
-            strikes["put_short"],
-            strikes["put_long"],
-            strikes["call_short"],
-            strikes["call_long"],
-            available_strikes=available_strikes,
-        )
+        # Dynamic SD walk-in: start at configured SD, step down until we get
+        # viable credit or hit the floor (0.5 SD).
+        SD_STEP = 0.1
+        SD_FLOOR = 0.5
+        used_sd = self.config.sd_multiplier
+        total_credit = 0.0
+        credits = None
+        put_short = put_long = call_short = call_long = 0.0
+        wings_adjusted = False
+        symmetric = None
+
+        while True:
+            strikes = self.calculate_strikes(spot, expected_move, sd_override=used_sd)
+
+            symmetric = self.enforce_symmetric_wings(
+                strikes["put_short"],
+                strikes["put_long"],
+                strikes["call_short"],
+                strikes["call_long"],
+                available_strikes=available_strikes,
+            )
+
+            if symmetric is not None:
+                put_short = symmetric["short_put"]
+                put_long = symmetric["long_put"]
+                call_short = symmetric["short_call"]
+                call_long = symmetric["long_call"]
+                wings_adjusted = symmetric["adjusted"]
+
+                credits = self.get_real_credits(
+                    expiration, put_short, put_long, call_short, call_long
+                )
+                if not credits:
+                    credits = self.estimate_credits(
+                        spot, expected_move, put_short, put_long, call_short, call_long, vix
+                    )
+                total_credit = credits["total_credit"]
+
+            if total_credit >= self.config.min_credit:
+                break  # found viable credit
+
+            next_sd = round(used_sd - SD_STEP, 1)
+            if next_sd < SD_FLOOR:
+                break  # hit floor, give up
+            logger.info(
+                f"{self.config.bot_name}: SD walk-in {used_sd:.1f} → {next_sd:.1f} "
+                f"(credit ${total_credit:.4f} < min ${self.config.min_credit})"
+            )
+            used_sd = next_sd
+
+        if used_sd != self.config.sd_multiplier:
+            logger.info(
+                f"{self.config.bot_name}: Dynamic SD settled at {used_sd:.1f} "
+                f"(configured {self.config.sd_multiplier:.1f})"
+            )
 
         if symmetric is None:
             return IronCondorSignal(
@@ -434,24 +477,7 @@ class SignalGenerator:
                 reasoning="No valid strikes available for symmetric wings",
             )
 
-        put_short = symmetric["short_put"]
-        put_long = symmetric["long_put"]
-        call_short = symmetric["short_call"]
-        call_long = symmetric["long_call"]
-        wings_adjusted = symmetric["adjusted"]
-
-        # Get real credits
-        credits = self.get_real_credits(
-            expiration, put_short, put_long, call_short, call_long
-        )
-        if not credits:
-            credits = self.estimate_credits(
-                spot, expected_move, put_short, put_long, call_short, call_long, vix
-            )
-
-        total_credit = credits["total_credit"]
-
-        # Minimum credit check
+        # Minimum credit check (after walk-in exhausted)
         if total_credit < self.config.min_credit:
             return IronCondorSignal(
                 spot_price=spot,
@@ -464,7 +490,7 @@ class SignalGenerator:
                 expiration=expiration,
                 total_credit=total_credit,
                 is_valid=False,
-                reasoning=f"Credit ${total_credit:.2f} below minimum ${self.config.min_credit}",
+                reasoning=f"Credit ${total_credit:.2f} below minimum ${self.config.min_credit} (after SD walk-in to {used_sd:.1f})",
             )
 
         # Run advisor for Oracle-compatible fields

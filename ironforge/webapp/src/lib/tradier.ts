@@ -812,12 +812,15 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size: min of paper-sized count and what this account's BP supports
+      // Size: min of paper-sized count and what this account's BP supports.
+      // Safety cap at 50 contracts to prevent runaway sandbox orders.
+      const SANDBOX_MAX_CONTRACTS = 50
       const usableBP = bp * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
-      const acctContracts = paperContracts > 0
-        ? Math.min(paperContracts, bpContracts)
-        : bpContracts
+      const acctContracts = Math.min(
+        SANDBOX_MAX_CONTRACTS,
+        paperContracts > 0 ? Math.min(paperContracts, bpContracts) : bpContracts,
+      )
 
       console.log(
         `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → bpMax=${bpContracts} → capped at ${acctContracts} (paper=${paperContracts})`,
