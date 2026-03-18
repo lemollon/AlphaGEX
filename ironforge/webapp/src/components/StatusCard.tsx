@@ -86,6 +86,10 @@ export default function StatusCard({
   const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl
   const unrealizedAvailable = unrealized != null
   const unrealizedPositive = (unrealized ?? 0) >= 0
+  // Unrealized as % of collateral at risk (most meaningful for IC traders)
+  const unrealizedPct = unrealizedAvailable && account.collateral_in_use > 0
+    ? ((unrealized ?? 0) / account.collateral_in_use) * 100
+    : null
   const totalPnl = unrealizedAvailable
     ? account.cumulative_pnl + (unrealized ?? 0)
     : null
@@ -386,6 +390,11 @@ export default function StatusCard({
                 : `${unrealizedPositive ? '+' : ''}$${(unrealized ?? 0).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                   })}`}
+            {unrealizedPct != null && unrealized !== 0 && (
+              <span className="text-sm ml-1">
+                ({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}%)
+              </span>
+            )}
           </p>
         </div>
         <div>
