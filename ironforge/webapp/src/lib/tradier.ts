@@ -390,6 +390,21 @@ interface SandboxAccount {
   cachedAccountId?: string
 }
 
+/**
+ * Bot → sandbox account mapping.
+ * User: all 3 bots.  Matt & Logan: FLAME + INFERNO only.
+ */
+const BOT_ACCOUNTS: Record<string, string[]> = {
+  flame:   ['User', 'Matt', 'Logan'],
+  spark:   ['User'],
+  inferno: ['User', 'Matt', 'Logan'],
+}
+
+/** Get sandbox accounts that a specific bot trades on. */
+export function getAccountsForBot(botName: string): string[] {
+  return BOT_ACCOUNTS[botName] ?? ['User']
+}
+
 /** Load all configured sandbox accounts from env vars. */
 function getSandboxAccountsFromEnv(): SandboxAccount[] {
   const accounts: SandboxAccount[] = []
@@ -779,9 +794,16 @@ export async function placeIcOrderAllAccounts(
   paperContracts: number,
   totalCredit: number,
   tag?: string,
+  botName?: string,
 ): Promise<Record<string, SandboxOrderInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
+
+  // Filter accounts by bot (User trades all bots; Matt/Logan only FLAME+INFERNO)
+  const allowedAccounts = botName ? getAccountsForBot(botName) : null
+  const eligibleAccounts = allowedAccounts
+    ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
+    : _sandboxAccounts
 
   // Shared OCC symbols — same strikes for all accounts
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
@@ -795,8 +817,8 @@ export async function placeIcOrderAllAccounts(
   if (collateralPer <= 0) return results
 
   // Process User first (for fill price later), then others in parallel
-  const userAccts = _sandboxAccounts.filter((a) => a.name === 'User')
-  const otherAccts = _sandboxAccounts.filter((a) => a.name !== 'User')
+  const userAccts = eligibleAccounts.filter((a) => a.name === 'User')
+  const otherAccts = eligibleAccounts.filter((a) => a.name !== 'User')
 
   async function placeForAccount(acct: SandboxAccount) {
     try {

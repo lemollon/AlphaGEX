@@ -865,7 +865,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         sandboxOrderIds = await placeIcOrderAllAccounts(
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-          maxContracts, credits.totalCredit, positionId,
+          maxContracts, credits.totalCredit, positionId, bot.name,
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -1000,7 +1000,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-        maxContracts, credits.totalCredit, positionId,
+        maxContracts, credits.totalCredit, positionId, bot.name,
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
