@@ -98,8 +98,10 @@ def flame_config() -> BotConfig:
 
 
 def spark_config() -> BotConfig:
-    """Default SPARK configuration (1DTE)."""
-    return BotConfig(bot_name="SPARK", min_dte=1, dte_mode="1DTE")
+    """Default SPARK configuration (1DTE).
+    SD=0.8 (not 1.2) because 1DTE far-OTM options have zero bid at SD=1.2.
+    """
+    return BotConfig(bot_name="SPARK", min_dte=1, dte_mode="1DTE", sd_multiplier=0.8)
 
 
 def inferno_config() -> BotConfig:
