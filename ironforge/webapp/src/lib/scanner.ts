@@ -1731,22 +1731,20 @@ async function runAllScans(): Promise<void> {
     console.warn(`[scanner] Config override load failed (using defaults): ${msg}`)
   }
 
-  // Daily sandbox cleanup at market open (Fix 7)
+  // Daily sandbox cleanup at market open (Fix 7) — fire-and-forget.
+  // Cleanup runs in the background so it NEVER blocks bot scanning.
+  // If you already force-closed positions manually, cleanup finds nothing and exits fast.
   const ct = getCentralTime()
-  try {
-    await dailySandboxCleanup(ct)
-  } catch (err: unknown) {
+  dailySandboxCleanup(ct).catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[scanner] Daily sandbox cleanup failed (non-fatal): ${msg}`)
-  }
+  })
 
-  // Pre-scan sandbox health check (Fix 8)
-  try {
-    await prescanSandboxHealthCheck()
-  } catch (err: unknown) {
+  // Pre-scan sandbox health check (Fix 8) — also non-blocking.
+  prescanSandboxHealthCheck().catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Sandbox health check failed (non-fatal): ${msg}`)
-  }
+  })
 
   // Skip scanning entirely after 3:10 PM CT — market closed, no work to do.
   // Safety net runs in the 2:55-3:05 window, so we keep scanning until 3:10.

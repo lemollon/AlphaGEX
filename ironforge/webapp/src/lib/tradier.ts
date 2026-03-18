@@ -759,14 +759,22 @@ async function getOrderFillPrice(
   accountId: string,
   orderId: number,
 ): Promise<number | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Poll until Tradier reports filled. Market orders WILL fill — keep polling
+  // until they do. No timeout. Start with 1s intervals, back off to 2s after
+  // 10 attempts, 3s after 20.
+  const startMs = Date.now()
+  let attempt = 0
+
+  for (;;) {
+    attempt++
     const data = await sandboxGet(
       `/accounts/${accountId}/orders/${orderId}`,
       undefined,
       apiKey,
     )
     if (!data) {
-      await new Promise((r) => setTimeout(r, 1000))
+      const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+      await new Promise((r) => setTimeout(r, delay))
       continue
     }
 
@@ -776,6 +784,7 @@ async function getOrderFillPrice(
     if (status === 'filled') {
       // avg_fill_price on order level for multileg
       if (order.avg_fill_price != null) {
+        console.log(`[tradier] Order ${orderId} filled after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s)`)
         return Math.abs(parseFloat(order.avg_fill_price))
       }
       // Fallback: calculate from leg fills
@@ -789,19 +798,29 @@ async function getOrderFillPrice(
           if (side.includes('sell')) total += fill
           else total -= fill
         }
-        return total !== 0 ? Math.abs(total) : null
+        if (total !== 0) {
+          console.log(`[tradier] Order ${orderId} filled (leg calc) after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s)`)
+          return Math.abs(total)
+        }
       }
     }
 
     if (['pending', 'open', 'partially_filled'].includes(status)) {
-      await new Promise((r) => setTimeout(r, 1000))
+      const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+      if (attempt % 10 === 0) {
+        console.log(`[tradier] Order ${orderId} still ${status} after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s) — continuing...`)
+      }
+      await new Promise((r) => setTimeout(r, delay))
       continue
     }
 
-    // rejected, canceled, expired
-    return null
+    // rejected, canceled, expired — Tradier may report these transiently
+    // before the fill settles. Keep polling until we see 'filled'.
+    console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} — continuing to poll...`)
+    const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+    await new Promise((r) => setTimeout(r, delay))
+    continue
   }
-  return null
 }
 
 /**
