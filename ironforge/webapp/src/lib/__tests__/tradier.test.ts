@@ -519,26 +519,16 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
-  it('calculates contracts with 33% bot share (User account, 3 bots)', () => {
+  it('exclusive accounts get 100% BP (FLAME on Matt, INFERNO on User)', () => {
+    // All bots now trade exclusive accounts → botShare is always 1.0
     const bp = 20000
-    const botShare = 0.33
+    const botShare = 1.0 // FLAME=100% on Matt/Logan, INFERNO=100% on User
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
-    const usableBP = bp * botShare * 0.85 // $5,610
+    const usableBP = bp * botShare * 0.85 // $17,000
     const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(11) // 5610 / 473 = 11.86 → 11
-  })
-
-  it('calculates contracts with 70% bot share (Matt/Logan FLAME)', () => {
-    const bp = 20000
-    const botShare = 0.70
-    const totalCredit = 0.27
-    const spreadWidth = 5.0
-    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
-    const usableBP = bp * botShare * 0.85 // $11,900
-    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(25) // 11900 / 473 = 25.15 → 25
+    expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
   it('returns 1 contract when BP barely covers one', () => {

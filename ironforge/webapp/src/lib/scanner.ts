@@ -500,10 +500,10 @@ async function closePosition(
           contracts, estimatedPrice, positionId, sandboxOpenInfo,
         )
 
-        // Check if User account actually closed (FLAME requirement)
-        if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+        // Check if primary account actually closed (FLAME requirement)
+        if (isFlameBotClose && !sandboxCloseInfo['Matt']?.order_id) {
           console.error(
-            `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +
+            `[scanner] FLAME SANDBOX CLOSE: Matt account missing from results ` +
             `(attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}) — ${positionId}`,
           )
           if (attempt < MAX_CLOSE_ATTEMPTS) {
@@ -526,7 +526,7 @@ async function closePosition(
     }
 
     // FLAME: log critical error if sandbox close still failed
-    if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+    if (isFlameBotClose && !sandboxCloseInfo['Matt']?.order_id) {
       console.error(
         `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
         `Position ${positionId} closed on paper but Tradier positions may still be open!`,
@@ -838,9 +838,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // ── FLAME Tradier-fill-only mode ──────────────────────────────────
   // FLAME only records trades that Tradier actually fills.
-  // Place sandbox order FIRST; if User's account doesn't fill, reject.
+  // Place sandbox order FIRST; if Matt's account doesn't fill, reject.
   // Use actual fill price + actual contract count as the paper position.
   // SPARK/INFERNO still use paper-first (traditional) mode.
+  const FLAME_PRIMARY_ACCOUNT = 'Matt' // Primary fill account for FLAME
   const isFlameFillOnly = bot.name === 'flame'
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
@@ -854,7 +855,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
-    // Attempt sandbox order — if User doesn't fill, try cleaning up
+    // Attempt sandbox order — if Matt doesn't fill, try cleaning up
     // stale positions and retry once before giving up.
     let attempts = 0
     const MAX_FLAME_ATTEMPTS = 2
@@ -898,11 +899,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         return `skip:flame_sandbox_failed(${msg})`
       }
 
-      // Check User fill — FLAME requires it
-      const userFill = sandboxOrderIds['User']
-      if (!userFill || !userFill.fill_price || userFill.fill_price <= 0) {
+      // Check primary account fill — FLAME requires it
+      const primaryFill = sandboxOrderIds[FLAME_PRIMARY_ACCOUNT]
+      if (!primaryFill || !primaryFill.fill_price || primaryFill.fill_price <= 0) {
         console.warn(
-          `[scanner] FLAME: User sandbox did not fill (attempt ${attempts}) — got: ${JSON.stringify(userFill)}`,
+          `[scanner] FLAME: ${FLAME_PRIMARY_ACCOUNT} sandbox did not fill (attempt ${attempts}) — got: ${JSON.stringify(primaryFill)}`,
         )
         if (attempts < MAX_FLAME_ATTEMPTS) {
           // Stale positions likely consuming all buying power — clean up and retry
@@ -925,29 +926,29 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-            credits.totalCredit, adv.confidence, false, 'user_no_fill', `Auto scan | ${adv.reasoning}`,
+            credits.totalCredit, adv.confidence, false, 'primary_no_fill', `Auto scan | ${adv.reasoning}`,
             false, bot.dte,
           ],
         )
-        return 'skip:flame_user_no_fill'
+        return 'skip:flame_primary_no_fill'
       }
 
-      // User filled — break out of retry loop
+      // Primary account filled — break out of retry loop
       break
     }
 
     // Use Tradier's actual fill values
-    const userFill = sandboxOrderIds['User']!
-    if (!userFill || !userFill.fill_price || userFill.fill_price <= 0) {
-      return 'skip:flame_user_no_fill'
+    const primaryFillFinal = sandboxOrderIds[FLAME_PRIMARY_ACCOUNT]!
+    if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
+      return 'skip:flame_primary_no_fill'
     }
 
     // Use Tradier's actual fill values
-    effectiveCredit = userFill.fill_price
-    effectiveContracts = userFill.contracts
+    effectiveCredit = primaryFillFinal.fill_price
+    effectiveContracts = primaryFillFinal.contracts
     effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
     console.log(
-      `[scanner] FLAME Tradier-fill-only: User filled ${effectiveContracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `[scanner] FLAME Tradier-fill-only: ${FLAME_PRIMARY_ACCOUNT} filled ${effectiveContracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
       `(estimated was $${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
     )
   }
@@ -1742,6 +1743,15 @@ async function runAllScans(): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Sandbox health check failed (non-fatal): ${msg}`)
+  }
+
+  // Skip scanning entirely after 3:10 PM CT — market closed, no work to do.
+  // Safety net runs in the 2:55-3:05 window, so we keep scanning until 3:10.
+  const hhmm = ctHHMM(ct)
+  if (hhmm > 1510) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+    console.log(`[scanner] === scan cycle #${_scanCount} skipped (${elapsed}s) — market closed (${hhmm} CT) ===`)
+    return
   }
 
   // Run all bots in parallel

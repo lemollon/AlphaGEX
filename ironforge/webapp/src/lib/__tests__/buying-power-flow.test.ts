@@ -224,22 +224,22 @@ describe('Flow 3: Per-account BP displayed on Accounts page', () => {
 /* ================================================================== */
 
 describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
-  it('FLAME uses User fill price, not paper estimate', () => {
-    // Scanner places sandbox order → gets fill price from User account
+  it('FLAME uses Matt fill price, not paper estimate', () => {
+    // Scanner places sandbox order → gets fill price from Matt account (primary)
     const paperCredit = 0.27 // estimated
-    const userFillPrice = 0.25 // actual (slightly worse)
+    const mattFillPrice = 0.25 // actual (slightly worse)
 
-    // FLAME uses actual fill values
-    expect(userFillPrice).not.toBe(paperCredit)
-    const effectiveCredit = userFillPrice
+    // FLAME uses actual fill values from Matt (primary account)
+    expect(mattFillPrice).not.toBe(paperCredit)
+    const effectiveCredit = mattFillPrice
     expect(effectiveCredit).toBe(0.25)
   })
 
-  it('FLAME uses User fill contracts, not paper sizing', () => {
+  it('FLAME uses Matt fill contracts, not paper sizing', () => {
     const paperContracts = 10 // paper estimate based on paper_account BP
-    const userFillContracts = 8 // actual (User BP may be different)
+    const mattFillContracts = 8 // actual (Matt BP may be different)
 
-    const effectiveContracts = userFillContracts
+    const effectiveContracts = mattFillContracts
     expect(effectiveContracts).toBe(8)
   })
 
@@ -253,16 +253,15 @@ describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
     expect(collateral).toBe(3800)
   })
 
-  it('FLAME rejects trade when User account has no fill', () => {
+  it('FLAME rejects trade when Matt account has no fill', () => {
     const sandboxResults = {
-      // User didn't fill — might be BP insufficient, rejected, etc.
-      Matt: { order_id: 123, contracts: 5, fill_price: 0.25 },
+      // Matt didn't fill — might be BP insufficient, rejected, etc.
       Logan: { order_id: 456, contracts: 7, fill_price: 0.25 },
     }
 
-    const userFill = sandboxResults['User' as keyof typeof sandboxResults]
-    expect(userFill).toBeUndefined()
-    // FLAME should return 'skip:flame_user_no_fill'
+    const mattFill = sandboxResults['Matt' as keyof typeof sandboxResults]
+    expect(mattFill).toBeUndefined()
+    // FLAME should return 'skip:flame_primary_no_fill'
   })
 
   it('SPARK/INFERNO still use paper sizing (not Tradier-fill-only)', () => {
