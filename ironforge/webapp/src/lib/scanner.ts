@@ -473,12 +473,14 @@ async function closePosition(
   }
 
   // Mirror close to sandbox — FLAME requires sandbox close to succeed (1:1 sync).
-  // SPARK/INFERNO: best-effort sandbox mirroring.
+  // SPARK: best-effort sandbox mirroring. INFERNO: paper-only, skip sandbox.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
   const isFlameBotClose = bot.name === 'flame'
+  const isInfernoClose = bot.name === 'inferno'
 
-  // Even if _sandboxPaperOnly, FLAME must attempt sandbox close — positions are real.
-  const shouldCloseSandbox = !_sandboxPaperOnly || isFlameBotClose
+  // FLAME must attempt sandbox close — positions are real.
+  // INFERNO never has sandbox positions — skip entirely.
+  const shouldCloseSandbox = !isInfernoClose && (!_sandboxPaperOnly || isFlameBotClose)
 
   if (shouldCloseSandbox) {
     const sbRows = await query(
@@ -841,7 +843,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Place sandbox order FIRST; if User's account doesn't fill, reject.
   // Use actual fill price + actual contract count as the paper position.
   // SPARK/INFERNO still use paper-first (traditional) mode.
-  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME (70% of User BP)
+  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME (100% of 85% BP)
   const isFlameFillOnly = bot.name === 'flame'
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
@@ -995,7 +997,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     ],
   )
 
-  // SPARK/INFERNO: mirror to sandbox after position insert (traditional mode)
+  // SPARK: mirror to sandbox after position insert (traditional mode)
+  // INFERNO: paper-only, no sandbox (getAccountsForBot returns [] → no orders placed)
   if (!isFlameFillOnly && !_sandboxPaperOnly) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(

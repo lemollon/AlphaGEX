@@ -519,37 +519,29 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
-  it('FLAME on User at 70% share', () => {
+  it('FLAME/SPARK use 100% of account BP (no share reduction)', () => {
+    // All sandbox bots use bpShare=1.0 now — full 85% of account BP
     const bp = 25000
-    const botShare = 0.70
-    const totalCredit = 0.27
-    const spreadWidth = 5.0
-    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
-    const usableBP = bp * botShare * 0.85 // 25000 * 0.70 * 0.85 = $14,875
-    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(31) // 14875 / 473 = 31.45 → 31
-  })
-
-  it('SPARK/INFERNO on User at 15% share', () => {
-    const bp = 25000
-    const botShare = 0.15
-    const totalCredit = 0.27
-    const spreadWidth = 5.0
-    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
-    const usableBP = bp * botShare * 0.85 // 25000 * 0.15 * 0.85 = $3,187.50
-    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(6) // 3187.5 / 473 = 6.74 → 6
-  })
-
-  it('FLAME on Matt/Logan at 100% share (full 85%)', () => {
-    const bp = 20000
     const botShare = 1.0
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
-    const usableBP = bp * botShare * 0.85 // 20000 * 1.0 * 0.85 = $17,000
+    const usableBP = bp * botShare * 0.85 // 25000 * 1.0 * 0.85 = $21,250
     const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
+    expect(contracts).toBe(44) // 21250 / 473 = 44.9 → 44
+  })
+
+  it('INFERNO is paper-only (no sandbox accounts)', () => {
+    // INFERNO has accounts=[] — placeIcOrderAllAccounts finds zero eligible accounts
+    // Paper sizing uses paper_account balance × bp_pct (0.85), not Tradier BP
+    const paperBalance = 10000
+    const bp_pct = 0.85
+    const totalCredit = 0.27
+    const spreadWidth = 5.0
+    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
+    const usableBP = paperBalance * bp_pct // $8,500
+    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
+    expect(contracts).toBe(17) // 8500 / 473 = 17.97 → 17
   })
 
   it('returns 1 contract when BP barely covers one', () => {
