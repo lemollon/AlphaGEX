@@ -519,7 +519,7 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
-  it('User account at 70% share (SPARK/INFERNO)', () => {
+  it('FLAME on User at 70% share', () => {
     const bp = 25000
     const botShare = 0.70
     const totalCredit = 0.27
@@ -530,15 +530,26 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(31) // 14875 / 473 = 31.45 → 31
   })
 
-  it('Matt/Logan account at 15% share (FLAME)', () => {
-    const bp = 20000
+  it('SPARK/INFERNO on User at 15% share', () => {
+    const bp = 25000
     const botShare = 0.15
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
-    const usableBP = bp * botShare * 0.85 // 20000 * 0.15 * 0.85 = $2,550
+    const usableBP = bp * botShare * 0.85 // 25000 * 0.15 * 0.85 = $3,187.50
     const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(5) // 2550 / 473 = 5.39 → 5
+    expect(contracts).toBe(6) // 3187.5 / 473 = 6.74 → 6
+  })
+
+  it('FLAME on Matt/Logan at 100% share (full 85%)', () => {
+    const bp = 20000
+    const botShare = 1.0
+    const totalCredit = 0.27
+    const spreadWidth = 5.0
+    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
+    const usableBP = bp * botShare * 0.85 // 20000 * 1.0 * 0.85 = $17,000
+    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
+    expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
   it('returns 1 contract when BP barely covers one', () => {

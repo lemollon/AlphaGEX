@@ -501,9 +501,9 @@ async function closePosition(
         )
 
         // Check if primary account actually closed (FLAME requirement)
-        if (isFlameBotClose && !sandboxCloseInfo['Matt']?.order_id) {
+        if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
           console.error(
-            `[scanner] FLAME SANDBOX CLOSE: Matt account missing from results ` +
+            `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +
             `(attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}) — ${positionId}`,
           )
           if (attempt < MAX_CLOSE_ATTEMPTS) {
@@ -526,7 +526,7 @@ async function closePosition(
     }
 
     // FLAME: log critical error if sandbox close still failed
-    if (isFlameBotClose && !sandboxCloseInfo['Matt']?.order_id) {
+    if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
       console.error(
         `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
         `Position ${positionId} closed on paper but Tradier positions may still be open!`,
@@ -838,10 +838,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // ── FLAME Tradier-fill-only mode ──────────────────────────────────
   // FLAME only records trades that Tradier actually fills.
-  // Place sandbox order FIRST; if Matt's account doesn't fill, reject.
+  // Place sandbox order FIRST; if User's account doesn't fill, reject.
   // Use actual fill price + actual contract count as the paper position.
   // SPARK/INFERNO still use paper-first (traditional) mode.
-  const FLAME_PRIMARY_ACCOUNT = 'Matt' // Primary fill account for FLAME
+  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME (70% of User BP)
   const isFlameFillOnly = bot.name === 'flame'
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
@@ -855,7 +855,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
-    // Attempt sandbox order — if Matt doesn't fill, try cleaning up
+    // Attempt sandbox order — if User doesn't fill, try cleaning up
     // stale positions and retry once before giving up.
     let attempts = 0
     const MAX_FLAME_ATTEMPTS = 2

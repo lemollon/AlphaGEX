@@ -224,22 +224,22 @@ describe('Flow 3: Per-account BP displayed on Accounts page', () => {
 /* ================================================================== */
 
 describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
-  it('FLAME uses Matt fill price, not paper estimate', () => {
-    // Scanner places sandbox order → gets fill price from Matt account (primary)
+  it('FLAME uses User fill price, not paper estimate', () => {
+    // Scanner places sandbox order → gets fill price from User account (primary, 70% share)
     const paperCredit = 0.27 // estimated
-    const mattFillPrice = 0.25 // actual (slightly worse)
+    const userFillPrice = 0.25 // actual (slightly worse)
 
-    // FLAME uses actual fill values from Matt (primary account)
-    expect(mattFillPrice).not.toBe(paperCredit)
-    const effectiveCredit = mattFillPrice
+    // FLAME uses actual fill values from User (primary account)
+    expect(userFillPrice).not.toBe(paperCredit)
+    const effectiveCredit = userFillPrice
     expect(effectiveCredit).toBe(0.25)
   })
 
-  it('FLAME uses Matt fill contracts, not paper sizing', () => {
+  it('FLAME uses User fill contracts, not paper sizing', () => {
     const paperContracts = 10 // paper estimate based on paper_account BP
-    const mattFillContracts = 8 // actual (Matt BP may be different)
+    const userFillContracts = 8 // actual (User BP may be different)
 
-    const effectiveContracts = mattFillContracts
+    const effectiveContracts = userFillContracts
     expect(effectiveContracts).toBe(8)
   })
 
@@ -253,14 +253,15 @@ describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
     expect(collateral).toBe(3800)
   })
 
-  it('FLAME rejects trade when Matt account has no fill', () => {
+  it('FLAME rejects trade when User account has no fill', () => {
     const sandboxResults = {
-      // Matt didn't fill — might be BP insufficient, rejected, etc.
+      // User didn't fill — might be BP insufficient, rejected, etc.
+      Matt: { order_id: 123, contracts: 5, fill_price: 0.25 },
       Logan: { order_id: 456, contracts: 7, fill_price: 0.25 },
     }
 
-    const mattFill = sandboxResults['Matt' as keyof typeof sandboxResults]
-    expect(mattFill).toBeUndefined()
+    const userFill = sandboxResults['User' as keyof typeof sandboxResults]
+    expect(userFill).toBeUndefined()
     // FLAME should return 'skip:flame_primary_no_fill'
   })
 
