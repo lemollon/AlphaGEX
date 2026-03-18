@@ -69,8 +69,8 @@ class BotConfig:
     pdt_max_day_trades: int = 4
     pdt_rolling_window_days: int = 5
 
-    # Position sizing
-    max_contracts: int = 10
+    # Position sizing (0 = unlimited, sized by 85% BP)
+    max_contracts: int = 0
     buying_power_usage_pct: float = 0.85
 
     # ML advisor minimum win probability

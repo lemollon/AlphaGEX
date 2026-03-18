@@ -73,8 +73,8 @@ interface BotConfig {
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 3,  bp_pct: 0.85, starting_capital: 10000 },
 }
 
