@@ -395,10 +395,9 @@ interface SandboxAccount {
  *
  * FLAME:   User + Matt + Logan — Tradier fill-only (1:1 with sandbox).
  *          Uses 100% of each account's 85% BP. Paper position = Tradier fill.
- * SPARK:   User only — paper-first, mirrors to sandbox.
- *          Uses 100% of User's 85% BP.
+ * SPARK:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  * INFERNO: Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
- *          Can hold multiple simultaneous positions.
+ *          Can hold multiple simultaneous positions (max 20 contracts).
  *
  * Formula: usableBP = accountBP × bpShare × 0.85
  * Contract counts always floor() to whole numbers — no fractional contracts.
@@ -415,8 +414,8 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
     bpShare:  { User: 1.0, Matt: 1.0, Logan: 1.0 },
   },
   spark: {
-    accounts: ['User'],
-    bpShare:  { User: 1.0 },
+    accounts: [],  // Paper-only — no sandbox orders
+    bpShare:  {},
   },
   inferno: {
     accounts: [],  // Paper-only — no sandbox orders
@@ -828,7 +827,7 @@ export async function placeIcOrderAllAccounts(
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
-  // Filter accounts by bot (FLAME=User+Matt+Logan, SPARK=User, INFERNO=none)
+  // Filter accounts by bot (FLAME=User+Matt+Logan, SPARK+INFERNO=paper-only/none)
   const allowedAccounts = botName ? getAccountsForBot(botName) : null
   const eligibleAccounts = allowedAccounts
     ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
@@ -864,7 +863,7 @@ export async function placeIcOrderAllAccounts(
       }
 
       // Size to ~85% of this account's buying power.
-      // FLAME: all 3 accounts (fill-only). SPARK: User only. INFERNO: paper-only (no sandbox).
+      // FLAME: all 3 accounts (fill-only). SPARK+INFERNO: paper-only (no sandbox).
       // Math.floor guarantees whole contracts — no fractional orders.
       const SANDBOX_MAX_CONTRACTS = 200
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0

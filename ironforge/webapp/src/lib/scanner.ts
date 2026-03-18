@@ -75,7 +75,7 @@ interface BotConfig {
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 3,  bp_pct: 0.85, starting_capital: 10000 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 20, bp_pct: 0.85, starting_capital: 10000 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -473,14 +473,12 @@ async function closePosition(
   }
 
   // Mirror close to sandbox — FLAME requires sandbox close to succeed (1:1 sync).
-  // SPARK: best-effort sandbox mirroring. INFERNO: paper-only, skip sandbox.
+  // SPARK + INFERNO: paper-only, no sandbox positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
   const isFlameBotClose = bot.name === 'flame'
-  const isInfernoClose = bot.name === 'inferno'
 
-  // FLAME must attempt sandbox close — positions are real.
-  // INFERNO never has sandbox positions — skip entirely.
-  const shouldCloseSandbox = !isInfernoClose && (!_sandboxPaperOnly || isFlameBotClose)
+  // Only FLAME has real sandbox positions. SPARK/INFERNO are paper-only.
+  const shouldCloseSandbox = isFlameBotClose
 
   if (shouldCloseSandbox) {
     const sbRows = await query(
@@ -997,8 +995,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     ],
   )
 
-  // SPARK: mirror to sandbox after position insert (traditional mode)
-  // INFERNO: paper-only, no sandbox (getAccountsForBot returns [] → no orders placed)
+  // SPARK + INFERNO: paper-only, no sandbox orders (getAccountsForBot returns [] → skip)
   if (!isFlameFillOnly && !_sandboxPaperOnly) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(

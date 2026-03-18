@@ -265,12 +265,13 @@ describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
     // FLAME should return 'skip:flame_primary_no_fill'
   })
 
-  it('SPARK/INFERNO still use paper sizing (not Tradier-fill-only)', () => {
-    // Only FLAME is fill-only; SPARK and INFERNO use paper estimates
-    const botName = 'spark'
-    const isFlameFillOnly = botName === 'flame'
-    expect(isFlameFillOnly).toBe(false)
-    // Paper sizing logic applies
+  it('SPARK/INFERNO are paper-only (no sandbox, no fill-only)', () => {
+    // Only FLAME is fill-only; SPARK and INFERNO use paper_account balance × 85%
+    // Neither has sandbox accounts — getAccountsForBot returns []
+    for (const botName of ['spark', 'inferno']) {
+      const isFlameFillOnly = botName === 'flame'
+      expect(isFlameFillOnly).toBe(false)
+    }
   })
 })
 
@@ -358,14 +359,13 @@ describe('Flow 6: Scanner paper sizing matches API buying power', () => {
     expect(apiBuyingPower).toBe(7730)
   })
 
-  it('max_contracts=0 means unlimited (INFERNO)', () => {
-    const maxContracts = 0
+  it('max_contracts=20 caps INFERNO at 20', () => {
+    const maxContracts = 20
     const computedContracts = 50
-    // When max_contracts=0, scanner does NOT cap
     const finalContracts = maxContracts > 0
       ? Math.min(computedContracts, maxContracts)
       : computedContracts
-    expect(finalContracts).toBe(50) // uncapped
+    expect(finalContracts).toBe(20) // capped at 20
   })
 
   it('max_contracts=10 caps at 10 (FLAME/SPARK)', () => {

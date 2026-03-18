@@ -519,8 +519,7 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
-  it('FLAME/SPARK use 100% of account BP (no share reduction)', () => {
-    // All sandbox bots use bpShare=1.0 now — full 85% of account BP
+  it('FLAME uses 100% of sandbox account BP (fill-only)', () => {
     const bp = 25000
     const botShare = 1.0
     const totalCredit = 0.27
@@ -531,17 +530,32 @@ describe('Buying power → contract sizing', () => {
     expect(contracts).toBe(44) // 21250 / 473 = 44.9 → 44
   })
 
-  it('INFERNO is paper-only (no sandbox accounts)', () => {
-    // INFERNO has accounts=[] — placeIcOrderAllAccounts finds zero eligible accounts
-    // Paper sizing uses paper_account balance × bp_pct (0.85), not Tradier BP
+  it('SPARK/INFERNO are paper-only (no sandbox accounts)', () => {
+    // Both have accounts=[] — paper sizing uses paper_account balance × 0.85
     const paperBalance = 10000
     const bp_pct = 0.85
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
     const usableBP = paperBalance * bp_pct // $8,500
-    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
-    expect(contracts).toBe(17) // 8500 / 473 = 17.97 → 17
+    const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer)) // 17
+    // INFERNO caps at max_contracts=20 (17 < 20, so no cap here)
+    // SPARK caps at max_contracts=0 (unlimited, sized by BP)
+    expect(bpContracts).toBe(17) // 8500 / 473 = 17.97 → 17
+  })
+
+  it('INFERNO max_contracts caps at 20', () => {
+    // With a large paper balance, BP sizing could exceed 20
+    const paperBalance = 50000
+    const bp_pct = 0.85
+    const totalCredit = 0.27
+    const spreadWidth = 5.0
+    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473
+    const bpContracts = Math.max(1, Math.floor(paperBalance * bp_pct / collateralPer)) // 89
+    const maxContracts = 20
+    const finalContracts = Math.min(maxContracts, bpContracts)
+    expect(bpContracts).toBe(89)
+    expect(finalContracts).toBe(20) // capped
   })
 
   it('returns 1 contract when BP barely covers one', () => {
