@@ -759,21 +759,34 @@ async function getOrderFillPrice(
   accountId: string,
   orderId: number,
 ): Promise<number | null> {
-  // Poll until Tradier reports filled. Market orders WILL fill — keep polling
-  // until they do. No timeout. Start with 1s intervals, back off to 2s after
-  // 10 attempts, 3s after 20.
+  // Aggressive polling for fills. Market orders WILL fill — poll until they do.
+  //
+  // Behavior by status:
+  //   pending / open / partially_filled → keep polling (no limit, these WILL fill)
+  //   filled → return the fill price
+  //   rejected / canceled / expired → confirm 5x then give up (genuinely terminal)
+  //   API failure (null data) → retry indefinitely (transient network issue)
+  //
+  // Safety cap: 90s total to prevent zombie promises if something truly bizarre
+  // happens. Market orders fill in 1-5s; 90s is 18-90x more than needed.
+  // Backoff: 1s for first 10 polls, 2s for 10-20, 3s after that.
   const startMs = Date.now()
+  const MAX_POLL_MS = 90_000
   let attempt = 0
+  let terminalConfirmations = 0 // count consecutive rejected/canceled/expired reads
 
-  for (;;) {
+  while (Date.now() - startMs < MAX_POLL_MS) {
     attempt++
+    const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+
     const data = await sandboxGet(
       `/accounts/${accountId}/orders/${orderId}`,
       undefined,
       apiKey,
     )
     if (!data) {
-      const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+      // API call failed — transient, keep retrying
+      terminalConfirmations = 0
       await new Promise((r) => setTimeout(r, delay))
       continue
     }
@@ -803,10 +816,15 @@ async function getOrderFillPrice(
           return Math.abs(total)
         }
       }
+      // filled but no price yet — keep polling (Tradier may populate price on next read)
+      terminalConfirmations = 0
+      await new Promise((r) => setTimeout(r, delay))
+      continue
     }
 
     if (['pending', 'open', 'partially_filled'].includes(status)) {
-      const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+      // Normal pre-fill states — poll indefinitely (within safety cap)
+      terminalConfirmations = 0
       if (attempt % 10 === 0) {
         console.log(`[tradier] Order ${orderId} still ${status} after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s) — continuing...`)
       }
@@ -814,13 +832,26 @@ async function getOrderFillPrice(
       continue
     }
 
-    // rejected, canceled, expired — Tradier may report these transiently
-    // before the fill settles. Keep polling until we see 'filled'.
-    console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} — continuing to poll...`)
-    const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+    // rejected / canceled / expired — these are genuinely terminal on Tradier.
+    // Confirm 5 consecutive reads to be sure (in case of API glitch).
+    terminalConfirmations++
+    if (terminalConfirmations >= 5) {
+      console.error(
+        `[tradier] Order ${orderId} confirmed ${status} after ${terminalConfirmations} consecutive reads ` +
+        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — giving up`,
+      )
+      return null
+    }
+    console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} (confirmation ${terminalConfirmations}/5) — re-checking...`)
     await new Promise((r) => setTimeout(r, delay))
-    continue
   }
+
+  // Safety cap reached — should never happen for market orders
+  console.error(
+    `[tradier] Order ${orderId} polling safety cap reached after ${attempt} polls ` +
+    `(${((Date.now() - startMs) / 1000).toFixed(1)}s) — returning null`,
+  )
+  return null
 }
 
 /**
