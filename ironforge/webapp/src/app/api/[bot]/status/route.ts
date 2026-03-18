@@ -43,6 +43,18 @@ export async function GET(
          ${dteFilter}`,
     )
 
+    // Today's realized P&L (trades closed today in CT)
+    const todayRealizedQuery = dbQuery(
+      `SELECT
+        COALESCE(SUM(realized_pnl), 0) as today_realized_pnl,
+        COUNT(*) as today_trades_closed
+       FROM ${botTable(bot, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ${dteFilter}`,
+    )
+
     // Actual collateral from open positions (not stale paper_account value)
     const liveCollateralQuery = dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
@@ -100,8 +112,8 @@ export async function GET(
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery])
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery])
 
     const acct = accountRows[0]
     const startingCapital = num(acct?.starting_capital) || 10000
@@ -153,6 +165,9 @@ export async function GET(
       unrealizedPnl = 0
     }
 
+    const todayRealizedPnl = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
+    const todayTradesClosed = int(todayRealizedRows[0]?.today_trades_closed)
+
     const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
@@ -199,6 +214,8 @@ export async function GET(
         balance,
         cumulative_pnl: realizedPnl,
         unrealized_pnl: unrealizedPnl,
+        today_realized_pnl: todayRealizedPnl,
+        today_trades_closed: todayTradesClosed,
         total_pnl: Math.round(totalPnl * 100) / 100,
         return_pct: Math.round(returnPct * 100) / 100,
         total_trades: totalTrades,

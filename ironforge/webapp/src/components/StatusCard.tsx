@@ -11,11 +11,14 @@ interface StatusData {
     balance: number
     cumulative_pnl: number
     unrealized_pnl: number | null
+    today_realized_pnl?: number
+    today_trades_closed?: number
     total_pnl: number
     return_pct: number
     buying_power: number
     total_trades: number
     collateral_in_use: number
+    starting_capital?: number
   }
   open_positions: number
   last_scan: string | null
@@ -99,6 +102,16 @@ export default function StatusCard({
     ? account.cumulative_pnl + (unrealized ?? 0)
     : null
   const totalPositive = (totalPnl ?? 0) >= 0
+
+  // Today's P&L
+  const todayRealized = account.today_realized_pnl ?? 0
+  const todayRealizedPositive = todayRealized >= 0
+  const todayRealizedPct = startingCapital > 0 ? (todayRealized / startingCapital) * 100 : null
+  const todayUnrealized = unrealized ?? 0
+  const todayUnrealizedPositive = todayUnrealized >= 0
+  const todayTotal = todayRealized + todayUnrealized
+  const todayTotalPositive = todayTotal >= 0
+  const todayTotalPct = startingCapital > 0 ? (todayTotal / startingCapital) * 100 : null
 
   const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
   const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
@@ -423,6 +436,48 @@ export default function StatusCard({
           ) : (
             <p className="text-xl font-bold text-gray-500">—</p>
           )}
+        </div>
+      </div>
+
+      {/* Today's P&L row */}
+      <div className="grid grid-cols-4 gap-4 mb-4 pt-3 border-t border-forge-border/30">
+        <div>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Today</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Realized Today</p>
+          <p className={`text-base font-semibold ${todayRealized === 0 ? 'text-gray-400' : todayRealizedPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+            {todayRealized === 0
+              ? '$0.00'
+              : `${todayRealizedPositive ? '+' : ''}$${todayRealized.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            {todayRealizedPct != null && todayRealized !== 0 && (
+              <span className="text-xs ml-1">({todayRealizedPct >= 0 ? '+' : ''}{todayRealizedPct.toFixed(1)}%)</span>
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Unrealized Now</p>
+          <p className={`text-base font-semibold ${!unrealizedAvailable ? 'text-gray-500' : todayUnrealized === 0 ? 'text-gray-400' : todayUnrealizedPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+            {!unrealizedAvailable
+              ? '—'
+              : todayUnrealized === 0
+                ? '$0.00'
+                : `${todayUnrealizedPositive ? '+' : ''}$${todayUnrealized.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            {unrealizedPct != null && todayUnrealized !== 0 && (
+              <span className="text-xs ml-1">({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}%)</span>
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Today Total</p>
+          <p className={`text-base font-bold ${todayTotal === 0 ? 'text-gray-400' : todayTotalPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+            {todayTotal === 0
+              ? '$0.00'
+              : `${todayTotalPositive ? '+' : ''}$${todayTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+            {todayTotalPct != null && todayTotal !== 0 && (
+              <span className="text-xs ml-1">({todayTotalPct >= 0 ? '+' : ''}{todayTotalPct.toFixed(1)}%)</span>
+            )}
+          </p>
         </div>
       </div>
 
