@@ -99,9 +99,10 @@ def flame_config() -> BotConfig:
 
 def spark_config() -> BotConfig:
     """Default SPARK configuration (1DTE).
-    SD=0.8 (not 1.2) because 1DTE far-OTM options have zero bid at SD=1.2.
+    Starts at SD=1.2 like FLAME; dynamic walk-in in SignalGenerator steps
+    SD down automatically if credit is too low (common for 1DTE far-OTM).
     """
-    return BotConfig(bot_name="SPARK", min_dte=1, dte_mode="1DTE", sd_multiplier=0.8)
+    return BotConfig(bot_name="SPARK", min_dte=1, dte_mode="1DTE")
 
 
 def inferno_config() -> BotConfig:
