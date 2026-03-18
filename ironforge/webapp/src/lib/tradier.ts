@@ -393,32 +393,36 @@ interface SandboxAccount {
 /**
  * Bot → sandbox account mapping with BP share allocation.
  *
- * Each bot trades exclusive accounts — no BP splitting needed.
+ * Shares are applied ON TOP of the 85% BP usage cap.
+ * Formula: usableBP = accountBP × share × 0.85
  *
- * FLAME:   Matt + Logan only (100% of each account's BP)
- * SPARK:   User only         (100% of User BP)
- * INFERNO: User only         (100% of User BP)
+ * FLAME:   Matt (15%) + Logan (15%)
+ * SPARK:   User (70%)
+ * INFERNO: User (70%)
+ *
+ * Example: Matt has $20k BP → FLAME uses $20k × 0.15 × 0.85 = $2,550
+ * Example: User has $25k BP → INFERNO uses $25k × 0.70 × 0.85 = $14,875
  *
  * Contract counts always floor() to whole numbers — no fractional contracts.
  */
 interface BotAccountConfig {
   accounts: string[]
-  /** BP share per account name (0-1). e.g., 1.0 = 100% of account BP */
+  /** BP share per account name (0-1). Applied before the 0.85 BP usage cap. */
   bpShare: Record<string, number>
 }
 
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
     accounts: ['Matt', 'Logan'],
-    bpShare:  { Matt: 1.0, Logan: 1.0 },
+    bpShare:  { Matt: 0.15, Logan: 0.15 },
   },
   spark: {
     accounts: ['User'],
-    bpShare:  { User: 1.0 },
+    bpShare:  { User: 0.70 },
   },
   inferno: {
     accounts: ['User'],
-    bpShare:  { User: 1.0 },
+    bpShare:  { User: 0.70 },
   },
 }
 
@@ -862,7 +866,7 @@ export async function placeIcOrderAllAccounts(
       }
 
       // Size using this bot's share of the account's buying power.
-      // FLAME: Matt+Logan 100%.  SPARK+INFERNO: User 100%.
+      // User=70%, Matt=15%, Logan=15% — applied before the 0.85 cap.
       // Math.floor guarantees whole contracts — no fractional orders.
       const SANDBOX_MAX_CONTRACTS = 200
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
