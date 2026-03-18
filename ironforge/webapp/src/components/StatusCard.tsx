@@ -80,7 +80,12 @@ export default function StatusCard({
   pendingOrderCount?: number
 }) {
   const { account } = data
+  const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
   const realizedPositive = account.cumulative_pnl >= 0
+  // Realized as % of starting capital
+  const realizedPct = startingCapital > 0
+    ? (account.cumulative_pnl / startingCapital) * 100
+    : null
   // Prefer position-monitor's live unrealized P&L (single source of truth with position cards)
   // null means "unavailable" (MTM failed) — display "—" instead of $0
   const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl
@@ -368,6 +373,11 @@ export default function StatusCard({
           >
             {realizedPositive ? '+' : ''}$
             {account.cumulative_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            {realizedPct != null && account.cumulative_pnl !== 0 && (
+              <span className="text-sm ml-1">
+                ({realizedPct >= 0 ? '+' : ''}{realizedPct.toFixed(1)}%)
+              </span>
+            )}
           </p>
         </div>
         <div>
