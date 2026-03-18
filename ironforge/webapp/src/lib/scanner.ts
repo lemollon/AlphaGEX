@@ -820,7 +820,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
-  const maxContracts = Math.min(botCfg.max_contracts, Math.max(1, Math.floor(usableBP / collateralPer)))
+  const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+  // max_contracts=0 means unlimited (sized by BP only)
+  const maxContracts = botCfg.max_contracts > 0
+    ? Math.min(botCfg.max_contracts, bpContracts)
+    : bpContracts
   const totalCollateral = collateralPer * maxContracts
   const maxProfit = credits.totalCredit * 100 * maxContracts
   const maxLoss = totalCollateral

@@ -133,8 +133,14 @@ export async function GET(
             const acctInfo = (sandboxOrderIds as Record<string, Record<string, unknown>> | null)?.[acct.name]
             if (!acctInfo) return null
 
-            const orderId = typeof acctInfo === 'object' ? (acctInfo as Record<string, unknown>).order_id : acctInfo
-            const acctContracts = typeof acctInfo === 'object' ? int((acctInfo as Record<string, unknown>).contracts) : contracts
+            const acctInfoObj = typeof acctInfo === 'object' ? (acctInfo as Record<string, unknown>) : null
+            const orderId = acctInfoObj ? acctInfoObj.order_id : acctInfo
+            const acctContracts = acctInfoObj ? int(acctInfoObj.contracts) : contracts
+            const fillPrice = acctInfoObj ? Number(acctInfoObj.fill_price || 0) : 0
+
+            // Use Tradier fill price for entry credit when available (more accurate
+            // than paper entry credit since sandbox may fill at different prices).
+            const acctEntryCredit = fillPrice > 0 ? fillPrice : entryCredit
 
             let tradierPnl: number | null = null
             let tradierCostBasis: number | null = null
@@ -144,20 +150,26 @@ export async function GET(
               if (positions.length > 0) {
                 tradierCostBasis = positions.reduce((s, p) => s + p.cost_basis, 0)
                 tradierMarketValue = positions.reduce((s, p) => s + p.market_value, 0)
-                tradierPnl = positions.reduce((s, p) => s + p.gain_loss, 0)
               }
             } catch {
               // Sandbox may be unreachable
             }
 
+            // Compute Tradier P&L from fill price + production quotes (not sandbox
+            // gain_loss which uses stale sandbox marks).  Falls back to
+            // market_value - cost_basis if no production quotes available.
             let calcPnl: number | null = null
             if (currentDebit != null) {
-              calcPnl = Math.round((entryCredit - currentDebit) * 100 * acctContracts * 100) / 100
+              calcPnl = Math.round((acctEntryCredit - currentDebit) * 100 * acctContracts * 100) / 100
+              tradierPnl = calcPnl
+            } else if (tradierCostBasis != null && tradierMarketValue != null) {
+              tradierPnl = Math.round((tradierMarketValue - tradierCostBasis) * 100) / 100
             }
 
             return {
               name: acct.name, order_id: orderId, contracts: acctContracts,
-              entry_credit_total: Math.round(entryCredit * 100 * acctContracts * 100) / 100,
+              fill_price: fillPrice > 0 ? fillPrice : null,
+              entry_credit_total: Math.round(acctEntryCredit * 100 * acctContracts * 100) / 100,
               current_debit_total: currentDebit != null ? Math.round(currentDebit * 100 * acctContracts * 100) / 100 : null,
               calculated_pnl: calcPnl,
               tradier_pnl: tradierPnl != null ? Math.round(tradierPnl * 100) / 100 : null,
