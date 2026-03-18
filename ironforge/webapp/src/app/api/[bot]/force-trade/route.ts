@@ -295,7 +295,7 @@ export async function POST(
         strikes.putShort, strikes.putLong,
         strikes.callShort, strikes.callLong,
         maxContracts, credits.totalCredit,
-        positionId,
+        positionId, bot,
       )
       if (Object.keys(sandboxOrderIds).length > 0) {
         await dbExecute(

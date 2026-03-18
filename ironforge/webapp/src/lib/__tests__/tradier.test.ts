@@ -506,24 +506,48 @@ describe('isConfigured', () => {
 /* ================================================================== */
 
 describe('Buying power → contract sizing', () => {
-  it('calculates contracts from BP correctly', () => {
-    // This mirrors the logic in placeIcOrderAllAccounts
+  it('calculates contracts from BP correctly (full share)', () => {
+    // This mirrors the logic in placeIcOrderAllAccounts with botShare = 1.0
     const bp = 20000
+    const botShare = 1.0
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100) // $473 per contract
-    const usableBP = bp * 0.85 // $17,000
+    const usableBP = bp * botShare * 0.85 // $17,000
     const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
     expect(collateralPer).toBeCloseTo(473, 0)
     expect(contracts).toBe(35) // 17000 / 473 = 35.9 → 35
   })
 
+  it('calculates contracts with 33% bot share (User account, 3 bots)', () => {
+    const bp = 20000
+    const botShare = 0.33
+    const totalCredit = 0.27
+    const spreadWidth = 5.0
+    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
+    const usableBP = bp * botShare * 0.85 // $5,610
+    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
+    expect(contracts).toBe(11) // 5610 / 473 = 11.86 → 11
+  })
+
+  it('calculates contracts with 70% bot share (Matt/Logan FLAME)', () => {
+    const bp = 20000
+    const botShare = 0.70
+    const totalCredit = 0.27
+    const spreadWidth = 5.0
+    const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
+    const usableBP = bp * botShare * 0.85 // $11,900
+    const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
+    expect(contracts).toBe(25) // 11900 / 473 = 25.15 → 25
+  })
+
   it('returns 1 contract when BP barely covers one', () => {
     const bp = 600
+    const botShare = 1.0
     const totalCredit = 0.27
     const spreadWidth = 5.0
     const collateralPer = (spreadWidth - totalCredit) * 100
-    const usableBP = bp * 0.85
+    const usableBP = bp * botShare * 0.85
     const contracts = Math.max(1, Math.floor(usableBP / collateralPer))
     expect(contracts).toBe(1) // 510 / 473 = 1.07 → 1
   })
