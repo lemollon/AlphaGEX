@@ -393,8 +393,9 @@ interface SandboxAccount {
 /**
  * Bot → sandbox account mapping.
  *
- * FLAME:   User + Matt + Logan — Tradier fill-only (1:1 with sandbox).
- *          Uses 100% of each account's 85% BP. Paper position = Tradier fill.
+ * FLAME:   User + Matt + Logan — Tradier fill-only.
+ *          Paper position = 85% of paper_account BP (contracts) + Tradier fill price.
+ *          Each sandbox account independently sizes at 85% of its own BP.
  * SPARK:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  * INFERNO: Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  *          Can hold multiple simultaneous positions (max 20 contracts).

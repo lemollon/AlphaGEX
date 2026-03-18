@@ -839,9 +839,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // ── FLAME Tradier-fill-only mode ──────────────────────────────────
   // FLAME only records trades that Tradier actually fills.
   // Place sandbox order FIRST; if User's account doesn't fill, reject.
-  // Use actual fill price + actual contract count as the paper position.
-  // SPARK/INFERNO still use paper-first (traditional) mode.
-  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME (100% of 85% BP)
+  // Paper position uses: actual fill PRICE + paper-sized contracts (85% of paper BP).
+  // Each Tradier sandbox account independently sizes at 85% of its own BP.
+  // SPARK/INFERNO are paper-only (no sandbox orders).
+  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
   const isFlameFillOnly = bot.name === 'flame'
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
@@ -937,19 +938,21 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       break
     }
 
-    // Use Tradier's actual fill values
+    // Use Tradier's actual fill PRICE but keep paper-sized contracts.
+    // Paper position = 85% of paper_account BP (maxContracts).
+    // Each Tradier sandbox account independently sizes at 85% of its own BP.
     const primaryFillFinal = sandboxOrderIds[FLAME_PRIMARY_ACCOUNT]!
     if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
       return 'skip:flame_primary_no_fill'
     }
 
-    // Use Tradier's actual fill values
+    // Use real fill price for paper P&L accuracy, but paper-sized contract count
     effectiveCredit = primaryFillFinal.fill_price
-    effectiveContracts = primaryFillFinal.contracts
+    // effectiveContracts stays as maxContracts (85% of paper BP)
     effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
     console.log(
-      `[scanner] FLAME Tradier-fill-only: ${FLAME_PRIMARY_ACCOUNT} filled ${effectiveContracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
-      `(estimated was $${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
+      `[scanner] FLAME Tradier-fill-only: ${FLAME_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `(paper=${effectiveContracts} contracts, estimated credit=$${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
     )
   }
 

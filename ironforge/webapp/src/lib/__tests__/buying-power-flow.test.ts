@@ -235,22 +235,32 @@ describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
     expect(effectiveCredit).toBe(0.25)
   })
 
-  it('FLAME uses User fill contracts, not paper sizing', () => {
-    const paperContracts = 10 // paper estimate based on paper_account BP
-    const userFillContracts = 8 // actual (User BP may be different)
-
-    const effectiveContracts = userFillContracts
-    expect(effectiveContracts).toBe(8)
-  })
-
-  it('FLAME collateral uses actual fill values', () => {
+  it('FLAME paper position uses paper-sized contracts (85% of paper BP)', () => {
+    // Paper account sizes at 85% of paper BP
+    const paperBP = 10000
+    const bpPct = 0.85
     const spreadWidth = 5.0
     const fillPrice = 0.25
-    const fillContracts = 8
+    const collateralPer = Math.max(0, (spreadWidth - fillPrice) * 100) // $475
+    const paperContracts = Math.max(1, Math.floor(paperBP * bpPct / collateralPer)) // 17
 
-    const collateral = Math.max(0, (spreadWidth - fillPrice) * 100) * fillContracts
-    // (5 - 0.25) * 100 * 8 = 475 * 8 = $3800
-    expect(collateral).toBe(3800)
+    // Tradier User account may fill different qty (its own 85% of sandbox BP)
+    const userFillContracts = 44 // User sandbox has $25k BP
+
+    // Paper position uses paper contracts, NOT Tradier fill contracts
+    const effectiveContracts = paperContracts
+    expect(effectiveContracts).toBe(17) // paper-sized
+    expect(effectiveContracts).not.toBe(userFillContracts) // NOT sandbox-sized
+  })
+
+  it('FLAME collateral uses fill price but paper contracts', () => {
+    const spreadWidth = 5.0
+    const fillPrice = 0.25
+    const paperContracts = 17 // from 85% of paper BP
+
+    const collateral = Math.max(0, (spreadWidth - fillPrice) * 100) * paperContracts
+    // (5 - 0.25) * 100 * 17 = 475 * 17 = $8075
+    expect(collateral).toBe(8075)
   })
 
   it('FLAME rejects trade when User account has no fill', () => {
