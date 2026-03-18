@@ -397,8 +397,10 @@ interface SandboxAccount {
  * This prevents one bot from consuming all BP on a shared account.
  *
  * User (3 bots):  FLAME=33%, SPARK=33%, INFERNO=33%
- * Matt (2 bots):  FLAME=50%, INFERNO=50%
- * Logan (2 bots): FLAME=50%, INFERNO=50%
+ * Matt (2 bots):  FLAME=70%, INFERNO=30%
+ * Logan (2 bots): FLAME=70%, INFERNO=30%
+ *
+ * Contract counts always floor() to whole numbers — no fractional contracts.
  */
 interface BotAccountConfig {
   accounts: string[]
@@ -409,7 +411,7 @@ interface BotAccountConfig {
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
     accounts: ['User', 'Matt', 'Logan'],
-    bpShare:  { User: 0.33, Matt: 0.50, Logan: 0.50 },
+    bpShare:  { User: 0.33, Matt: 0.70, Logan: 0.70 },
   },
   spark: {
     accounts: ['User'],
@@ -417,7 +419,7 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   },
   inferno: {
     accounts: ['User', 'Matt', 'Logan'],
-    bpShare:  { User: 0.33, Matt: 0.50, Logan: 0.50 },
+    bpShare:  { User: 0.33, Matt: 0.30, Logan: 0.30 },
   },
 }
 
@@ -861,8 +863,8 @@ export async function placeIcOrderAllAccounts(
       }
 
       // Size using this bot's share of the account's buying power.
-      // On shared accounts, BP is split: User (3 bots) = 33% each,
-      // Matt/Logan (2 bots) = 50% each.  Prevents one bot hogging all BP.
+      // User (3 bots): 33% each.  Matt/Logan: FLAME=70%, INFERNO=30%.
+      // Math.floor guarantees whole contracts — no fractional orders.
       const SANDBOX_MAX_CONTRACTS = 200
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
