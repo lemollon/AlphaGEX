@@ -74,7 +74,7 @@ interface BotConfig {
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
+  spark:   { sd: 0.8, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 3,  bp_pct: 0.85, starting_capital: 10000 },
 }
 
@@ -833,51 +833,91 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
-    try {
-      sandboxOrderIds = await placeIcOrderAllAccounts(
-        'SPY', expiration,
-        strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-        maxContracts, credits.totalCredit, positionId,
-      )
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.warn(`[scanner] FLAME sandbox order failed — trade rejected: ${msg}`)
-      // Log the rejected signal
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'signals')} (
-          spot_price, vix, expected_move, call_wall, put_wall,
-          gex_regime, put_short, put_long, call_short, call_long,
-          total_credit, confidence, was_executed, skip_reason, reasoning,
-          wings_adjusted, dte_mode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-        [
-          spot, vix, expectedMove, 0, 0,
-          'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-          credits.totalCredit, adv.confidence, false, 'sandbox_order_failed', `Auto scan | ${adv.reasoning}`,
-          false, bot.dte,
-        ],
-      )
-      return `skip:flame_sandbox_failed(${msg})`
+    // Attempt sandbox order — if User doesn't fill, try cleaning up
+    // stale positions and retry once before giving up.
+    let attempts = 0
+    const MAX_FLAME_ATTEMPTS = 2
+    while (attempts < MAX_FLAME_ATTEMPTS) {
+      attempts++
+
+      try {
+        sandboxOrderIds = await placeIcOrderAllAccounts(
+          'SPY', expiration,
+          strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+          maxContracts, credits.totalCredit, positionId,
+        )
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.warn(`[scanner] FLAME sandbox order failed (attempt ${attempts}): ${msg}`)
+        if (attempts < MAX_FLAME_ATTEMPTS) {
+          // Try emergency cleanup of stale positions blocking buying power
+          console.log('[scanner] FLAME: Attempting sandbox cleanup before retry...')
+          const accounts = await getLoadedSandboxAccountsAsync()
+          for (const acct of accounts) {
+            await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+          }
+          await new Promise((r) => setTimeout(r, 2000))
+          continue
+        }
+        // Log the rejected signal after all attempts
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'signals')} (
+            spot_price, vix, expected_move, call_wall, put_wall,
+            gex_regime, put_short, put_long, call_short, call_long,
+            total_credit, confidence, was_executed, skip_reason, reasoning,
+            wings_adjusted, dte_mode
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [
+            spot, vix, expectedMove, 0, 0,
+            'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+            credits.totalCredit, adv.confidence, false, 'sandbox_order_failed', `Auto scan | ${adv.reasoning}`,
+            false, bot.dte,
+          ],
+        )
+        return `skip:flame_sandbox_failed(${msg})`
+      }
+
+      // Check User fill — FLAME requires it
+      const userFill = sandboxOrderIds['User']
+      if (!userFill || !userFill.fill_price || userFill.fill_price <= 0) {
+        console.warn(
+          `[scanner] FLAME: User sandbox did not fill (attempt ${attempts}) — got: ${JSON.stringify(userFill)}`,
+        )
+        if (attempts < MAX_FLAME_ATTEMPTS) {
+          // Stale positions likely consuming all buying power — clean up and retry
+          console.log('[scanner] FLAME: Cleaning up stale sandbox positions before retry...')
+          const accounts = await getLoadedSandboxAccountsAsync()
+          for (const acct of accounts) {
+            await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+          }
+          await new Promise((r) => setTimeout(r, 2000))
+          sandboxOrderIds = {}  // Reset for retry
+          continue
+        }
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'signals')} (
+            spot_price, vix, expected_move, call_wall, put_wall,
+            gex_regime, put_short, put_long, call_short, call_long,
+            total_credit, confidence, was_executed, skip_reason, reasoning,
+            wings_adjusted, dte_mode
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [
+            spot, vix, expectedMove, 0, 0,
+            'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+            credits.totalCredit, adv.confidence, false, 'user_no_fill', `Auto scan | ${adv.reasoning}`,
+            false, bot.dte,
+          ],
+        )
+        return 'skip:flame_user_no_fill'
+      }
+
+      // User filled — break out of retry loop
+      break
     }
 
-    // Check User fill — FLAME requires it
-    const userFill = sandboxOrderIds['User']
+    // Use Tradier's actual fill values
+    const userFill = sandboxOrderIds['User']!
     if (!userFill || !userFill.fill_price || userFill.fill_price <= 0) {
-      console.warn(`[scanner] FLAME: User sandbox did not fill — trade rejected (got: ${JSON.stringify(userFill)})`)
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'signals')} (
-          spot_price, vix, expected_move, call_wall, put_wall,
-          gex_regime, put_short, put_long, call_short, call_long,
-          total_credit, confidence, was_executed, skip_reason, reasoning,
-          wings_adjusted, dte_mode
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-        [
-          spot, vix, expectedMove, 0, 0,
-          'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-          credits.totalCredit, adv.confidence, false, 'user_no_fill', `Auto scan | ${adv.reasoning}`,
-          false, bot.dte,
-        ],
-      )
       return 'skip:flame_user_no_fill'
     }
 
@@ -1094,30 +1134,35 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
 async function dailySandboxCleanup(ct: Date): Promise<void> {
   const todayStr = ct.toISOString().slice(0, 10)
 
-  // Only run once per day, during first 15 minutes of market (8:30-8:45 CT)
+  // Run once per day at market open, OR re-run if stale positions were found
+  // but not successfully closed on the first attempt.
   if (_lastSandboxCleanupDate === todayStr) return
   const hhmm = ctHHMM(ct)
-  if (hhmm < 830 || hhmm > 845) return
+  if (hhmm < 830 || hhmm > 900) return
 
-  _lastSandboxCleanupDate = todayStr
   console.log('[scanner] DAILY SANDBOX CLEANUP: Starting stale position scan...')
 
   try {
     const accounts = await getLoadedSandboxAccountsAsync()
     if (accounts.length === 0) {
+      _lastSandboxCleanupDate = todayStr
       console.log('[scanner] DAILY SANDBOX CLEANUP: No sandbox accounts configured, skipping')
       return
     }
 
     let totalStale = 0
     let totalClosed = 0
-    const cleanupDetails: Record<string, { stale: number; closed: number }> = {}
+    let totalFailed = 0
+    const cleanupDetails: Record<string, { stale: number; closed: number; failed: number }> = {}
 
     for (const acct of accounts) {
       const positions = await getSandboxAccountPositions(acct.apiKey)
       let acctStale = 0
       let acctClosed = 0
+      let acctFailed = 0
 
+      // Count stale positions (expired or expiring today as holdovers)
+      const staleSymbols: string[] = []
       for (const pos of positions) {
         const symbol = pos.symbol
         if (!symbol || symbol.length < 15) continue
@@ -1126,18 +1171,47 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
         try {
           const datePart = symbol.slice(3, 9) // YYMMDD
           const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
-          if (expDate < todayStr) {
+          // Catch BOTH expired (<today) AND today-expiring holdovers (<=today).
+          // Today's 0DTE holdovers are from trades opened on previous days
+          // (e.g., FLAME 2DTE opened Friday → 0DTE Tuesday). These consume
+          // margin and block new orders even though the paper position was
+          // already closed at EOD.
+          if (expDate <= todayStr) {
             acctStale++
-            // Note: expired options settle automatically overnight.
-            // We log them but Tradier sandbox handles settlement.
-            console.log(`[scanner] SANDBOX CLEANUP [${acct.name}]: Stale position ${symbol} (expired ${expDate})`)
+            staleSymbols.push(symbol)
+            console.log(`[scanner] SANDBOX CLEANUP [${acct.name}]: Stale position ${symbol} (exp ${expDate})`)
           }
         } catch { /* ignore parse errors */ }
       }
 
+      // Actually close stale positions instead of just logging them.
+      // Tradier sandbox does NOT reliably auto-settle expired options.
+      if (staleSymbols.length > 0) {
+        console.log(
+          `[scanner] SANDBOX CLEANUP [${acct.name}]: Closing ${staleSymbols.length} stale positions...`,
+        )
+        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+        acctClosed = result.closed
+        acctFailed = result.failed
+        for (const detail of result.details) {
+          console.log(`[scanner] SANDBOX CLEANUP: ${detail}`)
+        }
+      }
+
       totalStale += acctStale
       totalClosed += acctClosed
-      cleanupDetails[acct.name] = { stale: acctStale, closed: acctClosed }
+      totalFailed += acctFailed
+      cleanupDetails[acct.name] = { stale: acctStale, closed: acctClosed, failed: acctFailed }
+    }
+
+    // Only mark cleanup as done if all stale positions were handled.
+    // If some failed, allow retry on next scan cycle.
+    if (totalFailed === 0) {
+      _lastSandboxCleanupDate = todayStr
+    } else {
+      console.warn(
+        `[scanner] SANDBOX CLEANUP: ${totalFailed} positions failed to close — will retry next cycle`,
+      )
     }
 
     if (totalStale > 0) {
@@ -1146,14 +1220,14 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
          VALUES ($1, $2, $3, $4)`,
         [
           'SANDBOX_CLEANUP',
-          `Daily sandbox cleanup: ${totalStale} stale positions found, ${totalClosed} closed`,
-          JSON.stringify({ event: 'daily_sandbox_cleanup', date: todayStr, totalStale, totalClosed, perAccount: cleanupDetails }),
+          `Daily sandbox cleanup: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`,
+          JSON.stringify({ event: 'daily_sandbox_cleanup', date: todayStr, totalStale, totalClosed, totalFailed, perAccount: cleanupDetails }),
           '2DTE',
         ],
       )
     }
 
-    console.log(`[scanner] DAILY SANDBOX CLEANUP COMPLETE: ${totalStale} stale, ${totalClosed} closed`)
+    console.log(`[scanner] DAILY SANDBOX CLEANUP COMPLETE: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[scanner] DAILY SANDBOX CLEANUP ERROR: ${msg}`)
