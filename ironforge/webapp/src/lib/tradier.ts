@@ -1326,3 +1326,8 @@ export async function emergencyCloseSandboxPositions(
 
   return { closed, failed, details }
 }
+
+// Expose internals for testing only
+export const _testing = {
+  getOrderFillPrice,
+}
