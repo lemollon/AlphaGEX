@@ -508,7 +508,12 @@ async function monitorSinglePosition(
   _mtmFailureCounts.delete(pid)
 
   const costToClose = mtm.cost_to_close       // bid/ask worst-case — for PT/SL decisions
-  const costToCloseMid = mtm.cost_to_close_mid // last/mid — for P&L display (matches Tradier)
+  const costToCloseMid = mtm.cost_to_close_mid // mark (mid) — for P&L display (matches Tradier)
+
+  // Log when quotes have validation issues (wide spreads on wings) but we still got mid prices
+  if (mtm.validation_issues?.length) {
+    console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: wide bid/ask spreads (using mid for PT/SL fallback): ${mtm.validation_issues.join(', ')}`)
+  }
 
   // Profit target: cost_to_close <= PT threshold (sliding) — uses bid/ask (conservative)
   if (costToClose <= profitTargetPrice) {
