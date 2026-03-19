@@ -5,6 +5,7 @@ import {
   isConfigured,
   buildOccSymbol,
   getRawQuotes,
+  getTimesales,
   getSandboxAccountPositions,
   calculateIcUnrealizedPnl,
   getTradierBaseUrl,
@@ -269,21 +270,68 @@ export async function GET(
       }),
     )
 
-    // Scanner's snapshot
-    const scannerSnapshot = snapshotRows[0]
-      ? {
-          snapshot_time: snapshotRows[0].snapshot_time,
-          unrealized_pnl: num(snapshotRows[0].unrealized_pnl),
-          balance: num(snapshotRows[0].balance),
+    // ─── Tradier timesales (last 10 minutes of SPY minute bars) ───
+    // Compare latest candle close to the quote's "last" field.
+    // If quote.last lags the timesales close, quotes are delayed.
+    let timesalesData: Record<string, unknown> = {}
+    if (isConfigured()) {
+      try {
+        const candles = await getTimesales('SPY', 10)
+        const quoteSpot = results[0]?.raw_spot as any
+        const quoteLast = quoteSpot?.last ? Number(quoteSpot.last) : null
+        const latestCandle = candles.length > 0 ? candles[candles.length - 1] : null
+
+        timesalesData = {
+          candles,
+          latest_candle: latestCandle,
+          quote_last: quoteLast,
+          delta: latestCandle && quoteLast != null
+            ? Math.round((Number(latestCandle.close) - quoteLast) * 100) / 100
+            : null,
+          verdict: latestCandle && quoteLast != null
+            ? Math.abs(Number(latestCandle.close) - quoteLast) > 0.50
+              ? `STALE — quote SPY $${quoteLast} vs timesales $${latestCandle.close} (${latestCandle.time})`
+              : `OK — quote SPY $${quoteLast} ≈ timesales $${latestCandle.close}`
+            : 'No data to compare',
         }
-      : null
+      } catch (err: unknown) {
+        timesalesData = { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+
+    // ─── Historical equity snapshots (last 30 from today) ───
+    let historicalSnapshots: Array<Record<string, unknown>> = []
+    try {
+      const snapRows = await dbQuery(
+        `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note
+         FROM ${botTable(bot, 'equity_snapshots')}
+         ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+         ORDER BY snapshot_time DESC
+         LIMIT 30`,
+      )
+      historicalSnapshots = snapRows.map((r: any) => ({
+        time: r.snapshot_time,
+        balance: num(r.balance),
+        realized_pnl: num(r.realized_pnl),
+        unrealized_pnl: num(r.unrealized_pnl),
+        open_positions: int(r.open_positions),
+        note: r.note,
+      })).reverse()  // oldest first
+    } catch { /* table may not exist */ }
 
     return NextResponse.json({
       bot: bot.toUpperCase(),
       timestamp: new Date().toISOString(),
       tradier_api_url: getTradierBaseUrl(),
       tradier_connected: isConfigured(),
-      scanner_snapshot: scannerSnapshot,
+
+      // Cross-check: compare /markets/quotes vs /markets/timesales
+      spy_timesales_vs_quote: timesalesData,
+
+      // Historical scanner snapshots (unrealized P&L trail)
+      equity_snapshot_history: historicalSnapshots,
+
+      // Per-position deep dive
       positions: results,
     })
   } catch (err: unknown) {

@@ -1205,6 +1205,39 @@ export function getTradierBaseUrl(): string {
   return TRADIER_BASE_URL
 }
 
+/**
+ * Fetch Tradier timesales (minute bars) for a symbol.
+ * Returns the last `minutes` candles for intraday comparison.
+ */
+export async function getTimesales(
+  symbol: string,
+  minutes: number = 10,
+): Promise<Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return []
+
+  const data = await tradierGet('/markets/timesales', {
+    symbol,
+    interval: '1min',
+    session_filter: 'all',
+  })
+  if (!data) return []
+
+  let series = data.series?.data
+  if (!series) return []
+  if (!Array.isArray(series)) series = [series]
+
+  // Return last N candles
+  return series.slice(-minutes).map((d: any) => ({
+    time: d.time || d.timestamp,
+    open: parseFloat(d.open || '0'),
+    high: parseFloat(d.high || '0'),
+    low: parseFloat(d.low || '0'),
+    close: parseFloat(d.close || '0'),
+    volume: parseInt(d.volume || '0', 10),
+  }))
+}
+
 export async function getBatchOptionQuotes(
   occSymbols: string[],
 ): Promise<Record<string, LegQuote>> {
