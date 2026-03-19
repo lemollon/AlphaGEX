@@ -38,6 +38,8 @@ export async function GET(
     }
 
     let anyLiveQuoteSucceeded = false
+    let quoteAgeSeconds: number | undefined
+    let apiSource: string | undefined
 
     const positions = await Promise.all(
       positionRows.map(async (r) => {
@@ -69,6 +71,8 @@ export async function GET(
               anyLiveQuoteSucceeded = true
               mtm = mtmResult.cost_to_close
               spotPrice = mtmResult.spot_price
+              quoteAgeSeconds = mtmResult.quote_age_seconds
+              apiSource = mtmResult.api_source
               const spreadWidth = num(r.spread_width) || (ps - pl)
               // Use mid/last prices for P&L display to match Tradier's Gain/Loss
               const mtmMid = mtmResult.cost_to_close_mid
@@ -128,6 +132,9 @@ export async function GET(
         spot_price: positions[0]?.spot_price ?? null,
         tradier_connected: isConfigured(),
         pnl_source: 'live',
+        quote_age_seconds: quoteAgeSeconds,
+        api_source: apiSource,
+        quotes_delayed: quoteAgeSeconds != null && quoteAgeSeconds > 300,
       })
     }
 

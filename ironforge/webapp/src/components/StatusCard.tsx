@@ -74,6 +74,8 @@ export default function StatusCard({
   bot,
   liveUnrealizedPnl,
   pendingOrderCount,
+  quotesDelayed,
+  quoteAgeSeconds,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
@@ -81,6 +83,8 @@ export default function StatusCard({
   bot: 'flame' | 'spark' | 'inferno'
   liveUnrealizedPnl?: number | null
   pendingOrderCount?: number
+  quotesDelayed?: boolean
+  quoteAgeSeconds?: number
 }) {
   const { account } = data
   const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
@@ -394,7 +398,14 @@ export default function StatusCard({
           </p>
         </div>
         <div>
-          <p className="text-xs text-forge-muted">Unrealized P&L</p>
+          <p className="text-xs text-forge-muted">
+            Unrealized P&L
+            {quotesDelayed && (
+              <span className="ml-1 text-yellow-500" title={`Quotes are ${quoteAgeSeconds ? Math.round(quoteAgeSeconds / 60) + 'min' : ''} old — Tradier API may be returning delayed data`}>
+                (DELAYED)
+              </span>
+            )}
+          </p>
           <p
             className={`text-xl font-semibold ${
               !unrealizedAvailable

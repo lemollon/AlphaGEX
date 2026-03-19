@@ -71,6 +71,10 @@ export interface IcMtmResult {
   call_long_bid: number
   spot_price: number | null
   validation_issues?: string[]
+  /** Seconds since the most recent quote update across all legs. >300 = likely delayed data. */
+  quote_age_seconds?: number
+  /** The API base URL used (production vs sandbox). */
+  api_source?: string
 }
 
 /** Validation issues found in a set of MTM quotes (empty = passed). */
@@ -337,6 +341,35 @@ export async function getIcMarkToMarket(
     ? Math.min(Math.max(0, rawCost), spreadWidth)
     : costMark  // Fallback: use mid for PT/SL too when bid/ask is unreliable
 
+  // Detect quote staleness: compare most recent trade/bid timestamp to now.
+  // Tradier returns trade_date (last fill) and bid_date (last bid update) as epoch ms.
+  let quoteAgeSeconds: number | undefined
+  try {
+    const now = Date.now()
+    const timestamps: number[] = []
+    for (const raw of [psRaw, plRaw, csRaw, clRaw, spotRaw]) {
+      if (!raw) continue
+      // Tradier returns bid_date/ask_date as epoch milliseconds, or trade_date as ISO string
+      for (const field of ['bid_date', 'ask_date', 'trade_date']) {
+        const v = raw[field]
+        if (!v) continue
+        const ts = typeof v === 'number' ? v : new Date(v).getTime()
+        if (ts > 0 && ts < now + 86400000) timestamps.push(ts)
+      }
+    }
+    if (timestamps.length > 0) {
+      const newest = Math.max(...timestamps)
+      quoteAgeSeconds = Math.round((now - newest) / 1000)
+    }
+  } catch { /* non-fatal */ }
+
+  if (quoteAgeSeconds != null && quoteAgeSeconds > 300) {
+    console.warn(
+      `[tradier] MTM quotes are ${quoteAgeSeconds}s old (${Math.round(quoteAgeSeconds / 60)}min) — ` +
+      `API may be returning delayed data. Base URL: ${TRADIER_BASE_URL}`,
+    )
+  }
+
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
     cost_to_close_mid: Math.round(costMark * 10000) / 10000,
@@ -346,6 +379,8 @@ export async function getIcMarkToMarket(
     call_long_bid: clQ.bid,
     spot_price: spotRaw ? parse(spotRaw.last) : null,
     validation_issues: validation.pass ? undefined : validation.issues,
+    quote_age_seconds: quoteAgeSeconds,
+    api_source: TRADIER_BASE_URL,
   }
 }
 
