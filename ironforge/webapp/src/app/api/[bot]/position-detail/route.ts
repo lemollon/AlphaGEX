@@ -159,24 +159,32 @@ export async function GET(
             let tradierPnl: number | null = null
             let tradierCostBasis: number | null = null
             let tradierMarketValue: number | null = null
+            let tradierGainLoss: number | null = null
             try {
               const positions = await getSandboxAccountPositions(acct.apiKey, occSymbols)
               if (positions.length > 0) {
                 tradierCostBasis = positions.reduce((s, p) => s + p.cost_basis, 0)
                 tradierMarketValue = positions.reduce((s, p) => s + p.market_value, 0)
+                tradierGainLoss = positions.reduce((s, p) => s + p.gain_loss, 0)
               }
             } catch {
               // Sandbox may be unreachable
             }
 
-            // Compute P&L using mid/last prices to match Tradier's Gain/Loss.
-            // Falls back to market_value - cost_basis if no production quotes.
+            // Compute FLAME's P&L using last trade prices.
             let calcPnl: number | null = null
             if (currentDebitMid != null) {
               calcPnl = Math.round((acctEntryCredit - currentDebitMid) * 100 * acctContracts * 100) / 100
-              tradierPnl = calcPnl
+            }
+
+            // Tradier P&L: prefer Tradier's own gain_loss (matches their portfolio
+            // Gain/Loss column exactly). Fall back to FLAME's last-price calculation.
+            if (tradierGainLoss != null && tradierGainLoss !== 0) {
+              tradierPnl = Math.round(tradierGainLoss * 100) / 100
             } else if (tradierCostBasis != null && tradierMarketValue != null) {
               tradierPnl = Math.round((tradierMarketValue - tradierCostBasis) * 100) / 100
+            } else {
+              tradierPnl = calcPnl
             }
 
             return {

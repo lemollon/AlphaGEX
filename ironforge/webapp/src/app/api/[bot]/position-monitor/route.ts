@@ -74,12 +74,13 @@ export async function GET(
               quoteAgeSeconds = mtmResult.quote_age_seconds
               apiSource = mtmResult.api_source
               const spreadWidth = num(r.spread_width) || (ps - pl)
-              // Use mid/last prices for P&L display to match Tradier's Gain/Loss
-              const mtmMid = mtmResult.cost_to_close_mid
-              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmMid, contracts, spreadWidth)
+              // Use last trade prices for P&L display — matches Tradier's portfolio
+              // Gain/Loss which uses last trade prices, not bid/ask midpoint.
+              const mtmLast = mtmResult.cost_to_close_last
+              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
               unrealizedPnlPct =
                 entryCredit > 0
-                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmMid), spreadWidth)) / entryCredit) * 10000) / 100
+                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmLast), spreadWidth)) / entryCredit) * 10000) / 100
                   : 0
               // PT/SL proximity uses bid/ask (worst-case) since these trigger actual closes
               distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000

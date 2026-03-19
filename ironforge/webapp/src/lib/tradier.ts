@@ -65,6 +65,8 @@ interface Quote {
 export interface IcMtmResult {
   cost_to_close: number
   cost_to_close_mid: number
+  /** Cost using last trade prices (matches Tradier portfolio valuation). */
+  cost_to_close_last: number
   put_short_ask: number
   put_long_bid: number
   call_short_ask: number
@@ -75,6 +77,8 @@ export interface IcMtmResult {
   quote_age_seconds?: number
   /** The API base URL used (production vs sandbox). */
   api_source?: string
+  /** Per-leg last trade prices used for cost_to_close_last. */
+  last_prices?: { ps: number; pl: number; cs: number; cl: number }
 }
 
 /** Validation issues found in a set of MTM quotes (empty = passed). */
@@ -317,10 +321,17 @@ export async function getIcMarkToMarket(
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
 
   // Mark price cost — uses mid (bid+ask average) for each leg.
-  // Tradier's portfolio values positions at mark price, not last trade.
-  // Last trade can be stale on thinly-traded wings causing P&L lag.
   const rawCostMark = psQ.mid + csQ.mid - plQ.mid - clQ.mid
   const costMark = Math.min(Math.max(0, rawCostMark), spreadWidth)
+
+  // Last trade price cost — matches Tradier portfolio's "Price" column.
+  // Tradier uses last trade prices for Gain/Loss. Falls back to mid if no last trade.
+  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+  const csLast = csQ.last > 0 ? csQ.last : csQ.mid
+  const clLast = clQ.last > 0 ? clQ.last : clQ.mid
+  const rawCostLast = psLast + csLast - plLast - clLast
+  const costLast = Math.min(Math.max(0, rawCostLast), spreadWidth)
 
   const validation = validateMtmQuotes(
     [
@@ -373,6 +384,7 @@ export async function getIcMarkToMarket(
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
     cost_to_close_mid: Math.round(costMark * 10000) / 10000,
+    cost_to_close_last: Math.round(costLast * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
@@ -381,6 +393,7 @@ export async function getIcMarkToMarket(
     validation_issues: validation.pass ? undefined : validation.issues,
     quote_age_seconds: quoteAgeSeconds,
     api_source: TRADIER_BASE_URL,
+    last_prices: { ps: psLast, pl: plLast, cs: csLast, cl: clLast },
   }
 }
 
