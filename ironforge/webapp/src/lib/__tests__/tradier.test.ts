@@ -335,7 +335,8 @@ describe('getSandboxAccountBalances', () => {
     for (const acct of balances) {
       expect(acct.account_id).toBeTruthy()
       expect(acct.total_equity).toBe(25000)
-      expect(acct.option_buying_power).toBe(20000)
+      // option_buying_power now uses total_equity (sandbox inflates option_buying_power fields)
+      expect(acct.option_buying_power).toBe(25000)
     }
 
     // Verify names are User, Matt, Logan
@@ -370,7 +371,8 @@ describe('getSandboxAccountBalances', () => {
     expect(balances).toHaveLength(3)
     for (const acct of balances) {
       expect(acct.total_equity).toBe(18000)
-      expect(acct.option_buying_power).toBe(14000)
+      // option_buying_power now uses total_equity (sandbox inflates option_buying_power fields)
+      expect(acct.option_buying_power).toBe(18000)
       expect(acct.open_positions_count).toBe(2)
     }
   })
