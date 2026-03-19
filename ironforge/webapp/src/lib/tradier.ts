@@ -232,10 +232,19 @@ function validateMtmQuotes(
 
 /**
  * Get current cost-to-close for an Iron Condor by fetching live quotes
- * for all four legs.  Returns null when any leg quote is unavailable
- * or when quote validation fails (wide spreads, stale data, etc.).
+ * for all four legs in a single batch API call.
+ *
+ * Returns null when any leg quote is unavailable or when quote validation
+ * fails (wide spreads, stale data, etc.).
  *
  * Pass entryCredit to enable the "cost > 3x entry" validation check.
+ *
+ * Two cost figures:
+ *   cost_to_close     — worst-case (buy shorts at ask, sell longs at bid).
+ *                        Used for PT/SL decisions.
+ *   cost_to_close_mid — mark price (bid+ask midpoint for each leg).
+ *                        Used for P&L display. Matches Tradier's portfolio
+ *                        valuation which uses mark, not last trade.
  */
 export async function getIcMarkToMarket(
   ticker: string,
@@ -246,15 +255,55 @@ export async function getIcMarkToMarket(
   callLong: number,
   entryCredit?: number,
 ): Promise<IcMtmResult | null> {
-  const [psQ, plQ, csQ, clQ, spotQ] = await Promise.all([
-    getOptionQuote(buildOccSymbol(ticker, expiration, putShort, 'P')),
-    getOptionQuote(buildOccSymbol(ticker, expiration, putLong, 'P')),
-    getOptionQuote(buildOccSymbol(ticker, expiration, callShort, 'C')),
-    getOptionQuote(buildOccSymbol(ticker, expiration, callLong, 'C')),
-    getQuote(ticker),
-  ])
+  const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
 
-  if (!psQ || !plQ || !csQ || !clQ) return null
+  // Single batch call for all 4 option legs + underlying (synchronized snapshot)
+  const allSymbols = [occPs, occPl, occCs, occCl, ticker].join(',')
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return null
+
+  const data = await tradierGet('/markets/quotes', { symbols: allSymbols })
+  if (!data) return null
+
+  let quotes = data.quotes?.quote
+  if (!quotes) return null
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  // Index by symbol for fast lookup
+  const bySymbol: Record<string, any> = {}
+  for (const q of quotes) {
+    if (q?.symbol) bySymbol[q.symbol] = q
+  }
+
+  const psRaw = bySymbol[occPs]
+  const plRaw = bySymbol[occPl]
+  const csRaw = bySymbol[occCs]
+  const clRaw = bySymbol[occCl]
+  const spotRaw = bySymbol[ticker]
+
+  if (!psRaw || !plRaw || !csRaw || !clRaw) return null
+  if (psRaw.bid == null || plRaw.bid == null || csRaw.bid == null || clRaw.bid == null) return null
+
+  // Also reject if any symbol was unmatched by Tradier
+  if (data.quotes?.unmatched_symbols) {
+    const unmatched = data.quotes.unmatched_symbols
+    const unmatchedStr = typeof unmatched === 'string' ? unmatched : JSON.stringify(unmatched)
+    const needed = [occPs, occPl, occCs, occCl]
+    if (needed.some(s => unmatchedStr.includes(s))) return null
+  }
+
+  const parse = (v: any) => parseFloat(v || '0')
+  const psQ = { bid: parse(psRaw.bid), ask: parse(psRaw.ask), last: parse(psRaw.last), mid: 0 }
+  const plQ = { bid: parse(plRaw.bid), ask: parse(plRaw.ask), last: parse(plRaw.last), mid: 0 }
+  const csQ = { bid: parse(csRaw.bid), ask: parse(csRaw.ask), last: parse(csRaw.last), mid: 0 }
+  const clQ = { bid: parse(clRaw.bid), ask: parse(clRaw.ask), last: parse(clRaw.last), mid: 0 }
+  psQ.mid = Math.round(((psQ.bid + psQ.ask) / 2) * 10000) / 10000
+  plQ.mid = Math.round(((plQ.bid + plQ.ask) / 2) * 10000) / 10000
+  csQ.mid = Math.round(((csQ.bid + csQ.ask) / 2) * 10000) / 10000
+  clQ.mid = Math.round(((clQ.bid + clQ.ask) / 2) * 10000) / 10000
 
   // Cost to close = buy back shorts (at ask) - sell longs (at bid)
   const rawCost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
@@ -280,23 +329,20 @@ export async function getIcMarkToMarket(
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
   const cost = Math.min(Math.max(0, rawCost), spreadWidth)
 
-  // Mid/last price cost — matches Tradier's Gain/Loss calculation.
-  // Tradier uses last trade prices for position valuation.
-  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
-  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
-  const csLast = csQ.last > 0 ? csQ.last : csQ.mid
-  const clLast = clQ.last > 0 ? clQ.last : clQ.mid
-  const rawCostMid = psLast + csLast - plLast - clLast
-  const costMid = Math.min(Math.max(0, rawCostMid), spreadWidth)
+  // Mark price cost — uses mid (bid+ask average) for each leg.
+  // Tradier's portfolio values positions at mark price, not last trade.
+  // Last trade can be stale on thinly-traded wings causing P&L lag.
+  const rawCostMark = psQ.mid + csQ.mid - plQ.mid - clQ.mid
+  const costMark = Math.min(Math.max(0, rawCostMark), spreadWidth)
 
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
-    cost_to_close_mid: Math.round(costMid * 10000) / 10000,
+    cost_to_close_mid: Math.round(costMark * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
     call_long_bid: clQ.bid,
-    spot_price: spotQ?.last ?? null,
+    spot_price: spotRaw ? parse(spotRaw.last) : null,
   }
 }
 
