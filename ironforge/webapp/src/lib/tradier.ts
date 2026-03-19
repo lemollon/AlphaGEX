@@ -1438,12 +1438,28 @@ export async function emergencyCloseSandboxPositions(
           duration: 'day',
         }
         const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey)
+        if (result?.errors) {
+          failed++
+          details.push(`${accountName}: ORDER REJECTED ${pos.symbol} x${qty}: ${JSON.stringify(result.errors)}`)
+          continue
+        }
         if (result?.order?.id) {
-          closed++
-          details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${result.order.id}`)
+          // VERIFY the close order actually filled — don't fire-and-forget.
+          // Old behavior just counted order ID as "closed" but the order
+          // could be rejected by Tradier, leaving the position open.
+          const orderId = result.order.id
+          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000) // 15s timeout
+          if (fillPrice != null) {
+            closed++
+            details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${orderId} filled @ $${fillPrice.toFixed(4)}`)
+          } else {
+            // Order was placed but rejected/expired — position still open
+            failed++
+            details.push(`${accountName}: Close order ${orderId} for ${pos.symbol} x${qty} was REJECTED/EXPIRED (position still open)`)
+          }
         } else {
           failed++
-          details.push(`${accountName}: FAILED to close ${pos.symbol} x${qty}`)
+          details.push(`${accountName}: FAILED to close ${pos.symbol} x${qty} (no order ID)`)
         }
       } catch (err: unknown) {
         failed++
