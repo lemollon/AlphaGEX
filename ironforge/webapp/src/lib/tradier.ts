@@ -626,15 +626,52 @@ async function getSandboxBuyingPower(
   const pdt = balances.pdt || {}
   const margin = balances.margin || {}
 
-  // CRITICAL: For IC orders, ONLY use option_buying_power.
-  // stock_buying_power is 2x and day_trade_buying_power is 4x — using those
-  // causes orders to be sized 2-4x too large and rejected by Tradier.
+  // Log raw values for debugging order sizing
+  console.log(
+    `getSandboxBuyingPower [${accountId}]: ` +
+    `margin.obp=${margin.option_buying_power ?? 'N/A'}, ` +
+    `balances.obp=${balances.option_buying_power ?? 'N/A'}, ` +
+    `pdt.obp=${pdt.option_buying_power ?? 'N/A'}, ` +
+    `total_equity=${balances.total_equity ?? 'N/A'}, ` +
+    `total_cash=${balances.total_cash ?? 'N/A'}`,
+  )
+
+  // CRITICAL: For IC orders, use OVERNIGHT option_buying_power.
+  // PDT accounts inflate pdt.option_buying_power to day-trade levels (~4x),
+  // which causes massively oversized orders. The margin sub-object and
+  // top-level balances have the correct overnight option BP.
+  //
+  // Priority: margin.option_buying_power > balances.option_buying_power > pdt (SKIP)
+  // pdt.option_buying_power is intentionally excluded — it returns day-trade BP.
   const optionBp =
-    pdt.option_buying_power ??
     margin.option_buying_power ??
     balances.option_buying_power
   if (optionBp != null) {
-    return parseFloat(optionBp)
+    const parsed = parseFloat(optionBp)
+    // Sanity check: if pdt.option_buying_power exists and differs, log it
+    if (pdt.option_buying_power != null) {
+      const pdtBp = parseFloat(pdt.option_buying_power)
+      if (Math.abs(pdtBp - parsed) > 1) {
+        console.log(
+          `getSandboxBuyingPower: Using margin/balances option_buying_power=$${parsed.toFixed(0)} ` +
+          `(skipped pdt.option_buying_power=$${pdtBp.toFixed(0)} — day-trade inflated)`,
+        )
+      }
+    }
+    return parsed
+  }
+
+  // If margin/balances don't have option_buying_power, try pdt as last resort
+  // but cap it at total_equity to prevent day-trade inflation
+  if (pdt.option_buying_power != null) {
+    const pdtBp = parseFloat(pdt.option_buying_power)
+    const equity = balances.total_equity != null ? parseFloat(balances.total_equity) : pdtBp
+    const safeBp = Math.min(pdtBp, equity)
+    console.warn(
+      `getSandboxBuyingPower: No margin/balances option_buying_power found. ` +
+      `Using min(pdt=$${pdtBp.toFixed(0)}, equity=$${equity.toFixed(0)}) = $${safeBp.toFixed(0)}`,
+    )
+    return safeBp
   }
 
   // Fallback: use total_cash (conservative) — never use stock/day-trade BP
