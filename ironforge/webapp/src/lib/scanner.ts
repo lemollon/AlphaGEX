@@ -75,8 +75,8 @@ interface BotConfig {
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 10, bp_pct: 0.85, starting_capital: 10000 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 20, bp_pct: 0.85, starting_capital: 10000 },
 }
 
@@ -943,14 +943,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
   const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
-  // Hard cap: no bot should ever open more than 50 contracts on paper.
-  // Prevents DB config overrides from creating absurdly large positions.
-  const ABSOLUTE_MAX_CONTRACTS = 50
-  // max_contracts=0 means unlimited (sized by BP only), but always capped at absolute max
-  const maxContracts = Math.min(
-    ABSOLUTE_MAX_CONTRACTS,
-    botCfg.max_contracts > 0 ? Math.min(botCfg.max_contracts, bpContracts) : bpContracts,
-  )
+  // max_contracts=0 means unlimited (sized by BP only)
+  const maxContracts = botCfg.max_contracts > 0
+    ? Math.min(botCfg.max_contracts, bpContracts)
+    : bpContracts
   const totalCollateral = collateralPer * maxContracts
   const maxProfit = credits.totalCredit * 100 * maxContracts
   const maxLoss = totalCollateral

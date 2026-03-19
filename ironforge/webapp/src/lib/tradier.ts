@@ -625,15 +625,25 @@ async function getSandboxBuyingPower(
   // Cash accounts have it at balances.* directly
   const pdt = balances.pdt || {}
   const margin = balances.margin || {}
-  const bp =
+
+  // CRITICAL: For IC orders, ONLY use option_buying_power.
+  // stock_buying_power is 2x and day_trade_buying_power is 4x — using those
+  // causes orders to be sized 2-4x too large and rejected by Tradier.
+  const optionBp =
     pdt.option_buying_power ??
     margin.option_buying_power ??
-    balances.option_buying_power ??
-    pdt.stock_buying_power ??
-    margin.stock_buying_power ??
-    balances.buying_power ??
-    balances.total_cash
-  return bp != null ? parseFloat(bp) : null
+    balances.option_buying_power
+  if (optionBp != null) {
+    return parseFloat(optionBp)
+  }
+
+  // Fallback: use total_cash (conservative) — never use stock/day-trade BP
+  console.warn(
+    `getSandboxBuyingPower: option_buying_power not found, falling back to total_cash. ` +
+    `Keys: ${JSON.stringify(Object.keys(balances))} pdt: ${JSON.stringify(Object.keys(pdt))} margin: ${JSON.stringify(Object.keys(margin))}`,
+  )
+  const fallback = balances.total_cash ?? balances.cash?.cash_available
+  return fallback != null ? parseFloat(fallback) : null
 }
 
 /* ------------------------------------------------------------------ */
@@ -905,11 +915,12 @@ export async function placeIcOrderAllAccounts(
       const accountId = await getAccountIdForKey(acct.apiKey)
       if (!accountId) return
 
-      // Query this account's own buying power
+      // Query this account's OPTION buying power (not stock/day-trade BP)
       const bp = await getSandboxBuyingPower(acct.apiKey, accountId)
-      if (bp == null || bp < collateralPer) {
+      const brokerMarginCheck = spreadWidth * 100  // $500 for $5 spread
+      if (bp == null || bp < brokerMarginCheck) {
         console.warn(
-          `Sandbox [${acct.name}]: BP=$${bp} insufficient (need $${collateralPer.toFixed(2)}/contract)`,
+          `Sandbox [${acct.name}]: optionBP=$${bp} insufficient (need $${brokerMarginCheck.toFixed(0)}/contract)`,
         )
         return
       }
@@ -921,15 +932,20 @@ export async function placeIcOrderAllAccounts(
       // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
       // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
-      const SANDBOX_MAX_CONTRACTS = 50
+      const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
       const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
+      const totalMargin = acctContracts * brokerMarginPer
       console.log(
-        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} × ${(botShare * 100).toFixed(0)}% share → ${acctContracts} contracts (paper=${paperContracts})`,
+        `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, ` +
+        `usable=$${usableBP.toFixed(0)} (${(botShare * 100).toFixed(0)}% × 85%), ` +
+        `margin/contract=$${brokerMarginPer}, ` +
+        `contracts=${acctContracts} (bp_calc=${bpContracts}, cap=${SANDBOX_MAX_CONTRACTS}), ` +
+        `totalMargin=$${totalMargin.toFixed(0)} (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
