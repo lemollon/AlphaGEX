@@ -917,10 +917,15 @@ export async function placeIcOrderAllAccounts(
       // Size to ~85% of this account's buying power.
       // FLAME: all 3 accounts (fill-only). SPARK+INFERNO: paper-only (no sandbox).
       // Math.floor guarantees whole contracts — no fractional orders.
-      const SANDBOX_MAX_CONTRACTS = 200
+      //
+      // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
+      // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
+      // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
+      const SANDBOX_MAX_CONTRACTS = 50
+      const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
-      const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+      const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
       const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       console.log(

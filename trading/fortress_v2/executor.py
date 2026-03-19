@@ -146,6 +146,11 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ABSOLUTE hard cap on contracts - cannot be overridden by DB config or Kelly.
+# Even if DB sets max_contracts=10000, this cap prevails.
+# SPY options: 200 contracts * $500 max loss = $100K margin max.
+ABSOLUTE_MAX_CONTRACTS = 200
+
 T = TypeVar('T')
 
 
@@ -835,6 +840,8 @@ class OrderExecutor:
                 # Try reducing contracts to fit available buying power
                 if available_bp > 0 and max_loss_per_contract > 0:
                     affordable_contracts = int(available_bp / max_loss_per_contract)
+                    # CRITICAL: affordable_contracts must also respect max_contracts and absolute cap
+                    affordable_contracts = min(affordable_contracts, self.config.max_contracts, ABSOLUTE_MAX_CONTRACTS)
                     if affordable_contracts >= 1:
                         logger.warning(
                             f"FORTRESS: Reducing contracts from {contracts} to {affordable_contracts} "
@@ -1594,7 +1601,9 @@ class OrderExecutor:
         if abs(thompson_weight - 1.0) > 0.05:
             logger.info(f"[FORTRESS {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
 
-        return max(1, min(adjusted_contracts, self.config.max_contracts))
+        # Apply BOTH config cap and absolute hard cap (whichever is lower)
+        capped = min(adjusted_contracts, self.config.max_contracts, ABSOLUTE_MAX_CONTRACTS)
+        return max(1, capped)
 
     def store_entry_conditions(self, position_id: int, gex_data: Dict) -> bool:
         """

@@ -142,6 +142,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ABSOLUTE hard cap on contracts - cannot be overridden by DB config or Kelly.
+# SPX options: 100 contracts * $2500 max loss = $250K margin max.
+ABSOLUTE_MAX_CONTRACTS = 100
+
 try:
     from data.tradier_data_fetcher import TradierDataFetcher
     TRADIER_AVAILABLE = True
@@ -739,7 +743,9 @@ class OrderExecutor:
         if abs(thompson_weight - 1.0) > 0.05:
             logger.info(f"[ANCHOR {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
 
-        return max(1, min(adjusted_contracts, self.config.max_contracts))
+        # Apply BOTH config cap and absolute hard cap (whichever is lower)
+        capped = min(adjusted_contracts, self.config.max_contracts, ABSOLUTE_MAX_CONTRACTS)
+        return max(1, capped)
 
     def _get_current_spx_price(self) -> Optional[float]:
         """Get current SPX price from multiple sources with fallbacks."""
