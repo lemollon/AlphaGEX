@@ -626,61 +626,33 @@ async function getSandboxBuyingPower(
   const pdt = balances.pdt || {}
   const margin = balances.margin || {}
 
-  // Log raw values for debugging order sizing
-  console.log(
-    `getSandboxBuyingPower [${accountId}]: ` +
-    `margin.obp=${margin.option_buying_power ?? 'N/A'}, ` +
-    `balances.obp=${balances.option_buying_power ?? 'N/A'}, ` +
-    `pdt.obp=${pdt.option_buying_power ?? 'N/A'}, ` +
-    `total_equity=${balances.total_equity ?? 'N/A'}, ` +
-    `total_cash=${balances.total_cash ?? 'N/A'}`,
-  )
-
-  // CRITICAL: For IC orders, use OVERNIGHT option_buying_power.
-  // PDT accounts inflate pdt.option_buying_power to day-trade levels (~4x),
-  // which causes massively oversized orders. The margin sub-object and
-  // top-level balances have the correct overnight option BP.
+  // CRITICAL: Tradier sandbox inflates ALL option_buying_power fields with margin
+  // leverage (4x for PDT, 2x for margin). For example:
+  //   total_equity = $81,459  ← actual account value (matches Tradier UI "Option B.P.")
+  //   margin.option_buying_power = $325,837  ← 4x leveraged, NOT real option BP
+  //   pdt.option_buying_power = $325,837  ← also 4x leveraged
+  //   stock_buying_power = $162,918  ← 2x leveraged
   //
-  // Priority: margin.option_buying_power > balances.option_buying_power > pdt (SKIP)
-  // pdt.option_buying_power is intentionally excluded — it returns day-trade BP.
-  const optionBp =
-    margin.option_buying_power ??
-    balances.option_buying_power
-  if (optionBp != null) {
-    const parsed = parseFloat(optionBp)
-    // Sanity check: if pdt.option_buying_power exists and differs, log it
-    if (pdt.option_buying_power != null) {
-      const pdtBp = parseFloat(pdt.option_buying_power)
-      if (Math.abs(pdtBp - parsed) > 1) {
-        console.log(
-          `getSandboxBuyingPower: Using margin/balances option_buying_power=$${parsed.toFixed(0)} ` +
-          `(skipped pdt.option_buying_power=$${pdtBp.toFixed(0)} — day-trade inflated)`,
-        )
-      }
-    }
+  // Using leveraged values causes orders sized at 552 contracts ($276K) against
+  // $81K actual buying power → instant rejection.
+  //
+  // FIX: Use total_equity as the true buying power. This matches what the
+  // Tradier website displays as "Option B.P." and is the actual collateral limit.
+  const equity = balances.total_equity ?? balances.total_cash ?? balances.cash?.cash_available
+  if (equity != null) {
+    const parsed = parseFloat(equity)
+    console.log(
+      `getSandboxBuyingPower [${accountId}]: Using total_equity=$${parsed.toFixed(0)} ` +
+      `(margin.obp=${margin.option_buying_power ?? 'N/A'}, pdt.obp=${pdt.option_buying_power ?? 'N/A'} — ignored, leveraged)`,
+    )
     return parsed
   }
 
-  // If margin/balances don't have option_buying_power, try pdt as last resort
-  // but cap it at total_equity to prevent day-trade inflation
-  if (pdt.option_buying_power != null) {
-    const pdtBp = parseFloat(pdt.option_buying_power)
-    const equity = balances.total_equity != null ? parseFloat(balances.total_equity) : pdtBp
-    const safeBp = Math.min(pdtBp, equity)
-    console.warn(
-      `getSandboxBuyingPower: No margin/balances option_buying_power found. ` +
-      `Using min(pdt=$${pdtBp.toFixed(0)}, equity=$${equity.toFixed(0)}) = $${safeBp.toFixed(0)}`,
-    )
-    return safeBp
-  }
-
-  // Fallback: use total_cash (conservative) — never use stock/day-trade BP
   console.warn(
-    `getSandboxBuyingPower: option_buying_power not found, falling back to total_cash. ` +
-    `Keys: ${JSON.stringify(Object.keys(balances))} pdt: ${JSON.stringify(Object.keys(pdt))} margin: ${JSON.stringify(Object.keys(margin))}`,
+    `getSandboxBuyingPower [${accountId}]: No balance data found. ` +
+    `Keys: ${JSON.stringify(Object.keys(balances))}`,
   )
-  const fallback = balances.total_cash ?? balances.cash?.cash_available
-  return fallback != null ? parseFloat(fallback) : null
+  return null
 }
 
 /* ------------------------------------------------------------------ */
@@ -729,10 +701,9 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       const pdt = bal.pdt || {}
       const margin = bal.margin || {}
       const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
-      const bp =
-        pdt.option_buying_power ?? margin.option_buying_power ??
-        bal.option_buying_power ?? bal.buying_power ?? bal.total_cash
-      const optionBp = bp != null ? parseFloat(bp) : null
+      // Use total_equity as real option BP (Tradier sandbox inflates all
+      // option_buying_power fields with margin leverage — see getSandboxBuyingPower)
+      const optionBp = equity
 
       // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
       // Use pending_cash or option_short_value as proxy; safest: just report null if unavailable
