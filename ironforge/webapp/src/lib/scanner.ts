@@ -507,9 +507,10 @@ async function monitorSinglePosition(
   // MTM succeeded — reset failure counter
   _mtmFailureCounts.delete(pid)
 
-  const costToClose = mtm.cost_to_close
+  const costToClose = mtm.cost_to_close       // bid/ask worst-case — for PT/SL decisions
+  const costToCloseMid = mtm.cost_to_close_mid // last/mid — for P&L display (matches Tradier)
 
-  // Profit target: cost_to_close <= PT threshold (sliding)
+  // Profit target: cost_to_close <= PT threshold (sliding) — uses bid/ask (conservative)
   if (costToClose <= profitTargetPrice) {
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
@@ -527,7 +528,8 @@ async function monitorSinglePosition(
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
-  const unrealizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+  // Unrealized P&L uses mid/last prices to match Tradier's Gain/Loss
+  const unrealizedPnl = Math.round((entryCredit - costToCloseMid) * 100 * contracts * 100) / 100
   return {
     status: `monitoring:mtm=${costToClose.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)} PT=${ptTier}(${(ptFraction * 100).toFixed(0)}%)`,
     unrealizedPnl,
@@ -1008,7 +1010,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
     // GATE: Don't place orders if sandbox cleanup hasn't verified clean.
     // Reset the verified flag if date changed (new day).
-    const todayStr = ct.toISOString().slice(0, 10)
+    const ctNow = getCentralTime()
+    const todayStr = ctNow.toISOString().slice(0, 10)
     if (_sandboxCleanupVerifiedDate !== todayStr) {
       _sandboxCleanupVerified = false
     }

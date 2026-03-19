@@ -51,6 +51,7 @@ interface OptionQuote {
   bid: number
   ask: number
   last: number
+  mid: number
   symbol: string
 }
 
@@ -63,6 +64,7 @@ interface Quote {
 
 export interface IcMtmResult {
   cost_to_close: number
+  cost_to_close_mid: number
   put_short_ask: number
   put_long_bid: number
   call_short_ask: number
@@ -177,10 +179,13 @@ export async function getOptionQuote(
   if (Array.isArray(quote)) quote = quote[0]
   if (!quote || quote.bid == null) return null
   if (data.quotes?.unmatched_symbols) return null
+  const bid = parseFloat(quote.bid || '0')
+  const ask = parseFloat(quote.ask || '0')
   return {
-    bid: parseFloat(quote.bid || '0'),
-    ask: parseFloat(quote.ask || '0'),
+    bid,
+    ask,
     last: parseFloat(quote.last || '0'),
+    mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
     symbol: occSymbol,
   }
 }
@@ -274,8 +279,19 @@ export async function getIcMarkToMarket(
   // Cap at spread width — theoretical max cost for an IC
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
   const cost = Math.min(Math.max(0, rawCost), spreadWidth)
+
+  // Mid/last price cost — matches Tradier's Gain/Loss calculation.
+  // Tradier uses last trade prices for position valuation.
+  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+  const csLast = csQ.last > 0 ? csQ.last : csQ.mid
+  const clLast = clQ.last > 0 ? clQ.last : clQ.mid
+  const rawCostMid = psLast + csLast - plLast - clLast
+  const costMid = Math.min(Math.max(0, rawCostMid), spreadWidth)
+
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
+    cost_to_close_mid: Math.round(costMid * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
