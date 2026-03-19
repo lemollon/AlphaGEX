@@ -390,6 +390,50 @@ interface SandboxAccount {
   cachedAccountId?: string
 }
 
+/**
+ * Bot → sandbox account mapping.
+ *
+ * FLAME:   User + Matt + Logan — Tradier fill-only.
+ *          Paper position = 85% of paper_account BP (contracts) + Tradier fill price.
+ *          Each sandbox account independently sizes at 85% of its own BP.
+ * SPARK:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
+ * INFERNO: Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
+ *          Can hold multiple simultaneous positions (max 20 contracts).
+ *
+ * Formula: usableBP = accountBP × bpShare × 0.85
+ * Contract counts always floor() to whole numbers — no fractional contracts.
+ */
+interface BotAccountConfig {
+  accounts: string[]
+  /** BP share per account name (0-1). Applied before the 0.85 BP usage cap. */
+  bpShare: Record<string, number>
+}
+
+const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
+  flame: {
+    accounts: ['User', 'Matt', 'Logan'],
+    bpShare:  { User: 1.0, Matt: 1.0, Logan: 1.0 },
+  },
+  spark: {
+    accounts: [],  // Paper-only — no sandbox orders
+    bpShare:  {},
+  },
+  inferno: {
+    accounts: [],  // Paper-only — no sandbox orders
+    bpShare:  {},
+  },
+}
+
+/** Get sandbox accounts that a specific bot trades on. */
+export function getAccountsForBot(botName: string): string[] {
+  return BOT_ACCOUNTS[botName]?.accounts ?? ['User']
+}
+
+/** Get this bot's BP share for a specific account (0-1). */
+export function getBpShareForBot(botName: string, accountName: string): number {
+  return BOT_ACCOUNTS[botName]?.bpShare[accountName] ?? 1.0
+}
+
 /** Load all configured sandbox accounts from env vars. */
 function getSandboxAccountsFromEnv(): SandboxAccount[] {
   const accounts: SandboxAccount[] = []
@@ -715,14 +759,35 @@ async function getOrderFillPrice(
   accountId: string,
   orderId: number,
 ): Promise<number | null> {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  // Aggressive polling for fills. Market orders WILL fill — poll until they do.
+  //
+  // Behavior by status:
+  //   pending / open / partially_filled → keep polling (no limit, these WILL fill)
+  //   filled → return the fill price
+  //   rejected / canceled / expired → confirm 5x then give up (genuinely terminal)
+  //   API failure (null data) → retry indefinitely (transient network issue)
+  //
+  // Safety cap: 90s total to prevent zombie promises if something truly bizarre
+  // happens. Market orders fill in 1-5s; 90s is 18-90x more than needed.
+  // Backoff: 1s for first 10 polls, 2s for 10-20, 3s after that.
+  const startMs = Date.now()
+  const MAX_POLL_MS = 90_000
+  let attempt = 0
+  let terminalConfirmations = 0 // count consecutive rejected/canceled/expired reads
+
+  while (Date.now() - startMs < MAX_POLL_MS) {
+    attempt++
+    const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+
     const data = await sandboxGet(
       `/accounts/${accountId}/orders/${orderId}`,
       undefined,
       apiKey,
     )
     if (!data) {
-      await new Promise((r) => setTimeout(r, 1000))
+      // API call failed — transient, keep retrying
+      terminalConfirmations = 0
+      await new Promise((r) => setTimeout(r, delay))
       continue
     }
 
@@ -732,6 +797,7 @@ async function getOrderFillPrice(
     if (status === 'filled') {
       // avg_fill_price on order level for multileg
       if (order.avg_fill_price != null) {
+        console.log(`[tradier] Order ${orderId} filled after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s)`)
         return Math.abs(parseFloat(order.avg_fill_price))
       }
       // Fallback: calculate from leg fills
@@ -745,18 +811,46 @@ async function getOrderFillPrice(
           if (side.includes('sell')) total += fill
           else total -= fill
         }
-        return total !== 0 ? Math.abs(total) : null
+        if (total !== 0) {
+          console.log(`[tradier] Order ${orderId} filled (leg calc) after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s)`)
+          return Math.abs(total)
+        }
       }
-    }
-
-    if (['pending', 'open', 'partially_filled'].includes(status)) {
-      await new Promise((r) => setTimeout(r, 1000))
+      // filled but no price yet — keep polling (Tradier may populate price on next read)
+      terminalConfirmations = 0
+      await new Promise((r) => setTimeout(r, delay))
       continue
     }
 
-    // rejected, canceled, expired
-    return null
+    if (['pending', 'open', 'partially_filled'].includes(status)) {
+      // Normal pre-fill states — poll indefinitely (within safety cap)
+      terminalConfirmations = 0
+      if (attempt % 10 === 0) {
+        console.log(`[tradier] Order ${orderId} still ${status} after ${attempt} polls (${((Date.now() - startMs) / 1000).toFixed(1)}s) — continuing...`)
+      }
+      await new Promise((r) => setTimeout(r, delay))
+      continue
+    }
+
+    // rejected / canceled / expired — these are genuinely terminal on Tradier.
+    // Confirm 5 consecutive reads to be sure (in case of API glitch).
+    terminalConfirmations++
+    if (terminalConfirmations >= 5) {
+      console.error(
+        `[tradier] Order ${orderId} confirmed ${status} after ${terminalConfirmations} consecutive reads ` +
+        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — giving up`,
+      )
+      return null
+    }
+    console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} (confirmation ${terminalConfirmations}/5) — re-checking...`)
+    await new Promise((r) => setTimeout(r, delay))
   }
+
+  // Safety cap reached — should never happen for market orders
+  console.error(
+    `[tradier] Order ${orderId} polling safety cap reached after ${attempt} polls ` +
+    `(${((Date.now() - startMs) / 1000).toFixed(1)}s) — returning null`,
+  )
   return null
 }
 
@@ -779,9 +873,16 @@ export async function placeIcOrderAllAccounts(
   paperContracts: number,
   totalCredit: number,
   tag?: string,
+  botName?: string,
 ): Promise<Record<string, SandboxOrderInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
+
+  // Filter accounts by bot (FLAME=User+Matt+Logan, SPARK+INFERNO=paper-only/none)
+  const allowedAccounts = botName ? getAccountsForBot(botName) : null
+  const eligibleAccounts = allowedAccounts
+    ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
+    : _sandboxAccounts
 
   // Shared OCC symbols — same strikes for all accounts
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
@@ -795,8 +896,8 @@ export async function placeIcOrderAllAccounts(
   if (collateralPer <= 0) return results
 
   // Process User first (for fill price later), then others in parallel
-  const userAccts = _sandboxAccounts.filter((a) => a.name === 'User')
-  const otherAccts = _sandboxAccounts.filter((a) => a.name !== 'User')
+  const userAccts = eligibleAccounts.filter((a) => a.name === 'User')
+  const otherAccts = eligibleAccounts.filter((a) => a.name !== 'User')
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
@@ -812,18 +913,17 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size: min of paper-sized count and what this account's BP supports.
-      // Safety cap at 50 contracts to prevent runaway sandbox orders.
-      const SANDBOX_MAX_CONTRACTS = 50
-      const usableBP = bp * 0.85
+      // Size to ~85% of this account's buying power.
+      // FLAME: all 3 accounts (fill-only). SPARK+INFERNO: paper-only (no sandbox).
+      // Math.floor guarantees whole contracts — no fractional orders.
+      const SANDBOX_MAX_CONTRACTS = 200
+      const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
+      const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
-      const acctContracts = Math.min(
-        SANDBOX_MAX_CONTRACTS,
-        paperContracts > 0 ? Math.min(paperContracts, bpContracts) : bpContracts,
-      )
+      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       console.log(
-        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} → bpMax=${bpContracts} → capped at ${acctContracts} (paper=${paperContracts})`,
+        `Sandbox [${acct.name}]: BP=$${bp.toFixed(0)} × ${(botShare * 100).toFixed(0)}% share → ${acctContracts} contracts (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
@@ -1225,4 +1325,9 @@ export async function emergencyCloseSandboxPositions(
   }
 
   return { closed, failed, details }
+}
+
+// Expose internals for testing only
+export const _testing = {
+  getOrderFillPrice,
 }

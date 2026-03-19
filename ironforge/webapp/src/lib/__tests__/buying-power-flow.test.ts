@@ -225,32 +225,42 @@ describe('Flow 3: Per-account BP displayed on Accounts page', () => {
 
 describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
   it('FLAME uses User fill price, not paper estimate', () => {
-    // Scanner places sandbox order → gets fill price from User account
+    // Scanner places sandbox order → gets fill price from User account (primary, 70% share)
     const paperCredit = 0.27 // estimated
     const userFillPrice = 0.25 // actual (slightly worse)
 
-    // FLAME uses actual fill values
+    // FLAME uses actual fill values from User (primary account)
     expect(userFillPrice).not.toBe(paperCredit)
     const effectiveCredit = userFillPrice
     expect(effectiveCredit).toBe(0.25)
   })
 
-  it('FLAME uses User fill contracts, not paper sizing', () => {
-    const paperContracts = 10 // paper estimate based on paper_account BP
-    const userFillContracts = 8 // actual (User BP may be different)
-
-    const effectiveContracts = userFillContracts
-    expect(effectiveContracts).toBe(8)
-  })
-
-  it('FLAME collateral uses actual fill values', () => {
+  it('FLAME paper position uses paper-sized contracts (85% of paper BP)', () => {
+    // Paper account sizes at 85% of paper BP
+    const paperBP = 10000
+    const bpPct = 0.85
     const spreadWidth = 5.0
     const fillPrice = 0.25
-    const fillContracts = 8
+    const collateralPer = Math.max(0, (spreadWidth - fillPrice) * 100) // $475
+    const paperContracts = Math.max(1, Math.floor(paperBP * bpPct / collateralPer)) // 17
 
-    const collateral = Math.max(0, (spreadWidth - fillPrice) * 100) * fillContracts
-    // (5 - 0.25) * 100 * 8 = 475 * 8 = $3800
-    expect(collateral).toBe(3800)
+    // Tradier User account may fill different qty (its own 85% of sandbox BP)
+    const userFillContracts = 44 // User sandbox has $25k BP
+
+    // Paper position uses paper contracts, NOT Tradier fill contracts
+    const effectiveContracts = paperContracts
+    expect(effectiveContracts).toBe(17) // paper-sized
+    expect(effectiveContracts).not.toBe(userFillContracts) // NOT sandbox-sized
+  })
+
+  it('FLAME collateral uses fill price but paper contracts', () => {
+    const spreadWidth = 5.0
+    const fillPrice = 0.25
+    const paperContracts = 17 // from 85% of paper BP
+
+    const collateral = Math.max(0, (spreadWidth - fillPrice) * 100) * paperContracts
+    // (5 - 0.25) * 100 * 17 = 475 * 17 = $8075
+    expect(collateral).toBe(8075)
   })
 
   it('FLAME rejects trade when User account has no fill', () => {
@@ -262,15 +272,16 @@ describe('Flow 4: FLAME Tradier-fill-only buying power flow', () => {
 
     const userFill = sandboxResults['User' as keyof typeof sandboxResults]
     expect(userFill).toBeUndefined()
-    // FLAME should return 'skip:flame_user_no_fill'
+    // FLAME should return 'skip:flame_primary_no_fill'
   })
 
-  it('SPARK/INFERNO still use paper sizing (not Tradier-fill-only)', () => {
-    // Only FLAME is fill-only; SPARK and INFERNO use paper estimates
-    const botName = 'spark'
-    const isFlameFillOnly = botName === 'flame'
-    expect(isFlameFillOnly).toBe(false)
-    // Paper sizing logic applies
+  it('SPARK/INFERNO are paper-only (no sandbox, no fill-only)', () => {
+    // Only FLAME is fill-only; SPARK and INFERNO use paper_account balance × 85%
+    // Neither has sandbox accounts — getAccountsForBot returns []
+    for (const botName of ['spark', 'inferno']) {
+      const isFlameFillOnly = botName === 'flame'
+      expect(isFlameFillOnly).toBe(false)
+    }
   })
 })
 
@@ -358,14 +369,13 @@ describe('Flow 6: Scanner paper sizing matches API buying power', () => {
     expect(apiBuyingPower).toBe(7730)
   })
 
-  it('max_contracts=0 means unlimited (INFERNO)', () => {
-    const maxContracts = 0
+  it('max_contracts=20 caps INFERNO at 20', () => {
+    const maxContracts = 20
     const computedContracts = 50
-    // When max_contracts=0, scanner does NOT cap
     const finalContracts = maxContracts > 0
       ? Math.min(computedContracts, maxContracts)
       : computedContracts
-    expect(finalContracts).toBe(50) // uncapped
+    expect(finalContracts).toBe(20) // capped at 20
   })
 
   it('max_contracts=10 caps at 10 (FLAME/SPARK)', () => {

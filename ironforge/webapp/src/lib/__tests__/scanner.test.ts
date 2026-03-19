@@ -110,25 +110,25 @@ describe('Market Hours', () => {
   })
 
   describe('isAfterEodCutoff (Fix 6)', () => {
-    it('returns true at 14:45 CT and after', () => {
-      expect(isAfterEodCutoff(makeCT(14, 45))).toBe(true)
+    it('returns true at 14:50 CT and after', () => {
+      expect(isAfterEodCutoff(makeCT(14, 50))).toBe(true)
       expect(isAfterEodCutoff(makeCT(15, 0))).toBe(true)
       expect(isAfterEodCutoff(makeCT(15, 45))).toBe(true)
     })
 
-    it('returns false before 14:45 CT', () => {
-      expect(isAfterEodCutoff(makeCT(14, 44))).toBe(false)
+    it('returns false before 14:50 CT', () => {
+      expect(isAfterEodCutoff(makeCT(14, 49))).toBe(false)
       expect(isAfterEodCutoff(makeCT(14, 0))).toBe(false)
       expect(isAfterEodCutoff(makeCT(8, 30))).toBe(false)
     })
 
-    it('OLD cutoff 15:45 would have been wrong — verify 14:45 is correct', () => {
+    it('OLD cutoff 15:45 would have been wrong — verify 14:50 is correct', () => {
       // This is the bug that was fixed: 15:45 was too late
       expect(isAfterEodCutoff(makeCT(15, 45))).toBe(true)
-      // 14:45 is now the cutoff — positions should close here
-      expect(isAfterEodCutoff(makeCT(14, 45))).toBe(true)
-      // 14:44 should NOT trigger EOD
-      expect(isAfterEodCutoff(makeCT(14, 44))).toBe(false)
+      // 14:50 is now the cutoff — positions should close here
+      expect(isAfterEodCutoff(makeCT(14, 50))).toBe(true)
+      // 14:49 should NOT trigger EOD
+      expect(isAfterEodCutoff(makeCT(14, 49))).toBe(false)
     })
   })
 
@@ -252,13 +252,13 @@ describe('Sliding Profit Target', () => {
 /* ================================================================== */
 
 describe('Per-Bot Config', () => {
-  it('FLAME defaults: sd=1.2, pt=0.30, sl=2.0, entry_end=1400, max_contracts=10', () => {
+  it('FLAME defaults: sd=1.2, pt=0.30, sl=2.0, entry_end=1400, max_contracts=0 (unlimited)', () => {
     const c = DEFAULT_CONFIG.flame
     expect(c.sd).toBe(1.2)
     expect(c.pt_pct).toBe(0.30)
     expect(c.sl_mult).toBe(2.0)
     expect(c.entry_end).toBe(1400)
-    expect(c.max_contracts).toBe(10)
+    expect(c.max_contracts).toBe(0) // 0 = unlimited (sized by BP only)
     expect(c.max_trades).toBe(1)
     expect(c.bp_pct).toBe(0.85)
   })
@@ -273,13 +273,13 @@ describe('Per-Bot Config', () => {
     expect(s.max_contracts).toBe(f.max_contracts)
   })
 
-  it('INFERNO defaults: sd=1.0, pt=0.50, sl=3.0, entry_end=1430, max_contracts=3, unlimited trades', () => {
+  it('INFERNO defaults: sd=1.0, pt=0.50, sl=3.0, entry_end=1430, max_contracts=20, unlimited trades', () => {
     const c = DEFAULT_CONFIG.inferno
     expect(c.sd).toBe(1.0)
     expect(c.pt_pct).toBe(0.50)
     expect(c.sl_mult).toBe(3.0)
     expect(c.entry_end).toBe(1430)
-    expect(c.max_contracts).toBe(3)
+    expect(c.max_contracts).toBe(20)
     expect(c.max_trades).toBe(0) // 0 = unlimited
   })
 
@@ -638,11 +638,11 @@ describe('Entry Window vs EOD Cutoff: No Gap', () => {
   })
 
   it('no bot can open trades after EOD cutoff', () => {
-    const ct1445 = makeCT(14, 45, 1)
+    const ct1450 = makeCT(14, 50, 1)
     for (const bot of BOTS) {
-      expect(isInEntryWindow(ct1445, bot)).toBe(false)
+      expect(isInEntryWindow(ct1450, bot)).toBe(false)
     }
-    expect(isAfterEodCutoff(ct1445)).toBe(true)
+    expect(isAfterEodCutoff(ct1450)).toBe(true)
   })
 })
 
@@ -815,7 +815,7 @@ describe('Scenario: Full trade lifecycle P&L', () => {
 
     // INFERNO allows 0 trades/day = unlimited
     expect(DEFAULT_CONFIG.inferno.max_trades).toBe(0)
-    // INFERNO max 3 contracts (not 10)
-    expect(DEFAULT_CONFIG.inferno.max_contracts).toBe(3)
+    // INFERNO max 20 contracts
+    expect(DEFAULT_CONFIG.inferno.max_contracts).toBe(20)
   })
 })
