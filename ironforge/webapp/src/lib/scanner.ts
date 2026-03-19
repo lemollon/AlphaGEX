@@ -1001,6 +1001,42 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       console.log(`[scanner] FLAME: ${_flameConsecutiveRejects} consecutive rejects — retrying now (backoff cycle)`)
     }
 
+    // PRE-ORDER CLEANUP: Close stale sandbox positions BEFORE placing new orders.
+    // Without this, yesterday's unsettled positions consume all buying power
+    // and every new order gets rejected (1500+ rejections/day).
+    try {
+      const accounts = await getLoadedSandboxAccountsAsync()
+      for (const acct of accounts) {
+        const positions = await getSandboxAccountPositions(acct.apiKey)
+        const todayStr = ct.toISOString().slice(0, 10)
+        const stalePositions = positions.filter(p => {
+          if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) return false
+          try {
+            const datePart = p.symbol.slice(3, 9)
+            const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
+            return expDate <= todayStr
+          } catch { return false }
+        })
+        if (stalePositions.length > 0) {
+          console.warn(
+            `[scanner] FLAME PRE-ORDER: ${acct.name} has ${stalePositions.length} stale positions ` +
+            `consuming buying power — emergency closing before order...`,
+          )
+          const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+          console.log(
+            `[scanner] FLAME PRE-ORDER CLEANUP [${acct.name}]: ` +
+            `${result.closed} closed, ${result.failed} failed`,
+          )
+          for (const detail of result.details) {
+            console.log(`[scanner] FLAME PRE-ORDER: ${detail}`)
+          }
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] FLAME PRE-ORDER CLEANUP failed: ${msg}`)
+    }
+
     // Attempt sandbox order — if User doesn't fill, try cleaning up
     // stale positions and retry once before giving up.
     let attempts = 0
@@ -1307,11 +1343,14 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
 async function dailySandboxCleanup(ct: Date): Promise<void> {
   const todayStr = ct.toISOString().slice(0, 10)
 
-  // Run once per day at market open, OR re-run if stale positions were found
-  // but not successfully closed on the first attempt.
+  // Run once per day, but DON'T restrict to 8:30-9:00 AM.
+  // Old behavior: only ran between 8:30-9:00 AM, so if cleanup failed during
+  // that window (e.g., Tradier rejects close on expired options), stale
+  // positions blocked ALL new orders for the rest of the day.
+  // New behavior: keep retrying every cycle until cleanup succeeds.
   if (_lastSandboxCleanupDate === todayStr) return
   const hhmm = ctHHMM(ct)
-  if (hhmm < 830 || hhmm > 900) return
+  if (hhmm < 830) return  // Don't run before market open
 
   console.log('[scanner] DAILY SANDBOX CLEANUP: Starting stale position scan...')
 
