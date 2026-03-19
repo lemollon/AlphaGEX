@@ -41,9 +41,10 @@ export async function POST(
               contracts, spread_width, total_credit, max_loss,
               collateral_required, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
-       WHERE position_id = '${escapeSql(position_id)}' AND status = 'open'
-         AND dte_mode = '${escapeSql(dte)}'
+       WHERE position_id = $1 AND status = 'open'
+         AND dte_mode = $2
        LIMIT 1`,
+      [position_id, dte],
     )
 
     if (rows.length === 0) {

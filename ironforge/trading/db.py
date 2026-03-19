@@ -207,6 +207,8 @@ class TradingDatabase:
             logger.error(f"{self.bot_name}: Failed to load positions: {e}")
             raise RuntimeError(f"{self.bot_name}: Cannot load positions from database: {e}") from e
 
+        return positions
+
     def save_position(self, pos: IronCondorPosition) -> bool:
         try:
             with db_connection() as conn:
