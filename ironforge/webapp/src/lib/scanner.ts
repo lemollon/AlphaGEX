@@ -944,9 +944,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const usableBP = buyingPower * botCfg.bp_pct
   const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
   // max_contracts=0 means unlimited (sized by BP only)
-  const maxContracts = botCfg.max_contracts > 0
+  // SAFETY CAP: Never exceed 200 contracts regardless of BP calculation.
+  // Prevents runaway sizing from inflated buying power values.
+  const SCANNER_MAX_CONTRACTS = 200
+  const rawMax = botCfg.max_contracts > 0
     ? Math.min(botCfg.max_contracts, bpContracts)
     : bpContracts
+  const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
   const totalCollateral = collateralPer * maxContracts
   const maxProfit = credits.totalCredit * 100 * maxContracts
   const maxLoss = totalCollateral
