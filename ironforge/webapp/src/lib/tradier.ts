@@ -940,20 +940,23 @@ export async function placeIcOrderAllAccounts(
       // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
       // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
-      const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
-      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
+      // Cap at paperContracts — sandbox orders must never exceed the scanner's
+      // paper-sized amount (which already applies max_contracts + 200 safety cap).
+      // Without this cap, sandbox accounts independently size from their own BP
+      // and can produce 500+ contract orders against an $81K account.
+      const acctContracts = Math.min(bpContracts, paperContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
       console.log(
         `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, ` +
         `usable=$${usableBP.toFixed(0)} (${(botShare * 100).toFixed(0)}% × 85%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
-        `contracts=${acctContracts} (bp_calc=${bpContracts}, cap=${SANDBOX_MAX_CONTRACTS}), ` +
-        `totalMargin=$${totalMargin.toFixed(0)} (paper=${paperContracts})`,
+        `contracts=${acctContracts} (bp_calc=${bpContracts}, paper_cap=${paperContracts}), ` +
+        `totalMargin=$${totalMargin.toFixed(0)}`,
       )
 
       const orderBody: Record<string, string> = {
