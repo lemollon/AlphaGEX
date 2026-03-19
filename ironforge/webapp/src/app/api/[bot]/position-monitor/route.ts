@@ -70,11 +70,14 @@ export async function GET(
               mtm = mtmResult.cost_to_close
               spotPrice = mtmResult.spot_price
               const spreadWidth = num(r.spread_width) || (ps - pl)
-              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtm, contracts, spreadWidth)
+              // Use mid/last prices for P&L display to match Tradier's Gain/Loss
+              const mtmMid = mtmResult.cost_to_close_mid
+              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmMid, contracts, spreadWidth)
               unrealizedPnlPct =
                 entryCredit > 0
-                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtm), spreadWidth)) / entryCredit) * 10000) / 100
+                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmMid), spreadWidth)) / entryCredit) * 10000) / 100
                   : 0
+              // PT/SL proximity uses bid/ask (worst-case) since these trigger actual closes
               distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
               distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
             }

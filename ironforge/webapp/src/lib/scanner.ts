@@ -50,6 +50,18 @@ import {
 const SCAN_INTERVAL_MS = 60 * 1000 // 1 minute
 const MAX_CONSECUTIVE_MTM_FAILURES = 10
 
+// Track consecutive FLAME sandbox rejections to avoid spamming Tradier
+// with 1500+ rejected orders per day. After N consecutive rejections,
+// back off exponentially (skip cycles) before retrying.
+let _flameConsecutiveRejects = 0
+const FLAME_MAX_REJECTS_BEFORE_BACKOFF = 5  // After 5 rejections, start backing off
+const FLAME_BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retries
+
+// Gate FLAME orders behind sandbox cleanup completion.
+// Set to true once daily cleanup verifies all stale positions are gone.
+let _sandboxCleanupVerified = false
+let _sandboxCleanupVerifiedDate = ''
+
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -495,9 +507,10 @@ async function monitorSinglePosition(
   // MTM succeeded — reset failure counter
   _mtmFailureCounts.delete(pid)
 
-  const costToClose = mtm.cost_to_close
+  const costToClose = mtm.cost_to_close       // bid/ask worst-case — for PT/SL decisions
+  const costToCloseMid = mtm.cost_to_close_mid // last/mid — for P&L display (matches Tradier)
 
-  // Profit target: cost_to_close <= PT threshold (sliding)
+  // Profit target: cost_to_close <= PT threshold (sliding) — uses bid/ask (conservative)
   if (costToClose <= profitTargetPrice) {
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
@@ -515,7 +528,8 @@ async function monitorSinglePosition(
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
-  const unrealizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+  // Unrealized P&L uses mid/last prices to match Tradier's Gain/Loss
+  const unrealizedPnl = Math.round((entryCredit - costToCloseMid) * 100 * contracts * 100) / 100
   return {
     status: `monitoring:mtm=${costToClose.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)} PT=${ptTier}(${(ptFraction * 100).toFixed(0)}%)`,
     unrealizedPnl,
@@ -982,6 +996,89 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
+    // Backoff after consecutive rejections — stop spamming Tradier with orders
+    // that will just get rejected again (prevents 1500+ rejected orders/day).
+    if (_flameConsecutiveRejects >= FLAME_MAX_REJECTS_BEFORE_BACKOFF) {
+      // Only retry every FLAME_BACKOFF_CYCLES cycles (~10 min)
+      const cyclesSinceLastAttempt = _flameConsecutiveRejects - FLAME_MAX_REJECTS_BEFORE_BACKOFF
+      if (cyclesSinceLastAttempt % FLAME_BACKOFF_CYCLES !== 0) {
+        _flameConsecutiveRejects++
+        return `skip:flame_backoff(${_flameConsecutiveRejects} consecutive rejects, retrying every ${FLAME_BACKOFF_CYCLES} cycles)`
+      }
+      console.log(`[scanner] FLAME: ${_flameConsecutiveRejects} consecutive rejects — retrying now (backoff cycle)`)
+    }
+
+    // GATE: Don't place orders if sandbox cleanup hasn't verified clean.
+    // Reset the verified flag if date changed (new day).
+    const ctNow = getCentralTime()
+    const todayStr = ctNow.toISOString().slice(0, 10)
+    if (_sandboxCleanupVerifiedDate !== todayStr) {
+      _sandboxCleanupVerified = false
+    }
+
+    if (!_sandboxCleanupVerified) {
+      // Quick check: are there actually stale positions right now?
+      let staleCount = 0
+      try {
+        const accounts = await getLoadedSandboxAccountsAsync()
+        for (const acct of accounts) {
+          const positions = await getSandboxAccountPositions(acct.apiKey)
+          for (const p of positions) {
+            if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
+            try {
+              const datePart = p.symbol.slice(3, 9)
+              const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
+              if (expDate <= todayStr) staleCount++
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
+
+      if (staleCount > 0) {
+        // Try emergency cleanup right now
+        console.warn(`[scanner] FLAME PRE-ORDER: ${staleCount} stale positions blocking orders — cleaning up...`)
+        try {
+          const accounts = await getLoadedSandboxAccountsAsync()
+          for (const acct of accounts) {
+            const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+            for (const detail of result.details) {
+              console.log(`[scanner] FLAME PRE-ORDER: ${detail}`)
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Re-check if stale positions remain
+        let remaining = 0
+        try {
+          const accounts = await getLoadedSandboxAccountsAsync()
+          for (const acct of accounts) {
+            const positions = await getSandboxAccountPositions(acct.apiKey)
+            for (const p of positions) {
+              if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
+              try {
+                const datePart = p.symbol.slice(3, 9)
+                const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
+                if (expDate <= todayStr) remaining++
+              } catch { /* ignore */ }
+            }
+          }
+        } catch { /* ignore */ }
+
+        if (remaining > 0) {
+          _flameConsecutiveRejects++
+          return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
+        }
+        // All clear now
+        _sandboxCleanupVerified = true
+        _sandboxCleanupVerifiedDate = todayStr
+        console.log('[scanner] FLAME PRE-ORDER: All stale positions cleared — proceeding with order')
+      } else {
+        // No stale positions — mark verified
+        _sandboxCleanupVerified = true
+        _sandboxCleanupVerifiedDate = todayStr
+      }
+    }
+
     // Attempt sandbox order — if User doesn't fill, try cleaning up
     // stale positions and retry once before giving up.
     let attempts = 0
@@ -1023,6 +1120,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             false, bot.dte,
           ],
         )
+        _flameConsecutiveRejects++
         return `skip:flame_sandbox_failed(${msg})`
       }
 
@@ -1057,10 +1155,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             false, bot.dte,
           ],
         )
+        _flameConsecutiveRejects++
         return 'skip:flame_primary_no_fill'
       }
 
-      // Primary account filled — break out of retry loop
+      // Primary account filled — reset rejection counter
+      _flameConsecutiveRejects = 0
       break
     }
 
@@ -1285,11 +1385,14 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
 async function dailySandboxCleanup(ct: Date): Promise<void> {
   const todayStr = ct.toISOString().slice(0, 10)
 
-  // Run once per day at market open, OR re-run if stale positions were found
-  // but not successfully closed on the first attempt.
+  // Run once per day, but DON'T restrict to 8:30-9:00 AM.
+  // Old behavior: only ran between 8:30-9:00 AM, so if cleanup failed during
+  // that window (e.g., Tradier rejects close on expired options), stale
+  // positions blocked ALL new orders for the rest of the day.
+  // New behavior: keep retrying every cycle until cleanup succeeds.
   if (_lastSandboxCleanupDate === todayStr) return
   const hhmm = ctHHMM(ct)
-  if (hhmm < 830 || hhmm > 900) return
+  if (hhmm < 830) return  // Don't run before market open
 
   console.log('[scanner] DAILY SANDBOX CLEANUP: Starting stale position scan...')
 
@@ -1355,13 +1458,47 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       cleanupDetails[acct.name] = { stale: acctStale, closed: acctClosed, failed: acctFailed }
     }
 
-    // Only mark cleanup as done if all stale positions were handled.
-    // If some failed, allow retry on next scan cycle.
+    // After emergency close, VERIFY positions are actually gone.
+    // emergencyCloseSandboxPositions now polls for fill confirmation,
+    // but double-check by re-querying positions.
+    if (totalFailed > 0) {
+      console.warn(
+        `[scanner] SANDBOX CLEANUP: ${totalFailed} close orders failed — re-checking positions...`,
+      )
+      // Re-query to see if positions are actually gone despite "failed" close orders
+      let remainingStale = 0
+      for (const acct of accounts) {
+        const freshPositions = await getSandboxAccountPositions(acct.apiKey)
+        for (const pos of freshPositions) {
+          if (!pos.symbol || pos.symbol.length < 15 || pos.quantity === 0) continue
+          try {
+            const datePart = pos.symbol.slice(3, 9)
+            const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
+            if (expDate <= todayStr) {
+              remainingStale++
+              console.warn(`[scanner] SANDBOX CLEANUP: STILL OPEN after close attempt: ${acct.name} ${pos.symbol} x${pos.quantity}`)
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      if (remainingStale === 0) {
+        console.log('[scanner] SANDBOX CLEANUP: All stale positions verified gone (close orders may have settled)')
+        totalFailed = 0  // Override — positions are actually gone
+      } else {
+        console.error(`[scanner] SANDBOX CLEANUP: ${remainingStale} stale positions STILL OPEN — will retry next cycle`)
+      }
+    }
+
+    // Mark cleanup complete and set verified flag for FLAME gate
     if (totalFailed === 0) {
       _lastSandboxCleanupDate = todayStr
+      _sandboxCleanupVerified = true
+      _sandboxCleanupVerifiedDate = todayStr
     } else {
+      // Stale positions remain — FLAME will be blocked until next successful cleanup
+      _sandboxCleanupVerified = false
       console.warn(
-        `[scanner] SANDBOX CLEANUP: ${totalFailed} positions failed to close — will retry next cycle`,
+        `[scanner] SANDBOX CLEANUP: ${totalFailed} positions still open — FLAME BLOCKED until resolved`,
       )
     }
 
@@ -1370,12 +1507,18 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
         `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
          VALUES ($1, $2, $3, $4)`,
         [
-          'SANDBOX_CLEANUP',
+          totalFailed > 0 ? 'CRITICAL' : 'SANDBOX_CLEANUP',
           `Daily sandbox cleanup: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`,
           JSON.stringify({ event: 'daily_sandbox_cleanup', date: todayStr, totalStale, totalClosed, totalFailed, perAccount: cleanupDetails }),
           '2DTE',
         ],
       )
+    }
+
+    // No stale positions found at all — sandbox is clean
+    if (totalStale === 0) {
+      _sandboxCleanupVerified = true
+      _sandboxCleanupVerifiedDate = todayStr
     }
 
     console.log(`[scanner] DAILY SANDBOX CLEANUP COMPLETE: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`)
@@ -1857,14 +2000,18 @@ async function runAllScans(): Promise<void> {
     console.warn(`[scanner] Config override load failed (using defaults): ${msg}`)
   }
 
-  // Daily sandbox cleanup at market open (Fix 7) — fire-and-forget.
-  // Cleanup runs in the background so it NEVER blocks bot scanning.
-  // If you already force-closed positions manually, cleanup finds nothing and exits fast.
+  // Daily sandbox cleanup at market open — MUST complete before FLAME can trade.
+  // Stale positions from yesterday consume buying power and cause every new order
+  // to be rejected (1500+ rejections/day if not cleaned up).
+  // This BLOCKS bot scanning until cleanup finishes — getting positions cleared
+  // is more important than scanning 1 minute earlier.
   const ct = getCentralTime()
-  dailySandboxCleanup(ct).catch((err: unknown) => {
+  try {
+    await dailySandboxCleanup(ct)
+  } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error(`[scanner] Daily sandbox cleanup failed (non-fatal): ${msg}`)
-  })
+    console.error(`[scanner] Daily sandbox cleanup failed: ${msg}`)
+  }
 
   // Pre-scan sandbox health check (Fix 8) — also non-blocking.
   prescanSandboxHealthCheck().catch((err: unknown) => {

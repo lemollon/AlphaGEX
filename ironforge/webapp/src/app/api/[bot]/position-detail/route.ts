@@ -89,18 +89,32 @@ export async function GET(
         ]
 
         let currentDebit: number | null = null
+        // currentDebitMid uses last/mid prices to match Tradier's P&L calculation.
+        // currentDebit (bid/ask worst-case) is kept for cost-to-close and PT/SL proximity.
+        let currentDebitMid: number | null = null
         let paperPnl: number | null = null
         let spreadPnlPerContract: number | null = null
         let pctProfitCaptured: number | null = null
 
         if (hasQuotes) {
+          // Worst-case bid/ask debit (what you'd actually pay to close)
           const rawDebit = psQ.ask + csQ.ask - plQ.bid - clQ.bid
           const spreadWidthCalc = Math.round((ps - pl) * 100) / 100
           currentDebit = Math.round(Math.min(Math.max(0, rawDebit), spreadWidthCalc) * 10000) / 10000
-          spreadPnlPerContract = Math.round((entryCredit - currentDebit) * 10000) / 10000
-          paperPnl = calculateIcUnrealizedPnl(entryCredit, currentDebit, contracts, spreadWidthCalc)
+
+          // Mid/last price debit — matches Tradier's Gain/Loss calculation.
+          // Tradier uses last trade prices; we use last with mid fallback.
+          const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+          const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+          const csLast = csQ.last > 0 ? csQ.last : csQ.mid
+          const clLast = clQ.last > 0 ? clQ.last : clQ.mid
+          const rawDebitMid = psLast + csLast - plLast - clLast
+          currentDebitMid = Math.round(Math.min(Math.max(0, rawDebitMid), spreadWidthCalc) * 10000) / 10000
+
+          spreadPnlPerContract = Math.round((entryCredit - currentDebitMid) * 10000) / 10000
+          paperPnl = calculateIcUnrealizedPnl(entryCredit, currentDebitMid, contracts, spreadWidthCalc)
           pctProfitCaptured = entryCredit > 0
-            ? Math.round(((entryCredit - currentDebit) / entryCredit) * 10000) / 100
+            ? Math.round(((entryCredit - currentDebitMid) / entryCredit) * 10000) / 100
             : 0
         }
 
@@ -155,12 +169,11 @@ export async function GET(
               // Sandbox may be unreachable
             }
 
-            // Compute Tradier P&L from fill price + production quotes (not sandbox
-            // gain_loss which uses stale sandbox marks).  Falls back to
-            // market_value - cost_basis if no production quotes available.
+            // Compute P&L using mid/last prices to match Tradier's Gain/Loss.
+            // Falls back to market_value - cost_basis if no production quotes.
             let calcPnl: number | null = null
-            if (currentDebit != null) {
-              calcPnl = Math.round((acctEntryCredit - currentDebit) * 100 * acctContracts * 100) / 100
+            if (currentDebitMid != null) {
+              calcPnl = Math.round((acctEntryCredit - currentDebitMid) * 100 * acctContracts * 100) / 100
               tradierPnl = calcPnl
             } else if (tradierCostBasis != null && tradierMarketValue != null) {
               tradierPnl = Math.round((tradierMarketValue - tradierCostBasis) * 100) / 100
@@ -170,7 +183,7 @@ export async function GET(
               name: acct.name, order_id: orderId, contracts: acctContracts,
               fill_price: fillPrice > 0 ? fillPrice : null,
               entry_credit_total: Math.round(acctEntryCredit * 100 * acctContracts * 100) / 100,
-              current_debit_total: currentDebit != null ? Math.round(currentDebit * 100 * acctContracts * 100) / 100 : null,
+              current_debit_total: currentDebitMid != null ? Math.round(currentDebitMid * 100 * acctContracts * 100) / 100 : null,
               calculated_pnl: calcPnl,
               tradier_pnl: tradierPnl != null ? Math.round(tradierPnl * 100) / 100 : null,
               tradier_cost_basis: tradierCostBasis != null ? Math.round(tradierCostBasis * 100) / 100 : null,
@@ -182,7 +195,7 @@ export async function GET(
         const paperAccount = {
           name: 'Paper', order_id: null, contracts,
           entry_credit_total: maxProfit,
-          current_debit_total: currentDebit != null ? Math.round(currentDebit * 100 * contracts * 100) / 100 : null,
+          current_debit_total: currentDebitMid != null ? Math.round(currentDebitMid * 100 * contracts * 100) / 100 : null,
           calculated_pnl: paperPnl,
           tradier_pnl: null, tradier_cost_basis: null, tradier_market_value: null,
         }
@@ -196,7 +209,7 @@ export async function GET(
           underlying_at_entry: num(r.underlying_at_entry),
           open_time: r.open_time || null, spy_price: spyPrice,
           legs,
-          entry_credit: entryCredit, current_debit: currentDebit,
+          entry_credit: entryCredit, current_debit: currentDebitMid, cost_to_close: currentDebit,
           spread_pnl_per_contract: spreadPnlPerContract, paper_pnl: paperPnl,
           max_profit: maxProfit, max_loss: maxLoss,
           put_breakeven: putBreakeven, call_breakeven: callBreakeven,

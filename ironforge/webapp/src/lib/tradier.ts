@@ -51,6 +51,7 @@ interface OptionQuote {
   bid: number
   ask: number
   last: number
+  mid: number
   symbol: string
 }
 
@@ -63,6 +64,7 @@ interface Quote {
 
 export interface IcMtmResult {
   cost_to_close: number
+  cost_to_close_mid: number
   put_short_ask: number
   put_long_bid: number
   call_short_ask: number
@@ -177,10 +179,13 @@ export async function getOptionQuote(
   if (Array.isArray(quote)) quote = quote[0]
   if (!quote || quote.bid == null) return null
   if (data.quotes?.unmatched_symbols) return null
+  const bid = parseFloat(quote.bid || '0')
+  const ask = parseFloat(quote.ask || '0')
   return {
-    bid: parseFloat(quote.bid || '0'),
-    ask: parseFloat(quote.ask || '0'),
+    bid,
+    ask,
     last: parseFloat(quote.last || '0'),
+    mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
     symbol: occSymbol,
   }
 }
@@ -274,8 +279,19 @@ export async function getIcMarkToMarket(
   // Cap at spread width — theoretical max cost for an IC
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
   const cost = Math.min(Math.max(0, rawCost), spreadWidth)
+
+  // Mid/last price cost — matches Tradier's Gain/Loss calculation.
+  // Tradier uses last trade prices for position valuation.
+  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+  const csLast = csQ.last > 0 ? csQ.last : csQ.mid
+  const clLast = clQ.last > 0 ? clQ.last : clQ.mid
+  const rawCostMid = psLast + csLast - plLast - clLast
+  const costMid = Math.min(Math.max(0, rawCostMid), spreadWidth)
+
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
+    cost_to_close_mid: Math.round(costMid * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
@@ -538,10 +554,12 @@ async function sandboxPost(
 
   if (!res.ok) {
     const status = res.status
+    let errorBody = ''
+    try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+      console.error(`Tradier sandbox POST: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+      console.error(`Tradier sandbox POST: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -582,10 +600,12 @@ async function sandboxGet(
 
   if (!res.ok) {
     const status = res.status
+    let errorBody = ''
+    try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+      console.error(`Tradier sandbox GET: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+      console.error(`Tradier sandbox GET: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -876,10 +896,18 @@ async function getOrderFillPrice(
     // Confirm 5 consecutive reads to be sure (in case of API glitch).
     terminalConfirmations++
     if (terminalConfirmations >= 5) {
+      // Log the full rejection reason from Tradier so we can debug
+      const reason = order.reason_description || order.reject_reason || order.reason || 'no reason provided'
+      const tag = order.tag || ''
       console.error(
         `[tradier] Order ${orderId} confirmed ${status} after ${terminalConfirmations} consecutive reads ` +
-        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — giving up`,
+        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — REASON: "${reason}" ` +
+        `[tag=${tag}, qty=${order.quantity || 'N/A'}, class=${order.class || 'N/A'}]`,
       )
+      // Log full order object for debugging (first rejection only)
+      if (terminalConfirmations === 5) {
+        console.error(`[tradier] Order ${orderId} FULL RESPONSE: ${JSON.stringify(order)}`)
+      }
       return null
     }
     console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} (confirmation ${terminalConfirmations}/5) — re-checking...`)
@@ -966,6 +994,9 @@ export async function placeIcOrderAllAccounts(
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
+      // Size to 85% of account's option buying power. No paperContracts cap —
+      // sandbox accounts size independently based on their own BP.
+      // Safety cap at 200 contracts to prevent runaway orders.
       const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
@@ -973,7 +1004,7 @@ export async function placeIcOrderAllAccounts(
         `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, ` +
         `usable=$${usableBP.toFixed(0)} (${(botShare * 100).toFixed(0)}% × 85%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
-        `contracts=${acctContracts} (bp_calc=${bpContracts}, cap=${SANDBOX_MAX_CONTRACTS}), ` +
+        `contracts=${acctContracts} (bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}), ` +
         `totalMargin=$${totalMargin.toFixed(0)} (paper=${paperContracts})`,
       )
 
@@ -994,6 +1025,15 @@ export async function placeIcOrderAllAccounts(
         orderBody,
         acct.apiKey,
       )
+      if (!result) {
+        console.error(`Sandbox [${acct.name}]: Order POST returned null (HTTP error) — check logs above`)
+        return
+      }
+      // Tradier may return errors at the order level (e.g., insufficient BP)
+      if (result.errors) {
+        console.error(`Sandbox [${acct.name}]: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        return
+      }
       if (result?.order?.id) {
         // Read back actual fill price
         let fillPrice: number | null = null
@@ -1414,12 +1454,28 @@ export async function emergencyCloseSandboxPositions(
           duration: 'day',
         }
         const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey)
+        if (result?.errors) {
+          failed++
+          details.push(`${accountName}: ORDER REJECTED ${pos.symbol} x${qty}: ${JSON.stringify(result.errors)}`)
+          continue
+        }
         if (result?.order?.id) {
-          closed++
-          details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${result.order.id}`)
+          // VERIFY the close order actually filled — don't fire-and-forget.
+          // Old behavior just counted order ID as "closed" but the order
+          // could be rejected by Tradier, leaving the position open.
+          const orderId = result.order.id
+          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000) // 15s timeout
+          if (fillPrice != null) {
+            closed++
+            details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${orderId} filled @ $${fillPrice.toFixed(4)}`)
+          } else {
+            // Order was placed but rejected/expired — position still open
+            failed++
+            details.push(`${accountName}: Close order ${orderId} for ${pos.symbol} x${qty} was REJECTED/EXPIRED (position still open)`)
+          }
         } else {
           failed++
-          details.push(`${accountName}: FAILED to close ${pos.symbol} x${qty}`)
+          details.push(`${accountName}: FAILED to close ${pos.symbol} x${qty} (no order ID)`)
         }
       } catch (err: unknown) {
         failed++
