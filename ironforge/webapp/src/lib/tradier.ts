@@ -966,11 +966,10 @@ export async function placeIcOrderAllAccounts(
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
-      // Cap at paperContracts — sandbox orders must NEVER exceed the scanner's
-      // paper-sized amount (which already applies max_contracts config + 200 safety cap).
-      // Without this cap, sandbox accounts independently size from their own BP
-      // and can produce 138+ contract orders (e.g., $81K × 0.85 / $500 = 138).
-      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
+      // Size to 85% of account's option buying power. No paperContracts cap —
+      // sandbox accounts size independently based on their own BP.
+      // Safety cap at 200 contracts to prevent runaway orders.
+      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
       console.log(
