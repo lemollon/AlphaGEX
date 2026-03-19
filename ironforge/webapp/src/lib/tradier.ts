@@ -758,6 +758,7 @@ async function getOrderFillPrice(
   apiKey: string,
   accountId: string,
   orderId: number,
+  maxPollMs: number = 90_000,
 ): Promise<number | null> {
   // Aggressive polling for fills. Market orders WILL fill — poll until they do.
   //
@@ -767,15 +768,15 @@ async function getOrderFillPrice(
   //   rejected / canceled / expired → confirm 5x then give up (genuinely terminal)
   //   API failure (null data) → retry indefinitely (transient network issue)
   //
-  // Safety cap: 90s total to prevent zombie promises if something truly bizarre
-  // happens. Market orders fill in 1-5s; 90s is 18-90x more than needed.
+  // maxPollMs: 0 = no cap (poll forever until fill or terminal status).
+  // Default 90s for opens. Pass 0 for close orders where we MUST get the fill.
   // Backoff: 1s for first 10 polls, 2s for 10-20, 3s after that.
   const startMs = Date.now()
-  const MAX_POLL_MS = 90_000
+  const MAX_POLL_MS = maxPollMs
   let attempt = 0
   let terminalConfirmations = 0 // count consecutive rejected/canceled/expired reads
 
-  while (Date.now() - startMs < MAX_POLL_MS) {
+  while (MAX_POLL_MS === 0 || Date.now() - startMs < MAX_POLL_MS) {
     attempt++
     const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
 
@@ -1170,7 +1171,7 @@ export async function closeIcOrderAllAccounts(
         let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1180,7 +1181,7 @@ export async function closeIcOrderAllAccounts(
         result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1207,8 +1208,28 @@ export async function closeIcOrderAllAccounts(
         const callId = callResult?.order?.id
 
         if (putId && callId) {
+          // Poll BOTH spread orders for fill prices and combine them.
+          // Each 2-leg close returns the net debit for that half of the IC.
+          // Combined = put spread debit + call spread debit = total IC close cost.
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, putId) } catch { /* non-fatal */ }
+          try {
+            const [putFill, callFill] = await Promise.all([
+              getOrderFillPrice(acct.apiKey, accountId, putId, 0),
+              getOrderFillPrice(acct.apiKey, accountId, callId, 0),
+            ])
+            if (putFill != null && callFill != null) {
+              fillPrice = putFill + callFill
+              console.log(
+                `[tradier] ${acct.name}: 2x2-leg close fills: put=$${putFill.toFixed(4)} + call=$${callFill.toFixed(4)} = $${fillPrice.toFixed(4)}`,
+              )
+            } else if (putFill != null) {
+              fillPrice = putFill
+              console.warn(`[tradier] ${acct.name}: 2x2-leg close: only put fill available ($${putFill.toFixed(4)}), call fill missing`)
+            } else if (callFill != null) {
+              fillPrice = callFill
+              console.warn(`[tradier] ${acct.name}: 2x2-leg close: only call fill available ($${callFill.toFixed(4)}), put fill missing`)
+            }
+          } catch { /* non-fatal — fillPrice stays null, scanner uses estimated price */ }
           results[acct.name] = { order_id: putId, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1226,6 +1247,9 @@ export async function closeIcOrderAllAccounts(
           { occ: occCl, side: 'sell_to_close', label: 'call_long' },
         ]
         let anyOk = false
+        // Track individual leg order IDs for fill polling
+        const legOrders: Array<{ orderId: number; side: string; label: string }> = []
+
         for (const leg of legs) {
           // Skip legs already closed by partial 2-leg success
           if (leg.label.startsWith('put') && putId) continue
@@ -1240,13 +1264,48 @@ export async function closeIcOrderAllAccounts(
           const legResult = await sandboxPost(`/accounts/${accountId}/orders`, legBody, acct.apiKey)
           if (legResult?.order?.id) {
             anyOk = true
+            legOrders.push({ orderId: legResult.order.id, side: leg.side, label: leg.label })
           } else {
             console.error(`Sandbox leg CLOSE FAILED [${acct.name}]: ${leg.label}`)
           }
         }
 
         if (anyOk) {
-          results[acct.name] = { order_id: -1, contracts: closeQty, fill_price: null }
+          // Poll each individual leg for fill prices and combine.
+          // buy_to_close legs = debit (cost), sell_to_close legs = credit (offset).
+          // Net close cost = sum(buy_to_close fills) - sum(sell_to_close fills).
+          let fillPrice: number | null = null
+          try {
+            const legFills = await Promise.all(
+              legOrders.map(async (lo) => {
+                const fp = await getOrderFillPrice(acct.apiKey, accountId, lo.orderId, 0)
+                return { ...lo, fill: fp }
+              }),
+            )
+            let totalDebit = 0
+            let totalCredit = 0
+            let allFilled = true
+            for (const lf of legFills) {
+              if (lf.fill == null) {
+                allFilled = false
+                console.warn(`[tradier] ${acct.name}: Individual leg ${lf.label} fill missing`)
+                continue
+              }
+              if (lf.side === 'buy_to_close') {
+                totalDebit += lf.fill
+              } else {
+                totalCredit += lf.fill
+              }
+            }
+            if (allFilled || totalDebit > 0) {
+              fillPrice = totalDebit - totalCredit
+              console.log(
+                `[tradier] ${acct.name}: Individual leg close fills: debit=$${totalDebit.toFixed(4)} - credit=$${totalCredit.toFixed(4)} = net $${fillPrice.toFixed(4)}` +
+                (allFilled ? '' : ' (partial — some legs missing)'),
+              )
+            }
+          } catch { /* non-fatal — fillPrice stays null, scanner uses estimated price */ }
+          results[acct.name] = { order_id: legOrders[0]?.orderId ?? -1, contracts: closeQty, fill_price: fillPrice }
         } else {
           console.error(`Sandbox IC close ALL strategies FAILED [${acct.name}] — orphan likely`)
         }
@@ -1327,7 +1386,9 @@ export async function emergencyCloseSandboxPositions(
   return { closed, failed, details }
 }
 
-// Expose internals for testing only
+// Expose for scanner re-poll and testing
+export { getOrderFillPrice, getAccountIdForKey }
+
 export const _testing = {
   getOrderFillPrice,
 }
