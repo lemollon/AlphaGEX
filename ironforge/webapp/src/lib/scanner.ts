@@ -37,6 +37,8 @@ import {
   getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
   emergencyCloseSandboxPositions,
+  getOrderFillPrice,
+  getAccountIdForKey,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -548,7 +550,9 @@ async function closePosition(
     }
   }
 
-  // Use User's actual fill price if available
+  // Use User's actual fill price if available (FLAME parity with Tradier).
+  // FLAME MUST use Tradier fills for both open AND close to stay 1:1 with sandbox.
+  // If sandbox closed but fill price is missing, re-poll the order before falling back.
   let effectivePrice = estimatedPrice
   const userClose = sandboxCloseInfo['User']
   if (userClose?.fill_price != null && userClose.fill_price > 0) {
@@ -557,6 +561,41 @@ async function closePosition(
       `(estimated=$${estimatedPrice.toFixed(4)}, diff=${(userClose.fill_price - estimatedPrice).toFixed(4)})`,
     )
     effectivePrice = userClose.fill_price
+  } else if (isFlameBotClose && userClose?.order_id && userClose.order_id > 0) {
+    // Sandbox order was placed but fill price polling failed or returned null.
+    // Re-poll one more time — the order likely filled but price wasn't populated yet.
+    console.log(`[scanner] FLAME: Close order ${userClose.order_id} has no fill price — re-polling...`)
+    try {
+      const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
+      if (userAcct) {
+        const accountId = await getAccountIdForKey(userAcct.apiKey)
+        if (accountId) {
+          const retryFill = await getOrderFillPrice(userAcct.apiKey, accountId, userClose.order_id)
+          if (retryFill != null && retryFill > 0) {
+            console.log(`[scanner] FLAME: Re-poll succeeded! Close fill=$${retryFill.toFixed(4)}`)
+            effectivePrice = retryFill
+          } else {
+            console.error(
+              `[scanner] *** FLAME CLOSE FILL MISSING *** Order ${userClose.order_id} filled on Tradier ` +
+              `but fill price unavailable after re-poll. Using estimated $${estimatedPrice.toFixed(4)} — ` +
+              `P&L will drift from Tradier sandbox.`,
+            )
+          }
+        }
+      }
+    } catch (repollErr: unknown) {
+      const msg = repollErr instanceof Error ? repollErr.message : String(repollErr)
+      console.error(
+        `[scanner] *** FLAME CLOSE FILL RE-POLL FAILED *** Order ${userClose.order_id}: ${msg}. ` +
+        `Using estimated $${estimatedPrice.toFixed(4)} — P&L will drift from Tradier sandbox.`,
+      )
+    }
+  } else if (isFlameBotClose) {
+    console.error(
+      `[scanner] *** FLAME CLOSE: NO SANDBOX ORDER *** Position ${positionId} closed on paper ` +
+      `with estimated $${estimatedPrice.toFixed(4)} but Tradier sandbox close may have failed. ` +
+      `Check sandbox for orphaned positions.`,
+    )
   }
 
   const pnlPerContract = (entryCredit - effectivePrice) * 100
