@@ -69,8 +69,8 @@ class BotConfig:
     pdt_max_day_trades: int = 4
     pdt_rolling_window_days: int = 5
 
-    # Position sizing (0 = unlimited, sized by 85% BP)
-    max_contracts: int = 0
+    # Position sizing — hard-capped at 50 to prevent oversized Tradier orders
+    max_contracts: int = 10
     buying_power_usage_pct: float = 0.85
 
     # ML advisor minimum win probability
@@ -112,7 +112,7 @@ def inferno_config() -> BotConfig:
         min_dte=0,
         dte_mode="0DTE",
         max_trades_per_day=0,  # 0 = unlimited
-        max_contracts=0,  # 0 = no limit (sized by buying power)
+        max_contracts=20,  # Hard cap per trade (executor also enforces ABSOLUTE_MAX=50)
         profit_target_pct=50.0,
         stop_loss_pct=300.0,  # 300 = 3.0x entry credit (matches scanner sl_mult=3.0)
         sd_multiplier=1.0,

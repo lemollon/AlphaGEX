@@ -13,11 +13,14 @@ SAMSON is an aggressive version of ANCHOR:
 - More positions allowed (10 vs 5)
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
@@ -247,17 +250,23 @@ class SamsonConfig:
         """
         errors = []
 
-        # Capital validation
+        # Capital validation - clamp to prevent DB override disasters
         if self.capital <= 0:
             errors.append(f"capital must be > 0, got {self.capital}")
+        if self.capital > 2_000_000:
+            logger.warning(f"SAMSON: capital=${self.capital:,.0f} exceeds safe limit $2M, clamping")
+            self.capital = 2_000_000
 
         # Risk validation
         if self.risk_per_trade_pct <= 0 or self.risk_per_trade_pct > 100:
             errors.append(f"risk_per_trade_pct must be 0-100, got {self.risk_per_trade_pct}")
 
-        # Contract limits
+        # Contract limits - enforce sane bounds to prevent DB override disasters
         if self.max_contracts <= 0:
             errors.append(f"max_contracts must be > 0, got {self.max_contracts}")
+        if self.max_contracts > 100:
+            logger.warning(f"SAMSON: max_contracts={self.max_contracts} exceeds safe limit 100, clamping")
+            self.max_contracts = 100
 
         # Spread width
         if self.spread_width <= 0:
