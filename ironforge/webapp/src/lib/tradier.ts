@@ -608,7 +608,21 @@ async function getAccountIdForKey(apiKey: string): Promise<string | null> {
   return accountId || null
 }
 
-/** Get available buying power for a sandbox account. */
+/** Get available Option Buying Power for a sandbox account.
+ *
+ * Tradier API balances response (per docs):
+ *   - margin.option_buying_power  = Option B.P. (1x, real collateral limit)
+ *   - margin.stock_buying_power   = Stock B.P.  (2x margin)
+ *   - pdt.option_buying_power     = Option B.P. for PDT accounts
+ *   - pdt.day_trade_buying_power  = Day Trade B.P. (4x leverage — NOT for sizing)
+ *   - total_equity                = Total account value (includes positions)
+ *
+ * The correct field for option order sizing is margin.option_buying_power
+ * (or pdt.option_buying_power for PDT accounts). This matches the
+ * "Option B.P." shown on the Tradier website UI.
+ *
+ * See: https://documentation.tradier.com/brokerage-api/reference/response/balances
+ */
 async function getSandboxBuyingPower(
   apiKey: string,
   accountId: string,
@@ -620,31 +634,37 @@ async function getSandboxBuyingPower(
   )
   if (!data) return null
   const balances = data.balances || {}
-  // PDT accounts nest buying power under balances.pdt.*
-  // Margin accounts nest under balances.margin.*
-  // Cash accounts have it at balances.* directly
   const pdt = balances.pdt || {}
   const margin = balances.margin || {}
+  const cash = balances.cash || {}
 
-  // CRITICAL: Tradier sandbox inflates ALL option_buying_power fields with margin
-  // leverage (4x for PDT, 2x for margin). For example:
-  //   total_equity = $81,459  ← actual account value (matches Tradier UI "Option B.P.")
-  //   margin.option_buying_power = $325,837  ← 4x leveraged, NOT real option BP
-  //   pdt.option_buying_power = $325,837  ← also 4x leveraged
-  //   stock_buying_power = $162,918  ← 2x leveraged
-  //
-  // Using leveraged values causes orders sized at 552 contracts ($276K) against
-  // $81K actual buying power → instant rejection.
-  //
-  // FIX: Use total_equity as the true buying power. This matches what the
-  // Tradier website displays as "Option B.P." and is the actual collateral limit.
-  const equity = balances.total_equity ?? balances.total_cash ?? balances.cash?.cash_available
-  if (equity != null) {
-    const parsed = parseFloat(equity)
-    console.log(
-      `getSandboxBuyingPower [${accountId}]: Using total_equity=$${parsed.toFixed(0)} ` +
-      `(margin.obp=${margin.option_buying_power ?? 'N/A'}, pdt.obp=${pdt.option_buying_power ?? 'N/A'} — ignored, leveraged)`,
-    )
+  // Log ALL balance fields so we can verify which field is correct
+  console.log(
+    `getSandboxBuyingPower [${accountId}]: RAW ` +
+    `account_type=${balances.account_type ?? 'N/A'}, ` +
+    `total_equity=${balances.total_equity ?? 'N/A'}, ` +
+    `total_cash=${balances.total_cash ?? 'N/A'}, ` +
+    `margin.obp=${margin.option_buying_power ?? 'N/A'}, ` +
+    `margin.sbp=${margin.stock_buying_power ?? 'N/A'}, ` +
+    `pdt.obp=${pdt.option_buying_power ?? 'N/A'}, ` +
+    `pdt.sbp=${pdt.stock_buying_power ?? 'N/A'}, ` +
+    `pdt.dtbp=${pdt.day_trade_buying_power ?? 'N/A'}, ` +
+    `cash.available=${cash.cash_available ?? 'N/A'}`,
+  )
+
+  // Per Tradier docs: option_buying_power is the real Option B.P. (1x).
+  // Use margin.option_buying_power or pdt.option_buying_power depending on account type.
+  // Fallback chain: margin OBP → pdt OBP → total_cash → cash_available → total_equity
+  const optionBp =
+    margin.option_buying_power ??
+    pdt.option_buying_power ??
+    balances.total_cash ??
+    cash.cash_available ??
+    balances.total_equity
+
+  if (optionBp != null) {
+    const parsed = parseFloat(optionBp)
+    console.log(`getSandboxBuyingPower [${accountId}]: Using option_buying_power=$${parsed.toFixed(0)}`)
     return parsed
   }
 
@@ -701,9 +721,10 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       const pdt = bal.pdt || {}
       const margin = bal.margin || {}
       const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
-      // Use total_equity as real option BP (Tradier sandbox inflates all
-      // option_buying_power fields with margin leverage — see getSandboxBuyingPower)
-      const optionBp = equity
+      // Per Tradier docs: margin.option_buying_power (or pdt.option_buying_power)
+      // is the real Option B.P. — matches what the Tradier UI shows as "Option B.P."
+      const rawObp = margin.option_buying_power ?? pdt.option_buying_power
+      const optionBp = rawObp != null ? parseFloat(rawObp) : equity
 
       // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
       // Use pending_cash or option_short_value as proxy; safest: just report null if unavailable
@@ -940,23 +961,20 @@ export async function placeIcOrderAllAccounts(
       // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
       // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
+      const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
-      // Cap at paperContracts — sandbox orders must never exceed the scanner's
-      // paper-sized amount (which already applies max_contracts + 200 safety cap).
-      // Without this cap, sandbox accounts independently size from their own BP
-      // and can produce 500+ contract orders against an $81K account.
-      const acctContracts = Math.min(bpContracts, paperContracts)
+      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
       console.log(
         `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, ` +
         `usable=$${usableBP.toFixed(0)} (${(botShare * 100).toFixed(0)}% × 85%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
-        `contracts=${acctContracts} (bp_calc=${bpContracts}, paper_cap=${paperContracts}), ` +
-        `totalMargin=$${totalMargin.toFixed(0)}`,
+        `contracts=${acctContracts} (bp_calc=${bpContracts}, cap=${SANDBOX_MAX_CONTRACTS}), ` +
+        `totalMargin=$${totalMargin.toFixed(0)} (paper=${paperContracts})`,
       )
 
       const orderBody: Record<string, string> = {
