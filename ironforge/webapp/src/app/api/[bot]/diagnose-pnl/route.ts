@@ -73,17 +73,21 @@ export async function GET(
         if (isConfigured()) {
           const mtm = await getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit)
           if (mtm) {
-            const pnl = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
+            const pnlBidAsk = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
+            const pnlMid = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_mid, contracts, spreadWidth)
             methodA = {
-              cost_to_close: mtm.cost_to_close,
+              cost_to_close_bidask: mtm.cost_to_close,
+              cost_to_close_mid: mtm.cost_to_close_mid,
               put_short_ask: mtm.put_short_ask,
               put_long_bid: mtm.put_long_bid,
               call_short_ask: mtm.call_short_ask,
               call_long_bid: mtm.call_long_bid,
               spot_price: mtm.spot_price,
               raw_cost: Math.round((mtm.put_short_ask + mtm.call_short_ask - mtm.put_long_bid - mtm.call_long_bid) * 10000) / 10000,
-              unrealized_pnl: pnl,
-              formula: `(${entryCredit} - ${mtm.cost_to_close}) * 100 * ${contracts} = $${pnl}`,
+              unrealized_pnl_bidask: pnlBidAsk,
+              unrealized_pnl_mid: pnlMid,
+              formula_mid: `(${entryCredit} - ${mtm.cost_to_close_mid}) * 100 * ${contracts} = $${pnlMid}`,
+              validation_issues: mtm.validation_issues || [],
             }
           } else {
             methodA = { error: 'getIcMarkToMarket returned null (quote unavailable)' }
@@ -184,7 +188,7 @@ export async function GET(
 
     // 5. Summary comparison
     const methodAPnl = results.reduce((sum, r) => {
-      const pnl = (r.method_a_getIcMarkToMarket as any)?.unrealized_pnl
+      const pnl = (r.method_a_getIcMarkToMarket as any)?.unrealized_pnl_mid
       return sum + (typeof pnl === 'number' ? pnl : 0)
     }, 0)
 

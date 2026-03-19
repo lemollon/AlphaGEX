@@ -309,6 +309,15 @@ export async function getIcMarkToMarket(
   const rawCost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
 
   // Validate quotes — matching the scanner's _validate_mtm logic
+  // Cap at spread width — theoretical max cost for an IC
+  const spreadWidth = Math.round((putShort - putLong) * 100) / 100
+
+  // Mark price cost — uses mid (bid+ask average) for each leg.
+  // Tradier's portfolio values positions at mark price, not last trade.
+  // Last trade can be stale on thinly-traded wings causing P&L lag.
+  const rawCostMark = psQ.mid + csQ.mid - plQ.mid - clQ.mid
+  const costMark = Math.min(Math.max(0, rawCostMark), spreadWidth)
+
   const validation = validateMtmQuotes(
     [
       { label: 'PS', bid: psQ.bid, ask: psQ.ask },
@@ -320,20 +329,13 @@ export async function getIcMarkToMarket(
     entryCredit ?? 0,
   )
 
-  if (!validation.pass) {
-    // Quotes failed validation — return null so caller falls back to scanner snapshot
-    return null
-  }
-
-  // Cap at spread width — theoretical max cost for an IC
-  const spreadWidth = Math.round((putShort - putLong) * 100) / 100
-  const cost = Math.min(Math.max(0, rawCost), spreadWidth)
-
-  // Mark price cost — uses mid (bid+ask average) for each leg.
-  // Tradier's portfolio values positions at mark price, not last trade.
-  // Last trade can be stale on thinly-traded wings causing P&L lag.
-  const rawCostMark = psQ.mid + csQ.mid - plQ.mid - clQ.mid
-  const costMark = Math.min(Math.max(0, rawCostMark), spreadWidth)
+  // Always return cost_to_close_mid (mark price) for P&L display — even when
+  // bid/ask validation fails due to wide spreads on wing strikes.
+  // The mid price is still a reliable estimate and matches Tradier's portfolio.
+  // Only cost_to_close (worst-case bid/ask) is unreliable with wide spreads.
+  const cost = validation.pass
+    ? Math.min(Math.max(0, rawCost), spreadWidth)
+    : costMark  // Fallback: use mid for PT/SL too when bid/ask is unreliable
 
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
@@ -343,6 +345,7 @@ export async function getIcMarkToMarket(
     call_short_ask: csQ.ask,
     call_long_bid: clQ.bid,
     spot_price: spotRaw ? parse(spotRaw.last) : null,
+    validation_issues: validation.pass ? undefined : validation.issues,
   }
 }
 
