@@ -538,10 +538,12 @@ async function sandboxPost(
 
   if (!res.ok) {
     const status = res.status
+    let errorBody = ''
+    try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+      console.error(`Tradier sandbox POST: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+      console.error(`Tradier sandbox POST: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -582,10 +584,12 @@ async function sandboxGet(
 
   if (!res.ok) {
     const status = res.status
+    let errorBody = ''
+    try { errorBody = await res.text() } catch { /* ignore */ }
     if (status === 401 || status === 403) {
-      console.error(`Tradier sandbox: AUTH FAILURE ${status} on ${endpoint} — check API key`)
+      console.error(`Tradier sandbox GET: AUTH FAILURE ${status} on ${endpoint} — check API key. Body: ${errorBody}`)
     } else {
-      console.error(`Tradier sandbox: ${endpoint} returned HTTP ${status} (${res.statusText})`)
+      console.error(`Tradier sandbox GET: ${endpoint} returned HTTP ${status} (${res.statusText}) — Body: ${errorBody}`)
     }
     return null
   }
@@ -876,10 +880,18 @@ async function getOrderFillPrice(
     // Confirm 5 consecutive reads to be sure (in case of API glitch).
     terminalConfirmations++
     if (terminalConfirmations >= 5) {
+      // Log the full rejection reason from Tradier so we can debug
+      const reason = order.reason_description || order.reject_reason || order.reason || 'no reason provided'
+      const tag = order.tag || ''
       console.error(
         `[tradier] Order ${orderId} confirmed ${status} after ${terminalConfirmations} consecutive reads ` +
-        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — giving up`,
+        `(${attempt} total polls, ${((Date.now() - startMs) / 1000).toFixed(1)}s) — REASON: "${reason}" ` +
+        `[tag=${tag}, qty=${order.quantity || 'N/A'}, class=${order.class || 'N/A'}]`,
       )
+      // Log full order object for debugging (first rejection only)
+      if (terminalConfirmations === 5) {
+        console.error(`[tradier] Order ${orderId} FULL RESPONSE: ${JSON.stringify(order)}`)
+      }
       return null
     }
     console.warn(`[tradier] Order ${orderId} shows ${status} at poll ${attempt} (confirmation ${terminalConfirmations}/5) — re-checking...`)
@@ -997,6 +1009,15 @@ export async function placeIcOrderAllAccounts(
         orderBody,
         acct.apiKey,
       )
+      if (!result) {
+        console.error(`Sandbox [${acct.name}]: Order POST returned null (HTTP error) — check logs above`)
+        return
+      }
+      // Tradier may return errors at the order level (e.g., insufficient BP)
+      if (result.errors) {
+        console.error(`Sandbox [${acct.name}]: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        return
+      }
       if (result?.order?.id) {
         // Read back actual fill price
         let fillPrice: number | null = null

@@ -50,6 +50,13 @@ import {
 const SCAN_INTERVAL_MS = 60 * 1000 // 1 minute
 const MAX_CONSECUTIVE_MTM_FAILURES = 10
 
+// Track consecutive FLAME sandbox rejections to avoid spamming Tradier
+// with 1500+ rejected orders per day. After N consecutive rejections,
+// back off exponentially (skip cycles) before retrying.
+let _flameConsecutiveRejects = 0
+const FLAME_MAX_REJECTS_BEFORE_BACKOFF = 5  // After 5 rejections, start backing off
+const FLAME_BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retries
+
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -982,6 +989,18 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
+    // Backoff after consecutive rejections — stop spamming Tradier with orders
+    // that will just get rejected again (prevents 1500+ rejected orders/day).
+    if (_flameConsecutiveRejects >= FLAME_MAX_REJECTS_BEFORE_BACKOFF) {
+      // Only retry every FLAME_BACKOFF_CYCLES cycles (~10 min)
+      const cyclesSinceLastAttempt = _flameConsecutiveRejects - FLAME_MAX_REJECTS_BEFORE_BACKOFF
+      if (cyclesSinceLastAttempt % FLAME_BACKOFF_CYCLES !== 0) {
+        _flameConsecutiveRejects++
+        return `skip:flame_backoff(${_flameConsecutiveRejects} consecutive rejects, retrying every ${FLAME_BACKOFF_CYCLES} cycles)`
+      }
+      console.log(`[scanner] FLAME: ${_flameConsecutiveRejects} consecutive rejects — retrying now (backoff cycle)`)
+    }
+
     // Attempt sandbox order — if User doesn't fill, try cleaning up
     // stale positions and retry once before giving up.
     let attempts = 0
@@ -1023,6 +1042,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             false, bot.dte,
           ],
         )
+        _flameConsecutiveRejects++
         return `skip:flame_sandbox_failed(${msg})`
       }
 
@@ -1057,10 +1077,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             false, bot.dte,
           ],
         )
+        _flameConsecutiveRejects++
         return 'skip:flame_primary_no_fill'
       }
 
-      // Primary account filled — break out of retry loop
+      // Primary account filled — reset rejection counter
+      _flameConsecutiveRejects = 0
       break
     }
 
