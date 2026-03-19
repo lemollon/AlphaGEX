@@ -319,7 +319,8 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
             put_short_strike, put_long_strike,
             call_short_strike, call_long_strike,
             contracts, total_credit, max_loss,
-            collateral_required, open_time
+            collateral_required, open_time,
+            sandbox_close_order_id
      FROM ${botTable(bot.name, 'positions')}
      WHERE status = 'open' AND dte_mode = $1
      ORDER BY open_time DESC`,
@@ -357,6 +358,78 @@ async function monitorSinglePosition(
   const ticker = pos.ticker || 'SPY'
   const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
   const pid = pos.position_id
+
+  // --- FLAME pending close re-poll ---
+  // If sandbox_close_order_id is set but status is still 'open', a previous close
+  // fired on Tradier but the fill price wasn't available. Re-poll for the fill
+  // and complete the paper close once we have it.
+  if (bot.name === 'flame' && pos.sandbox_close_order_id) {
+    let pendingInfo: Record<string, any> = {}
+    try { pendingInfo = JSON.parse(pos.sandbox_close_order_id) } catch { /* ignore */ }
+    const userPending = pendingInfo['User']
+    if (userPending?.order_id && userPending.order_id > 0 && !userPending.fill_price) {
+      console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price...`)
+      try {
+        const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
+        if (userAcct) {
+          const accountId = await getAccountIdForKey(userAcct.apiKey)
+          if (accountId) {
+            const fill = await getOrderFillPrice(userAcct.apiKey, accountId, userPending.order_id, 0)
+            if (fill != null && fill > 0) {
+              console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close`)
+              // Complete the deferred close with actual fill
+              const closeReason = pendingInfo._pending_reason || 'deferred_fill'
+              const pnlPerContract = (entryCredit - fill) * 100
+              const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
+              // Update sandbox_close_order_id with the fill price
+              pendingInfo['User'] = { ...userPending, fill_price: fill }
+              delete pendingInfo._pending_reason
+              const rowsAffected = await dbExecute(
+                `UPDATE ${botTable(bot.name, 'positions')}
+                 SET status = 'closed', close_time = NOW(),
+                     close_price = $1, realized_pnl = $2,
+                     close_reason = $3, sandbox_close_order_id = $4,
+                     updated_at = NOW()
+                 WHERE position_id = $5 AND status = 'open' AND dte_mode = $6`,
+                [fill, realizedPnl, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
+              )
+              if (rowsAffected > 0) {
+                await query(
+                  `UPDATE ${botTable(bot.name, 'paper_account')}
+                   SET current_balance = current_balance + $1,
+                       cumulative_pnl = cumulative_pnl + $1,
+                       total_trades = total_trades + 1,
+                       collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                       buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
+                       updated_at = NOW()
+                   WHERE dte_mode = $3`,
+                  [realizedPnl, collateral, bot.dte],
+                )
+                await query(
+                  `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
+                   VALUES (${CT_TODAY}, 0, 1, $1)
+                   ON CONFLICT (trade_date) DO UPDATE SET
+                     positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
+                     realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
+                  [realizedPnl],
+                )
+                console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
+              }
+              _mtmFailureCounts.delete(pid)
+              return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
+            } else {
+              console.warn(`[scanner] FLAME ${pid}: Re-poll returned no fill — will retry next cycle`)
+              return { status: `monitoring:pending_close_fill(order=${userPending.order_id})`, unrealizedPnl: 0 }
+            }
+          }
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[scanner] FLAME ${pid}: Pending close re-poll failed: ${msg} — will retry next cycle`)
+        return { status: `monitoring:pending_close_repoll_error`, unrealizedPnl: 0 }
+      }
+    }
+  }
 
   // Sliding profit target (Fix 2)
   const [ptFraction, ptTier] = getSlidingProfitTarget(ct, botCfg.pt_pct, bot.name)
@@ -550,9 +623,10 @@ async function closePosition(
     }
   }
 
-  // Use User's actual fill price if available (FLAME parity with Tradier).
-  // FLAME MUST use Tradier fills for both open AND close to stay 1:1 with sandbox.
-  // If sandbox closed but fill price is missing, re-poll the order before falling back.
+  // FLAME parity: MUST use actual Tradier fill price for close, just like open.
+  // Close polls use maxPollMs=0 (unlimited) so fill_price should always be present
+  // for successful closes. If still missing, DEFER the paper close — store the
+  // sandbox close info on the position and let next cycle re-poll.
   let effectivePrice = estimatedPrice
   const userClose = sandboxCloseInfo['User']
   if (userClose?.fill_price != null && userClose.fill_price > 0) {
@@ -562,39 +636,48 @@ async function closePosition(
     )
     effectivePrice = userClose.fill_price
   } else if (isFlameBotClose && userClose?.order_id && userClose.order_id > 0) {
-    // Sandbox order was placed but fill price polling failed or returned null.
-    // Re-poll one more time — the order likely filled but price wasn't populated yet.
-    console.log(`[scanner] FLAME: Close order ${userClose.order_id} has no fill price — re-polling...`)
-    try {
-      const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
-      if (userAcct) {
-        const accountId = await getAccountIdForKey(userAcct.apiKey)
-        if (accountId) {
-          const retryFill = await getOrderFillPrice(userAcct.apiKey, accountId, userClose.order_id)
-          if (retryFill != null && retryFill > 0) {
-            console.log(`[scanner] FLAME: Re-poll succeeded! Close fill=$${retryFill.toFixed(4)}`)
-            effectivePrice = retryFill
-          } else {
-            console.error(
-              `[scanner] *** FLAME CLOSE FILL MISSING *** Order ${userClose.order_id} filled on Tradier ` +
-              `but fill price unavailable after re-poll. Using estimated $${estimatedPrice.toFixed(4)} — ` +
-              `P&L will drift from Tradier sandbox.`,
-            )
-          }
-        }
-      }
-    } catch (repollErr: unknown) {
-      const msg = repollErr instanceof Error ? repollErr.message : String(repollErr)
-      console.error(
-        `[scanner] *** FLAME CLOSE FILL RE-POLL FAILED *** Order ${userClose.order_id}: ${msg}. ` +
-        `Using estimated $${estimatedPrice.toFixed(4)} — P&L will drift from Tradier sandbox.`,
-      )
-    }
+    // Sandbox close order exists but fill price is missing (should be rare with unlimited polling).
+    // DEFER: store the close info on the position so next cycle can re-poll.
+    // Do NOT close paper with estimated price — that causes drift.
+    console.warn(
+      `[scanner] FLAME ${positionId}: Close order ${userClose.order_id} placed but no fill price. ` +
+      `DEFERRING paper close — will re-poll next cycle.`,
+    )
+    const pendingInfo = { ...sandboxCloseInfo, _pending_reason: reason }
+    await query(
+      `UPDATE ${botTable(bot.name, 'positions')}
+       SET sandbox_close_order_id = $1, updated_at = NOW()
+       WHERE position_id = $2 AND status = 'open' AND dte_mode = $3`,
+      [JSON.stringify(pendingInfo), positionId, bot.dte],
+    )
+    await query(
+      `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        'WARNING',
+        `DEFERRED CLOSE: ${positionId} — waiting for Tradier fill price (order ${userClose.order_id})`,
+        JSON.stringify({ position_id: positionId, reason, sandbox_close_info: sandboxCloseInfo }),
+        bot.dte,
+      ],
+    )
+    return // Exit without closing paper — next cycle will re-poll
   } else if (isFlameBotClose) {
+    // Sandbox close failed entirely (no order_id). Log critical error.
+    // Still close paper to prevent stranded positions, but mark the reason.
     console.error(
-      `[scanner] *** FLAME CLOSE: NO SANDBOX ORDER *** Position ${positionId} closed on paper ` +
-      `with estimated $${estimatedPrice.toFixed(4)} but Tradier sandbox close may have failed. ` +
+      `[scanner] *** FLAME CLOSE: NO SANDBOX ORDER *** Position ${positionId} — ` +
+      `Tradier close failed. Closing paper with estimated $${estimatedPrice.toFixed(4)}. ` +
       `Check sandbox for orphaned positions.`,
+    )
+    await query(
+      `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        'CRITICAL',
+        `SANDBOX CLOSE FAILED: ${positionId} — paper closed at estimated price, Tradier may have orphans`,
+        JSON.stringify({ position_id: positionId, reason, sandbox_close_info: sandboxCloseInfo }),
+        bot.dte,
+      ],
     )
   }
 

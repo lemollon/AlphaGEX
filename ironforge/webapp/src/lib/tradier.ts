@@ -758,6 +758,7 @@ async function getOrderFillPrice(
   apiKey: string,
   accountId: string,
   orderId: number,
+  maxPollMs: number = 90_000,
 ): Promise<number | null> {
   // Aggressive polling for fills. Market orders WILL fill — poll until they do.
   //
@@ -767,15 +768,15 @@ async function getOrderFillPrice(
   //   rejected / canceled / expired → confirm 5x then give up (genuinely terminal)
   //   API failure (null data) → retry indefinitely (transient network issue)
   //
-  // Safety cap: 90s total to prevent zombie promises if something truly bizarre
-  // happens. Market orders fill in 1-5s; 90s is 18-90x more than needed.
+  // maxPollMs: 0 = no cap (poll forever until fill or terminal status).
+  // Default 90s for opens. Pass 0 for close orders where we MUST get the fill.
   // Backoff: 1s for first 10 polls, 2s for 10-20, 3s after that.
   const startMs = Date.now()
-  const MAX_POLL_MS = 90_000
+  const MAX_POLL_MS = maxPollMs
   let attempt = 0
   let terminalConfirmations = 0 // count consecutive rejected/canceled/expired reads
 
-  while (Date.now() - startMs < MAX_POLL_MS) {
+  while (MAX_POLL_MS === 0 || Date.now() - startMs < MAX_POLL_MS) {
     attempt++
     const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
 
@@ -1170,7 +1171,7 @@ export async function closeIcOrderAllAccounts(
         let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1180,7 +1181,7 @@ export async function closeIcOrderAllAccounts(
         result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1213,8 +1214,8 @@ export async function closeIcOrderAllAccounts(
           let fillPrice: number | null = null
           try {
             const [putFill, callFill] = await Promise.all([
-              getOrderFillPrice(acct.apiKey, accountId, putId),
-              getOrderFillPrice(acct.apiKey, accountId, callId),
+              getOrderFillPrice(acct.apiKey, accountId, putId, 0),
+              getOrderFillPrice(acct.apiKey, accountId, callId, 0),
             ])
             if (putFill != null && callFill != null) {
               fillPrice = putFill + callFill
@@ -1277,7 +1278,7 @@ export async function closeIcOrderAllAccounts(
           try {
             const legFills = await Promise.all(
               legOrders.map(async (lo) => {
-                const fp = await getOrderFillPrice(acct.apiKey, accountId, lo.orderId)
+                const fp = await getOrderFillPrice(acct.apiKey, accountId, lo.orderId, 0)
                 return { ...lo, fill: fp }
               }),
             )
