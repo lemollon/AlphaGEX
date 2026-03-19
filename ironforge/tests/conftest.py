@@ -28,7 +28,7 @@ def mock_config():
         spread_width=5.0,
         min_credit=0.05,
         profit_target_pct=30.0,
-        stop_loss_pct=100.0,
+        stop_loss_pct=200.0,
         vix_skip=32.0,
         max_contracts=10,
         buying_power_usage_pct=0.85,

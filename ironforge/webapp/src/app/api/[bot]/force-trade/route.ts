@@ -41,6 +41,7 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
 
   // DTE factor
   if (dteMode === '2DTE') { const a = 0.03; winProb += a; factors.push(['DTE_2DAY_DECAY', a]) }
+  else if (dteMode === '0DTE') { const a = -0.05; winProb += a; factors.push(['DTE_0DAY_AGGRESSIVE', a]) }
   else { const a = -0.02; winProb += a; factors.push(['DTE_1DAY_TIGHT', a]) }
 
   winProb = Math.max(0.10, Math.min(0.95, winProb))
