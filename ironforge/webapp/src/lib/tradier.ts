@@ -1173,6 +1173,38 @@ export interface LegQuote {
  * Fetch quotes for multiple OCC symbols in a single API call.
  * Returns a map of symbol → LegQuote.
  */
+/**
+ * Fetch raw Tradier quote data for multiple symbols, preserving all fields
+ * (bid, ask, last, bid_date, ask_date, trade_date, etc.) for diagnostics.
+ */
+export async function getRawQuotes(
+  symbols: string[],
+): Promise<Record<string, Record<string, unknown>>> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey || symbols.length === 0) return {}
+
+  const data = await tradierGet('/markets/quotes', {
+    symbols: symbols.join(','),
+  })
+  if (!data) return {}
+
+  const results: Record<string, Record<string, unknown>> = {}
+  let quotes = data.quotes?.quote
+  if (!quotes) return results
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  for (const q of quotes) {
+    if (!q?.symbol) continue
+    results[q.symbol] = q
+  }
+  return results
+}
+
+/** Returns the Tradier API base URL currently in use (for diagnostics). */
+export function getTradierBaseUrl(): string {
+  return TRADIER_BASE_URL
+}
+
 export async function getBatchOptionQuotes(
   occSymbols: string[],
 ): Promise<Record<string, LegQuote>> {
