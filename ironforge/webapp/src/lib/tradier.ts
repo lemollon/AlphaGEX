@@ -921,7 +921,7 @@ export async function placeIcOrderAllAccounts(
       // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
       // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
-      const SANDBOX_MAX_CONTRACTS = 50
+      const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
       const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
       const usableBP = bp * botShare * 0.85

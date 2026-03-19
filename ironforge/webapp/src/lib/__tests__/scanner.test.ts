@@ -252,13 +252,13 @@ describe('Sliding Profit Target', () => {
 /* ================================================================== */
 
 describe('Per-Bot Config', () => {
-  it('FLAME defaults: sd=1.2, pt=0.30, sl=2.0, entry_end=1400, max_contracts=10', () => {
+  it('FLAME defaults: sd=1.2, pt=0.30, sl=2.0, entry_end=1400, max_contracts=0 (unlimited)', () => {
     const c = DEFAULT_CONFIG.flame
     expect(c.sd).toBe(1.2)
     expect(c.pt_pct).toBe(0.30)
     expect(c.sl_mult).toBe(2.0)
     expect(c.entry_end).toBe(1400)
-    expect(c.max_contracts).toBe(10) // Hard default cap (absolute max enforced in scanner)
+    expect(c.max_contracts).toBe(0) // 0 = unlimited (sized by BP only)
     expect(c.max_trades).toBe(1)
     expect(c.bp_pct).toBe(0.85)
   })
