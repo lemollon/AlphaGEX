@@ -4,16 +4,21 @@ import {
   getIcMarkToMarket,
   isConfigured,
   buildOccSymbol,
-  getBatchOptionQuotes,
-  getQuote,
+  getRawQuotes,
+  getTimesales,
+  getSandboxAccountPositions,
   calculateIcUnrealizedPnl,
+  getTradierBaseUrl,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Diagnostic endpoint: compares unrealized P&L from all sources.
- * Visit /api/spark/diagnose-pnl to see the raw data.
+ * Deep diagnostic: dumps raw Tradier API responses, all pricing methods,
+ * and Tradier sandbox position data side-by-side so you can see exactly
+ * where P&L numbers diverge.
+ *
+ * GET /api/flame/diagnose-pnl
  */
 export async function GET(
   _req: NextRequest,
@@ -26,18 +31,19 @@ export async function GET(
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
 
   try {
-    // 1. Get open positions from DB
+    // 1. Open positions from DB
     const positionRows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
-              contracts, total_credit, spread_width, open_time
+              contracts, total_credit, spread_width, open_time,
+              sandbox_order_id
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open' ${dteFilter}
        ORDER BY open_time DESC`,
     )
 
-    // 2. Get latest equity snapshot (scanner's last calculation)
+    // 2. Latest equity snapshot (scanner's last calculation)
     const snapshotRows = await dbQuery(
       `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note
        FROM ${botTable(bot, 'equity_snapshots')}
@@ -46,18 +52,29 @@ export async function GET(
        LIMIT 1`,
     )
 
+    // 3. Load sandbox accounts
+    let sandboxAccounts: Array<{ name: string; apiKey: string }> = []
+    try {
+      const acctRows = await dbQuery(
+        `SELECT name, api_key FROM ironforge_accounts WHERE is_active = TRUE ORDER BY id`,
+      )
+      sandboxAccounts = acctRows
+        .filter((r: any) => r.api_key)
+        .map((r: any) => ({ name: r.name, apiKey: r.api_key.trim() }))
+    } catch { /* no accounts table */ }
+
     if (!positionRows.length) {
       return NextResponse.json({
         diagnosis: 'No open positions',
-        positions: [],
-        scanner_snapshot: snapshotRows[0] || null,
+        tradier_api_url: getTradierBaseUrl(),
         tradier_connected: isConfigured(),
+        scanner_snapshot: snapshotRows[0] || null,
       })
     }
 
-    // 3. For each position, get quotes via BOTH methods and compare
+    // 4. For each position, get ALL data sources
     const results = await Promise.all(
-      positionRows.map(async (r) => {
+      positionRows.map(async (r: any) => {
         const ps = num(r.put_short_strike)
         const pl = num(r.put_long_strike)
         const cs = num(r.call_short_strike)
@@ -68,157 +85,253 @@ export async function GET(
         const ticker = r.ticker || 'SPY'
         const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
-        // Method A: getIcMarkToMarket (used by position-monitor & status)
-        let methodA: Record<string, unknown> = { error: 'Tradier not configured' }
+        const occPs = buildOccSymbol(ticker, expiration, ps, 'P')
+        const occPl = buildOccSymbol(ticker, expiration, pl, 'P')
+        const occCs = buildOccSymbol(ticker, expiration, cs, 'C')
+        const occCl = buildOccSymbol(ticker, expiration, cl, 'C')
+        const occSymbols = [occPs, occPl, occCs, occCl]
+
+        // ─── SOURCE 1: Raw Tradier API quotes (all fields) ───
+        const rawQuotes = isConfigured()
+          ? await getRawQuotes([...occSymbols, ticker])
+          : {}
+
+        // Extract per-leg raw data
+        const legNames = ['put_short', 'put_long', 'call_short', 'call_long'] as const
+        const legOccs = [occPs, occPl, occCs, occCl]
+        const rawLegs: Record<string, unknown> = {}
+        for (let i = 0; i < 4; i++) {
+          const raw = rawQuotes[legOccs[i]]
+          if (raw) {
+            rawLegs[legNames[i]] = {
+              symbol: raw.symbol,
+              bid: raw.bid,
+              ask: raw.ask,
+              last: raw.last,
+              mid: raw.bid != null && raw.ask != null
+                ? Math.round(((Number(raw.bid) + Number(raw.ask)) / 2) * 10000) / 10000
+                : null,
+              bid_date: raw.bid_date,
+              ask_date: raw.ask_date,
+              trade_date: raw.trade_date,
+              volume: raw.volume,
+              open_interest: raw.open_interest,
+              description: raw.description,
+            }
+          } else {
+            rawLegs[legNames[i]] = { error: 'No quote returned', occ: legOccs[i] }
+          }
+        }
+
+        const spotRaw = rawQuotes[ticker]
+        const rawSpot = spotRaw ? {
+          last: spotRaw.last,
+          bid: spotRaw.bid,
+          ask: spotRaw.ask,
+          trade_date: spotRaw.trade_date,
+        } : null
+
+        // ─── SOURCE 2: getIcMarkToMarket (position-monitor method) ───
+        let mtmResult: Record<string, unknown> = { error: 'Not configured' }
         if (isConfigured()) {
           const mtm = await getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit)
           if (mtm) {
-            const pnlBidAsk = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
             const pnlMid = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_mid, contracts, spreadWidth)
-            methodA = {
+            const pnlLast = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_last, contracts, spreadWidth)
+            const pnlBidAsk = calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
+            mtmResult = {
               cost_to_close_bidask: mtm.cost_to_close,
               cost_to_close_mid: mtm.cost_to_close_mid,
-              put_short_ask: mtm.put_short_ask,
-              put_long_bid: mtm.put_long_bid,
-              call_short_ask: mtm.call_short_ask,
-              call_long_bid: mtm.call_long_bid,
+              cost_to_close_last: mtm.cost_to_close_last,
+              last_prices_used: mtm.last_prices,
+              pnl_using_bidask: pnlBidAsk,
+              pnl_using_mid: pnlMid,
+              pnl_using_last: pnlLast,
               spot_price: mtm.spot_price,
-              raw_cost: Math.round((mtm.put_short_ask + mtm.call_short_ask - mtm.put_long_bid - mtm.call_long_bid) * 10000) / 10000,
-              unrealized_pnl_bidask: pnlBidAsk,
-              unrealized_pnl_mid: pnlMid,
-              formula_mid: `(${entryCredit} - ${mtm.cost_to_close_mid}) * 100 * ${contracts} = $${pnlMid}`,
+              quote_age_seconds: mtm.quote_age_seconds,
               validation_issues: mtm.validation_issues || [],
             }
           } else {
-            methodA = { error: 'getIcMarkToMarket returned null (quote unavailable)' }
+            mtmResult = { error: 'getIcMarkToMarket returned null' }
           }
         }
 
-        // Method B: getBatchOptionQuotes (used by position-detail)
-        let methodB: Record<string, unknown> = { error: 'Tradier not configured' }
-        if (isConfigured()) {
-          const occPs = buildOccSymbol(ticker, expiration, ps, 'P')
-          const occPl = buildOccSymbol(ticker, expiration, pl, 'P')
-          const occCs = buildOccSymbol(ticker, expiration, cs, 'C')
-          const occCl = buildOccSymbol(ticker, expiration, cl, 'C')
+        // ─── SOURCE 3: Tradier sandbox account positions ───
+        let sandboxOrderIds: Record<string, any> | null = null
+        try {
+          sandboxOrderIds = r.sandbox_order_id ? JSON.parse(r.sandbox_order_id) : null
+        } catch { sandboxOrderIds = null }
 
-          const [batchQuotes, spyQ] = await Promise.all([
-            getBatchOptionQuotes([occPs, occPl, occCs, occCl]),
-            getQuote(ticker),
-          ])
+        const sandboxData = await Promise.all(
+          sandboxAccounts.map(async (acct) => {
+            const acctInfo = sandboxOrderIds?.[acct.name]
+            const acctContracts = typeof acctInfo === 'object' && acctInfo?.contracts
+              ? int(acctInfo.contracts)
+              : contracts
 
-          const psQ = batchQuotes[occPs]
-          const plQ = batchQuotes[occPl]
-          const csQ = batchQuotes[occCs]
-          const clQ = batchQuotes[occCl]
-
-          if (psQ && plQ && csQ && clQ) {
-            const rawCost = psQ.ask + csQ.ask - plQ.bid - clQ.bid
-            const cappedCost = Math.min(Math.max(0, rawCost), spreadWidth)
-            const costToClose = Math.round(cappedCost * 10000) / 10000
-            const pnl = calculateIcUnrealizedPnl(entryCredit, costToClose, contracts, spreadWidth)
-
-            // Scanner-style validation
-            const validationIssues: string[] = []
-            for (const [label, q] of [['PS', psQ], ['PL', plQ], ['CS', csQ], ['CL', clQ]] as const) {
-              const qq = q as { bid: number; ask: number }
-              if (qq.bid <= 0 && qq.ask <= 0) validationIssues.push(`${label}: zero bid/ask`)
-              if (qq.bid > qq.ask && qq.ask > 0) validationIssues.push(`${label}: inverted (bid ${qq.bid} > ask ${qq.ask})`)
-              const mid = (qq.bid + qq.ask) / 2
-              if (mid > 0 && (qq.ask - qq.bid) > 0.50 * mid) {
-                validationIssues.push(`${label}: wide spread (${(qq.ask - qq.bid).toFixed(2)} > 50% of mid ${mid.toFixed(2)})`)
+            let positionData: Record<string, unknown> = { error: 'No positions found' }
+            try {
+              const positions = await getSandboxAccountPositions(acct.apiKey, occSymbols)
+              if (positions.length > 0) {
+                const totalGainLoss = positions.reduce((s, p) => s + p.gain_loss, 0)
+                const totalCostBasis = positions.reduce((s, p) => s + p.cost_basis, 0)
+                const totalMarketValue = positions.reduce((s, p) => s + p.market_value, 0)
+                positionData = {
+                  total_gain_loss: Math.round(totalGainLoss * 100) / 100,
+                  total_cost_basis: Math.round(totalCostBasis * 100) / 100,
+                  total_market_value: Math.round(totalMarketValue * 100) / 100,
+                  per_leg: positions.map(p => ({
+                    symbol: p.symbol,
+                    quantity: p.quantity,
+                    cost_basis: p.cost_basis,
+                    market_value: p.market_value,
+                    gain_loss: p.gain_loss,
+                    gain_loss_percent: p.gain_loss_percent,
+                  })),
+                }
               }
-            }
-            if (rawCost < 0) validationIssues.push(`Negative raw cost: ${rawCost.toFixed(4)}`)
-            if (entryCredit > 0 && rawCost > 3 * entryCredit) {
-              validationIssues.push(`Cost ${rawCost.toFixed(4)} > 3x entry ${entryCredit.toFixed(4)}`)
+            } catch (err: unknown) {
+              positionData = { error: err instanceof Error ? err.message : String(err) }
             }
 
-            methodB = {
-              occ_symbols: { ps: occPs, pl: occPl, cs: occCs, cl: occCl },
-              quotes: {
-                put_short: psQ,
-                put_long: plQ,
-                call_short: csQ,
-                call_long: clQ,
-              },
-              spot_price: spyQ?.last ?? null,
-              raw_cost: Math.round(rawCost * 10000) / 10000,
-              capped_cost: costToClose,
-              unrealized_pnl: pnl,
-              formula: `(${entryCredit} - ${costToClose}) * 100 * ${contracts} = $${pnl}`,
-              scanner_validation: validationIssues.length > 0
-                ? { pass: false, issues: validationIssues }
-                : { pass: true, issues: [] },
+            return {
+              account_name: acct.name,
+              contracts: acctContracts,
+              tradier_positions_api: positionData,
             }
-          } else {
-            methodB = {
-              error: 'Some leg quotes unavailable',
-              available: { ps: !!psQ, pl: !!plQ, cs: !!csQ, cl: !!clQ },
-            }
-          }
-        }
+          }),
+        )
+
+        // ─── Compute all P&L methods for comparison ───
+        const parse = (v: unknown) => typeof v === 'number' ? v : parseFloat(String(v || '0'))
+        const psB = parse((rawLegs.put_short as any)?.bid)
+        const psA = parse((rawLegs.put_short as any)?.ask)
+        const psL = parse((rawLegs.put_short as any)?.last)
+        const psM = parse((rawLegs.put_short as any)?.mid)
+        const plB = parse((rawLegs.put_long as any)?.bid)
+        const plA = parse((rawLegs.put_long as any)?.ask)
+        const plL = parse((rawLegs.put_long as any)?.last)
+        const plM = parse((rawLegs.put_long as any)?.mid)
+        const csB = parse((rawLegs.call_short as any)?.bid)
+        const csA = parse((rawLegs.call_short as any)?.ask)
+        const csL = parse((rawLegs.call_short as any)?.last)
+        const csM = parse((rawLegs.call_short as any)?.mid)
+        const clB = parse((rawLegs.call_long as any)?.bid)
+        const clA = parse((rawLegs.call_long as any)?.ask)
+        const clL = parse((rawLegs.call_long as any)?.last)
+        const clM = parse((rawLegs.call_long as any)?.mid)
+
+        const costMid = Math.round((psM + csM - plM - clM) * 10000) / 10000
+        const costLast = Math.round(((psL > 0 ? psL : psM) + (csL > 0 ? csL : csM) - (plL > 0 ? plL : plM) - (clL > 0 ? clL : clM)) * 10000) / 10000
+        const costBidAsk = Math.round((psA + csA - plB - clB) * 10000) / 10000
 
         return {
           position_id: r.position_id,
           ticker,
           expiration,
-          strikes: { put_long: pl, put_short: ps, call_short: cs, call_long: cl },
+          strikes: `${pl}/${ps}P - ${cs}/${cl}C`,
           contracts,
           entry_credit: entryCredit,
           spread_width: spreadWidth,
-          open_time: r.open_time,
-          method_a_getIcMarkToMarket: methodA,
-          method_b_batchQuotes: methodB,
+
+          // All 3 cost-to-close methods with P&L
+          pricing_comparison: {
+            bid_ask_worst_case: {
+              cost: costBidAsk,
+              pnl_per_contract: Math.round((entryCredit - Math.min(Math.max(0, costBidAsk), spreadWidth)) * 10000) / 10000,
+              pnl_total: calculateIcUnrealizedPnl(entryCredit, costBidAsk, contracts, spreadWidth),
+              formula: `PS_ask(${psA}) + CS_ask(${csA}) - PL_bid(${plB}) - CL_bid(${clB})`,
+            },
+            mid_price: {
+              cost: costMid,
+              pnl_per_contract: Math.round((entryCredit - Math.min(Math.max(0, costMid), spreadWidth)) * 10000) / 10000,
+              pnl_total: calculateIcUnrealizedPnl(entryCredit, costMid, contracts, spreadWidth),
+              formula: `PS_mid(${psM}) + CS_mid(${csM}) - PL_mid(${plM}) - CL_mid(${clM})`,
+            },
+            last_trade: {
+              cost: costLast,
+              pnl_per_contract: Math.round((entryCredit - Math.min(Math.max(0, costLast), spreadWidth)) * 10000) / 10000,
+              pnl_total: calculateIcUnrealizedPnl(entryCredit, costLast, contracts, spreadWidth),
+              formula: `PS_last(${psL > 0 ? psL : psM + '*'}) + CS_last(${csL > 0 ? csL : csM + '*'}) - PL_last(${plL > 0 ? plL : plM + '*'}) - CL_last(${clL > 0 ? clL : clM + '*'})`,
+              note: 'Values marked with * fell back to mid (no last trade)',
+            },
+          },
+
+          // Raw per-leg data from Tradier API
+          raw_tradier_quotes: rawLegs,
+          raw_spot: rawSpot,
+
+          // getIcMarkToMarket output (what position-monitor uses)
+          position_monitor_method: mtmResult,
+
+          // Tradier sandbox positions API (what the portfolio shows)
+          sandbox_accounts: sandboxData,
         }
       }),
     )
 
-    // 4. Scanner's last known unrealized P&L
-    const scannerSnapshot = snapshotRows[0]
-      ? {
-          snapshot_time: snapshotRows[0].snapshot_time,
-          balance: num(snapshotRows[0].balance),
-          realized_pnl: num(snapshotRows[0].realized_pnl),
-          unrealized_pnl: num(snapshotRows[0].unrealized_pnl),
-          open_positions: int(snapshotRows[0].open_positions),
-          note: snapshotRows[0].note,
+    // ─── Tradier timesales (last 10 minutes of SPY minute bars) ───
+    // Compare latest candle close to the quote's "last" field.
+    // If quote.last lags the timesales close, quotes are delayed.
+    let timesalesData: Record<string, unknown> = {}
+    if (isConfigured()) {
+      try {
+        const candles = await getTimesales('SPY', 10)
+        const quoteSpot = results[0]?.raw_spot as any
+        const quoteLast = quoteSpot?.last ? Number(quoteSpot.last) : null
+        const latestCandle = candles.length > 0 ? candles[candles.length - 1] : null
+
+        timesalesData = {
+          candles,
+          latest_candle: latestCandle,
+          quote_last: quoteLast,
+          delta: latestCandle && quoteLast != null
+            ? Math.round((Number(latestCandle.close) - quoteLast) * 100) / 100
+            : null,
+          verdict: latestCandle && quoteLast != null
+            ? Math.abs(Number(latestCandle.close) - quoteLast) > 0.50
+              ? `STALE — quote SPY $${quoteLast} vs timesales $${latestCandle.close} (${latestCandle.time})`
+              : `OK — quote SPY $${quoteLast} ≈ timesales $${latestCandle.close}`
+            : 'No data to compare',
         }
-      : null
+      } catch (err: unknown) {
+        timesalesData = { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
 
-    // 5. Summary comparison
-    const methodAPnl = results.reduce((sum, r) => {
-      const pnl = (r.method_a_getIcMarkToMarket as any)?.unrealized_pnl_mid
-      return sum + (typeof pnl === 'number' ? pnl : 0)
-    }, 0)
-
-    const methodBPnl = results.reduce((sum, r) => {
-      const pnl = (r.method_b_batchQuotes as any)?.unrealized_pnl
-      return sum + (typeof pnl === 'number' ? pnl : 0)
-    }, 0)
-
-    const scannerPnl = scannerSnapshot?.unrealized_pnl ?? null
-
-    const hasValidationIssues = results.some((r) => {
-      const v = (r.method_b_batchQuotes as any)?.scanner_validation
-      return v && !v.pass
-    })
+    // ─── Historical equity snapshots (last 30 from today) ───
+    let historicalSnapshots: Array<Record<string, unknown>> = []
+    try {
+      const snapRows = await dbQuery(
+        `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note
+         FROM ${botTable(bot, 'equity_snapshots')}
+         ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+         ORDER BY snapshot_time DESC
+         LIMIT 30`,
+      )
+      historicalSnapshots = snapRows.map((r: any) => ({
+        time: r.snapshot_time,
+        balance: num(r.balance),
+        realized_pnl: num(r.realized_pnl),
+        unrealized_pnl: num(r.unrealized_pnl),
+        open_positions: int(r.open_positions),
+        note: r.note,
+      })).reverse()  // oldest first
+    } catch { /* table may not exist */ }
 
     return NextResponse.json({
       bot: bot.toUpperCase(),
       timestamp: new Date().toISOString(),
+      tradier_api_url: getTradierBaseUrl(),
       tradier_connected: isConfigured(),
-      summary: {
-        method_a_pnl: Math.round(methodAPnl * 100) / 100,
-        method_b_pnl: Math.round(methodBPnl * 100) / 100,
-        scanner_pnl: scannerPnl,
-        all_agree: Math.abs(methodAPnl - methodBPnl) < 1 && (scannerPnl === null || Math.abs(methodAPnl - scannerPnl) < 50),
-        has_validation_issues: hasValidationIssues,
-        verdict: hasValidationIssues
-          ? 'UNTRUSTED — Tradier quotes fail scanner validation (wide spreads / stale data). Scanner P&L is more reliable.'
-          : 'OK — Tradier quotes pass validation',
-      },
-      scanner_snapshot: scannerSnapshot,
+
+      // Cross-check: compare /markets/quotes vs /markets/timesales
+      spy_timesales_vs_quote: timesalesData,
+
+      // Historical scanner snapshots (unrealized P&L trail)
+      equity_snapshot_history: historicalSnapshots,
+
+      // Per-position deep dive
       positions: results,
     })
   } catch (err: unknown) {

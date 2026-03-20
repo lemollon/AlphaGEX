@@ -38,6 +38,8 @@ export async function GET(
     }
 
     let anyLiveQuoteSucceeded = false
+    let quoteAgeSeconds: number | undefined
+    let apiSource: string | undefined
 
     const positions = await Promise.all(
       positionRows.map(async (r) => {
@@ -69,13 +71,16 @@ export async function GET(
               anyLiveQuoteSucceeded = true
               mtm = mtmResult.cost_to_close
               spotPrice = mtmResult.spot_price
+              quoteAgeSeconds = mtmResult.quote_age_seconds
+              apiSource = mtmResult.api_source
               const spreadWidth = num(r.spread_width) || (ps - pl)
-              // Use mid/last prices for P&L display to match Tradier's Gain/Loss
-              const mtmMid = mtmResult.cost_to_close_mid
-              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmMid, contracts, spreadWidth)
+              // Use last trade prices for P&L display — matches Tradier's portfolio
+              // Gain/Loss which uses last trade prices, not bid/ask midpoint.
+              const mtmLast = mtmResult.cost_to_close_last
+              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
               unrealizedPnlPct =
                 entryCredit > 0
-                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmMid), spreadWidth)) / entryCredit) * 10000) / 100
+                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmLast), spreadWidth)) / entryCredit) * 10000) / 100
                   : 0
               // PT/SL proximity uses bid/ask (worst-case) since these trigger actual closes
               distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
@@ -128,6 +133,9 @@ export async function GET(
         spot_price: positions[0]?.spot_price ?? null,
         tradier_connected: isConfigured(),
         pnl_source: 'live',
+        quote_age_seconds: quoteAgeSeconds,
+        api_source: apiSource,
+        quotes_delayed: quoteAgeSeconds != null && quoteAgeSeconds > 300,
       })
     }
 

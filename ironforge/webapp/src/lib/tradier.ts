@@ -65,12 +65,20 @@ interface Quote {
 export interface IcMtmResult {
   cost_to_close: number
   cost_to_close_mid: number
+  /** Cost using last trade prices (matches Tradier portfolio valuation). */
+  cost_to_close_last: number
   put_short_ask: number
   put_long_bid: number
   call_short_ask: number
   call_long_bid: number
   spot_price: number | null
   validation_issues?: string[]
+  /** Seconds since the most recent quote update across all legs. >300 = likely delayed data. */
+  quote_age_seconds?: number
+  /** The API base URL used (production vs sandbox). */
+  api_source?: string
+  /** Per-leg last trade prices used for cost_to_close_last. */
+  last_prices?: { ps: number; pl: number; cs: number; cl: number }
 }
 
 /** Validation issues found in a set of MTM quotes (empty = passed). */
@@ -313,10 +321,17 @@ export async function getIcMarkToMarket(
   const spreadWidth = Math.round((putShort - putLong) * 100) / 100
 
   // Mark price cost — uses mid (bid+ask average) for each leg.
-  // Tradier's portfolio values positions at mark price, not last trade.
-  // Last trade can be stale on thinly-traded wings causing P&L lag.
   const rawCostMark = psQ.mid + csQ.mid - plQ.mid - clQ.mid
   const costMark = Math.min(Math.max(0, rawCostMark), spreadWidth)
+
+  // Last trade price cost — matches Tradier portfolio's "Price" column.
+  // Tradier uses last trade prices for Gain/Loss. Falls back to mid if no last trade.
+  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+  const csLast = csQ.last > 0 ? csQ.last : csQ.mid
+  const clLast = clQ.last > 0 ? clQ.last : clQ.mid
+  const rawCostLast = psLast + csLast - plLast - clLast
+  const costLast = Math.min(Math.max(0, rawCostLast), spreadWidth)
 
   const validation = validateMtmQuotes(
     [
@@ -337,15 +352,48 @@ export async function getIcMarkToMarket(
     ? Math.min(Math.max(0, rawCost), spreadWidth)
     : costMark  // Fallback: use mid for PT/SL too when bid/ask is unreliable
 
+  // Detect quote staleness: compare most recent trade/bid timestamp to now.
+  // Tradier returns trade_date (last fill) and bid_date (last bid update) as epoch ms.
+  let quoteAgeSeconds: number | undefined
+  try {
+    const now = Date.now()
+    const timestamps: number[] = []
+    for (const raw of [psRaw, plRaw, csRaw, clRaw, spotRaw]) {
+      if (!raw) continue
+      // Tradier returns bid_date/ask_date as epoch milliseconds, or trade_date as ISO string
+      for (const field of ['bid_date', 'ask_date', 'trade_date']) {
+        const v = raw[field]
+        if (!v) continue
+        const ts = typeof v === 'number' ? v : new Date(v).getTime()
+        if (ts > 0 && ts < now + 86400000) timestamps.push(ts)
+      }
+    }
+    if (timestamps.length > 0) {
+      const newest = Math.max(...timestamps)
+      quoteAgeSeconds = Math.round((now - newest) / 1000)
+    }
+  } catch { /* non-fatal */ }
+
+  if (quoteAgeSeconds != null && quoteAgeSeconds > 300) {
+    console.warn(
+      `[tradier] MTM quotes are ${quoteAgeSeconds}s old (${Math.round(quoteAgeSeconds / 60)}min) — ` +
+      `API may be returning delayed data. Base URL: ${TRADIER_BASE_URL}`,
+    )
+  }
+
   return {
     cost_to_close: Math.round(cost * 10000) / 10000,
     cost_to_close_mid: Math.round(costMark * 10000) / 10000,
+    cost_to_close_last: Math.round(costLast * 10000) / 10000,
     put_short_ask: psQ.ask,
     put_long_bid: plQ.bid,
     call_short_ask: csQ.ask,
     call_long_bid: clQ.bid,
     spot_price: spotRaw ? parse(spotRaw.last) : null,
     validation_issues: validation.pass ? undefined : validation.issues,
+    quote_age_seconds: quoteAgeSeconds,
+    api_source: TRADIER_BASE_URL,
+    last_prices: { ps: psLast, pl: plLast, cs: csLast, cl: clLast },
   }
 }
 
@@ -1125,6 +1173,71 @@ export interface LegQuote {
  * Fetch quotes for multiple OCC symbols in a single API call.
  * Returns a map of symbol → LegQuote.
  */
+/**
+ * Fetch raw Tradier quote data for multiple symbols, preserving all fields
+ * (bid, ask, last, bid_date, ask_date, trade_date, etc.) for diagnostics.
+ */
+export async function getRawQuotes(
+  symbols: string[],
+): Promise<Record<string, Record<string, unknown>>> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey || symbols.length === 0) return {}
+
+  const data = await tradierGet('/markets/quotes', {
+    symbols: symbols.join(','),
+  })
+  if (!data) return {}
+
+  const results: Record<string, Record<string, unknown>> = {}
+  let quotes = data.quotes?.quote
+  if (!quotes) return results
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  for (const q of quotes) {
+    if (!q?.symbol) continue
+    results[q.symbol] = q
+  }
+  return results
+}
+
+/** Returns the Tradier API base URL currently in use (for diagnostics). */
+export function getTradierBaseUrl(): string {
+  return TRADIER_BASE_URL
+}
+
+/**
+ * Fetch Tradier timesales (minute bars) for a symbol.
+ * Returns the last `minutes` candles for intraday comparison.
+ */
+export async function getTimesales(
+  symbol: string,
+  minutes: number = 10,
+): Promise<Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return []
+
+  const data = await tradierGet('/markets/timesales', {
+    symbol,
+    interval: '1min',
+    session_filter: 'all',
+  })
+  if (!data) return []
+
+  let series = data.series?.data
+  if (!series) return []
+  if (!Array.isArray(series)) series = [series]
+
+  // Return last N candles
+  return series.slice(-minutes).map((d: any) => ({
+    time: d.time || d.timestamp,
+    open: parseFloat(d.open || '0'),
+    high: parseFloat(d.high || '0'),
+    low: parseFloat(d.low || '0'),
+    close: parseFloat(d.close || '0'),
+    volume: parseInt(d.volume || '0', 10),
+  }))
+}
+
 export async function getBatchOptionQuotes(
   occSymbols: string[],
 ): Promise<Record<string, LegQuote>> {
