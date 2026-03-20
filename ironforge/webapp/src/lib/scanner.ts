@@ -37,6 +37,7 @@ import {
   getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
   emergencyCloseSandboxPositions,
+  closeOrphanSandboxPositions,
   getOrderFillPrice,
   getAccountIdForKey,
   buildOccSymbol,
@@ -1559,29 +1560,34 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
         }
       }
 
-      // Check each sandbox account for orphans
+      // Check each sandbox account for orphans — close ONLY orphans, preserve matched positions.
+      // Old behavior: emergencyCloseSandboxPositions closed ALL positions including the matched
+      // one, which broke paper↔sandbox 1:1 sync. New behavior: targeted orphan-only close.
       for (const acct of accounts) {
         const positions = await getSandboxAccountPositions(acct.apiKey)
         const orphans = positions.filter(p => p.quantity !== 0 && !paperOccPrefixes.has(p.symbol))
         if (orphans.length > 0) {
+          const orphanSymbols = new Set(orphans.map(o => o.symbol))
+          const matched = positions.filter(p => p.quantity !== 0 && paperOccPrefixes.has(p.symbol)).length
           console.error(
-            `[scanner] ORPHAN DETECTION [${acct.name}]: ${orphans.length} Tradier positions ` +
-            `with NO matching open paper position — EMERGENCY CLOSING!`,
+            `[scanner] ORPHAN DETECTION [${acct.name}]: ${orphans.length} orphan positions ` +
+            `(${matched} matched positions preserved) — closing orphans only!`,
           )
           for (const o of orphans) {
             console.error(`[scanner]   ORPHAN: ${o.symbol} qty=${o.quantity} cost=${o.cost_basis} mv=${o.market_value}`)
           }
-          const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+          const result = await closeOrphanSandboxPositions(acct.apiKey, acct.name, orphanSymbols)
           await query(
             `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
              VALUES ($1, $2, $3, $4)`,
             [
               'CRITICAL',
               `ORPHAN CLEANUP [${acct.name}]: ${result.closed} closed, ${result.failed} failed ` +
-              `(${orphans.length} orphans found)`,
+              `(${orphans.length} orphans, ${matched} matched preserved)`,
               JSON.stringify({
                 account: acct.name,
                 orphans: orphans.map(p => ({ symbol: p.symbol, qty: p.quantity, gain_loss: p.gain_loss })),
+                matched_preserved: matched,
                 close_result: result,
               }),
               '2DTE',
@@ -1592,6 +1598,8 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
     } catch (orphanErr: unknown) {
       const msg = orphanErr instanceof Error ? orphanErr.message : String(orphanErr)
       console.warn(`[scanner] ORPHAN DETECTION ERROR: ${msg}`)
+      // Reset so we retry orphan detection next cycle
+      _lastSandboxCleanupDate = null
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

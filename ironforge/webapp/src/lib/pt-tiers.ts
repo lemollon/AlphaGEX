@@ -94,14 +94,15 @@ export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabe
   return null
 }
 
-/** Format a close_reason string for display. */
-export function formatCloseReason(reason: string): { text: string; color: string } {
+/** Format a close_reason string for display. Pass bot to get correct PT% for INFERNO. */
+export function formatCloseReason(reason: string, bot?: string): { text: string; color: string } {
+  const isInferno = bot === 'inferno'
   if (reason === 'profit_target_morning')
-    return { text: 'Profit Target (Morning 30%)', color: 'text-emerald-400' }
+    return { text: `Profit Target (Morning ${isInferno ? '50' : '30'}%)`, color: 'text-emerald-400' }
   if (reason === 'profit_target_midday')
-    return { text: 'Profit Target (Midday 20%)', color: 'text-yellow-400' }
+    return { text: `Profit Target (Midday ${isInferno ? '30' : '20'}%)`, color: 'text-yellow-400' }
   if (reason === 'profit_target_afternoon')
-    return { text: 'Profit Target (Afternoon 15%)', color: 'text-orange-400' }
+    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '15'}%)`, color: 'text-orange-400' }
   if (reason === 'profit_target')
     return { text: 'Profit Target', color: 'text-emerald-400' }
   if (reason === 'stop_loss')

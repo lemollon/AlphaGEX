@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow } from '@/lib/pt-tiers'
+import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow, formatCloseReason } from '@/lib/pt-tiers'
 
 interface SandboxAccount {
   name: string
@@ -24,6 +24,7 @@ interface StatusData {
     unrealized_pnl: number | null
     today_realized_pnl?: number
     today_trades_closed?: number
+    today_ic_return_pct?: number | null
     total_pnl: number
     return_pct: number
     buying_power: number
@@ -40,6 +41,7 @@ interface StatusData {
   vix: number | null
   bot_state: string | null
   sandbox_accounts?: SandboxAccount[]
+  today_close_reasons?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
 }
 
 interface ConfigData {
@@ -89,6 +91,7 @@ export default function StatusCard({
   pendingOrderCount,
   quotesDelayed,
   quoteAgeSeconds,
+  todaysClosedTrades,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
@@ -99,6 +102,7 @@ export default function StatusCard({
   pendingOrderCount?: number
   quotesDelayed?: boolean
   quoteAgeSeconds?: number
+  todaysClosedTrades?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
 }) {
   const { account } = data
   const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
@@ -124,7 +128,8 @@ export default function StatusCard({
   // Today's P&L
   const todayRealized = account.today_realized_pnl ?? 0
   const todayRealizedPositive = todayRealized >= 0
-  const todayRealizedPct = startingCapital > 0 ? (todayRealized / startingCapital) * 100 : null
+  // IC return % = how much of the credit premium was kept (the real trading metric)
+  const todayIcReturnPct = account.today_ic_return_pct ?? null
   const todayUnrealized = unrealized ?? 0
   const todayUnrealizedPositive = todayUnrealized >= 0
   const todayTotal = todayRealized + todayUnrealized
@@ -478,10 +483,43 @@ export default function StatusCard({
             {todayRealized === 0
               ? '$0.00'
               : `${todayRealizedPositive ? '+' : ''}$${todayRealized.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-            {todayRealizedPct != null && todayRealized !== 0 && (
-              <span className="text-xs ml-1">({todayRealizedPct >= 0 ? '+' : ''}{todayRealizedPct.toFixed(1)}%)</span>
+            {todayIcReturnPct != null && todayRealized !== 0 && (
+              <span className="text-xs ml-1" title="IC return: % of credit premium kept">
+                ({todayIcReturnPct >= 0 ? '+' : ''}{todayIcReturnPct.toFixed(1)}%
+                <span className="text-[9px] text-forge-muted"> of credit</span>)
+              </span>
             )}
           </p>
+          {/* Close reason breakdown — shows which PT tiers hit today */}
+          {(() => {
+            // Prefer status API data (always available), fall back to position-monitor
+            const trades = data.today_close_reasons?.length
+              ? data.today_close_reasons
+              : todaysClosedTrades
+            if (!trades || trades.length === 0) return null
+            return (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {trades.map((t, i) => {
+                  const r = formatCloseReason(t.close_reason, bot)
+                  const pnlPos = t.realized_pnl >= 0
+                  return (
+                    <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                      r.color.includes('emerald') ? 'bg-emerald-500/15' :
+                      r.color.includes('yellow') ? 'bg-yellow-500/15' :
+                      r.color.includes('orange') ? 'bg-orange-500/15' :
+                      r.color.includes('red') ? 'bg-red-500/15' :
+                      r.color.includes('amber') ? 'bg-amber-500/15' :
+                      'bg-gray-500/15'
+                    } ${r.color}`}>
+                      {pnlPos ? '+' : ''}{Math.abs(t.realized_pnl) < 1000 ? `$${t.realized_pnl.toFixed(0)}` : `$${(t.realized_pnl/1000).toFixed(1)}k`}
+                      {t.ic_return_pct != null && ` (${t.ic_return_pct >= 0 ? '+' : ''}${t.ic_return_pct.toFixed(0)}%)`}
+                      {' '}{r.text.replace('Profit Target ', '').replace('(', '').replace(')', '')}
+                    </span>
+                  )
+                })}
+              </div>
+            )
+          })()}
         </div>
         <div>
           <p className="text-xs text-forge-muted">Unrealized Now</p>
