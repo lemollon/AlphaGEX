@@ -129,10 +129,22 @@ async function handleToggle(
     `SELECT pdt_enabled FROM ${PDT_CONFIG}
      WHERE bot_name = '${escapeSql(botName)}' LIMIT 1`,
   )
+
+  // If row doesn't exist yet, seed it first (prevents silent UPDATE-0-rows bug)
+  if (rows.length === 0) {
+    const defaults = { flame: [3, 1], spark: [3, 1], inferno: [0, 0] } as const
+    const [maxDT, maxPD] = defaults[bot as keyof typeof defaults] ?? [3, 1]
+    await dbExecute(
+      `INSERT INTO ${PDT_CONFIG}
+         (bot_name, pdt_enabled, day_trade_count, max_day_trades, window_days, max_trades_per_day)
+       VALUES ('${escapeSql(botName)}', ${maxDT > 0}, 0, ${maxDT}, 5, ${maxPD})`,
+    )
+  }
+
   const current = rows[0]?.pdt_enabled !== false && rows[0]?.pdt_enabled !== 'false'
 
-  // No-op if already in requested state
-  if (current === enabled) {
+  // No-op if already in requested state (and row existed)
+  if (rows.length > 0 && current === enabled) {
     return await buildStatusResponse(bot, botName, dteMode(bot)!)
   }
 
@@ -140,7 +152,7 @@ async function handleToggle(
   if (enabled) {
     await dbExecute(
       `UPDATE ${PDT_CONFIG}
-       SET pdt_enabled = ${enabled}, updated_at = NOW()
+       SET pdt_enabled = TRUE, updated_at = NOW()
        WHERE bot_name = '${escapeSql(botName)}'`,
     )
   } else {
@@ -161,6 +173,15 @@ async function handleToggle(
       )
     } catch { /* non-critical */ }
   }
+
+  // Also sync per-bot pdt_config table for consistency
+  try {
+    await dbExecute(
+      `UPDATE ${botTable(bot, 'pdt_config')}
+       SET pdt_enabled = ${enabled}, updated_at = NOW()
+       WHERE bot_name = '${escapeSql(botName)}'`,
+    )
+  } catch { /* non-critical — shared table is authoritative */ }
 
   // Audit log (per-bot table)
   const oldJson = JSON.stringify({ pdt_enabled: current }).replace(/'/g, "''")
