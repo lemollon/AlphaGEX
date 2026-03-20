@@ -122,10 +122,26 @@ export async function GET(
       }),
     )
 
-    // Total entry credit across all open positions (for position-relative %)
-    const totalEntryCredit = positions.reduce(
-      (sum, p) => sum + (p.total_credit || 0), 0,
-    )
+    // Use per-position unrealized_pnl_pct (already correctly computed as
+    // (credit - cost_to_close) / credit — the IC perspective matching Tradier).
+    // Weighted average by dollar credit when multiple positions are open.
+    const pctPositions = positions.filter(p => p.unrealized_pnl_pct != null)
+    let totalUnrealizedPct: number | null = null
+    if (pctPositions.length === 1) {
+      totalUnrealizedPct = pctPositions[0].unrealized_pnl_pct
+    } else if (pctPositions.length > 1) {
+      // Dollar-weighted average: weight = credit × contracts (×100 cancels out)
+      const totalWeight = pctPositions.reduce(
+        (s, p) => s + ((p.total_credit || 0) * (p.contracts || 1)), 0,
+      )
+      if (totalWeight > 0) {
+        totalUnrealizedPct = Math.round(
+          pctPositions.reduce(
+            (s, p) => s + ((p.unrealized_pnl_pct ?? 0) * (p.total_credit || 0) * (p.contracts || 1)), 0,
+          ) / totalWeight * 100,
+        ) / 100
+      }
+    }
 
     // If live Tradier quotes passed validation, use them
     if (anyLiveQuoteSucceeded) {
@@ -135,7 +151,7 @@ export async function GET(
       return NextResponse.json({
         positions,
         total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
-        total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
+        total_unrealized_pnl_pct: totalUnrealizedPct,
         spot_price: positions[0]?.spot_price ?? null,
         tradier_connected: isConfigured(),
         pnl_source: 'live',
@@ -169,7 +185,7 @@ export async function GET(
     return NextResponse.json({
       positions,
       total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
-      total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
+      total_unrealized_pnl_pct: totalUnrealizedPct,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
       pnl_source: 'scanner_snapshot',
