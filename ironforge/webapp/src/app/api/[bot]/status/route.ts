@@ -248,6 +248,8 @@ export async function GET(
         total_equity: s.total_equity,
         option_buying_power: s.option_buying_power,
         day_pnl: s.day_pnl,
+        unrealized_pnl: s.unrealized_pnl,
+        unrealized_pnl_pct: s.unrealized_pnl_pct,
         open_positions: s.open_positions_count,
       })),
     })

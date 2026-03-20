@@ -9,6 +9,8 @@ interface SandboxAccount {
   total_equity: number | null
   option_buying_power: number | null
   day_pnl: number | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
   open_positions: number
 }
 
@@ -550,6 +552,9 @@ export default function StatusCard({
               const hasData = acct.account_id != null
               const dayPnl = acct.day_pnl ?? 0
               const dayPositive = dayPnl >= 0
+              const uPnl = acct.unrealized_pnl
+              const uPct = acct.unrealized_pnl_pct
+              const uPositive = (uPnl ?? 0) >= 0
               const bp = acct.option_buying_power
               const bpNeg = bp != null && bp < 0
               return (
@@ -564,6 +569,15 @@ export default function StatusCard({
                         {dayPnl === 0 ? '$0.00' : `${dayPositive ? '+' : ''}$${dayPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
                         <span className="text-[10px] text-forge-muted ml-1">day P&L</span>
                       </p>
+                      {uPnl != null && acct.open_positions > 0 && (
+                        <p className={`text-xs mt-0.5 font-medium ${uPnl === 0 ? 'text-gray-400' : uPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {uPnl === 0 ? '$0.00' : `${uPositive ? '+' : ''}$${uPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                          {uPct != null && uPnl !== 0 && (
+                            <span className="ml-1">({uPositive ? '+' : ''}{uPct.toFixed(1)}%)</span>
+                          )}
+                          <span className="text-[10px] text-forge-muted ml-1">unreal</span>
+                        </p>
+                      )}
                       <p className={`text-xs mt-0.5 ${bpNeg ? 'text-red-400 font-semibold' : 'text-gray-500'}`}>
                         BP: ${bp != null ? bp.toLocaleString(undefined, { minimumFractionDigits: 0 }) : '—'}
                       </p>

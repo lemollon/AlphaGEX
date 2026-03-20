@@ -802,6 +802,8 @@ export interface SandboxAccountBalance {
   total_equity: number | null
   option_buying_power: number | null
   day_pnl: number | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
   open_positions_count: number
 }
 
@@ -823,6 +825,8 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
           total_equity: null,
           option_buying_power: null,
           day_pnl: null,
+          unrealized_pnl: null,
+          unrealized_pnl_pct: null,
           open_positions_count: 0,
         })
         return
@@ -850,12 +854,26 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       const openPl = bal.pending_cash != null ? parseFloat(bal.pending_cash) : null
       const dayPnl = closePl != null ? closePl + (openPl || 0) : null
 
-      // Count open positions
+      // Count open positions and sum unrealized P&L from Tradier gain_loss
       let posCount = 0
+      let unrealizedPnl: number | null = null
+      let totalCostBasis = 0
       if (posData?.positions?.position) {
-        const pos = posData.positions.position
-        posCount = Array.isArray(pos) ? pos.length : 1
+        const posList = Array.isArray(posData.positions.position)
+          ? posData.positions.position
+          : [posData.positions.position]
+        posCount = posList.length
+        let gainSum = 0
+        for (const p of posList) {
+          if (p.gain_loss != null) gainSum += parseFloat(p.gain_loss)
+          if (p.cost_basis != null) totalCostBasis += Math.abs(parseFloat(p.cost_basis))
+        }
+        unrealizedPnl = gainSum
       }
+      // Unrealized % relative to cost basis (absolute value since short positions have negative cost basis)
+      const unrealizedPct = unrealizedPnl != null && totalCostBasis > 0
+        ? (unrealizedPnl / totalCostBasis) * 100
+        : null
 
       results.push({
         name: acct.name,
@@ -863,6 +881,8 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         total_equity: equity,
         option_buying_power: optionBp,
         day_pnl: dayPnl,
+        unrealized_pnl: unrealizedPnl != null ? Math.round(unrealizedPnl * 100) / 100 : null,
+        unrealized_pnl_pct: unrealizedPct != null ? Math.round(unrealizedPct * 10) / 10 : null,
         open_positions_count: posCount,
       })
     }),
