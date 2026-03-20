@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCurrentPTTier, getCTNow, type PTTier } from '@/lib/pt-tiers'
+import { getCurrentPTTier, getCTNow, formatCloseReason, type PTTier } from '@/lib/pt-tiers'
 import PositionDetail from './PositionDetail'
 
 interface Position {
@@ -130,7 +130,7 @@ export default function PositionTable({
             <span className="flex-1 border-t border-forge-border/50" />
           </div>
           {todaysClosedTrades!.map((trade) => (
-            <ClosedTradeCard key={trade.position_id} trade={trade} />
+            <ClosedTradeCard key={trade.position_id} trade={trade} bot={bot} />
           ))}
         </>
       )}
@@ -435,16 +435,25 @@ function PositionCard({
 /*  Closed Trade Card — shows today's realized IC with position %     */
 /* ------------------------------------------------------------------ */
 
-function ClosedTradeCard({ trade }: { trade: ClosedTrade }) {
+function ClosedTradeCard({ trade, bot }: { trade: ClosedTrade; bot: string }) {
   const pnl = trade.realized_pnl
   const pnlColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
 
-  // Close reason badge color
-  const reasonColor = trade.close_reason === 'PROFIT_TARGET'
-    ? 'bg-emerald-500/20 text-emerald-400'
-    : trade.close_reason === 'STOP_LOSS'
-      ? 'bg-red-500/20 text-red-400'
-      : 'bg-gray-500/20 text-gray-400'
+  // Use the shared formatter that maps close_reason → human-readable with PT %
+  const reason = formatCloseReason(trade.close_reason, bot)
+  const reasonBg = reason.color.includes('emerald')
+    ? 'bg-emerald-500/20'
+    : reason.color.includes('red')
+      ? 'bg-red-500/20'
+      : reason.color.includes('yellow')
+        ? 'bg-yellow-500/20'
+        : reason.color.includes('orange')
+          ? 'bg-orange-500/20'
+          : reason.color.includes('amber')
+            ? 'bg-amber-500/20'
+            : reason.color.includes('blue')
+              ? 'bg-blue-500/20'
+              : 'bg-gray-500/20'
 
   // Format time as HH:MM CT
   const formatTime = (t: string | null) => {
@@ -462,8 +471,8 @@ function ClosedTradeCard({ trade }: { trade: ClosedTrade }) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-mono text-xs text-gray-500">{trade.position_id.slice(0, 20)}</span>
-          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${reasonColor}`}>
-            {trade.close_reason?.replace(/_/g, ' ') || 'CLOSED'}
+          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${reasonBg} ${reason.color}`}>
+            {reason.text}
           </span>
         </div>
         <div className="text-right">

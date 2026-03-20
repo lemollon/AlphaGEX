@@ -19,7 +19,7 @@ interface Trade {
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
-export default function TradeHistory({ trades }: { trades: Trade[] }) {
+export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: string }) {
   if (!trades.length) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">
@@ -46,7 +46,7 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
           {trades.map((trade) => {
             const positive = trade.realized_pnl >= 0
             const hasSandbox = trade.sandbox_order_ids && Object.keys(trade.sandbox_order_ids).length > 0
-            const reason = formatCloseReason(trade.close_reason)
+            const reason = formatCloseReason(trade.close_reason, bot)
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{trade.close_time?.slice(0, 16)}</td>

@@ -325,7 +325,7 @@ export default function BotDashboard({
         {tab === 'Trade History' && (
           tradesErr
             ? <TabError message={tradesErr.message} />
-            : trades ? <TradeHistory trades={trades.trades} /> : <TabLoading />
+            : trades ? <TradeHistory trades={trades.trades} bot={bot} /> : <TabLoading />
         )}
         {tab === 'Signals' && (
           signalsErr
