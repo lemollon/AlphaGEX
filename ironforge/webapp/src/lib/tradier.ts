@@ -857,7 +857,6 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       // Count open positions and sum unrealized P&L from Tradier gain_loss
       let posCount = 0
       let unrealizedPnl: number | null = null
-      let totalCostBasis = 0
       if (posData?.positions?.position) {
         const posList = Array.isArray(posData.positions.position)
           ? posData.positions.position
@@ -866,13 +865,12 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         let gainSum = 0
         for (const p of posList) {
           if (p.gain_loss != null) gainSum += parseFloat(p.gain_loss)
-          if (p.cost_basis != null) totalCostBasis += Math.abs(parseFloat(p.cost_basis))
         }
         unrealizedPnl = gainSum
       }
-      // Unrealized % relative to cost basis (absolute value since short positions have negative cost basis)
-      const unrealizedPct = unrealizedPnl != null && totalCostBasis > 0
-        ? (unrealizedPnl / totalCostBasis) * 100
+      // Unrealized % relative to total equity (not per-leg cost basis, which inflates IC %)
+      const unrealizedPct = unrealizedPnl != null && equity != null && equity > 0
+        ? (unrealizedPnl / equity) * 100
         : null
 
       results.push({
