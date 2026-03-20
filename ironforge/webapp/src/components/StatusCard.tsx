@@ -405,8 +405,9 @@ export default function StatusCard({
             {realizedPositive ? '+' : ''}$
             {account.cumulative_pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             {realizedPct != null && account.cumulative_pnl !== 0 && (
-              <span className="text-sm ml-1">
-                ({realizedPct >= 0 ? '+' : ''}{realizedPct.toFixed(1)}%)
+              <span className="text-sm ml-1" title="% return on account capital">
+                ({realizedPct >= 0 ? '+' : ''}{realizedPct.toFixed(1)}%
+                <span className="text-[9px] text-forge-muted"> of acct</span>)
               </span>
             )}
           </p>
@@ -439,8 +440,9 @@ export default function StatusCard({
                     minimumFractionDigits: 2,
                   })}`}
             {unrealizedPct != null && unrealized !== 0 && (
-              <span className="text-sm ml-1">
-                ({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}%)
+              <span className="text-sm ml-1" title="% of IC credit captured (position return)">
+                ({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}%
+                <span className="text-[9px] text-forge-muted"> of credit</span>)
               </span>
             )}
           </p>
@@ -453,9 +455,10 @@ export default function StatusCard({
             >
               {totalPositive ? '+' : ''}$
               {totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              <span className="text-sm ml-1">
+              <span className="text-sm ml-1" title="% return on account capital">
                 ({totalPositive ? '+' : ''}
-                {account.return_pct.toFixed(1)}%)
+                {account.return_pct.toFixed(1)}%
+                <span className="text-[9px] text-forge-muted"> of acct</span>)
               </span>
             </p>
           ) : (
@@ -489,7 +492,7 @@ export default function StatusCard({
                 ? '$0.00'
                 : `${todayUnrealizedPositive ? '+' : ''}$${todayUnrealized.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             {unrealizedPct != null && todayUnrealized !== 0 && (
-              <span className="text-xs ml-1">({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}%)</span>
+              <span className="text-xs ml-1" title="% of IC credit captured">({unrealizedPct >= 0 ? '+' : ''}{unrealizedPct.toFixed(1)}% <span className="text-[9px] text-forge-muted">of credit</span>)</span>
             )}
           </p>
         </div>
@@ -500,7 +503,7 @@ export default function StatusCard({
               ? '$0.00'
               : `${todayTotalPositive ? '+' : ''}$${todayTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             {todayTotalPct != null && todayTotal !== 0 && (
-              <span className="text-xs ml-1">({todayTotalPct >= 0 ? '+' : ''}{todayTotalPct.toFixed(1)}%)</span>
+              <span className="text-xs ml-1" title="% return on account capital">({todayTotalPct >= 0 ? '+' : ''}{todayTotalPct.toFixed(1)}% <span className="text-[9px] text-forge-muted">of acct</span>)</span>
             )}
           </p>
         </div>
