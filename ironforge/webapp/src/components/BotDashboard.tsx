@@ -318,6 +318,7 @@ export default function BotDashboard({
               tradierConnected={positionMonitor?.tradier_connected}
               detailData={positionDetail}
               bot={bot}
+              todaysClosedTrades={positionMonitor?.todays_closed_trades}
             />
           </>
         )}

@@ -33,6 +33,31 @@ interface Position {
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
+interface ClosedTrade {
+  position_id: string
+  ticker: string
+  expiration: string | null
+  put_short_strike: number
+  put_long_strike: number
+  call_short_strike: number
+  call_long_strike: number
+  contracts: number
+  spread_width: number
+  total_credit: number
+  collateral_required: number
+  close_price: number
+  close_reason: string
+  realized_pnl: number
+  return_on_credit_pct: number
+  return_on_collateral_pct: number
+  underlying_at_entry: number
+  vix_at_entry: number
+  open_time: string | null
+  close_time: string | null
+  wings_adjusted: boolean
+  sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DetailData = any
 
@@ -42,14 +67,19 @@ export default function PositionTable({
   tradierConnected,
   detailData,
   bot,
+  todaysClosedTrades,
 }: {
   positions: Position[]
   spotPrice?: number | null
   tradierConnected?: boolean
   detailData?: { positions: DetailData[] } | null
   bot: 'flame' | 'spark' | 'inferno'
+  todaysClosedTrades?: ClosedTrade[]
 }) {
-  if (!positions.length) {
+  const hasOpenPositions = positions.length > 0
+  const hasTodaysClosed = (todaysClosedTrades?.length ?? 0) > 0
+
+  if (!hasOpenPositions && !hasTodaysClosed) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">
         <p className="text-forge-muted">No open positions</p>
@@ -81,7 +111,7 @@ export default function PositionTable({
         </div>
       )}
 
-      {/* Position cards */}
+      {/* Open position cards */}
       {positions.map((pos) => (
         <PositionCard
           key={pos.position_id}
@@ -91,6 +121,19 @@ export default function PositionTable({
           bot={bot}
         />
       ))}
+
+      {/* Today's closed trades (persists all day until next position opens) */}
+      {!hasOpenPositions && hasTodaysClosed && (
+        <>
+          <div className="flex items-center gap-2 text-xs text-forge-muted pt-1">
+            <span className="text-emerald-400 font-medium">TODAY&apos;S CLOSED</span>
+            <span className="flex-1 border-t border-forge-border/50" />
+          </div>
+          {todaysClosedTrades!.map((trade) => (
+            <ClosedTradeCard key={trade.position_id} trade={trade} />
+          ))}
+        </>
+      )}
     </div>
   )
 }
@@ -383,6 +426,104 @@ function PositionCard({
         >
           {closing ? 'Closing...' : 'Force Close'}
         </button>
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Closed Trade Card — shows today's realized IC with position %     */
+/* ------------------------------------------------------------------ */
+
+function ClosedTradeCard({ trade }: { trade: ClosedTrade }) {
+  const pnl = trade.realized_pnl
+  const pnlColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
+
+  // Close reason badge color
+  const reasonColor = trade.close_reason === 'PROFIT_TARGET'
+    ? 'bg-emerald-500/20 text-emerald-400'
+    : trade.close_reason === 'STOP_LOSS'
+      ? 'bg-red-500/20 text-red-400'
+      : 'bg-gray-500/20 text-gray-400'
+
+  // Format time as HH:MM CT
+  const formatTime = (t: string | null) => {
+    if (!t) return '--'
+    try {
+      return new Date(t).toLocaleTimeString('en-US', {
+        hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago',
+      })
+    } catch { return '--' }
+  }
+
+  return (
+    <div className="rounded-xl border border-forge-border/60 bg-forge-card/60 p-4 space-y-3">
+      {/* Header with P&L */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xs text-gray-500">{trade.position_id.slice(0, 20)}</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${reasonColor}`}>
+            {trade.close_reason?.replace(/_/g, ' ') || 'CLOSED'}
+          </span>
+        </div>
+        <div className="text-right">
+          <span className={`text-lg font-bold font-mono ${pnlColor}`}>
+            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+          </span>
+        </div>
+      </div>
+
+      {/* Position return metrics — THIS is what you want to see */}
+      <div className="grid grid-cols-3 gap-4 bg-forge-bg/50 rounded-lg p-3">
+        <div>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">IC Return</p>
+          <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+            {trade.return_on_credit_pct >= 0 ? '+' : ''}{trade.return_on_credit_pct.toFixed(1)}%
+          </p>
+          <p className="text-[10px] text-forge-muted">of credit received</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Return on Risk</p>
+          <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+            {trade.return_on_collateral_pct >= 0 ? '+' : ''}{trade.return_on_collateral_pct.toFixed(1)}%
+          </p>
+          <p className="text-[10px] text-forge-muted">of collateral</p>
+        </div>
+        <div>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Credit → Close</p>
+          <p className="text-sm font-mono text-gray-200">
+            ${trade.total_credit.toFixed(4)} → ${trade.close_price.toFixed(4)}
+          </p>
+          <p className="text-[10px] text-forge-muted">
+            kept ${trade.total_credit > 0 ? Math.round(((trade.total_credit - trade.close_price) / trade.total_credit) * 100) : 0}% of premium
+          </p>
+        </div>
+      </div>
+
+      {/* Strikes and details */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
+        <div>
+          <p className="text-xs text-forge-muted">Strikes</p>
+          <p className="font-mono text-sm">
+            {trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Qty</p>
+          <p className="font-mono">x{trade.contracts}</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Collateral</p>
+          <p className="font-mono">${trade.collateral_required.toFixed(0)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Opened</p>
+          <p className="font-mono text-xs">{formatTime(trade.open_time)} CT</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Closed</p>
+          <p className="font-mono text-xs">{formatTime(trade.close_time)} CT</p>
+        </div>
       </div>
     </div>
   )

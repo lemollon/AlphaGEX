@@ -28,8 +28,59 @@ export async function GET(
     )
 
     if (!positionRows.length) {
+      // No open positions — fetch today's closed trades so UI can show them
+      const todaysClosed = await dbQuery(
+        `SELECT position_id, ticker, expiration,
+                put_short_strike, put_long_strike, put_credit,
+                call_short_strike, call_long_strike, call_credit,
+                contracts, spread_width, total_credit, max_loss, max_profit,
+                underlying_at_entry, vix_at_entry, collateral_required,
+                close_price, close_reason, realized_pnl,
+                open_time, close_time, wings_adjusted, sandbox_order_id
+         FROM ${botTable(bot, 'positions')}
+         WHERE status IN ('closed', 'expired') ${dteFilter}
+           AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date
+         ORDER BY close_time DESC`,
+      )
+
+      const closedTrades = todaysClosed.map((r) => {
+        const credit = num(r.total_credit)
+        const closeP = num(r.close_price)
+        const pnl = num(r.realized_pnl)
+        const collateral = num(r.collateral_required)
+        // Position-level return: P&L as % of credit received
+        const returnOnCredit = credit > 0 ? Math.round((pnl / (credit * 100 * int(r.contracts))) * 10000) / 100 : 0
+        // Return on collateral (risk-adjusted)
+        const returnOnCollateral = collateral > 0 ? Math.round((pnl / collateral) * 10000) / 100 : 0
+        return {
+          position_id: r.position_id,
+          ticker: r.ticker || 'SPY',
+          expiration: r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : null),
+          put_short_strike: num(r.put_short_strike),
+          put_long_strike: num(r.put_long_strike),
+          call_short_strike: num(r.call_short_strike),
+          call_long_strike: num(r.call_long_strike),
+          contracts: int(r.contracts),
+          spread_width: num(r.spread_width),
+          total_credit: credit,
+          collateral_required: collateral,
+          close_price: closeP,
+          close_reason: r.close_reason || '',
+          realized_pnl: pnl,
+          return_on_credit_pct: returnOnCredit,
+          return_on_collateral_pct: returnOnCollateral,
+          underlying_at_entry: num(r.underlying_at_entry),
+          vix_at_entry: num(r.vix_at_entry),
+          open_time: r.open_time || null,
+          close_time: r.close_time || null,
+          wings_adjusted: r.wings_adjusted === true || r.wings_adjusted === 'true',
+          sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
+        }
+      })
+
       return NextResponse.json({
         positions: [],
+        todays_closed_trades: closedTrades,
         total_unrealized_pnl: 0,
         spot_price: null,
         tradier_connected: isConfigured(),
