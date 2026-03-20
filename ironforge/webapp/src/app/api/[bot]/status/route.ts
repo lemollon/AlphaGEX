@@ -147,7 +147,8 @@ export async function GET(
             anyMtmSucceeded = true
             const contracts = int(pos.contracts)
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
-            return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_mid, contracts, spreadWidth)
+            // Use last trade prices — matches Tradier portfolio Gain/Loss calculation
+            return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_last, contracts, spreadWidth)
           } catch (err: unknown) {
             console.error(`[${bot}] MTM failed for position ${pos.position_id}:`, err instanceof Error ? err.message : err)
             return null

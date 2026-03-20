@@ -39,6 +39,7 @@ import {
   emergencyCloseSandboxPositions,
   getOrderFillPrice,
   getAccountIdForKey,
+  buildOccSymbol,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -1528,6 +1529,67 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
     }
 
     console.log(`[scanner] DAILY SANDBOX CLEANUP COMPLETE: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`)
+
+    // --- Orphan detection: Tradier positions with NO matching open paper position ---
+    // This catches the case where FLAME closed paper (e.g., EOD close with sandbox
+    // failure) but Tradier positions survived. The stale check above only catches
+    // EXPIRED positions; orphans may have future expirations.
+    try {
+      // Get all open FLAME paper positions
+      const openPaperRows = await query(
+        `SELECT put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                expiration, ticker
+         FROM ${botTable('flame', 'positions')}
+         WHERE status = 'open' AND dte_mode = '2DTE'`,
+      )
+      // Build a set of OCC symbol prefixes from open paper positions
+      const paperOccPrefixes = new Set<string>()
+      for (const row of openPaperRows) {
+        const ticker = row.ticker || 'SPY'
+        const exp = row.expiration?.toISOString?.()?.slice(0, 10) || String(row.expiration).slice(0, 10)
+        // Add all 4 leg OCC symbols
+        for (const [strike, type] of [
+          [row.put_short_strike, 'P'], [row.put_long_strike, 'P'],
+          [row.call_short_strike, 'C'], [row.call_long_strike, 'C'],
+        ] as [number, string][]) {
+          paperOccPrefixes.add(buildOccSymbol(ticker, exp, strike, type as 'P' | 'C'))
+        }
+      }
+
+      // Check each sandbox account for orphans
+      for (const acct of accounts) {
+        const positions = await getSandboxAccountPositions(acct.apiKey)
+        const orphans = positions.filter(p => p.quantity !== 0 && !paperOccPrefixes.has(p.symbol))
+        if (orphans.length > 0) {
+          console.error(
+            `[scanner] ORPHAN DETECTION [${acct.name}]: ${orphans.length} Tradier positions ` +
+            `with NO matching open paper position — EMERGENCY CLOSING!`,
+          )
+          for (const o of orphans) {
+            console.error(`[scanner]   ORPHAN: ${o.symbol} qty=${o.quantity} cost=${o.cost_basis} mv=${o.market_value}`)
+          }
+          const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+          await query(
+            `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+             VALUES ($1, $2, $3, $4)`,
+            [
+              'CRITICAL',
+              `ORPHAN CLEANUP [${acct.name}]: ${result.closed} closed, ${result.failed} failed ` +
+              `(${orphans.length} orphans found)`,
+              JSON.stringify({
+                account: acct.name,
+                orphans: orphans.map(p => ({ symbol: p.symbol, qty: p.quantity, gain_loss: p.gain_loss })),
+                close_result: result,
+              }),
+              '2DTE',
+            ],
+          )
+        }
+      }
+    } catch (orphanErr: unknown) {
+      const msg = orphanErr instanceof Error ? orphanErr.message : String(orphanErr)
+      console.warn(`[scanner] ORPHAN DETECTION ERROR: ${msg}`)
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error(`[scanner] DAILY SANDBOX CLEANUP ERROR: ${msg}`)
@@ -1599,8 +1661,10 @@ async function prescanSandboxHealthCheck(): Promise<void> {
 
 async function postEodSandboxVerify(ct: Date): Promise<void> {
   const hhmm = ctHHMM(ct)
-  // Only run in the 2:50-3:10 PM CT window
-  if (hhmm < 1450 || hhmm > 1510) return
+  // Run from EOD cutoff (2:45 PM CT) through 3:10 PM CT.
+  // Previously 2:50-3:10 PM, but EOD close happens at 2:45 PM CT —
+  // if the sandbox close fails at 2:47, we need to catch it immediately.
+  if (hhmm < 1445 || hhmm > 1510) return
 
   const accounts = await getLoadedSandboxAccountsAsync()
   if (accounts.length === 0) return
@@ -1802,8 +1866,11 @@ async function scanBot(bot: BotDef): Promise<void> {
       unrealizedPnl = monitorResult.unrealizedPnl
     }
 
-    // Post-EOD sandbox verification (Fix 9)
-    if (action === 'closed' && isAfterEodCutoff(ct)) {
+    // Post-EOD sandbox verification (Fix 9) — run on EVERY scan cycle
+    // after EOD cutoff, not just when a position was just closed.
+    // This catches stranded Tradier positions when the sandbox close fails
+    // during the EOD close (e.g., orders rejected near market close).
+    if (bot.name === 'flame' && isAfterEodCutoff(ct)) {
       try {
         await postEodSandboxVerify(ct)
       } catch (err: unknown) {
