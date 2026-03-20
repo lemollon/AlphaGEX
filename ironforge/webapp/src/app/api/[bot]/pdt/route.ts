@@ -32,7 +32,7 @@ function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null):
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
-    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
+    sql += ` AND created_at > '${escapeSql(String(lastResetAt))}'`
   }
   return sql
 }
@@ -47,7 +47,7 @@ function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): 
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
-    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
+    sql += ` AND created_at > '${escapeSql(String(lastResetAt))}'`
   }
   sql += ` ORDER BY trade_date ASC`
   return sql
