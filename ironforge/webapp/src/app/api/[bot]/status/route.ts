@@ -55,9 +55,9 @@ export async function GET(
          ${dteFilter}`,
     )
 
-    // Today's close reason breakdown (which PT tiers hit)
+    // Today's close reason breakdown (which PT tiers hit, with IC return data)
     const todayCloseReasonsQuery = dbQuery(
-      `SELECT close_reason, realized_pnl
+      `SELECT close_reason, realized_pnl, total_credit, contracts
        FROM ${botTable(bot, 'positions')}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
@@ -185,6 +185,16 @@ export async function GET(
     const todayRealizedPnl = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
     const todayTradesClosed = int(todayRealizedRows[0]?.today_trades_closed)
 
+    // Weighted IC return % for today's aggregate realized
+    // Sum of (credit × contracts × 100) = total credit exposure
+    let todayCreditExposure = 0
+    for (const r of todayCloseReasonRows) {
+      todayCreditExposure += num(r.total_credit) * (int(r.contracts) || 1) * 100
+    }
+    const todayIcReturnPct = todayCreditExposure > 0
+      ? Math.round((todayRealizedPnl / todayCreditExposure) * 10000) / 100
+      : null
+
     const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
@@ -233,6 +243,7 @@ export async function GET(
         unrealized_pnl: unrealizedPnl,
         today_realized_pnl: todayRealizedPnl,
         today_trades_closed: todayTradesClosed,
+        today_ic_return_pct: todayIcReturnPct,
         total_pnl: Math.round(totalPnl * 100) / 100,
         return_pct: Math.round(returnPct * 100) / 100,
         total_trades: totalTrades,
@@ -255,10 +266,19 @@ export async function GET(
         time: lastErr.log_time || null,
         message: lastErr.message || null,
       } : null,
-      today_close_reasons: todayCloseReasonRows.map((r) => ({
-        close_reason: r.close_reason || '',
-        realized_pnl: Math.round(num(r.realized_pnl) * 100) / 100,
-      })),
+      today_close_reasons: todayCloseReasonRows.map((r) => {
+        const pnl = Math.round(num(r.realized_pnl) * 100) / 100
+        const credit = num(r.total_credit)
+        const contracts = int(r.contracts) || 1
+        // IC return %: P&L as % of total credit exposure (credit × contracts × 100)
+        const creditExposure = credit * contracts * 100
+        const icReturnPct = creditExposure > 0 ? Math.round((pnl / creditExposure) * 10000) / 100 : 0
+        return {
+          close_reason: r.close_reason || '',
+          realized_pnl: pnl,
+          ic_return_pct: icReturnPct,
+        }
+      }),
       sandbox_accounts: sandboxBalances.map((s) => ({
         name: s.name,
         account_id: s.account_id,
