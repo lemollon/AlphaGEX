@@ -57,7 +57,7 @@ export async function GET(
 
     // Today's close reason breakdown (which PT tiers hit, with IC return data)
     const todayCloseReasonsQuery = dbQuery(
-      `SELECT close_reason, realized_pnl, total_credit, contracts
+      `SELECT close_reason, realized_pnl, total_credit, contracts, close_price
        FROM ${botTable(bot, 'positions')}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
@@ -185,14 +185,23 @@ export async function GET(
     const todayRealizedPnl = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
     const todayTradesClosed = int(todayRealizedRows[0]?.today_trades_closed)
 
-    // Weighted IC return % for today's aggregate realized
-    // Sum of (credit × contracts × 100) = total credit exposure
-    let todayCreditExposure = 0
+    // Weighted IC return %: average of (credit - close_price) / credit
+    // Weight by credit × contracts (larger positions count more)
+    let totalWeight = 0
+    let weightedReturnSum = 0
     for (const r of todayCloseReasonRows) {
-      todayCreditExposure += num(r.total_credit) * (int(r.contracts) || 1) * 100
+      const credit = num(r.total_credit)
+      const closePrice = num(r.close_price)
+      const contracts = int(r.contracts) || 1
+      if (credit > 0) {
+        const weight = credit * contracts
+        const icReturn = (credit - closePrice) / credit
+        weightedReturnSum += icReturn * weight
+        totalWeight += weight
+      }
     }
-    const todayIcReturnPct = todayCreditExposure > 0
-      ? Math.round((todayRealizedPnl / todayCreditExposure) * 10000) / 100
+    const todayIcReturnPct = totalWeight > 0
+      ? Math.round((weightedReturnSum / totalWeight) * 10000) / 100
       : null
 
     const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
@@ -269,10 +278,13 @@ export async function GET(
       today_close_reasons: todayCloseReasonRows.map((r) => {
         const pnl = Math.round(num(r.realized_pnl) * 100) / 100
         const credit = num(r.total_credit)
-        const contracts = int(r.contracts) || 1
-        // IC return %: P&L as % of total credit exposure (credit × contracts × 100)
-        const creditExposure = credit * contracts * 100
-        const icReturnPct = creditExposure > 0 ? Math.round((pnl / creditExposure) * 10000) / 100 : 0
+        const closePrice = num(r.close_price)
+        // IC return %: how much of the credit premium was kept
+        // Formula: (credit_received - close_price) / credit_received × 100
+        // This is the TRUE IC win % — matches the PT tier targets (30%, 20%, 15%)
+        const icReturnPct = credit > 0
+          ? Math.round(((credit - closePrice) / credit) * 10000) / 100
+          : 0
         return {
           close_reason: r.close_reason || '',
           realized_pnl: pnl,
