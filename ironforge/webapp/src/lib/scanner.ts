@@ -508,25 +508,28 @@ async function monitorSinglePosition(
   // MTM succeeded — reset failure counter
   _mtmFailureCounts.delete(pid)
 
-  const costToClose = mtm.cost_to_close        // bid/ask worst-case — for PT/SL decisions
-  const costToCloseMid = mtm.cost_to_close_mid // mark (mid) — unused, kept for logging
+  const costToClose = mtm.cost_to_close        // bid/ask worst-case — for stop loss
+  const costToCloseMid = mtm.cost_to_close_mid // mark (mid) — fallback reference
   const costToCloseLast = mtm.cost_to_close_last // last trade prices — matches Tradier portfolio
 
-  // Log when quotes have validation issues (wide spreads on wings) but we still got mid prices
+  // Log when quotes have validation issues (wide spreads on wings)
   if (mtm.validation_issues?.length) {
-    console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: wide bid/ask spreads (using mid for PT/SL fallback): ${mtm.validation_issues.join(', ')}`)
+    console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: wide bid/ask spreads: ${mtm.validation_issues.join(', ')}`)
   }
 
-  // Profit target: cost_to_close <= PT threshold (sliding) — uses bid/ask (conservative)
-  if (costToClose <= profitTargetPrice) {
+  // Profit target uses LAST TRADE prices — matches Tradier's portfolio Gain/Loss %
+  // and what the dashboard displays. Bid/ask spreads on 0DTE/2DTE wings can be
+  // extremely wide ($0.01 bid / $0.15 ask), making bid/ask cost_to_close much
+  // higher than reality. Last trade prices are the best estimate of actual fill.
+  if (costToCloseLast <= profitTargetPrice) {
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
-      contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToClose)
-    return { status: `closed:profit_target@${costToClose.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
+      contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast)
+    return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
   }
 
-  // Stop loss: cost_to_close >= SL multiplier * entry credit
+  // Stop loss uses BID/ASK (conservative) — better to exit early on losses
   if (costToClose >= stopLossPrice) {
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
@@ -538,7 +541,7 @@ async function monitorSinglePosition(
   // Unrealized P&L uses last trade prices to match Tradier's portfolio Gain/Loss
   const unrealizedPnl = Math.round((entryCredit - costToCloseLast) * 100 * contracts * 100) / 100
   return {
-    status: `monitoring:mtm=${costToClose.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)} PT=${ptTier}(${(ptFraction * 100).toFixed(0)}%)`,
+    status: `monitoring:mtm=${costToClose.toFixed(4)} last=${costToCloseLast.toFixed(4)} uPnL=$${unrealizedPnl.toFixed(2)} PT=${ptTier}(${(ptFraction * 100).toFixed(0)}%)`,
     unrealizedPnl,
   }
 }
