@@ -122,9 +122,10 @@ export async function GET(
       }),
     )
 
-    // Total entry credit across all open positions (for position-relative %)
-    const totalEntryCredit = positions.reduce(
-      (sum, p) => sum + (p.total_credit || 0), 0,
+    // Total dollar credit received across all positions (for weighted-average %)
+    // entryCredit is per-share, so multiply by contracts × 100 to get dollar value
+    const totalDollarCredit = positions.reduce(
+      (sum, p) => sum + ((p.total_credit || 0) * (p.contracts || 1) * 100), 0,
     )
 
     // If live Tradier quotes passed validation, use them
@@ -132,10 +133,15 @@ export async function GET(
       const totalUnrealizedPnl = positions.reduce(
         (sum, p) => sum + (p.unrealized_pnl || 0), 0,
       )
+      // Weighted unrealized % = total_pnl / total_dollar_credit — matches Tradier's IC Gain/Loss %
+      // e.g. received $150 credit, now worth $91 to close → ($150-$91)/$150 = 39.3%
+      const totalUnrealizedPct = totalDollarCredit > 0
+        ? Math.round((totalUnrealizedPnl / totalDollarCredit) * 10000) / 100
+        : null
       return NextResponse.json({
         positions,
         total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
-        total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
+        total_unrealized_pnl_pct: totalUnrealizedPct,
         spot_price: positions[0]?.spot_price ?? null,
         tradier_connected: isConfigured(),
         pnl_source: 'live',
@@ -166,10 +172,14 @@ export async function GET(
       console.error(`[${bot}] position-monitor: Equity snapshot query failed:`, err instanceof Error ? err.message : err)
     }
 
+    // Scanner fallback: compute % from scanner P&L and dollar credit
+    const scannerPct = totalDollarCredit > 0
+      ? Math.round((scannerPnl / totalDollarCredit) * 10000) / 100
+      : null
     return NextResponse.json({
       positions,
       total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
-      total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
+      total_unrealized_pnl_pct: scannerPct,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
       pnl_source: 'scanner_snapshot',

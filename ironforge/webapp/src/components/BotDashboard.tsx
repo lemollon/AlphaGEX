@@ -239,7 +239,7 @@ export default function BotDashboard({
           config={config}
           bot={bot}
           liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
-          liveEntryCredit={positionMonitor?.total_entry_credit}
+          liveUnrealizedPct={positionMonitor?.total_unrealized_pnl_pct}
           pendingOrderCount={status?.pending_order_count ?? pendingData?.pending_count}
           quotesDelayed={positionMonitor?.quotes_delayed}
           quoteAgeSeconds={positionMonitor?.quote_age_seconds}
