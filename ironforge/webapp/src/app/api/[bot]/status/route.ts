@@ -112,8 +112,10 @@ export async function GET(
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
 
-    // Sandbox account balances (all 3 accounts — for per-account P&L display)
-    const sandboxBalancesQuery = getSandboxAccountBalances().catch(() => [])
+    // Sandbox account balances — only FLAME mirrors to Tradier sandbox accounts
+    const sandboxBalancesQuery = bot === 'flame'
+      ? getSandboxAccountBalances().catch(() => [])
+      : Promise.resolve([])
 
     const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances] =
       await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery])
@@ -248,6 +250,8 @@ export async function GET(
         total_equity: s.total_equity,
         option_buying_power: s.option_buying_power,
         day_pnl: s.day_pnl,
+        unrealized_pnl: s.unrealized_pnl,
+        unrealized_pnl_pct: s.unrealized_pnl_pct,
         open_positions: s.open_positions_count,
       })),
     })
