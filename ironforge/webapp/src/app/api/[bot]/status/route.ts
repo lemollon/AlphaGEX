@@ -112,8 +112,10 @@ export async function GET(
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
 
-    // Sandbox account balances (all 3 accounts — for per-account P&L display)
-    const sandboxBalancesQuery = getSandboxAccountBalances().catch(() => [])
+    // Sandbox account balances — only FLAME mirrors to Tradier sandbox accounts
+    const sandboxBalancesQuery = bot === 'flame'
+      ? getSandboxAccountBalances().catch(() => [])
+      : Promise.resolve([])
 
     const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances] =
       await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery])
