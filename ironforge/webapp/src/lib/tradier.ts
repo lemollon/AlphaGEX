@@ -1472,8 +1472,8 @@ export async function closeIcOrderAllAccounts(
         }
         if (tagStr) body4leg.tag = tagStr
 
-        // Limit orders may not fill immediately — use short poll (15s) vs unlimited for market
-        const pollMs = effectiveOrderType === 'debit' ? 15_000 : 0
+        // Limit orders may not fill immediately — poll for 60s vs unlimited for market
+        const pollMs = effectiveOrderType === 'debit' ? 60_000 : 0
 
         let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
