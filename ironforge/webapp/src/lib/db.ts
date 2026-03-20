@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS ironforge_accounts (
 ` + `
 CREATE TABLE IF NOT EXISTS ironforge_pdt_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  bot_name TEXT NOT NULL,
+  bot_name TEXT NOT NULL UNIQUE,
   pdt_enabled BOOLEAN DEFAULT TRUE,
   day_trade_count INT DEFAULT 0,
   max_day_trades INT DEFAULT 4,
@@ -313,6 +313,21 @@ async function ensureTables(): Promise<void> {
         } catch { /* column already exists or table doesn't exist yet */ }
       }
     }
+
+    // Add UNIQUE constraint on ironforge_pdt_config.bot_name (safe to run repeatedly)
+    // Prevents duplicate rows from concurrent cold starts. First deduplicate if needed.
+    try {
+      // Remove duplicate rows keeping only the lowest id per bot_name
+      await client.query(`
+        DELETE FROM ironforge_pdt_config a
+        USING ironforge_pdt_config b
+        WHERE a.bot_name = b.bot_name AND a.id > b.id
+      `)
+      await client.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS ironforge_pdt_config_bot_name_uniq
+        ON ironforge_pdt_config (bot_name)
+      `)
+    } catch { /* constraint may already exist */ }
 
     // Seed paper accounts if empty
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {

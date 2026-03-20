@@ -820,7 +820,8 @@ async function closePosition(
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
 
-  // Post-close: if same-day open+close = day trade, increment PDT counter
+  // Post-close: if same-day open+close = day trade, increment PDT counter on SHARED table
+  // (ironforge_pdt_config — same table the UI toggle reads/writes)
   try {
     const posRow = await query(
       `SELECT open_time FROM ${botTable(bot.name, 'positions')}
@@ -832,13 +833,21 @@ async function closePosition(
       : null
     const closeDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     if (openDate === closeDate) {
+      // Increment on shared table (ironforge_pdt_config)
       const pdtRow = await query(
-        `SELECT day_trade_count FROM ${botTable(bot.name, 'pdt_config')}
+        `SELECT day_trade_count FROM ironforge_pdt_config
          WHERE bot_name = $1 LIMIT 1`,
         [bot.name.toUpperCase()],
       )
       const oldCount = int(pdtRow[0]?.day_trade_count)
       const newCount = oldCount + 1
+      await query(
+        `UPDATE ironforge_pdt_config
+         SET day_trade_count = $1, updated_at = NOW()
+         WHERE bot_name = $2`,
+        [newCount, bot.name.toUpperCase()],
+      )
+      // Also sync per-bot table for consistency
       await query(
         `UPDATE ${botTable(bot.name, 'pdt_config')}
          SET day_trade_count = $1, updated_at = NOW()
@@ -890,8 +899,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
   const lastResetAt = pdtCfg?.last_reset_at ?? null
 
-  // Already traded today? (0 = unlimited, also unlimited when PDT is off)
-  if (pdtEnabled && maxTradesPerDay > 0) {
+  // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
+  // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
+  // (0 = unlimited, used by INFERNO)
+  if (maxTradesPerDay > 0) {
     const todayTrades = await query(
       `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
@@ -900,7 +911,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
   }
 
-  // PDT rolling window check
+  // PDT rolling window check (only when PDT enforcement is ON)
   if (pdtEnabled && maxDayTrades > 0) {
     let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
@@ -1835,10 +1846,10 @@ async function scanBot(bot: BotDef): Promise<void> {
     // Collateral reconciliation every cycle (Fix 4)
     await reconcileCollateral(bot)
 
-    // Auto-decrement PDT counter
+    // Auto-decrement PDT counter — sync SHARED ironforge_pdt_config with live pdt_log count
     try {
       const pdtCfgRow = await query(
-        `SELECT day_trade_count, last_reset_at FROM ${botTable(bot.name, 'pdt_config')}
+        `SELECT day_trade_count, last_reset_at FROM ironforge_pdt_config
          WHERE bot_name = $1 LIMIT 1`,
         [bot.name.toUpperCase()],
       )
@@ -1859,6 +1870,14 @@ async function scanBot(bot: BotDef): Promise<void> {
       const actualCount = int(pdtActual[0]?.cnt)
 
       if (storedCount !== actualCount) {
+        // Update shared table (authoritative)
+        await query(
+          `UPDATE ironforge_pdt_config
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [actualCount, bot.name.toUpperCase()],
+        )
+        // Also sync per-bot table for consistency
         await query(
           `UPDATE ${botTable(bot.name, 'pdt_config')}
            SET day_trade_count = $1, updated_at = NOW()
