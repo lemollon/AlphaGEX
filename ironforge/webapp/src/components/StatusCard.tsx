@@ -490,20 +490,45 @@ export default function StatusCard({
               </span>
             )}
           </p>
-          {/* Close reason breakdown — shows which PT tiers hit today */}
+          {/* Close reason breakdown — aggregated summary of today's PT tiers */}
           {(() => {
             // Prefer status API data (always available), fall back to position-monitor
             const trades = data.today_close_reasons?.length
               ? data.today_close_reasons
               : todaysClosedTrades
             if (!trades || trades.length === 0) return null
+
+            // Aggregate by close_reason: count, total P&L, avg IC return %
+            const groups: Record<string, { count: number; totalPnl: number; totalIcPct: number }> = {}
+            for (const t of trades) {
+              const key = t.close_reason || 'unknown'
+              if (!groups[key]) groups[key] = { count: 0, totalPnl: 0, totalIcPct: 0 }
+              groups[key].count++
+              groups[key].totalPnl += t.realized_pnl
+              groups[key].totalIcPct += t.ic_return_pct ?? 0
+            }
+
+            // Sort: profit targets first, then stop loss, then others
+            const order = ['profit_target_morning', 'profit_target_midday', 'profit_target_afternoon', 'profit_target', 'eod_cutoff', 'eod_safety', 'stop_loss']
+            const sorted = Object.entries(groups).sort(([a], [b]) => {
+              const ai = order.indexOf(a)
+              const bi = order.indexOf(b)
+              return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+            })
+
             return (
               <div className="flex flex-wrap gap-1.5 mt-1">
-                {trades.map((t, i) => {
-                  const r = formatCloseReason(t.close_reason, bot)
-                  const pnlPos = t.realized_pnl >= 0
+                {sorted.map(([reason, g]) => {
+                  const r = formatCloseReason(reason, bot)
+                  const pnlPos = g.totalPnl >= 0
+                  const avgIcPct = g.count > 0 ? g.totalIcPct / g.count : 0
+                  // Short tier label
+                  const tierLabel = r.text
+                    .replace('Profit Target ', '')
+                    .replace('(', '').replace(')', '')
+                    .replace('Profit Target', 'PT')
                   return (
-                    <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                    <span key={reason} className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
                       r.color.includes('emerald') ? 'bg-emerald-500/15' :
                       r.color.includes('yellow') ? 'bg-yellow-500/15' :
                       r.color.includes('orange') ? 'bg-orange-500/15' :
@@ -511,9 +536,9 @@ export default function StatusCard({
                       r.color.includes('amber') ? 'bg-amber-500/15' :
                       'bg-gray-500/15'
                     } ${r.color}`}>
-                      {pnlPos ? '+' : ''}{Math.abs(t.realized_pnl) < 1000 ? `$${t.realized_pnl.toFixed(0)}` : `$${(t.realized_pnl/1000).toFixed(1)}k`}
-                      {t.ic_return_pct != null && ` (${t.ic_return_pct >= 0 ? '+' : ''}${t.ic_return_pct.toFixed(0)}%)`}
-                      {' '}{r.text.replace('Profit Target ', '').replace('(', '').replace(')', '')}
+                      {g.count}× {tierLabel}{' '}
+                      {pnlPos ? '+' : ''}{Math.abs(g.totalPnl) < 1000 ? `$${g.totalPnl.toFixed(0)}` : `$${(g.totalPnl/1000).toFixed(1)}k`}
+                      {avgIcPct !== 0 && ` (avg ${avgIcPct >= 0 ? '+' : ''}${avgIcPct.toFixed(0)}%)`}
                     </span>
                   )
                 })}
