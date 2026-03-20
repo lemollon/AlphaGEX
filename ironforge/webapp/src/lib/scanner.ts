@@ -33,6 +33,7 @@ import {
   isConfiguredAsync,
   placeIcOrderAllAccounts,
   closeIcOrderAllAccounts,
+  cancelSandboxOrder,
   getLoadedSandboxAccounts,
   getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
@@ -382,65 +383,85 @@ async function monitorSinglePosition(
     try { pendingInfo = JSON.parse(pos.sandbox_close_order_id) } catch { /* ignore */ }
     const userPending = pendingInfo['User']
     if (userPending?.order_id && userPending.order_id > 0 && !userPending.fill_price) {
-      console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price...`)
-      try {
-        const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
-        if (userAcct) {
-          const accountId = await getAccountIdForKey(userAcct.apiKey)
-          if (accountId) {
-            const fill = await getOrderFillPrice(userAcct.apiKey, accountId, userPending.order_id, 0)
-            if (fill != null && fill > 0) {
-              console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close`)
-              // Complete the deferred close with actual fill
-              const closeReason = pendingInfo._pending_reason || 'deferred_fill'
-              const pnlPerContract = (entryCredit - fill) * 100
-              const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
-              // Update sandbox_close_order_id with the fill price
-              pendingInfo['User'] = { ...userPending, fill_price: fill }
-              delete pendingInfo._pending_reason
-              const rowsAffected = await dbExecute(
-                `UPDATE ${botTable(bot.name, 'positions')}
-                 SET status = 'closed', close_time = NOW(),
-                     close_price = $1, realized_pnl = $2,
-                     close_reason = $3, sandbox_close_order_id = $4,
-                     updated_at = NOW()
-                 WHERE position_id = $5 AND status = 'open' AND dte_mode = $6`,
-                [fill, realizedPnl, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
-              )
-              if (rowsAffected > 0) {
-                await query(
-                  `UPDATE ${botTable(bot.name, 'paper_account')}
-                   SET current_balance = current_balance + $1,
-                       cumulative_pnl = cumulative_pnl + $1,
-                       total_trades = total_trades + 1,
-                       collateral_in_use = GREATEST(0, collateral_in_use - $2),
-                       buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
+      // If past EOD cutoff, cancel the pending limit order and fall through
+      // to the normal EOD market close logic below. A pending limit order
+      // should never block the EOD safety close.
+      if (isAfterEodCutoff(ct)) {
+        console.log(
+          `[scanner] FLAME ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
+          `canceling limit order and falling through to EOD market close`,
+        )
+        try { await cancelSandboxOrder(userPending.order_id) } catch { /* non-fatal */ }
+        // Clear the pending state so EOD close can proceed cleanly
+        await query(
+          `UPDATE ${botTable(bot.name, 'positions')}
+           SET sandbox_close_order_id = NULL, updated_at = NOW()
+           WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+          [pid, bot.dte],
+        )
+        // Fall through — do NOT return; the EOD/stale close logic below will handle it
+      } else {
+        // Normal re-poll during market hours
+        console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price...`)
+        try {
+          const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
+          if (userAcct) {
+            const accountId = await getAccountIdForKey(userAcct.apiKey)
+            if (accountId) {
+              const fill = await getOrderFillPrice(userAcct.apiKey, accountId, userPending.order_id, 0)
+              if (fill != null && fill > 0) {
+                console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close`)
+                // Complete the deferred close with actual fill
+                const closeReason = pendingInfo._pending_reason || 'deferred_fill'
+                const pnlPerContract = (entryCredit - fill) * 100
+                const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
+                // Update sandbox_close_order_id with the fill price
+                pendingInfo['User'] = { ...userPending, fill_price: fill }
+                delete pendingInfo._pending_reason
+                const rowsAffected = await dbExecute(
+                  `UPDATE ${botTable(bot.name, 'positions')}
+                   SET status = 'closed', close_time = NOW(),
+                       close_price = $1, realized_pnl = $2,
+                       close_reason = $3, sandbox_close_order_id = $4,
                        updated_at = NOW()
-                   WHERE dte_mode = $3`,
-                  [realizedPnl, collateral, bot.dte],
+                   WHERE position_id = $5 AND status = 'open' AND dte_mode = $6`,
+                  [fill, realizedPnl, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
                 )
-                await query(
-                  `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-                   VALUES (${CT_TODAY}, 0, 1, $1)
-                   ON CONFLICT (trade_date) DO UPDATE SET
-                     positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
-                     realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-                  [realizedPnl],
-                )
-                console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
+                if (rowsAffected > 0) {
+                  await query(
+                    `UPDATE ${botTable(bot.name, 'paper_account')}
+                     SET current_balance = current_balance + $1,
+                         cumulative_pnl = cumulative_pnl + $1,
+                         total_trades = total_trades + 1,
+                         collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                         buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
+                         updated_at = NOW()
+                     WHERE dte_mode = $3`,
+                    [realizedPnl, collateral, bot.dte],
+                  )
+                  await query(
+                    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
+                     VALUES (${CT_TODAY}, 0, 1, $1)
+                     ON CONFLICT (trade_date) DO UPDATE SET
+                       positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
+                       realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
+                    [realizedPnl],
+                  )
+                  console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
+                }
+                _mtmFailureCounts.delete(pid)
+                return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
+              } else {
+                console.warn(`[scanner] FLAME ${pid}: Re-poll returned no fill — will retry next cycle`)
+                return { status: `monitoring:pending_close_fill(order=${userPending.order_id})`, unrealizedPnl: 0 }
               }
-              _mtmFailureCounts.delete(pid)
-              return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
-            } else {
-              console.warn(`[scanner] FLAME ${pid}: Re-poll returned no fill — will retry next cycle`)
-              return { status: `monitoring:pending_close_fill(order=${userPending.order_id})`, unrealizedPnl: 0 }
             }
           }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error(`[scanner] FLAME ${pid}: Pending close re-poll failed: ${msg} — will retry next cycle`)
+          return { status: `monitoring:pending_close_repoll_error`, unrealizedPnl: 0 }
         }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[scanner] FLAME ${pid}: Pending close re-poll failed: ${msg} — will retry next cycle`)
-        return { status: `monitoring:pending_close_repoll_error`, unrealizedPnl: 0 }
       }
     }
   }
@@ -518,15 +539,17 @@ async function monitorSinglePosition(
     console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: wide bid/ask spreads: ${mtm.validation_issues.join(', ')}`)
   }
 
-  // Profit target uses LAST TRADE prices — matches Tradier's portfolio Gain/Loss %
-  // and what the dashboard displays. Bid/ask spreads on 0DTE/2DTE wings can be
-  // extremely wide ($0.01 bid / $0.15 ask), making bid/ask cost_to_close much
-  // higher than reality. Last trade prices are the best estimate of actual fill.
+  // Profit target uses LAST TRADE prices for the TRIGGER check — best estimate of
+  // actual market. But the Tradier close order uses a DEBIT LIMIT at profitTargetPrice
+  // to guarantee the minimum return. This prevents slippage from eroding profits
+  // (e.g., trigger at 20% based on last trades, but market fill at only 14%).
+  // If the limit doesn't fill immediately, the deferred-close mechanism retries next cycle.
   if (costToCloseLast <= profitTargetPrice) {
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
-      contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast)
+      contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast,
+      'debit', profitTargetPrice)
     return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
   }
 
@@ -564,6 +587,8 @@ async function closePosition(
   collateral: number,
   reason: string,
   closePrice?: number,
+  orderType?: 'market' | 'debit',
+  limitPrice?: number,
 ): Promise<void> {
   // Determine estimated close price if not provided
   let estimatedPrice = closePrice ?? 0
@@ -598,6 +623,7 @@ async function closePosition(
         sandboxCloseInfo = await closeIcOrderAllAccounts(
           ticker, expiration, putShort, putLong, callShort, callLong,
           contracts, estimatedPrice, positionId, sandboxOpenInfo,
+          orderType, limitPrice,
         )
 
         // Check if primary account actually closed (FLAME requirement)

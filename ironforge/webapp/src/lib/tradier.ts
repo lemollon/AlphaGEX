@@ -1408,6 +1408,8 @@ export async function closeIcOrderAllAccounts(
   closePrice: number,
   tag?: string,
   sandboxOpenInfo?: Record<string, SandboxOrderInfo | number> | null,
+  orderType?: 'market' | 'debit',
+  limitPrice?: number,
 ): Promise<Record<string, SandboxCloseInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxCloseInfo> = {}
@@ -1453,22 +1455,30 @@ export async function closeIcOrderAllAccounts(
         const tagStr = tag ? tag.slice(0, 255) : ''
 
         // --- Stage 1: 4-leg multileg close (2 attempts) ---
+        const effectiveOrderType = orderType ?? 'market'
         const body4leg: Record<string, string> = {
           class: 'multileg',
           symbol: ticker,
-          type: 'market',
+          type: effectiveOrderType,
           duration: 'day',
           'option_symbol[0]': occPs, 'side[0]': 'buy_to_close',  'quantity[0]': String(closeQty),
           'option_symbol[1]': occPl, 'side[1]': 'sell_to_close', 'quantity[1]': String(closeQty),
           'option_symbol[2]': occCs, 'side[2]': 'buy_to_close',  'quantity[2]': String(closeQty),
           'option_symbol[3]': occCl, 'side[3]': 'sell_to_close', 'quantity[3]': String(closeQty),
         }
+        // For debit limit orders, set the max debit price (guarantees minimum return)
+        if (effectiveOrderType === 'debit' && limitPrice != null) {
+          body4leg.price = limitPrice.toFixed(2)
+        }
         if (tagStr) body4leg.tag = tagStr
+
+        // Limit orders may not fill immediately — use short poll (15s) vs unlimited for market
+        const pollMs = effectiveOrderType === 'debit' ? 15_000 : 0
 
         let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1478,7 +1488,7 @@ export async function closeIcOrderAllAccounts(
         result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 0) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1614,6 +1624,54 @@ export async function closeIcOrderAllAccounts(
   )
 
   return results
+}
+
+/**
+ * Cancel an open order on a Tradier sandbox account.
+ * Used to cancel pending limit orders (e.g., unfilled profit target debit closes)
+ * so the position can be re-evaluated or closed with a market order.
+ */
+export async function cancelSandboxOrder(
+  orderId: number,
+  apiKey?: string,
+): Promise<boolean> {
+  // Find the right API key — try all sandbox accounts if not provided
+  const accounts = apiKey ? [{ name: 'direct', apiKey }] : await getLoadedSandboxAccountsAsync()
+  for (const acct of accounts) {
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey)
+      if (!accountId) continue
+
+      const url = `${SANDBOX_URL}/accounts/${accountId}/orders/${orderId}`
+      const res = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${acct.apiKey}`,
+          Accept: 'application/json',
+        },
+        cache: 'no-store',
+        signal: timeoutSignal(),
+      })
+
+      if (res.ok) {
+        console.log(`[tradier] Order ${orderId} canceled on account ${acct.name}`)
+        return true
+      }
+
+      // 404 = order already filled/canceled/expired — not an error
+      if (res.status === 404) {
+        console.log(`[tradier] Order ${orderId} not found (already filled/canceled) on ${acct.name}`)
+        return true
+      }
+
+      const body = await res.text().catch(() => '')
+      console.warn(`[tradier] Cancel order ${orderId} returned ${res.status} on ${acct.name}: ${body}`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[tradier] Cancel order ${orderId} failed on ${acct.name}: ${msg}`)
+    }
+  }
+  return false
 }
 
 /**
