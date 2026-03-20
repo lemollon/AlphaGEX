@@ -122,22 +122,32 @@ export async function GET(
       }),
     )
 
-    // Total dollar credit received across all positions (for weighted-average %)
-    // entryCredit is per-share, so multiply by contracts × 100 to get dollar value
-    const totalDollarCredit = positions.reduce(
-      (sum, p) => sum + ((p.total_credit || 0) * (p.contracts || 1) * 100), 0,
-    )
+    // Use per-position unrealized_pnl_pct (already correctly computed as
+    // (credit - cost_to_close) / credit — the IC perspective matching Tradier).
+    // Weighted average by dollar credit when multiple positions are open.
+    const pctPositions = positions.filter(p => p.unrealized_pnl_pct != null)
+    let totalUnrealizedPct: number | null = null
+    if (pctPositions.length === 1) {
+      totalUnrealizedPct = pctPositions[0].unrealized_pnl_pct
+    } else if (pctPositions.length > 1) {
+      // Dollar-weighted average: weight = credit × contracts (×100 cancels out)
+      const totalWeight = pctPositions.reduce(
+        (s, p) => s + ((p.total_credit || 0) * (p.contracts || 1)), 0,
+      )
+      if (totalWeight > 0) {
+        totalUnrealizedPct = Math.round(
+          pctPositions.reduce(
+            (s, p) => s + ((p.unrealized_pnl_pct ?? 0) * (p.total_credit || 0) * (p.contracts || 1)), 0,
+          ) / totalWeight * 100,
+        ) / 100
+      }
+    }
 
     // If live Tradier quotes passed validation, use them
     if (anyLiveQuoteSucceeded) {
       const totalUnrealizedPnl = positions.reduce(
         (sum, p) => sum + (p.unrealized_pnl || 0), 0,
       )
-      // Weighted unrealized % = total_pnl / total_dollar_credit — matches Tradier's IC Gain/Loss %
-      // e.g. received $150 credit, now worth $91 to close → ($150-$91)/$150 = 39.3%
-      const totalUnrealizedPct = totalDollarCredit > 0
-        ? Math.round((totalUnrealizedPnl / totalDollarCredit) * 10000) / 100
-        : null
       return NextResponse.json({
         positions,
         total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
@@ -172,14 +182,10 @@ export async function GET(
       console.error(`[${bot}] position-monitor: Equity snapshot query failed:`, err instanceof Error ? err.message : err)
     }
 
-    // Scanner fallback: compute % from scanner P&L and dollar credit
-    const scannerPct = totalDollarCredit > 0
-      ? Math.round((scannerPnl / totalDollarCredit) * 10000) / 100
-      : null
     return NextResponse.json({
       positions,
       total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
-      total_unrealized_pnl_pct: scannerPct,
+      total_unrealized_pnl_pct: totalUnrealizedPct,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
       pnl_source: 'scanner_snapshot',
