@@ -847,30 +847,41 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       const rawObp = margin.option_buying_power ?? pdt.option_buying_power
       const optionBp = rawObp != null ? parseFloat(rawObp) : equity
 
-      // Tradier doesn't provide day P&L directly — compute from total_equity - close_pl - open_pl
-      // Use pending_cash or option_short_value as proxy; safest: just report null if unavailable
-      // Actually Tradier balances include `close_pl` which is realized day P&L
+      // Tradier balances include `close_pl` (realized day P&L) and `open_pl` (unrealized P&L)
       const closePl = bal.close_pl != null ? parseFloat(bal.close_pl) : null
       const openPl = bal.pending_cash != null ? parseFloat(bal.pending_cash) : null
       const dayPnl = closePl != null ? closePl + (openPl || 0) : null
 
-      // Count open positions and sum unrealized P&L from Tradier gain_loss
+      // Count open positions and compute unrealized P&L
       let posCount = 0
       let unrealizedPnl: number | null = null
+      let totalCostBasis = 0
       if (posData?.positions?.position) {
         const posList = Array.isArray(posData.positions.position)
           ? posData.positions.position
           : [posData.positions.position]
         posCount = posList.length
         let gainSum = 0
+        let hasGainLoss = false
         for (const p of posList) {
-          if (p.gain_loss != null) gainSum += parseFloat(p.gain_loss)
+          if (p.cost_basis != null) totalCostBasis += Math.abs(parseFloat(p.cost_basis))
+          if (p.gain_loss != null) {
+            gainSum += parseFloat(p.gain_loss)
+            hasGainLoss = true
+          }
         }
-        unrealizedPnl = gainSum
+        if (hasGainLoss) {
+          unrealizedPnl = gainSum
+        }
       }
-      // Unrealized % relative to total equity (not per-leg cost basis, which inflates IC %)
-      const unrealizedPct = unrealizedPnl != null && equity != null && equity > 0
-        ? (unrealizedPnl / equity) * 100
+      // Fallback: use `open_pl` from balances if positions didn't have gain_loss
+      // (sandbox API may not return gain_loss on positions)
+      if (unrealizedPnl == null && bal.open_pl != null) {
+        unrealizedPnl = parseFloat(bal.open_pl)
+      }
+      // Unrealized % relative to cost basis to match Tradier's display
+      const unrealizedPct = unrealizedPnl != null && totalCostBasis > 0
+        ? (unrealizedPnl / totalCostBasis) * 100
         : null
 
       results.push({
