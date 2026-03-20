@@ -847,10 +847,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
-  // PDT config check
+  // PDT config check — read from shared ironforge_pdt_config (same table the UI writes to)
   const pdtConfigRows = await query(
     `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
-     FROM ${botTable(bot.name, 'pdt_config')}
+     FROM ironforge_pdt_config
      WHERE bot_name = $1 LIMIT 1`,
     [bot.name.toUpperCase()],
   )
