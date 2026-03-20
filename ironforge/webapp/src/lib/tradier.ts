@@ -892,9 +892,12 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       if (unrealizedPnl == null && posCount > 0 && bal.market_value != null) {
         unrealizedPnl = parseFloat(bal.market_value) - netCostBasis
       }
-      // Unrealized % relative to cost basis to match Tradier's display
-      const unrealizedPct = unrealizedPnl != null && totalAbsCostBasis > 0
-        ? (unrealizedPnl / totalAbsCostBasis) * 100
+      // Unrealized % relative to abs(net cost basis) to match Tradier's portfolio display
+      // Tradier: Gain/Loss % = total_gain_loss / abs(net_cost_basis)
+      // e.g. $3,234 gain / abs(-$7,795 net cost) = 41.49%
+      const absNetCb = Math.abs(netCostBasis)
+      const unrealizedPct = unrealizedPnl != null && absNetCb > 0
+        ? (unrealizedPnl / absNetCb) * 100
         : null
 
       results.push({

@@ -122,6 +122,11 @@ export async function GET(
       }),
     )
 
+    // Total entry credit across all open positions (for position-relative %)
+    const totalEntryCredit = positions.reduce(
+      (sum, p) => sum + (p.total_credit || 0), 0,
+    )
+
     // If live Tradier quotes passed validation, use them
     if (anyLiveQuoteSucceeded) {
       const totalUnrealizedPnl = positions.reduce(
@@ -130,6 +135,7 @@ export async function GET(
       return NextResponse.json({
         positions,
         total_unrealized_pnl: Math.round(totalUnrealizedPnl * 100) / 100,
+        total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
         spot_price: positions[0]?.spot_price ?? null,
         tradier_connected: isConfigured(),
         pnl_source: 'live',
@@ -163,6 +169,7 @@ export async function GET(
     return NextResponse.json({
       positions,
       total_unrealized_pnl: Math.round(scannerPnl * 100) / 100,
+      total_entry_credit: Math.round(totalEntryCredit * 100) / 100,
       spot_price: positions[0]?.spot_price ?? null,
       tradier_connected: isConfigured(),
       pnl_source: 'scanner_snapshot',

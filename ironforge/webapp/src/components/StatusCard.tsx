@@ -85,6 +85,7 @@ export default function StatusCard({
   config,
   bot,
   liveUnrealizedPnl,
+  liveEntryCredit,
   pendingOrderCount,
   quotesDelayed,
   quoteAgeSeconds,
@@ -94,6 +95,7 @@ export default function StatusCard({
   config?: ConfigData | null
   bot: 'flame' | 'spark' | 'inferno'
   liveUnrealizedPnl?: number | null
+  liveEntryCredit?: number | null
   pendingOrderCount?: number
   quotesDelayed?: boolean
   quoteAgeSeconds?: number
@@ -110,10 +112,13 @@ export default function StatusCard({
   const unrealized = liveUnrealizedPnl ?? account.unrealized_pnl
   const unrealizedAvailable = unrealized != null
   const unrealizedPositive = (unrealized ?? 0) >= 0
-  // Unrealized as % of collateral at risk (most meaningful for IC traders)
-  const unrealizedPct = unrealizedAvailable && account.collateral_in_use > 0
-    ? ((unrealized ?? 0) / account.collateral_in_use) * 100
-    : null
+  // Unrealized as % of entry credit (position-relative, matches Tradier's Gain/Loss %)
+  // For ICs: entry_credit is the "cost basis" — shows how much of your credit you've captured
+  const unrealizedPct = unrealizedAvailable && liveEntryCredit && liveEntryCredit > 0
+    ? ((unrealized ?? 0) / liveEntryCredit) * 100
+    : unrealizedAvailable && account.collateral_in_use > 0
+      ? ((unrealized ?? 0) / account.collateral_in_use) * 100
+      : null
   const totalPnl = unrealizedAvailable
     ? account.cumulative_pnl + (unrealized ?? 0)
     : null
