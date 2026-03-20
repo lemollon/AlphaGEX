@@ -506,9 +506,9 @@ interface SandboxAccount {
 /**
  * Bot → sandbox account mapping.
  *
- * FLAME:   User + Matt + Logan — Tradier fill-only.
+ * FLAME:   User only — 1:1 sandbox mirror for unrealized P&L comparison.
  *          Paper position = 85% of paper_account BP (contracts) + Tradier fill price.
- *          Each sandbox account independently sizes at 85% of its own BP.
+ *          User sandbox account sizes at 85% of its own BP.
  * SPARK:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  * INFERNO: Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  *          Can hold multiple simultaneous positions (max 20 contracts).
@@ -524,8 +524,8 @@ interface BotAccountConfig {
 
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
-    accounts: ['User', 'Matt', 'Logan'],
-    bpShare:  { User: 1.0, Matt: 1.0, Logan: 1.0 },
+    accounts: ['User'],
+    bpShare:  { User: 1.0 },
   },
   spark: {
     accounts: [],  // Paper-only — no sandbox orders
