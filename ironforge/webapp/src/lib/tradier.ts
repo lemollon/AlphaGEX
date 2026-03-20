@@ -853,9 +853,14 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
       const dayPnl = closePl != null ? closePl + (openPl || 0) : null
 
       // Count open positions and compute unrealized P&L
+      // Sandbox API may not return gain_loss on positions, so we use multiple fallbacks:
+      // 1. Sum gain_loss from positions (production API)
+      // 2. Use open_pl from balances
+      // 3. Compute from balance market_value minus net cost basis
       let posCount = 0
       let unrealizedPnl: number | null = null
-      let totalCostBasis = 0
+      let totalAbsCostBasis = 0
+      let netCostBasis = 0
       if (posData?.positions?.position) {
         const posList = Array.isArray(posData.positions.position)
           ? posData.positions.position
@@ -864,7 +869,11 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         let gainSum = 0
         let hasGainLoss = false
         for (const p of posList) {
-          if (p.cost_basis != null) totalCostBasis += Math.abs(parseFloat(p.cost_basis))
+          if (p.cost_basis != null) {
+            const cb = parseFloat(p.cost_basis)
+            totalAbsCostBasis += Math.abs(cb)
+            netCostBasis += cb
+          }
           if (p.gain_loss != null) {
             gainSum += parseFloat(p.gain_loss)
             hasGainLoss = true
@@ -874,14 +883,18 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
           unrealizedPnl = gainSum
         }
       }
-      // Fallback: use `open_pl` from balances if positions didn't have gain_loss
-      // (sandbox API may not return gain_loss on positions)
+      // Fallback 1: use open_pl from balances
       if (unrealizedPnl == null && bal.open_pl != null) {
         unrealizedPnl = parseFloat(bal.open_pl)
       }
+      // Fallback 2: compute from balance market_value - net cost basis
+      // market_value = net value of all options (long_market_value + short_market_value)
+      if (unrealizedPnl == null && posCount > 0 && bal.market_value != null) {
+        unrealizedPnl = parseFloat(bal.market_value) - netCostBasis
+      }
       // Unrealized % relative to cost basis to match Tradier's display
-      const unrealizedPct = unrealizedPnl != null && totalCostBasis > 0
-        ? (unrealizedPnl / totalCostBasis) * 100
+      const unrealizedPct = unrealizedPnl != null && totalAbsCostBasis > 0
+        ? (unrealizedPnl / totalAbsCostBasis) * 100
         : null
 
       results.push({
