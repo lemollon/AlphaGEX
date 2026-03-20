@@ -250,6 +250,7 @@ export default function BotDashboard({
           pendingOrderCount={status?.pending_order_count ?? pendingData?.pending_count}
           quotesDelayed={positionMonitor?.quotes_delayed}
           quoteAgeSeconds={positionMonitor?.quote_age_seconds}
+          todaysClosedTrades={positionMonitor?.todays_closed_trades}
         />
       )}
 

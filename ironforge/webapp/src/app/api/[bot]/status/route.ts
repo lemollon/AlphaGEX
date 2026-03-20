@@ -55,6 +55,17 @@ export async function GET(
          ${dteFilter}`,
     )
 
+    // Today's close reason breakdown (which PT tiers hit)
+    const todayCloseReasonsQuery = dbQuery(
+      `SELECT close_reason, realized_pnl
+       FROM ${botTable(bot, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ${dteFilter}
+       ORDER BY close_time ASC`,
+    )
+
     // Actual collateral from open positions (not stale paper_account value)
     const liveCollateralQuery = dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
@@ -117,8 +128,8 @@ export async function GET(
       ? getSandboxAccountBalances().catch(() => [])
       : Promise.resolve([])
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery])
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances, todayCloseReasonRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery, todayCloseReasonsQuery])
 
     const acct = accountRows[0]
     const startingCapital = num(acct?.starting_capital) || 10000
@@ -244,6 +255,10 @@ export async function GET(
         time: lastErr.log_time || null,
         message: lastErr.message || null,
       } : null,
+      today_close_reasons: todayCloseReasonRows.map((r) => ({
+        close_reason: r.close_reason || '',
+        realized_pnl: Math.round(num(r.realized_pnl) * 100) / 100,
+      })),
       sandbox_accounts: sandboxBalances.map((s) => ({
         name: s.name,
         account_id: s.account_id,
