@@ -55,7 +55,7 @@ function TabLoading() {
   )
 }
 
-const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT'] as const
+const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
 type Tab = (typeof TABS)[number]
 
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
@@ -166,6 +166,13 @@ export default function BotDashboard({
     { refreshInterval: DATA_REFRESH },
   )
 
+  /* ---- Reconcile (FLAME only) ---- */
+  const { data: reconData, error: reconErr } = useSWR(
+    tab === 'Reconcile' && bot === 'flame' ? `/api/${bot}/reconcile` : null,
+    fetcher,
+    { refreshInterval: 60_000 },
+  )
+
   const onPeriodChange = useCallback((p: Period) => setEquityPeriod(p), [])
 
   /* ---- Auto EOD close: when past 2:45 PM CT and positions still open, trigger close ---- */
@@ -264,7 +271,7 @@ export default function BotDashboard({
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">
-        {TABS.map((t) => (
+        {TABS.filter(t => t !== 'Reconcile' || bot === 'flame').map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -339,7 +346,219 @@ export default function BotDashboard({
                 onPdtUpdate={() => mutatePdt()}
               />
         )}
+        {tab === 'Reconcile' && bot === 'flame' && (
+          reconErr
+            ? <TabError message={reconErr.message} />
+            : !reconData
+              ? <TabLoading />
+              : <ReconcileTab data={reconData} />
+        )}
       </div>
+    </div>
+  )
+}
+
+/* ================================================================
+   Reconcile Tab — FLAME ↔ Tradier Sandbox comparison
+   ================================================================ */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ReconcileTab({ data }: { data: any }) {
+  const s = data?.summary
+  const positions = data?.positions || []
+  const orphans = data?.orphans || {}
+  const checks = data?.checks || []
+
+  const passChecks = checks.filter((c: any) => c.pass)
+  const failChecks = checks.filter((c: any) => !c.pass)
+  const orphanCount = Object.values(orphans).reduce((sum: number, arr: any) => sum + (arr as any[]).length, 0)
+
+  return (
+    <div className="space-y-4">
+      {/* Verdict banner */}
+      <div className={`rounded-xl border p-4 ${
+        s?.verdict === 'ALL_MATCH'
+          ? 'border-emerald-500/30 bg-emerald-500/10'
+          : 'border-red-500/30 bg-red-500/10'
+      }`}>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className={`text-lg font-bold ${s?.verdict === 'ALL_MATCH' ? 'text-emerald-400' : 'text-red-400'}`}>
+              {s?.verdict === 'ALL_MATCH' ? 'ALL MATCH' : 'MISMATCH DETECTED'}
+            </p>
+            <p className="text-sm text-forge-muted mt-1">
+              {s?.passed}/{s?.total_checks} checks passed
+              {failChecks.length > 0 && <span className="text-red-400 ml-2">{failChecks.length} failed</span>}
+              {orphanCount > 0 && <span className="text-yellow-400 ml-2">{orphanCount} orphan legs in Tradier</span>}
+            </p>
+          </div>
+          <div className="text-right text-xs text-forge-muted">
+            <p>{s?.paper_positions} paper position{s?.paper_positions !== 1 ? 's' : ''}</p>
+            <p>Accounts: {s?.sandbox_accounts?.join(', ')}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Failed checks */}
+      {failChecks.length > 0 && (
+        <div className="rounded-xl border border-red-500/30 bg-forge-card/80 p-4">
+          <p className="text-sm font-semibold text-red-400 mb-2">Failed Checks</p>
+          <div className="space-y-1">
+            {failChecks.map((c: any, i: number) => (
+              <div key={i} className="text-xs">
+                <span className="text-red-400 font-mono">FAIL</span>
+                <span className="text-gray-300 ml-2">{c.name}</span>
+                <span className="text-gray-500 ml-2">{c.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Per-position comparison */}
+      {positions.map((pos: any) => (
+        <div key={pos.position_id} className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <p className="text-sm font-semibold text-gray-200">
+                {pos.ticker} {pos.expiration} &middot; {pos.contracts} contracts
+              </p>
+              <p className="text-xs text-forge-muted font-mono">{pos.position_id}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-forge-muted">Paper Entry Credit</p>
+              <p className="text-sm font-semibold text-gray-200">${pos.paper_entry_credit?.toFixed(4)}</p>
+            </div>
+          </div>
+
+          {/* Paper P&L */}
+          <div className="grid grid-cols-2 gap-4 mb-3 pb-3 border-b border-forge-border/30">
+            <div>
+              <p className="text-xs text-forge-muted">Paper Unrealized</p>
+              <p className={`text-sm font-semibold ${(pos.paper_unrealized_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                {pos.paper_unrealized_pnl != null
+                  ? `${pos.paper_unrealized_pnl >= 0 ? '+' : ''}$${pos.paper_unrealized_pnl.toFixed(2)}`
+                  : '—'}
+                {pos.paper_unrealized_pct != null && (
+                  <span className="text-xs ml-1">({pos.paper_unrealized_pct.toFixed(1)}% of credit)</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          {/* Per-account comparison */}
+          <div className="space-y-3">
+            {Object.entries(pos.accounts || {}).map(([acctName, acct]: [string, any]) => (
+              <div key={acctName} className="bg-forge-bg/50 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-300">{acctName}</span>
+                  <span className={`text-[10px] font-mono ${acct.all_legs_found ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {acct.all_legs_found ? '4/4 LEGS' : 'MISSING LEGS'}
+                  </span>
+                </div>
+
+                {acct.all_legs_found && (
+                  <div className="grid grid-cols-3 gap-3 text-xs">
+                    {/* Entry credit comparison */}
+                    <div>
+                      <p className="text-forge-muted">Tradier Entry</p>
+                      <p className="font-medium text-gray-200">
+                        ${acct.implied_entry_credit?.toFixed(4)}
+                        <span className={`ml-1 ${Math.abs(acct.entry_credit_diff_pct) < 5 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ({acct.entry_credit_diff_pct >= 0 ? '+' : ''}{acct.entry_credit_diff_pct.toFixed(1)}%)
+                        </span>
+                      </p>
+                    </div>
+                    {/* Tradier unrealized */}
+                    <div>
+                      <p className="text-forge-muted">Tradier Unrealized</p>
+                      <p className={`font-medium ${acct.total_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {acct.total_gain_loss >= 0 ? '+' : ''}${acct.total_gain_loss.toFixed(2)}
+                        {acct.tradier_unrealized_pct != null && (
+                          <span className="ml-1">({acct.tradier_unrealized_pct.toFixed(1)}%)</span>
+                        )}
+                      </p>
+                    </div>
+                    {/* Diff */}
+                    <div>
+                      <p className="text-forge-muted">Diff (Paper − Tradier)</p>
+                      <p className={`font-medium ${Math.abs(acct.unrealized_pct_diff) < 5 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                        {acct.unrealized_pct_diff >= 0 ? '+' : ''}{acct.unrealized_pct_diff.toFixed(1)}pp
+                        <span className="text-forge-muted ml-1">
+                          (${acct.unrealized_pnl_diff >= 0 ? '+' : ''}{acct.unrealized_pnl_diff.toFixed(2)})
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Missing legs detail */}
+                {!acct.all_legs_found && (
+                  <div className="mt-2 space-y-1">
+                    {acct.legs?.map((leg: any) => (
+                      <div key={leg.occ_symbol} className={`text-[10px] font-mono flex justify-between ${leg.qty_match ? 'text-gray-500' : 'text-red-400'}`}>
+                        <span>{leg.occ_symbol}</span>
+                        <span>paper={leg.paper_qty} tradier={leg.tradier_qty}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {/* Orphans */}
+      {orphanCount > 0 && (
+        <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
+          <p className="text-sm font-semibold text-yellow-400 mb-2">
+            Orphan Tradier Positions ({orphanCount} legs)
+          </p>
+          <p className="text-xs text-yellow-400/70 mb-3">
+            These Tradier positions have no matching FLAME paper position.
+            The orphan cleanup should close them on next scan cycle.
+          </p>
+          {Object.entries(orphans).map(([acctName, legs]: [string, any]) => (
+            <div key={acctName} className="mb-2">
+              <p className="text-xs font-medium text-gray-300 mb-1">{acctName}</p>
+              <div className="space-y-0.5">
+                {legs.map((leg: any) => (
+                  <div key={leg.symbol} className="text-[10px] font-mono text-yellow-400/80 flex justify-between">
+                    <span>{leg.symbol}</span>
+                    <span>qty={leg.quantity} G/L=${leg.gain_loss?.toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* All checks (collapsed) */}
+      {passChecks.length > 0 && (
+        <details className="rounded-xl border border-forge-border bg-forge-card/80">
+          <summary className="p-3 text-sm text-forge-muted cursor-pointer hover:text-gray-300">
+            {passChecks.length} passing checks (click to expand)
+          </summary>
+          <div className="px-3 pb-3 space-y-0.5">
+            {passChecks.map((c: any, i: number) => (
+              <div key={i} className="text-[10px]">
+                <span className="text-emerald-400 font-mono">PASS</span>
+                <span className="text-gray-400 ml-2">{c.name}</span>
+                <span className="text-gray-600 ml-2">{c.detail}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* No positions */}
+      {positions.length === 0 && orphanCount === 0 && (
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+          <p className="text-forge-muted text-sm">No open positions to reconcile</p>
+        </div>
+      )}
     </div>
   )
 }
