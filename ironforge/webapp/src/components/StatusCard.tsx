@@ -3,6 +3,15 @@
 import { useState, useEffect } from 'react'
 import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow } from '@/lib/pt-tiers'
 
+interface SandboxAccount {
+  name: string
+  account_id: string | null
+  total_equity: number | null
+  option_buying_power: number | null
+  day_pnl: number | null
+  open_positions: number
+}
+
 interface StatusData {
   bot_name: string
   strategy: string
@@ -28,6 +37,7 @@ interface StatusData {
   spot_price: number | null
   vix: number | null
   bot_state: string | null
+  sandbox_accounts?: SandboxAccount[]
 }
 
 interface ConfigData {
@@ -530,6 +540,43 @@ export default function StatusCard({
           <p className="font-medium">{data.scan_count}</p>
         </div>
       </div>
+
+      {/* Sandbox accounts — per-account P&L from Tradier */}
+      {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (
+        <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Sandbox Accounts</p>
+          <div className="grid grid-cols-3 gap-3">
+            {data.sandbox_accounts.map((acct) => {
+              const hasData = acct.account_id != null
+              const dayPnl = acct.day_pnl ?? 0
+              const dayPositive = dayPnl >= 0
+              const bp = acct.option_buying_power
+              const bpNeg = bp != null && bp < 0
+              return (
+                <div key={acct.name} className="bg-forge-bg/50 rounded-lg px-3 py-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-gray-300">{acct.name}</span>
+                    <span className="text-[10px] text-gray-500">{acct.open_positions} pos</span>
+                  </div>
+                  {hasData ? (
+                    <>
+                      <p className={`text-sm font-semibold ${dayPnl === 0 ? 'text-gray-400' : dayPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {dayPnl === 0 ? '$0.00' : `${dayPositive ? '+' : ''}$${dayPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                        <span className="text-[10px] text-forge-muted ml-1">day P&L</span>
+                      </p>
+                      <p className={`text-xs mt-0.5 ${bpNeg ? 'text-red-400 font-semibold' : 'text-gray-500'}`}>
+                        BP: ${bp != null ? bp.toLocaleString(undefined, { minimumFractionDigits: 0 }) : '—'}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-xs text-gray-600">Not configured</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Config summary with editable allocation */}
       {config && (

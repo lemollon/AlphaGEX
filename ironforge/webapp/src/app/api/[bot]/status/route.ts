@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -112,8 +112,11 @@ export async function GET(
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery])
+    // Sandbox account balances (all 3 accounts — for per-account P&L display)
+    const sandboxBalancesQuery = getSandboxAccountBalances().catch(() => [])
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery])
 
     const acct = accountRows[0]
     const startingCapital = num(acct?.starting_capital) || 10000
@@ -239,6 +242,14 @@ export async function GET(
         time: lastErr.log_time || null,
         message: lastErr.message || null,
       } : null,
+      sandbox_accounts: sandboxBalances.map((s) => ({
+        name: s.name,
+        account_id: s.account_id,
+        total_equity: s.total_equity,
+        option_buying_power: s.option_buying_power,
+        day_pnl: s.day_pnl,
+        open_positions: s.open_positions_count,
+      })),
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
