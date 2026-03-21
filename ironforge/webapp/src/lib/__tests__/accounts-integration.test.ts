@@ -38,7 +38,10 @@ import {
   getAccountsForBotAsync,
   getCapitalPctForAccount,
   getAllocatedCapitalForAccount,
+  getPdtEnabledForAccount,
 } from '../tradier'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 
 /* ── Helpers ──────────────────────────────────────────────────── */
 
@@ -353,5 +356,189 @@ describe('Edge Cases', () => {
     mockDbQuery.mockResolvedValueOnce([])
     const pct = await getCapitalPctForAccount('')
     expect(pct).toBe(100) // defaults
+  })
+})
+
+/* ── Group 4: Scanner Capital Flow (Code Structure) ──────────── */
+
+describe('Scanner Capital Flow (Code Structure)', () => {
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  it('scanner imports getAllocatedCapitalForAccount from tradier', () => {
+    expect(scannerSource).toMatch(/import[\s\S]*?getAllocatedCapitalForAccount[\s\S]*?from\s+['"]\.\/tradier['"]/)
+  })
+
+  it('scanner imports getAccountsForBotAsync from tradier', () => {
+    expect(scannerSource).toMatch(/import[\s\S]*?getAccountsForBotAsync[\s\S]*?from\s+['"]\.\/tradier['"]/)
+  })
+
+  it('getStartingCapitalForBot calls getAllocatedCapitalForAccount', () => {
+    const fnMatch = scannerSource.match(
+      /async function getStartingCapitalForBot[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/getAccountsForBotAsync/)
+    expect(fnBody).toMatch(/getAllocatedCapitalForAccount/)
+  })
+
+  it('getStartingCapitalForBot falls back to DEFAULT_CONFIG when no accounts', () => {
+    const fnMatch = scannerSource.match(
+      /async function getStartingCapitalForBot[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must have fallback to DEFAULT_CONFIG
+    expect(fnBody).toMatch(/DEFAULT_CONFIG/)
+    // Must have try/catch for graceful fallback
+    expect(fnBody).toMatch(/catch/)
+  })
+
+  it('loadConfigOverrides calls getStartingCapitalForBot', () => {
+    const fnMatch = scannerSource.match(
+      /async function loadConfigOverrides[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/getStartingCapitalForBot/)
+  })
+
+  it('loadConfigOverrides calls syncPaperAccountCapital', () => {
+    const fnMatch = scannerSource.match(
+      /async function loadConfigOverrides[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/syncPaperAccountCapital/)
+  })
+})
+
+/* ── Group 6: Paper Account Capital Sync (Code Structure) ───── */
+
+describe('Paper Account Capital Sync (Code Structure)', () => {
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  it('syncPaperAccountCapital reads current starting_capital from DB', () => {
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must SELECT starting_capital from paper_account
+    expect(fnBody).toMatch(/SELECT.*starting_capital/)
+  })
+
+  it('syncPaperAccountCapital updates balance as target + pnl', () => {
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must UPDATE with new starting_capital, current_balance, buying_power
+    expect(fnBody).toMatch(/UPDATE.*paper_account/)
+    expect(fnBody).toMatch(/SET\s+starting_capital/)
+    expect(fnBody).toMatch(/current_balance/)
+    expect(fnBody).toMatch(/buying_power/)
+  })
+
+  it('syncPaperAccountCapital skips update for <$1 change', () => {
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must have threshold check to avoid unnecessary writes
+    expect(fnBody).toMatch(/Math\.abs.*<\s*1/)
+  })
+
+  it('syncPaperAccountCapital updates high_water_mark', () => {
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must update HWM alongside balance
+    expect(fnBody).toMatch(/high_water_mark/)
+  })
+})
+
+/* ── Group 7: PDT Account Integration ────────────────────────── */
+
+describe('PDT Account Integration', () => {
+  it('should return true (default) when no account in DB', async () => {
+    mockDbQuery.mockResolvedValueOnce([])
+    const pdt = await getPdtEnabledForAccount('Unknown')
+    expect(pdt).toBe(true)
+  })
+
+  it('should return false when pdt_enabled = false in DB', async () => {
+    mockDbQuery.mockResolvedValueOnce([{ pdt_enabled: false }])
+    const pdt = await getPdtEnabledForAccount('User')
+    expect(pdt).toBe(false)
+  })
+
+  it('should return true when pdt_enabled = true in DB', async () => {
+    mockDbQuery.mockResolvedValueOnce([{ pdt_enabled: true }])
+    const pdt = await getPdtEnabledForAccount('User')
+    expect(pdt).toBe(true)
+  })
+
+  it('should handle string "true" from DB', async () => {
+    mockDbQuery.mockResolvedValueOnce([{ pdt_enabled: 'true' }])
+    const pdt = await getPdtEnabledForAccount('User')
+    expect(pdt).toBe(true)
+  })
+
+  it('should default to true when DB query fails', async () => {
+    mockDbQuery.mockRejectedValueOnce(new Error('connection refused'))
+    const pdt = await getPdtEnabledForAccount('User')
+    expect(pdt).toBe(true)
+  })
+})
+
+/* ── Group 9: Consistent Balance Basis ────────────────────────── */
+
+describe('Consistent Balance Basis (total_equity)', () => {
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+
+  it('getAllocatedCapitalForAccount uses getSandboxTotalEquity, not getSandboxBuyingPower', () => {
+    const fnMatch = tradierSource.match(
+      /async function getAllocatedCapitalForAccount[\s\S]*?^}/m,
+    )
+    // It's exported, so match with export
+    const fnExportMatch = tradierSource.match(
+      /export async function getAllocatedCapitalForAccount[\s\S]*?^}/m,
+    )
+    const fnBody = (fnExportMatch || fnMatch)?.[0] ?? ''
+    expect(fnBody).toBeTruthy()
+    expect(fnBody).toMatch(/getSandboxTotalEquity/)
+    expect(fnBody).not.toMatch(/getSandboxBuyingPower/)
+  })
+
+  it('getSandboxTotalEquity reads total_equity from balances', () => {
+    const fnMatch = tradierSource.match(
+      /async function getSandboxTotalEquity[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/total_equity/)
+  })
+
+  it('placeIcOrderAllAccounts uses getAccountsForBotAsync (DB-backed)', () => {
+    const fnMatch = tradierSource.match(
+      /export async function placeIcOrderAllAccounts[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/getAccountsForBotAsync/)
   })
 })
