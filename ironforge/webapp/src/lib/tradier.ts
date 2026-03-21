@@ -1085,11 +1085,15 @@ export async function placeIcOrderAllAccounts(
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
-  // Filter accounts by bot (FLAME=User+Matt+Logan, SPARK+INFERNO=paper-only/none)
-  const allowedAccounts = botName ? getAccountsForBot(botName) : null
+  // Filter accounts by bot — reads from ironforge_accounts DB (falls back to hardcoded BOT_ACCOUNTS)
+  const allowedAccounts = botName ? await getAccountsForBotAsync(botName) : null
   const eligibleAccounts = allowedAccounts
     ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
     : _sandboxAccounts
+  console.log(
+    `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
+    `eligible=[${eligibleAccounts.map(a => a.name).join(', ')}] (${allowedAccounts ? 'from DB' : 'all'})`,
+  )
 
   // Shared OCC symbols — same strikes for all accounts
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
@@ -1130,7 +1134,10 @@ export async function placeIcOrderAllAccounts(
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
       const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
-      const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
+      // Equal share among all accounts assigned to this bot (DB-backed)
+      const botShare = botName && eligibleAccounts.length > 1
+        ? 1.0 / eligibleAccounts.length
+        : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
       // Size to 85% of account's option buying power. No paperContracts cap —
@@ -1368,13 +1375,13 @@ export async function getCapitalPctForAccount(person: string): Promise<number> {
 
 /**
  * Get the allocated capital for a specific account.
- * = real Tradier account balance × capital_pct / 100
- * Falls back to the paper account balance if Tradier is unreachable.
+ * = real Tradier total_equity × capital_pct / 100
+ * Falls back to $10,000 × pct if Tradier is unreachable.
  */
 export async function getAllocatedCapitalForAccount(person: string): Promise<number> {
   const pct = await getCapitalPctForAccount(person)
 
-  // Find the account's API key from DB
+  // Find the account's API key from DB and fetch total_equity (not OBP)
   try {
     const { query: dbq } = await import('./db')
     const rows = await dbq(
@@ -1386,9 +1393,11 @@ export async function getAllocatedCapitalForAccount(person: string): Promise<num
       const apiKey = rows[0].api_key.trim()
       const accountId = await getAccountIdForKey(apiKey)
       if (accountId) {
-        const bp = await getSandboxBuyingPower(apiKey, accountId)
-        if (bp != null) {
-          return Math.round(bp * pct / 100 * 100) / 100
+        const equity = await getSandboxTotalEquity(apiKey, accountId)
+        if (equity != null) {
+          const allocated = Math.round(equity * pct / 100 * 100) / 100
+          console.log(`[tradier] getAllocatedCapital: ${person} → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
+          return allocated
         }
       }
     }
@@ -1396,6 +1405,16 @@ export async function getAllocatedCapitalForAccount(person: string): Promise<num
 
   // Fallback: return a default
   return Math.round(10000 * pct / 100)
+}
+
+/**
+ * Fetch total equity for a sandbox account (consistent with frontend display).
+ * Uses total_equity, NOT option_buying_power.
+ */
+async function getSandboxTotalEquity(apiKey: string, accountId: string): Promise<number | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/balances`, undefined, apiKey)
+  const equity = data?.balances?.total_equity
+  return equity != null ? parseFloat(equity) : null
 }
 
 /**

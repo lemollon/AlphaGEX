@@ -38,7 +38,6 @@ async function ensureColumns(): Promise<void> {
   if (_migrated) return
   _migrated = true
   try {
-    await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS capital DECIMAL(15,2) DEFAULT 10000.00`)
     await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS pdt_enabled BOOLEAN DEFAULT TRUE`)
     await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS capital_pct INTEGER DEFAULT 100`)
   } catch (err: unknown) {
@@ -129,18 +128,15 @@ async function getLiveBalance(
   apiKey: string,
   accountId: string,
 ): Promise<CachedBalance> {
-  const cached = _balanceCache[accountId]
+  // Cache key includes last 6 chars of API key to avoid cross-account collisions
+  const cacheKey = `${accountId}:${apiKey.slice(-6)}`
+  const cached = _balanceCache[cacheKey]
   if (cached && Date.now() - cached.fetched_at < CACHE_TTL_MS) return cached
 
-  // Need to discover account number from key
-  const accountNumber = await discoverAccountId(apiKey)
-  if (!accountNumber) {
-    return { live_balance: null, live_buying_power: null, open_positions: 0, fetched_at: Date.now() }
-  }
-
-  const result = await fetchLiveBalance(apiKey, accountNumber)
+  // Use the account_id from DB directly (it's the Tradier account number)
+  const result = await fetchLiveBalance(apiKey, accountId)
   const entry: CachedBalance = { ...result, fetched_at: Date.now() }
-  _balanceCache[accountId] = entry
+  _balanceCache[cacheKey] = entry
   return entry
 }
 
@@ -230,6 +226,10 @@ export async function GET() {
     }
 
     await Promise.all(balancePromises)
+
+    // Trace live balances
+    const activeCount = Object.keys(liveData).length
+    console.log(`[accounts] GET: Fetched live balances for ${activeCount} active account(s)`)
 
     const productionByPerson: Record<string, any[]> = {}
     const sandboxByPerson: Record<string, any[]> = {}
