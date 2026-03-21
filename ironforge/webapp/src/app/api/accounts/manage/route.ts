@@ -10,33 +10,56 @@ function maskApiKey(key: string): string {
   return `${key.slice(0, 4)}...${key.slice(-4)}`
 }
 
+/** One-time migration: add capital and pdt_enabled columns if missing. */
+let _migrated = false
+async function ensureColumns(): Promise<void> {
+  if (_migrated) return
+  _migrated = true
+  try {
+    await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS capital DECIMAL(15,2) DEFAULT 10000.00`)
+    await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS pdt_enabled BOOLEAN DEFAULT TRUE`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[accounts] Column migration warning (non-fatal): ${msg}`)
+  }
+}
+
 /** GET /api/accounts/manage — list all accounts grouped by type/person */
 export async function GET() {
   try {
+    await ensureColumns()
+
     const rows = await dbQuery(`
       SELECT id, person, account_id, api_key, bot, type, is_active,
+             COALESCE(capital, 10000) as capital,
+             COALESCE(pdt_enabled, TRUE) as pdt_enabled,
              created_at, updated_at
       FROM ${TABLE}
       ORDER BY type, person, id
     `)
 
     const productionByPerson: Record<string, any[]> = {}
-    let sandboxAccount: any = null
+    const sandboxByPerson: Record<string, any[]> = {}
 
     for (const row of rows) {
       const acct = {
         id: parseInt(row.id),
+        person: row.person,
         account_id: row.account_id,
         api_key_masked: maskApiKey(row.api_key || ''),
         bot: row.bot,
         type: row.type,
         is_active: row.is_active === true || row.is_active === 'true',
+        capital: parseFloat(row.capital) || 10000,
+        pdt_enabled: row.pdt_enabled === true || row.pdt_enabled === 'true',
         created_at: row.created_at || null,
         updated_at: row.updated_at || null,
       }
 
       if (row.type === 'sandbox') {
-        sandboxAccount = { person: row.person, ...acct }
+        const person = row.person
+        if (!sandboxByPerson[person]) sandboxByPerson[person] = []
+        sandboxByPerson[person].push(acct)
       } else {
         const person = row.person
         if (!productionByPerson[person]) productionByPerson[person] = []
@@ -48,7 +71,11 @@ export async function GET() {
       ([person, accounts]) => ({ person, accounts }),
     )
 
-    return NextResponse.json({ production, sandbox: sandboxAccount })
+    const sandbox = Object.entries(sandboxByPerson).map(
+      ([person, accounts]) => ({ person, accounts }),
+    )
+
+    return NextResponse.json({ production, sandbox })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
@@ -58,8 +85,12 @@ export async function GET() {
 /** POST /api/accounts/manage — create a new account */
 export async function POST(req: NextRequest) {
   try {
+    await ensureColumns()
+
     const body = await req.json()
     const { person, account_id, api_key, bot, type } = body
+    const capital = body.capital != null ? parseFloat(body.capital) : 10000
+    const pdt_enabled = body.pdt_enabled != null ? body.pdt_enabled : true
 
     if (!person || !account_id || !api_key) {
       return NextResponse.json(
@@ -80,14 +111,14 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Sandbox enforcement: only one active sandbox allowed
+    // Sandbox enforcement: only one active sandbox per person
     if (type === 'sandbox') {
       const existing = await dbQuery(
-        `SELECT id FROM ${TABLE} WHERE type = 'sandbox' AND is_active = TRUE LIMIT 1`,
+        `SELECT id FROM ${TABLE} WHERE type = 'sandbox' AND person = '${escapeSql(person)}' AND is_active = TRUE LIMIT 1`,
       )
       if (existing.length > 0) {
         return NextResponse.json(
-          { error: 'A sandbox account already exists' },
+          { error: `${person} already has an active sandbox account. Each person can have only one sandbox.` },
           { status: 409 },
         )
       }
@@ -106,11 +137,11 @@ export async function POST(req: NextRequest) {
 
     await dbExecute(`
       INSERT INTO ${TABLE}
-        (person, account_id, api_key, bot, type, is_active, created_at, updated_at)
+        (person, account_id, api_key, bot, type, is_active, capital, pdt_enabled, created_at, updated_at)
       VALUES (
         '${escapeSql(person)}', '${escapeSql(account_id)}', '${escapeSql(api_key)}',
         '${escapeSql(bot)}', '${escapeSql(type)}',
-        TRUE, NOW(), NOW()
+        TRUE, ${capital}, ${pdt_enabled === true}, NOW(), NOW()
       )
     `)
 

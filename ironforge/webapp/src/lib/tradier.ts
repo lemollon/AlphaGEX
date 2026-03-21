@@ -593,16 +593,13 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
     }
     if (rows.length > 0) {
       const seen = new Set<string>()
-      let isFirst = true
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
         seen.add(key)
-        // First account gets name 'User' so FLAME fill-only mode works
-        // (FLAME requires sandboxOrderIds['User'] to be present)
-        const name = isFirst ? 'User' : (row.person || 'DB')
+        // Use actual person name from DB — each account holder has their own sandbox
+        const name = row.person || 'User'
         _sandboxAccounts.push({ name, apiKey: key })
-        isFirst = false
       }
       if (_sandboxAccounts.length > 0) {
         console.log(
@@ -1347,6 +1344,66 @@ export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string
 export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string }>> {
   await ensureSandboxAccountsLoaded()
   return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+}
+
+/**
+ * Get the configured capital for a specific account (by person name).
+ * Reads from ironforge_accounts table. Defaults to 10000.
+ */
+export async function getCapitalForAccount(person: string): Promise<number> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT capital FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].capital != null) {
+      return parseFloat(rows[0].capital) || 10000
+    }
+  } catch { /* fallback */ }
+  return 10000
+}
+
+/**
+ * Get the PDT enabled flag for a specific account (by person name).
+ * Reads from ironforge_accounts table. Defaults to true.
+ */
+export async function getPdtEnabledForAccount(person: string): Promise<boolean> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT pdt_enabled FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].pdt_enabled != null) {
+      return rows[0].pdt_enabled === true || rows[0].pdt_enabled === 'true'
+    }
+  } catch { /* fallback */ }
+  return true
+}
+
+/**
+ * Get sandbox accounts that a specific bot should trade on (DB-backed).
+ * Queries ironforge_accounts for accounts assigned to this bot.
+ * Falls back to the hardcoded BOT_ACCOUNTS if DB query fails.
+ */
+export async function getAccountsForBotAsync(botName: string): Promise<string[]> {
+  try {
+    const { query: dbq } = await import('./db')
+    const botUpper = botName.toUpperCase()
+    const rows = await dbq(
+      `SELECT DISTINCT person FROM ironforge_accounts
+       WHERE is_active = TRUE
+         AND (bot = '${botUpper}' OR bot = 'BOTH')
+       ORDER BY person`,
+    )
+    if (rows.length > 0) {
+      return rows.map((r: any) => r.person)
+    }
+  } catch { /* fallback to hardcoded */ }
+  return BOT_ACCOUNTS[botName]?.accounts ?? ['User']
 }
 
 /**

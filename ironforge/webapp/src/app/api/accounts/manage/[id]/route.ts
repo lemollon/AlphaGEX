@@ -41,6 +41,19 @@ export async function PUT(
     if (body.is_active != null) {
       updates.push(`is_active = ${body.is_active}`)
     }
+    if (body.capital != null) {
+      const cap = parseFloat(body.capital)
+      if (isNaN(cap) || cap < 0) {
+        return NextResponse.json(
+          { error: 'capital must be a non-negative number' },
+          { status: 400 },
+        )
+      }
+      updates.push(`capital = ${cap}`)
+    }
+    if (body.pdt_enabled != null) {
+      updates.push(`pdt_enabled = ${body.pdt_enabled === true}`)
+    }
 
     if (updates.length === 0) {
       return NextResponse.json({ success: true, message: 'No changes' })

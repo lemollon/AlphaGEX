@@ -6,11 +6,14 @@ import { useState, useEffect, useCallback } from 'react'
 
 interface Account {
   id: number
+  person: string
   account_id: string
   api_key_masked: string
   bot: string
   type: string
   is_active: boolean
+  capital: number
+  pdt_enabled: boolean
   created_at: string | null
   updated_at: string | null
 }
@@ -20,19 +23,23 @@ interface PersonGroup {
   accounts: Account[]
 }
 
-interface SandboxAccount extends Account {
-  person: string
-}
-
 interface AccountsData {
   production: PersonGroup[]
-  sandbox: SandboxAccount | null
+  sandbox: PersonGroup[]
 }
 
 interface TestResult {
   account_id: string
+  person: string
   success: boolean
   message: string
+  tradier_account_number?: string
+  total_equity?: number
+  option_buying_power?: number
+  stock_buying_power?: number
+  account_type?: string
+  open_positions?: number
+  day_pnl?: number
 }
 
 /* ── Bot badge colors ──────────────────────────────────────────── */
@@ -71,13 +78,23 @@ function AddAccountModal({
   onSave,
 }: {
   onClose: () => void
-  onSave: (data: { person: string; account_id: string; api_key: string; bot: string; type: string }) => Promise<void>
+  onSave: (data: {
+    person: string
+    account_id: string
+    api_key: string
+    bot: string
+    type: string
+    capital: number
+    pdt_enabled: boolean
+  }) => Promise<void>
 }) {
   const [person, setPerson] = useState('')
   const [accountId, setAccountId] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [bot, setBot] = useState('BOTH')
-  const [type, setType] = useState('production')
+  const [type, setType] = useState('sandbox')
+  const [capital, setCapital] = useState('10000')
+  const [pdtEnabled, setPdtEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -86,7 +103,15 @@ function AddAccountModal({
     setError('')
     setSaving(true)
     try {
-      await onSave({ person, account_id: accountId, api_key: apiKey, bot, type })
+      await onSave({
+        person,
+        account_id: accountId,
+        api_key: apiKey,
+        bot,
+        type,
+        capital: parseFloat(capital) || 10000,
+        pdt_enabled: pdtEnabled,
+      })
       onClose()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to save')
@@ -164,10 +189,39 @@ function AddAccountModal({
               onChange={(e) => setType(e.target.value)}
               className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
             >
-              <option value="production">Production</option>
               <option value="sandbox">Sandbox</option>
+              <option value="production">Production</option>
             </select>
           </label>
+        </div>
+
+        <div className="flex gap-3 mb-3">
+          <label className="flex-1">
+            <span className="text-sm text-gray-400">Capital ($)</span>
+            <input
+              type="number"
+              min="0"
+              step="100"
+              value={capital}
+              onChange={(e) => setCapital(e.target.value)}
+              className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
+            />
+          </label>
+
+          <div className="flex-1">
+            <span className="text-sm text-gray-400 block">PDT Enforcement</span>
+            <button
+              type="button"
+              onClick={() => setPdtEnabled(!pdtEnabled)}
+              className={`mt-1 w-full px-3 py-2 rounded text-sm font-medium border transition-colors ${
+                pdtEnabled
+                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                  : 'bg-gray-500/10 border-gray-600 text-gray-400'
+              }`}
+            >
+              {pdtEnabled ? 'ON' : 'OFF'}
+            </button>
+          </div>
         </div>
 
         <div className="flex justify-end gap-3 mt-5">
@@ -191,28 +245,40 @@ function AddAccountModal({
   )
 }
 
-/* ── Edit Bot Modal ────────────────────────────────────────────── */
+/* ── Edit Account Modal ───────────────────────────────────────── */
 
-function EditBotModal({
+function EditAccountModal({
   account,
   onClose,
   onSave,
 }: {
-  account: Account & { person?: string }
+  account: Account
   onClose: () => void
-  onSave: (id: number, data: { bot?: string; is_active?: boolean }) => Promise<void>
+  onSave: (id: number, data: {
+    bot?: string
+    capital?: number
+    pdt_enabled?: boolean
+  }) => Promise<void>
 }) {
   const [bot, setBot] = useState(account.bot)
+  const [capital, setCapital] = useState(String(account.capital || 10000))
+  const [pdtEnabled, setPdtEnabled] = useState(account.pdt_enabled)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError('')
     setSaving(true)
     try {
-      await onSave(account.id, { bot })
+      await onSave(account.id, {
+        bot,
+        capital: parseFloat(capital) || 10000,
+        pdt_enabled: pdtEnabled,
+      })
       onClose()
-    } catch {
-      // error handled in parent
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
       setSaving(false)
     }
@@ -224,11 +290,21 @@ function EditBotModal({
         onSubmit={handleSubmit}
         className="bg-forge-card border border-amber-900/30 rounded-lg p-6 w-full max-w-sm shadow-xl"
       >
-        <h2 className="text-lg font-bold text-white mb-1">Edit Bot Assignment</h2>
-        <p className="text-sm text-gray-500 mb-4 font-mono">{account.account_id}</p>
+        <h2 className="text-lg font-bold text-white mb-1">Edit Account</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          <span className="font-mono">{account.account_id}</span>
+          <span className="mx-2 text-gray-600">|</span>
+          {account.person}
+        </p>
+
+        {error && (
+          <div className="mb-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-sm">
+            {error}
+          </div>
+        )}
 
         <label className="block mb-4">
-          <span className="text-sm text-gray-400">Bot</span>
+          <span className="text-sm text-gray-400">Bot Assignment</span>
           <select
             value={bot}
             onChange={(e) => setBot(e.target.value)}
@@ -240,6 +316,33 @@ function EditBotModal({
             <option value="INFERNO">INFERNO</option>
           </select>
         </label>
+
+        <label className="block mb-4">
+          <span className="text-sm text-gray-400">Capital ($)</span>
+          <input
+            type="number"
+            min="0"
+            step="100"
+            value={capital}
+            onChange={(e) => setCapital(e.target.value)}
+            className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono focus:border-amber-500 focus:outline-none"
+          />
+        </label>
+
+        <div className="mb-4">
+          <span className="text-sm text-gray-400 block mb-1">PDT Enforcement</span>
+          <button
+            type="button"
+            onClick={() => setPdtEnabled(!pdtEnabled)}
+            className={`px-4 py-2 rounded text-sm font-medium border transition-colors ${
+              pdtEnabled
+                ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                : 'bg-gray-500/10 border-gray-600 text-gray-400'
+            }`}
+          >
+            {pdtEnabled ? 'ON — 4 day trades / 5 days' : 'OFF — No PDT limit'}
+          </button>
+        </div>
 
         <div className="flex justify-end gap-3">
           <button
@@ -269,7 +372,7 @@ export default function AccountsContent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
-  const [editAccount, setEditAccount] = useState<(Account & { person?: string }) | null>(null)
+  const [editAccount, setEditAccount] = useState<Account | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [testingAll, setTestingAll] = useState(false)
 
@@ -299,6 +402,8 @@ export default function AccountsContent() {
     api_key: string
     bot: string
     type: string
+    capital: number
+    pdt_enabled: boolean
   }) => {
     const res = await fetch('/api/accounts/manage', {
       method: 'POST',
@@ -312,7 +417,10 @@ export default function AccountsContent() {
     await fetchAccounts()
   }
 
-  const handleUpdate = async (id: number, body: { bot?: string; is_active?: boolean }) => {
+  const handleUpdate = async (
+    id: number,
+    body: { bot?: string; is_active?: boolean; capital?: number; pdt_enabled?: boolean },
+  ) => {
     const res = await fetch(`/api/accounts/manage/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -348,7 +456,6 @@ export default function AccountsContent() {
     setTestResults({})
 
     try {
-      // Server-side endpoint reads real API keys from Databricks and tests each
       const res = await fetch('/api/accounts/test-all', { method: 'POST' })
       if (!res.ok) throw new Error('Failed to test accounts')
       const results: TestResult[] = await res.json()
@@ -397,17 +504,8 @@ export default function AccountsContent() {
     )
   }
 
-  const allAccounts: (Account & { person: string })[] = []
-  if (data) {
-    for (const group of data.production) {
-      for (const acct of group.accounts) {
-        allAccounts.push({ ...acct, person: group.person })
-      }
-    }
-    if (data.sandbox) {
-      allAccounts.push(data.sandbox)
-    }
-  }
+  const hasSandbox = data != null && data.sandbox.length > 0
+  const hasProduction = data != null && data.production.length > 0
 
   return (
     <div className="space-y-6">
@@ -436,14 +534,52 @@ export default function AccountsContent() {
         </div>
       </div>
 
+      {/* Sandbox Accounts (one per person) */}
+      {hasSandbox && (
+        <section>
+          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+            Sandbox Accounts
+          </h2>
+          <div className="space-y-3">
+            {data!.sandbox.map((group) => (
+              <div
+                key={group.person}
+                className="bg-forge-card border border-blue-900/20 rounded-lg overflow-hidden"
+              >
+                <div className="px-4 py-3 border-b border-blue-900/10">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-white font-medium">{group.person}</h3>
+                    <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
+                      sandbox
+                    </span>
+                  </div>
+                </div>
+                <div className="divide-y divide-gray-800/50">
+                  {group.accounts.map((acct) => (
+                    <AccountRow
+                      key={acct.id}
+                      account={acct}
+                      testResult={testResults[acct.account_id]}
+                      onEdit={() => setEditAccount(acct)}
+                      onDeactivate={() => handleDeactivate(acct.id, acct.account_id)}
+                      onReactivate={() => handleReactivate(acct.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Production Accounts */}
-      {data && data.production.length > 0 && (
+      {hasProduction && (
         <section>
           <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
             Production Accounts
           </h2>
           <div className="space-y-3">
-            {data.production.map((group) => (
+            {data!.production.map((group) => (
               <div
                 key={group.person}
                 className="bg-forge-card border border-amber-900/20 rounded-lg overflow-hidden"
@@ -456,9 +592,8 @@ export default function AccountsContent() {
                     <AccountRow
                       key={acct.id}
                       account={acct}
-                      person={group.person}
                       testResult={testResults[acct.account_id]}
-                      onEdit={() => setEditAccount({ ...acct, person: group.person })}
+                      onEdit={() => setEditAccount(acct)}
                       onDeactivate={() => handleDeactivate(acct.id, acct.account_id)}
                       onReactivate={() => handleReactivate(acct.id)}
                     />
@@ -470,35 +605,8 @@ export default function AccountsContent() {
         </section>
       )}
 
-      {/* Sandbox Account */}
-      {data && data.sandbox && (
-        <section>
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
-            Sandbox Account
-          </h2>
-          <div className="bg-forge-card border border-blue-900/20 rounded-lg overflow-hidden">
-            <div className="px-4 py-3 border-b border-blue-900/10">
-              <div className="flex items-center gap-2">
-                <h3 className="text-white font-medium">{data.sandbox.person}</h3>
-                <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
-                  sandbox
-                </span>
-              </div>
-            </div>
-            <AccountRow
-              account={data.sandbox}
-              person={data.sandbox.person}
-              testResult={testResults[data.sandbox.account_id]}
-              onEdit={() => setEditAccount(data.sandbox!)}
-              onDeactivate={() => handleDeactivate(data.sandbox!.id, data.sandbox!.account_id)}
-              onReactivate={() => handleReactivate(data.sandbox!.id)}
-            />
-          </div>
-        </section>
-      )}
-
       {/* Empty state */}
-      {data && data.production.length === 0 && !data.sandbox && (
+      {!hasProduction && !hasSandbox && (
         <div className="text-center py-12 text-gray-500">
           <p className="text-lg mb-2">No accounts configured</p>
           <p className="text-sm">Add a Tradier sandbox account to start mirroring trades.</p>
@@ -510,7 +618,7 @@ export default function AccountsContent() {
         <AddAccountModal onClose={() => setShowAdd(false)} onSave={handleCreate} />
       )}
       {editAccount && (
-        <EditBotModal
+        <EditAccountModal
           account={editAccount}
           onClose={() => setEditAccount(null)}
           onSave={handleUpdate}
@@ -524,14 +632,12 @@ export default function AccountsContent() {
 
 function AccountRow({
   account,
-  person,
   testResult,
   onEdit,
   onDeactivate,
   onReactivate,
 }: {
   account: Account
-  person: string
   testResult?: TestResult
   onEdit: () => void
   onDeactivate: () => void
@@ -540,37 +646,75 @@ function AccountRow({
   return (
     <div className="px-4 py-3 flex items-center gap-4">
       {/* Status + Account ID */}
-      <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
         <StatusDot active={account.is_active} />
         <span className="font-mono text-sm text-white truncate">{account.account_id}</span>
       </div>
 
       {/* API Key (masked) */}
-      <div className="hidden sm:block">
+      <div className="hidden sm:block flex-shrink-0">
         <span className="font-mono text-xs text-gray-500">{account.api_key_masked}</span>
       </div>
 
       {/* Bot badge */}
       <BotBadge bot={account.bot} />
 
+      {/* Capital */}
+      <div className="hidden md:block flex-shrink-0">
+        <span className="text-xs text-gray-400">
+          ${(account.capital || 10000).toLocaleString()}
+        </span>
+      </div>
+
+      {/* PDT */}
+      <div className="hidden md:block flex-shrink-0">
+        <span
+          className={`text-xs px-1.5 py-0.5 rounded ${
+            account.pdt_enabled
+              ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+              : 'bg-gray-500/10 text-gray-500 border border-gray-600'
+          }`}
+        >
+          PDT {account.pdt_enabled ? 'ON' : 'OFF'}
+        </span>
+      </div>
+
       {/* Test result */}
       {testResult && (
-        <span
-          className={`text-xs ${
-            testResult.success ? 'text-green-400' : 'text-red-400'
-          }`}
-          title={testResult.message}
-        >
-          {testResult.success ? 'Connected' : 'Failed'}
-        </span>
+        <div className="flex-shrink-0">
+          <span
+            className={`text-xs ${
+              testResult.success ? 'text-green-400' : 'text-red-400'
+            }`}
+          >
+            {testResult.success ? 'Connected' : testResult.message}
+          </span>
+          {testResult.success && testResult.total_equity != null && (
+            <div className="text-xs text-gray-500 mt-0.5 space-x-2">
+              <span title="Total Equity">
+                Equity: ${testResult.total_equity.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </span>
+              {testResult.option_buying_power != null && (
+                <span title="Option Buying Power">
+                  OBP: ${testResult.option_buying_power.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+              )}
+              {testResult.open_positions != null && testResult.open_positions > 0 && (
+                <span title="Open Positions">
+                  Pos: {testResult.open_positions}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Actions */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 ml-auto flex-shrink-0">
         <button
           onClick={onEdit}
           className="p-1.5 text-gray-500 hover:text-amber-400 transition-colors"
-          title="Edit bot assignment"
+          title="Edit account settings"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
             <path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L3.463 11.098a.25.25 0 00-.064.108l-.563 1.97 1.971-.564a.25.25 0 00.108-.064l8.61-8.61a.25.25 0 000-.354L12.427 2.487z" />
