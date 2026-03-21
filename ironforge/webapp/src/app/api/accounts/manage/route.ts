@@ -10,6 +10,28 @@ function maskApiKey(key: string): string {
   return `${key.slice(0, 4)}...${key.slice(-4)}`
 }
 
+const VALID_BOTS = ['FLAME', 'SPARK', 'INFERNO']
+
+/**
+ * Validate bot field: accepts a single bot name, "BOTH", or comma-separated list.
+ * Returns normalized comma-separated string or null if invalid.
+ * "BOTH" is stored as "FLAME,SPARK,INFERNO" for consistency.
+ */
+function validateBotField(bot: string): string | null {
+  if (!bot) return null
+  const trimmed = bot.trim().toUpperCase()
+  if (trimmed === 'BOTH') return 'FLAME,SPARK,INFERNO'
+  const parts = trimmed.split(',').map(b => b.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  for (const p of parts) {
+    if (!VALID_BOTS.includes(p)) return null
+  }
+  // Deduplicate and sort for consistent storage
+  const unique = Array.from(new Set(parts))
+  unique.sort((a, b) => VALID_BOTS.indexOf(a) - VALID_BOTS.indexOf(b))
+  return unique.join(',')
+}
+
 /** One-time migration: add capital and pdt_enabled columns if missing. */
 let _migrated = false
 async function ensureColumns(): Promise<void> {
@@ -98,9 +120,10 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
-    if (!['FLAME', 'SPARK', 'INFERNO', 'BOTH'].includes(bot)) {
+    const normalizedBot = validateBotField(bot)
+    if (!normalizedBot) {
       return NextResponse.json(
-        { error: 'bot must be FLAME, SPARK, INFERNO, or BOTH' },
+        { error: 'bot must be one or more of: FLAME, SPARK, INFERNO (comma-separated or BOTH)' },
         { status: 400 },
       )
     }
@@ -140,7 +163,7 @@ export async function POST(req: NextRequest) {
         (person, account_id, api_key, bot, type, is_active, capital, pdt_enabled, created_at, updated_at)
       VALUES (
         '${escapeSql(person)}', '${escapeSql(account_id)}', '${escapeSql(api_key)}',
-        '${escapeSql(bot)}', '${escapeSql(type)}',
+        '${escapeSql(normalizedBot)}', '${escapeSql(type)}',
         TRUE, ${capital}, ${pdt_enabled === true}, NOW(), NOW()
       )
     `)

@@ -1387,16 +1387,20 @@ export async function getPdtEnabledForAccount(person: string): Promise<boolean> 
 /**
  * Get sandbox accounts that a specific bot should trade on (DB-backed).
  * Queries ironforge_accounts for accounts assigned to this bot.
+ * The bot field can be a single bot name or comma-separated (e.g. "FLAME,SPARK").
  * Falls back to the hardcoded BOT_ACCOUNTS if DB query fails.
  */
 export async function getAccountsForBotAsync(botName: string): Promise<string[]> {
   try {
     const { query: dbq } = await import('./db')
     const botUpper = botName.toUpperCase()
+    // Match accounts where the bot field contains this bot name
+    // Handles: exact match ("FLAME"), comma-separated ("FLAME,SPARK"), or legacy "BOTH"
     const rows = await dbq(
       `SELECT DISTINCT person FROM ironforge_accounts
        WHERE is_active = TRUE
-         AND (bot = '${botUpper}' OR bot = 'BOTH')
+         AND (bot = '${botUpper}' OR bot LIKE '%${botUpper}%' OR bot = 'BOTH'
+              OR bot = 'FLAME,SPARK,INFERNO')
        ORDER BY person`,
     )
     if (rows.length > 0) {

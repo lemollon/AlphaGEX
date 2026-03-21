@@ -44,19 +44,79 @@ interface TestResult {
 
 /* ── Bot badge colors ──────────────────────────────────────────── */
 
+const ALL_BOTS = ['FLAME', 'SPARK', 'INFERNO'] as const
+
 const BOT_COLORS: Record<string, string> = {
   FLAME: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   SPARK: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
   INFERNO: 'bg-red-500/20 text-red-400 border-red-500/30',
-  BOTH: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
 }
 
-function BotBadge({ bot }: { bot: string }) {
-  const cls = BOT_COLORS[bot] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+/** Parse stored bot field ("FLAME,SPARK" or legacy "BOTH") into array */
+function parseBots(bot: string): string[] {
+  if (!bot) return []
+  if (bot === 'BOTH') return [...ALL_BOTS]
+  return bot.split(',').map(b => b.trim()).filter(Boolean)
+}
+
+/** Convert array back to stored format */
+function serializeBots(bots: string[]): string {
+  const sorted = bots
+    .filter(b => ALL_BOTS.includes(b as typeof ALL_BOTS[number]))
+    .sort((a, b) => ALL_BOTS.indexOf(a as typeof ALL_BOTS[number]) - ALL_BOTS.indexOf(b as typeof ALL_BOTS[number]))
+  return Array.from(new Set(sorted)).join(',')
+}
+
+function BotBadges({ bot }: { bot: string }) {
+  const bots = parseBots(bot)
   return (
-    <span className={`text-xs font-medium px-2 py-0.5 rounded border ${cls}`}>
-      {bot}
-    </span>
+    <div className="flex gap-1 flex-wrap">
+      {bots.map(b => {
+        const cls = BOT_COLORS[b] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+        return (
+          <span key={b} className={`text-xs font-medium px-2 py-0.5 rounded border ${cls}`}>
+            {b}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
+function BotCheckboxes({
+  selected,
+  onChange,
+}: {
+  selected: string[]
+  onChange: (bots: string[]) => void
+}) {
+  const toggle = (bot: string) => {
+    if (selected.includes(bot)) {
+      onChange(selected.filter(b => b !== bot))
+    } else {
+      onChange([...selected, bot])
+    }
+  }
+
+  return (
+    <div className="flex gap-2 mt-1">
+      {ALL_BOTS.map(bot => {
+        const isSelected = selected.includes(bot)
+        const cls = isSelected
+          ? BOT_COLORS[bot]
+          : 'bg-gray-800 text-gray-500 border-gray-700'
+        return (
+          <button
+            key={bot}
+            type="button"
+            onClick={() => toggle(bot)}
+            className={`text-xs font-medium px-3 py-1.5 rounded border transition-colors cursor-pointer ${cls}`}
+          >
+            {bot}
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
@@ -91,7 +151,7 @@ function AddAccountModal({
   const [person, setPerson] = useState('')
   const [accountId, setAccountId] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [bot, setBot] = useState('BOTH')
+  const [selectedBots, setSelectedBots] = useState<string[]>([...ALL_BOTS])
   const [type, setType] = useState('sandbox')
   const [capital, setCapital] = useState('10000')
   const [pdtEnabled, setPdtEnabled] = useState(true)
@@ -100,6 +160,10 @@ function AddAccountModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (selectedBots.length === 0) {
+      setError('Select at least one bot')
+      return
+    }
     setError('')
     setSaving(true)
     try {
@@ -107,7 +171,7 @@ function AddAccountModal({
         person,
         account_id: accountId,
         api_key: apiKey,
-        bot,
+        bot: serializeBots(selectedBots),
         type,
         capital: parseFloat(capital) || 10000,
         pdt_enabled: pdtEnabled,
@@ -167,33 +231,22 @@ function AddAccountModal({
           />
         </label>
 
-        <div className="flex gap-3 mb-3">
-          <label className="flex-1">
-            <span className="text-sm text-gray-400">Bot Assignment</span>
-            <select
-              value={bot}
-              onChange={(e) => setBot(e.target.value)}
-              className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
-            >
-              <option value="BOTH">BOTH</option>
-              <option value="FLAME">FLAME</option>
-              <option value="SPARK">SPARK</option>
-              <option value="INFERNO">INFERNO</option>
-            </select>
-          </label>
-
-          <label className="flex-1">
-            <span className="text-sm text-gray-400">Type</span>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
-            >
-              <option value="sandbox">Sandbox</option>
-              <option value="production">Production</option>
-            </select>
-          </label>
+        <div className="mb-3">
+          <span className="text-sm text-gray-400">Bot Assignment</span>
+          <BotCheckboxes selected={selectedBots} onChange={setSelectedBots} />
         </div>
+
+        <label className="block mb-3">
+          <span className="text-sm text-gray-400">Type</span>
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
+          >
+            <option value="sandbox">Sandbox</option>
+            <option value="production">Production</option>
+          </select>
+        </label>
 
         <div className="flex gap-3 mb-3">
           <label className="flex-1">
@@ -260,7 +313,7 @@ function EditAccountModal({
     pdt_enabled?: boolean
   }) => Promise<void>
 }) {
-  const [bot, setBot] = useState(account.bot)
+  const [selectedBots, setSelectedBots] = useState<string[]>(parseBots(account.bot))
   const [capital, setCapital] = useState(String(account.capital || 10000))
   const [pdtEnabled, setPdtEnabled] = useState(account.pdt_enabled)
   const [saving, setSaving] = useState(false)
@@ -268,11 +321,15 @@ function EditAccountModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (selectedBots.length === 0) {
+      setError('Select at least one bot')
+      return
+    }
     setError('')
     setSaving(true)
     try {
       await onSave(account.id, {
-        bot,
+        bot: serializeBots(selectedBots),
         capital: parseFloat(capital) || 10000,
         pdt_enabled: pdtEnabled,
       })
@@ -303,19 +360,10 @@ function EditAccountModal({
           </div>
         )}
 
-        <label className="block mb-4">
+        <div className="mb-4">
           <span className="text-sm text-gray-400">Bot Assignment</span>
-          <select
-            value={bot}
-            onChange={(e) => setBot(e.target.value)}
-            className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
-          >
-            <option value="BOTH">BOTH</option>
-            <option value="FLAME">FLAME</option>
-            <option value="SPARK">SPARK</option>
-            <option value="INFERNO">INFERNO</option>
-          </select>
-        </label>
+          <BotCheckboxes selected={selectedBots} onChange={setSelectedBots} />
+        </div>
 
         <label className="block mb-4">
           <span className="text-sm text-gray-400">Capital ($)</span>
@@ -656,8 +704,8 @@ function AccountRow({
         <span className="font-mono text-xs text-gray-500">{account.api_key_masked}</span>
       </div>
 
-      {/* Bot badge */}
-      <BotBadge bot={account.bot} />
+      {/* Bot badges */}
+      <BotBadges bot={account.bot} />
 
       {/* Capital */}
       <div className="hidden md:block flex-shrink-0">
