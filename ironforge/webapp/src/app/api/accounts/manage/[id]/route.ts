@@ -58,15 +58,15 @@ export async function PUT(
     if (body.is_active != null) {
       updates.push(`is_active = ${body.is_active}`)
     }
-    if (body.capital != null) {
-      const cap = parseFloat(body.capital)
-      if (isNaN(cap) || cap < 0) {
+    if (body.capital_pct != null) {
+      const pct = parseInt(body.capital_pct)
+      if (isNaN(pct) || pct < 1 || pct > 100) {
         return NextResponse.json(
-          { error: 'capital must be a non-negative number' },
+          { error: 'capital_pct must be between 1 and 100' },
           { status: 400 },
         )
       }
-      updates.push(`capital = ${cap}`)
+      updates.push(`capital_pct = ${pct}`)
     }
     if (body.pdt_enabled != null) {
       updates.push(`pdt_enabled = ${body.pdt_enabled === true}`)

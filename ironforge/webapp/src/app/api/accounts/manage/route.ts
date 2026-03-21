@@ -4,6 +4,7 @@ import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/db'
 export const dynamic = 'force-dynamic'
 
 const TABLE = sharedTable('ironforge_accounts')
+const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
 
 function maskApiKey(key: string): string {
   if (!key || key.length < 9) return '****'
@@ -26,13 +27,12 @@ function validateBotField(bot: string): string | null {
   for (const p of parts) {
     if (!VALID_BOTS.includes(p)) return null
   }
-  // Deduplicate and sort for consistent storage
   const unique = Array.from(new Set(parts))
   unique.sort((a, b) => VALID_BOTS.indexOf(a) - VALID_BOTS.indexOf(b))
   return unique.join(',')
 }
 
-/** One-time migration: add capital and pdt_enabled columns if missing. */
+/** One-time migration: add columns if missing. */
 let _migrated = false
 async function ensureColumns(): Promise<void> {
   if (_migrated) return
@@ -40,41 +40,112 @@ async function ensureColumns(): Promise<void> {
   try {
     await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS capital DECIMAL(15,2) DEFAULT 10000.00`)
     await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS pdt_enabled BOOLEAN DEFAULT TRUE`)
+    await dbExecute(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS capital_pct INTEGER DEFAULT 100`)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[accounts] Column migration warning (non-fatal): ${msg}`)
   }
 }
 
-const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+/* ── Tradier helpers ─────────────────────────────────────────── */
 
-/**
- * Auto-discover Tradier sandbox account ID from an API key.
- * Calls /user/profile to get the account number.
- */
-async function discoverAccountId(apiKey: string): Promise<string | null> {
+async function tradierFetch(
+  endpoint: string,
+  apiKey: string,
+): Promise<any> {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
-    const res = await fetch(`${SANDBOX_URL}/user/profile`, {
+    const res = await fetch(`${SANDBOX_URL}${endpoint}`, {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      cache: 'no-store',
       signal: controller.signal,
     })
     clearTimeout(timeout)
     if (!res.ok) return null
-    const data = await res.json()
-    let account = data.profile?.account
-    if (Array.isArray(account)) account = account[0]
-    return account?.account_number?.toString() || null
+    return res.json()
   } catch {
     return null
   }
 }
 
-/**
- * Auto-seed: when the DB table is empty, create rows from env vars.
- * Each env-var-based sandbox account gets auto-discovered account ID from Tradier.
- */
+/** Discover Tradier account number from API key via /user/profile. */
+async function discoverAccountId(apiKey: string): Promise<string | null> {
+  const data = await tradierFetch('/user/profile', apiKey)
+  if (!data) return null
+  let account = data.profile?.account
+  if (Array.isArray(account)) account = account[0]
+  return account?.account_number?.toString() || null
+}
+
+/** Fetch live balance for one account. Returns null fields on failure. */
+async function fetchLiveBalance(
+  apiKey: string,
+  accountNumber: string,
+): Promise<{
+  live_balance: number | null
+  live_buying_power: number | null
+  open_positions: number
+}> {
+  const [balData, posData] = await Promise.all([
+    tradierFetch(`/accounts/${accountNumber}/balances`, apiKey),
+    tradierFetch(`/accounts/${accountNumber}/positions`, apiKey),
+  ])
+
+  const bal = balData?.balances || {}
+  const margin = bal.margin || {}
+  const pdt = bal.pdt || {}
+
+  const equity = bal.total_equity != null ? parseFloat(bal.total_equity) : null
+  const obp =
+    margin.option_buying_power != null ? parseFloat(margin.option_buying_power) :
+    pdt.option_buying_power != null ? parseFloat(pdt.option_buying_power) :
+    equity
+
+  let posCount = 0
+  if (posData?.positions?.position) {
+    const posList = Array.isArray(posData.positions.position)
+      ? posData.positions.position
+      : [posData.positions.position]
+    posCount = posList.length
+  }
+
+  return { live_balance: equity, live_buying_power: obp, open_positions: posCount }
+}
+
+/* ── Balance cache (60s TTL) ─────────────────────────────────── */
+
+interface CachedBalance {
+  live_balance: number | null
+  live_buying_power: number | null
+  open_positions: number
+  fetched_at: number
+}
+
+const _balanceCache: Record<string, CachedBalance> = {}
+const CACHE_TTL_MS = 60_000
+
+async function getLiveBalance(
+  apiKey: string,
+  accountId: string,
+): Promise<CachedBalance> {
+  const cached = _balanceCache[accountId]
+  if (cached && Date.now() - cached.fetched_at < CACHE_TTL_MS) return cached
+
+  // Need to discover account number from key
+  const accountNumber = await discoverAccountId(apiKey)
+  if (!accountNumber) {
+    return { live_balance: null, live_buying_power: null, open_positions: 0, fetched_at: Date.now() }
+  }
+
+  const result = await fetchLiveBalance(apiKey, accountNumber)
+  const entry: CachedBalance = { ...result, fetched_at: Date.now() }
+  _balanceCache[accountId] = entry
+  return entry
+}
+
+/* ── Auto-seed from env vars ─────────────────────────────────── */
+
 let _seeded = false
 async function seedFromEnvVars(): Promise<void> {
   if (_seeded) return
@@ -82,9 +153,8 @@ async function seedFromEnvVars(): Promise<void> {
 
   try {
     const existing = await dbQuery(`SELECT id FROM ${TABLE} LIMIT 1`)
-    if (existing.length > 0) return // DB already has accounts — skip seeding
+    if (existing.length > 0) return
 
-    // Collect env var accounts
     const envAccounts: Array<{ name: string; apiKey: string; accountIdEnv?: string }> = []
 
     const userKey = process.env.TRADIER_SANDBOX_KEY_USER || ''
@@ -104,7 +174,6 @@ async function seedFromEnvVars(): Promise<void> {
     console.log(`[accounts] Auto-seeding ${envAccounts.length} sandbox account(s) from env vars...`)
 
     for (const acct of envAccounts) {
-      // Use env var account ID if available, otherwise auto-discover from Tradier
       let accountId = acct.accountIdEnv
       if (!accountId) {
         accountId = await discoverAccountId(acct.apiKey) || `pending-${acct.name.toLowerCase()}`
@@ -112,11 +181,11 @@ async function seedFromEnvVars(): Promise<void> {
 
       await dbExecute(`
         INSERT INTO ${TABLE}
-          (person, account_id, api_key, bot, type, is_active, capital, pdt_enabled, created_at, updated_at)
+          (person, account_id, api_key, bot, type, is_active, capital_pct, pdt_enabled, created_at, updated_at)
         VALUES (
           '${escapeSql(acct.name)}', '${escapeSql(accountId)}', '${escapeSql(acct.apiKey)}',
           'FLAME,SPARK,INFERNO', 'sandbox',
-          TRUE, 10000.00, TRUE, NOW(), NOW()
+          TRUE, 100, TRUE, NOW(), NOW()
         )
         ON CONFLICT DO NOTHING
       `)
@@ -128,7 +197,8 @@ async function seedFromEnvVars(): Promise<void> {
   }
 }
 
-/** GET /api/accounts/manage — list all accounts grouped by type/person */
+/* ── GET /api/accounts/manage ────────────────────────────────── */
+
 export async function GET() {
   try {
     await ensureColumns()
@@ -136,27 +206,57 @@ export async function GET() {
 
     const rows = await dbQuery(`
       SELECT id, person, account_id, api_key, bot, type, is_active,
-             COALESCE(capital, 10000) as capital,
+             COALESCE(capital_pct, 100) as capital_pct,
              COALESCE(pdt_enabled, TRUE) as pdt_enabled,
              created_at, updated_at
       FROM ${TABLE}
       ORDER BY type, person, id
     `)
 
+    // Fetch live balances in parallel for all active accounts
+    const balancePromises: Array<Promise<void>> = []
+    const liveData: Record<number, CachedBalance> = {}
+
+    for (const row of rows) {
+      const isActive = row.is_active === true || row.is_active === 'true'
+      if (isActive && row.api_key) {
+        const rowId = parseInt(row.id)
+        balancePromises.push(
+          getLiveBalance(row.api_key, row.account_id).then(bal => {
+            liveData[rowId] = bal
+          }),
+        )
+      }
+    }
+
+    await Promise.all(balancePromises)
+
     const productionByPerson: Record<string, any[]> = {}
     const sandboxByPerson: Record<string, any[]> = {}
 
     for (const row of rows) {
+      const rowId = parseInt(row.id)
+      const capitalPct = parseInt(row.capital_pct) || 100
+      const live = liveData[rowId]
+      const liveBalance = live?.live_balance ?? null
+      const allocatedCapital = liveBalance != null
+        ? Math.round(liveBalance * capitalPct / 100 * 100) / 100
+        : null
+
       const acct = {
-        id: parseInt(row.id),
+        id: rowId,
         person: row.person,
         account_id: row.account_id,
         api_key_masked: maskApiKey(row.api_key || ''),
         bot: row.bot,
         type: row.type,
         is_active: row.is_active === true || row.is_active === 'true',
-        capital: parseFloat(row.capital) || 10000,
+        capital_pct: capitalPct,
         pdt_enabled: row.pdt_enabled === true || row.pdt_enabled === 'true',
+        live_balance: liveBalance,
+        live_buying_power: live?.live_buying_power ?? null,
+        open_positions: live?.open_positions ?? 0,
+        allocated_capital: allocatedCapital,
         created_at: row.created_at || null,
         updated_at: row.updated_at || null,
       }
@@ -187,14 +287,15 @@ export async function GET() {
   }
 }
 
-/** POST /api/accounts/manage — create a new account */
+/* ── POST /api/accounts/manage ───────────────────────────────── */
+
 export async function POST(req: NextRequest) {
   try {
     await ensureColumns()
 
     const body = await req.json()
     const { person, account_id, api_key, bot, type } = body
-    const capital = body.capital != null ? parseFloat(body.capital) : 10000
+    const capitalPct = body.capital_pct != null ? parseInt(body.capital_pct) : 100
     const pdt_enabled = body.pdt_enabled != null ? body.pdt_enabled : true
 
     if (!person || !account_id || !api_key) {
@@ -213,6 +314,12 @@ export async function POST(req: NextRequest) {
     if (!['production', 'sandbox'].includes(type)) {
       return NextResponse.json(
         { error: 'type must be production or sandbox' },
+        { status: 400 },
+      )
+    }
+    if (capitalPct < 1 || capitalPct > 100) {
+      return NextResponse.json(
+        { error: 'capital_pct must be between 1 and 100' },
         { status: 400 },
       )
     }
@@ -243,11 +350,11 @@ export async function POST(req: NextRequest) {
 
     await dbExecute(`
       INSERT INTO ${TABLE}
-        (person, account_id, api_key, bot, type, is_active, capital, pdt_enabled, created_at, updated_at)
+        (person, account_id, api_key, bot, type, is_active, capital_pct, pdt_enabled, created_at, updated_at)
       VALUES (
         '${escapeSql(person)}', '${escapeSql(account_id)}', '${escapeSql(api_key)}',
         '${escapeSql(normalizedBot)}', '${escapeSql(type)}',
-        TRUE, ${capital}, ${pdt_enabled === true}, NOW(), NOW()
+        TRUE, ${capitalPct}, ${pdt_enabled === true}, NOW(), NOW()
       )
     `)
 

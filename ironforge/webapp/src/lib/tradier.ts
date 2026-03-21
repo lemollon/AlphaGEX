@@ -1347,22 +1347,55 @@ export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: str
 }
 
 /**
- * Get the configured capital for a specific account (by person name).
- * Reads from ironforge_accounts table. Defaults to 10000.
+ * Get the configured capital percentage for a specific account (by person name).
+ * Reads from ironforge_accounts table. Defaults to 100 (%).
  */
-export async function getCapitalForAccount(person: string): Promise<number> {
+export async function getCapitalPctForAccount(person: string): Promise<number> {
   try {
     const { query: dbq } = await import('./db')
     const rows = await dbq(
-      `SELECT capital FROM ironforge_accounts
+      `SELECT capital_pct FROM ironforge_accounts
        WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
        ORDER BY type DESC LIMIT 1`,
     )
-    if (rows.length > 0 && rows[0].capital != null) {
-      return parseFloat(rows[0].capital) || 10000
+    if (rows.length > 0 && rows[0].capital_pct != null) {
+      const pct = parseInt(rows[0].capital_pct)
+      return (pct >= 1 && pct <= 100) ? pct : 100
     }
   } catch { /* fallback */ }
-  return 10000
+  return 100
+}
+
+/**
+ * Get the allocated capital for a specific account.
+ * = real Tradier account balance × capital_pct / 100
+ * Falls back to the paper account balance if Tradier is unreachable.
+ */
+export async function getAllocatedCapitalForAccount(person: string): Promise<number> {
+  const pct = await getCapitalPctForAccount(person)
+
+  // Find the account's API key from DB
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT api_key FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].api_key) {
+      const apiKey = rows[0].api_key.trim()
+      const accountId = await getAccountIdForKey(apiKey)
+      if (accountId) {
+        const bp = await getSandboxBuyingPower(apiKey, accountId)
+        if (bp != null) {
+          return Math.round(bp * pct / 100 * 100) / 100
+        }
+      }
+    }
+  } catch { /* fallback */ }
+
+  // Fallback: return a default
+  return Math.round(10000 * pct / 100)
 }
 
 /**
