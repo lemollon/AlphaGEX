@@ -21,6 +21,17 @@ function toInt(val: any): number {
 }
 
 /**
+ * Convert a value (possibly a Date object from PostgreSQL) to an ISO string.
+ * PostgreSQL's node-postgres driver returns timestamptz columns as JS Date objects.
+ * String(date) gives "Fri Mar 20 2026 ..." which is NOT valid PostgreSQL timestamp syntax.
+ * This helper ensures we always get ISO 8601 format (e.g. "2026-03-20T22:27:47.000Z").
+ */
+function toISOString(val: any): string {
+  if (val instanceof Date) return val.toISOString()
+  return String(val)
+}
+
+/**
  * Count day trades in the rolling window.
  * Reads from {bot}_pdt_log (per-bot table the scanner writes to).
  * If last_reset_at is set, exclude trades created before the reset.
@@ -32,7 +43,7 @@ function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null):
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
-    sql += ` AND created_at > '${escapeSql(String(lastResetAt))}'`
+    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
   return sql
 }
@@ -47,7 +58,7 @@ function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): 
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
   if (lastResetAt) {
-    sql += ` AND created_at > '${escapeSql(String(lastResetAt))}'`
+    sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
   sql += ` ORDER BY trade_date ASC`
   return sql
@@ -214,7 +225,7 @@ async function handleReset(
     `SELECT last_reset_at FROM ${PDT_CONFIG}
      WHERE bot_name = '${escapeSql(botName)}' LIMIT 1`,
   )
-  const currentResetAt = configRows[0]?.last_reset_at ?? null
+  const currentResetAt = configRows[0]?.last_reset_at ? toISOString(configRows[0].last_reset_at) : null
 
   // Count current day trades
   const countRows = await dbQuery(dayTradeCountSql(bot, dte, currentResetAt))
@@ -327,7 +338,8 @@ async function buildStatusResponse(
   const maxDayTrades = cfg.max_day_trades != null && cfg.max_day_trades !== '' ? toInt(cfg.max_day_trades) : 4
   const maxTradesPerDay = cfg.max_trades_per_day != null && cfg.max_trades_per_day !== '' ? toInt(cfg.max_trades_per_day) : 1
   const windowDays = cfg.window_days != null && cfg.window_days !== '' ? toInt(cfg.window_days) : 5
-  const lastResetAt = cfg.last_reset_at ?? null
+  // PostgreSQL returns timestamptz as JS Date — must convert to ISO string for SQL embedding
+  const lastResetAt = cfg.last_reset_at ? toISOString(cfg.last_reset_at) : null
 
   // Count from {bot}_pdt_log — respects last_reset_at
   const countRows = await dbQuery(dayTradeCountSql(bot, dte, lastResetAt))
@@ -341,7 +353,7 @@ async function buildStatusResponse(
   const todayTradesCount = toInt(todayRows[0]?.cnt)
   const tradedToday = maxTradesPerDay > 0 && todayTradesCount >= maxTradesPerDay
   const todayTradeTime = todayRows[0]?.first_trade_time
-    ? String(todayRows[0].first_trade_time)
+    ? toISOString(todayRows[0].first_trade_time)
     : null
 
   // is_blocked = only rolling PDT limit
