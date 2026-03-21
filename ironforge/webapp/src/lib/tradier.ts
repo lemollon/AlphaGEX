@@ -593,16 +593,13 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
     }
     if (rows.length > 0) {
       const seen = new Set<string>()
-      let isFirst = true
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
         seen.add(key)
-        // First account gets name 'User' so FLAME fill-only mode works
-        // (FLAME requires sandboxOrderIds['User'] to be present)
-        const name = isFirst ? 'User' : (row.person || 'DB')
+        // Use actual person name from DB — each account holder has their own sandbox
+        const name = row.person || 'User'
         _sandboxAccounts.push({ name, apiKey: key })
-        isFirst = false
       }
       if (_sandboxAccounts.length > 0) {
         console.log(
@@ -1088,11 +1085,15 @@ export async function placeIcOrderAllAccounts(
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
-  // Filter accounts by bot (FLAME=User+Matt+Logan, SPARK+INFERNO=paper-only/none)
-  const allowedAccounts = botName ? getAccountsForBot(botName) : null
+  // Filter accounts by bot — reads from ironforge_accounts DB (falls back to hardcoded BOT_ACCOUNTS)
+  const allowedAccounts = botName ? await getAccountsForBotAsync(botName) : null
   const eligibleAccounts = allowedAccounts
     ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
     : _sandboxAccounts
+  console.log(
+    `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
+    `eligible=[${eligibleAccounts.map(a => a.name).join(', ')}] (${allowedAccounts ? 'from DB' : 'all'})`,
+  )
 
   // Shared OCC symbols — same strikes for all accounts
   const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
@@ -1133,7 +1134,10 @@ export async function placeIcOrderAllAccounts(
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
       const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
-      const botShare = botName ? getBpShareForBot(botName, acct.name) : 1.0
+      // Equal share among all accounts assigned to this bot (DB-backed)
+      const botShare = botName && eligibleAccounts.length > 1
+        ? 1.0 / eligibleAccounts.length
+        : 1.0
       const usableBP = bp * botShare * 0.85
       const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
       // Size to 85% of account's option buying power. No paperContracts cap —
@@ -1347,6 +1351,115 @@ export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string
 export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string }>> {
   await ensureSandboxAccountsLoaded()
   return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+}
+
+/**
+ * Get the configured capital percentage for a specific account (by person name).
+ * Reads from ironforge_accounts table. Defaults to 100 (%).
+ */
+export async function getCapitalPctForAccount(person: string): Promise<number> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT capital_pct FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].capital_pct != null) {
+      const pct = parseInt(rows[0].capital_pct)
+      return (pct >= 1 && pct <= 100) ? pct : 100
+    }
+  } catch { /* fallback */ }
+  return 100
+}
+
+/**
+ * Get the allocated capital for a specific account.
+ * = real Tradier total_equity × capital_pct / 100
+ * Falls back to $10,000 × pct if Tradier is unreachable.
+ */
+export async function getAllocatedCapitalForAccount(person: string): Promise<number> {
+  const pct = await getCapitalPctForAccount(person)
+
+  // Find the account's API key from DB and fetch total_equity (not OBP)
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT api_key FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].api_key) {
+      const apiKey = rows[0].api_key.trim()
+      const accountId = await getAccountIdForKey(apiKey)
+      if (accountId) {
+        const equity = await getSandboxTotalEquity(apiKey, accountId)
+        if (equity != null) {
+          const allocated = Math.round(equity * pct / 100 * 100) / 100
+          console.log(`[tradier] getAllocatedCapital: ${person} → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
+          return allocated
+        }
+      }
+    }
+  } catch { /* fallback */ }
+
+  // Fallback: return a default
+  return Math.round(10000 * pct / 100)
+}
+
+/**
+ * Fetch total equity for a sandbox account (consistent with frontend display).
+ * Uses total_equity, NOT option_buying_power.
+ */
+async function getSandboxTotalEquity(apiKey: string, accountId: string): Promise<number | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/balances`, undefined, apiKey)
+  const equity = data?.balances?.total_equity
+  return equity != null ? parseFloat(equity) : null
+}
+
+/**
+ * Get the PDT enabled flag for a specific account (by person name).
+ * Reads from ironforge_accounts table. Defaults to true.
+ */
+export async function getPdtEnabledForAccount(person: string): Promise<boolean> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT pdt_enabled FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
+       ORDER BY type DESC LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].pdt_enabled != null) {
+      return rows[0].pdt_enabled === true || rows[0].pdt_enabled === 'true'
+    }
+  } catch { /* fallback */ }
+  return true
+}
+
+/**
+ * Get sandbox accounts that a specific bot should trade on (DB-backed).
+ * Queries ironforge_accounts for accounts assigned to this bot.
+ * The bot field can be a single bot name or comma-separated (e.g. "FLAME,SPARK").
+ * Falls back to the hardcoded BOT_ACCOUNTS if DB query fails.
+ */
+export async function getAccountsForBotAsync(botName: string): Promise<string[]> {
+  try {
+    const { query: dbq } = await import('./db')
+    const botUpper = botName.toUpperCase()
+    // Match accounts where the bot field contains this bot name
+    // Handles: exact match ("FLAME"), comma-separated ("FLAME,SPARK"), or legacy "BOTH"
+    const rows = await dbq(
+      `SELECT DISTINCT person FROM ironforge_accounts
+       WHERE is_active = TRUE
+         AND (bot = '${botUpper}' OR bot LIKE '%${botUpper}%' OR bot = 'BOTH'
+              OR bot = 'FLAME,SPARK,INFERNO')
+       ORDER BY person`,
+    )
+    if (rows.length > 0) {
+      return rows.map((r: any) => r.person)
+    }
+  } catch { /* fallback to hardcoded */ }
+  return BOT_ACCOUNTS[botName]?.accounts ?? ['User']
 }
 
 /**

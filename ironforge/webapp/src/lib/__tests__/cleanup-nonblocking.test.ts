@@ -1,10 +1,12 @@
 /**
- * Tests verifying that dailySandboxCleanup and prescanSandboxHealthCheck
- * do NOT block the scan cycle.
+ * Tests verifying cleanup and health check behavior in runAllScans.
  *
- * These tests verify the code structure by reading the source and confirming
- * the cleanup calls are fire-and-forget (no await), and that position counting
- * is independent from cleanup (different data stores).
+ * dailySandboxCleanup is BLOCKING (awaited) — stale positions must be cleared
+ * before scanning or every new order gets rejected (1500+ rejections/day).
+ *
+ * prescanSandboxHealthCheck is fire-and-forget (non-blocking).
+ *
+ * These tests verify the code structure by reading the source.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -12,31 +14,26 @@ import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
 /* ================================================================== */
-/*  1. Code Structure: Cleanup is fire-and-forget                      */
+/*  1. Code Structure: Cleanup blocking, health check fire-and-forget  */
 /* ================================================================== */
 
-describe('Cleanup Non-Blocking: Code Structure', () => {
+describe('Cleanup: Code Structure', () => {
   const scannerSource = readFileSync(
     resolve(__dirname, '../scanner.ts'),
     'utf-8',
   )
 
-  it('dailySandboxCleanup is NOT awaited in runAllScans', () => {
-    // The cleanup call must be fire-and-forget: dailySandboxCleanup(ct).catch(...)
-    // NOT: await dailySandboxCleanup(ct)
-
-    // Find the runAllScans function body
+  it('dailySandboxCleanup IS awaited (blocking) in runAllScans', () => {
+    // Cleanup MUST block bot scanning — stale positions consume buying power
+    // and cause every new order to be rejected (1500+ rejections/day).
     const runAllScansMatch = scannerSource.match(
       /async function runAllScans\(\)[\s\S]*?^}/m,
     )
     expect(runAllScansMatch).toBeTruthy()
     const fnBody = runAllScansMatch![0]
 
-    // Must NOT contain "await dailySandboxCleanup"
-    expect(fnBody).not.toMatch(/await\s+dailySandboxCleanup/)
-
-    // Must contain the fire-and-forget pattern
-    expect(fnBody).toMatch(/dailySandboxCleanup\(ct\)\.catch/)
+    // Must contain "await dailySandboxCleanup(ct)" inside a try/catch
+    expect(fnBody).toMatch(/await\s+dailySandboxCleanup\(ct\)/)
   })
 
   it('prescanSandboxHealthCheck is NOT awaited in runAllScans', () => {
@@ -53,15 +50,15 @@ describe('Cleanup Non-Blocking: Code Structure', () => {
     expect(fnBody).toMatch(/prescanSandboxHealthCheck\(\)\.catch/)
   })
 
-  it('bot scanning (scanBot) still runs after cleanup fires', () => {
+  it('bot scanning (scanBot) runs AFTER cleanup completes', () => {
     const runAllScansMatch = scannerSource.match(
       /async function runAllScans\(\)[\s\S]*?^}/m,
     )
     expect(runAllScansMatch).toBeTruthy()
     const fnBody = runAllScansMatch![0]
 
-    // The BOTS.map(bot => scanBot(bot)) call must come AFTER the cleanup calls
-    const cleanupIdx = fnBody.indexOf('dailySandboxCleanup(ct).catch')
+    // dailySandboxCleanup (awaited) must appear BEFORE scanBot calls
+    const cleanupIdx = fnBody.indexOf('dailySandboxCleanup(ct)')
     const scanBotIdx = fnBody.indexOf('scanBot(bot)')
 
     expect(cleanupIdx).toBeGreaterThan(-1)

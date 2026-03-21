@@ -42,6 +42,8 @@ import {
   getOrderFillPrice,
   getAccountIdForKey,
   buildOccSymbol,
+  getAccountsForBotAsync,
+  getAllocatedCapitalForAccount,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -118,7 +120,30 @@ function cfg(bot: BotDef): BotConfig {
 }
 
 /**
+ * Look up the allocated capital for this bot from ironforge_accounts.
+ * Uses the primary (first) person assigned to this bot.
+ * allocated_capital = total_equity × capital_pct / 100
+ * Falls back to DEFAULT_CONFIG starting_capital if no accounts found.
+ */
+async function getStartingCapitalForBot(botName: string): Promise<number> {
+  try {
+    const persons = await getAccountsForBotAsync(botName)
+    if (persons.length > 0) {
+      const allocated = await getAllocatedCapitalForAccount(persons[0])
+      if (allocated > 0) {
+        console.log(
+          `[scanner] ${botName.toUpperCase()} capital from account (${persons[0]}): $${allocated.toLocaleString()}`,
+        )
+        return allocated
+      }
+    }
+  } catch { /* fallback */ }
+  return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
+}
+
+/**
  * Read {bot}_config tables from PostgreSQL and merge into _botConfig.
+ * Also reads allocated capital from ironforge_accounts (capital_pct × real balance).
  * Runs once per scan cycle. Falls back silently to defaults if table
  * doesn't exist or query fails.
  */
@@ -149,15 +174,75 @@ async function loadConfigOverrides(): Promise<void> {
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
 
+      // Override starting_capital from ironforge_accounts (capital_pct × real balance)
+      try {
+        const allocatedCap = await getStartingCapitalForBot(bot.name)
+        if (allocatedCap > 0) {
+          merged.starting_capital = allocatedCap
+        }
+      } catch { /* keep config default */ }
+
       _botConfig[bot.name] = merged
       console.log(
         `[scanner] ${bot.name.toUpperCase()} config loaded: sd=${merged.sd}, pt=${merged.pt_pct}, ` +
         `sl=${merged.sl_mult}, entry_end=${merged.entry_end}, max_contracts=${merged.max_contracts}, ` +
-        `max_trades=${merged.max_trades}, bp_pct=${merged.bp_pct}`,
+        `max_trades=${merged.max_trades}, bp_pct=${merged.bp_pct}, starting_capital=$${merged.starting_capital.toLocaleString()}`,
       )
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${bot.name.toUpperCase()} config load failed (using defaults): ${msg}`)
+    }
+  }
+
+  // Sync paper_account starting_capital if it changed
+  await syncPaperAccountCapital()
+}
+
+/**
+ * Update paper_account.starting_capital when allocated capital changes.
+ * Recalculates balance and buying_power to keep accounting consistent.
+ */
+async function syncPaperAccountCapital(): Promise<void> {
+  for (const bot of BOTS) {
+    const botCfg = cfg(bot)
+    try {
+      const rows = await query(
+        `SELECT id, starting_capital, cumulative_pnl, collateral_in_use
+         FROM ${botTable(bot.name, 'paper_account')}
+         WHERE is_active = TRUE AND dte_mode = $1 ORDER BY id DESC LIMIT 1`,
+        [bot.dte],
+      )
+      if (rows.length === 0) continue
+
+      const current = num(rows[0].starting_capital)
+      const target = botCfg.starting_capital
+
+      // Only update if meaningful change (>$1 difference)
+      if (Math.abs(current - target) < 1) continue
+
+      const pnl = num(rows[0].cumulative_pnl)
+      const collateral = num(rows[0].collateral_in_use)
+      const newBalance = target + pnl
+      const newBp = newBalance - collateral
+
+      await query(
+        `UPDATE ${botTable(bot.name, 'paper_account')}
+         SET starting_capital = $1,
+             current_balance = $2,
+             buying_power = $3,
+             high_water_mark = GREATEST(high_water_mark, $2),
+             updated_at = NOW()
+         WHERE is_active = TRUE AND dte_mode = $4`,
+        [target, newBalance, newBp, bot.dte],
+      )
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} PAPER ACCOUNT CAPITAL SYNCED: ` +
+        `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
+        `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+      )
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] ${bot.name.toUpperCase()} capital sync error: ${msg}`)
     }
   }
 }

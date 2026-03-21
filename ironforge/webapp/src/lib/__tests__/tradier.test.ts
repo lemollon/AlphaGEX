@@ -128,7 +128,7 @@ describe('getOptionQuote', () => {
       jsonResponse({ quotes: { quote: { bid: '0.15', ask: '0.20', last: '0.18', symbol: 'SPY260318P00580000' } } }),
     )
     const q = await getOptionQuote('SPY260318P00580000')
-    expect(q).toEqual({ bid: 0.15, ask: 0.20, last: 0.18, symbol: 'SPY260318P00580000' })
+    expect(q).toEqual({ bid: 0.15, ask: 0.20, last: 0.18, mid: 0.175, symbol: 'SPY260318P00580000' })
   })
 
   it('returns null on unmatched symbols', async () => {
@@ -145,16 +145,25 @@ describe('getOptionQuote', () => {
 /* ================================================================== */
 
 describe('getIcMarkToMarket', () => {
+  // OCC symbols for the test IC: SPY 2026-03-18 580/575 put spread, 590/595 call spread
+  const occPs = buildOccSymbol('SPY', '2026-03-18', 580, 'P') // SPY260318P00580000
+  const occPl = buildOccSymbol('SPY', '2026-03-18', 575, 'P') // SPY260318P00575000
+  const occCs = buildOccSymbol('SPY', '2026-03-18', 590, 'C') // SPY260318C00590000
+  const occCl = buildOccSymbol('SPY', '2026-03-18', 595, 'C') // SPY260318C00595000
+
   it('calculates cost_to_close from 4 leg quotes', async () => {
-    // PS ask=0.12, PL bid=0.01, CS ask=0.10, CL bid=0.01, SPY last=585.50
-    const mockQuotes = [
-      jsonResponse({ quotes: { quote: { bid: '0.10', ask: '0.12', last: '0.11', symbol: 'PS' } } }),
-      jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'PL' } } }),
-      jsonResponse({ quotes: { quote: { bid: '0.08', ask: '0.10', last: '0.09', symbol: 'CS' } } }),
-      jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'CL' } } }),
-      jsonResponse({ quotes: { quote: { last: '585.50', bid: '585.45', ask: '585.55', symbol: 'SPY' } } }),
-    ]
-    for (const r of mockQuotes) mockFetch.mockResolvedValueOnce(r)
+    // Single batch response with all 5 symbols (4 option legs + underlying)
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      quotes: {
+        quote: [
+          { bid: '0.10', ask: '0.12', last: '0.11', symbol: occPs },
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occPl },
+          { bid: '0.08', ask: '0.10', last: '0.09', symbol: occCs },
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occCl },
+          { bid: '585.45', ask: '585.55', last: '585.50', symbol: 'SPY' },
+        ],
+      },
+    }))
 
     const result = await getIcMarkToMarket('SPY', '2026-03-18', 580, 575, 590, 595, 0.27)
     expect(result).not.toBeNull()
@@ -164,26 +173,36 @@ describe('getIcMarkToMarket', () => {
   })
 
   it('returns null when a leg quote is missing', async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse({}, 500)) // PS fails
-    mockFetch.mockResolvedValueOnce(jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'PL' } } }))
-    mockFetch.mockResolvedValueOnce(jsonResponse({ quotes: { quote: { bid: '0.08', ask: '0.10', last: '0.09', symbol: 'CS' } } }))
-    mockFetch.mockResolvedValueOnce(jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'CL' } } }))
-    mockFetch.mockResolvedValueOnce(jsonResponse({ quotes: { quote: { last: '585.50', bid: '585.45', ask: '585.55', symbol: 'SPY' } } }))
+    // Batch response missing the put short leg
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      quotes: {
+        quote: [
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occPl },
+          { bid: '0.08', ask: '0.10', last: '0.09', symbol: occCs },
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occCl },
+          { bid: '585.45', ask: '585.55', last: '585.50', symbol: 'SPY' },
+        ],
+        unmatched_symbols: { symbol: occPs },
+      },
+    }))
 
     const result = await getIcMarkToMarket('SPY', '2026-03-18', 580, 575, 590, 595, 0.27)
     expect(result).toBeNull()
   })
 
   it('caps cost at spread width', async () => {
-    // All asks very high — cost would exceed spread width
-    const mockQuotes = [
-      jsonResponse({ quotes: { quote: { bid: '4.90', ask: '5.10', last: '5.0', symbol: 'PS' } } }),
-      jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'PL' } } }),
-      jsonResponse({ quotes: { quote: { bid: '4.90', ask: '5.10', last: '5.0', symbol: 'CS' } } }),
-      jsonResponse({ quotes: { quote: { bid: '0.01', ask: '0.02', last: '0.01', symbol: 'CL' } } }),
-      jsonResponse({ quotes: { quote: { last: '585.50', bid: '585.45', ask: '585.55', symbol: 'SPY' } } }),
-    ]
-    for (const r of mockQuotes) mockFetch.mockResolvedValueOnce(r)
+    // All short leg asks very high — cost would exceed spread width
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      quotes: {
+        quote: [
+          { bid: '4.90', ask: '5.10', last: '5.0', symbol: occPs },
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occPl },
+          { bid: '4.90', ask: '5.10', last: '5.0', symbol: occCs },
+          { bid: '0.01', ask: '0.02', last: '0.01', symbol: occCl },
+          { bid: '585.45', ask: '585.55', last: '585.50', symbol: 'SPY' },
+        ],
+      },
+    }))
 
     const result = await getIcMarkToMarket('SPY', '2026-03-18', 580, 575, 590, 595)
     // spread width = 580 - 575 = 5.0; cost should be capped

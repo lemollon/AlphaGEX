@@ -5,6 +5,22 @@ export const dynamic = 'force-dynamic'
 
 const TABLE = sharedTable('ironforge_accounts')
 
+const VALID_BOTS = ['FLAME', 'SPARK', 'INFERNO']
+
+function validateBotField(bot: string): string | null {
+  if (!bot) return null
+  const trimmed = bot.trim().toUpperCase()
+  if (trimmed === 'BOTH') return 'FLAME,SPARK,INFERNO'
+  const parts = trimmed.split(',').map(b => b.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  for (const p of parts) {
+    if (!VALID_BOTS.includes(p)) return null
+  }
+  const unique = Array.from(new Set(parts))
+  unique.sort((a, b) => VALID_BOTS.indexOf(a) - VALID_BOTS.indexOf(b))
+  return unique.join(',')
+}
+
 /** PUT /api/accounts/manage/:id — update bot assignment, API key, or active status */
 export async function PUT(
   req: NextRequest,
@@ -27,19 +43,33 @@ export async function PUT(
     const updates: string[] = []
 
     if (body.bot != null) {
-      if (!['FLAME', 'SPARK', 'INFERNO', 'BOTH'].includes(body.bot)) {
+      const normalizedBot = validateBotField(body.bot)
+      if (!normalizedBot) {
         return NextResponse.json(
-          { error: 'bot must be FLAME, SPARK, INFERNO, or BOTH' },
+          { error: 'bot must be one or more of: FLAME, SPARK, INFERNO (comma-separated or BOTH)' },
           { status: 400 },
         )
       }
-      updates.push(`bot = '${escapeSql(body.bot)}'`)
+      updates.push(`bot = '${escapeSql(normalizedBot)}'`)
     }
     if (body.api_key != null) {
       updates.push(`api_key = '${escapeSql(body.api_key)}'`)
     }
     if (body.is_active != null) {
       updates.push(`is_active = ${body.is_active}`)
+    }
+    if (body.capital_pct != null) {
+      const pct = parseInt(body.capital_pct)
+      if (isNaN(pct) || pct < 1 || pct > 100) {
+        return NextResponse.json(
+          { error: 'capital_pct must be between 1 and 100' },
+          { status: 400 },
+        )
+      }
+      updates.push(`capital_pct = ${pct}`)
+    }
+    if (body.pdt_enabled != null) {
+      updates.push(`pdt_enabled = ${body.pdt_enabled === true}`)
     }
 
     if (updates.length === 0) {

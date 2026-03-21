@@ -398,10 +398,18 @@ describe('Advisor', () => {
   const idealVix = 18.0
 
   it('TRADE_FULL when conditions are ideal', () => {
-    const result = evaluateAdvisor(idealVix, spot, em, '2DTE')
-    expect(result.advice).toBe('TRADE_FULL')
-    expect(result.winProbability).toBeGreaterThanOrEqual(0.60)
-    expect(result.confidence).toBeGreaterThanOrEqual(0.50)
+    // evaluateAdvisor uses new Date().getDay() internally — pin to Wednesday
+    // so weekend/Friday penalties don't affect the "ideal conditions" test
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-18T12:00:00')) // Wednesday
+    try {
+      const result = evaluateAdvisor(idealVix, spot, em, '2DTE')
+      expect(result.advice).toBe('TRADE_FULL')
+      expect(result.winProbability).toBeGreaterThanOrEqual(0.60)
+      expect(result.confidence).toBeGreaterThanOrEqual(0.50)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('penalizes heavily when VIX is extremely high', () => {
