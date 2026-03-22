@@ -45,6 +45,7 @@ import {
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
   getPdtEnabledForAccount,
+  getSandboxAccountBalances,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -2243,6 +2244,40 @@ export function ensureScannerStarted(): void {
   startScanner()
 }
 
+/* ------------------------------------------------------------------ */
+/*  Production equity snapshots — real Tradier balance each cycle       */
+/* ------------------------------------------------------------------ */
+
+async function saveProductionEquitySnapshots(): Promise<void> {
+  try {
+    const balances = await getSandboxAccountBalances()
+    if (balances.length === 0) return
+
+    for (const acct of balances) {
+      if (acct.total_equity == null) continue
+      await query(
+        `INSERT INTO production_equity_snapshots
+         (person, account_id, total_equity, option_buying_power, day_pnl,
+          unrealized_pnl, open_positions, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          acct.name,
+          acct.account_id || null,
+          acct.total_equity,
+          acct.option_buying_power,
+          acct.day_pnl,
+          acct.unrealized_pnl,
+          acct.open_positions_count || 0,
+          `scan:${_scanCount}`,
+        ],
+      )
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] saveProductionEquitySnapshots: ${msg}`)
+  }
+}
+
 async function runAllScans(): Promise<void> {
   _scanCount++
   const start = Date.now()
@@ -2292,6 +2327,13 @@ async function runAllScans(): Promise<void> {
       }),
     ),
   )
+
+  // Save production account equity snapshots every cycle (same as paper snapshots).
+  // This gives production accounts their own equity curve based on real Tradier balances.
+  saveProductionEquitySnapshots().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] Production equity snapshot failed (non-fatal): ${msg}`)
+  })
 
   // EOD safety net: at 2:55 PM CT, sweep ALL bots for any stranded positions
   // This catches positions that survived the normal EOD close (scanner restart,

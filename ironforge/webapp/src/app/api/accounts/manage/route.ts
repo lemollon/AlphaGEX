@@ -139,7 +139,8 @@ async function getLiveBalance(
   if (cached && Date.now() - cached.fetched_at < CACHE_TTL_MS) return cached
 
   // Deduplicate concurrent requests for the same account
-  if (_balanceInflight[cacheKey]) return _balanceInflight[cacheKey]
+  const inflight = _balanceInflight[cacheKey]
+  if (inflight) return inflight
 
   const promise = (async () => {
     const result = await fetchLiveBalance(apiKey, accountId, accountType)

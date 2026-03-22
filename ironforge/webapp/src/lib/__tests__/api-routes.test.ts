@@ -749,10 +749,11 @@ describe('Person filtering — /api/persons endpoint', () => {
     expect(source).toMatch(/export\s+async\s+function\s+GET/)
   })
 
-  it('queries ironforge_accounts for active sandbox persons', () => {
+  it('queries ironforge_accounts for all active persons (sandbox + production)', () => {
     expect(source).toMatch(/ironforge_accounts/)
-    expect(source).toMatch(/type\s*=\s*'sandbox'/)
     expect(source).toMatch(/is_active\s*=\s*TRUE/)
+    // Production accounts must appear in person dropdown for broker equity curve
+    expect(source).not.toMatch(/type\s*=\s*'sandbox'/)
   })
 
   it('returns distinct person names', () => {
@@ -963,5 +964,87 @@ describe('Person filtering — Compare page', () => {
     expect(source).toMatch(/inferno\/status\$\{pq\}/)
     expect(source).toMatch(/flame\/equity-curve\$\{pq\}/)
     expect(source).toMatch(/flame\/performance\$\{pq\}/)
+  })
+})
+
+/* ── Production Equity Curve ─────────────────────────────── */
+
+describe('Production Equity Curve', () => {
+  const { readFileSync } = require('fs')
+  const { resolve } = require('path')
+
+  const dbSource = readFileSync(
+    resolve(__dirname, '../db.ts'),
+    'utf-8',
+  )
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+  const equityCurveSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/production/equity-curve/route.ts'),
+    'utf-8',
+  )
+  const dashboardSource = readFileSync(
+    resolve(__dirname, '../../components/BotDashboard.tsx'),
+    'utf-8',
+  )
+
+  it('creates production_equity_snapshots table in DDL', () => {
+    expect(dbSource).toMatch(/CREATE TABLE IF NOT EXISTS production_equity_snapshots/)
+  })
+
+  it('production_equity_snapshots has required columns', () => {
+    expect(dbSource).toMatch(/person TEXT NOT NULL/)
+    expect(dbSource).toMatch(/total_equity NUMERIC/)
+    expect(dbSource).toMatch(/option_buying_power NUMERIC/)
+    expect(dbSource).toMatch(/day_pnl NUMERIC/)
+    expect(dbSource).toMatch(/open_positions INT/)
+  })
+
+  it('scanner saves production equity snapshots each cycle', () => {
+    expect(scannerSource).toMatch(/saveProductionEquitySnapshots/)
+    // Called in runAllScans
+    expect(scannerSource).toMatch(/saveProductionEquitySnapshots\(\)\.catch/)
+  })
+
+  it('saveProductionEquitySnapshots calls getSandboxAccountBalances', () => {
+    const fn = scannerSource.match(
+      /async function saveProductionEquitySnapshots[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/getSandboxAccountBalances/)
+  })
+
+  it('saveProductionEquitySnapshots inserts into production_equity_snapshots', () => {
+    const fn = scannerSource.match(
+      /async function saveProductionEquitySnapshots[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/INSERT INTO production_equity_snapshots/)
+  })
+
+  it('equity curve API supports person parameter', () => {
+    expect(equityCurveSource).toMatch(/person.*parameter required/)
+    expect(equityCurveSource).toMatch(/person = \$1/)
+  })
+
+  it('equity curve API supports intraday and historical modes', () => {
+    expect(equityCurveSource).toMatch(/mode.*intraday/)
+    expect(equityCurveSource).toMatch(/mode.*historical/)
+  })
+
+  it('equity curve API supports period filter', () => {
+    expect(equityCurveSource).toMatch(/period/)
+    expect(equityCurveSource).toMatch(/INTERVAL/)
+  })
+
+  it('BotDashboard includes Broker Equity tab', () => {
+    expect(dashboardSource).toMatch(/Broker Equity/)
+    expect(dashboardSource).toMatch(/BrokerEquityTab/)
+  })
+
+  it('BotDashboard fetches production equity curve data', () => {
+    expect(dashboardSource).toMatch(/\/api\/accounts\/production\/equity-curve/)
   })
 })

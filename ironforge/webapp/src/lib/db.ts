@@ -293,7 +293,21 @@ CREATE TABLE IF NOT EXISTS ${bot}_config (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-`).join('')
+`).join('') + `
+CREATE TABLE IF NOT EXISTS production_equity_snapshots (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+  person TEXT NOT NULL,
+  account_id TEXT,
+  total_equity NUMERIC(12,2),
+  option_buying_power NUMERIC(12,2),
+  day_pnl NUMERIC(12,2),
+  unrealized_pnl NUMERIC(12,2),
+  open_positions INT DEFAULT 0,
+  note TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+`
 
 /**
  * Ensure all tables exist. Runs once per server cold start.

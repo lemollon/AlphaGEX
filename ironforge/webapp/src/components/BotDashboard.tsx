@@ -55,7 +55,7 @@ function TabLoading() {
   )
 }
 
-const TABS = ['Equity Curve', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+const TABS = ['Equity Curve', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
 type Tab = (typeof TABS)[number]
 
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
@@ -108,6 +108,17 @@ export default function BotDashboard({
   const { data: intraday } = useSWR(
     tab === 'Equity Curve' && equityPeriod === 'intraday'
       ? withPerson(`/api/${bot}/equity-curve/intraday`)
+      : null,
+    fetcher,
+    { refreshInterval: LIVE_REFRESH },
+  )
+
+  /* ---- Broker (production) equity curve ---- */
+  const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
+  const brokerPerson = selectedPerson !== 'all' ? selectedPerson : persons[0] ?? 'User'
+  const { data: brokerEquity } = useSWR(
+    tab === 'Broker Equity'
+      ? `/api/accounts/production/equity-curve?person=${encodeURIComponent(brokerPerson)}&mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
       : null,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
@@ -323,6 +334,15 @@ export default function BotDashboard({
             onPeriodChange={onPeriodChange}
           />
         )}
+        {tab === 'Broker Equity' && (
+          <BrokerEquityTab
+            data={brokerEquity}
+            person={brokerPerson}
+            period={brokerPeriod}
+            onPeriodChange={setBrokerPeriod}
+            accent={accent}
+          />
+        )}
         {tab === 'Performance' && (
           perfErr
             ? <TabError message={perfErr.message} />
@@ -377,6 +397,210 @@ export default function BotDashboard({
               ? <TabLoading />
               : <ReconcileTab data={reconData} />
         )}
+      </div>
+    </div>
+  )
+}
+
+/* ================================================================
+   Broker Equity Tab — real Tradier account equity curve
+   ================================================================ */
+
+const BROKER_PERIODS = [
+  { label: 'Intraday', value: 'intraday' as const },
+  { label: '1W', value: '1w' as const },
+  { label: '1M', value: '1m' as const },
+  { label: '3M', value: '3m' as const },
+  { label: 'All', value: 'all' as const },
+]
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function BrokerEquityTab({
+  data,
+  person,
+  period,
+  onPeriodChange,
+  accent,
+}: {
+  data: any
+  person: string
+  period: string
+  onPeriodChange: (p: 'intraday' | '1d' | '1w' | '1m' | '3m' | 'all') => void
+  accent: 'amber' | 'blue' | 'red'
+}) {
+  const points = data?.mode === 'intraday' ? data?.snapshots : data?.curve
+  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'
+
+  if (!data) return <TabLoading />
+
+  if (!points || points.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-white">Broker Equity — {person}</h3>
+          <div className="flex gap-1">
+            {BROKER_PERIODS.map((p) => (
+              <button
+                key={p.value}
+                onClick={() => onPeriodChange(p.value)}
+                className={`px-2 py-1 text-xs rounded ${
+                  period === p.value
+                    ? 'bg-forge-border text-white'
+                    : 'text-forge-muted hover:text-white'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+          <p className="text-forge-muted text-sm">
+            No broker equity snapshots yet — data will appear after the next scan cycle
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  const first = points[0]
+  const last = points[points.length - 1]
+  const firstEquity = first.total_equity
+  const lastEquity = last.total_equity
+  const change = lastEquity - firstEquity
+  const changePct = firstEquity > 0 ? (change / firstEquity) * 100 : 0
+
+  // Find min/max for Y-axis
+  const equities = points.map((p: any) => p.total_equity).filter((v: number) => v > 0)
+  const minEq = Math.min(...equities)
+  const maxEq = Math.max(...equities)
+  const range = maxEq - minEq || 1
+  const yMin = minEq - range * 0.1
+  const yMax = maxEq + range * 0.1
+
+  return (
+    <div className="space-y-4">
+      {/* Header with period selector */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-white">Broker Equity — {person}</h3>
+          <div className="flex items-center gap-3 mt-1">
+            <span className="text-xl font-bold text-white">
+              ${lastEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+            <span className={`text-sm font-medium ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {change >= 0 ? '+' : ''}{change.toFixed(2)} ({changePct.toFixed(2)}%)
+            </span>
+            {last.open_positions > 0 && (
+              <span className="text-xs text-forge-muted">
+                {last.open_positions} position{last.open_positions !== 1 ? 's' : ''} open
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-1">
+          {BROKER_PERIODS.map((p) => (
+            <button
+              key={p.value}
+              onClick={() => onPeriodChange(p.value)}
+              className={`px-2 py-1 text-xs rounded ${
+                period === p.value
+                  ? 'bg-forge-border text-white'
+                  : 'text-forge-muted hover:text-white'
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* SVG Chart */}
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
+        <svg viewBox="0 0 800 300" className="w-full h-64">
+          {/* Grid lines */}
+          {Array.from({ length: 5 }).map((_, i) => {
+            const y = 20 + (i * 260) / 4
+            const val = yMax - (i * (yMax - yMin)) / 4
+            return (
+              <g key={i}>
+                <line x1="60" y1={y} x2="780" y2={y} stroke="#374151" strokeWidth="0.5" />
+                <text x="55" y={y + 4} textAnchor="end" fill="#6b7280" fontSize="10">
+                  ${val.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </text>
+              </g>
+            )
+          })}
+          {/* Equity line */}
+          <polyline
+            fill="none"
+            stroke={accentColor}
+            strokeWidth="2"
+            points={points
+              .map((p: any, i: number) => {
+                const x = 60 + (i / Math.max(1, points.length - 1)) * 720
+                const y = 20 + ((yMax - p.total_equity) / (yMax - yMin)) * 260
+                return `${x},${y}`
+              })
+              .join(' ')}
+          />
+          {/* Fill area */}
+          <polygon
+            fill={accentColor}
+            fillOpacity="0.1"
+            points={[
+              `60,280`,
+              ...points.map((p: any, i: number) => {
+                const x = 60 + (i / Math.max(1, points.length - 1)) * 720
+                const y = 20 + ((yMax - p.total_equity) / (yMax - yMin)) * 260
+                return `${x},${y}`
+              }),
+              `${60 + 720},280`,
+            ].join(' ')}
+          />
+          {/* Time labels */}
+          {Array.from({ length: 5 }).map((_, i) => {
+            const idx = Math.round((i / 4) * (points.length - 1))
+            const p = points[idx]
+            if (!p) return null
+            const x = 60 + (idx / Math.max(1, points.length - 1)) * 720
+            const ts = new Date(p.timestamp)
+            const label = period === 'intraday'
+              ? ts.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' })
+              : ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })
+            return (
+              <text key={i} x={x} y={295} textAnchor="middle" fill="#6b7280" fontSize="10">
+                {label}
+              </text>
+            )
+          })}
+        </svg>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
+          <p className="text-xs text-forge-muted">Day P&L</p>
+          <p className={`text-sm font-bold ${(last.day_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {(last.day_pnl ?? 0) >= 0 ? '+' : ''}${(last.day_pnl ?? 0).toFixed(2)}
+          </p>
+        </div>
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
+          <p className="text-xs text-forge-muted">Unrealized P&L</p>
+          <p className={`text-sm font-bold ${(last.unrealized_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {(last.unrealized_pnl ?? 0) >= 0 ? '+' : ''}${(last.unrealized_pnl ?? 0).toFixed(2)}
+          </p>
+        </div>
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
+          <p className="text-xs text-forge-muted">Option BP</p>
+          <p className="text-sm font-bold text-white">
+            ${(last.option_buying_power ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
+          <p className="text-xs text-forge-muted">Snapshots</p>
+          <p className="text-sm font-bold text-white">{points.length}</p>
+        </div>
       </div>
     </div>
   )
