@@ -80,15 +80,33 @@ function serializeBots(bots: string[]): string {
   return Array.from(new Set(sorted)).join(',')
 }
 
-function BotBadges({ bot }: { bot: string }) {
+/** Trading mode for each bot on a given account type */
+function getTradingMode(bot: string, accountType: string): { label: string; cls: string } {
+  if (accountType === 'production') {
+    return { label: 'MONITOR', cls: 'bg-purple-500/20 text-purple-400 border-purple-500/30' }
+  }
+  // Sandbox: only FLAME places live orders; SPARK/INFERNO are paper-only
+  if (bot === 'FLAME') {
+    return { label: 'LIVE', cls: 'bg-green-500/20 text-green-400 border-green-500/30' }
+  }
+  return { label: 'PAPER', cls: 'bg-gray-500/20 text-gray-400 border-gray-500/30' }
+}
+
+function BotBadges({ bot, accountType }: { bot: string; accountType: string }) {
   const bots = parseBots(bot)
   return (
     <div className="flex gap-1 flex-wrap">
       {bots.map(b => {
         const cls = BOT_COLORS[b] || 'bg-gray-500/20 text-gray-400 border-gray-500/30'
+        const mode = getTradingMode(b, accountType)
         return (
-          <span key={b} className={`text-xs font-medium px-2 py-0.5 rounded border ${cls}`}>
-            {b}
+          <span key={b} className="inline-flex items-center gap-1">
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-l border ${cls}`}>
+              {b}
+            </span>
+            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-r border ${mode.cls}`}>
+              {mode.label}
+            </span>
           </span>
         )
       })}
@@ -149,6 +167,8 @@ function StatusDot({ active }: { active: boolean }) {
 function AddAccountModal({
   onClose,
   onSave,
+  presetPerson,
+  presetType,
 }: {
   onClose: () => void
   onSave: (data: {
@@ -160,16 +180,22 @@ function AddAccountModal({
     capital_pct: number
     pdt_enabled: boolean
   }) => Promise<void>
+  /** When set, locks person field to this value (for adding sub-accounts) */
+  presetPerson?: string
+  /** When set, locks type to this value (e.g. 'production') */
+  presetType?: string
 }) {
-  const [person, setPerson] = useState('')
+  const [person, setPerson] = useState(presetPerson ?? '')
   const [accountId, setAccountId] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [selectedBots, setSelectedBots] = useState<string[]>([...ALL_BOTS])
-  const [type, setType] = useState('sandbox')
+  const [type, setType] = useState(presetType ?? 'sandbox')
   const [capitalPct, setCapitalPct] = useState(100)
   const [pdtEnabled, setPdtEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const isProduction = type === 'production'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -181,13 +207,13 @@ function AddAccountModal({
     setSaving(true)
     try {
       await onSave({
-        person,
+        person: presetPerson ?? person,
         account_id: accountId,
         api_key: apiKey,
         bot: serializeBots(selectedBots),
-        type,
+        type: presetType ?? type,
         capital_pct: capitalPct,
-        pdt_enabled: pdtEnabled,
+        pdt_enabled: isProduction ? false : pdtEnabled,
       })
       onClose()
     } catch (err: unknown) {
@@ -197,13 +223,17 @@ function AddAccountModal({
     }
   }
 
+  const title = presetPerson
+    ? `Add Production Account for ${presetPerson}`
+    : 'Add Account'
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <form
         onSubmit={handleSubmit}
         className="bg-forge-card border border-amber-900/30 rounded-lg p-6 w-full max-w-md shadow-xl"
       >
-        <h2 className="text-lg font-bold text-white mb-4">Add Account</h2>
+        <h2 className="text-lg font-bold text-white mb-4">{title}</h2>
 
         {error && (
           <div className="mb-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-red-400 text-sm">
@@ -211,15 +241,27 @@ function AddAccountModal({
           </div>
         )}
 
+        {isProduction && (
+          <div className="mb-3 p-2 bg-purple-500/10 border border-purple-500/30 rounded text-purple-300 text-xs">
+            Production accounts are for monitoring only — no trades will be placed.
+          </div>
+        )}
+
         <label className="block mb-3">
           <span className="text-sm text-gray-400">Person</span>
-          <input
-            required
-            value={person}
-            onChange={(e) => setPerson(e.target.value)}
-            className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
-            placeholder="e.g. Matt"
-          />
+          {presetPerson ? (
+            <div className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-gray-400 text-sm">
+              {presetPerson}
+            </div>
+          ) : (
+            <input
+              required
+              value={person}
+              onChange={(e) => setPerson(e.target.value)}
+              className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
+              placeholder="e.g. Matt"
+            />
+          )}
         </label>
 
         <label className="block mb-3">
@@ -240,7 +282,7 @@ function AddAccountModal({
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm font-mono focus:border-amber-500 focus:outline-none"
-            placeholder="Tradier sandbox API key"
+            placeholder={isProduction ? 'Tradier production API key' : 'Tradier sandbox API key'}
           />
         </label>
 
@@ -249,17 +291,19 @@ function AddAccountModal({
           <BotCheckboxes selected={selectedBots} onChange={setSelectedBots} />
         </div>
 
-        <label className="block mb-3">
-          <span className="text-sm text-gray-400">Type</span>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
-          >
-            <option value="sandbox">Sandbox</option>
-            <option value="production">Production</option>
-          </select>
-        </label>
+        {!presetType && (
+          <label className="block mb-3">
+            <span className="text-sm text-gray-400">Type</span>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              className="mt-1 w-full bg-forge-bg border border-gray-700 rounded px-3 py-2 text-white text-sm focus:border-amber-500 focus:outline-none"
+            >
+              <option value="sandbox">Sandbox</option>
+              <option value="production">Production</option>
+            </select>
+          </label>
+        )}
 
         <div className="flex gap-3 mb-3">
           <label className="flex-1">
@@ -277,20 +321,22 @@ function AddAccountModal({
             </div>
           </label>
 
-          <div className="flex-1">
-            <span className="text-sm text-gray-400 block">PDT Enforcement</span>
-            <button
-              type="button"
-              onClick={() => setPdtEnabled(!pdtEnabled)}
-              className={`mt-1 w-full px-3 py-2 rounded text-sm font-medium border transition-colors ${
-                pdtEnabled
-                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                  : 'bg-gray-500/10 border-gray-600 text-gray-400'
-              }`}
-            >
-              {pdtEnabled ? 'ON' : 'OFF'}
-            </button>
-          </div>
+          {!isProduction && (
+            <div className="flex-1">
+              <span className="text-sm text-gray-400 block">PDT Enforcement</span>
+              <button
+                type="button"
+                onClick={() => setPdtEnabled(!pdtEnabled)}
+                className={`mt-1 w-full px-3 py-2 rounded text-sm font-medium border transition-colors ${
+                  pdtEnabled
+                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                    : 'bg-gray-500/10 border-gray-600 text-gray-400'
+                }`}
+              >
+                {pdtEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex justify-end gap-3 mt-5">
@@ -450,6 +496,35 @@ function EditAccountModal({
   )
 }
 
+/* ── Person-first data structure ───────────────────────────────── */
+
+interface PersonView {
+  person: string
+  sandbox: Account | null
+  production: Account[]
+}
+
+/** Merge API response into person-first view */
+function buildPersonViews(data: AccountsData): PersonView[] {
+  const map = new Map<string, PersonView>()
+
+  for (const group of data.sandbox) {
+    const view: PersonView = { person: group.person, sandbox: group.accounts[0] ?? null, production: [] }
+    map.set(group.person, view)
+  }
+  for (const group of data.production) {
+    const existing = map.get(group.person)
+    if (existing) {
+      existing.production = group.accounts
+    } else {
+      map.set(group.person, { person: group.person, sandbox: null, production: group.accounts })
+    }
+  }
+
+  // Sort by person name
+  return Array.from(map.values()).sort((a, b) => a.person.localeCompare(b.person))
+}
+
 /* ── Main Page ─────────────────────────────────────────────────── */
 
 export default function AccountsContent() {
@@ -457,9 +532,12 @@ export default function AccountsContent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showAdd, setShowAdd] = useState(false)
+  const [addPresetPerson, setAddPresetPerson] = useState<string | undefined>()
+  const [addPresetType, setAddPresetType] = useState<string | undefined>()
   const [editAccount, setEditAccount] = useState<Account | null>(null)
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [testingAll, setTestingAll] = useState(false)
+  const [testingId, setTestingId] = useState<number | null>(null)
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -533,7 +611,7 @@ export default function AccountsContent() {
     await handleUpdate(id, { is_active: true })
   }
 
-  /* ── Connectivity test ─────────────────────────────────────── */
+  /* ── Connectivity tests ────────────────────────────────────── */
 
   const handleTestAll = async () => {
     if (!data) return
@@ -555,6 +633,42 @@ export default function AccountsContent() {
     } finally {
       setTestingAll(false)
     }
+  }
+
+  const handleTestOne = async (acct: Account) => {
+    setTestingId(acct.id)
+    try {
+      const res = await fetch(`/api/accounts/manage/${acct.id}/test`, { method: 'POST' })
+      if (!res.ok) throw new Error('Test failed')
+      const result: TestResult = await res.json()
+      setTestResults(prev => ({ ...prev, [acct.account_id]: result }))
+    } catch {
+      setTestResults(prev => ({
+        ...prev,
+        [acct.account_id]: {
+          account_id: acct.account_id,
+          person: acct.person,
+          success: false,
+          message: 'Test request failed',
+        },
+      }))
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  /* ── Open add modal with optional presets ───────────────────── */
+
+  const openAddModal = (presetPerson?: string, presetType?: string) => {
+    setAddPresetPerson(presetPerson)
+    setAddPresetType(presetType)
+    setShowAdd(true)
+  }
+
+  const closeAddModal = () => {
+    setShowAdd(false)
+    setAddPresetPerson(undefined)
+    setAddPresetType(undefined)
   }
 
   /* ── Render ────────────────────────────────────────────────── */
@@ -589,8 +703,7 @@ export default function AccountsContent() {
     )
   }
 
-  const hasSandbox = data != null && data.sandbox.length > 0
-  const hasProduction = data != null && data.production.length > 0
+  const personViews = data ? buildPersonViews(data) : []
 
   return (
     <div className="space-y-6">
@@ -599,7 +712,7 @@ export default function AccountsContent() {
         <div>
           <h1 className="text-2xl font-bold text-white">Accounts</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Tradier sandbox accounts receiving mirrored trades
+            Manage Tradier sandbox and production accounts
           </p>
         </div>
         <div className="flex gap-2">
@@ -611,7 +724,7 @@ export default function AccountsContent() {
             {testingAll ? 'Testing...' : 'Test All'}
           </button>
           <button
-            onClick={() => setShowAdd(true)}
+            onClick={() => openAddModal()}
             className="px-3 py-1.5 text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white rounded transition-colors"
           >
             + Add Account
@@ -619,88 +732,97 @@ export default function AccountsContent() {
         </div>
       </div>
 
-      {/* Sandbox Accounts (one per person) */}
-      {hasSandbox && (
-        <section>
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
-            Sandbox Accounts
-          </h2>
-          <div className="space-y-3">
-            {data!.sandbox.map((group) => (
-              <div
-                key={group.person}
-                className="bg-forge-card border border-blue-900/20 rounded-lg overflow-hidden"
-              >
-                <div className="px-4 py-3 border-b border-blue-900/10">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-white font-medium">{group.person}</h3>
-                    <span className="text-xs text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
-                      sandbox
-                    </span>
-                  </div>
+      {/* Person-first layout */}
+      {personViews.length > 0 ? (
+        <div className="space-y-4">
+          {personViews.map((pv) => (
+            <div
+              key={pv.person}
+              className="bg-forge-card border border-gray-800 rounded-lg overflow-hidden"
+            >
+              {/* Person header */}
+              <div className="px-4 py-3 border-b border-gray-800">
+                <h3 className="text-white font-medium text-lg">{pv.person}</h3>
+              </div>
+
+              {/* Sandbox section */}
+              <div className="px-4 pt-3 pb-1">
+                <h4 className="text-xs font-medium text-blue-400 uppercase tracking-wider mb-2">
+                  Sandbox
+                </h4>
+              </div>
+              {pv.sandbox ? (
+                <div className="border-b border-gray-800/50">
+                  <AccountCard
+                    account={pv.sandbox}
+                    testResult={testResults[pv.sandbox.account_id]}
+                    testingId={testingId}
+                    onEdit={() => setEditAccount(pv.sandbox!)}
+                    onDeactivate={() => handleDeactivate(pv.sandbox!.id, pv.sandbox!.account_id)}
+                    onReactivate={() => handleReactivate(pv.sandbox!.id)}
+                    onTest={() => handleTestOne(pv.sandbox!)}
+                  />
                 </div>
+              ) : (
+                <div className="px-4 pb-3 text-xs text-gray-600">
+                  No sandbox account
+                </div>
+              )}
+
+              {/* Production section */}
+              <div className="px-4 pt-3 pb-1">
+                <h4 className="text-xs font-medium text-purple-400 uppercase tracking-wider mb-2">
+                  Production
+                </h4>
+              </div>
+              {pv.production.length > 0 ? (
                 <div className="divide-y divide-gray-800/50">
-                  {group.accounts.map((acct) => (
+                  {pv.production.map((acct) => (
                     <AccountCard
                       key={acct.id}
                       account={acct}
                       testResult={testResults[acct.account_id]}
+                      testingId={testingId}
                       onEdit={() => setEditAccount(acct)}
                       onDeactivate={() => handleDeactivate(acct.id, acct.account_id)}
                       onReactivate={() => handleReactivate(acct.id)}
+                      onTest={() => handleTestOne(acct)}
                     />
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Production Accounts */}
-      {hasProduction && (
-        <section>
-          <h2 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
-            Production Accounts
-          </h2>
-          <div className="space-y-3">
-            {data!.production.map((group) => (
-              <div
-                key={group.person}
-                className="bg-forge-card border border-amber-900/20 rounded-lg overflow-hidden"
-              >
-                <div className="px-4 py-3 border-b border-amber-900/10">
-                  <h3 className="text-white font-medium">{group.person}</h3>
+              ) : (
+                <div className="px-4 pb-1 text-xs text-gray-600">
+                  No production accounts
                 </div>
-                <div className="divide-y divide-gray-800/50">
-                  {group.accounts.map((acct) => (
-                    <AccountCard
-                      key={acct.id}
-                      account={acct}
-                      testResult={testResults[acct.account_id]}
-                      onEdit={() => setEditAccount(acct)}
-                      onDeactivate={() => handleDeactivate(acct.id, acct.account_id)}
-                      onReactivate={() => handleReactivate(acct.id)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+              )}
 
-      {/* Empty state */}
-      {!hasProduction && !hasSandbox && (
+              {/* Add production sub-account button */}
+              <div className="px-4 py-3">
+                <button
+                  onClick={() => openAddModal(pv.person, 'production')}
+                  className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                >
+                  + Add Production Account
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
         <div className="text-center py-12 text-gray-500">
           <p className="text-lg mb-2">No accounts configured</p>
-          <p className="text-sm">Add a Tradier sandbox account to start mirroring trades.</p>
+          <p className="text-sm">Add a Tradier account to get started.</p>
         </div>
       )}
 
       {/* Modals */}
       {showAdd && (
-        <AddAccountModal onClose={() => setShowAdd(false)} onSave={handleCreate} />
+        <AddAccountModal
+          onClose={closeAddModal}
+          onSave={handleCreate}
+          presetPerson={addPresetPerson}
+          presetType={addPresetType}
+        />
       )}
       {editAccount && (
         <EditAccountModal
@@ -718,16 +840,21 @@ export default function AccountsContent() {
 function AccountCard({
   account,
   testResult,
+  testingId,
   onEdit,
   onDeactivate,
   onReactivate,
+  onTest,
 }: {
   account: Account
   testResult?: TestResult
+  testingId?: number | null
   onEdit: () => void
   onDeactivate: () => void
   onReactivate: () => void
+  onTest: () => void
 }) {
+  const isTesting = testingId === account.id
   return (
     <div className="px-4 py-3">
       {/* Top row: status, account ID, bots, PDT, actions */}
@@ -735,7 +862,7 @@ function AccountCard({
         <StatusDot active={account.is_active} />
         <span className="font-mono text-sm text-white">{account.account_id}</span>
         <span className="hidden sm:inline font-mono text-xs text-gray-600">{account.api_key_masked}</span>
-        <BotBadges bot={account.bot} />
+        <BotBadges bot={account.bot} accountType={account.type} />
         <span
           className={`text-xs px-1.5 py-0.5 rounded ${
             account.pdt_enabled
@@ -746,6 +873,23 @@ function AccountCard({
           PDT {account.pdt_enabled ? 'ON' : 'OFF'}
         </span>
         <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={onTest}
+            disabled={isTesting}
+            className="p-1.5 text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-50"
+            title="Test Connection"
+          >
+            {isTesting ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
+                <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm0 14A6 6 0 118 2a6 6 0 010 12z" opacity="0.3" />
+                <path d="M8 0a8 8 0 018 8h-2A6 6 0 008 2V0z" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 0a8 8 0 100 16A8 8 0 008 0zm3.28 5.78l-4 4a.75.75 0 01-1.06 0l-2-2a.75.75 0 011.06-1.06L6.75 8.19l3.47-3.47a.75.75 0 011.06 1.06z" />
+              </svg>
+            )}
+          </button>
           <button onClick={onEdit} className="p-1.5 text-gray-500 hover:text-amber-400 transition-colors" title="Edit">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
               <path d="M11.013 1.427a1.75 1.75 0 012.474 0l1.086 1.086a1.75 1.75 0 010 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 01-.927-.928l.929-3.25a1.75 1.75 0 01.445-.758l8.61-8.61zm1.414 1.06a.25.25 0 00-.354 0L3.463 11.098a.25.25 0 00-.064.108l-.563 1.97 1.971-.564a.25.25 0 00.108-.064l8.61-8.61a.25.25 0 000-.354L12.427 2.487z" />

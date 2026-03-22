@@ -5,6 +5,11 @@ export const dynamic = 'force-dynamic'
 
 const TABLE = sharedTable('ironforge_accounts')
 const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+const PRODUCTION_URL = 'https://api.tradier.com/v1'
+
+function tradierBaseUrl(accountType: string): string {
+  return accountType === 'production' ? PRODUCTION_URL : SANDBOX_URL
+}
 
 interface TestResult {
   account_id: string
@@ -27,15 +32,16 @@ interface TestResult {
   day_pnl?: number
 }
 
-async function sandboxFetch(
+async function tradierFetch(
   endpoint: string,
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<any> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 5000)
 
   try {
-    const res = await fetch(`${SANDBOX_URL}${endpoint}`, {
+    const res = await fetch(`${baseUrl}${endpoint}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         Accept: 'application/json',
@@ -56,6 +62,7 @@ async function testOne(
   accountId: string,
   apiKey: string,
   person: string,
+  type: string = 'sandbox',
 ): Promise<TestResult> {
   const fail = (msg: string): TestResult => ({
     account_id: accountId,
@@ -64,9 +71,12 @@ async function testOne(
     message: msg,
   })
 
+  const baseUrl = tradierBaseUrl(type)
+  const label = type === 'production' ? 'Tradier production API' : 'Tradier sandbox API'
+
   // Step 1: Discover account number from profile
-  const profileData = await sandboxFetch('/user/profile', apiKey)
-  if (!profileData) return fail('Cannot reach Tradier sandbox API')
+  const profileData = await tradierFetch('/user/profile', apiKey, baseUrl)
+  if (!profileData) return fail(`Cannot reach ${label}`)
 
   let account = profileData.profile?.account
   if (Array.isArray(account)) account = account[0]
@@ -76,8 +86,8 @@ async function testOne(
 
   // Step 2: Fetch balances and positions in parallel
   const [balData, posData] = await Promise.all([
-    sandboxFetch(`/accounts/${tradierAccountNumber}/balances`, apiKey),
-    sandboxFetch(`/accounts/${tradierAccountNumber}/positions`, apiKey),
+    tradierFetch(`/accounts/${tradierAccountNumber}/balances`, apiKey, baseUrl),
+    tradierFetch(`/accounts/${tradierAccountNumber}/positions`, apiKey, baseUrl),
   ])
 
   const bal = balData?.balances || {}
@@ -128,14 +138,14 @@ async function testOne(
 export async function POST(_req: NextRequest) {
   try {
     const rows = await dbQuery(`
-      SELECT account_id, api_key, person
+      SELECT account_id, api_key, person, type
       FROM ${TABLE}
       WHERE is_active = TRUE
       ORDER BY person
     `)
 
     const results = await Promise.all(
-      rows.map((row) => testOne(row.account_id, row.api_key, row.person)),
+      rows.map((row) => testOne(row.account_id, row.api_key, row.person, row.type || 'sandbox')),
     )
 
     return NextResponse.json(results)

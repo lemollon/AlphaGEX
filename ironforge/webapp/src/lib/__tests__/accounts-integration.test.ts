@@ -698,4 +698,43 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     // Falls back to BOT_ACCOUNTS on error
     expect(fnBody).toMatch(/BOT_ACCOUNTS/)
   })
+
+  it('getAccountsForBotAsync filters to sandbox-only accounts', () => {
+    // Production accounts must NEVER affect scanner capital sizing or order placement.
+    // The query must include AND type = 'sandbox' to exclude production monitoring accounts.
+    const fnMatch = tradierSource.match(
+      /export async function getAccountsForBotAsync[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/type\s*=\s*'sandbox'/)
+  })
+
+  it('test-all route uses correct Tradier URL per account type', () => {
+    const testAllSource = readFileSync(
+      resolve(__dirname, '../../app/api/accounts/test-all/route.ts'),
+      'utf-8',
+    )
+    // Must define both URLs
+    expect(testAllSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testAllSource).toMatch(/api\.tradier\.com/)
+    // testOne must accept a type parameter
+    expect(testAllSource).toMatch(/async function testOne[\s\S]*?type/)
+    // Must query type column from DB
+    expect(testAllSource).toMatch(/SELECT[\s\S]*?type[\s\S]*?FROM/)
+  })
+
+  it('per-account test endpoint exists', () => {
+    const testRouteSource = readFileSync(
+      resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+      'utf-8',
+    )
+    // Must support both sandbox and production URLs
+    expect(testRouteSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testRouteSource).toMatch(/api\.tradier\.com/)
+    // Must read account type from DB
+    expect(testRouteSource).toMatch(/type/)
+    // Must export POST handler
+    expect(testRouteSource).toMatch(/export async function POST/)
+  })
 })
