@@ -129,8 +129,19 @@ export async function GET(
     // Account balances — fetch real Tradier data for all bots (sandbox + production)
     const sandboxBalancesQuery = getSandboxAccountBalances().catch(() => [])
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances, todayCloseReasonRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery, todayCloseReasonsQuery])
+    // Fetch person aliases for sandbox account display names
+    const aliasQuery = dbQuery(
+      `SELECT person, alias FROM ${sharedTable('ironforge_person_aliases')}`,
+    ).catch(() => [])
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances, todayCloseReasonRows, aliasRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery, todayCloseReasonsQuery, aliasQuery])
+
+    // Build person → alias lookup
+    const aliasMap: Record<string, string> = {}
+    for (const r of aliasRows) {
+      if (r.alias) aliasMap[r.person as string] = r.alias as string
+    }
 
     const acct = accountRows[0]
     const startingCapital = num(acct?.starting_capital) || 10000
@@ -293,7 +304,7 @@ export async function GET(
         }
       }),
       sandbox_accounts: sandboxBalances.map((s) => ({
-        name: s.name,
+        name: aliasMap[s.name] || s.name,
         account_id: s.account_id,
         total_equity: s.total_equity,
         option_buying_power: s.option_buying_power,
