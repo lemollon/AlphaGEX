@@ -5,14 +5,17 @@ import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib
 export const dynamic = 'force-dynamic'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot)
+  const personParam = req.nextUrl.searchParams.get('person')
+  const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
 
   try {
     const positionRows = await dbQuery(
@@ -23,7 +26,7 @@ export async function GET(
              underlying_at_entry, vix_at_entry, collateral_required,
              wings_adjusted, open_time, sandbox_order_id
       FROM ${botTable(bot, 'positions')}
-      WHERE status = 'open' ${dteFilter}
+      WHERE status = 'open' ${dteFilter} ${personFilter}
       ORDER BY open_time DESC`,
     )
 

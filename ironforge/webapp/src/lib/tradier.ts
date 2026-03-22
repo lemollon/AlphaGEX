@@ -1398,6 +1398,23 @@ export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: str
 }
 
 /**
+ * Force-reload sandbox accounts from DB and clear API key cache.
+ * Call this after any account CRUD (create, update, delete) to ensure
+ * the scanner picks up changes immediately instead of on next restart.
+ */
+export async function reloadSandboxAccounts(): Promise<void> {
+  // Clear caches
+  _sandboxAccounts = []
+  _sandboxAccountsLoadedFromDb = false
+  for (const key of Object.keys(_accountIdCache)) {
+    delete _accountIdCache[key]
+  }
+  // Re-load from DB
+  await ensureSandboxAccountsLoaded()
+  console.log(`[tradier] Sandbox accounts reloaded (${_sandboxAccounts.length} account(s))`)
+}
+
+/**
  * Get the configured capital percentage for a specific account (by person name).
  * Reads from ironforge_accounts table. Defaults to 100 (%).
  */
@@ -1994,6 +2011,39 @@ export async function closeOrphanSandboxPositions(
   }
 
   return { closed, failed, details }
+}
+
+/**
+ * Close ALL open positions for a sandbox account via market orders.
+ * Used when an account is deactivated to prevent orphaned positions.
+ * Returns the number of positions successfully closed.
+ */
+export async function closeAllSandboxPositions(apiKey: string): Promise<number> {
+  const accountId = await getAccountIdForKey(apiKey)
+  if (!accountId) return 0
+
+  const positions = await getSandboxAccountPositions(apiKey)
+  const openPositions = positions.filter(p => p.quantity !== 0)
+  if (openPositions.length === 0) return 0
+
+  let closed = 0
+  for (const pos of openPositions) {
+    const qty = Math.abs(pos.quantity)
+    const side = pos.quantity > 0 ? 'sell_to_close' : 'buy_to_close'
+    try {
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, {
+        class: 'option',
+        symbol: pos.symbol.slice(0, 3),
+        option_symbol: pos.symbol,
+        side,
+        quantity: String(qty),
+        type: 'market',
+        duration: 'day',
+      }, apiKey)
+      if (result?.order?.id) closed++
+    } catch { /* best-effort */ }
+  }
+  return closed
 }
 
 // Expose for scanner re-poll and testing

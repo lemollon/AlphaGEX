@@ -71,10 +71,20 @@ export default function BotDashboard({
 }) {
   const [tab, setTab] = useState<Tab>('Equity Curve')
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')
+  const [selectedPerson, setSelectedPerson] = useState('all')
+
+  // Fetch available persons for the dropdown
+  const { data: personsData } = useSWR('/api/persons', fetcher)
+  const persons: string[] = personsData?.persons ?? []
+
+  // Query string fragment for person filtering (appended to all API calls)
+  const pq = selectedPerson !== 'all' ? `person=${encodeURIComponent(selectedPerson)}` : ''
+  const pqSep = (url: string) => url.includes('?') ? `${url}&${pq}` : `${url}?${pq}`
+  const withPerson = (url: string) => pq ? pqSep(url) : url
 
   /* ---- Status (always fetched) ---- */
   const { data: status, error: statusErr } = useSWR(
-    `/api/${bot}/status`,
+    withPerson(`/api/${bot}/status`),
     fetcher,
     { refreshInterval: STATUS_REFRESH },
   )
@@ -89,7 +99,7 @@ export default function BotDashboard({
   /* ---- Equity curve (historical, fetched based on period) ---- */
   const historicalPeriod = equityPeriod === 'intraday' ? 'all' : equityPeriod
   const { data: equity } = useSWR(
-    tab === 'Equity Curve' ? `/api/${bot}/equity-curve?period=${historicalPeriod}` : null,
+    tab === 'Equity Curve' ? withPerson(`/api/${bot}/equity-curve?period=${historicalPeriod}`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -97,7 +107,7 @@ export default function BotDashboard({
   /* ---- Intraday snapshots ---- */
   const { data: intraday } = useSWR(
     tab === 'Equity Curve' && equityPeriod === 'intraday'
-      ? `/api/${bot}/equity-curve/intraday`
+      ? withPerson(`/api/${bot}/equity-curve/intraday`)
       : null,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
@@ -105,14 +115,14 @@ export default function BotDashboard({
 
   /* ---- Position monitor (live MTM) — always fetched so StatusCard unrealized P&L is accurate ---- */
   const { data: positionMonitor, error: posMonitorErr } = useSWR(
-    `/api/${bot}/position-monitor`,
+    withPerson(`/api/${bot}/position-monitor`),
     fetcher,
     { refreshInterval: LIVE_REFRESH },
   )
 
   /* ---- Fallback positions (simple DB query, no Tradier MTM) — used when position-monitor fails ---- */
   const { data: fallbackPositions } = useSWR(
-    posMonitorErr && tab === 'Positions' ? `/api/${bot}/positions` : null,
+    posMonitorErr && tab === 'Positions' ? withPerson(`/api/${bot}/positions`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -126,7 +136,7 @@ export default function BotDashboard({
 
   /* ---- Performance ---- */
   const { data: perf, error: perfErr } = useSWR(
-    tab === 'Performance' ? `/api/${bot}/performance` : null,
+    tab === 'Performance' ? withPerson(`/api/${bot}/performance`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -224,8 +234,8 @@ export default function BotDashboard({
 
   return (
     <div className="space-y-6">
-      {/* Title */}
-      <div>
+      {/* Title + Person Filter */}
+      <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1
             className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : 'text-blue-400'}`}
@@ -236,6 +246,18 @@ export default function BotDashboard({
             {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
           </span>
         </div>
+        {persons.length > 1 && (
+          <select
+            value={selectedPerson}
+            onChange={(e) => setSelectedPerson(e.target.value)}
+            className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
+          >
+            <option value="all">All Accounts</option>
+            {persons.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Status card */}

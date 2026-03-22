@@ -44,6 +44,7 @@ import {
   buildOccSymbol,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
+  getPdtEnabledForAccount,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -971,6 +972,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
+  // Resolve the primary person for this bot (used for position attribution)
+  let person = 'User'
+  try {
+    const persons = await getAccountsForBotAsync(bot.name)
+    if (persons.length > 0) person = persons[0]
+  } catch { /* default to 'User' */ }
+
   // PDT config check — read from shared ironforge_pdt_config (same table the UI writes to)
   const pdtConfigRows = await query(
     `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
@@ -979,7 +987,18 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [bot.name.toUpperCase()],
   )
   const pdtCfg = pdtConfigRows[0]
-  const pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
+  let pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
+
+  // Per-account PDT override: if the primary account has pdt_enabled=false, honor it.
+  if (pdtEnabled) {
+    try {
+      const acctPdt = await getPdtEnabledForAccount(person)
+      if (!acctPdt) {
+        pdtEnabled = false
+        console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
+      }
+    } catch { /* keep bot-level setting */ }
+  }
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
   const lastResetAt = pdtCfg?.last_reset_at ?? null
@@ -1333,12 +1352,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
       wings_adjusted, original_put_width, original_call_width,
       put_order_id, call_order_id,
-      status, open_time, open_date, dte_mode
+      status, open_time, open_date, dte_mode, person
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-      $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36
+      $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36, $37
     )`,
     [
       positionId, 'SPY', expiration,
@@ -1353,7 +1372,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       adv.reasoning, JSON.stringify(adv.topFactors), false,
       false, spreadWidth, spreadWidth,
       'PAPER', 'PAPER',
-      'open', bot.dte,
+      'open', bot.dte, person,
     ],
   )
 
@@ -1443,17 +1462,18 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
   await query(
     `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-     (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-     VALUES ($1, $2, 0, 1, $3, $4)`,
-    [num(updatedAcct[0]?.current_balance), num(updatedAcct[0]?.cumulative_pnl), `auto:${positionId}`, bot.dte],
+     (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person)
+     VALUES ($1, $2, 0, 1, $3, $4, $5)`,
+    [num(updatedAcct[0]?.current_balance), num(updatedAcct[0]?.cumulative_pnl), `auto:${positionId}`, bot.dte, person],
   )
 
   // Daily perf
   await query(
-    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-     VALUES (${CT_TODAY}, 1, 0, 0)
+    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
+     VALUES (${CT_TODAY}, 1, 0, 0, $1)
      ON CONFLICT (trade_date) DO UPDATE SET
        trades_executed = ${botTable(bot.name, 'daily_perf')}.trades_executed + 1`,
+    [person],
   )
 
   console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isFlameFillOnly ? ' [Tradier-fill-only]' : ''}`)
@@ -2078,13 +2098,19 @@ async function scanBot(bot: BotDef): Promise<void> {
         `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
          WHERE status = 'open' AND dte_mode = $1`, [bot.dte],
       )
+      // Resolve person for equity snapshot attribution
+      let snapPerson = 'User'
+      try {
+        const snapPersons = await getAccountsForBotAsync(bot.name)
+        if (snapPersons.length > 0) snapPerson = snapPersons[0]
+      } catch { /* default */ }
       if (acctRows.length > 0) {
         await query(
           `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
-           unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte],
+           unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
         )
       }
     } catch (snapErr: unknown) {

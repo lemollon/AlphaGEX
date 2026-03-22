@@ -699,3 +699,142 @@ describe('scanner/status route', () => {
     expect(source).toMatch(/bot_heartbeats/)
   })
 })
+
+/* ================================================================== */
+/*  Person Filtering                                                    */
+/* ================================================================== */
+
+describe('Person filtering — API route support', () => {
+  const routes = [
+    { name: 'status', path: '../../app/api/[bot]/status/route.ts' },
+    { name: 'equity-curve', path: '../../app/api/[bot]/equity-curve/route.ts' },
+    { name: 'equity-curve/intraday', path: '../../app/api/[bot]/equity-curve/intraday/route.ts' },
+    { name: 'performance', path: '../../app/api/[bot]/performance/route.ts' },
+    { name: 'position-monitor', path: '../../app/api/[bot]/position-monitor/route.ts' },
+    { name: 'positions', path: '../../app/api/[bot]/positions/route.ts' },
+  ]
+
+  for (const route of routes) {
+    describe(`${route.name} route`, () => {
+      const source = readFileSync(resolve(__dirname, route.path), 'utf-8')
+
+      it('reads person query parameter from request', () => {
+        expect(source).toMatch(/person/)
+        expect(source).toMatch(/searchParams/)
+      })
+
+      it('builds personFilter for SQL WHERE clause', () => {
+        expect(source).toMatch(/personFilter/)
+      })
+
+      it('applies personFilter to positions queries', () => {
+        // personFilter should appear in at least one SQL query
+        expect(source).toMatch(/\$\{personFilter\}/)
+      })
+
+      it('treats person=all as no filter (backward compatible)', () => {
+        expect(source).toMatch(/!==\s*'all'/)
+      })
+    })
+  }
+})
+
+describe('Person filtering — /api/persons endpoint', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/persons/route.ts'),
+    'utf-8',
+  )
+
+  it('exports a GET handler', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+GET/)
+  })
+
+  it('queries ironforge_accounts for active sandbox persons', () => {
+    expect(source).toMatch(/ironforge_accounts/)
+    expect(source).toMatch(/type\s*=\s*'sandbox'/)
+    expect(source).toMatch(/is_active\s*=\s*TRUE/)
+  })
+
+  it('returns distinct person names', () => {
+    expect(source).toMatch(/DISTINCT person/)
+  })
+})
+
+describe('Person filtering — schema migration', () => {
+  const dbSource = readFileSync(resolve(__dirname, '../db.ts'), 'utf-8')
+
+  it('adds person column to positions tables via ALTER TABLE migration', () => {
+    // The migration loop adds 'person TEXT' to the columns list for positions
+    expect(dbSource).toMatch(/'person TEXT'/)
+    expect(dbSource).toMatch(/positions.*ADD COLUMN IF NOT EXISTS/)
+  })
+
+  it('adds person column to equity_snapshots tables', () => {
+    expect(dbSource).toMatch(/equity_snapshots/)
+    expect(dbSource).toMatch(/ADD COLUMN IF NOT EXISTS person/)
+  })
+
+  it('adds person column to daily_perf tables', () => {
+    expect(dbSource).toMatch(/daily_perf/)
+    expect(dbSource).toMatch(/ADD COLUMN IF NOT EXISTS person/)
+  })
+})
+
+describe('Person filtering — scanner population', () => {
+  const scannerSource = readFileSync(resolve(__dirname, '../scanner.ts'), 'utf-8')
+
+  it('resolves person at start of tryOpenTrade', () => {
+    const fn = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    // person should be resolved BEFORE the PDT check
+    const personIdx = body.indexOf("let person = 'User'")
+    const pdtIdx = body.indexOf('ironforge_pdt_config')
+    expect(personIdx).toBeGreaterThan(-1)
+    expect(pdtIdx).toBeGreaterThan(-1)
+    expect(personIdx).toBeLessThan(pdtIdx)
+  })
+
+  it('passes person to position INSERT', () => {
+    // The position INSERT should include person column and $37 param
+    expect(scannerSource).toMatch(/dte_mode, person/)
+    expect(scannerSource).toMatch(/\$36, \$37/)
+  })
+
+  it('passes person to equity snapshot INSERT', () => {
+    expect(scannerSource).toMatch(/dte_mode, person\)[\s\S]*?VALUES.*\$7/)
+  })
+})
+
+describe('Person filtering — BotDashboard dropdown', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../components/BotDashboard.tsx'),
+    'utf-8',
+  )
+
+  it('fetches /api/persons for dropdown options', () => {
+    expect(source).toMatch(/\/api\/persons/)
+  })
+
+  it('has selectedPerson state', () => {
+    expect(source).toMatch(/selectedPerson/)
+    expect(source).toMatch(/setSelectedPerson/)
+  })
+
+  it('renders person dropdown when multiple persons exist', () => {
+    expect(source).toMatch(/persons\.length > 1/)
+    expect(source).toMatch(/<select/)
+    expect(source).toMatch(/All Accounts/)
+  })
+
+  it('appends person param to API calls via withPerson helper', () => {
+    expect(source).toMatch(/withPerson/)
+    // Status, equity-curve, intraday, position-monitor, performance should all use withPerson
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/status`\)/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/equity-curve/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/position-monitor`\)/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/performance`\)/)
+  })
+})

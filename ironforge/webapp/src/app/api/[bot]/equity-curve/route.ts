@@ -13,7 +13,10 @@ export async function GET(
 
   const dte = dteMode(bot)
   const period = req.nextUrl.searchParams.get('period') || 'all'
+  const personParam = req.nextUrl.searchParams.get('person')
+  const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
 
   try {
     const [capitalRows, curveRows, openPositions] = await Promise.all([
@@ -32,7 +35,7 @@ export async function GET(
         WHERE status IN ('closed', 'expired')
           AND realized_pnl IS NOT NULL
           AND close_time IS NOT NULL
-          ${dteFilter}
+          ${dteFilter} ${personFilter}
         ORDER BY close_time`,
       ),
       dbQuery(
@@ -41,7 +44,7 @@ export async function GET(
                 call_short_strike, call_long_strike,
                 contracts, total_credit, spread_width
          FROM ${botTable(bot, 'positions')}
-         WHERE status = 'open' ${dteFilter}`,
+         WHERE status = 'open' ${dteFilter} ${personFilter}`,
       ),
     ])
 

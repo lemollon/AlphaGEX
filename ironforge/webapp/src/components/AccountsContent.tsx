@@ -305,23 +305,23 @@ function AddAccountModal({
           </label>
         )}
 
-        <div className="flex gap-3 mb-3">
-          <label className="flex-1">
-            <span className="text-sm text-gray-400">Capital to Use (%)</span>
-            <div className="mt-1 flex items-center gap-2">
-              <input
-                type="range"
-                min="1"
-                max="100"
-                value={capitalPct}
-                onChange={(e) => setCapitalPct(parseInt(e.target.value))}
-                className="flex-1 accent-amber-500"
-              />
-              <span className="text-white text-sm font-mono w-10 text-right">{capitalPct}%</span>
-            </div>
-          </label>
+        {!isProduction && (
+          <div className="flex gap-3 mb-3">
+            <label className="flex-1">
+              <span className="text-sm text-gray-400">Capital to Use (%)</span>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  value={capitalPct}
+                  onChange={(e) => setCapitalPct(parseInt(e.target.value))}
+                  className="flex-1 accent-amber-500"
+                />
+                <span className="text-white text-sm font-mono w-10 text-right">{capitalPct}%</span>
+              </div>
+            </label>
 
-          {!isProduction && (
             <div className="flex-1">
               <span className="text-sm text-gray-400 block">PDT Enforcement</span>
               <button
@@ -336,8 +336,8 @@ function AddAccountModal({
                 {pdtEnabled ? 'ON' : 'OFF'}
               </button>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         <div className="flex justify-end gap-3 mt-5">
           <button
@@ -432,33 +432,35 @@ function EditAccountModal({
           <BotCheckboxes selected={selectedBots} onChange={setSelectedBots} />
         </div>
 
-        {/* Capital % with live preview */}
-        <div className="mb-4">
-          <span className="text-sm text-gray-400">Capital to Use</span>
-          <div className="mt-1 flex items-center gap-2">
-            <input
-              type="range"
-              min="1"
-              max="100"
-              value={capitalPct}
-              onChange={(e) => setCapitalPct(parseInt(e.target.value))}
-              className="flex-1 accent-amber-500"
-            />
-            <span className="text-white text-sm font-mono w-10 text-right">{capitalPct}%</span>
-          </div>
-          {liveBalance != null && (
-            <div className="mt-2 p-2 bg-forge-bg rounded border border-gray-700/50">
-              <div className="flex justify-between text-xs">
-                <span className="text-gray-500">Account Balance</span>
-                <span className="text-white font-mono">{fmtDollar(liveBalance)}</span>
-              </div>
-              <div className="flex justify-between text-xs mt-1">
-                <span className="text-gray-500">{capitalPct}% Allocated</span>
-                <span className="text-amber-400 font-mono font-medium">{fmtDollar(allocatedPreview)}</span>
-              </div>
+        {/* Capital % with live preview — sandbox only (production is monitoring-only) */}
+        {account.type !== 'production' && (
+          <div className="mb-4">
+            <span className="text-sm text-gray-400">Capital to Use</span>
+            <div className="mt-1 flex items-center gap-2">
+              <input
+                type="range"
+                min="1"
+                max="100"
+                value={capitalPct}
+                onChange={(e) => setCapitalPct(parseInt(e.target.value))}
+                className="flex-1 accent-amber-500"
+              />
+              <span className="text-white text-sm font-mono w-10 text-right">{capitalPct}%</span>
             </div>
-          )}
-        </div>
+            {liveBalance != null && (
+              <div className="mt-2 p-2 bg-forge-bg rounded border border-gray-700/50">
+                <div className="flex justify-between text-xs">
+                  <span className="text-gray-500">Account Balance</span>
+                  <span className="text-white font-mono">{fmtDollar(liveBalance)}</span>
+                </div>
+                <div className="flex justify-between text-xs mt-1">
+                  <span className="text-gray-500">{capitalPct}% Allocated</span>
+                  <span className="text-amber-400 font-mono font-medium">{fmtDollar(allocatedPreview)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="mb-4">
           <span className="text-sm text-gray-400 block mb-1">PDT Enforcement</span>
@@ -923,12 +925,14 @@ function AccountCard({
               <span className="text-gray-500">OBP: </span>
               <span className="text-white font-mono">{fmtDollar(account.live_buying_power)}</span>
             </div>
-            <div>
-              <span className="text-gray-500">Capital: </span>
-              <span className="text-amber-400 font-mono font-medium">
-                {account.capital_pct}% = {fmtDollar(account.allocated_capital)}
-              </span>
-            </div>
+            {account.type !== 'production' && (
+              <div>
+                <span className="text-gray-500">Capital: </span>
+                <span className="text-amber-400 font-mono font-medium">
+                  {account.capital_pct}% = {fmtDollar(account.allocated_capital)}
+                </span>
+              </div>
+            )}
             {account.open_positions > 0 && (
               <div>
                 <span className="text-gray-500">Positions: </span>
