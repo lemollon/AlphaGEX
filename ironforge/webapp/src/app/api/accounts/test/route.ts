@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       clearTimeout(timeout)
 
       if (!profileRes.ok) {
+        console.warn(`[accounts/test] ${label} returned HTTP ${profileRes.status} for account ${account_id}`)
         return NextResponse.json({
           account_id,
           success: false,
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
       const msg = fetchErr instanceof Error && fetchErr.name === 'AbortError'
         ? 'Timeout'
         : fetchErr instanceof Error ? fetchErr.message : 'Unknown error'
+      console.warn(`[accounts/test] Account ${account_id} test failed: ${msg}`)
       return NextResponse.json({ account_id, success: false, message: msg })
     }
   } catch (err: unknown) {

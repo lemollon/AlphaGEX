@@ -126,6 +126,7 @@ interface CachedBalance {
 }
 
 const _balanceCache: Record<string, CachedBalance> = {}
+const _balanceInflight: Record<string, Promise<CachedBalance>> = {}
 const CACHE_TTL_MS = 60_000
 
 async function getLiveBalance(
@@ -137,10 +138,19 @@ async function getLiveBalance(
   const cached = _balanceCache[cacheKey]
   if (cached && Date.now() - cached.fetched_at < CACHE_TTL_MS) return cached
 
-  const result = await fetchLiveBalance(apiKey, accountId, accountType)
-  const entry: CachedBalance = { ...result, fetched_at: Date.now() }
-  _balanceCache[cacheKey] = entry
-  return entry
+  // Deduplicate concurrent requests for the same account
+  if (_balanceInflight[cacheKey]) return _balanceInflight[cacheKey]
+
+  const promise = (async () => {
+    const result = await fetchLiveBalance(apiKey, accountId, accountType)
+    const entry: CachedBalance = { ...result, fetched_at: Date.now() }
+    _balanceCache[cacheKey] = entry
+    delete _balanceInflight[cacheKey]
+    return entry
+  })()
+
+  _balanceInflight[cacheKey] = promise
+  return promise
 }
 
 /* ── Auto-seed from env vars ─────────────────────────────────── */

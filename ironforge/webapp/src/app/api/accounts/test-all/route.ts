@@ -50,10 +50,17 @@ async function tradierFetch(
       signal: controller.signal,
     })
     clearTimeout(timeout)
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[accounts/test-all] Tradier ${endpoint} returned HTTP ${res.status}`)
+      return null
+    }
     return res.json()
-  } catch {
+  } catch (err: unknown) {
     clearTimeout(timeout)
+    const msg = err instanceof Error
+      ? (err.name === 'AbortError' ? 'timeout (5s)' : err.message)
+      : 'unknown error'
+    console.warn(`[accounts/test-all] Tradier ${endpoint} failed: ${msg}`)
     return null
   }
 }
@@ -144,10 +151,14 @@ export async function POST(_req: NextRequest) {
       ORDER BY person
     `)
 
+    console.log(`[accounts/test-all] Testing ${rows.length} active account(s)`)
     const results = await Promise.all(
       rows.map((row) => testOne(row.account_id, row.api_key, row.person, row.type || 'sandbox')),
     )
 
+    const passed = results.filter(r => r.success).length
+    const failed = results.length - passed
+    console.log(`[accounts/test-all] Results: ${passed} passed, ${failed} failed`)
     return NextResponse.json(results)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

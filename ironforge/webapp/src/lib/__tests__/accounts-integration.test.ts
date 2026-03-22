@@ -1044,3 +1044,240 @@ describe('Production Account Live Trading UI', () => {
     expect(accountsContentSource).toMatch(/REAL MONEY/)
   })
 })
+
+/* ── Test Endpoint: Balance & Buying Power ────────────────── */
+
+describe('Test Endpoint Returns Balance & Buying Power', () => {
+  const testRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/test/route.ts'),
+    'utf-8',
+  )
+  const perAccountTestSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+    'utf-8',
+  )
+  const testAllSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/test-all/route.ts'),
+    'utf-8',
+  )
+
+  // ── Production vs Sandbox URL routing ──
+
+  it('test route supports production URL (api.tradier.com)', () => {
+    expect(testRouteSource).toMatch(/api\.tradier\.com/)
+    expect(testRouteSource).toMatch(/PRODUCTION_URL/)
+  })
+
+  it('test route supports sandbox URL (sandbox.tradier.com)', () => {
+    expect(testRouteSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testRouteSource).toMatch(/SANDBOX_URL/)
+  })
+
+  it('test route selects URL based on type param', () => {
+    // Must check body.type or accountType to determine URL
+    expect(testRouteSource).toMatch(/type.*===.*'production'/)
+    expect(testRouteSource).toMatch(/PRODUCTION_URL/)
+    expect(testRouteSource).toMatch(/SANDBOX_URL/)
+  })
+
+  it('per-account test reads type from DB and routes correctly', () => {
+    expect(perAccountTestSource).toMatch(/type.*===.*'production'.*PRODUCTION_URL.*SANDBOX_URL/)
+  })
+
+  it('test-all routes each account to correct URL based on DB type', () => {
+    expect(testAllSource).toMatch(/tradierBaseUrl/)
+    expect(testAllSource).toMatch(/'production'/)
+  })
+
+  // ── Balance & Buying Power fields returned ──
+
+  it('test route returns total_equity in response', () => {
+    expect(testRouteSource).toMatch(/total_equity/)
+    expect(testRouteSource).toMatch(/bal\.total_equity/)
+  })
+
+  it('test route returns option_buying_power in response', () => {
+    expect(testRouteSource).toMatch(/option_buying_power/)
+    // Must check both margin and pdt sub-objects
+    expect(testRouteSource).toMatch(/margin\.option_buying_power/)
+    expect(testRouteSource).toMatch(/pdt\.option_buying_power/)
+  })
+
+  it('test route fetches balances endpoint from Tradier', () => {
+    expect(testRouteSource).toMatch(/\/balances/)
+  })
+
+  it('test route fetches positions endpoint from Tradier', () => {
+    expect(testRouteSource).toMatch(/\/positions/)
+  })
+
+  it('test route returns open_positions count', () => {
+    expect(testRouteSource).toMatch(/open_positions/)
+  })
+
+  it('test route returns day_pnl from close_pl', () => {
+    expect(testRouteSource).toMatch(/day_pnl/)
+    expect(testRouteSource).toMatch(/close_pl/)
+  })
+
+  it('per-account test returns option_buying_power', () => {
+    expect(perAccountTestSource).toMatch(/option_buying_power/)
+    expect(perAccountTestSource).toMatch(/margin\.option_buying_power/)
+  })
+
+  it('per-account test returns stock_buying_power', () => {
+    expect(perAccountTestSource).toMatch(/stock_buying_power/)
+    expect(perAccountTestSource).toMatch(/margin\.stock_buying_power/)
+  })
+
+  it('per-account test returns total_equity', () => {
+    expect(perAccountTestSource).toMatch(/total_equity/)
+    expect(perAccountTestSource).toMatch(/bal\.total_equity/)
+  })
+
+  it('test-all returns option_buying_power per account', () => {
+    expect(testAllSource).toMatch(/option_buying_power/)
+    expect(testAllSource).toMatch(/margin\.option_buying_power/)
+  })
+
+  it('test-all returns stock_buying_power per account', () => {
+    expect(testAllSource).toMatch(/stock_buying_power/)
+    expect(testAllSource).toMatch(/margin\.stock_buying_power/)
+  })
+
+  it('test-all returns total_equity per account', () => {
+    expect(testAllSource).toMatch(/total_equity/)
+    expect(testAllSource).toMatch(/bal\.total_equity/)
+  })
+
+  // ── Error logging ──
+
+  it('test route logs warnings on Tradier failures', () => {
+    expect(testRouteSource).toMatch(/console\.warn/)
+    expect(testRouteSource).toMatch(/\[accounts\/test\]/)
+  })
+
+  it('per-account test logs warnings on Tradier failures', () => {
+    expect(perAccountTestSource).toMatch(/console\.warn/)
+    expect(perAccountTestSource).toMatch(/\[accounts\/test\]/)
+  })
+
+  it('test-all logs warnings on Tradier failures', () => {
+    expect(testAllSource).toMatch(/console\.warn/)
+    expect(testAllSource).toMatch(/\[accounts\/test-all\]/)
+  })
+
+  it('test-all logs summary of pass/fail counts', () => {
+    expect(testAllSource).toMatch(/passed.*failed/)
+  })
+})
+
+/* ── SQL Parameterization: Per-Account Test ───────────────── */
+
+describe('Per-Account Test SQL Safety', () => {
+  const perAccountTestSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+    'utf-8',
+  )
+
+  it('per-account test uses parameterized WHERE id = $1', () => {
+    expect(perAccountTestSource).toMatch(/WHERE id = \$1/)
+  })
+
+  it('per-account test does NOT use string interpolation for id', () => {
+    // Should NOT contain WHERE id = ${id} (template literal injection)
+    expect(perAccountTestSource).not.toMatch(/WHERE id = \$\{id\}/)
+  })
+})
+
+/* ── Production Route: Null Safety ────────────────────────── */
+
+describe('Production Route OCC Symbol Null Safety', () => {
+  const productionSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/production/route.ts'),
+    'utf-8',
+  )
+
+  it('skips rows with null expiration', () => {
+    expect(productionSource).toMatch(/if\s*\(\s*!row\.expiration\s*\)\s*continue/)
+  })
+
+  it('skips invalid dates', () => {
+    expect(productionSource).toMatch(/isNaN\(exp\.getTime\(\)\)/)
+  })
+
+  it('skips null strikes', () => {
+    expect(productionSource).toMatch(/if\s*\(\s*strike\s*==\s*null\s*\)\s*continue/)
+  })
+})
+
+/* ── Manage Route: Production URL Support ─────────────────── */
+
+describe('Manage Route Production URL Support', () => {
+  const manageSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/route.ts'),
+    'utf-8',
+  )
+
+  it('manage route defines PRODUCTION_URL constant', () => {
+    expect(manageSource).toMatch(/PRODUCTION_URL\s*=\s*'https:\/\/api\.tradier\.com\/v1'/)
+  })
+
+  it('tradierFetch accepts baseUrl parameter', () => {
+    expect(manageSource).toMatch(/tradierFetch\(\s*\n?\s*endpoint.*\n?\s*apiKey.*\n?\s*baseUrl/)
+  })
+
+  it('create validation uses correct URL for production accounts', () => {
+    // Must route production type to PRODUCTION_URL
+    expect(manageSource).toMatch(/type\s*===\s*'production'\s*\?\s*PRODUCTION_URL/)
+  })
+
+  it('fetchLiveBalance accepts accountType parameter', () => {
+    expect(manageSource).toMatch(/fetchLiveBalance\(\s*\n?\s*apiKey.*\n?\s*accountNumber.*\n?\s*accountType/)
+  })
+
+  it('getLiveBalance passes accountType through', () => {
+    expect(manageSource).toMatch(/getLiveBalance\(\s*\n?\s*apiKey.*\n?\s*accountId.*\n?\s*accountType/)
+  })
+
+  it('GET handler passes row.type to getLiveBalance', () => {
+    expect(manageSource).toMatch(/getLiveBalance\(row\.api_key,\s*row\.account_id,\s*row\.type/)
+  })
+})
+
+/* ── Frontend: Test Result Display ────────────────────────── */
+
+describe('Frontend Displays Balance & Buying Power from Test', () => {
+  const uiSource = readFileSync(
+    resolve(__dirname, '../../components/AccountsContent.tsx'),
+    'utf-8',
+  )
+
+  it('TestResult interface includes total_equity', () => {
+    expect(uiSource).toMatch(/total_equity\??\s*:\s*number/)
+  })
+
+  it('TestResult interface includes option_buying_power', () => {
+    expect(uiSource).toMatch(/option_buying_power\??\s*:\s*number/)
+  })
+
+  it('TestResult interface includes stock_buying_power', () => {
+    expect(uiSource).toMatch(/stock_buying_power\??\s*:\s*number/)
+  })
+
+  it('UI renders total_equity (Equity)', () => {
+    expect(uiSource).toMatch(/testResult\.total_equity/)
+  })
+
+  it('UI renders option_buying_power (Option BP)', () => {
+    expect(uiSource).toMatch(/testResult\.option_buying_power/)
+  })
+
+  it('UI renders stock_buying_power (Stock BP)', () => {
+    expect(uiSource).toMatch(/testResult\.stock_buying_power/)
+  })
+
+  it('UI renders day_pnl', () => {
+    expect(uiSource).toMatch(/testResult\.day_pnl/)
+  })
+})
