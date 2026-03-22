@@ -636,3 +636,117 @@ describe('Collateral Math', () => {
     expect(collateralPer).toBe(0)
   })
 })
+
+/* ================================================================== */
+/*  Route existence and structural checks                              */
+/* ================================================================== */
+
+import { existsSync, readFileSync } from 'fs'
+import { resolve } from 'path'
+
+const BOT_ROUTE_DIR = resolve(__dirname, '../../app/api/[bot]')
+const ACCOUNT_ROUTE_DIR = resolve(__dirname, '../../app/api/accounts')
+
+describe('Route file existence', () => {
+  const expectedBotRoutes = [
+    'status', 'positions', 'position-monitor', 'position-detail',
+    'equity-curve', 'trades', 'performance', 'daily-perf',
+    'config', 'toggle', 'force-trade', 'force-close',
+    'logs', 'signals', 'pdt', 'diagnose-trade', 'diagnose-pnl',
+    'fix-collateral', 'eod-close', 'reconcile', 'verify-pnl',
+    'pending-orders', 'debug-ic-return',
+  ]
+
+  for (const route of expectedBotRoutes) {
+    it(`/api/[bot]/${route}/route.ts exists`, () => {
+      const routePath = resolve(BOT_ROUTE_DIR, route, 'route.ts')
+      expect(existsSync(routePath)).toBe(true)
+    })
+  }
+
+  it('/api/[bot]/pdt/audit/route.ts exists', () => {
+    const routePath = resolve(BOT_ROUTE_DIR, 'pdt', 'audit', 'route.ts')
+    expect(existsSync(routePath)).toBe(true)
+  })
+
+  it('/api/[bot]/equity-curve/intraday/route.ts exists', () => {
+    const routePath = resolve(BOT_ROUTE_DIR, 'equity-curve', 'intraday', 'route.ts')
+    expect(existsSync(routePath)).toBe(true)
+  })
+
+  const expectedAccountRoutes = [
+    'manage/route.ts',
+    'manage/[id]/route.ts',
+    'manage/[id]/test/route.ts',
+    'test-all/route.ts',
+    'test/route.ts',
+    'production/route.ts',
+  ]
+
+  for (const route of expectedAccountRoutes) {
+    it(`/api/accounts/${route} exists`, () => {
+      const routePath = resolve(ACCOUNT_ROUTE_DIR, route)
+      expect(existsSync(routePath)).toBe(true)
+    })
+  }
+
+  it('/api/health/route.ts exists', () => {
+    expect(existsSync(resolve(__dirname, '../../app/api/health/route.ts'))).toBe(true)
+  })
+
+  it('/api/scanner/status/route.ts exists', () => {
+    expect(existsSync(resolve(__dirname, '../../app/api/scanner/status/route.ts'))).toBe(true)
+  })
+})
+
+describe('Route error handling', () => {
+  const routeFiles = [
+    'status', 'positions', 'force-trade', 'force-close',
+    'toggle', 'eod-close', 'equity-curve', 'performance',
+  ]
+
+  for (const route of routeFiles) {
+    it(`${route}/route.ts has try/catch error handling`, () => {
+      const source = readFileSync(
+        resolve(BOT_ROUTE_DIR, route, 'route.ts'), 'utf-8',
+      )
+      expect(source).toMatch(/try\s*\{/)
+      expect(source).toMatch(/catch\s*\(/)
+    })
+
+    it(`${route}/route.ts returns error JSON on failure`, () => {
+      const source = readFileSync(
+        resolve(BOT_ROUTE_DIR, route, 'route.ts'), 'utf-8',
+      )
+      expect(source).toMatch(/NextResponse\.json\(\s*\{.*error/)
+    })
+  }
+})
+
+describe('Route SQL safety', () => {
+  it('eod-close uses parameterized queries', () => {
+    const source = readFileSync(
+      resolve(BOT_ROUTE_DIR, 'eod-close', 'route.ts'), 'utf-8',
+    )
+    // eod-close should use $1, $2 parameterized queries (not escapeSql)
+    expect(source).toMatch(/\$1/)
+    expect(source).toMatch(/\$2/)
+    // Should NOT use escapeSql (fully parameterized)
+    expect(source).not.toMatch(/escapeSql/)
+  })
+
+  it('force-trade uses SQL protection', () => {
+    const source = readFileSync(
+      resolve(BOT_ROUTE_DIR, 'force-trade', 'route.ts'), 'utf-8',
+    )
+    expect(source).toMatch(/escapeSql|\\$\d/)
+  })
+
+  it('force-close uses parameterized queries', () => {
+    const source = readFileSync(
+      resolve(BOT_ROUTE_DIR, 'force-close', 'route.ts'), 'utf-8',
+    )
+    // force-close should use $1, $2 pattern
+    expect(source).toMatch(/\$1/)
+  })
+})

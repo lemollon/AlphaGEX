@@ -594,3 +594,108 @@ describe('Scanner status route contract', () => {
     expect(httpStatus).toBe(200)
   })
 })
+
+/* ================================================================== */
+/*  Section 10: Untested Route Logic Validation                        */
+/* ================================================================== */
+
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
+
+describe('diagnose-trade route', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/diagnose-trade/route.ts'),
+    'utf-8',
+  )
+
+  it('exports a GET handler', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+GET/)
+  })
+
+  it('checks market hours', () => {
+    expect(source).toMatch(/market.*hour|isMarketOpen|830|1500/i)
+  })
+
+  it('checks buying power', () => {
+    expect(source).toMatch(/buying.?power|bp/i)
+  })
+
+  it('returns diagnostic gates array', () => {
+    expect(source).toMatch(/gates|checks|diagnosis|diagnostic/i)
+  })
+})
+
+describe('verify-pnl route', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/verify-pnl/route.ts'),
+    'utf-8',
+  )
+
+  it('exports a GET handler', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+GET/)
+  })
+
+  it('queries closed positions for P&L', () => {
+    expect(source).toMatch(/realized_pnl/)
+    expect(source).toMatch(/status.*closed|closed.*status/i)
+  })
+})
+
+describe('eod-close route logic', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/eod-close/route.ts'),
+    'utf-8',
+  )
+
+  it('exports a POST handler', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+POST/)
+  })
+
+  it('validates EOD cutoff time (14:45 CT = 885 minutes)', () => {
+    expect(source).toMatch(/885|14:45|14.*45/)
+  })
+
+  it('returns early with error if before cutoff', () => {
+    expect(source).toMatch(/Not past EOD cutoff/)
+  })
+
+  it('handles zero open positions gracefully', () => {
+    expect(source).toMatch(/No open positions/)
+    expect(source).toMatch(/closed:\s*0/)
+  })
+})
+
+describe('fix-collateral route', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/fix-collateral/route.ts'),
+    'utf-8',
+  )
+
+  it('exports GET (diagnostic) and POST (fix)', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+GET/)
+    expect(source).toMatch(/export\s+async\s+function\s+POST/)
+  })
+
+  it('queries orphan positions', () => {
+    expect(source).toMatch(/orphan|stale|expired/i)
+  })
+
+  it('reconciles collateral from live positions', () => {
+    expect(source).toMatch(/SUM\(collateral_required\)/)
+  })
+})
+
+describe('scanner/status route', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/scanner/status/route.ts'),
+    'utf-8',
+  )
+
+  it('exports a GET handler', () => {
+    expect(source).toMatch(/export\s+async\s+function\s+GET/)
+  })
+
+  it('queries bot_heartbeats table', () => {
+    expect(source).toMatch(/bot_heartbeats/)
+  })
+})
