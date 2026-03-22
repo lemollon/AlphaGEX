@@ -102,6 +102,12 @@ export async function PUT(
       WHERE id = $${paramIndex}
     `, values)
 
+    // Invalidate sandbox account cache so scanner picks up changes immediately
+    try {
+      const { reloadSandboxAccounts } = await import('@/lib/tradier')
+      await reloadSandboxAccounts()
+    } catch { /* non-fatal */ }
+
     return NextResponse.json({ success: true, message: 'Account updated' })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -121,7 +127,7 @@ export async function DELETE(
     }
 
     const existing = await dbQuery(
-      `SELECT id, person, account_id FROM ${TABLE} WHERE id = $1 LIMIT 1`,
+      `SELECT id, person, account_id, api_key, bot, type FROM ${TABLE} WHERE id = $1 LIMIT 1`,
       [id],
     )
     if (existing.length === 0) {
@@ -135,9 +141,32 @@ export async function DELETE(
     `, [id])
 
     const acct = existing[0]
+
+    // Immediate cleanup: close any open Tradier sandbox positions for this account
+    let closedPositions = 0
+    if (acct.type === 'sandbox' && acct.api_key) {
+      try {
+        const { closeAllSandboxPositions } = await import('@/lib/tradier')
+        closedPositions = await closeAllSandboxPositions(acct.api_key)
+        if (closedPositions > 0) {
+          console.log(`[accounts] Closed ${closedPositions} Tradier position(s) for deactivated account ${acct.account_id}`)
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[accounts] Failed to close positions for ${acct.account_id}: ${msg}`)
+      }
+    }
+
+    // Invalidate sandbox account cache
+    try {
+      const { reloadSandboxAccounts } = await import('@/lib/tradier')
+      await reloadSandboxAccounts()
+    } catch { /* non-fatal */ }
+
+    const closeNote = closedPositions > 0 ? ` (${closedPositions} position(s) closed)` : ''
     return NextResponse.json({
       success: true,
-      message: `Account ${acct.account_id} deactivated`,
+      message: `Account ${acct.account_id} deactivated${closeNote}`,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

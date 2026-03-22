@@ -44,6 +44,7 @@ import {
   buildOccSymbol,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
+  getPdtEnabledForAccount,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
 } from './tradier'
@@ -979,7 +980,22 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [bot.name.toUpperCase()],
   )
   const pdtCfg = pdtConfigRows[0]
-  const pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
+  let pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
+
+  // Per-account PDT override: if the primary account has pdt_enabled=false, honor it.
+  // This allows individual account holders to opt out of PDT enforcement.
+  if (pdtEnabled) {
+    try {
+      const persons = await getAccountsForBotAsync(bot.name)
+      if (persons.length > 0) {
+        const acctPdt = await getPdtEnabledForAccount(persons[0])
+        if (!acctPdt) {
+          pdtEnabled = false
+          console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${persons[0]})`)
+        }
+      }
+    } catch { /* keep bot-level setting */ }
+  }
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
   const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
   const lastResetAt = pdtCfg?.last_reset_at ?? null

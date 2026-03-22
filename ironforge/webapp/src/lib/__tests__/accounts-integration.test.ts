@@ -859,4 +859,188 @@ describe('Validation Guards', () => {
     // warning appears after success: true
     expect(body).toMatch(/success:\s*true[\s\S]*?warning/)
   })
+
+  it('POST capital warning only for sandbox (not production)', () => {
+    // Production accounts are monitoring-only, capital_pct is irrelevant
+    expect(manageRouteSource).toMatch(/type === 'sandbox' && estimatedAllocation < 500/)
+  })
+})
+
+/* ── Cache Invalidation ────────────────────────────────────── */
+
+describe('Cache Invalidation', () => {
+  const manageRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/route.ts'),
+    'utf-8',
+  )
+  const manageIdRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/route.ts'),
+    'utf-8',
+  )
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+
+  it('POST create invalidates sandbox cache after INSERT', () => {
+    const postFn = manageRouteSource.match(
+      /export async function POST[\s\S]*?^}/m,
+    )
+    expect(postFn).toBeTruthy()
+    const body = postFn![0]
+    // reloadSandboxAccounts must appear AFTER INSERT
+    const insertIdx = body.indexOf('INSERT INTO')
+    const reloadIdx = body.indexOf('reloadSandboxAccounts')
+    expect(insertIdx).toBeGreaterThan(-1)
+    expect(reloadIdx).toBeGreaterThan(-1)
+    expect(reloadIdx).toBeGreaterThan(insertIdx)
+  })
+
+  it('PUT update invalidates sandbox cache after UPDATE', () => {
+    const putFn = manageIdRouteSource.match(
+      /export async function PUT[\s\S]*?^}/m,
+    )
+    expect(putFn).toBeTruthy()
+    const body = putFn![0]
+    const updateIdx = body.indexOf('UPDATE')
+    const reloadIdx = body.indexOf('reloadSandboxAccounts')
+    expect(updateIdx).toBeGreaterThan(-1)
+    expect(reloadIdx).toBeGreaterThan(-1)
+    expect(reloadIdx).toBeGreaterThan(updateIdx)
+  })
+
+  it('DELETE deactivation invalidates sandbox cache', () => {
+    const deleteFn = manageIdRouteSource.match(
+      /export async function DELETE[\s\S]*?^}/m,
+    )
+    expect(deleteFn).toBeTruthy()
+    expect(deleteFn![0]).toMatch(/reloadSandboxAccounts/)
+  })
+
+  it('reloadSandboxAccounts exists as an exported function in tradier.ts', () => {
+    expect(tradierSource).toMatch(/export async function reloadSandboxAccounts/)
+  })
+
+  it('reloadSandboxAccounts clears _sandboxAccounts and _accountIdCache', () => {
+    const fn = tradierSource.match(
+      /export async function reloadSandboxAccounts[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/_sandboxAccounts\s*=\s*\[\]/)
+    expect(body).toMatch(/_sandboxAccountsLoadedFromDb\s*=\s*false/)
+    expect(body).toMatch(/_accountIdCache/)
+  })
+})
+
+/* ── Immediate Position Cleanup on Deactivation ────────────── */
+
+describe('Immediate Position Cleanup', () => {
+  const manageIdRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/route.ts'),
+    'utf-8',
+  )
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+
+  it('DELETE closes Tradier positions before deactivation', () => {
+    const deleteFn = manageIdRouteSource.match(
+      /export async function DELETE[\s\S]*?^}/m,
+    )
+    expect(deleteFn).toBeTruthy()
+    const body = deleteFn![0]
+    expect(body).toMatch(/closeAllSandboxPositions/)
+  })
+
+  it('DELETE only closes positions for sandbox accounts (not production)', () => {
+    const deleteFn = manageIdRouteSource.match(
+      /export async function DELETE[\s\S]*?^}/m,
+    )
+    expect(deleteFn).toBeTruthy()
+    // Must check type before closing
+    expect(deleteFn![0]).toMatch(/type.*===.*'sandbox'/)
+  })
+
+  it('DELETE reports closed position count in response', () => {
+    expect(manageIdRouteSource).toMatch(/position\(s\) closed/)
+  })
+
+  it('closeAllSandboxPositions exists in tradier.ts', () => {
+    expect(tradierSource).toMatch(/export async function closeAllSandboxPositions/)
+  })
+
+  it('closeAllSandboxPositions uses market orders for immediate fill', () => {
+    const fn = tradierSource.match(
+      /export async function closeAllSandboxPositions[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/type.*:.*'market'/)
+  })
+})
+
+/* ── Per-Account PDT Enforcement ───────────────────────────── */
+
+describe('Per-Account PDT Enforcement', () => {
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  it('scanner imports getPdtEnabledForAccount from tradier', () => {
+    expect(scannerSource).toMatch(/getPdtEnabledForAccount/)
+    expect(scannerSource).toMatch(/from\s+'\.\/tradier'/)
+  })
+
+  it('tryOpenTrade checks per-account PDT after bot-level PDT', () => {
+    const fn = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    // Must first read from ironforge_pdt_config (bot-level)
+    const botLevelIdx = body.indexOf('ironforge_pdt_config')
+    // Then check per-account via getPdtEnabledForAccount
+    const acctLevelIdx = body.indexOf('getPdtEnabledForAccount')
+    expect(botLevelIdx).toBeGreaterThan(-1)
+    expect(acctLevelIdx).toBeGreaterThan(-1)
+    expect(acctLevelIdx).toBeGreaterThan(botLevelIdx)
+  })
+
+  it('per-account PDT can disable enforcement (override bot-level)', () => {
+    const fn = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    // If account has PDT disabled, set pdtEnabled = false
+    expect(body).toMatch(/pdtEnabled\s*=\s*false/)
+    expect(body).toMatch(/PDT disabled by account/)
+  })
+})
+
+/* ── Production Capital Cleanup ─────────────────────────────── */
+
+describe('Production Account Capital UI', () => {
+  const accountsContentSource = readFileSync(
+    resolve(__dirname, '../../components/AccountsContent.tsx'),
+    'utf-8',
+  )
+
+  it('AddAccountModal hides capital slider for production accounts', () => {
+    // The capital slider should be wrapped in {!isProduction && (...)}
+    // which means it only shows for sandbox accounts
+    expect(accountsContentSource).toMatch(/!isProduction[\s\S]*?Capital to Use \(%\)/)
+  })
+
+  it('EditAccountModal hides capital slider for production accounts', () => {
+    // The edit modal should check account.type !== 'production'
+    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital to Use/)
+  })
+
+  it('account card hides capital line for production accounts', () => {
+    // The "Capital: X% = $Y" line should be conditional on type
+    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital:/)
+  })
 })

@@ -364,9 +364,15 @@ export async function POST(req: NextRequest) {
       VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, NOW(), NOW())
     `, [person, account_id, api_key, normalizedBot, type, capitalPct, pdt_enabled === true])
 
-    // Capital minimum warning
+    // Invalidate sandbox account cache so scanner picks up the new account immediately
+    try {
+      const { reloadSandboxAccounts } = await import('@/lib/tradier')
+      await reloadSandboxAccounts()
+    } catch { /* non-fatal */ }
+
+    // Capital minimum warning (only relevant for sandbox — production is monitoring-only)
     const estimatedAllocation = 10000 * capitalPct / 100
-    const warning = estimatedAllocation < 500
+    const warning = type === 'sandbox' && estimatedAllocation < 500
       ? `Allocated capital will be ~$${Math.round(estimatedAllocation)} — below recommended $500 minimum`
       : undefined
 
