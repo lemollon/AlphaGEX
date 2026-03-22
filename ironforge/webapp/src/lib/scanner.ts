@@ -1123,7 +1123,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
-  const bpContracts = Math.max(1, Math.floor(usableBP / collateralPer))
+  const bpContracts = Math.floor(usableBP / collateralPer)
+  if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
   // max_contracts=0 means unlimited (sized by BP only)
   // SAFETY CAP: Never exceed 200 contracts regardless of BP calculation.
   // Prevents runaway sizing from inflated buying power values.

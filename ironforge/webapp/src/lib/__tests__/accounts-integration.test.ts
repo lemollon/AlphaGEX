@@ -633,19 +633,20 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     expect(negativeBP).toBeLessThan(200)
   })
 
-  it('sandbox orders use Math.max(1, ...) for minimum contract floor', () => {
+  it('sandbox orders skip account when BP insufficient for 1 contract', () => {
     const tradierSource = readFileSync(
       resolve(__dirname, '../tradier.ts'),
       'utf-8',
     )
-    // placeForAccount sizes with Math.max(1, Math.floor(usableBP / brokerMarginPer))
-    // This forces at least 1 contract even when BP can't cover it — sandbox concern
+    // placeForAccount now checks bpContracts < 1 and returns early
+    // instead of forcing Math.max(1, ...) which could oversize
     const fnMatch = tradierSource.match(
-      /async function placeForAccount[\s\S]*?^}/m,
+      /async function placeForAccount[\s\S]*?^  }/m,
     )
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/Math\.max\(1/)
+    expect(fnBody).toMatch(/if\s*\(bpContracts\s*<\s*1\)/)
+    expect(fnBody).not.toMatch(/Math\.max\(\s*1/)
   })
 
   it('scanner syncPaperAccountCapital runs before bot scanning', () => {
@@ -1279,5 +1280,99 @@ describe('Frontend Displays Balance & Buying Power from Test', () => {
 
   it('UI renders day_pnl', () => {
     expect(uiSource).toMatch(/testResult\.day_pnl/)
+  })
+})
+
+/* ── Capital_pct Enforcement in Execution ─────────────────── */
+
+describe('Capital_pct Enforcement in Trade Execution', () => {
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  // ── Sandbox sizing respects capital_pct ──
+
+  it('placeIcOrderAllAccounts applies capital_pct to buying power', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/getCapitalPctForAccount/)
+    expect(body).toMatch(/capitalPct/)
+  })
+
+  it('sandbox sizing multiplies BP by capital_pct / 100', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/bp\s*\*\s*\(capitalPct\s*\/\s*100\)/)
+  })
+
+  it('sandbox skips account when capital_pct makes BP insufficient', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/if\s*\(bpContracts\s*<\s*1\)/)
+    expect(body).toMatch(/capital_pct=/)
+  })
+
+  it('sandbox caps at paperContracts (not just BP)', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/Math\.min\(.*paperContracts/)
+  })
+
+  it('sandbox logs capital_pct in sizing output', () => {
+    expect(tradierSource).toMatch(/capital_pct=\$\{capitalPct\}%/)
+  })
+
+  // ── Scanner does NOT force 1 contract when BP is insufficient ──
+
+  it('scanner does NOT use Math.max(1, ...) for contract sizing', () => {
+    // The old pattern was Math.max(1, Math.floor(usableBP / collateralPer))
+    // This forced 1 contract even when BP couldn't cover it.
+    // New pattern: Math.floor(...) then check bpContracts < 1 → skip.
+    const bpContractsLine = scannerSource.match(/bpContracts\s*=\s*Math\.\w+\(.*collateralPer/)
+    expect(bpContractsLine).toBeTruthy()
+    const line = bpContractsLine![0]
+    expect(line).not.toMatch(/Math\.max\s*\(\s*1/)
+    expect(line).toMatch(/Math\.floor/)
+  })
+
+  it('scanner skips trade when BP cannot cover 1 contract', () => {
+    expect(scannerSource).toMatch(/if\s*\(bpContracts\s*<\s*1\)\s*return\s*[`'"]skip:insufficient_bp/)
+  })
+
+  // ── Allocated capital flows through to paper account ──
+
+  it('syncPaperAccountCapital reads starting_capital from bot config', () => {
+    const fn = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/starting_capital/)
+    expect(body).toMatch(/target/)
+  })
+
+  it('syncPaperAccountCapital skips trivial changes (<$1)', () => {
+    const fn = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/Math\.abs.*<\s*1/)
   })
 })

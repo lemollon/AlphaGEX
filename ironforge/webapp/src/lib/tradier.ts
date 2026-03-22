@@ -1184,20 +1184,32 @@ export async function placeIcOrderAllAccounts(
       const botShare = botName && eligibleAccounts.length > 1
         ? 1.0 / eligibleAccounts.length
         : 1.0
-      const usableBP = bp * botShare * 0.85
-      const bpContracts = Math.max(1, Math.floor(usableBP / brokerMarginPer))
-      // Size to 85% of account's option buying power. No paperContracts cap —
-      // sandbox accounts size independently based on their own BP.
-      // Safety cap at 200 contracts to prevent runaway orders.
-      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts)
+      // Apply capital_pct: if user allocated only 50% of their capital,
+      // sandbox should not use more than 50% of its buying power either.
+      let capitalPct = 100
+      try {
+        capitalPct = await getCapitalPctForAccount(acct.name)
+      } catch { /* default 100% */ }
+      const bpAfterCapitalPct = bp * (capitalPct / 100)
+      const usableBP = bpAfterCapitalPct * botShare * 0.85
+      const bpContracts = Math.floor(usableBP / brokerMarginPer)
+      if (bpContracts < 1) {
+        console.warn(
+          `Sandbox [${acct.name}]: capital_pct=${capitalPct}% → usableBP=$${usableBP.toFixed(0)} insufficient for 1 contract ($${brokerMarginPer}/ea)`,
+        )
+        return
+      }
+      // Cap at paper-sized contracts (respects capital_pct from scanner sizing)
+      // and absolute safety cap of 200 contracts.
+      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
       console.log(
-        `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, ` +
-        `usable=$${usableBP.toFixed(0)} (${(botShare * 100).toFixed(0)}% × 85%), ` +
+        `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, capital_pct=${capitalPct}%, ` +
+        `usable=$${usableBP.toFixed(0)} (${capitalPct}% × ${(botShare * 100).toFixed(0)}% × 85%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
         `contracts=${acctContracts} (bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}), ` +
-        `totalMargin=$${totalMargin.toFixed(0)} (paper=${paperContracts})`,
+        `totalMargin=$${totalMargin.toFixed(0)}`,
       )
 
       const orderBody: Record<string, string> = {
