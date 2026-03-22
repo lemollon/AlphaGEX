@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
  *
  * Automatically close ALL open positions at EOD (2:45 PM CT).
  * Called by the frontend position-monitor poll for faster EOD handling
- * than the 5-minute Databricks scanner cycle.
+ * than the 5-minute scanner cycle.
  *
  * Returns: { closed: number, results: [...] }
  */
@@ -22,7 +22,6 @@ export async function POST(
 
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Invalid dte' }, { status: 400 })
-  const dteFilter = `AND dte_mode = '${escapeSql(dte)}'`
 
   // Verify it's actually past 2:45 PM CT (server-side check to prevent abuse)
   const ctNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
@@ -40,8 +39,9 @@ export async function POST(
               contracts, spread_width, total_credit, max_loss,
               collateral_required, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter}
+       WHERE status = 'open' AND dte_mode = $1
        ORDER BY open_time DESC`,
+      [dte],
     )
 
     if (openPositions.length === 0) {
@@ -109,55 +109,60 @@ export async function POST(
 
       // Close the position (atomically — only if still open)
       const sandboxCloseJson = Object.keys(sandboxCloseInfo).length > 0
-        ? `'${escapeSql(JSON.stringify(sandboxCloseInfo))}'`
-        : 'NULL'
+        ? JSON.stringify(sandboxCloseInfo)
+        : null
       const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
          SET status = 'closed', close_time = NOW(),
-             close_price = ${effectivePrice}, realized_pnl = ${realizedPnl},
+             close_price = $1, realized_pnl = $2,
              close_reason = 'eod_cutoff', updated_at = NOW(),
-             sandbox_close_order_id = ${sandboxCloseJson}
-         WHERE position_id = '${escapeSql(positionId)}' AND status = 'open'
-           ${dteFilter}`,
+             sandbox_close_order_id = $3
+         WHERE position_id = $4 AND status = 'open'
+           AND dte_mode = $5`,
+        [effectivePrice, realizedPnl, sandboxCloseJson, positionId, dte],
       )
 
       // Guard: skip paper_account update if position was already closed by scanner
       if (rowsAffected === 0) {
         await dbExecute(
           `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-           VALUES ('SKIP',
-                   '${escapeSql(`EOD SKIP: ${positionId} already closed (would have been $${realizedPnl.toFixed(2)})`)}',
-                   '${escapeSql(JSON.stringify({ position_id: positionId, skipped_pnl: realizedPnl, source: 'webapp_eod_close', skip_reason: 'already_closed' }))}',
-                   '${escapeSql(dte)}')`,
+           VALUES ('SKIP', $1, $2, $3)`,
+          [
+            `EOD SKIP: ${positionId} already closed (would have been $${realizedPnl.toFixed(2)})`,
+            JSON.stringify({ position_id: positionId, skipped_pnl: realizedPnl, source: 'webapp_eod_close', skip_reason: 'already_closed' }),
+            dte,
+          ],
         )
         continue  // Skip to next position — don't double-count P&L
       }
 
       // Log the close
-      const logDetails = escapeSql(JSON.stringify({
-        position_id: positionId,
-        close_price: effectivePrice,
-        realized_pnl: realizedPnl,
-        close_reason: 'eod_cutoff',
-        entry_credit: totalCredit,
-        source: 'webapp_eod_close',
-        sandbox_close_info: sandboxCloseInfo,
-      }))
       await dbExecute(
         `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-         VALUES ('TRADE_CLOSE',
-                 '${escapeSql(`EOD CLOSE: ${positionId} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`)}',
-                 '${logDetails}',
-                 '${escapeSql(dte)}')`,
+         VALUES ('TRADE_CLOSE', $1, $2, $3)`,
+        [
+          `EOD CLOSE: ${positionId} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)}`,
+          JSON.stringify({
+            position_id: positionId,
+            close_price: effectivePrice,
+            realized_pnl: realizedPnl,
+            close_reason: 'eod_cutoff',
+            entry_credit: totalCredit,
+            source: 'webapp_eod_close',
+            sandbox_close_info: sandboxCloseInfo,
+          }),
+          dte,
+        ],
       )
 
       // Update PDT log
       await dbExecute(
         `UPDATE ${botTable(bot, 'pdt_log')}
-         SET closed_at = NOW(), exit_cost = ${effectivePrice}, pnl = ${realizedPnl},
+         SET closed_at = NOW(), exit_cost = $1, pnl = $2,
              close_reason = 'eod_cutoff',
              is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
-         WHERE position_id = '${escapeSql(positionId)}' AND dte_mode = '${escapeSql(dte)}'`,
+         WHERE position_id = $3 AND dte_mode = $4`,
+        [effectivePrice, realizedPnl, positionId, dte],
       )
 
       results.push({
@@ -172,46 +177,50 @@ export async function POST(
     const remainingCollateral = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter}`,
+       WHERE status = 'open' AND dte_mode = $1`,
+      [dte],
     )
     const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     const totalRealizedPnl = results.reduce((sum, r) => sum + r.realized_pnl, 0)
 
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
-       SET current_balance = current_balance + ${totalRealizedPnl},
-           cumulative_pnl = cumulative_pnl + ${totalRealizedPnl},
-           total_trades = total_trades + ${results.length},
-           collateral_in_use = ${actualCollateral},
-           buying_power = current_balance + ${totalRealizedPnl} - ${actualCollateral},
-           high_water_mark = GREATEST(high_water_mark, current_balance + ${totalRealizedPnl}),
+       SET current_balance = current_balance + $1,
+           cumulative_pnl = cumulative_pnl + $1,
+           total_trades = total_trades + $2,
+           collateral_in_use = $3,
+           buying_power = current_balance + $1 - $3,
+           high_water_mark = GREATEST(high_water_mark, current_balance + $1),
            max_drawdown = GREATEST(max_drawdown,
-             GREATEST(high_water_mark, current_balance + ${totalRealizedPnl}) - (current_balance + ${totalRealizedPnl})),
+             GREATEST(high_water_mark, current_balance + $1) - (current_balance + $1)),
            updated_at = NOW()
-       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE is_active IS NOT NULL AND dte_mode = $4`,
+      [totalRealizedPnl, results.length, actualCollateral, dte],
     )
 
     // 4. Equity snapshot
     const acctRows = await dbQuery(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
-       WHERE dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
+       WHERE dte_mode = $1 ORDER BY id DESC LIMIT 1`,
+      [dte],
     )
     const bal = num(acctRows[0]?.current_balance)
     const cumPnl = num(acctRows[0]?.cumulative_pnl)
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'equity_snapshots')}
        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-       VALUES (${bal}, ${cumPnl}, 0, 0,
-               '${escapeSql(`webapp_eod_close:${results.length}_positions`)}', '${escapeSql(dte)}')`,
+       VALUES ($1, $2, 0, 0, $3, $4)`,
+      [bal, cumPnl, `webapp_eod_close:${results.length}_positions`, dte],
     )
 
     // 5. Daily perf upsert
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-       VALUES (${CT_TODAY}, 0, ${results.length}, ${totalRealizedPnl})
+       VALUES (${CT_TODAY}, 0, $1, $2)
        ON CONFLICT (trade_date) DO UPDATE SET
-         positions_closed = ${botTable(bot, 'daily_perf')}.positions_closed + ${results.length},
-         realized_pnl = ${botTable(bot, 'daily_perf')}.realized_pnl + ${totalRealizedPnl}`,
+         positions_closed = ${botTable(bot, 'daily_perf')}.positions_closed + $1,
+         realized_pnl = ${botTable(bot, 'daily_perf')}.realized_pnl + $2`,
+      [results.length, totalRealizedPnl],
     )
 
     return NextResponse.json({

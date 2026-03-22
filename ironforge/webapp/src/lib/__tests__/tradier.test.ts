@@ -599,3 +599,58 @@ describe('Buying power → contract sizing', () => {
     expect(bp).toBeLessThan(collateralPer)
   })
 })
+
+/* ================================================================== */
+/*  Tradier API failure paths                                          */
+/* ================================================================== */
+
+describe('getQuote failure handling', () => {
+  it('returns null when fetch throws AbortError (timeout)', async () => {
+    mockFetch.mockRejectedValueOnce(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+    )
+    const result = await getQuote('SPY')
+    expect(result).toBeNull()
+  })
+
+  it('returns null on HTTP 500 response', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({}, 500))
+    const result = await getQuote('SPY')
+    expect(result).toBeNull()
+  })
+
+  it('returns null on HTTP 429 (rate limited)', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({}, 429))
+    const result = await getQuote('SPY')
+    expect(result).toBeNull()
+  })
+
+  it('returns null when quote has no data at all', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ quotes: {} }))
+    const result = await getQuote('SPY')
+    expect(result).toBeNull()
+  })
+})
+
+describe('getIcEntryCredit failure handling', () => {
+  it('returns null when option chain quotes are missing', async () => {
+    // Return empty quotes for all calls
+    mockFetch.mockResolvedValue(jsonResponse({ quotes: { quote: null } }))
+    const result = await getIcEntryCredit('SPY', '2026-03-24', 580, 575, 590, 595)
+    expect(result).toBeNull()
+  })
+})
+
+describe('getOptionExpirations failure handling', () => {
+  it('returns empty array on API error', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({}, 500))
+    const result = await getOptionExpirations('SPY')
+    expect(result).toEqual([])
+  })
+
+  it('returns empty array on network error', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('Network error'))
+    const result = await getOptionExpirations('SPY')
+    expect(result).toEqual([])
+  })
+})

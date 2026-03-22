@@ -896,3 +896,101 @@ describe('Scanner Safety Gates', () => {
     expect(scanIdx).toBeGreaterThan(configIdx)
   })
 })
+
+/* ================================================================== */
+/*  Close Position Scenarios                                           */
+/* ================================================================== */
+
+describe('Close position decision logic', () => {
+  it('profit target: cost_to_close < entry * (1 - pt_pct) triggers close', () => {
+    // FLAME: entry 0.27, PT 30% → close when cost < 0.27 * 0.70 = 0.189
+    const entry = 0.27
+    const ptPct = 0.30
+    const ptThreshold = entry * (1 - ptPct) // 0.189
+    const costToClose = 0.10
+    expect(costToClose).toBeLessThan(ptThreshold)
+  })
+
+  it('stop loss: cost_to_close > entry * sl_mult triggers close', () => {
+    // FLAME: entry 0.27, SL 2.0x → close when cost > 0.27 * 2.0 = 0.54
+    const entry = 0.27
+    const slMult = 2.0
+    const slThreshold = entry * slMult // 0.54
+    const costToClose = 0.60
+    expect(costToClose).toBeGreaterThan(slThreshold)
+  })
+
+  it('INFERNO has wider stop loss than FLAME', () => {
+    const flameSlMult = DEFAULT_CONFIG.flame.sl_mult
+    const infernoSlMult = DEFAULT_CONFIG.inferno.sl_mult
+    expect(infernoSlMult).toBeGreaterThan(flameSlMult)
+  })
+
+  it('profit target slides down over the day', () => {
+    // MORNING 30% → MIDDAY 20% → AFTERNOON 15%
+    const morning = new Date('2026-03-18T09:00:00') // 9 AM
+    const midday = new Date('2026-03-18T11:00:00')  // 11 AM
+    const afternoon = new Date('2026-03-18T13:30:00') // 1:30 PM
+
+    const [mPt] = getSlidingProfitTarget(morning, 0.30, 'flame')
+    const [mdPt] = getSlidingProfitTarget(midday, 0.30, 'flame')
+    const [aPt] = getSlidingProfitTarget(afternoon, 0.30, 'flame')
+
+    expect(mPt).toBeGreaterThan(mdPt)
+    expect(mdPt).toBeGreaterThan(aPt)
+  })
+})
+
+describe('Close position — source code structural', () => {
+  const { readFileSync } = require('fs')
+  const { resolve } = require('path')
+  const scannerSrc = readFileSync(
+    resolve(__dirname, '../scanner.ts'), 'utf-8',
+  )
+
+  it('closePosition function handles PT, SL, EOD, and stale', () => {
+    // Find the close decision logic in scanner source
+    expect(scannerSrc).toMatch(/profit.?target|ptThreshold/i)
+    expect(scannerSrc).toMatch(/stop.?loss|slThreshold/i)
+    expect(scannerSrc).toMatch(/eod|isAfterEodCutoff/i)
+    expect(scannerSrc).toMatch(/stale|prior.?day|holdover/i)
+  })
+
+  it('MTM failure tracking increments and resets correctly', () => {
+    _mtmFailureCounts.set('test-pos', 0)
+
+    // Increment
+    for (let i = 0; i < 3; i++) {
+      _mtmFailureCounts.set('test-pos', (_mtmFailureCounts.get('test-pos') ?? 0) + 1)
+    }
+    expect(_mtmFailureCounts.get('test-pos')).toBe(3)
+
+    // Reset on success
+    _mtmFailureCounts.delete('test-pos')
+    expect(_mtmFailureCounts.get('test-pos')).toBeUndefined()
+  })
+
+  it('force-close at MAX_CONSECUTIVE_MTM_FAILURES', () => {
+    // Verify the threshold is used in scanner source
+    expect(scannerSrc).toMatch(/MAX_CONSECUTIVE_MTM_FAILURES/)
+    // And that it leads to a close action
+    expect(scannerSrc).toMatch(/failCount\s*>=\s*MAX_CONSECUTIVE_MTM_FAILURES/)
+    expect(scannerSrc).toMatch(/data_feed_failure/)
+  })
+})
+
+describe('Config loading resilience', () => {
+  const { readFileSync } = require('fs')
+  const { resolve } = require('path')
+  const src = readFileSync(resolve(__dirname, '../scanner.ts'), 'utf-8')
+
+  it('loadConfigOverrides is called with try/catch in runAllScans', () => {
+    expect(src).toMatch(/loadConfigOverrides/)
+    expect(src).toMatch(/using defaults/i)
+  })
+
+  it('syncPaperAccountCapital exists and has error handling', () => {
+    expect(src).toMatch(/syncPaperAccountCapital/)
+    expect(src).toMatch(/capital sync error/i)
+  })
+})

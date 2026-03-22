@@ -94,6 +94,42 @@ interface MtmValidation {
 /** Default timeout for all Tradier API calls (5 seconds). */
 const API_TIMEOUT_MS = 5_000
 
+/* ------------------------------------------------------------------ */
+/*  Circuit Breaker — stops hammering Tradier when it's down           */
+/* ------------------------------------------------------------------ */
+
+let _circuitOpenUntil = 0           // epoch ms; 0 = circuit closed
+let _consecutiveFailures = 0
+const CIRCUIT_BREAKER_THRESHOLD = 5
+const CIRCUIT_BREAKER_COOLDOWN_MS = 5 * 60 * 1000 // 5 min
+
+function recordTradierSuccess(): void {
+  _consecutiveFailures = 0
+  _circuitOpenUntil = 0
+}
+
+function recordTradierFailure(): void {
+  _consecutiveFailures++
+  if (_consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    _circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS
+    console.warn(
+      `[tradier] Circuit breaker OPEN — ${_consecutiveFailures} consecutive failures. ` +
+      `Cooling off for ${CIRCUIT_BREAKER_COOLDOWN_MS / 60_000} min.`,
+    )
+  }
+}
+
+function isCircuitOpen(): boolean {
+  if (_circuitOpenUntil === 0) return false
+  if (Date.now() > _circuitOpenUntil) {
+    // Half-open: allow one retry
+    _circuitOpenUntil = 0
+    _consecutiveFailures = 0
+    return false
+  }
+  return true
+}
+
 /** Create an AbortSignal that fires after `ms` milliseconds. */
 function timeoutSignal(ms: number = API_TIMEOUT_MS): AbortSignal {
   const controller = new AbortController()
@@ -120,6 +156,11 @@ async function tradierGet(
   endpoint: string,
   params?: Record<string, string>,
 ): Promise<any> {
+  // Circuit breaker: skip API call if Tradier is known to be down
+  if (isCircuitOpen()) {
+    return null
+  }
+
   // Lazy-load API key from DB if env var wasn't set
   await ensureQuoteApiKey()
 
@@ -144,6 +185,7 @@ async function tradierGet(
       signal: timeoutSignal(),
     })
   } catch (err: unknown) {
+    recordTradierFailure()
     if (err instanceof Error && err.name === 'AbortError') {
       console.error(`Tradier: ${endpoint} timed out after ${API_TIMEOUT_MS}ms`)
     } else {
@@ -154,9 +196,11 @@ async function tradierGet(
   }
 
   if (!res.ok) {
+    recordTradierFailure()
     console.error(`Tradier: ${endpoint} returned HTTP ${res.status} (${res.statusText})`)
     return null
   }
+  recordTradierSuccess()
   return res.json()
 }
 
@@ -1957,4 +2001,14 @@ export { getOrderFillPrice, getAccountIdForKey }
 
 export const _testing = {
   getOrderFillPrice,
+  // Circuit breaker internals
+  get _circuitOpenUntil() { return _circuitOpenUntil },
+  set _circuitOpenUntil(v: number) { _circuitOpenUntil = v },
+  get _consecutiveFailures() { return _consecutiveFailures },
+  set _consecutiveFailures(v: number) { _consecutiveFailures = v },
+  CIRCUIT_BREAKER_THRESHOLD,
+  CIRCUIT_BREAKER_COOLDOWN_MS,
+  recordTradierSuccess,
+  recordTradierFailure,
+  isCircuitOpen,
 }
