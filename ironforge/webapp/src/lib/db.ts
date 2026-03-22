@@ -312,11 +312,17 @@ async function ensureTables(): Promise<void> {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
         } catch { /* column already exists or table doesn't exist yet */ }
       }
-      // Add person column to equity_snapshots and daily_perf for per-person filtering
-      for (const tbl of [`${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+      // Add person column to equity_snapshots, daily_perf, logs, and signals for per-person filtering
+      for (const tbl of [`${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_logs`, `${bot}_signals`]) {
         try {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS person TEXT`)
         } catch { /* column already exists or table doesn't exist yet */ }
+      }
+      // Backfill NULL person values to 'User' so existing data matches person filter
+      for (const tbl of [`${bot}_positions`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+        try {
+          await client.query(`UPDATE ${tbl} SET person = 'User' WHERE person IS NULL`)
+        } catch { /* table may not exist yet */ }
       }
     }
 

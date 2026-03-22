@@ -525,13 +525,18 @@ async function monitorSinglePosition(
                      WHERE dte_mode = $3`,
                     [realizedPnl, collateral, bot.dte],
                   )
+                  const deferPersonRow = await query(
+                    `SELECT person FROM ${botTable(bot.name, 'positions')} WHERE position_id = $1 AND dte_mode = $2`,
+                    [pid, bot.dte],
+                  )
+                  const deferPerson = deferPersonRow[0]?.person || 'User'
                   await query(
-                    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-                     VALUES (${CT_TODAY}, 0, 1, $1)
+                    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
+                     VALUES (${CT_TODAY}, 0, 1, $1, $2)
                      ON CONFLICT (trade_date) DO UPDATE SET
                        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
                        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-                    [realizedPnl],
+                    [realizedPnl, deferPerson],
                   )
                   console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
@@ -676,6 +681,16 @@ async function closePosition(
   orderType?: 'market' | 'debit',
   limitPrice?: number,
 ): Promise<void> {
+  // Read person from position for daily_perf attribution
+  let posPerson = 'User'
+  try {
+    const posPersonRow = await query(
+      `SELECT person FROM ${botTable(bot.name, 'positions')} WHERE position_id = $1 AND dte_mode = $2`,
+      [positionId, bot.dte],
+    )
+    if (posPersonRow[0]?.person) posPerson = posPersonRow[0].person
+  } catch { /* default */ }
+
   // Determine estimated close price if not provided
   let estimatedPrice = closePrice ?? 0
   if (closePrice === undefined && isConfigured()) {
@@ -896,12 +911,12 @@ async function closePosition(
 
   // Daily perf
   await query(
-    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
-     VALUES (${CT_TODAY}, 0, 1, $1)
+    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
+     VALUES (${CT_TODAY}, 0, 1, $1, $2)
      ON CONFLICT (trade_date) DO UPDATE SET
        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-    [realizedPnl],
+    [realizedPnl, posPerson],
   )
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)

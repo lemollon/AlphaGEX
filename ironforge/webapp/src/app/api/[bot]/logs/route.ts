@@ -11,7 +11,10 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot)
-  const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''
+  const personParam = req.nextUrl.searchParams.get('person')
+  const filterByPerson = personParam && personParam !== 'all'
+  const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50), 200)
@@ -21,7 +24,7 @@ export async function GET(
     const rows = await dbQuery(
       `SELECT log_time, level, message, details
        FROM ${botTable(bot, 'logs')}
-       ${dteFilter}
+       WHERE 1=1 ${dteFilter} ${personFilter}
        ORDER BY log_time DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )

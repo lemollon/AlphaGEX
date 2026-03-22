@@ -829,12 +829,139 @@ describe('Person filtering — BotDashboard dropdown', () => {
     expect(source).toMatch(/All Accounts/)
   })
 
-  it('appends person param to API calls via withPerson helper', () => {
+  it('appends person param to ALL data API calls via withPerson helper', () => {
     expect(source).toMatch(/withPerson/)
-    // Status, equity-curve, intraday, position-monitor, performance should all use withPerson
+    // Core scorecard routes
     expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/status`\)/)
     expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/equity-curve/)
     expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/position-monitor`\)/)
     expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/performance`\)/)
+    // Extended data routes (trades, logs, signals, position-detail)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/trades`\)/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/logs`\)/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/signals`\)/)
+    expect(source).toMatch(/withPerson\(`\/api\/\$\{bot\}\/position-detail`\)/)
+  })
+})
+
+/* ── Extended person filtering — additional routes ──────────── */
+
+describe('Person filtering — additional routes', () => {
+  const additionalRoutes = [
+    { name: 'trades', path: '../../app/api/[bot]/trades/route.ts' },
+    { name: 'daily-perf', path: '../../app/api/[bot]/daily-perf/route.ts' },
+    { name: 'position-detail', path: '../../app/api/[bot]/position-detail/route.ts' },
+    { name: 'logs', path: '../../app/api/[bot]/logs/route.ts' },
+    { name: 'signals', path: '../../app/api/[bot]/signals/route.ts' },
+  ]
+
+  for (const route of additionalRoutes) {
+    it(`${route.name} route reads person query parameter`, () => {
+      const source = readFileSync(resolve(__dirname, route.path), 'utf-8')
+      expect(source).toMatch(/personParam/)
+      expect(source).toMatch(/personFilter/)
+    })
+  }
+})
+
+describe('Person filtering — NULL backfill migration', () => {
+  const dbSource = readFileSync(resolve(__dirname, '../db.ts'), 'utf-8')
+
+  it('backfills NULL person to User for positions', () => {
+    expect(dbSource).toMatch(/SET person = 'User' WHERE person IS NULL/)
+  })
+
+  it('adds person column to logs and signals tables', () => {
+    // The migration loop includes logs and signals in the table list
+    expect(dbSource).toMatch(/logs/)
+    expect(dbSource).toMatch(/signals/)
+    // Both are in the same ALTER TABLE loop that adds person
+    expect(dbSource).toMatch(/equity_snapshots.*daily_perf.*logs.*signals/)
+  })
+})
+
+describe('Person filtering — scanner close-path', () => {
+  const scannerSource = readFileSync(resolve(__dirname, '../scanner.ts'), 'utf-8')
+
+  it('closePosition reads person from position row', () => {
+    const fn = scannerSource.match(
+      /async function closePosition[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/SELECT person FROM/)
+    expect(fn![0]).toMatch(/posPerson/)
+  })
+
+  it('closePosition passes person to daily_perf INSERT', () => {
+    const fn = scannerSource.match(
+      /async function closePosition[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/daily_perf.*person/)
+    expect(fn![0]).toMatch(/posPerson/)
+  })
+})
+
+describe('Person filtering — force-close ownership check', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/force-close/route.ts'),
+    'utf-8',
+  )
+
+  it('reads person query parameter', () => {
+    expect(source).toMatch(/personParam/)
+  })
+
+  it('selects person column from positions', () => {
+    expect(source).toMatch(/person/)
+    // The SELECT should include person
+    expect(source).toMatch(/sandbox_order_id, person/)
+  })
+
+  it('returns 403 if position belongs to different person', () => {
+    expect(source).toMatch(/403/)
+    expect(source).toMatch(/belongs to/)
+  })
+})
+
+describe('Person filtering — eod-close person filter', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/eod-close/route.ts'),
+    'utf-8',
+  )
+
+  it('reads person query parameter', () => {
+    expect(source).toMatch(/personParam/)
+  })
+
+  it('builds parameterized person filter for positions query', () => {
+    expect(source).toMatch(/personFilter/)
+    expect(source).toMatch(/AND person = \$2/)
+  })
+})
+
+describe('Person filtering — Compare page', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../../components/CompareContent.tsx'),
+    'utf-8',
+  )
+
+  it('fetches /api/persons for dropdown', () => {
+    expect(source).toMatch(/\/api\/persons/)
+  })
+
+  it('has person dropdown when multiple persons exist', () => {
+    expect(source).toMatch(/selectedPerson/)
+    expect(source).toMatch(/persons\.length > 1/)
+    expect(source).toMatch(/<select/)
+  })
+
+  it('appends person param to all 9 SWR calls', () => {
+    // All bot status/equity/performance calls should include ${pq}
+    expect(source).toMatch(/flame\/status\$\{pq\}/)
+    expect(source).toMatch(/spark\/status\$\{pq\}/)
+    expect(source).toMatch(/inferno\/status\$\{pq\}/)
+    expect(source).toMatch(/flame\/equity-curve\$\{pq\}/)
+    expect(source).toMatch(/flame\/performance\$\{pq\}/)
   })
 })

@@ -129,7 +129,7 @@ export default function BotDashboard({
 
   /* ---- Position detail (per-leg quotes, sandbox P&L, metrics) ---- */
   const { data: positionDetail } = useSWR(
-    tab === 'Positions' ? `/api/${bot}/position-detail` : null,
+    tab === 'Positions' ? withPerson(`/api/${bot}/position-detail`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -143,21 +143,21 @@ export default function BotDashboard({
 
   /* ---- Trade history ---- */
   const { data: trades, error: tradesErr } = useSWR(
-    tab === 'Trade History' ? `/api/${bot}/trades` : null,
+    tab === 'Trade History' ? withPerson(`/api/${bot}/trades`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Logs ---- */
   const { data: logs, error: logsErr } = useSWR(
-    tab === 'Logs' ? `/api/${bot}/logs` : null,
+    tab === 'Logs' ? withPerson(`/api/${bot}/logs`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Signals ---- */
   const { data: signalsData, error: signalsErr } = useSWR(
-    tab === 'Signals' ? `/api/${bot}/signals` : null,
+    tab === 'Signals' ? withPerson(`/api/${bot}/signals`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )

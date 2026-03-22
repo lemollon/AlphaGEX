@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, validateBot } from '@/lib/db'
+import { dbQuery, botTable, num, int, escapeSql, validateBot } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,6 +7,7 @@ export const dynamic = 'force-dynamic'
  * GET /api/[bot]/daily-perf
  *
  * Returns the last 30 days of daily performance summaries.
+ * Supports ?person= filter.
  */
 export async function GET(
   req: NextRequest,
@@ -14,6 +15,10 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
+
+  const personParam = req.nextUrl.searchParams.get('person')
+  const filterByPerson = personParam && personParam !== 'all'
+  const personFilter = filterByPerson ? `WHERE person = '${escapeSql(personParam)}'` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 30), 200)
@@ -23,6 +28,7 @@ export async function GET(
     const rows = await dbQuery(
       `SELECT trade_date, trades_executed, positions_closed, realized_pnl
        FROM ${botTable(bot, 'daily_perf')}
+       ${personFilter}
        ORDER BY trade_date DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )
