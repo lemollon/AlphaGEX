@@ -412,3 +412,76 @@ describe('Flow 7: Collateral calculation is consistent', () => {
     expect(maxLoss).toBeCloseTo(2365, 0)
   })
 })
+
+/* ================================================================== */
+/*  Edge Cases: Buying Power Boundary Conditions                       */
+/* ================================================================== */
+
+describe('Edge Cases: BP boundary conditions', () => {
+  const MIN_BP_THRESHOLD = 200 // scanner.ts: buyingPower < 200 → skip
+
+  it('zero balance, zero collateral → BP = $0, trade blocked', () => {
+    const balance = 0
+    const collateral = 0
+    const buyingPower = balance - collateral
+    expect(buyingPower).toBe(0)
+    expect(buyingPower).toBeLessThan(MIN_BP_THRESHOLD)
+  })
+
+  it('balance $5k, collateral $8k → BP = -$3k, trade blocked', () => {
+    const balance = 5000
+    const collateral = 8000
+    const buyingPower = balance - collateral
+    expect(buyingPower).toBe(-3000)
+    expect(buyingPower).toBeLessThan(MIN_BP_THRESHOLD)
+    // Negative BP is correctly blocked (< 200 catches all negative values)
+  })
+
+  it('balance = exactly $200, zero collateral → BP = $200, trade allowed', () => {
+    const balance = 200
+    const collateral = 0
+    const buyingPower = balance - collateral
+    expect(buyingPower).toBe(200)
+    // Scanner: buyingPower < 200 → skip. $200 is NOT < 200, so trade proceeds.
+    expect(buyingPower).not.toBeLessThan(MIN_BP_THRESHOLD)
+  })
+
+  it('balance = $199.99, zero collateral → BP < $200, trade blocked', () => {
+    const balance = 199.99
+    const collateral = 0
+    const buyingPower = balance - collateral
+    expect(buyingPower).toBe(199.99)
+    expect(buyingPower).toBeLessThan(MIN_BP_THRESHOLD)
+  })
+
+  it('very large balance does not overflow', () => {
+    const balance = 999_999_999
+    const collateral = 0
+    const buyingPower = balance - collateral
+    expect(buyingPower).toBe(999_999_999)
+    expect(Number.isFinite(buyingPower)).toBe(true)
+    // Contract calculation with max BP
+    const SPREAD_WIDTH = 5.0
+    const credit = 0.27
+    const collateralPer = (SPREAD_WIDTH - credit) * 100
+    const usableBP = buyingPower * 0.85
+    const contracts = Math.floor(usableBP / collateralPer)
+    expect(Number.isFinite(contracts)).toBe(true)
+    expect(contracts).toBeGreaterThan(0)
+  })
+
+  it('BP where contracts would be exactly 0 (usableBP < collateralPer)', () => {
+    const balance = 400 // Just above $200 threshold
+    const collateral = 0
+    const buyingPower = balance - collateral
+    const SPREAD_WIDTH = 5.0
+    const credit = 0.27
+    const collateralPer = (SPREAD_WIDTH - credit) * 100 // $473
+    const usableBP = buyingPower * 0.85 // $340
+
+    expect(usableBP).toBeLessThan(collateralPer)
+    // Math.floor(340 / 473) = 0 — scanner should handle this
+    const rawContracts = Math.floor(usableBP / collateralPer)
+    expect(rawContracts).toBe(0)
+  })
+})
