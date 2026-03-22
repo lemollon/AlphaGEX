@@ -33,13 +33,16 @@ export async function POST(
       )
     }
 
+    // Person validation: if ?person= provided, only allow closing positions belonging to that person
+    const personParam = req.nextUrl.searchParams.get('person')
+
     // 1. Look up the open position
     const rows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
-              collateral_required, sandbox_order_id
+              collateral_required, sandbox_order_id, person
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open'
          AND dte_mode = $2
@@ -55,6 +58,15 @@ export async function POST(
     }
 
     const pos = rows[0]
+
+    // Person ownership check
+    if (personParam && personParam !== 'all' && pos.person && pos.person !== personParam) {
+      return NextResponse.json(
+        { error: `Position ${position_id} belongs to ${pos.person}, not ${personParam}` },
+        { status: 403 },
+      )
+    }
+
     const totalCredit = num(pos.total_credit)
     const contracts = num(pos.contracts)
     const collateral = num(pos.collateral_required)

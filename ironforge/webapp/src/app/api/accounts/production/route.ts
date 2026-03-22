@@ -49,7 +49,9 @@ export async function GET() {
 
             const botOccSymbols = new Set<string>()
             for (const row of openRows) {
+              if (!row.expiration) continue
               const exp = new Date(row.expiration + 'T12:00:00')
+              if (isNaN(exp.getTime())) continue
               const yy = String(exp.getFullYear()).slice(2)
               const mm = String(exp.getMonth() + 1).padStart(2, '0')
               const dd = String(exp.getDate()).padStart(2, '0')
@@ -62,6 +64,7 @@ export async function GET() {
                 [row.call_short_strike, 'C'],
                 [row.call_long_strike, 'C'],
               ] as const) {
+                if (strike == null) continue
                 const s = String(Math.round(parseFloat(String(strike)) * 1000)).padStart(8, '0')
                 botOccSymbols.add(`${ticker}${dateStr}${type}${s}`)
               }
@@ -108,7 +111,9 @@ export async function GET() {
           )
 
           for (const row of openRows) {
+            if (!row.expiration) continue
             const exp = new Date(row.expiration + 'T12:00:00')
+            if (isNaN(exp.getTime())) continue
             const yy = String(exp.getFullYear()).slice(2)
             const mm = String(exp.getMonth() + 1).padStart(2, '0')
             const dd = String(exp.getDate()).padStart(2, '0')
@@ -121,6 +126,7 @@ export async function GET() {
               [row.call_short_strike, 'C'],
               [row.call_long_strike, 'C'],
             ] as const) {
+              if (strike == null) continue
               const s = String(Math.round(parseFloat(String(strike)) * 1000)).padStart(8, '0')
               allBotSymbols.add(`${ticker}${dateStr}${type}${s}`)
             }

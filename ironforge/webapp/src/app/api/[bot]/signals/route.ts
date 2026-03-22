@@ -17,7 +17,10 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot)
+  const personParam = req.nextUrl.searchParams.get('person')
+  const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+  const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 50), 200)
@@ -31,7 +34,7 @@ export async function GET(
               total_credit, confidence, was_executed,
               skip_reason, reasoning, wings_adjusted, dte_mode
        FROM ${botTable(bot, 'signals')}
-       WHERE 1=1 ${dteFilter}
+       WHERE 1=1 ${dteFilter} ${personFilter}
        ORDER BY signal_time DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )

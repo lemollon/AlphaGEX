@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 
 const TABLE = sharedTable('ironforge_accounts')
 const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+const PRODUCTION_URL = 'https://api.tradier.com/v1'
 
 function maskApiKey(key: string): string {
   if (!key || key.length < 9) return '****'
@@ -51,11 +52,12 @@ async function ensureColumns(): Promise<void> {
 async function tradierFetch(
   endpoint: string,
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<any> {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
-    const res = await fetch(`${SANDBOX_URL}${endpoint}`, {
+    const res = await fetch(`${baseUrl}${endpoint}`, {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       cache: 'no-store',
       signal: controller.signal,
@@ -81,14 +83,16 @@ async function discoverAccountId(apiKey: string): Promise<string | null> {
 async function fetchLiveBalance(
   apiKey: string,
   accountNumber: string,
+  accountType: string = 'sandbox',
 ): Promise<{
   live_balance: number | null
   live_buying_power: number | null
   open_positions: number
 }> {
+  const baseUrl = accountType === 'production' ? PRODUCTION_URL : SANDBOX_URL
   const [balData, posData] = await Promise.all([
-    tradierFetch(`/accounts/${accountNumber}/balances`, apiKey),
-    tradierFetch(`/accounts/${accountNumber}/positions`, apiKey),
+    tradierFetch(`/accounts/${accountNumber}/balances`, apiKey, baseUrl),
+    tradierFetch(`/accounts/${accountNumber}/positions`, apiKey, baseUrl),
   ])
 
   const bal = balData?.balances || {}
@@ -122,22 +126,31 @@ interface CachedBalance {
 }
 
 const _balanceCache: Record<string, CachedBalance> = {}
+const _balanceInflight: Record<string, Promise<CachedBalance>> = {}
 const CACHE_TTL_MS = 60_000
 
 async function getLiveBalance(
   apiKey: string,
   accountId: string,
+  accountType: string = 'sandbox',
 ): Promise<CachedBalance> {
-  // Cache key includes last 6 chars of API key to avoid cross-account collisions
   const cacheKey = `${accountId}:${apiKey.slice(-6)}`
   const cached = _balanceCache[cacheKey]
   if (cached && Date.now() - cached.fetched_at < CACHE_TTL_MS) return cached
 
-  // Use the account_id from DB directly (it's the Tradier account number)
-  const result = await fetchLiveBalance(apiKey, accountId)
-  const entry: CachedBalance = { ...result, fetched_at: Date.now() }
-  _balanceCache[cacheKey] = entry
-  return entry
+  // Deduplicate concurrent requests for the same account
+  if (_balanceInflight[cacheKey]) return _balanceInflight[cacheKey]
+
+  const promise = (async () => {
+    const result = await fetchLiveBalance(apiKey, accountId, accountType)
+    const entry: CachedBalance = { ...result, fetched_at: Date.now() }
+    _balanceCache[cacheKey] = entry
+    delete _balanceInflight[cacheKey]
+    return entry
+  })()
+
+  _balanceInflight[cacheKey] = promise
+  return promise
 }
 
 /* ── Auto-seed from env vars ─────────────────────────────────── */
@@ -214,7 +227,7 @@ export async function GET() {
       if (isActive && row.api_key) {
         const rowId = parseInt(row.id)
         balancePromises.push(
-          getLiveBalance(row.api_key, row.account_id).then(bal => {
+          getLiveBalance(row.api_key, row.account_id, row.type || 'sandbox').then(bal => {
             liveData[rowId] = bal
           }),
         )
@@ -346,13 +359,15 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Validate API key against Tradier (skip for tests or seeding)
+    // Validate API key against correct Tradier API (sandbox or production)
     const skipTest = req.nextUrl.searchParams.get('skip_test') === 'true'
     if (!skipTest) {
-      const profile = await tradierFetch('/user/profile', api_key)
+      const validateUrl = type === 'production' ? PRODUCTION_URL : SANDBOX_URL
+      const profile = await tradierFetch('/user/profile', api_key, validateUrl)
       if (!profile) {
+        const label = type === 'production' ? 'Tradier production API' : 'Tradier sandbox API'
         return NextResponse.json(
-          { error: 'API key validation failed — cannot reach Tradier with this key' },
+          { error: `API key validation failed — cannot reach ${label} with this key` },
           { status: 400 },
         )
       }

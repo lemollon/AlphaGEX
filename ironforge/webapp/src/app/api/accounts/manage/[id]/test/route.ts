@@ -25,10 +25,17 @@ async function tradierFetch(
       signal: controller.signal,
     })
     clearTimeout(timeout)
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[accounts/test] Tradier ${endpoint} returned HTTP ${res.status}`)
+      return null
+    }
     return res.json()
-  } catch {
+  } catch (err: unknown) {
     clearTimeout(timeout)
+    const msg = err instanceof Error
+      ? (err.name === 'AbortError' ? 'timeout (5s)' : err.message)
+      : 'unknown error'
+    console.warn(`[accounts/test] Tradier ${endpoint} failed: ${msg}`)
     return null
   }
 }
@@ -51,7 +58,8 @@ export async function POST(
     const rows = await dbQuery(
       `SELECT account_id, api_key, person, type
        FROM ${TABLE}
-       WHERE id = ${id} LIMIT 1`,
+       WHERE id = $1 LIMIT 1`,
+      [id],
     )
     if (rows.length === 0) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 })

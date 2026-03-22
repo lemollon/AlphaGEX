@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
  * Returns: { closed: number, results: [...] }
  */
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
@@ -22,6 +22,11 @@ export async function POST(
 
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Invalid dte' }, { status: 400 })
+
+  // Optional person filter — if provided, only close positions belonging to this person
+  const personParam = req.nextUrl.searchParams.get('person')
+  const personFilter = personParam && personParam !== 'all' ? `AND person = $2` : ''
+  const posParams: any[] = personFilter ? [dte, personParam] : [dte]
 
   // Verify it's actually past 2:45 PM CT (server-side check to prevent abuse)
   const ctNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
@@ -31,7 +36,7 @@ export async function POST(
   }
 
   try {
-    // 1. Find all open positions
+    // 1. Find all open positions (optionally filtered by person)
     const openPositions = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike, put_credit,
@@ -39,9 +44,9 @@ export async function POST(
               contracts, spread_width, total_credit, max_loss,
               collateral_required, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1
+       WHERE status = 'open' AND dte_mode = $1 ${personFilter}
        ORDER BY open_time DESC`,
-      [dte],
+      posParams,
     )
 
     if (openPositions.length === 0) {

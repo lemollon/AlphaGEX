@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { ComparisonChart } from '@/components/EquityChart'
@@ -12,22 +13,29 @@ function fmtPnl(v: number) {
 }
 
 export default function CompareContent() {
-  const { data: flameStatus } = useSWR('/api/flame/status', fetcher, { refreshInterval: REFRESH })
-  const { data: sparkStatus } = useSWR('/api/spark/status', fetcher, { refreshInterval: REFRESH })
-  const { data: infernoStatus } = useSWR('/api/inferno/status', fetcher, { refreshInterval: REFRESH })
-  const { data: flameEquity } = useSWR('/api/flame/equity-curve', fetcher, { refreshInterval: REFRESH })
-  const { data: sparkEquity } = useSWR('/api/spark/equity-curve', fetcher, { refreshInterval: REFRESH })
-  const { data: infernoEquity } = useSWR('/api/inferno/equity-curve', fetcher, { refreshInterval: REFRESH })
-  const { data: flamePerf } = useSWR('/api/flame/performance', fetcher, { refreshInterval: REFRESH })
-  const { data: sparkPerf } = useSWR('/api/spark/performance', fetcher, { refreshInterval: REFRESH })
-  const { data: infernoPerf } = useSWR('/api/inferno/performance', fetcher, { refreshInterval: REFRESH })
+  const [selectedPerson, setSelectedPerson] = useState('all')
+  const { data: personsData } = useSWR('/api/persons', fetcher)
+  const persons: string[] = personsData?.persons ?? []
+
+  const pq = selectedPerson !== 'all' ? `?person=${encodeURIComponent(selectedPerson)}` : ''
+
+  const { data: flameStatus } = useSWR(`/api/flame/status${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: sparkStatus } = useSWR(`/api/spark/status${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: infernoStatus } = useSWR(`/api/inferno/status${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: flameEquity } = useSWR(`/api/flame/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: sparkEquity } = useSWR(`/api/spark/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: infernoEquity } = useSWR(`/api/inferno/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: flamePerf } = useSWR(`/api/flame/performance${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: sparkPerf } = useSWR(`/api/spark/performance${pq}`, fetcher, { refreshInterval: REFRESH })
+  const { data: infernoPerf } = useSWR(`/api/inferno/performance${pq}`, fetcher, { refreshInterval: REFRESH })
 
   const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || infernoEquity?.starting_capital || 5000
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline gap-2">
-        <h1 className="text-2xl font-bold">
+      <div className="flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <h1 className="text-2xl font-bold">
           <span className="text-amber-400">FLAME</span>
           <span className="text-forge-muted mx-2">vs</span>
           <span className="text-blue-400">SPARK</span>
@@ -35,7 +43,20 @@ export default function CompareContent() {
           <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block align-[-2px]" />
           <span className="text-red-400">INFERNO</span>
         </h1>
-        <span className="text-forge-muted">2DTE vs 1DTE vs 0DTE Comparison</span>
+          <span className="text-forge-muted">2DTE vs 1DTE vs 0DTE Comparison</span>
+        </div>
+        {persons.length > 1 && (
+          <select
+            value={selectedPerson}
+            onChange={(e) => setSelectedPerson(e.target.value)}
+            className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
+          >
+            <option value="all">All Accounts</option>
+            {persons.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Equity overlay */}

@@ -633,19 +633,20 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     expect(negativeBP).toBeLessThan(200)
   })
 
-  it('sandbox orders use Math.max(1, ...) for minimum contract floor', () => {
+  it('sandbox orders skip account when BP insufficient for 1 contract', () => {
     const tradierSource = readFileSync(
       resolve(__dirname, '../tradier.ts'),
       'utf-8',
     )
-    // placeForAccount sizes with Math.max(1, Math.floor(usableBP / brokerMarginPer))
-    // This forces at least 1 contract even when BP can't cover it — sandbox concern
+    // placeForAccount now checks bpContracts < 1 and returns early
+    // instead of forcing Math.max(1, ...) which could oversize
     const fnMatch = tradierSource.match(
-      /async function placeForAccount[\s\S]*?^}/m,
+      /async function placeForAccount[\s\S]*?^  }/m,
     )
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/Math\.max\(1/)
+    expect(fnBody).toMatch(/if\s*\(bpContracts\s*<\s*1\)/)
+    expect(fnBody).not.toMatch(/Math\.max\(\s*1/)
   })
 
   it('scanner syncPaperAccountCapital runs before bot scanning', () => {
@@ -699,15 +700,15 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     expect(fnBody).toMatch(/BOT_ACCOUNTS/)
   })
 
-  it('getAccountsForBotAsync filters to sandbox-only accounts', () => {
-    // Production accounts must NEVER affect scanner capital sizing or order placement.
-    // The query must include AND type = 'sandbox' to exclude production monitoring accounts.
+  it('getAccountsForBotAsync includes both sandbox and production accounts', () => {
+    // Both sandbox and production accounts are eligible for trading.
+    // Production accounts route orders to api.tradier.com (real money).
     const fnMatch = tradierSource.match(
       /export async function getAccountsForBotAsync[\s\S]*?^}/m,
     )
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/type\s*=\s*'sandbox'/)
+    expect(fnBody).toMatch(/sandbox.*production/)
   })
 
   it('test-all route uses correct Tradier URL per account type', () => {
@@ -1022,25 +1023,356 @@ describe('Per-Account PDT Enforcement', () => {
 
 /* ── Production Capital Cleanup ─────────────────────────────── */
 
-describe('Production Account Capital UI', () => {
+describe('Production Account Live Trading UI', () => {
   const accountsContentSource = readFileSync(
     resolve(__dirname, '../../components/AccountsContent.tsx'),
     'utf-8',
   )
 
-  it('AddAccountModal hides capital slider for production accounts', () => {
-    // The capital slider should be wrapped in {!isProduction && (...)}
-    // which means it only shows for sandbox accounts
-    expect(accountsContentSource).toMatch(/!isProduction[\s\S]*?Capital to Use \(%\)/)
+  it('capital slider shows for ALL account types (sandbox + production)', () => {
+    // Capital slider should NOT be wrapped in {!isProduction}
+    // Production accounts now use capital_pct for live trading sizing
+    expect(accountsContentSource).toMatch(/Capital to Use \(%\)/)
+    expect(accountsContentSource).not.toMatch(/!isProduction[\s\S]*?Capital to Use \(%\)/)
   })
 
-  it('EditAccountModal hides capital slider for production accounts', () => {
-    // The edit modal should check account.type !== 'production'
-    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital to Use/)
+  it('production accounts show LIVE badge', () => {
+    expect(accountsContentSource).toMatch(/LIVE/)
+    expect(accountsContentSource).toMatch(/bg-red-500/)
   })
 
-  it('account card hides capital line for production accounts', () => {
-    // The "Capital: X% = $Y" line should be conditional on type
-    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital:/)
+  it('production warning mentions real money', () => {
+    expect(accountsContentSource).toMatch(/REAL MONEY/)
+  })
+})
+
+/* ── Test Endpoint: Balance & Buying Power ────────────────── */
+
+describe('Test Endpoint Returns Balance & Buying Power', () => {
+  const testRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/test/route.ts'),
+    'utf-8',
+  )
+  const perAccountTestSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+    'utf-8',
+  )
+  const testAllSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/test-all/route.ts'),
+    'utf-8',
+  )
+
+  // ── Production vs Sandbox URL routing ──
+
+  it('test route supports production URL (api.tradier.com)', () => {
+    expect(testRouteSource).toMatch(/api\.tradier\.com/)
+    expect(testRouteSource).toMatch(/PRODUCTION_URL/)
+  })
+
+  it('test route supports sandbox URL (sandbox.tradier.com)', () => {
+    expect(testRouteSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testRouteSource).toMatch(/SANDBOX_URL/)
+  })
+
+  it('test route selects URL based on type param', () => {
+    // Must check body.type or accountType to determine URL
+    expect(testRouteSource).toMatch(/type.*===.*'production'/)
+    expect(testRouteSource).toMatch(/PRODUCTION_URL/)
+    expect(testRouteSource).toMatch(/SANDBOX_URL/)
+  })
+
+  it('per-account test reads type from DB and routes correctly', () => {
+    expect(perAccountTestSource).toMatch(/type.*===.*'production'.*PRODUCTION_URL.*SANDBOX_URL/)
+  })
+
+  it('test-all routes each account to correct URL based on DB type', () => {
+    expect(testAllSource).toMatch(/tradierBaseUrl/)
+    expect(testAllSource).toMatch(/'production'/)
+  })
+
+  // ── Balance & Buying Power fields returned ──
+
+  it('test route returns total_equity in response', () => {
+    expect(testRouteSource).toMatch(/total_equity/)
+    expect(testRouteSource).toMatch(/bal\.total_equity/)
+  })
+
+  it('test route returns option_buying_power in response', () => {
+    expect(testRouteSource).toMatch(/option_buying_power/)
+    // Must check both margin and pdt sub-objects
+    expect(testRouteSource).toMatch(/margin\.option_buying_power/)
+    expect(testRouteSource).toMatch(/pdt\.option_buying_power/)
+  })
+
+  it('test route fetches balances endpoint from Tradier', () => {
+    expect(testRouteSource).toMatch(/\/balances/)
+  })
+
+  it('test route fetches positions endpoint from Tradier', () => {
+    expect(testRouteSource).toMatch(/\/positions/)
+  })
+
+  it('test route returns open_positions count', () => {
+    expect(testRouteSource).toMatch(/open_positions/)
+  })
+
+  it('test route returns day_pnl from close_pl', () => {
+    expect(testRouteSource).toMatch(/day_pnl/)
+    expect(testRouteSource).toMatch(/close_pl/)
+  })
+
+  it('per-account test returns option_buying_power', () => {
+    expect(perAccountTestSource).toMatch(/option_buying_power/)
+    expect(perAccountTestSource).toMatch(/margin\.option_buying_power/)
+  })
+
+  it('per-account test returns stock_buying_power', () => {
+    expect(perAccountTestSource).toMatch(/stock_buying_power/)
+    expect(perAccountTestSource).toMatch(/margin\.stock_buying_power/)
+  })
+
+  it('per-account test returns total_equity', () => {
+    expect(perAccountTestSource).toMatch(/total_equity/)
+    expect(perAccountTestSource).toMatch(/bal\.total_equity/)
+  })
+
+  it('test-all returns option_buying_power per account', () => {
+    expect(testAllSource).toMatch(/option_buying_power/)
+    expect(testAllSource).toMatch(/margin\.option_buying_power/)
+  })
+
+  it('test-all returns stock_buying_power per account', () => {
+    expect(testAllSource).toMatch(/stock_buying_power/)
+    expect(testAllSource).toMatch(/margin\.stock_buying_power/)
+  })
+
+  it('test-all returns total_equity per account', () => {
+    expect(testAllSource).toMatch(/total_equity/)
+    expect(testAllSource).toMatch(/bal\.total_equity/)
+  })
+
+  // ── Error logging ──
+
+  it('test route logs warnings on Tradier failures', () => {
+    expect(testRouteSource).toMatch(/console\.warn/)
+    expect(testRouteSource).toMatch(/\[accounts\/test\]/)
+  })
+
+  it('per-account test logs warnings on Tradier failures', () => {
+    expect(perAccountTestSource).toMatch(/console\.warn/)
+    expect(perAccountTestSource).toMatch(/\[accounts\/test\]/)
+  })
+
+  it('test-all logs warnings on Tradier failures', () => {
+    expect(testAllSource).toMatch(/console\.warn/)
+    expect(testAllSource).toMatch(/\[accounts\/test-all\]/)
+  })
+
+  it('test-all logs summary of pass/fail counts', () => {
+    expect(testAllSource).toMatch(/passed.*failed/)
+  })
+})
+
+/* ── SQL Parameterization: Per-Account Test ───────────────── */
+
+describe('Per-Account Test SQL Safety', () => {
+  const perAccountTestSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+    'utf-8',
+  )
+
+  it('per-account test uses parameterized WHERE id = $1', () => {
+    expect(perAccountTestSource).toMatch(/WHERE id = \$1/)
+  })
+
+  it('per-account test does NOT use string interpolation for id', () => {
+    // Should NOT contain WHERE id = ${id} (template literal injection)
+    expect(perAccountTestSource).not.toMatch(/WHERE id = \$\{id\}/)
+  })
+})
+
+/* ── Production Route: Null Safety ────────────────────────── */
+
+describe('Production Route OCC Symbol Null Safety', () => {
+  const productionSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/production/route.ts'),
+    'utf-8',
+  )
+
+  it('skips rows with null expiration', () => {
+    expect(productionSource).toMatch(/if\s*\(\s*!row\.expiration\s*\)\s*continue/)
+  })
+
+  it('skips invalid dates', () => {
+    expect(productionSource).toMatch(/isNaN\(exp\.getTime\(\)\)/)
+  })
+
+  it('skips null strikes', () => {
+    expect(productionSource).toMatch(/if\s*\(\s*strike\s*==\s*null\s*\)\s*continue/)
+  })
+})
+
+/* ── Manage Route: Production URL Support ─────────────────── */
+
+describe('Manage Route Production URL Support', () => {
+  const manageSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/route.ts'),
+    'utf-8',
+  )
+
+  it('manage route defines PRODUCTION_URL constant', () => {
+    expect(manageSource).toMatch(/PRODUCTION_URL\s*=\s*'https:\/\/api\.tradier\.com\/v1'/)
+  })
+
+  it('tradierFetch accepts baseUrl parameter', () => {
+    expect(manageSource).toMatch(/tradierFetch\(\s*\n?\s*endpoint.*\n?\s*apiKey.*\n?\s*baseUrl/)
+  })
+
+  it('create validation uses correct URL for production accounts', () => {
+    // Must route production type to PRODUCTION_URL
+    expect(manageSource).toMatch(/type\s*===\s*'production'\s*\?\s*PRODUCTION_URL/)
+  })
+
+  it('fetchLiveBalance accepts accountType parameter', () => {
+    expect(manageSource).toMatch(/fetchLiveBalance\(\s*\n?\s*apiKey.*\n?\s*accountNumber.*\n?\s*accountType/)
+  })
+
+  it('getLiveBalance passes accountType through', () => {
+    expect(manageSource).toMatch(/getLiveBalance\(\s*\n?\s*apiKey.*\n?\s*accountId.*\n?\s*accountType/)
+  })
+
+  it('GET handler passes row.type to getLiveBalance', () => {
+    expect(manageSource).toMatch(/getLiveBalance\(row\.api_key,\s*row\.account_id,\s*row\.type/)
+  })
+})
+
+/* ── Frontend: Test Result Display ────────────────────────── */
+
+describe('Frontend Displays Balance & Buying Power from Test', () => {
+  const uiSource = readFileSync(
+    resolve(__dirname, '../../components/AccountsContent.tsx'),
+    'utf-8',
+  )
+
+  it('TestResult interface includes total_equity', () => {
+    expect(uiSource).toMatch(/total_equity\??\s*:\s*number/)
+  })
+
+  it('TestResult interface includes option_buying_power', () => {
+    expect(uiSource).toMatch(/option_buying_power\??\s*:\s*number/)
+  })
+
+  it('TestResult interface includes stock_buying_power', () => {
+    expect(uiSource).toMatch(/stock_buying_power\??\s*:\s*number/)
+  })
+
+  it('UI renders total_equity (Equity)', () => {
+    expect(uiSource).toMatch(/testResult\.total_equity/)
+  })
+
+  it('UI renders option_buying_power (Option BP)', () => {
+    expect(uiSource).toMatch(/testResult\.option_buying_power/)
+  })
+
+  it('UI renders stock_buying_power (Stock BP)', () => {
+    expect(uiSource).toMatch(/testResult\.stock_buying_power/)
+  })
+
+  it('UI renders day_pnl', () => {
+    expect(uiSource).toMatch(/testResult\.day_pnl/)
+  })
+})
+
+/* ── Capital_pct Enforcement in Execution ─────────────────── */
+
+describe('Capital_pct Enforcement in Trade Execution', () => {
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  // ── Sandbox sizing respects capital_pct ──
+
+  it('placeIcOrderAllAccounts applies capital_pct to buying power', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/getCapitalPctForAccount/)
+    expect(body).toMatch(/capitalPct/)
+  })
+
+  it('sandbox sizing multiplies BP by capital_pct / 100', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/bp\s*\*\s*\(capitalPct\s*\/\s*100\)/)
+  })
+
+  it('sandbox skips account when capital_pct makes BP insufficient', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/if\s*\(bpContracts\s*<\s*1\)/)
+    expect(body).toMatch(/capital_pct=/)
+  })
+
+  it('sandbox caps at paperContracts (not just BP)', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/Math\.min\(.*paperContracts/)
+  })
+
+  it('sandbox logs capital_pct in sizing output', () => {
+    expect(tradierSource).toMatch(/capital_pct=\$\{capitalPct\}%/)
+  })
+
+  // ── Scanner does NOT force 1 contract when BP is insufficient ──
+
+  it('scanner does NOT use Math.max(1, ...) for contract sizing', () => {
+    // The old pattern was Math.max(1, Math.floor(usableBP / collateralPer))
+    // This forced 1 contract even when BP couldn't cover it.
+    // New pattern: Math.floor(...) then check bpContracts < 1 → skip.
+    const bpContractsLine = scannerSource.match(/bpContracts\s*=\s*Math\.\w+\(.*collateralPer/)
+    expect(bpContractsLine).toBeTruthy()
+    const line = bpContractsLine![0]
+    expect(line).not.toMatch(/Math\.max\s*\(\s*1/)
+    expect(line).toMatch(/Math\.floor/)
+  })
+
+  it('scanner skips trade when BP cannot cover 1 contract', () => {
+    expect(scannerSource).toMatch(/if\s*\(bpContracts\s*<\s*1\)\s*return\s*[`'"]skip:insufficient_bp/)
+  })
+
+  // ── Allocated capital flows through to paper account ──
+
+  it('syncPaperAccountCapital reads starting_capital from bot config', () => {
+    const fn = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/starting_capital/)
+    expect(body).toMatch(/target/)
+  })
+
+  it('syncPaperAccountCapital skips trivial changes (<$1)', () => {
+    const fn = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    expect(fn![0]).toMatch(/Math\.abs.*<\s*1/)
   })
 })
