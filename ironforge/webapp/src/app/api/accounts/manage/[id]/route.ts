@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/db'
+import { dbQuery, dbExecute, sharedTable } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,14 +33,26 @@ export async function PUT(
     }
 
     const existing = await dbQuery(
-      `SELECT id, person, account_id FROM ${TABLE} WHERE id = ${id} LIMIT 1`,
+      `SELECT id, person, account_id FROM ${TABLE} WHERE id = $1 LIMIT 1`,
+      [id],
     )
     if (existing.length === 0) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 })
     }
 
     const body = await req.json()
-    const updates: string[] = []
+
+    // Block account type changes — type is immutable after creation
+    if (body.type != null) {
+      return NextResponse.json(
+        { error: 'Account type cannot be changed after creation' },
+        { status: 400 },
+      )
+    }
+
+    const setClauses: string[] = []
+    const values: any[] = []
+    let paramIndex = 1
 
     if (body.bot != null) {
       const normalizedBot = validateBotField(body.bot)
@@ -50,13 +62,16 @@ export async function PUT(
           { status: 400 },
         )
       }
-      updates.push(`bot = '${escapeSql(normalizedBot)}'`)
+      setClauses.push(`bot = $${paramIndex++}`)
+      values.push(normalizedBot)
     }
     if (body.api_key != null) {
-      updates.push(`api_key = '${escapeSql(body.api_key)}'`)
+      setClauses.push(`api_key = $${paramIndex++}`)
+      values.push(body.api_key)
     }
     if (body.is_active != null) {
-      updates.push(`is_active = ${body.is_active}`)
+      setClauses.push(`is_active = $${paramIndex++}`)
+      values.push(body.is_active === true)
     }
     if (body.capital_pct != null) {
       const pct = parseInt(body.capital_pct)
@@ -66,23 +81,26 @@ export async function PUT(
           { status: 400 },
         )
       }
-      updates.push(`capital_pct = ${pct}`)
+      setClauses.push(`capital_pct = $${paramIndex++}`)
+      values.push(pct)
     }
     if (body.pdt_enabled != null) {
-      updates.push(`pdt_enabled = ${body.pdt_enabled === true}`)
+      setClauses.push(`pdt_enabled = $${paramIndex++}`)
+      values.push(body.pdt_enabled === true)
     }
 
-    if (updates.length === 0) {
+    if (setClauses.length === 0) {
       return NextResponse.json({ success: true, message: 'No changes' })
     }
 
-    updates.push('updated_at = NOW()')
+    setClauses.push('updated_at = NOW()')
+    values.push(id)
 
     await dbExecute(`
       UPDATE ${TABLE}
-      SET ${updates.join(', ')}
-      WHERE id = ${id}
-    `)
+      SET ${setClauses.join(', ')}
+      WHERE id = $${paramIndex}
+    `, values)
 
     return NextResponse.json({ success: true, message: 'Account updated' })
   } catch (err: unknown) {
@@ -103,7 +121,8 @@ export async function DELETE(
     }
 
     const existing = await dbQuery(
-      `SELECT id, person, account_id FROM ${TABLE} WHERE id = ${id} LIMIT 1`,
+      `SELECT id, person, account_id FROM ${TABLE} WHERE id = $1 LIMIT 1`,
+      [id],
     )
     if (existing.length === 0) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 })
@@ -112,8 +131,8 @@ export async function DELETE(
     await dbExecute(`
       UPDATE ${TABLE}
       SET is_active = FALSE, updated_at = NOW()
-      WHERE id = ${id}
-    `)
+      WHERE id = $1
+    `, [id])
 
     const acct = existing[0]
     return NextResponse.json({

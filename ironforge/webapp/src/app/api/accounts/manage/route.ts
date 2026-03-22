@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, sharedTable, escapeSql } from '@/lib/db'
+import { dbQuery, dbExecute, sharedTable } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -178,13 +178,9 @@ async function seedFromEnvVars(): Promise<void> {
       await dbExecute(`
         INSERT INTO ${TABLE}
           (person, account_id, api_key, bot, type, is_active, capital_pct, pdt_enabled, created_at, updated_at)
-        VALUES (
-          '${escapeSql(acct.name)}', '${escapeSql(accountId)}', '${escapeSql(acct.apiKey)}',
-          'FLAME,SPARK,INFERNO', 'sandbox',
-          TRUE, 100, TRUE, NOW(), NOW()
-        )
+        VALUES ($1, $2, $3, 'FLAME,SPARK,INFERNO', 'sandbox', TRUE, 100, TRUE, NOW(), NOW())
         ON CONFLICT DO NOTHING
-      `)
+      `, [acct.name, accountId, acct.apiKey])
       console.log(`[accounts] Seeded: ${acct.name} → ${accountId}`)
     }
   } catch (err: unknown) {
@@ -327,7 +323,8 @@ export async function POST(req: NextRequest) {
     // Sandbox enforcement: only one active sandbox per person
     if (type === 'sandbox') {
       const existing = await dbQuery(
-        `SELECT id FROM ${TABLE} WHERE type = 'sandbox' AND person = '${escapeSql(person)}' AND is_active = TRUE LIMIT 1`,
+        `SELECT id FROM ${TABLE} WHERE type = 'sandbox' AND person = $1 AND is_active = TRUE LIMIT 1`,
+        [person],
       )
       if (existing.length > 0) {
         return NextResponse.json(
@@ -339,7 +336,8 @@ export async function POST(req: NextRequest) {
 
     // Check duplicate account_id
     const dupes = await dbQuery(
-      `SELECT id FROM ${TABLE} WHERE account_id = '${escapeSql(account_id)}' LIMIT 1`,
+      `SELECT id FROM ${TABLE} WHERE account_id = $1 LIMIT 1`,
+      [account_id],
     )
     if (dupes.length > 0) {
       return NextResponse.json(
@@ -348,17 +346,31 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Validate API key against Tradier (skip for tests or seeding)
+    const skipTest = req.nextUrl.searchParams.get('skip_test') === 'true'
+    if (!skipTest) {
+      const profile = await tradierFetch('/user/profile', api_key)
+      if (!profile) {
+        return NextResponse.json(
+          { error: 'API key validation failed — cannot reach Tradier with this key' },
+          { status: 400 },
+        )
+      }
+    }
+
     await dbExecute(`
       INSERT INTO ${TABLE}
         (person, account_id, api_key, bot, type, is_active, capital_pct, pdt_enabled, created_at, updated_at)
-      VALUES (
-        '${escapeSql(person)}', '${escapeSql(account_id)}', '${escapeSql(api_key)}',
-        '${escapeSql(normalizedBot)}', '${escapeSql(type)}',
-        TRUE, ${capitalPct}, ${pdt_enabled === true}, NOW(), NOW()
-      )
-    `)
+      VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, NOW(), NOW())
+    `, [person, account_id, api_key, normalizedBot, type, capitalPct, pdt_enabled === true])
 
-    return NextResponse.json({ success: true, message: `Account ${account_id} created` })
+    // Capital minimum warning
+    const estimatedAllocation = 10000 * capitalPct / 100
+    const warning = estimatedAllocation < 500
+      ? `Allocated capital will be ~$${Math.round(estimatedAllocation)} — below recommended $500 minimum`
+      : undefined
+
+    return NextResponse.json({ success: true, message: `Account ${account_id} created`, warning })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

@@ -4,7 +4,7 @@ import {
   getLoadedSandboxAccounts,
   getSandboxPositionSymbols,
 } from '@/lib/tradier'
-import { dbQuery, botTable, num, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, num, dteMode, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,13 +36,15 @@ export async function GET() {
           BOTS.map(async (bot) => {
             const dte = dteMode(bot)
             const tbl = botTable(bot, 'positions')
-            const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+            const dteFilter = dte ? 'AND dte_mode = $1' : ''
+            const dteParams = dte ? [dte] : []
 
             const openRows = await dbQuery(
               `SELECT put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                      expiration, ticker
               FROM ${tbl}
               WHERE status = 'open' ${dteFilter}`,
+              dteParams,
             )
 
             const botOccSymbols = new Set<string>()
@@ -77,6 +79,7 @@ export async function GET() {
               WHERE status IN ('closed', 'expired')
                 AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
                 ${dteFilter}`,
+              dteParams,
             )
             const dayPnl = num(todayPnlRows[0]?.pnl)
 
@@ -93,13 +96,15 @@ export async function GET() {
         for (const bot of BOTS) {
           const dte = dteMode(bot)
           const tbl = botTable(bot, 'positions')
-          const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+          const dteFilter2 = dte ? 'AND dte_mode = $1' : ''
+          const dteParams2 = dte ? [dte] : []
 
           const openRows = await dbQuery(
             `SELECT put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                    expiration, ticker
             FROM ${tbl}
-            WHERE status = 'open' ${dteFilter}`,
+            WHERE status = 'open' ${dteFilter2}`,
+            dteParams2,
           )
 
           for (const row of openRows) {

@@ -738,3 +738,125 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     expect(testRouteSource).toMatch(/export async function POST/)
   })
 })
+
+/* ── SQL Parameterization — source code checks ────────────── */
+
+describe('SQL Parameterization', () => {
+  const manageRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/route.ts'),
+    'utf-8',
+  )
+  const manageIdRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/route.ts'),
+    'utf-8',
+  )
+  const productionRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/production/route.ts'),
+    'utf-8',
+  )
+
+  it('manage/route.ts does not import escapeSql', () => {
+    // After parameterization, escapeSql should no longer be imported
+    expect(manageRouteSource).not.toMatch(/import\s+.*escapeSql.*from/)
+  })
+
+  it('manage/route.ts POST uses parameterized INSERT ($1-$7)', () => {
+    // The INSERT should use $1, $2, ... placeholders, not string interpolation
+    expect(manageRouteSource).toMatch(/VALUES\s*\(\$1,\s*\$2,\s*\$3/)
+  })
+
+  it('manage/route.ts sandbox check uses parameterized WHERE', () => {
+    // person = $1, not person = '${escapeSql(person)}'
+    expect(manageRouteSource).toMatch(/person\s*=\s*\$1\s+AND\s+is_active/)
+  })
+
+  it('manage/route.ts duplicate check uses parameterized WHERE', () => {
+    expect(manageRouteSource).toMatch(/account_id\s*=\s*\$1\s+LIMIT/)
+  })
+
+  it('manage/route.ts seed uses parameterized INSERT', () => {
+    // The seedFromEnvVars INSERT should also use $1, $2, $3
+    const seedFn = manageRouteSource.match(
+      /async function seedFromEnvVars[\s\S]*?^}/m,
+    )
+    expect(seedFn).toBeTruthy()
+    expect(seedFn![0]).toMatch(/VALUES\s*\(\$1,\s*\$2,\s*\$3/)
+    expect(seedFn![0]).not.toMatch(/escapeSql/)
+  })
+
+  it('manage/[id]/route.ts does not import escapeSql', () => {
+    expect(manageIdRouteSource).not.toMatch(/import\s+.*escapeSql.*from/)
+  })
+
+  it('manage/[id]/route.ts PUT uses parameterized SET clauses', () => {
+    // Should build dynamic $N params, not escapeSql string interpolation
+    expect(manageIdRouteSource).toMatch(/\$\{paramIndex\+\+\}/)
+    expect(manageIdRouteSource).not.toMatch(/escapeSql/)
+  })
+
+  it('manage/[id]/route.ts DELETE uses parameterized WHERE', () => {
+    expect(manageIdRouteSource).toMatch(/WHERE id = \$1/)
+  })
+
+  it('production/route.ts does not import escapeSql', () => {
+    expect(productionRouteSource).not.toMatch(/import\s+.*escapeSql.*from/)
+  })
+
+  it('production/route.ts dte filter uses parameterized query', () => {
+    // Should use $1 param, not escapeSql(dte)
+    expect(productionRouteSource).toMatch(/dte_mode\s*=\s*\$1/)
+    expect(productionRouteSource).not.toMatch(/escapeSql/)
+  })
+})
+
+/* ── Validation Guards ─────────────────────────────────────── */
+
+describe('Validation Guards', () => {
+  const manageRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/route.ts'),
+    'utf-8',
+  )
+  const manageIdRouteSource = readFileSync(
+    resolve(__dirname, '../../app/api/accounts/manage/[id]/route.ts'),
+    'utf-8',
+  )
+
+  it('PUT blocks account type changes', () => {
+    // If body.type is provided, return 400
+    expect(manageIdRouteSource).toMatch(/body\.type\s*!=\s*null/)
+    expect(manageIdRouteSource).toMatch(/Account type cannot be changed/)
+  })
+
+  it('POST validates API key against Tradier before INSERT', () => {
+    const postFn = manageRouteSource.match(
+      /export async function POST[\s\S]*?^}/m,
+    )
+    expect(postFn).toBeTruthy()
+    const body = postFn![0]
+    // tradierFetch call must come BEFORE the INSERT
+    const tradierIdx = body.indexOf("tradierFetch('/user/profile'")
+    const insertIdx = body.indexOf('INSERT INTO')
+    expect(tradierIdx).toBeGreaterThan(-1)
+    expect(insertIdx).toBeGreaterThan(-1)
+    expect(tradierIdx).toBeLessThan(insertIdx)
+  })
+
+  it('POST supports skip_test query param to bypass API key validation', () => {
+    expect(manageRouteSource).toMatch(/skip_test/)
+  })
+
+  it('POST returns capital warning when allocation is below $500', () => {
+    expect(manageRouteSource).toMatch(/below recommended \$500 minimum/)
+  })
+
+  it('POST capital warning is informational (not blocking)', () => {
+    // The warning is in the success response, not an error
+    const postFn = manageRouteSource.match(
+      /export async function POST[\s\S]*?^}/m,
+    )
+    expect(postFn).toBeTruthy()
+    const body = postFn![0]
+    // warning appears after success: true
+    expect(body).toMatch(/success:\s*true[\s\S]*?warning/)
+  })
+})
