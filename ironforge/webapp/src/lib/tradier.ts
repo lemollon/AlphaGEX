@@ -1530,9 +1530,10 @@ export async function getAccountsForBotAsync(botName: string): Promise<string[]>
     const rows = await dbq(
       `SELECT DISTINCT person FROM ironforge_accounts
        WHERE is_active = TRUE AND type IN ('sandbox', 'production')
-         AND (bot = '${botUpper}' OR bot LIKE '%${botUpper}%' OR bot = 'BOTH'
+         AND (bot = $1 OR bot LIKE '%' || $1 || '%' OR bot = 'BOTH'
               OR bot = 'FLAME,SPARK,INFERNO')
        ORDER BY person`,
+      [botUpper],
     )
     if (rows.length > 0) {
       return rows.map((r: any) => r.person)

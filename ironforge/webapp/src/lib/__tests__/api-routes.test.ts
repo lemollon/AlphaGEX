@@ -757,7 +757,7 @@ describe('Person filtering — /api/persons endpoint', () => {
   })
 
   it('returns distinct person names', () => {
-    expect(source).toMatch(/DISTINCT person/)
+    expect(source).toMatch(/DISTINCT\s+\w*\.?person/)
   })
 })
 
