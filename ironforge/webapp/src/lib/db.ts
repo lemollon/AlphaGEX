@@ -307,9 +307,15 @@ async function ensureTables(): Promise<void> {
 
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ['flame', 'spark', 'inferno']) {
-      for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT']) {
+      for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
+        } catch { /* column already exists or table doesn't exist yet */ }
+      }
+      // Add person column to equity_snapshots and daily_perf for per-person filtering
+      for (const tbl of [`${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+        try {
+          await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS person TEXT`)
         } catch { /* column already exists or table doesn't exist yet */ }
       }
     }
