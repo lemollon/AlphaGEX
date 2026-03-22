@@ -1376,3 +1376,60 @@ describe('Capital_pct Enforcement in Trade Execution', () => {
     expect(fn![0]).toMatch(/Math\.abs.*<\s*1/)
   })
 })
+
+/* ── Production Account Safety ─────────────────────────────── */
+
+describe('Production Account Safety', () => {
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+
+  it('placeForAccount skips production accounts when capital_pct lookup fails', () => {
+    // Production accounts must NOT default to 100% on DB failure.
+    // The code must check acct.type === \'production\' and return (skip)
+    // instead of silently using 100%.
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/acct\.type\s*===\s*'production'/)
+    expect(body).toMatch(/SKIPPING account/)
+  })
+
+  it('getCapitalPctForAccount logs warnings on DB failure', () => {
+    // Silent catch {} is dangerous — must log the error
+    const fn = tradierSource.match(
+      /export async function getCapitalPctForAccount[\s\S]*?^}/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/console\.warn/)
+    expect(body).toMatch(/defaulting to 100%/)
+  })
+
+  it('placeForAccount uses PRODUCTION label for production accounts', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    // Sizing log must say PRODUCTION for production accounts
+    expect(body).toMatch(/PRODUCTION \[/)
+  })
+
+  it('production accounts route to api.tradier.com (not sandbox)', () => {
+    // ensureSandboxAccountsLoaded must set baseUrl to PRODUCTION_URL for production accounts
+    expect(tradierSource).toMatch(/===\s*'production'\s*\?\s*PRODUCTION_URL\s*:\s*SANDBOX_URL/)
+  })
+
+  it('order placement uses acct.baseUrl (respects production routing)', () => {
+    const fn = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^  }/m,
+    )
+    expect(fn).toBeTruthy()
+    const body = fn![0]
+    expect(body).toMatch(/acct\.baseUrl/)
+  })
+})
