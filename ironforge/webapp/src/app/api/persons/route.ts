@@ -13,7 +13,7 @@ export async function GET() {
     const rows = await dbQuery(
       `SELECT DISTINCT person
        FROM ${sharedTable('ironforge_accounts')}
-       WHERE is_active = TRUE AND type = 'sandbox'
+       WHERE is_active = TRUE
        ORDER BY person`,
     )
     const persons = rows.map((r) => r.person as string)
