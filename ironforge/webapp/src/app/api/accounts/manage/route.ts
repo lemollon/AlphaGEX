@@ -241,6 +241,15 @@ export async function GET() {
     const activeCount = Object.keys(liveData).length
     console.log(`[accounts] GET: Fetched live balances for ${activeCount} active account(s)`)
 
+    // Fetch person aliases
+    const aliasRows = await dbQuery(
+      `SELECT person, alias FROM ${sharedTable('ironforge_person_aliases')}`,
+    )
+    const aliasMap: Record<string, string | null> = {}
+    for (const r of aliasRows) {
+      aliasMap[r.person as string] = (r.alias as string | null) || null
+    }
+
     const productionByPerson: Record<string, any[]> = {}
     const sandboxByPerson: Record<string, any[]> = {}
 
@@ -283,11 +292,11 @@ export async function GET() {
     }
 
     const production = Object.entries(productionByPerson).map(
-      ([person, accounts]) => ({ person, accounts }),
+      ([person, accounts]) => ({ person, alias: aliasMap[person] ?? null, accounts }),
     )
 
     const sandbox = Object.entries(sandboxByPerson).map(
-      ([person, accounts]) => ({ person, accounts }),
+      ([person, accounts]) => ({ person, alias: aliasMap[person] ?? null, accounts }),
     )
 
     return NextResponse.json({ production, sandbox })

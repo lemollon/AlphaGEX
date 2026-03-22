@@ -75,7 +75,8 @@ export default function BotDashboard({
 
   // Fetch available persons for the dropdown
   const { data: personsData } = useSWR('/api/persons', fetcher)
-  const persons: string[] = personsData?.persons ?? []
+  const personEntries: Array<{ person: string; alias: string | null }> = personsData?.persons ?? []
+  const persons: string[] = personEntries.map((pe) => pe.person)
 
   // Query string fragment for person filtering (appended to all API calls)
   const pq = selectedPerson !== 'all' ? `person=${encodeURIComponent(selectedPerson)}` : ''
@@ -264,8 +265,8 @@ export default function BotDashboard({
             className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
           >
             <option value="all">All Accounts</option>
-            {persons.map((p) => (
-              <option key={p} value={p}>{p}</option>
+            {personEntries.map((pe) => (
+              <option key={pe.person} value={pe.person}>{pe.alias || pe.person}</option>
             ))}
           </select>
         )}

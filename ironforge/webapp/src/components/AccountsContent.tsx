@@ -28,6 +28,7 @@ interface Account {
 
 interface PersonGroup {
   person: string
+  alias: string | null
   accounts: Account[]
 }
 
@@ -498,6 +499,7 @@ function EditAccountModal({
 
 interface PersonView {
   person: string
+  alias: string | null
   sandbox: Account | null
   production: Account[]
 }
@@ -507,15 +509,17 @@ function buildPersonViews(data: AccountsData): PersonView[] {
   const map = new Map<string, PersonView>()
 
   for (const group of data.sandbox) {
-    const view: PersonView = { person: group.person, sandbox: group.accounts[0] ?? null, production: [] }
+    const view: PersonView = { person: group.person, alias: group.alias ?? null, sandbox: group.accounts[0] ?? null, production: [] }
     map.set(group.person, view)
   }
   for (const group of data.production) {
     const existing = map.get(group.person)
     if (existing) {
       existing.production = group.accounts
+      // Use alias from whichever group has it
+      if (!existing.alias && group.alias) existing.alias = group.alias
     } else {
-      map.set(group.person, { person: group.person, sandbox: null, production: group.accounts })
+      map.set(group.person, { person: group.person, alias: group.alias ?? null, sandbox: null, production: group.accounts })
     }
   }
 
@@ -536,6 +540,8 @@ export default function AccountsContent() {
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({})
   const [testingAll, setTestingAll] = useState(false)
   const [testingId, setTestingId] = useState<number | null>(null)
+  const [editingAlias, setEditingAlias] = useState<string | null>(null)
+  const [aliasInput, setAliasInput] = useState('')
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -554,6 +560,24 @@ export default function AccountsContent() {
   useEffect(() => {
     fetchAccounts()
   }, [fetchAccounts])
+
+  /* ── Alias editing ────────────────────────────────────────── */
+
+  const saveAlias = async (person: string, alias: string) => {
+    try {
+      const res = await fetch('/api/persons/alias', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person, alias: alias.trim() || null }),
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      setEditingAlias(null)
+      await fetchAccounts()
+    } catch {
+      // Silently fail — user can retry
+      setEditingAlias(null)
+    }
+  }
 
   /* ── CRUD handlers ─────────────────────────────────────────── */
 
@@ -738,9 +762,42 @@ export default function AccountsContent() {
               key={pv.person}
               className="bg-forge-card border border-gray-800 rounded-lg overflow-hidden"
             >
-              {/* Person header */}
+              {/* Person header with alias editing */}
               <div className="px-4 py-3 border-b border-gray-800">
-                <h3 className="text-white font-medium text-lg">{pv.person}</h3>
+                {editingAlias === pv.person ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={aliasInput}
+                      onChange={(e) => setAliasInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') saveAlias(pv.person, aliasInput)
+                        if (e.key === 'Escape') setEditingAlias(null)
+                      }}
+                      onBlur={() => saveAlias(pv.person, aliasInput)}
+                      placeholder={pv.person}
+                      className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-lg font-medium focus:border-amber-500 focus:outline-none w-48"
+                    />
+                    <span className="text-gray-500 text-sm">Press Enter to save, Esc to cancel</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-white font-medium text-lg">
+                      {pv.alias || pv.person}
+                      {pv.alias && <span className="text-gray-500 text-sm font-normal ml-2">({pv.person})</span>}
+                    </h3>
+                    <button
+                      onClick={() => { setEditingAlias(pv.person); setAliasInput(pv.alias || '') }}
+                      className="text-gray-500 hover:text-amber-400 transition-colors"
+                      title="Edit display name"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                        <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Sandbox section */}

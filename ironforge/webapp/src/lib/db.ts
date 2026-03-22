@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS ironforge_accounts (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ` + `
+CREATE TABLE IF NOT EXISTS ironforge_person_aliases (
+  person TEXT NOT NULL PRIMARY KEY,
+  alias TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+` + `
 CREATE TABLE IF NOT EXISTS ironforge_pdt_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   bot_name TEXT NOT NULL UNIQUE,
