@@ -242,8 +242,8 @@ function AddAccountModal({
         )}
 
         {isProduction && (
-          <div className="mb-3 p-2 bg-purple-500/10 border border-purple-500/30 rounded text-purple-300 text-xs">
-            Production accounts are for monitoring only — no trades will be placed.
+          <div className="mb-3 p-2 bg-red-500/10 border border-red-500/30 rounded text-red-300 text-xs">
+            Production accounts trade with REAL MONEY on Tradier. Orders will be placed automatically.
           </div>
         )}
 
@@ -305,10 +305,9 @@ function AddAccountModal({
           </label>
         )}
 
-        {!isProduction && (
-          <div className="flex gap-3 mb-3">
-            <label className="flex-1">
-              <span className="text-sm text-gray-400">Capital to Use (%)</span>
+        <div className="flex gap-3 mb-3">
+          <label className="flex-1">
+            <span className="text-sm text-gray-400">Capital to Use (%)</span>
               <div className="mt-1 flex items-center gap-2">
                 <input
                   type="range"
@@ -337,7 +336,6 @@ function AddAccountModal({
               </button>
             </div>
           </div>
-        )}
 
         <div className="flex justify-end gap-3 mt-5">
           <button
@@ -432,10 +430,9 @@ function EditAccountModal({
           <BotCheckboxes selected={selectedBots} onChange={setSelectedBots} />
         </div>
 
-        {/* Capital % with live preview — sandbox only (production is monitoring-only) */}
-        {account.type !== 'production' && (
-          <div className="mb-4">
-            <span className="text-sm text-gray-400">Capital to Use</span>
+        {/* Capital % with live preview */}
+        <div className="mb-4">
+          <span className="text-sm text-gray-400">Capital to Use</span>
             <div className="mt-1 flex items-center gap-2">
               <input
                 type="range"
@@ -460,7 +457,6 @@ function EditAccountModal({
               </div>
             )}
           </div>
-        )}
 
         <div className="mb-4">
           <span className="text-sm text-gray-400 block mb-1">PDT Enforcement</span>
@@ -925,13 +921,14 @@ function AccountCard({
               <span className="text-gray-500">OBP: </span>
               <span className="text-white font-mono">{fmtDollar(account.live_buying_power)}</span>
             </div>
-            {account.type !== 'production' && (
-              <div>
-                <span className="text-gray-500">Capital: </span>
-                <span className="text-amber-400 font-mono font-medium">
-                  {account.capital_pct}% = {fmtDollar(account.allocated_capital)}
-                </span>
-              </div>
+            <div>
+              <span className="text-gray-500">Capital: </span>
+              <span className="text-amber-400 font-mono font-medium">
+                {account.capital_pct}% = {fmtDollar(account.allocated_capital)}
+              </span>
+            </div>
+            {account.type === 'production' && (
+              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">LIVE</span>
             )}
             {account.open_positions > 0 && (
               <div>

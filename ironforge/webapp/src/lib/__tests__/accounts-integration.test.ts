@@ -699,15 +699,15 @@ describe('Edge Cases: Boundary & Type Coercion', () => {
     expect(fnBody).toMatch(/BOT_ACCOUNTS/)
   })
 
-  it('getAccountsForBotAsync filters to sandbox-only accounts', () => {
-    // Production accounts must NEVER affect scanner capital sizing or order placement.
-    // The query must include AND type = 'sandbox' to exclude production monitoring accounts.
+  it('getAccountsForBotAsync includes both sandbox and production accounts', () => {
+    // Both sandbox and production accounts are eligible for trading.
+    // Production accounts route orders to api.tradier.com (real money).
     const fnMatch = tradierSource.match(
       /export async function getAccountsForBotAsync[\s\S]*?^}/m,
     )
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/type\s*=\s*'sandbox'/)
+    expect(fnBody).toMatch(/sandbox.*production/)
   })
 
   it('test-all route uses correct Tradier URL per account type', () => {
@@ -1022,25 +1022,25 @@ describe('Per-Account PDT Enforcement', () => {
 
 /* ── Production Capital Cleanup ─────────────────────────────── */
 
-describe('Production Account Capital UI', () => {
+describe('Production Account Live Trading UI', () => {
   const accountsContentSource = readFileSync(
     resolve(__dirname, '../../components/AccountsContent.tsx'),
     'utf-8',
   )
 
-  it('AddAccountModal hides capital slider for production accounts', () => {
-    // The capital slider should be wrapped in {!isProduction && (...)}
-    // which means it only shows for sandbox accounts
-    expect(accountsContentSource).toMatch(/!isProduction[\s\S]*?Capital to Use \(%\)/)
+  it('capital slider shows for ALL account types (sandbox + production)', () => {
+    // Capital slider should NOT be wrapped in {!isProduction}
+    // Production accounts now use capital_pct for live trading sizing
+    expect(accountsContentSource).toMatch(/Capital to Use \(%\)/)
+    expect(accountsContentSource).not.toMatch(/!isProduction[\s\S]*?Capital to Use \(%\)/)
   })
 
-  it('EditAccountModal hides capital slider for production accounts', () => {
-    // The edit modal should check account.type !== 'production'
-    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital to Use/)
+  it('production accounts show LIVE badge', () => {
+    expect(accountsContentSource).toMatch(/LIVE/)
+    expect(accountsContentSource).toMatch(/bg-red-500/)
   })
 
-  it('account card hides capital line for production accounts', () => {
-    // The "Capital: X% = $Y" line should be conditional on type
-    expect(accountsContentSource).toMatch(/account\.type\s*!==\s*'production'[\s\S]*?Capital:/)
+  it('production warning mentions real money', () => {
+    expect(accountsContentSource).toMatch(/REAL MONEY/)
   })
 })

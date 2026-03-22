@@ -536,15 +536,17 @@ export async function isConfiguredAsync(): Promise<boolean> {
 /*  Sandbox Order Execution (3 accounts: User, Matt, Logan)            */
 /* ------------------------------------------------------------------ */
 
-// Sandbox URL is always sandbox.tradier.com — never production.
-// TRADIER_BASE_URL may point to production for live quotes, but
-// sandbox keys only work against the sandbox API.
+// Sandbox URL for paper trading orders.
+// Production URL for live trading orders.
 const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+const PRODUCTION_URL = 'https://api.tradier.com/v1'
 
 interface SandboxAccount {
   name: string
   apiKey: string
   cachedAccountId?: string
+  baseUrl: string   // SANDBOX_URL or PRODUCTION_URL
+  type: 'sandbox' | 'production'
 }
 
 /**
@@ -598,9 +600,9 @@ function getSandboxAccountsFromEnv(): SandboxAccount[] {
   const mattKey = process.env.TRADIER_SANDBOX_KEY_MATT || ''
   const loganKey = process.env.TRADIER_SANDBOX_KEY_LOGAN || ''
 
-  if (userKey) accounts.push({ name: 'User', apiKey: userKey })
-  if (mattKey) accounts.push({ name: 'Matt', apiKey: mattKey })
-  if (loganKey) accounts.push({ name: 'Logan', apiKey: loganKey })
+  if (userKey) accounts.push({ name: 'User', apiKey: userKey, baseUrl: SANDBOX_URL, type: 'sandbox' })
+  if (mattKey) accounts.push({ name: 'Matt', apiKey: mattKey, baseUrl: SANDBOX_URL, type: 'sandbox' })
+  if (loganKey) accounts.push({ name: 'Logan', apiKey: loganKey, baseUrl: SANDBOX_URL, type: 'sandbox' })
   return accounts
 }
 
@@ -608,53 +610,47 @@ let _sandboxAccounts = getSandboxAccountsFromEnv()
 let _sandboxAccountsLoadedFromDb = false
 
 /**
- * Load sandbox accounts from the ironforge_accounts database table.
+ * Load trading accounts from the ironforge_accounts database table.
+ * Loads both sandbox and production accounts — production accounts route
+ * orders to api.tradier.com (real money), sandbox to sandbox.tradier.com.
  * Called once on first use if env vars yielded zero accounts.
- * This bridges the gap: accounts added via the UI (/accounts page)
- * are stored in the DB, not in env vars.
  */
 async function ensureSandboxAccountsLoaded(): Promise<void> {
   if (_sandboxAccounts.length > 0 || _sandboxAccountsLoadedFromDb) return
   _sandboxAccountsLoadedFromDb = true
 
   try {
-    // Dynamic import to avoid circular dependency (db.ts imports nothing from tradier)
     const { query: dbq } = await import('./db')
 
-    // Try sandbox-type accounts first; if none, try all accounts.
-    // IronForge sends all orders to sandbox.tradier.com regardless of type,
-    // so production-type keys stored here are still sandbox keys
-    // (the "type" field just indicates how the user categorized them).
-    let rows = await dbq(
-      `SELECT person, api_key, account_id FROM ironforge_accounts
-       WHERE is_active = TRUE AND type = 'sandbox' ORDER BY person`,
+    // Load ALL active accounts (sandbox + production)
+    const rows = await dbq(
+      `SELECT person, api_key, account_id, type FROM ironforge_accounts
+       WHERE is_active = TRUE ORDER BY type, person`,
     )
-    if (rows.length === 0) {
-      rows = await dbq(
-        `SELECT person, api_key, account_id FROM ironforge_accounts
-         WHERE is_active = TRUE ORDER BY person`,
-      )
-    }
     if (rows.length > 0) {
       const seen = new Set<string>()
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
         seen.add(key)
-        // Use actual person name from DB — each account holder has their own sandbox
         const name = row.person || 'User'
-        _sandboxAccounts.push({ name, apiKey: key })
+        const acctType = row.type === 'production' ? 'production' as const : 'sandbox' as const
+        const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
+        _sandboxAccounts.push({ name, apiKey: key, baseUrl, type: acctType })
       }
       if (_sandboxAccounts.length > 0) {
+        const sandboxCount = _sandboxAccounts.filter(a => a.type === 'sandbox').length
+        const prodCount = _sandboxAccounts.filter(a => a.type === 'production').length
         console.log(
-          `[tradier] Loaded ${_sandboxAccounts.length} sandbox account(s) from DB: ` +
-          _sandboxAccounts.map(a => `${a.name} (${a.apiKey.slice(0, 4)}...)`).join(', '),
+          `[tradier] Loaded ${_sandboxAccounts.length} trading account(s) from DB ` +
+          `(${sandboxCount} sandbox, ${prodCount} production): ` +
+          _sandboxAccounts.map(a => `${a.name}[${a.type}] (${a.apiKey.slice(0, 4)}...)`).join(', '),
         )
       }
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[tradier] Failed to load sandbox accounts from DB: ${msg}`)
+    console.warn(`[tradier] Failed to load trading accounts from DB: ${msg}`)
   }
 }
 
@@ -662,10 +658,11 @@ async function sandboxPost(
   endpoint: string,
   body: Record<string, string>,
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<any> {
   if (!apiKey) return null
 
-  const url = `${SANDBOX_URL}${endpoint}`
+  const url = `${baseUrl}${endpoint}`
 
   let res: Response
   try {
@@ -708,10 +705,11 @@ async function sandboxGet(
   endpoint: string,
   params: Record<string, string> | undefined,
   apiKey: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<any> {
   if (!apiKey) return null
 
-  const url = new URL(`${SANDBOX_URL}${endpoint}`)
+  const url = new URL(`${baseUrl}${endpoint}`)
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   }
@@ -753,10 +751,10 @@ async function sandboxGet(
 /** Auto-discover sandbox account ID from profile. */
 const _accountIdCache: Record<string, string> = {}
 
-async function getAccountIdForKey(apiKey: string): Promise<string | null> {
+async function getAccountIdForKey(apiKey: string, baseUrl: string = SANDBOX_URL): Promise<string | null> {
   if (_accountIdCache[apiKey]) return _accountIdCache[apiKey]
 
-  const data = await sandboxGet('/user/profile', undefined, apiKey)
+  const data = await sandboxGet('/user/profile', undefined, apiKey, baseUrl)
   if (!data) return null
 
   let account = data.profile?.account
@@ -784,11 +782,13 @@ async function getAccountIdForKey(apiKey: string): Promise<string | null> {
 async function getSandboxBuyingPower(
   apiKey: string,
   accountId: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<number | null> {
   const data = await sandboxGet(
     `/accounts/${accountId}/balances`,
     undefined,
     apiKey,
+    baseUrl,
   )
   if (!data) return null
   const balances = data.balances || {}
@@ -858,7 +858,7 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
 
   await Promise.all(
     _sandboxAccounts.map(async (acct) => {
-      const accountId = await getAccountIdForKey(acct.apiKey)
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
         results.push({
           name: acct.name,
@@ -875,8 +875,8 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
 
       // Fetch balances and positions in parallel
       const [balData, posData] = await Promise.all([
-        sandboxGet(`/accounts/${accountId}/balances`, undefined, acct.apiKey),
-        sandboxGet(`/accounts/${accountId}/positions`, undefined, acct.apiKey),
+        sandboxGet(`/accounts/${accountId}/balances`, undefined, acct.apiKey, acct.baseUrl),
+        sandboxGet(`/accounts/${accountId}/positions`, undefined, acct.apiKey, acct.baseUrl),
       ])
 
       const bal = balData?.balances || {}
@@ -1001,6 +1001,7 @@ async function getOrderFillPrice(
   accountId: string,
   orderId: number,
   maxPollMs: number = 90_000,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<number | null> {
   // Aggressive polling for fills. Market orders WILL fill — poll until they do.
   //
@@ -1026,6 +1027,7 @@ async function getOrderFillPrice(
       `/accounts/${accountId}/orders/${orderId}`,
       undefined,
       apiKey,
+      baseUrl,
     )
     if (!data) {
       // API call failed — transient, keep retrying
@@ -1156,11 +1158,11 @@ export async function placeIcOrderAllAccounts(
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
-      const accountId = await getAccountIdForKey(acct.apiKey)
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) return
 
       // Query this account's OPTION buying power (not stock/day-trade BP)
-      const bp = await getSandboxBuyingPower(acct.apiKey, accountId)
+      const bp = await getSandboxBuyingPower(acct.apiKey, accountId, acct.baseUrl)
       const brokerMarginCheck = spreadWidth * 100  // $500 for $5 spread
       if (bp == null || bp < brokerMarginCheck) {
         console.warn(
@@ -1210,25 +1212,27 @@ export async function placeIcOrderAllAccounts(
       }
       if (tag) orderBody.tag = tag.slice(0, 255)
 
+      const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       const result = await sandboxPost(
         `/accounts/${accountId}/orders`,
         orderBody,
         acct.apiKey,
+        acct.baseUrl,
       )
       if (!result) {
-        console.error(`Sandbox [${acct.name}]: Order POST returned null (HTTP error) — check logs above`)
+        console.error(`${label}: Order POST returned null (HTTP error) — check logs above`)
         return
       }
       // Tradier may return errors at the order level (e.g., insufficient BP)
       if (result.errors) {
-        console.error(`Sandbox [${acct.name}]: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
         return
       }
       if (result?.order?.id) {
         // Read back actual fill price
         let fillPrice: number | null = null
         try {
-          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id)
+          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 90_000, acct.baseUrl)
         } catch {
           // Non-fatal
         }
@@ -1509,11 +1513,11 @@ export async function getAccountsForBotAsync(botName: string): Promise<string[]>
     const botUpper = botName.toUpperCase()
     // Match accounts where the bot field contains this bot name
     // Handles: exact match ("FLAME"), comma-separated ("FLAME,SPARK"), or legacy "BOTH"
-    // Only match sandbox accounts — production accounts are monitoring-only
-    // and must never affect scanner capital sizing or order placement.
+    // Match both sandbox and production accounts for trading.
+    // Production accounts route orders to api.tradier.com (real money).
     const rows = await dbq(
       `SELECT DISTINCT person FROM ironforge_accounts
-       WHERE is_active = TRUE AND type = 'sandbox'
+       WHERE is_active = TRUE AND type IN ('sandbox', 'production')
          AND (bot = '${botUpper}' OR bot LIKE '%${botUpper}%' OR bot = 'BOTH'
               OR bot = 'FLAME,SPARK,INFERNO')
        ORDER BY person`,
@@ -1598,7 +1602,7 @@ export async function closeIcOrderAllAccounts(
   await Promise.all(
     _sandboxAccounts.map(async (acct) => {
       try {
-        const accountId = await getAccountIdForKey(acct.apiKey)
+        const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
         if (!accountId) return
 
         // Query Tradier for ACTUAL position quantities (not paper count).
@@ -1651,20 +1655,20 @@ export async function closeIcOrderAllAccounts(
         // Limit orders may not fill immediately — poll for 60s vs unlimited for market
         const pollMs = effectiveOrderType === 'debit' ? 60_000 : 0
 
-        let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
+        let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey, acct.baseUrl)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
 
         // Retry 4-leg after 1s
         await new Promise((r) => setTimeout(r, 1000))
-        result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey)
+        result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey, acct.baseUrl)
         if (result?.order?.id) {
           let fillPrice: number | null = null
-          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs) } catch { /* non-fatal */ }
+          try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
           results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
           return
         }
@@ -1684,21 +1688,18 @@ export async function closeIcOrderAllAccounts(
         if (tagStr) { putSpreadBody.tag = tagStr; callSpreadBody.tag = tagStr }
 
         const [putResult, callResult] = await Promise.all([
-          sandboxPost(`/accounts/${accountId}/orders`, putSpreadBody, acct.apiKey),
-          sandboxPost(`/accounts/${accountId}/orders`, callSpreadBody, acct.apiKey),
+          sandboxPost(`/accounts/${accountId}/orders`, putSpreadBody, acct.apiKey, acct.baseUrl),
+          sandboxPost(`/accounts/${accountId}/orders`, callSpreadBody, acct.apiKey, acct.baseUrl),
         ])
         const putId = putResult?.order?.id
         const callId = callResult?.order?.id
 
         if (putId && callId) {
-          // Poll BOTH spread orders for fill prices and combine them.
-          // Each 2-leg close returns the net debit for that half of the IC.
-          // Combined = put spread debit + call spread debit = total IC close cost.
           let fillPrice: number | null = null
           try {
             const [putFill, callFill] = await Promise.all([
-              getOrderFillPrice(acct.apiKey, accountId, putId, 0),
-              getOrderFillPrice(acct.apiKey, accountId, callId, 0),
+              getOrderFillPrice(acct.apiKey, accountId, putId, 0, acct.baseUrl),
+              getOrderFillPrice(acct.apiKey, accountId, callId, 0, acct.baseUrl),
             ])
             if (putFill != null && callFill != null) {
               fillPrice = putFill + callFill
@@ -1744,24 +1745,21 @@ export async function closeIcOrderAllAccounts(
           }
           if (tagStr) legBody.tag = tagStr
 
-          const legResult = await sandboxPost(`/accounts/${accountId}/orders`, legBody, acct.apiKey)
+          const legResult = await sandboxPost(`/accounts/${accountId}/orders`, legBody, acct.apiKey, acct.baseUrl)
           if (legResult?.order?.id) {
             anyOk = true
             legOrders.push({ orderId: legResult.order.id, side: leg.side, label: leg.label })
           } else {
-            console.error(`Sandbox leg CLOSE FAILED [${acct.name}]: ${leg.label}`)
+            console.error(`${acct.type === 'production' ? 'PRODUCTION' : 'Sandbox'} leg CLOSE FAILED [${acct.name}]: ${leg.label}`)
           }
         }
 
         if (anyOk) {
-          // Poll each individual leg for fill prices and combine.
-          // buy_to_close legs = debit (cost), sell_to_close legs = credit (offset).
-          // Net close cost = sum(buy_to_close fills) - sum(sell_to_close fills).
           let fillPrice: number | null = null
           try {
             const legFills = await Promise.all(
               legOrders.map(async (lo) => {
-                const fp = await getOrderFillPrice(acct.apiKey, accountId, lo.orderId, 0)
+                const fp = await getOrderFillPrice(acct.apiKey, accountId, lo.orderId, 0, acct.baseUrl)
                 return { ...lo, fill: fp }
               }),
             )
