@@ -90,9 +90,22 @@ async function fetchLiveBalance(
   open_positions: number
 }> {
   const baseUrl = accountType === 'production' ? PRODUCTION_URL : SANDBOX_URL
+
+  // Discover real account number from Tradier profile (matches test endpoint pattern).
+  // The stored account_id may not match what Tradier's API expects — especially for
+  // production accounts added via the UI without auto-discovery.
+  let realAccountNumber = accountNumber
+  const profileData = await tradierFetch('/user/profile', apiKey, baseUrl)
+  if (profileData) {
+    let account = profileData.profile?.account
+    if (Array.isArray(account)) account = account[0]
+    const discovered = account?.account_number?.toString()
+    if (discovered) realAccountNumber = discovered
+  }
+
   const [balData, posData] = await Promise.all([
-    tradierFetch(`/accounts/${accountNumber}/balances`, apiKey, baseUrl),
-    tradierFetch(`/accounts/${accountNumber}/positions`, apiKey, baseUrl),
+    tradierFetch(`/accounts/${realAccountNumber}/balances`, apiKey, baseUrl),
+    tradierFetch(`/accounts/${realAccountNumber}/positions`, apiKey, baseUrl),
   ])
 
   const bal = balData?.balances || {}
