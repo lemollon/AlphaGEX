@@ -827,3 +827,72 @@ describe('Scenario: Full trade lifecycle P&L', () => {
     expect(DEFAULT_CONFIG.inferno.max_contracts).toBe(20)
   })
 })
+
+/* ================================================================== */
+/*  Scanner Safety Gates (Code Structure)                              */
+/* ================================================================== */
+
+describe('Scanner Safety Gates', () => {
+  const { readFileSync } = require('fs')
+  const { resolve } = require('path')
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+
+  it('tryOpenTrade checks buying power minimum ($200) before trade attempt', () => {
+    const fnMatch = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must check buyingPower < 200 and return skip
+    expect(fnBody).toMatch(/buyingPower\s*<\s*200/)
+    expect(fnBody).toMatch(/skip:low_bp/)
+  })
+
+  it('tryOpenTrade checks VIX > 32 before trade attempt', () => {
+    const fnMatch = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/vix\s*>\s*32/)
+    expect(fnBody).toMatch(/skip:vix_too_high/)
+  })
+
+  it('tryOpenTrade derives BP from live positions, not cached paper_account', () => {
+    const fnMatch = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Must query SUM(collateral_required) from positions, not read paper_account.buying_power
+    expect(fnBody).toMatch(/SUM\(collateral_required\)/)
+    expect(fnBody).toMatch(/balance\s*-\s*liveCollateral/)
+  })
+
+  it('tryOpenTrade returns skip reasons (never throws) for all gate failures', () => {
+    const fnMatch = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Multiple skip paths exist — not throw/crash
+    const skipCount = (fnBody.match(/return\s+['"`]skip:/g) || []).length
+    expect(skipCount).toBeGreaterThanOrEqual(3) // vix, pdt, bp, advisor at minimum
+  })
+
+  it('runAllScans loads config before scanning bots', () => {
+    const fnMatch = scannerSource.match(
+      /async function runAllScans[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    const configIdx = fnBody.indexOf('loadConfigOverrides')
+    const scanIdx = fnBody.indexOf('scanBot(bot)')
+    expect(configIdx).toBeGreaterThan(-1)
+    expect(scanIdx).toBeGreaterThan(-1)
+    expect(scanIdx).toBeGreaterThan(configIdx)
+  })
+})

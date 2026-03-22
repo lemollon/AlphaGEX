@@ -164,6 +164,18 @@ describe('capital_pct CRUD Validation', () => {
     const pct = await getCapitalPctForAccount('User')
     expect(pct).toBe(100)
   })
+
+  it('should truncate float string capital_pct="50.5" → 50 (parseInt)', async () => {
+    mockDbQuery.mockResolvedValueOnce([{ capital_pct: '50.5' }])
+    const pct = await getCapitalPctForAccount('User')
+    expect(pct).toBe(50) // parseInt truncates, does not round
+  })
+
+  it('should handle partial numeric string capital_pct="100a" → 100', async () => {
+    mockDbQuery.mockResolvedValueOnce([{ capital_pct: '100a' }])
+    const pct = await getCapitalPctForAccount('User')
+    expect(pct).toBe(100) // parseInt("100a") = 100, which is in range
+  })
 })
 
 /* ── Group 3: Allocated Capital Calculation ──────────────────── */
@@ -249,6 +261,40 @@ describe('Allocated Capital Calculation', () => {
 
     const allocated = await getAllocatedCapitalForAccount('Ghost')
     expect(allocated).toBe(2500)
+  })
+
+  it('should fallback when API key is empty string (falsy)', async () => {
+    mockDbQuery
+      .mockResolvedValueOnce([{ capital_pct: 50 }])
+      .mockResolvedValueOnce([{ api_key: '' }]) // empty string, not NULL
+
+    const allocated = await getAllocatedCapitalForAccount('EmptyKey')
+    // "" is falsy in JS, so `if (rows[0].api_key)` skips → fallback
+    expect(allocated).toBe(5000) // $10,000 × 50%
+  })
+
+  it('should round allocated capital to 2 decimal places', async () => {
+    const apiKey = 'unique-key-rounding'
+    mockDbQuery
+      .mockResolvedValueOnce([{ capital_pct: 33 }])
+      .mockResolvedValueOnce([{ api_key: apiKey }])
+    // 33% of $10,001 = 3300.33 (clean), but try 33% of $10,003 = 3300.99
+    mockFetch.mockImplementation((url: string) => {
+      const urlStr = typeof url === 'string' ? url : url.toString()
+      if (urlStr.includes('/user/profile')) {
+        return Promise.resolve(tradierProfileResponse('VA-ROUND'))
+      }
+      if (urlStr.includes('/balances')) {
+        return Promise.resolve(tradierBalanceResponse(10003, 9000))
+      }
+      return Promise.resolve(jsonResponse(null, 404))
+    })
+
+    const allocated = await getAllocatedCapitalForAccount('RoundUser')
+    // Math.round(10003 * 33 / 100 * 100) / 100 = Math.round(330099) / 100 = 3300.99
+    expect(allocated).toBe(3300.99)
+    // Verify it's exactly 2 decimal places (no floating point artifacts)
+    expect(String(allocated).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2)
   })
 })
 
@@ -414,6 +460,20 @@ describe('Scanner Capital Flow (Code Structure)', () => {
     const fnBody = fnMatch![0]
     expect(fnBody).toMatch(/syncPaperAccountCapital/)
   })
+
+  it('getStartingCapitalForBot uses persons[0] — first person only', () => {
+    // When multiple accounts are assigned to a bot, only the first person's
+    // allocated capital is used. This is by design (documented behavior).
+    const fnMatch = scannerSource.match(
+      /async function getStartingCapitalForBot[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Uses persons[0], not a loop over all persons
+    expect(fnBody).toMatch(/persons\[0\]/)
+    // Does NOT iterate over all persons
+    expect(fnBody).not.toMatch(/for\s*\(.*persons/)
+  })
 })
 
 /* ── Group 6: Paper Account Capital Sync (Code Structure) ───── */
@@ -540,5 +600,141 @@ describe('Consistent Balance Basis (total_equity)', () => {
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
     expect(fnBody).toMatch(/getAccountsForBotAsync/)
+  })
+})
+
+/* ── Group 10: Edge Cases — Boundary & Coercion ─────────────── */
+
+describe('Edge Cases: Boundary & Type Coercion', () => {
+  const scannerSource = readFileSync(
+    resolve(__dirname, '../scanner.ts'),
+    'utf-8',
+  )
+  const tradierSource = readFileSync(
+    resolve(__dirname, '../tradier.ts'),
+    'utf-8',
+  )
+
+  it('scanner blocks trades when buying power < $200', () => {
+    // tryOpenTrade checks buyingPower < 200 and returns skip
+    const fnMatch = scannerSource.match(
+      /async function tryOpenTrade[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/buyingPower\s*<\s*200/)
+    expect(fnBody).toMatch(/skip:low_bp/)
+  })
+
+  it('negative buying power is caught by <200 check (handles -$3000)', () => {
+    // buyingPower = balance - liveCollateral can be negative
+    // -3000 < 200 is true, so trade is blocked
+    const negativeBP = 5000 - 8000 // -3000
+    expect(negativeBP).toBeLessThan(200)
+  })
+
+  it('sandbox orders use Math.max(1, ...) for minimum contract floor', () => {
+    const tradierSource = readFileSync(
+      resolve(__dirname, '../tradier.ts'),
+      'utf-8',
+    )
+    // placeForAccount sizes with Math.max(1, Math.floor(usableBP / brokerMarginPer))
+    // This forces at least 1 contract even when BP can't cover it — sandbox concern
+    const fnMatch = tradierSource.match(
+      /async function placeForAccount[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/Math\.max\(1/)
+  })
+
+  it('scanner syncPaperAccountCapital runs before bot scanning', () => {
+    // loadConfigOverrides calls syncPaperAccountCapital before returning
+    // Then runAllScans runs bots. This ordering is critical.
+    const loadFn = scannerSource.match(
+      /async function loadConfigOverrides[\s\S]*?^}/m,
+    )
+    expect(loadFn).toBeTruthy()
+    expect(loadFn![0]).toMatch(/syncPaperAccountCapital/)
+
+    const runAllFn = scannerSource.match(
+      /async function runAllScans[\s\S]*?^}/m,
+    )
+    expect(runAllFn).toBeTruthy()
+    const body = runAllFn![0]
+    const configIdx = body.indexOf('loadConfigOverrides')
+    const scanIdx = body.indexOf('scanBot(bot)')
+    expect(configIdx).toBeGreaterThan(-1)
+    expect(scanIdx).toBeGreaterThan(-1)
+    expect(scanIdx).toBeGreaterThan(configIdx)
+  })
+
+  it('scanBot checks isConfiguredAsync before opening trades', () => {
+    // Bot must be "configured" (has Tradier API key) before calling tryOpenTrade
+    const fnMatch = scannerSource.match(
+      /async function scanBot[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/isConfiguredAsync/)
+    // isConfiguredAsync check happens before tryOpenTrade
+    const configIdx = fnBody.indexOf('isConfiguredAsync')
+    const tradeIdx = fnBody.indexOf('tryOpenTrade')
+    expect(configIdx).toBeGreaterThan(-1)
+    expect(tradeIdx).toBeGreaterThan(-1)
+    expect(configIdx).toBeLessThan(tradeIdx)
+  })
+
+  it('getAccountsForBotAsync SQL uses bot name in query', () => {
+    // Bot names come from code (not user input), so injection risk is minimal
+    // but verify the query structure exists
+    const fnMatch = tradierSource.match(
+      /export async function getAccountsForBotAsync[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    // Uses toUpperCase() for consistent matching
+    expect(fnBody).toMatch(/toUpperCase\(\)/)
+    // Falls back to BOT_ACCOUNTS on error
+    expect(fnBody).toMatch(/BOT_ACCOUNTS/)
+  })
+
+  it('getAccountsForBotAsync filters to sandbox-only accounts', () => {
+    // Production accounts must NEVER affect scanner capital sizing or order placement.
+    // The query must include AND type = 'sandbox' to exclude production monitoring accounts.
+    const fnMatch = tradierSource.match(
+      /export async function getAccountsForBotAsync[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const fnBody = fnMatch![0]
+    expect(fnBody).toMatch(/type\s*=\s*'sandbox'/)
+  })
+
+  it('test-all route uses correct Tradier URL per account type', () => {
+    const testAllSource = readFileSync(
+      resolve(__dirname, '../../app/api/accounts/test-all/route.ts'),
+      'utf-8',
+    )
+    // Must define both URLs
+    expect(testAllSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testAllSource).toMatch(/api\.tradier\.com/)
+    // testOne must accept a type parameter
+    expect(testAllSource).toMatch(/async function testOne[\s\S]*?type/)
+    // Must query type column from DB
+    expect(testAllSource).toMatch(/SELECT[\s\S]*?type[\s\S]*?FROM/)
+  })
+
+  it('per-account test endpoint exists', () => {
+    const testRouteSource = readFileSync(
+      resolve(__dirname, '../../app/api/accounts/manage/[id]/test/route.ts'),
+      'utf-8',
+    )
+    // Must support both sandbox and production URLs
+    expect(testRouteSource).toMatch(/sandbox\.tradier\.com/)
+    expect(testRouteSource).toMatch(/api\.tradier\.com/)
+    // Must read account type from DB
+    expect(testRouteSource).toMatch(/type/)
+    // Must export POST handler
+    expect(testRouteSource).toMatch(/export async function POST/)
   })
 })

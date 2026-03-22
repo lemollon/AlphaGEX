@@ -1448,9 +1448,11 @@ export async function getAccountsForBotAsync(botName: string): Promise<string[]>
     const botUpper = botName.toUpperCase()
     // Match accounts where the bot field contains this bot name
     // Handles: exact match ("FLAME"), comma-separated ("FLAME,SPARK"), or legacy "BOTH"
+    // Only match sandbox accounts — production accounts are monitoring-only
+    // and must never affect scanner capital sizing or order placement.
     const rows = await dbq(
       `SELECT DISTINCT person FROM ironforge_accounts
-       WHERE is_active = TRUE
+       WHERE is_active = TRUE AND type = 'sandbox'
          AND (bot = '${botUpper}' OR bot LIKE '%${botUpper}%' OR bot = 'BOTH'
               OR bot = 'FLAME,SPARK,INFERNO')
        ORDER BY person`,
