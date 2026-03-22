@@ -63,9 +63,14 @@ async function tradierFetch(
       signal: controller.signal,
     })
     clearTimeout(timeout)
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`[accounts/manage] tradierFetch ${baseUrl}${endpoint} returned HTTP ${res.status}`)
+      return null
+    }
     return res.json()
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[accounts/manage] tradierFetch ${endpoint} failed: ${msg}`)
     return null
   }
 }
@@ -100,13 +105,22 @@ async function fetchLiveBalance(
     let account = profileData.profile?.account
     if (Array.isArray(account)) account = account[0]
     const discovered = account?.account_number?.toString()
-    if (discovered) realAccountNumber = discovered
+    if (discovered) {
+      realAccountNumber = discovered
+      console.log(`[accounts/manage] fetchLiveBalance: discovered account ${discovered} (stored: ${accountNumber}, type: ${accountType})`)
+    }
+  } else {
+    console.warn(`[accounts/manage] fetchLiveBalance: /user/profile returned null for ${accountNumber} (type: ${accountType}, baseUrl: ${baseUrl})`)
   }
 
   const [balData, posData] = await Promise.all([
     tradierFetch(`/accounts/${realAccountNumber}/balances`, apiKey, baseUrl),
     tradierFetch(`/accounts/${realAccountNumber}/positions`, apiKey, baseUrl),
   ])
+
+  if (!balData) {
+    console.warn(`[accounts/manage] fetchLiveBalance: balances returned null for ${realAccountNumber} (type: ${accountType})`)
+  }
 
   const bal = balData?.balances || {}
   const margin = bal.margin || {}

@@ -1186,16 +1186,26 @@ export async function placeIcOrderAllAccounts(
         : 1.0
       // Apply capital_pct: if user allocated only 50% of their capital,
       // sandbox should not use more than 50% of its buying power either.
+      // PRODUCTION SAFETY: If capital_pct lookup fails for a production account,
+      // skip the account entirely instead of defaulting to 100%.
       let capitalPct = 100
       try {
         capitalPct = await getCapitalPctForAccount(acct.name)
-      } catch { /* default 100% */ }
+      } catch (cpErr: unknown) {
+        const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr)
+        if (acct.type === 'production') {
+          console.error(`PRODUCTION [${acct.name}]: capital_pct lookup FAILED (${cpMsg}) — SKIPPING account to prevent 100% default`)
+          return
+        }
+        console.warn(`Sandbox [${acct.name}]: capital_pct lookup failed (${cpMsg}), defaulting to 100%`)
+      }
       const bpAfterCapitalPct = bp * (capitalPct / 100)
       const usableBP = bpAfterCapitalPct * botShare * 0.85
       const bpContracts = Math.floor(usableBP / brokerMarginPer)
       if (bpContracts < 1) {
+        const bpLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
         console.warn(
-          `Sandbox [${acct.name}]: capital_pct=${capitalPct}% → usableBP=$${usableBP.toFixed(0)} insufficient for 1 contract ($${brokerMarginPer}/ea)`,
+          `${bpLabel}: capital_pct=${capitalPct}% → usableBP=$${usableBP.toFixed(0)} insufficient for 1 contract ($${brokerMarginPer}/ea)`,
         )
         return
       }
@@ -1204,8 +1214,9 @@ export async function placeIcOrderAllAccounts(
       const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
 
       const totalMargin = acctContracts * brokerMarginPer
+      const sizeLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
       console.log(
-        `Sandbox [${acct.name}]: optionBP=$${bp.toFixed(0)}, capital_pct=${capitalPct}%, ` +
+        `${sizeLabel}: optionBP=$${bp.toFixed(0)}, capital_pct=${capitalPct}%, ` +
         `usable=$${usableBP.toFixed(0)} (${capitalPct}% × ${(botShare * 100).toFixed(0)}% × 85%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
         `contracts=${acctContracts} (bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}), ` +
@@ -1446,7 +1457,10 @@ export async function getCapitalPctForAccount(person: string): Promise<number> {
       const pct = parseInt(rows[0].capital_pct)
       return (pct >= 1 && pct <= 100) ? pct : 100
     }
-  } catch { /* fallback */ }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getCapitalPctForAccount('${person}') DB query failed: ${msg} — defaulting to 100%`)
+  }
   return 100
 }
 
