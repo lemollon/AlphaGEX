@@ -1178,9 +1178,13 @@ export async function placeIcOrderAllAccounts(
   const collateralPer = Math.max(0, (spreadWidth - totalCredit) * 100)
   if (collateralPer <= 0) return results
 
-  // Process User first (for fill price later), then others in parallel
-  const userAccts = eligibleAccounts.filter((a) => a.name === 'User')
-  const otherAccts = eligibleAccounts.filter((a) => a.name !== 'User')
+  // Separate sandbox and production accounts.
+  // Flow: User sandbox first → other sandbox in parallel → production ONLY if User sandbox filled.
+  // This ensures we never risk real money unless the sandbox trade is confirmed.
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+  const productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const userAccts = sandboxAccts.filter((a) => a.name === 'User')
+  const otherSandboxAccts = sandboxAccts.filter((a) => a.name !== 'User')
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
@@ -1299,9 +1303,26 @@ export async function placeIcOrderAllAccounts(
     }
   }
 
-  // User first (sequential), then others in parallel
+  // Step 1: User sandbox first (sequential) — must fill before anything else
   for (const acct of userAccts) await placeForAccount(acct)
-  await Promise.all(otherAccts.map(placeForAccount))
+
+  // Step 2: Other sandbox accounts in parallel (mirror trades)
+  await Promise.all(otherSandboxAccts.map(placeForAccount))
+
+  // Step 3: Production accounts ONLY if User sandbox filled successfully.
+  // This ensures we never risk real money unless the sandbox trade is confirmed.
+  const userFill = results['User:sandbox']
+  if (userFill?.fill_price && userFill.fill_price > 0 && productionAccts.length > 0) {
+    console.log(
+      `[tradier] User sandbox filled @ $${userFill.fill_price.toFixed(4)} — ` +
+      `mirroring to ${productionAccts.length} production account(s)`,
+    )
+    await Promise.all(productionAccts.map(placeForAccount))
+  } else if (productionAccts.length > 0) {
+    console.log(
+      `[tradier] User sandbox did NOT fill — skipping ${productionAccts.length} production account(s)`,
+    )
+  }
 
   return results
 }
