@@ -219,7 +219,7 @@ export async function POST(
       dbQuery(
         `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
          FROM ${botTable(bot, 'positions')}
-         WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+         WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${accountTypeFilter}`,
       ),
     ])
     if (accountRows.length === 0) {

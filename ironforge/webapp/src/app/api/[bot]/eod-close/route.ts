@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY, escapeSql } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -183,13 +183,6 @@ export async function POST(
     }
 
     // 3. Update paper account per account_type (after all positions closed)
-    const remainingCollateral = await dbQuery(
-      `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
-       FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1`,
-      [dte],
-    )
-    const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     const totalRealizedPnl = results.reduce((sum, r) => sum + r.realized_pnl, 0)
 
     // Group results by account_type to update the correct paper_account row
@@ -202,6 +195,19 @@ export async function POST(
     }
 
     for (const [acctType, { pnl, count, person: acctPerson }] of Object.entries(pnlByAccountType)) {
+      // Calculate remaining collateral PER account_type — not globally.
+      // Without this filter, production collateral inflates sandbox and vice versa.
+      const collFilter = acctType === 'production'
+        ? `AND account_type = 'production' AND person = '${escapeSql(acctPerson)}'`
+        : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
+      const remainingCollateral = await dbQuery(
+        `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+         FROM ${botTable(bot, 'positions')}
+         WHERE status = 'open' AND dte_mode = $1 ${collFilter}`,
+        [dte],
+      )
+      const actualCollateral = num(remainingCollateral[0]?.total_collateral)
+
       if (acctType === 'production') {
         await dbExecute(
           `UPDATE ${botTable(bot, 'paper_account')}
