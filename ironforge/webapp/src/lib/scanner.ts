@@ -953,8 +953,8 @@ async function closePosition(
     ? ` (actual fill=$${userClose.fill_price.toFixed(4)})`
     : ''
   await query(
-    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+     VALUES ($1, $2, $3, $4, $5)`,
     [
       'TRADE_CLOSE',
       `AUTO CLOSE: ${positionId} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)} [${reason}]${fillNote}`,
@@ -968,7 +968,7 @@ async function closePosition(
         source: 'scanner',
         sandbox_close_info: sandboxCloseInfo,
       }),
-      bot.dte,
+      bot.dte, posPerson,
     ],
   )
 
@@ -1347,13 +1347,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             spot_price, vix, expected_move, call_wall, put_wall,
             gex_regime, put_short, put_long, call_short, call_long,
             total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            wings_adjusted, dte_mode, person
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
             credits.totalCredit, adv.confidence, false, 'sandbox_order_failed', `Auto scan | ${adv.reasoning}`,
-            false, bot.dte,
+            false, bot.dte, person,
           ],
         )
         _flameConsecutiveRejects++
@@ -1472,13 +1472,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             spot_price, vix, expected_move, call_wall, put_wall,
             gex_regime, put_short, put_long, call_short, call_long,
             total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            wings_adjusted, dte_mode, person
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
             credits.totalCredit, adv.confidence, false, 'primary_no_fill', `Auto scan | ${adv.reasoning}`,
-            false, bot.dte,
+            false, bot.dte, person,
           ],
         )
         _flameConsecutiveRejects++
@@ -1592,27 +1592,27 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // (Production positions were already created before the sandbox gate — see above)
 
-  // Signal log
+  // Signal log (include person for per-account attribution)
   await query(
     `INSERT INTO ${botTable(bot.name, 'signals')} (
       spot_price, vix, expected_move, call_wall, put_wall,
       gex_regime, put_short, put_long, call_short, call_long,
       total_credit, confidence, was_executed, reasoning,
-      wings_adjusted, dte_mode
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      wings_adjusted, dte_mode, person
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
     [
       spot, vix, expectedMove, 0, 0,
       'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
       effectiveCredit, adv.confidence, true,
       `Auto scan${isFlameFillOnly ? ' [Tradier-fill]' : ''} | ${adv.reasoning}`,
-      false, bot.dte,
+      false, bot.dte, person,
     ],
   )
 
   // Trade log
   await query(
-    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+     VALUES ($1, $2, $3, $4, $5)`,
     [
       'TRADE_OPEN',
       `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)}${isFlameFillOnly ? ' [Tradier-fill]' : ''}`,
@@ -1624,7 +1624,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         sandbox_order_ids: sandboxOrderIds,
         config: { sd: botCfg.sd, used_sd: usedSd, pt_pct: botCfg.pt_pct, sl_mult: botCfg.sl_mult },
       }),
-      bot.dte,
+      bot.dte, person,
     ],
   )
 
