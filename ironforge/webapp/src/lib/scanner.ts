@@ -775,7 +775,9 @@ async function closePosition(
         )
 
         // Check if primary account actually closed (FLAME requirement)
-        if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+        // Use composite key 'User:sandbox' (closeIcOrderAllAccounts returns composite keys)
+        const userCloseInfo = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+        if (isFlameBotClose && !userCloseInfo?.order_id) {
           console.error(
             `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +
             `(attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}) — ${positionId}`,
@@ -800,7 +802,8 @@ async function closePosition(
     }
 
     // FLAME: log critical error if sandbox close still failed
-    if (isFlameBotClose && !sandboxCloseInfo['User']?.order_id) {
+    const userCloseResult = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+    if (isFlameBotClose && !userCloseResult?.order_id) {
       console.error(
         `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
         `Position ${positionId} closed on paper but Tradier positions may still be open!`,
@@ -827,7 +830,7 @@ async function closePosition(
   // for successful closes. If still missing, DEFER the paper close — store the
   // sandbox close info on the position and let next cycle re-poll.
   let effectivePrice = estimatedPrice
-  const userClose = sandboxCloseInfo['User']
+  const userClose = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
   if (userClose?.fill_price != null && userClose.fill_price > 0) {
     console.log(
       `[scanner] ${bot.name.toUpperCase()}: Actual close fill=$${userClose.fill_price.toFixed(4)} ` +
