@@ -203,21 +203,21 @@ export default function BotDashboard({
 
   /* ---- Pending orders (FLAME only — lightweight, always fetched with status) ---- */
   const { data: pendingData } = useSWR(
-    bot === 'flame' ? `/api/${bot}/pending-orders` : null,
+    bot === 'flame' ? withPerson(`/api/${bot}/pending-orders`) : null,
     fetcher,
     { refreshInterval: STATUS_REFRESH },
   )
 
   /* ---- PDT ---- */
   const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
-    tab === 'PDT' ? `/api/${bot}/pdt` : null,
+    tab === 'PDT' ? withPerson(`/api/${bot}/pdt`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Reconcile (FLAME only) ---- */
   const { data: reconData, error: reconErr } = useSWR(
-    tab === 'Reconcile' && bot === 'flame' ? `/api/${bot}/reconcile` : null,
+    tab === 'Reconcile' && bot === 'flame' ? withPerson(`/api/${bot}/reconcile`) : null,
     fetcher,
     { refreshInterval: 60_000 },
   )
