@@ -52,15 +52,15 @@ export async function GET(
        LIMIT 1`,
     )
 
-    // 3. Load sandbox accounts
+    // 3. Load sandbox accounts (only sandbox — never expose production keys in diagnostics)
     let sandboxAccounts: Array<{ name: string; apiKey: string }> = []
     try {
       const acctRows = await dbQuery(
-        `SELECT name, api_key FROM ironforge_accounts WHERE is_active = TRUE ORDER BY id`,
+        `SELECT person, api_key FROM ironforge_accounts WHERE is_active = TRUE AND type = 'sandbox' ORDER BY id`,
       )
       sandboxAccounts = acctRows
         .filter((r: any) => r.api_key)
-        .map((r: any) => ({ name: r.name, apiKey: r.api_key.trim() }))
+        .map((r: any) => ({ name: r.person, apiKey: r.api_key.trim() }))
     } catch { /* no accounts table */ }
 
     if (!positionRows.length) {

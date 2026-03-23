@@ -31,7 +31,7 @@ async function ensureQuoteApiKey(): Promise<void> {
     const { query: dbq } = await import('./db')
     const rows = await dbq(
       `SELECT api_key FROM ironforge_accounts
-       WHERE is_active = TRUE ORDER BY id LIMIT 1`,
+       WHERE is_active = TRUE AND type = 'sandbox' ORDER BY id LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].api_key) {
       _tradierApiKey = rows[0].api_key.trim()
@@ -1549,13 +1549,17 @@ async function getSandboxTotalEquity(apiKey: string, accountId: string, baseUrl:
  * Get the PDT enabled flag for a specific account (by person name).
  * Reads from ironforge_accounts table. Defaults to true.
  */
-export async function getPdtEnabledForAccount(person: string): Promise<boolean> {
+export async function getPdtEnabledForAccount(person: string, accountType?: 'sandbox' | 'production'): Promise<boolean> {
   try {
     const { query: dbq } = await import('./db')
+    // Filter by type when provided to avoid returning wrong account's PDT setting.
+    // Without this, a person with sandbox pdt_enabled=false + production pdt_enabled=true
+    // would always return the sandbox value.
+    const typeFilter = accountType ? `AND type = '${accountType}'` : ''
     const rows = await dbq(
       `SELECT pdt_enabled FROM ironforge_accounts
-       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
-       ORDER BY type DESC LIMIT 1`,
+       WHERE person = '${person.replace(/'/g, "''")}' ${typeFilter} AND is_active = TRUE
+       LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].pdt_enabled != null) {
       return rows[0].pdt_enabled === true || rows[0].pdt_enabled === 'true'
