@@ -236,6 +236,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_pdt_log (
   pnl NUMERIC(10,2),
   close_reason TEXT,
   dte_mode TEXT DEFAULT '2DTE',
+  person TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS ${bot}_pdt_config (
@@ -332,8 +333,8 @@ async function ensureTables(): Promise<void> {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
         } catch { /* column already exists or table doesn't exist yet */ }
       }
-      // Add person column to equity_snapshots, daily_perf, logs, and signals for per-person filtering
-      for (const tbl of [`${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_logs`, `${bot}_signals`]) {
+      // Add person column to equity_snapshots, daily_perf, logs, signals, and pdt_log for per-person filtering
+      for (const tbl of [`${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_logs`, `${bot}_signals`, `${bot}_pdt_log`]) {
         try {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS person TEXT`)
         } catch { /* column already exists or table doesn't exist yet */ }
@@ -360,6 +361,20 @@ async function ensureTables(): Promise<void> {
           await client.query(`UPDATE ${tbl} SET account_type = 'sandbox' WHERE account_type IS NULL`)
         } catch { /* table may not exist yet */ }
       }
+    }
+
+    // Migrate daily_perf UNIQUE constraint from (trade_date) to (trade_date, COALESCE(person, ''))
+    // Needed so sandbox and production can both have entries on the same date.
+    for (const bot of ['flame', 'spark', 'inferno']) {
+      try {
+        // Drop old single-column constraint
+        await client.query(`ALTER TABLE ${bot}_daily_perf DROP CONSTRAINT IF EXISTS ${bot}_daily_perf_trade_date_key`)
+        // Create composite unique index (safe to run repeatedly)
+        await client.query(
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${bot}_daily_perf_date_person_uniq
+           ON ${bot}_daily_perf (trade_date, COALESCE(person, ''))`,
+        )
+      } catch { /* constraint may already exist or table may not exist */ }
     }
 
     // Add UNIQUE constraint on ironforge_pdt_config.bot_name (safe to run repeatedly)

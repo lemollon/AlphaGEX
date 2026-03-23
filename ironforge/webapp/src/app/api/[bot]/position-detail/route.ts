@@ -22,9 +22,11 @@ export async function GET(
 
   const dte = dteMode(bot)
   const personParam = req.nextUrl.searchParams.get('person')
+  const accountTypeParam = req.nextUrl.searchParams.get('account_type')
   const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeFilter = accountTypeParam ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'` : ''
 
   try {
     const positionRows = await dbQuery(
@@ -35,7 +37,7 @@ export async function GET(
               underlying_at_entry, vix_at_entry, collateral_required,
               wings_adjusted, open_time, sandbox_order_id
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${personFilter}
+       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY open_time DESC`,
     )
 
