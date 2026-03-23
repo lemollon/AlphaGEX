@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
+import { getAccountsForBotAsync, getPdtEnabledForAccount } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -334,7 +335,31 @@ async function buildStatusResponse(
     last_reset_by: null,
   }
 
-  const pdtEnabled = cfg.pdt_enabled !== false && cfg.pdt_enabled !== 'false'
+  const botPdtEnabled = cfg.pdt_enabled !== false && cfg.pdt_enabled !== 'false'
+
+  // Check account-level PDT override (same logic as scanner lines 1034-1043)
+  let accountPdtEnabled = true
+  let pdtOverrideSource: string | null = null
+  try {
+    const persons = await getAccountsForBotAsync(botName)
+    if (persons.length > 0) {
+      accountPdtEnabled = await getPdtEnabledForAccount(persons[0])
+    }
+  } catch { /* default to true */ }
+
+  // Effective PDT: false if EITHER bot-level OR account-level is false
+  let pdtEnabled: boolean
+  if (!botPdtEnabled) {
+    pdtEnabled = false
+    pdtOverrideSource = 'bot_config'
+  } else if (!accountPdtEnabled) {
+    pdtEnabled = false
+    pdtOverrideSource = 'account'
+  } else {
+    pdtEnabled = true
+    pdtOverrideSource = null
+  }
+
   const maxDayTrades = cfg.max_day_trades != null && cfg.max_day_trades !== '' ? toInt(cfg.max_day_trades) : 4
   const maxTradesPerDay = cfg.max_trades_per_day != null && cfg.max_trades_per_day !== '' ? toInt(cfg.max_trades_per_day) : 1
   const windowDays = cfg.window_days != null && cfg.window_days !== '' ? toInt(cfg.window_days) : 5
@@ -397,6 +422,9 @@ async function buildStatusResponse(
     bot: botName,
     bot_name: botName,
     pdt_enabled: pdtEnabled,
+    bot_pdt_enabled: botPdtEnabled,
+    account_pdt_enabled: accountPdtEnabled,
+    pdt_override_source: pdtOverrideSource,
     pdt_status: pdtStatus,
     day_trade_count: dayTradeCount,
     max_day_trades: maxDayTrades,

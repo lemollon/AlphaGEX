@@ -216,34 +216,70 @@ async function syncPaperAccountCapital(): Promise<void> {
          ORDER BY id DESC LIMIT 1`,
         [bot.dte],
       )
-      if (rows.length === 0) continue
+      if (rows.length > 0) {
+        const current = num(rows[0].starting_capital)
+        const target = botCfg.starting_capital
 
-      const current = num(rows[0].starting_capital)
-      const target = botCfg.starting_capital
+        // Only update if meaningful change (>$1 difference)
+        if (Math.abs(current - target) >= 1) {
+          const pnl = num(rows[0].cumulative_pnl)
+          const collateral = num(rows[0].collateral_in_use)
+          const newBalance = target + pnl
+          const newBp = newBalance - collateral
 
-      // Only update if meaningful change (>$1 difference)
-      if (Math.abs(current - target) < 1) continue
+          await query(
+            `UPDATE ${botTable(bot.name, 'paper_account')}
+             SET starting_capital = $1,
+                 current_balance = $2,
+                 buying_power = $3,
+                 high_water_mark = GREATEST(high_water_mark, $2),
+                 updated_at = NOW()
+             WHERE id = $4`,
+            [target, newBalance, newBp, rows[0].id],
+          )
+          console.log(
+            `[scanner] ${bot.name.toUpperCase()} SANDBOX CAPITAL SYNCED: ` +
+            `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
+            `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+          )
+        }
+      }
 
-      const pnl = num(rows[0].cumulative_pnl)
-      const collateral = num(rows[0].collateral_in_use)
-      const newBalance = target + pnl
-      const newBp = newBalance - collateral
-
-      await query(
-        `UPDATE ${botTable(bot.name, 'paper_account')}
-         SET starting_capital = $1,
-             current_balance = $2,
-             buying_power = $3,
-             high_water_mark = GREATEST(high_water_mark, $2),
-             updated_at = NOW()
-         WHERE id = $4`,
-        [target, newBalance, newBp, rows[0].id],
+      // Sync PRODUCTION paper_accounts (each person independently)
+      const prodRows = await query(
+        `SELECT pa.id, pa.person, pa.starting_capital, pa.cumulative_pnl, pa.collateral_in_use
+         FROM ${botTable(bot.name, 'paper_account')} pa
+         WHERE pa.is_active = TRUE AND pa.dte_mode = $1 AND pa.account_type = 'production'`,
+        [bot.dte],
       )
-      console.log(
-        `[scanner] ${bot.name.toUpperCase()} PAPER ACCOUNT CAPITAL SYNCED: ` +
-        `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
-        `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
-      )
+      for (const pa of prodRows) {
+        try {
+          const target = await getAllocatedCapitalForAccount(pa.person)
+          const current = num(pa.starting_capital)
+          if (Math.abs(current - target) < 1) continue
+
+          const pnl = num(pa.cumulative_pnl)
+          const collateral = num(pa.collateral_in_use)
+          const newBalance = target + pnl
+          const newBp = newBalance - collateral
+
+          await query(
+            `UPDATE ${botTable(bot.name, 'paper_account')}
+             SET starting_capital = $1,
+                 current_balance = $2,
+                 buying_power = $3,
+                 high_water_mark = GREATEST(high_water_mark, $2),
+                 updated_at = NOW()
+             WHERE id = $4`,
+            [target, newBalance, newBp, pa.id],
+          )
+          console.log(
+            `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNCED (${pa.person}): ` +
+            `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
+            `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+          )
+        } catch { /* non-critical — sandbox is the primary account */ }
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${bot.name.toUpperCase()} capital sync error: ${msg}`)
@@ -538,7 +574,7 @@ async function monitorSinglePosition(
                   await query(
                     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
                      VALUES (${CT_TODAY}, 0, 1, $1, $2)
-                     ON CONFLICT (trade_date) DO UPDATE SET
+                     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
                        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
                        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
                     [realizedPnl, deferPerson],
@@ -917,8 +953,8 @@ async function closePosition(
     ? ` (actual fill=$${userClose.fill_price.toFixed(4)})`
     : ''
   await query(
-    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+     VALUES ($1, $2, $3, $4, $5)`,
     [
       'TRADE_CLOSE',
       `AUTO CLOSE: ${positionId} @ $${effectivePrice.toFixed(4)} P&L=$${realizedPnl.toFixed(2)} [${reason}]${fillNote}`,
@@ -932,15 +968,15 @@ async function closePosition(
         source: 'scanner',
         sandbox_close_info: sandboxCloseInfo,
       }),
-      bot.dte,
+      bot.dte, posPerson,
     ],
   )
 
-  // Daily perf
+  // Daily perf (keyed by trade_date + person so sandbox/production don't overwrite each other)
   await query(
     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
      VALUES (${CT_TODAY}, 0, 1, $1, $2)
-     ON CONFLICT (trade_date) DO UPDATE SET
+     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
     [realizedPnl, posPerson],
@@ -1311,13 +1347,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             spot_price, vix, expected_move, call_wall, put_wall,
             gex_regime, put_short, put_long, call_short, call_long,
             total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            wings_adjusted, dte_mode, person
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
             credits.totalCredit, adv.confidence, false, 'sandbox_order_failed', `Auto scan | ${adv.reasoning}`,
-            false, bot.dte,
+            false, bot.dte, person,
           ],
         )
         _flameConsecutiveRejects++
@@ -1436,13 +1472,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             spot_price, vix, expected_move, call_wall, put_wall,
             gex_regime, put_short, put_long, call_short, call_long,
             total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+            wings_adjusted, dte_mode, person
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
             credits.totalCredit, adv.confidence, false, 'primary_no_fill', `Auto scan | ${adv.reasoning}`,
-            false, bot.dte,
+            false, bot.dte, person,
           ],
         )
         _flameConsecutiveRejects++
@@ -1556,27 +1592,27 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // (Production positions were already created before the sandbox gate — see above)
 
-  // Signal log
+  // Signal log (include person for per-account attribution)
   await query(
     `INSERT INTO ${botTable(bot.name, 'signals')} (
       spot_price, vix, expected_move, call_wall, put_wall,
       gex_regime, put_short, put_long, call_short, call_long,
       total_credit, confidence, was_executed, reasoning,
-      wings_adjusted, dte_mode
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
+      wings_adjusted, dte_mode, person
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
     [
       spot, vix, expectedMove, 0, 0,
       'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
       effectiveCredit, adv.confidence, true,
       `Auto scan${isFlameFillOnly ? ' [Tradier-fill]' : ''} | ${adv.reasoning}`,
-      false, bot.dte,
+      false, bot.dte, person,
     ],
   )
 
   // Trade log
   await query(
-    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
-     VALUES ($1, $2, $3, $4)`,
+    `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+     VALUES ($1, $2, $3, $4, $5)`,
     [
       'TRADE_OPEN',
       `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)}${isFlameFillOnly ? ' [Tradier-fill]' : ''}`,
@@ -1588,17 +1624,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         sandbox_order_ids: sandboxOrderIds,
         config: { sd: botCfg.sd, used_sd: usedSd, pt_pct: botCfg.pt_pct, sl_mult: botCfg.sl_mult },
       }),
-      bot.dte,
+      bot.dte, person,
     ],
   )
 
-  // PDT log
+  // PDT log (include person for per-account daily trade tracking)
   await query(
     `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
       trade_date, symbol, position_id, opened_at,
-      contracts, entry_credit, dte_mode
-    ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5)`,
-    ['SPY', positionId, effectiveContracts, effectiveCredit, bot.dte],
+      contracts, entry_credit, dte_mode, person
+    ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6)`,
+    ['SPY', positionId, effectiveContracts, effectiveCredit, bot.dte, person],
   )
 
   // Equity snapshot
@@ -1617,7 +1653,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   await query(
     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
      VALUES (${CT_TODAY}, 1, 0, 0, $1)
-     ON CONFLICT (trade_date) DO UPDATE SET
+     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
        trades_executed = ${botTable(bot.name, 'daily_perf')}.trades_executed + 1`,
     [person],
   )
@@ -2306,12 +2342,18 @@ async function scanBot(bot: BotDef): Promise<void> {
            WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production' AND person = $2`,
           [bot.dte, pa.person],
         )
+        // Calculate production unrealized PNL from open production positions
+        let prodUnrealized = 0
+        if (int(prodOpenCount[0]?.cnt) > 0 && unrealizedPnl !== 0) {
+          // Use same unrealized PNL as sandbox (same IC, same MTM quotes)
+          prodUnrealized = unrealizedPnl
+        }
         await query(
           `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
            (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
-           VALUES ($1, $2, 0, $3, $4, $5, $6, 'production')`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'production')`,
           [num(pa.current_balance), num(pa.cumulative_pnl),
-           int(prodOpenCount[0]?.cnt), `scan:${action}`, bot.dte, pa.person],
+           prodUnrealized, int(prodOpenCount[0]?.cnt), `scan:${action}`, bot.dte, pa.person],
         )
       }
     } catch (snapErr: unknown) {

@@ -24,19 +24,23 @@ export async function POST(
   try {
     const body = await req.json()
     const active = Boolean(body.active)
+    const accountType = body.account_type as string | undefined
 
-    // Update paper_account is_active flag
+    // Update paper_account is_active flag (filtered by account_type if provided)
     const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : 'WHERE is_active IS NOT NULL'
+    const accountTypeFilter = accountType
+      ? ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
+      : ''
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET is_active = ${active}, updated_at = NOW()
-       ${dteFilter}`,
+       ${dteFilter}${accountTypeFilter}`,
     )
 
     // Verify the update took effect
     const result = await dbQuery(
       `SELECT is_active FROM ${botTable(bot, 'paper_account')}
-       ${dteFilter} LIMIT 1`,
+       ${dteFilter}${accountTypeFilter} LIMIT 1`,
     )
 
     if (result.length === 0) {

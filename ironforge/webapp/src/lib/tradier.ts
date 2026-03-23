@@ -1448,9 +1448,9 @@ export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string
 }
 
 /** Async version that ensures DB accounts are loaded first. */
-export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string }>> {
+export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string; baseUrl: string }>> {
   await ensureSandboxAccountsLoaded()
-  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey }))
+  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey, baseUrl: a.baseUrl }))
 }
 
 /**
@@ -1505,15 +1505,17 @@ export async function getAllocatedCapitalForAccount(person: string): Promise<num
   try {
     const { query: dbq } = await import('./db')
     const rows = await dbq(
-      `SELECT api_key FROM ironforge_accounts
+      `SELECT api_key, type FROM ironforge_accounts
        WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
        ORDER BY type DESC LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].api_key) {
       const apiKey = rows[0].api_key.trim()
-      const accountId = await getAccountIdForKey(apiKey)
+      const acctType = rows[0].type || 'sandbox'
+      const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
+      const accountId = await getAccountIdForKey(apiKey, baseUrl)
       if (accountId) {
-        const equity = await getSandboxTotalEquity(apiKey, accountId)
+        const equity = await getSandboxTotalEquity(apiKey, accountId, baseUrl)
         if (equity != null) {
           const allocated = Math.round(equity * pct / 100 * 100) / 100
           console.log(`[tradier] getAllocatedCapital: ${person} → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
@@ -1531,8 +1533,8 @@ export async function getAllocatedCapitalForAccount(person: string): Promise<num
  * Fetch total equity for a sandbox account (consistent with frontend display).
  * Uses total_equity, NOT option_buying_power.
  */
-async function getSandboxTotalEquity(apiKey: string, accountId: string): Promise<number | null> {
-  const data = await sandboxGet(`/accounts/${accountId}/balances`, undefined, apiKey)
+async function getSandboxTotalEquity(apiKey: string, accountId: string, baseUrl: string = SANDBOX_URL): Promise<number | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/balances`, undefined, apiKey, baseUrl)
   const equity = data?.balances?.total_equity
   return equity != null ? parseFloat(equity) : null
 }
@@ -1871,13 +1873,14 @@ export async function cancelSandboxOrder(
   apiKey?: string,
 ): Promise<boolean> {
   // Find the right API key — try all sandbox accounts if not provided
-  const accounts = apiKey ? [{ name: 'direct', apiKey }] : await getLoadedSandboxAccountsAsync()
+  const accounts = apiKey ? [{ name: 'direct', apiKey, baseUrl: SANDBOX_URL }] : await getLoadedSandboxAccountsAsync()
   for (const acct of accounts) {
     try {
-      const accountId = await getAccountIdForKey(acct.apiKey)
+      const acctBaseUrl = ('baseUrl' in acct ? acct.baseUrl : SANDBOX_URL) as string
+      const accountId = await getAccountIdForKey(acct.apiKey, acctBaseUrl)
       if (!accountId) continue
 
-      const url = `${SANDBOX_URL}/accounts/${accountId}/orders/${orderId}`
+      const url = `${acctBaseUrl}/accounts/${accountId}/orders/${orderId}`
       const res = await fetch(url, {
         method: 'DELETE',
         headers: {
