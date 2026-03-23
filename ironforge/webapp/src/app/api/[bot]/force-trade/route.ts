@@ -126,6 +126,7 @@ export async function POST(
   const dte = bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'
   const minDte = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
   const botName = bot.toUpperCase()
+  const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
 
   try {
     // 1. Check for existing open position
@@ -206,10 +207,14 @@ export async function POST(
     }
 
     // 7. Get paper account and calculate sizing (derive BP from live collateral)
+    const accountTypeFilter = accountType === 'production'
+      ? `AND account_type = 'production'`
+      : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
+
     const [accountRows, liveCollRows] = await Promise.all([
       dbQuery(
         `SELECT id, current_balance, buying_power FROM ${botTable(bot, 'paper_account')}
-         WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}' ORDER BY id DESC LIMIT 1`,
+         WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}' ${accountTypeFilter} ORDER BY id DESC LIMIT 1`,
       ),
       dbQuery(
         `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
@@ -270,7 +275,7 @@ export async function POST(
         oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
         wings_adjusted, original_put_width, original_call_width,
         put_order_id, call_order_id,
-        status, open_time, open_date, dte_mode
+        status, open_time, open_date, dte_mode, account_type
       ) VALUES (
         '${escapeSql(positionId)}', 'SPY', '${escapeSql(expiration)}',
         ${strikes.putShort}, ${strikes.putLong}, ${credits.putCredit},
@@ -284,7 +289,7 @@ export async function POST(
         '${escapeSql(adv.reasoning)}', '${topFactorsJson}', FALSE,
         FALSE, ${spreadWidth}, ${spreadWidth},
         'PAPER', 'PAPER',
-        'open', NOW(), ${CT_TODAY}, '${escapeSql(dte)}'
+        'open', NOW(), ${CT_TODAY}, '${escapeSql(dte)}', '${escapeSql(accountType)}'
       )`,
     )
 

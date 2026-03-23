@@ -208,10 +208,12 @@ async function syncPaperAccountCapital(): Promise<void> {
   for (const bot of BOTS) {
     const botCfg = cfg(bot)
     try {
+      // Sync SANDBOX paper_account
       const rows = await query(
         `SELECT id, starting_capital, cumulative_pnl, collateral_in_use
          FROM ${botTable(bot.name, 'paper_account')}
-         WHERE is_active = TRUE AND dte_mode = $1 ORDER BY id DESC LIMIT 1`,
+         WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         ORDER BY id DESC LIMIT 1`,
         [bot.dte],
       )
       if (rows.length === 0) continue
@@ -234,8 +236,8 @@ async function syncPaperAccountCapital(): Promise<void> {
              buying_power = $3,
              high_water_mark = GREATEST(high_water_mark, $2),
              updated_at = NOW()
-         WHERE is_active = TRUE AND dte_mode = $4`,
-        [target, newBalance, newBp, bot.dte],
+         WHERE id = $4`,
+        [target, newBalance, newBp, rows[0].id],
       )
       console.log(
         `[scanner] ${bot.name.toUpperCase()} PAPER ACCOUNT CAPITAL SYNCED: ` +
@@ -1046,12 +1048,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
   // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
   // (0 = unlimited, used by INFERNO)
+  // Filter by person so sandbox trades don't block production (and vice versa).
   if (maxTradesPerDay > 0) {
-    const todayTrades = await query(
-      `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-       WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`,
-      [bot.dte],
-    )
+    const todayTradesSql = person && person !== 'all'
+      ? `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1 AND person = $2`
+      : `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`
+    const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
+    const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) return 'skip:already_traded_today'
   }
 
@@ -1073,21 +1078,23 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
   }
 
-  // Get account
+  // Get sandbox paper account (production positions use Tradier fill data, not paper BP)
   const accountRows = await query(
     `SELECT id, current_balance, buying_power FROM ${botTable(bot.name, 'paper_account')}
-     WHERE is_active = TRUE AND dte_mode = $1 ORDER BY id DESC LIMIT 1`,
+     WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+     ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
   if (accountRows.length === 0) return 'skip:no_paper_account'
   const acct = accountRows[0]
 
   // Fix 10: Derive buying power from LIVE open position collateral (not cached paper_account)
+  // Filter by sandbox account_type so production collateral doesn't affect sandbox BP
   const balance = num(acct.current_balance)
   const liveCollRows = await query(
     `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
      FROM ${botTable(bot.name, 'positions')}
-     WHERE status = 'open' AND dte_mode = $1`,
+     WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
     [bot.dte],
   )
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
@@ -1317,7 +1324,96 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         return `skip:flame_sandbox_failed(${msg})`
       }
 
-      // Check primary account fill — FLAME requires it
+      // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox gate ──
+      // If production accounts filled, record those positions NOW — before the sandbox
+      // gate check. This prevents the scenario where production fills at Tradier but
+      // sandbox doesn't, leaving production positions untracked (MONEY LOSS).
+      const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap
+      for (const [key, info] of Object.entries(sandboxOrderIds)) {
+        if (info.account_type !== 'production') continue
+        if (!info.fill_price || info.fill_price <= 0) continue
+
+        const prodPerson = key.split(':')[0]
+        const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+        const prodCredit = info.fill_price
+        const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
+        const prodMaxLoss = prodCollateral
+        const prodMaxProfit = prodCredit * 100 * prodContracts
+        const prodPositionId = `${positionId}-prod-${prodPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+
+        console.log(
+          `[scanner] PRODUCTION POSITION (pre-sandbox-gate): ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)} ` +
+          `(collateral=$${prodCollateral.toFixed(0)}, maxLoss=$${prodMaxLoss.toFixed(0)})`,
+        )
+
+        try {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'positions')} (
+              position_id, ticker, expiration,
+              put_short_strike, put_long_strike, put_credit,
+              call_short_strike, call_long_strike, call_credit,
+              contracts, spread_width, total_credit, max_loss, max_profit,
+              collateral_required,
+              underlying_at_entry, vix_at_entry, expected_move,
+              call_wall, put_wall, gex_regime,
+              flip_point, net_gex,
+              oracle_confidence, oracle_win_probability, oracle_advice,
+              oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
+              wings_adjusted, original_put_width, original_call_width,
+              put_order_id, call_order_id,
+              sandbox_order_id,
+              status, open_time, open_date, dte_mode, person, account_type
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+              $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+              $31, $32, $33, $34, $35, $36,
+              'open', NOW(), ${CT_TODAY}, $37, $38, 'production'
+            )`,
+            [
+              prodPositionId, 'SPY', expiration,
+              strikes.putShort, strikes.putLong, prodCredit / 2,
+              strikes.callShort, strikes.callLong, prodCredit / 2,
+              prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
+              prodCollateral,
+              spot, vix, expectedMove,
+              0, 0, 'UNKNOWN',
+              0, 0,
+              adv.confidence, adv.winProbability, adv.advice,
+              adv.reasoning, JSON.stringify(adv.topFactors), false,
+              false, spreadWidth, spreadWidth,
+              'PRODUCTION', 'PRODUCTION',
+              JSON.stringify({ [key]: info }),
+              bot.dte, prodPerson,
+            ],
+          )
+
+          // Deduct collateral from the PRODUCTION paper_account
+          await query(
+            `UPDATE ${botTable(bot.name, 'paper_account')}
+             SET collateral_in_use = collateral_in_use + $1,
+                 buying_power = buying_power - $1,
+                 updated_at = NOW()
+             WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+            [prodCollateral, prodPerson, bot.dte],
+          )
+
+          // Log the production order
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+             VALUES ('PRODUCTION_ORDER', $1, $2, $3, $4)`,
+            [
+              `PRODUCTION: ${prodPerson} ${prodContracts}x SPY IC ${strikes.putShort}/${strikes.putLong}P-${strikes.callShort}/${strikes.callLong}C @ $${prodCredit.toFixed(4)}`,
+              JSON.stringify({ position_id: prodPositionId, order_info: info }),
+              bot.dte, prodPerson,
+            ],
+          )
+        } catch (prodErr: unknown) {
+          console.error(`[scanner] PRODUCTION position creation failed for ${prodPerson}:`, prodErr instanceof Error ? prodErr.message : prodErr)
+        }
+      }
+
+      // Check primary SANDBOX account fill — sandbox position requires it
       // Use composite key (name:type) after placeIcOrderAllAccounts key change
       const primaryFill = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]
       if (!primaryFill || !primaryFill.fill_price || primaryFill.fill_price <= 0) {
@@ -1458,98 +1554,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [effectiveCollateral, acct.id],
   )
 
-  // ── PRODUCTION POSITION ROWS ──────────────────────────────────────
-  // For each production account that filled, create a SEPARATE position row
-  // with its own contract count, fill price, and account_type = 'production'.
-  // Production positions track real money P&L independently from sandbox.
-  const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap for production orders
-  if (isFlameFillOnly) {
-    for (const [key, info] of Object.entries(sandboxOrderIds)) {
-      if (info.account_type !== 'production') continue
-      if (!info.fill_price || info.fill_price <= 0) continue
-
-      // Extract person name from composite key "Logan:production"
-      const prodPerson = key.split(':')[0]
-      const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
-      const prodCredit = info.fill_price
-      const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
-      const prodMaxLoss = prodCollateral
-      const prodMaxProfit = prodCredit * 100 * prodContracts
-      const prodPositionId = `${positionId}-prod`
-
-      console.log(
-        `[scanner] PRODUCTION POSITION: ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)} ` +
-        `(collateral=$${prodCollateral.toFixed(0)}, maxLoss=$${prodMaxLoss.toFixed(0)})`,
-      )
-
-      // Insert production position row
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'positions')} (
-          position_id, ticker, expiration,
-          put_short_strike, put_long_strike, put_credit,
-          call_short_strike, call_long_strike, call_credit,
-          contracts, spread_width, total_credit, max_loss, max_profit,
-          collateral_required,
-          underlying_at_entry, vix_at_entry, expected_move,
-          call_wall, put_wall, gex_regime,
-          flip_point, net_gex,
-          oracle_confidence, oracle_win_probability, oracle_advice,
-          oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
-          wings_adjusted, original_put_width, original_call_width,
-          put_order_id, call_order_id,
-          sandbox_order_id,
-          status, open_time, open_date, dte_mode, person, account_type
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-          $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-          $31, $32, $33, $34, $35, $36,
-          'open', NOW(), ${CT_TODAY}, $37, $38, 'production'
-        )`,
-        [
-          prodPositionId, 'SPY', expiration,
-          strikes.putShort, strikes.putLong, prodCredit / 2,
-          strikes.callShort, strikes.callLong, prodCredit / 2,
-          prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
-          prodCollateral,
-          spot, vix, expectedMove,
-          0, 0, 'UNKNOWN',
-          0, 0,
-          adv.confidence, adv.winProbability, adv.advice,
-          adv.reasoning, JSON.stringify(adv.topFactors), false,
-          false, spreadWidth, spreadWidth,
-          'PRODUCTION', 'PRODUCTION',
-          JSON.stringify({ [key]: info }),
-          bot.dte, prodPerson,
-        ],
-      )
-
-      // Deduct collateral from the PRODUCTION paper_account
-      try {
-        await query(
-          `UPDATE ${botTable(bot.name, 'paper_account')}
-           SET collateral_in_use = collateral_in_use + $1,
-               buying_power = buying_power - $1,
-               updated_at = NOW()
-           WHERE account_type = 'production' AND person = $2 AND is_active = TRUE`,
-          [prodCollateral, prodPerson],
-        )
-      } catch (err: unknown) {
-        console.warn(`[scanner] Production paper_account update failed for ${prodPerson}:`, err instanceof Error ? err.message : err)
-      }
-
-      // Log the production order
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
-         VALUES ('PRODUCTION_ORDER', $1, $2, $3, $4)`,
-        [
-          `PRODUCTION: ${prodPerson} ${prodContracts}x SPY IC ${strikes.putShort}/${strikes.putLong}P-${strikes.callShort}/${strikes.callLong}C @ $${prodCredit.toFixed(4)}`,
-          JSON.stringify({ position_id: prodPositionId, order_info: info }),
-          bot.dte, prodPerson,
-        ],
-      )
-    }
-  }
+  // (Production positions were already created before the sandbox gate — see above)
 
   // Signal log
   await query(
@@ -1603,8 +1608,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
   await query(
     `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-     (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person)
-     VALUES ($1, $2, 0, 1, $3, $4, $5)`,
+     (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+     VALUES ($1, $2, 0, 1, $3, $4, $5, 'sandbox')`,
     [num(updatedAcct[0]?.current_balance), num(updatedAcct[0]?.cumulative_pnl), `auto:${positionId}`, bot.dte, person],
   )
 
@@ -1630,10 +1635,11 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
     const posTable = botTable(bot.name, 'positions')
     const acctTable = botTable(bot.name, 'paper_account')
 
+    // Reconcile SANDBOX collateral (separate from production)
     const liveColl = await query(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${posTable}
-       WHERE status = 'open' AND dte_mode = $1`,
+       WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
       [bot.dte],
     )
     const actualColl = num(liveColl[0]?.total_collateral)
@@ -1641,7 +1647,7 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
     const storedAcct = await query(
       `SELECT collateral_in_use, current_balance
        FROM ${acctTable}
-       WHERE is_active = TRUE AND dte_mode = $1
+       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
        ORDER BY id DESC LIMIT 1`,
       [bot.dte],
     )
@@ -1657,7 +1663,7 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
          SET collateral_in_use = $1,
              buying_power = $2,
              updated_at = NOW()
-         WHERE is_active = TRUE AND dte_mode = $3`,
+         WHERE is_active = TRUE AND dte_mode = $3 AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
         [actualColl, newBp, bot.dte],
       )
       console.log(
@@ -1665,6 +1671,38 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
         `$${storedColl.toFixed(2)} → $${actualColl.toFixed(2)} ` +
         `(BP: $${(storedBal - storedColl).toFixed(2)} → $${newBp.toFixed(2)})`,
       )
+    }
+
+    // Reconcile PRODUCTION collateral per-person
+    const prodAccts = await query(
+      `SELECT id, person, collateral_in_use, current_balance
+       FROM ${acctTable}
+       WHERE is_active = TRUE AND dte_mode = $1 AND account_type = 'production'`,
+      [bot.dte],
+    )
+    for (const pa of prodAccts) {
+      const prodColl = await query(
+        `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
+         FROM ${posTable}
+         WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production' AND person = $2`,
+        [bot.dte, pa.person],
+      )
+      const prodActual = num(prodColl[0]?.total_collateral)
+      const prodStored = num(pa.collateral_in_use)
+      if (Math.abs(prodStored - prodActual) > 0.01) {
+        const prodBal = num(pa.current_balance)
+        const prodNewBp = prodBal - prodActual
+        await query(
+          `UPDATE ${acctTable}
+           SET collateral_in_use = $1, buying_power = $2, updated_at = NOW()
+           WHERE id = $3`,
+          [prodActual, prodNewBp, pa.id],
+        )
+        console.log(
+          `[scanner] ${bot.name.toUpperCase()} PRODUCTION COLLATERAL RECONCILED (${pa.person}): ` +
+          `$${prodStored.toFixed(2)} → $${prodActual.toFixed(2)}`,
+        )
+      }
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -2229,15 +2267,17 @@ async function scanBot(bot: BotDef): Promise<void> {
       reason = `Past entry cutoff (${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT, cutoff ${botCfg.entry_end})`
     }
 
-    // Take equity snapshot every cycle
+    // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production
     try {
+      // Sandbox snapshot
       const acctRows = await query(
         `SELECT current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
-         WHERE dte_mode = $1 ORDER BY id DESC LIMIT 1`, [bot.dte],
+         WHERE dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         ORDER BY id DESC LIMIT 1`, [bot.dte],
       )
       const openPosCount = await query(
         `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-         WHERE status = 'open' AND dte_mode = $1`, [bot.dte],
+         WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`, [bot.dte],
       )
       // Resolve person for equity snapshot attribution
       let snapPerson = 'User'
@@ -2248,10 +2288,30 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (acctRows.length > 0) {
         await query(
           `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')`,
           [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
            unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
+        )
+      }
+
+      // Production snapshots (one per production paper_account)
+      const prodAccts = await query(
+        `SELECT person, current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
+         WHERE dte_mode = $1 AND account_type = 'production' AND is_active = TRUE`, [bot.dte],
+      )
+      for (const pa of prodAccts) {
+        const prodOpenCount = await query(
+          `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+           WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production' AND person = $2`,
+          [bot.dte, pa.person],
+        )
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
+           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+           VALUES ($1, $2, 0, $3, $4, $5, $6, 'production')`,
+          [num(pa.current_balance), num(pa.cumulative_pnl),
+           int(prodOpenCount[0]?.cnt), `scan:${action}`, bot.dte, pa.person],
         )
       }
     } catch (snapErr: unknown) {

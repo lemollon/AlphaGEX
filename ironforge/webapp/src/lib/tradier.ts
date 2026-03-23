@@ -1133,14 +1133,38 @@ export async function placeIcOrderAllAccounts(
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
-  // Filter accounts by bot — reads from ironforge_accounts DB (falls back to hardcoded BOT_ACCOUNTS)
-  const allowedAccounts = botName ? await getAccountsForBotAsync(botName) : null
-  const eligibleAccounts = allowedAccounts
-    ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
-    : _sandboxAccounts
+  // Filter accounts by bot — reads from ironforge_accounts DB.
+  // Must check BOTH person AND account type (sandbox/production) to prevent
+  // placing orders on accounts that don't have this bot assigned.
+  // e.g., Logan has sandbox with FLAME but production WITHOUT FLAME — production should NOT get FLAME orders.
+  let eligibleAccounts = _sandboxAccounts
+  if (botName) {
+    try {
+      const { query: dbq } = await import('./db')
+      const botUpper = botName.toUpperCase()
+      const allowedRows = await dbq(
+        `SELECT DISTINCT person, type FROM ironforge_accounts
+         WHERE is_active = TRUE AND type IN ('sandbox', 'production')
+           AND (bot = $1 OR bot LIKE '%' || $1 || '%' OR bot = 'BOTH'
+                OR bot = 'FLAME,SPARK,INFERNO')
+         ORDER BY person, type`,
+        [botUpper],
+      )
+      // Build a set of "person:type" keys for efficient matching
+      const allowedKeys = new Set(allowedRows.map((r: any) => `${r.person}:${r.type}`))
+      eligibleAccounts = _sandboxAccounts.filter((a) => {
+        const key = `${a.name}:${a.type ?? 'sandbox'}`
+        return allowedKeys.has(key)
+      })
+    } catch {
+      // Fallback: use getAccountsForBotAsync (person-only matching)
+      const allowedPersons = await getAccountsForBotAsync(botName)
+      eligibleAccounts = _sandboxAccounts.filter((a) => allowedPersons.includes(a.name))
+    }
+  }
   console.log(
     `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
-    `eligible=[${eligibleAccounts.map(a => a.name).join(', ')}] (${allowedAccounts ? 'from DB' : 'all'})`,
+    `eligible=[${eligibleAccounts.map(a => `${a.name}:${a.type}`).join(', ')}]`,
   )
 
   // Shared OCC symbols — same strikes for all accounts

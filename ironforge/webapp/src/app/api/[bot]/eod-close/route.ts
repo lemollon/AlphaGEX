@@ -42,7 +42,7 @@ export async function POST(
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
-              collateral_required, sandbox_order_id
+              collateral_required, sandbox_order_id, account_type, person
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open' AND dte_mode = $1 ${personFilter}
        ORDER BY open_time DESC`,
@@ -58,6 +58,8 @@ export async function POST(
       close_price: number
       realized_pnl: number
       sandbox_close_info: Record<string, SandboxCloseInfo>
+      account_type?: string
+      person?: string
     }> = []
 
     // 2. Close each position
@@ -175,10 +177,12 @@ export async function POST(
         close_price: effectivePrice,
         realized_pnl: realizedPnl,
         sandbox_close_info: sandboxCloseInfo,
+        account_type: (pos.account_type || 'sandbox') as string,
+        person: (pos.person || '') as string,
       })
     }
 
-    // 3. Update paper account once (after all positions closed)
+    // 3. Update paper account per account_type (after all positions closed)
     const remainingCollateral = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${botTable(bot, 'positions')}
@@ -188,20 +192,48 @@ export async function POST(
     const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     const totalRealizedPnl = results.reduce((sum, r) => sum + r.realized_pnl, 0)
 
-    await dbExecute(
-      `UPDATE ${botTable(bot, 'paper_account')}
-       SET current_balance = current_balance + $1,
-           cumulative_pnl = cumulative_pnl + $1,
-           total_trades = total_trades + $2,
-           collateral_in_use = $3,
-           buying_power = current_balance + $1 - $3,
-           high_water_mark = GREATEST(high_water_mark, current_balance + $1),
-           max_drawdown = GREATEST(max_drawdown,
-             GREATEST(high_water_mark, current_balance + $1) - (current_balance + $1)),
-           updated_at = NOW()
-       WHERE is_active IS NOT NULL AND dte_mode = $4`,
-      [totalRealizedPnl, results.length, actualCollateral, dte],
-    )
+    // Group results by account_type to update the correct paper_account row
+    const pnlByAccountType: Record<string, { pnl: number; count: number; person: string }> = {}
+    for (const r of results) {
+      const key = r.account_type || 'sandbox'
+      if (!pnlByAccountType[key]) pnlByAccountType[key] = { pnl: 0, count: 0, person: r.person || '' }
+      pnlByAccountType[key].pnl += r.realized_pnl
+      pnlByAccountType[key].count += 1
+    }
+
+    for (const [acctType, { pnl, count, person: acctPerson }] of Object.entries(pnlByAccountType)) {
+      if (acctType === 'production') {
+        await dbExecute(
+          `UPDATE ${botTable(bot, 'paper_account')}
+           SET current_balance = current_balance + $1,
+               cumulative_pnl = cumulative_pnl + $1,
+               total_trades = total_trades + $2,
+               collateral_in_use = $3,
+               buying_power = current_balance + $1 - $3,
+               high_water_mark = GREATEST(high_water_mark, current_balance + $1),
+               max_drawdown = GREATEST(max_drawdown,
+                 GREATEST(high_water_mark, current_balance + $1) - (current_balance + $1)),
+               updated_at = NOW()
+           WHERE account_type = 'production' AND person = $4 AND is_active = TRUE AND dte_mode = $5`,
+          [pnl, count, actualCollateral, acctPerson, dte],
+        )
+      } else {
+        await dbExecute(
+          `UPDATE ${botTable(bot, 'paper_account')}
+           SET current_balance = current_balance + $1,
+               cumulative_pnl = cumulative_pnl + $1,
+               total_trades = total_trades + $2,
+               collateral_in_use = $3,
+               buying_power = current_balance + $1 - $3,
+               high_water_mark = GREATEST(high_water_mark, current_balance + $1),
+               max_drawdown = GREATEST(max_drawdown,
+                 GREATEST(high_water_mark, current_balance + $1) - (current_balance + $1)),
+               updated_at = NOW()
+           WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $4`,
+          [pnl, count, actualCollateral, dte],
+        )
+      }
+    }
 
     // 4. Equity snapshot
     const acctRows = await dbQuery(
