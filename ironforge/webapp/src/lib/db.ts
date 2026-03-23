@@ -435,6 +435,30 @@ async function ensureTables(): Promise<void> {
       console.warn('  Production paper_account seed failed (non-fatal):', err)
     }
 
+    // Ensure FLAME is assigned to Logan's production account (was missing — only had SPARK,INFERNO)
+    try {
+      const loganProdBot = await client.query(
+        `SELECT id, bot FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+      )
+      if (loganProdBot.rows.length > 0) {
+        const currentBot = loganProdBot.rows[0].bot || ''
+        if (!currentBot.includes('FLAME')) {
+          const parts = currentBot.split(',').map((b: string) => b.trim()).filter(Boolean)
+          if (!parts.includes('FLAME')) parts.unshift('FLAME')
+          // Normalize: FLAME first, then SPARK, then INFERNO
+          const ordered = ['FLAME', 'SPARK', 'INFERNO'].filter(b => parts.includes(b))
+          const newBot = ordered.join(',')
+          await client.query(
+            `UPDATE ironforge_accounts SET bot = $1, updated_at = NOW() WHERE id = $2`,
+            [newBot, loganProdBot.rows[0].id],
+          )
+          console.log(`  Added FLAME to Logan production account: '${currentBot}' → '${newBot}'`)
+        }
+      }
+    } catch (err) {
+      console.warn('  Logan production bot update failed (non-fatal):', err)
+    }
+
     // Seed shared ironforge_pdt_config if empty
     for (const [botName, maxDT, maxPerDay] of [
       ['FLAME', 3, 1],
