@@ -363,6 +363,15 @@ async function ensureTables(): Promise<void> {
       }
     }
 
+    // Add missing columns to ironforge_accounts (needed for production trading)
+    // capital_pct controls what % of account equity is used for trading
+    // pdt_enabled controls per-account PDT enforcement
+    for (const col of ['capital_pct INT DEFAULT 100', 'pdt_enabled BOOLEAN DEFAULT TRUE']) {
+      try {
+        await client.query(`ALTER TABLE ironforge_accounts ADD COLUMN IF NOT EXISTS ${col}`)
+      } catch { /* column already exists */ }
+    }
+
     // Migrate daily_perf UNIQUE constraint from (trade_date) to (trade_date, COALESCE(person, ''))
     // Needed so sandbox and production can both have entries on the same date.
     for (const bot of ['flame', 'spark', 'inferno']) {
