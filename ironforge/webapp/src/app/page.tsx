@@ -86,17 +86,21 @@ const bots = [
     btn: 'border-blue-500/60 text-blue-400 hover:bg-blue-500/10',
     glow: 'shadow-blue-500/5',
     badge: 'bg-blue-500/15 text-blue-400',
+    mode: 'PAPER ONLY' as const,
+    modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
   },
   {
     name: 'FLAME',
     href: '/flame',
     dte: '2DTE',
-    desc: 'Longer-duration Iron Condors with 2 days to expiration. More premium, more time for the trade to work.',
+    desc: 'Longer-duration Iron Condors with 2 days to expiration. Trades on sandbox and production accounts.',
     border: 'border-amber-500/30 hover:border-amber-400/60',
     heading: 'text-amber-400',
     btn: 'border-amber-500/60 text-amber-400 hover:bg-amber-500/10',
     glow: 'shadow-amber-500/5',
     badge: 'bg-amber-500/15 text-amber-400',
+    mode: 'ACCOUNT TRADING' as const,
+    modeCls: 'bg-green-500/15 text-green-400 border-green-500/30',
   },
   {
     name: 'INFERNO',
@@ -108,6 +112,8 @@ const bots = [
     btn: 'border-red-500/60 text-red-400 hover:bg-red-500/10',
     glow: 'shadow-red-500/5',
     badge: 'bg-red-500/15 text-red-400',
+    mode: 'PAPER ONLY' as const,
+    modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
   },
   {
     name: 'Compare',
@@ -119,6 +125,8 @@ const bots = [
     btn: 'border-stone-500/60 text-gray-300 hover:bg-stone-700/30',
     glow: '',
     badge: 'bg-stone-500/15 text-stone-300',
+    mode: null,
+    modeCls: '',
   },
 ]
 
@@ -183,9 +191,16 @@ export default function Home() {
                 <h2 className={`text-2xl font-bold ${bot.heading} ${botGlow[bot.name] || ''}`}>
                   {botIcons[bot.name]}{bot.name}
                 </h2>
-                <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${bot.badge}`}>
-                  {bot.dte}
-                </span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${bot.badge}`}>
+                    {bot.dte}
+                  </span>
+                  {bot.mode && (
+                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-semibold border tracking-wider ${bot.modeCls}`}>
+                      {bot.mode}
+                    </span>
+                  )}
+                </div>
               </div>
               <p className="text-sm text-gray-400 mb-5 leading-relaxed">{bot.desc}</p>
               <div className="text-center">
@@ -279,7 +294,7 @@ export default function Home() {
             { step: '1', title: 'Market Data', desc: 'SPY spot + VIX from Tradier production API', icon: '&#9673;' },
             { step: '2', title: 'Filter Gates', desc: 'VIX < 32, not max trades, PDT compliant, within window', icon: '&#9670;' },
             { step: '3', title: 'Strike Calc', desc: 'SD-based strikes, $5 wings, real option chain credits', icon: '&#9651;' },
-            { step: '4', title: 'Execute', desc: 'Size position, log to Delta Lake, monitor MTM every 1 min', icon: '&#9632;' },
+            { step: '4', title: 'Execute', desc: 'Size position, log to PostgreSQL, monitor MTM every 1 min', icon: '&#9632;' },
           ].map((s) => (
             <div key={s.step} className="rounded-xl border border-forge-border bg-forge-card/40 p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -290,6 +305,83 @@ export default function Home() {
               <p className="text-xs text-gray-500 leading-relaxed">{s.desc}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* Fire divider */}
+      <div className="fire-divider" />
+
+      {/* Architecture — Bot to Account Flow */}
+      <section>
+        <h2 className="text-xl font-bold mb-1">
+          <span className="text-amber-400">Architecture</span> — Bot to Account Flow
+        </h2>
+        <p className="text-xs text-forge-muted mb-5">
+          How each bot connects to trading accounts
+        </p>
+
+        <div className="grid md:grid-cols-2 gap-5">
+          {/* Left: Paper-Only Bots */}
+          <div className="rounded-xl border border-forge-border bg-forge-card/60 p-5">
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">
+              Paper-Only Bots
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Internal paper tracking only. No sandbox accounts, no broker orders.
+            </p>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-blue-500/20 bg-blue-500/5">
+                <img src="/icon-spark.svg" alt="" className="h-5 w-5" />
+                <div>
+                  <span className="text-sm font-medium text-blue-400">SPARK</span>
+                  <span className="text-xs text-gray-500 ml-2">1DTE</span>
+                </div>
+                <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-gray-500/15 text-gray-400 border border-gray-600/30">PAPER ONLY</span>
+              </div>
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-red-500/20 bg-red-500/5">
+                <img src="/inferno-icon.svg" alt="" className="h-5 w-5" />
+                <div>
+                  <span className="text-sm font-medium text-red-400">INFERNO</span>
+                  <span className="text-xs text-gray-500 ml-2">0DTE</span>
+                </div>
+                <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-gray-500/15 text-gray-400 border border-gray-600/30">PAPER ONLY</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: FLAME — Account Trading */}
+          <div className="rounded-xl border border-amber-500/20 bg-forge-card/60 p-5">
+            <h3 className="text-sm font-semibold text-amber-400/80 uppercase tracking-wider mb-4">
+              FLAME — Account Trading
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Places real orders on Tradier sandbox and production accounts.
+            </p>
+
+            {/* Sandbox accounts */}
+            <div className="mb-3">
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Sandbox Accounts</span>
+              <div className="mt-1 space-y-1.5">
+                {['Iron Viper', 'Blacksmith', 'Matt'].map((name) => (
+                  <div key={name} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-700/50 bg-forge-bg/50">
+                    <span className="text-xs text-gray-300 font-medium">{name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">SANDBOX</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Production account */}
+            <div>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Production Account</span>
+              <div className="mt-1">
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-green-500/20 bg-green-500/5">
+                  <span className="text-xs text-gray-300 font-medium">Iron Viper</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/15 text-green-400 border border-green-500/30">PRODUCTION</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -360,7 +452,7 @@ export default function Home() {
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Storage</p>
-          <p className="font-medium">Delta Lake</p>
+          <p className="font-medium">PostgreSQL</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Ticker</p>

@@ -55,8 +55,14 @@ function TabLoading() {
   )
 }
 
-const TABS = ['Equity Curve', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
-type Tab = (typeof TABS)[number]
+const ALL_TABS = ['Equity Curve', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+type Tab = (typeof ALL_TABS)[number]
+
+/** Only FLAME has sandbox/production accounts. SPARK and INFERNO are paper-only. */
+const ACCOUNT_BOTS = new Set(['flame'])
+
+/** Tabs that only make sense for bots with broker accounts */
+const ACCOUNT_ONLY_TABS = new Set<Tab>(['Broker Equity', 'Reconcile'])
 
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
 const DATA_REFRESH = 30_000     // Tables/logs refresh every 30s
@@ -69,12 +75,13 @@ export default function BotDashboard({
   bot: 'flame' | 'spark' | 'inferno'
   accent: 'amber' | 'blue' | 'red'
 }) {
+  const hasAccounts = ACCOUNT_BOTS.has(bot)
   const [tab, setTab] = useState<Tab>('Equity Curve')
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')
   const [selectedPerson, setSelectedPerson] = useState('all')
 
-  // Fetch available persons for the dropdown (now includes account_type)
-  const { data: personsData } = useSWR('/api/persons', fetcher)
+  // Fetch available persons for the dropdown — only needed for bots with accounts
+  const { data: personsData } = useSWR(hasAccounts ? '/api/persons' : null, fetcher)
   const personEntries: Array<{ person: string; alias: string | null; account_type?: string }> = personsData?.persons ?? []
 
   // Build dropdown entries: if a person has multiple account types, show separate entries
@@ -141,11 +148,11 @@ export default function BotDashboard({
     { refreshInterval: LIVE_REFRESH },
   )
 
-  /* ---- Broker (production) equity curve ---- */
+  /* ---- Broker (production) equity curve — FLAME only ---- */
   const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
   const brokerPerson = selectedPerson !== 'all' ? selectedPersonName : persons[0] ?? 'User'
   const { data: brokerEquity } = useSWR(
-    tab === 'Broker Equity'
+    hasAccounts && tab === 'Broker Equity'
       ? `/api/accounts/production/equity-curve?person=${encodeURIComponent(brokerPerson)}&mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
       : null,
     fetcher,
@@ -217,7 +224,7 @@ export default function BotDashboard({
 
   /* ---- Reconcile (FLAME only) ---- */
   const { data: reconData, error: reconErr } = useSWR(
-    tab === 'Reconcile' && bot === 'flame' ? withPerson(`/api/${bot}/reconcile`) : null,
+    tab === 'Reconcile' && hasAccounts ? withPerson(`/api/${bot}/reconcile`) : null,
     fetcher,
     { refreshInterval: 60_000 },
   )
@@ -285,7 +292,7 @@ export default function BotDashboard({
             {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
           </span>
         </div>
-        {dropdownEntries.length > 1 && (
+        {hasAccounts && dropdownEntries.length > 1 && (
           <div className="flex items-center gap-2">
             {selectedIsProduction && (
               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
@@ -303,6 +310,11 @@ export default function BotDashboard({
               ))}
             </select>
           </div>
+        )}
+        {!hasAccounts && (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-gray-500/15 text-gray-400 border border-gray-600/30 uppercase tracking-wider">
+            Paper Only
+          </span>
         )}
       </div>
 
@@ -340,7 +352,7 @@ export default function BotDashboard({
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">
-        {TABS.filter(t => t !== 'Reconcile' || bot === 'flame').map((t) => (
+        {ALL_TABS.filter(t => !ACCOUNT_ONLY_TABS.has(t) || hasAccounts).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -425,7 +437,7 @@ export default function BotDashboard({
                 onPdtUpdate={() => mutatePdt()}
               />
         )}
-        {tab === 'Reconcile' && bot === 'flame' && (
+        {tab === 'Reconcile' && hasAccounts && (
           reconErr
             ? <TabError message={reconErr.message} />
             : !reconData

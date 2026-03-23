@@ -61,6 +61,9 @@ function fmtDollar(n: number | null | undefined): string {
 
 /* ── Bot badge colors ──────────────────────────────────────────── */
 
+/** Only FLAME can be assigned to trading accounts. SPARK and INFERNO are paper-only bots. */
+const ASSIGNABLE_BOTS = ['FLAME'] as const
+/** All bots for display purposes */
 const ALL_BOTS = ['FLAME', 'SPARK', 'INFERNO'] as const
 
 const BOT_COLORS: Record<string, string> = {
@@ -77,8 +80,8 @@ function parseBots(bot: string): string[] {
 
 function serializeBots(bots: string[]): string {
   const sorted = bots
-    .filter(b => ALL_BOTS.includes(b as typeof ALL_BOTS[number]))
-    .sort((a, b) => ALL_BOTS.indexOf(a as typeof ALL_BOTS[number]) - ALL_BOTS.indexOf(b as typeof ALL_BOTS[number]))
+    .filter(b => ASSIGNABLE_BOTS.includes(b as typeof ASSIGNABLE_BOTS[number]))
+    .sort((a, b) => ASSIGNABLE_BOTS.indexOf(a as typeof ASSIGNABLE_BOTS[number]) - ASSIGNABLE_BOTS.indexOf(b as typeof ASSIGNABLE_BOTS[number]))
   return Array.from(new Set(sorted)).join(',')
 }
 
@@ -132,23 +135,26 @@ function BotCheckboxes({
   }
 
   return (
-    <div className="flex gap-2 mt-1">
-      {ALL_BOTS.map(bot => {
-        const isSelected = selected.includes(bot)
-        const cls = isSelected
-          ? BOT_COLORS[bot]
-          : 'bg-gray-800 text-gray-500 border-gray-700'
-        return (
-          <button
-            key={bot}
-            type="button"
-            onClick={() => toggle(bot)}
-            className={`text-xs font-medium px-3 py-1.5 rounded border transition-colors cursor-pointer ${cls}`}
-          >
-            {bot}
-          </button>
-        )
-      })}
+    <div className="flex flex-col gap-2 mt-1">
+      <div className="flex gap-2">
+        {ASSIGNABLE_BOTS.map(bot => {
+          const isSelected = selected.includes(bot)
+          const cls = isSelected
+            ? BOT_COLORS[bot]
+            : 'bg-gray-800 text-gray-500 border-gray-700'
+          return (
+            <button
+              key={bot}
+              type="button"
+              onClick={() => toggle(bot)}
+              className={`text-xs font-medium px-3 py-1.5 rounded border transition-colors cursor-pointer ${cls}`}
+            >
+              {bot}
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-[10px] text-gray-600">SPARK and INFERNO are paper-only — no account needed</p>
     </div>
   )
 }
@@ -190,7 +196,7 @@ function AddAccountModal({
   const [person, setPerson] = useState(presetPerson ?? '')
   const [accountId, setAccountId] = useState('')
   const [apiKey, setApiKey] = useState('')
-  const [selectedBots, setSelectedBots] = useState<string[]>([...ALL_BOTS])
+  const [selectedBots, setSelectedBots] = useState<string[]>([...ASSIGNABLE_BOTS])
   const [type, setType] = useState(presetType ?? 'sandbox')
   const [capitalPct, setCapitalPct] = useState(100)
   const [pdtEnabled, setPdtEnabled] = useState(true)

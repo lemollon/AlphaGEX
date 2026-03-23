@@ -15,6 +15,9 @@ const botGlow: Record<string, string> = {
   INFERNO: 'glow-inferno',
 }
 
+/** Bots with trading accounts get a green dot; paper-only get nothing */
+const ACCOUNT_BOTS = new Set(['FLAME'])
+
 const links = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
@@ -71,6 +74,9 @@ export default function Nav() {
                 }`}
               >
                 {icon}{link.label}
+                {ACCOUNT_BOTS.has(link.label) && (
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 ml-1 align-[1px]" title="Account Trading" />
+                )}
               </Link>
             )
           })}
