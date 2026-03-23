@@ -307,16 +307,32 @@ export async function GET(
           ic_return_pct: icReturnPct,
         }
       }),
-      sandbox_accounts: sandboxBalances.map((s) => ({
-        name: aliasMap[s.name] || s.name,
-        account_id: s.account_id,
-        total_equity: s.total_equity,
-        option_buying_power: s.option_buying_power,
-        day_pnl: s.day_pnl,
-        unrealized_pnl: s.unrealized_pnl,
-        unrealized_pnl_pct: s.unrealized_pnl_pct,
-        open_positions: s.open_positions_count,
-      })),
+      sandbox_accounts: sandboxBalances
+        // When viewing a specific person+account_type (e.g. "Iron Viper (Production)"),
+        // only show that account — don't show all sandbox accounts alongside it.
+        .filter((s) => {
+          if (accountTypeParam) {
+            // Show only accounts matching the selected type
+            if (s.account_type !== accountTypeParam) return false
+          }
+          if (filterByPerson) {
+            // Match by person name OR alias
+            const alias = aliasMap[s.name]
+            if (s.name !== personParam && alias !== personParam) return false
+          }
+          return true
+        })
+        .map((s) => ({
+          name: aliasMap[s.name] || s.name,
+          account_id: s.account_id,
+          total_equity: s.total_equity,
+          option_buying_power: s.option_buying_power,
+          day_pnl: s.day_pnl,
+          unrealized_pnl: s.unrealized_pnl,
+          unrealized_pnl_pct: s.unrealized_pnl_pct,
+          open_positions: s.open_positions_count,
+          account_type: s.account_type,
+        })),
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
