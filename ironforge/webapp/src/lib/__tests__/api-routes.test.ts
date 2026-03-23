@@ -825,7 +825,7 @@ describe('Person filtering — BotDashboard dropdown', () => {
   })
 
   it('renders person dropdown when multiple persons exist', () => {
-    expect(source).toMatch(/persons\.length > 1/)
+    expect(source).toMatch(/dropdownEntries\.length > 1/)
     expect(source).toMatch(/<select/)
     expect(source).toMatch(/All Accounts/)
   })
@@ -860,7 +860,8 @@ describe('Person filtering — additional routes', () => {
     it(`${route.name} route reads person query parameter`, () => {
       const source = readFileSync(resolve(__dirname, route.path), 'utf-8')
       expect(source).toMatch(/personParam/)
-      expect(source).toMatch(/personFilter/)
+      // Accept either personFilter variable or personClause (daily-perf uses WHERE clause builder)
+      expect(source).toMatch(/personFilter|personClause/)
     })
   }
 })
@@ -889,7 +890,7 @@ describe('Person filtering — scanner close-path', () => {
       /async function closePosition[\s\S]*?^}/m,
     )
     expect(fn).toBeTruthy()
-    expect(fn![0]).toMatch(/SELECT person FROM/)
+    expect(fn![0]).toMatch(/SELECT person/)
     expect(fn![0]).toMatch(/posPerson/)
   })
 

@@ -18,7 +18,13 @@ export async function GET(
 
   const personParam = req.nextUrl.searchParams.get('person')
   const filterByPerson = personParam && personParam !== 'all'
-  const personFilter = filterByPerson ? `WHERE person = '${escapeSql(personParam)}'` : ''
+  const accountTypeParam = req.nextUrl.searchParams.get('account_type')
+  const accountTypeClause = accountTypeParam
+    ? `COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
+    : ''
+  const personClause = filterByPerson ? `person = '${escapeSql(personParam)}'` : ''
+  const conditions = [personClause, accountTypeClause].filter(Boolean)
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 30), 200)
@@ -28,7 +34,7 @@ export async function GET(
     const rows = await dbQuery(
       `SELECT trade_date, trades_executed, positions_closed, realized_pnl
        FROM ${botTable(bot, 'daily_perf')}
-       ${personFilter}
+       ${whereClause}
        ORDER BY trade_date DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )

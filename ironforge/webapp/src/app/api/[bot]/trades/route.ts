@@ -15,6 +15,10 @@ export async function GET(
   const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeParam = req.nextUrl.searchParams.get('account_type')
+  const accountTypeFilter = accountTypeParam
+    ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
+    : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 50), 200)
@@ -32,7 +36,7 @@ export async function GET(
         underlying_at_entry, vix_at_entry,
         wings_adjusted, sandbox_order_id
       FROM ${botTable(bot, 'positions')}
-      WHERE status IN ('closed', 'expired') ${dteFilter} ${personFilter}
+      WHERE status IN ('closed', 'expired') ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY close_time DESC
       LIMIT ${limit} OFFSET ${offset}`,
     )

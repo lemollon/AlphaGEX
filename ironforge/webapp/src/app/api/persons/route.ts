@@ -10,16 +10,18 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET() {
   try {
+    // Return (person, account_type) pairs so dropdown can distinguish sandbox vs production
     const rows = await dbQuery(
-      `SELECT DISTINCT a.person, pa.alias
+      `SELECT DISTINCT a.person, a.type as account_type, pa.alias
        FROM ${sharedTable('ironforge_accounts')} a
        LEFT JOIN ${sharedTable('ironforge_person_aliases')} pa ON pa.person = a.person
        WHERE a.is_active = TRUE
-       ORDER BY a.person`,
+       ORDER BY a.person, a.type`,
     )
     const persons = rows.map((r) => ({
       person: r.person as string,
       alias: (r.alias as string | null) || null,
+      account_type: (r.account_type as string) || 'sandbox',
     }))
     return NextResponse.json({ persons })
   } catch (err: unknown) {
