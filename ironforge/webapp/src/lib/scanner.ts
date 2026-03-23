@@ -1601,7 +1601,94 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [effectiveCollateral, acct.id],
   )
 
-  // (Production positions were already created before the sandbox gate — see above)
+  // Record production positions for NON-FLAME bots (FLAME handles this in its own block above).
+  // Production positions only exist if placeIcOrderAllAccounts confirmed a Tradier fill
+  // (sandbox must fill first — production is only mirrored after sandbox success).
+  if (!isFlameFillOnly) {
+    const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap for production
+    for (const [key, info] of Object.entries(sandboxOrderIds)) {
+      if (info.account_type !== 'production') continue
+      if (!info.fill_price || info.fill_price <= 0) continue
+
+      const prodPerson = key.split(':')[0]
+      const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+      const prodCredit = info.fill_price
+      const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
+      const prodMaxLoss = prodCollateral
+      const prodMaxProfit = prodCredit * 100 * prodContracts
+      const prodPositionId = `${positionId}-prod-${prodPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} PRODUCTION POSITION: ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)} ` +
+        `(collateral=$${prodCollateral.toFixed(0)}, maxLoss=$${prodMaxLoss.toFixed(0)})`,
+      )
+
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'positions')} (
+            position_id, ticker, expiration,
+            put_short_strike, put_long_strike, put_credit,
+            call_short_strike, call_long_strike, call_credit,
+            contracts, spread_width, total_credit, max_loss, max_profit,
+            collateral_required,
+            underlying_at_entry, vix_at_entry, expected_move,
+            call_wall, put_wall, gex_regime,
+            flip_point, net_gex,
+            oracle_confidence, oracle_win_probability, oracle_advice,
+            oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
+            wings_adjusted, original_put_width, original_call_width,
+            put_order_id, call_order_id,
+            sandbox_order_id,
+            status, open_time, open_date, dte_mode, person, account_type
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+            $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+            $31, $32, $33, $34, $35, $36,
+            'open', NOW(), ${CT_TODAY}, $37, $38, 'production'
+          )`,
+          [
+            prodPositionId, 'SPY', expiration,
+            strikes.putShort, strikes.putLong, prodCredit / 2,
+            strikes.callShort, strikes.callLong, prodCredit / 2,
+            prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
+            prodCollateral,
+            spot, vix, expectedMove,
+            0, 0, 'UNKNOWN',
+            0, 0,
+            adv.confidence, adv.winProbability, adv.advice,
+            adv.reasoning, JSON.stringify(adv.topFactors), false,
+            false, spreadWidth, spreadWidth,
+            'PAPER', 'PAPER',
+            JSON.stringify({ [key]: info }),
+            bot.dte, prodPerson,
+          ],
+        )
+
+        // Deduct collateral from the PRODUCTION paper_account
+        await query(
+          `UPDATE ${botTable(bot.name, 'paper_account')}
+           SET collateral_in_use = collateral_in_use + $1,
+               buying_power = buying_power - $1,
+               updated_at = NOW()
+           WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+          [prodCollateral, prodPerson, bot.dte],
+        )
+
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+           VALUES ('PRODUCTION_ORDER', $1, $2, $3, $4)`,
+          [
+            `PRODUCTION: ${prodPerson} ${prodContracts}x SPY IC ${strikes.putShort}/${strikes.putLong}P-${strikes.callShort}/${strikes.callLong}C @ $${prodCredit.toFixed(4)}`,
+            JSON.stringify({ position_id: prodPositionId, order_info: info }),
+            bot.dte, prodPerson,
+          ],
+        )
+      } catch (prodErr: unknown) {
+        console.error(`[scanner] ${bot.name.toUpperCase()} PRODUCTION position creation failed for ${prodPerson}:`, prodErr instanceof Error ? prodErr.message : prodErr)
+      }
+    }
+  }
 
   // Signal log (include person for per-account attribution)
   await query(
