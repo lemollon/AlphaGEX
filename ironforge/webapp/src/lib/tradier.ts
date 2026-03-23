@@ -616,7 +616,10 @@ let _sandboxAccountsLoadedFromDb = false
  * Called once on first use if env vars yielded zero accounts.
  */
 async function ensureSandboxAccountsLoaded(): Promise<void> {
-  if (_sandboxAccounts.length > 0 || _sandboxAccountsLoadedFromDb) return
+  // ALWAYS check DB — env vars only provide sandbox accounts, production accounts
+  // live exclusively in the DB. The old check `if (_sandboxAccounts.length > 0) return`
+  // caused production accounts to NEVER load when env vars were set.
+  if (_sandboxAccountsLoadedFromDb) return
   _sandboxAccountsLoadedFromDb = true
 
   try {
@@ -628,7 +631,8 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
        WHERE is_active = TRUE ORDER BY type, person`,
     )
     if (rows.length > 0) {
-      const seen = new Set<string>()
+      // Deduplicate by API key — env-var accounts may already be in _sandboxAccounts
+      const seen = new Set<string>(_sandboxAccounts.map(a => a.apiKey))
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
@@ -638,15 +642,13 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
         const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
         _sandboxAccounts.push({ name, apiKey: key, baseUrl, type: acctType })
       }
-      if (_sandboxAccounts.length > 0) {
-        const sandboxCount = _sandboxAccounts.filter(a => a.type === 'sandbox').length
-        const prodCount = _sandboxAccounts.filter(a => a.type === 'production').length
-        console.log(
-          `[tradier] Loaded ${_sandboxAccounts.length} trading account(s) from DB ` +
-          `(${sandboxCount} sandbox, ${prodCount} production): ` +
-          _sandboxAccounts.map(a => `${a.name}[${a.type}] (${a.apiKey.slice(0, 4)}...)`).join(', '),
-        )
-      }
+      const sandboxCount = _sandboxAccounts.filter(a => a.type === 'sandbox').length
+      const prodCount = _sandboxAccounts.filter(a => a.type === 'production').length
+      console.log(
+        `[tradier] Loaded ${_sandboxAccounts.length} trading account(s) ` +
+        `(${sandboxCount} sandbox, ${prodCount} production): ` +
+        _sandboxAccounts.map(a => `${a.name}[${a.type}] (${a.apiKey.slice(0, 4)}...)`).join(', '),
+      )
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
