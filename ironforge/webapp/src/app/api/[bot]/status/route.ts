@@ -90,7 +90,7 @@ export async function GET(
     const snapshotQuery = dbQuery(
       `SELECT unrealized_pnl, open_positions, snapshot_time
        FROM ${botTable(bot, 'equity_snapshots')}
-       ${dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : ''}
+       WHERE 1=1 ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY snapshot_time DESC
        LIMIT 1`,
     )

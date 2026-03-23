@@ -254,7 +254,7 @@ async function syncPaperAccountCapital(): Promise<void> {
       )
       for (const pa of prodRows) {
         try {
-          const target = await getAllocatedCapitalForAccount(pa.person)
+          const target = await getAllocatedCapitalForAccount(pa.person, 'production')
           const current = num(pa.starting_capital)
           if (Math.abs(current - target) < 1) continue
 

@@ -1216,7 +1216,7 @@ export async function placeIcOrderAllAccounts(
       // skip the account entirely instead of defaulting to 100%.
       let capitalPct = 100
       try {
-        capitalPct = await getCapitalPctForAccount(acct.name)
+        capitalPct = await getCapitalPctForAccount(acct.name, acct.type)
       } catch (cpErr: unknown) {
         const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr)
         if (acct.type === 'production') {
@@ -1474,13 +1474,16 @@ export async function reloadSandboxAccounts(): Promise<void> {
  * Get the configured capital percentage for a specific account (by person name).
  * Reads from ironforge_accounts table. Defaults to 100 (%).
  */
-export async function getCapitalPctForAccount(person: string): Promise<number> {
+export async function getCapitalPctForAccount(person: string, accountType?: 'sandbox' | 'production'): Promise<number> {
   try {
     const { query: dbq } = await import('./db')
+    // Filter by type when provided to avoid returning wrong account's capital_pct.
+    // Production accounts often have different capital_pct (e.g., 15%) vs sandbox (100%).
+    const typeFilter = accountType ? `AND type = '${accountType}'` : ''
     const rows = await dbq(
       `SELECT capital_pct FROM ironforge_accounts
-       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
-       ORDER BY type DESC LIMIT 1`,
+       WHERE person = '${person.replace(/'/g, "''")}' ${typeFilter} AND is_active = TRUE
+       LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].capital_pct != null) {
       const pct = parseInt(rows[0].capital_pct)
@@ -1498,16 +1501,19 @@ export async function getCapitalPctForAccount(person: string): Promise<number> {
  * = real Tradier total_equity × capital_pct / 100
  * Falls back to $10,000 × pct if Tradier is unreachable.
  */
-export async function getAllocatedCapitalForAccount(person: string): Promise<number> {
-  const pct = await getCapitalPctForAccount(person)
+export async function getAllocatedCapitalForAccount(person: string, accountType: 'sandbox' | 'production' = 'sandbox'): Promise<number> {
+  const pct = await getCapitalPctForAccount(person, accountType)
 
   // Find the account's API key from DB and fetch total_equity (not OBP)
+  // CRITICAL: Filter by BOTH person AND type to avoid returning the wrong account.
+  // Without the type filter, ORDER BY type DESC returns 'sandbox' (s > p alphabetically),
+  // causing production paper_account to sync with sandbox Tradier balance.
   try {
     const { query: dbq } = await import('./db')
     const rows = await dbq(
       `SELECT api_key, type FROM ironforge_accounts
-       WHERE person = '${person.replace(/'/g, "''")}' AND is_active = TRUE
-       ORDER BY type DESC LIMIT 1`,
+       WHERE person = '${person.replace(/'/g, "''")}' AND type = '${accountType}' AND is_active = TRUE
+       LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].api_key) {
       const apiKey = rows[0].api_key.trim()
@@ -1518,7 +1524,7 @@ export async function getAllocatedCapitalForAccount(person: string): Promise<num
         const equity = await getSandboxTotalEquity(apiKey, accountId, baseUrl)
         if (equity != null) {
           const allocated = Math.round(equity * pct / 100 * 100) / 100
-          console.log(`[tradier] getAllocatedCapital: ${person} → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
+          console.log(`[tradier] getAllocatedCapital: ${person}[${accountType}] → equity=$${equity.toLocaleString()}, pct=${pct}%, allocated=$${allocated.toLocaleString()}`)
           return allocated
         }
       }
