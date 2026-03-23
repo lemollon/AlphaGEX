@@ -270,6 +270,15 @@ export async function GET() {
     const activeCount = Object.keys(liveData).length
     console.log(`[accounts] GET: Fetched live balances for ${activeCount} active account(s)`)
 
+    // Fetch bot-level PDT config for effective PDT calculation
+    const pdtConfigRows = await dbQuery(
+      `SELECT bot_name, pdt_enabled FROM ${sharedTable('ironforge_pdt_config')}`,
+    )
+    const botPdtMap: Record<string, boolean> = {}
+    for (const r of pdtConfigRows) {
+      botPdtMap[String(r.bot_name).toUpperCase()] = r.pdt_enabled !== false && r.pdt_enabled !== 'false'
+    }
+
     // Fetch person aliases
     const aliasRows = await dbQuery(
       `SELECT person, alias FROM ${sharedTable('ironforge_person_aliases')}`,
@@ -291,6 +300,13 @@ export async function GET() {
         ? Math.round(liveBalance * capitalPct / 100 * 100) / 100
         : null
 
+      const accountPdt = row.pdt_enabled === true || row.pdt_enabled === 'true'
+
+      // Compute effective PDT: false if account OR any assigned bot has PDT disabled
+      const assignedBots = (row.bot || '').split(',').map((b: string) => b.trim().toUpperCase()).filter(Boolean)
+      const anyBotPdtOff = assignedBots.some((b: string) => botPdtMap[b] === false)
+      const effectivePdt = accountPdt && !anyBotPdtOff
+
       const acct = {
         id: rowId,
         person: row.person,
@@ -300,7 +316,8 @@ export async function GET() {
         type: row.type,
         is_active: row.is_active === true || row.is_active === 'true',
         capital_pct: capitalPct,
-        pdt_enabled: row.pdt_enabled === true || row.pdt_enabled === 'true',
+        pdt_enabled: accountPdt,
+        effective_pdt_enabled: effectivePdt,
         live_balance: liveBalance,
         live_buying_power: live?.live_buying_power ?? null,
         open_positions: live?.open_positions ?? 0,

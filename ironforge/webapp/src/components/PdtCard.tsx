@@ -8,6 +8,9 @@ import { useState, useEffect, useCallback } from 'react'
 
 interface PdtStatus {
   pdt_enabled: boolean
+  bot_pdt_enabled?: boolean
+  account_pdt_enabled?: boolean
+  pdt_override_source?: string | null
   pdt_status: 'BLOCKED' | 'CAN_TRADE' | 'TRADED_TODAY' | 'PDT_OFF'
   day_trade_count: number
   max_day_trades: number
@@ -162,7 +165,10 @@ export default function PdtCard({
     dotColor = 'bg-gray-400'
     pulsing = false
     primary = 'PDT BYPASSED'
-    secondary = 'Unlimited trading'
+    const src = status.pdt_override_source
+    secondary = src === 'bot_config' ? 'Unlimited trading \u2014 bot config'
+      : src === 'account' ? 'Unlimited trading \u2014 account override'
+      : 'Unlimited trading'
   } else if (pdtStatus === 'BLOCKED') {
     bg = 'bg-red-900/30'
     dotColor = 'bg-red-400'

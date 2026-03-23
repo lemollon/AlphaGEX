@@ -14,6 +14,7 @@ interface Account {
   is_active: boolean
   capital_pct: number
   pdt_enabled: boolean
+  effective_pdt_enabled?: boolean
   /** Live Tradier total equity (null if unreachable) */
   live_balance: number | null
   /** Live Tradier option buying power */
@@ -920,12 +921,16 @@ function AccountCard({
         <BotBadges bot={account.bot} accountType={account.type} />
         <span
           className={`text-xs px-1.5 py-0.5 rounded ${
-            account.pdt_enabled
+            account.pdt_enabled && account.effective_pdt_enabled !== false
               ? 'bg-green-500/10 text-green-400 border border-green-500/20'
-              : 'bg-gray-500/10 text-gray-500 border border-gray-600'
+              : account.pdt_enabled && account.effective_pdt_enabled === false
+                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                : 'bg-gray-500/10 text-gray-500 border border-gray-600'
           }`}
         >
-          PDT {account.pdt_enabled ? 'ON' : 'OFF'}
+          {account.pdt_enabled && account.effective_pdt_enabled === false
+            ? 'PDT BYPASSED'
+            : `PDT ${account.pdt_enabled ? 'ON' : 'OFF'}`}
         </span>
         <div className="ml-auto flex items-center gap-1">
           <button
