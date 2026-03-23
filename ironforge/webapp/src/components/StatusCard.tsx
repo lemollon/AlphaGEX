@@ -12,6 +12,7 @@ interface SandboxAccount {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   open_positions: number
+  account_type?: 'sandbox' | 'production'
 }
 
 interface StatusData {
@@ -611,12 +612,14 @@ export default function StatusCard({
         </div>
       </div>
 
-      {/* Sandbox accounts — per-account P&L from Tradier */}
+      {/* Tradier accounts — per-account P&L from Tradier */}
       {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (
         <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Sandbox Accounts</p>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">
+            {data.sandbox_accounts.some((a: any) => a.account_type === 'production') ? 'Production Account' : 'Sandbox Accounts'}
+          </p>
           <div className="grid grid-cols-3 gap-3">
-            {data.sandbox_accounts.map((acct) => {
+            {data.sandbox_accounts.map((acct, idx) => {
               const hasData = acct.account_id != null
               const dayPnl = acct.day_pnl ?? 0
               const dayPositive = dayPnl >= 0
@@ -626,7 +629,7 @@ export default function StatusCard({
               const bp = acct.option_buying_power
               const bpNeg = bp != null && bp < 0
               return (
-                <div key={acct.name} className="bg-forge-bg/50 rounded-lg px-3 py-2">
+                <div key={`${acct.name}-${acct.account_type || acct.account_id || idx}`} className="bg-forge-bg/50 rounded-lg px-3 py-2">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-medium text-gray-300">{acct.name}</span>
                     <span className="text-[10px] text-gray-500">{acct.open_positions} pos</span>

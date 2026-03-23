@@ -848,6 +848,7 @@ export interface SandboxAccountBalance {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   open_positions_count: number
+  account_type: 'sandbox' | 'production'
 }
 
 /**
@@ -871,6 +872,7 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
           unrealized_pnl: null,
           unrealized_pnl_pct: null,
           open_positions_count: 0,
+          account_type: acct.type,
         })
         return
       }
@@ -952,6 +954,7 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         unrealized_pnl: unrealizedPnl != null ? Math.round(unrealizedPnl * 100) / 100 : null,
         unrealized_pnl_pct: unrealizedPct != null ? Math.round(unrealizedPct * 10) / 10 : null,
         open_positions_count: posCount,
+        account_type: acct.type,
       })
     }),
   )
