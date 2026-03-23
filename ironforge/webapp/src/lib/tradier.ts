@@ -1473,16 +1473,20 @@ export async function reloadSandboxAccounts(): Promise<void> {
 /**
  * Get the configured capital percentage for a specific account (by person name).
  * Reads from ironforge_accounts table. Defaults to 100 (%).
+ *
+ * IMPORTANT: capital_pct only applies to PRODUCTION accounts.
+ * Sandbox/paper accounts always use 100% so the paper account gets
+ * the full Tradier equity as its starting capital.
  */
 export async function getCapitalPctForAccount(person: string, accountType?: 'sandbox' | 'production'): Promise<number> {
+  // Sandbox accounts always use 100% — capital_pct is a production-only safety cap
+  if (accountType !== 'production') return 100
+
   try {
     const { query: dbq } = await import('./db')
-    // Filter by type when provided to avoid returning wrong account's capital_pct.
-    // Production accounts often have different capital_pct (e.g., 15%) vs sandbox (100%).
-    const typeFilter = accountType ? `AND type = '${accountType}'` : ''
     const rows = await dbq(
       `SELECT capital_pct FROM ironforge_accounts
-       WHERE person = '${person.replace(/'/g, "''")}' ${typeFilter} AND is_active = TRUE
+       WHERE person = '${person.replace(/'/g, "''")}' AND type = 'production' AND is_active = TRUE
        LIMIT 1`,
     )
     if (rows.length > 0 && rows[0].capital_pct != null) {

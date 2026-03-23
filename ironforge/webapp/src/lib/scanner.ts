@@ -42,6 +42,7 @@ import {
   getOrderFillPrice,
   getAccountIdForKey,
   buildOccSymbol,
+  getAccountsForBot,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
   getPdtEnabledForAccount,
@@ -123,21 +124,23 @@ function cfg(bot: BotDef): BotConfig {
 
 /**
  * Look up the allocated capital for this bot from ironforge_accounts.
- * Uses the primary (first) person assigned to this bot.
- * allocated_capital = total_equity × capital_pct / 100
+ * Uses the primary sandbox account (from BOT_ACCOUNTS hardcoded config,
+ * typically 'User') to determine starting capital for the shared paper account.
  * Falls back to DEFAULT_CONFIG starting_capital if no accounts found.
  */
 async function getStartingCapitalForBot(botName: string): Promise<number> {
   try {
-    const persons = await getAccountsForBotAsync(botName)
-    if (persons.length > 0) {
-      const allocated = await getAllocatedCapitalForAccount(persons[0])
-      if (allocated > 0) {
-        console.log(
-          `[scanner] ${botName.toUpperCase()} capital from account (${persons[0]}): $${allocated.toLocaleString()}`,
-        )
-        return allocated
-      }
+    // Use the hardcoded primary account (e.g., 'User' for FLAME) — not alphabetical first person.
+    // This ensures the sandbox paper account is based on the User account balance,
+    // not Iron Viper's (Logan) which may have a different equity.
+    const primaryAccounts = getAccountsForBot(botName)
+    const primaryPerson = primaryAccounts.length > 0 ? primaryAccounts[0] : 'User'
+    const allocated = await getAllocatedCapitalForAccount(primaryPerson, 'sandbox')
+    if (allocated > 0) {
+      console.log(
+        `[scanner] ${botName.toUpperCase()} capital from sandbox account (${primaryPerson}): $${allocated.toLocaleString()}`,
+      )
+      return allocated
     }
   } catch { /* fallback */ }
   return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
