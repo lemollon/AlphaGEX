@@ -1097,14 +1097,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   }
 
   // PDT rolling window check (only when PDT enforcement is ON)
+  // Filter by person so Person A's day trades don't block Person B
   if (pdtEnabled && maxDayTrades > 0) {
     let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
          AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
          AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
     const pdtParams: any[] = [bot.dte]
+    if (person && person !== 'all') {
+      pdtSql += ` AND person = $${pdtParams.length + 1}`
+      pdtParams.push(person)
+    }
     if (lastResetAt) {
-      pdtSql += ` AND created_at > $2`
+      pdtSql += ` AND created_at > $${pdtParams.length + 1}`
       pdtParams.push(lastResetAt)
     }
     const liveCountRows = await query(pdtSql, pdtParams)
@@ -2225,10 +2230,11 @@ async function scanBot(bot: BotDef): Promise<void> {
       console.warn(`[scanner] ${botName} PDT sync error: ${msg}`)
     }
 
-    // Count open positions
+    // Count open SANDBOX positions (production positions are managed independently
+    // via placeIcOrderAllAccounts — they should not block sandbox trading)
     const openRows = await query(
       `SELECT position_id FROM ${botTable(bot.name, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1`,
+       WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
       [bot.dte],
     )
     const openCount = openRows.length

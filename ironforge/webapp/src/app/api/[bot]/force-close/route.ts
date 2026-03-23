@@ -168,7 +168,7 @@ export async function POST(
     const remainingCollateral = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${accountTypeFilter}`,
     )
     const actualCollateral = num(remainingCollateral[0]?.total_collateral)
     await dbExecute(
