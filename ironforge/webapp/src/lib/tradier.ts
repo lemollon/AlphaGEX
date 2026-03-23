@@ -1308,25 +1308,20 @@ export async function placeIcOrderAllAccounts(
     }
   }
 
-  // Step 1: User sandbox first (sequential) — must fill before anything else
+  // Step 1: User sandbox first (sequential) — must fill before other sandbox accounts
   for (const acct of userAccts) await placeForAccount(acct)
 
   // Step 2: Other sandbox accounts in parallel (mirror trades)
   await Promise.all(otherSandboxAccts.map(placeForAccount))
 
-  // Step 3: Production accounts ONLY if User sandbox filled successfully.
-  // This ensures we never risk real money unless the sandbox trade is confirmed.
-  const userFill = results['User:sandbox']
-  if (userFill?.fill_price && userFill.fill_price > 0 && productionAccts.length > 0) {
+  // Step 3: Production accounts — run independently of sandbox fills.
+  // Production and sandbox are separate systems; a sandbox rejection should
+  // never prevent a production order from being placed.
+  if (productionAccts.length > 0) {
     console.log(
-      `[tradier] User sandbox filled @ $${userFill.fill_price.toFixed(4)} — ` +
-      `mirroring to ${productionAccts.length} production account(s)`,
+      `[tradier] Placing orders on ${productionAccts.length} production account(s) independently`,
     )
     await Promise.all(productionAccts.map(placeForAccount))
-  } else if (productionAccts.length > 0) {
-    console.log(
-      `[tradier] User sandbox did NOT fill — skipping ${productionAccts.length} production account(s)`,
-    )
   }
 
   return results
@@ -1474,9 +1469,9 @@ export function getLoadedSandboxAccounts(): Array<{ name: string; apiKey: string
 }
 
 /** Async version that ensures DB accounts are loaded first. */
-export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string; baseUrl: string }>> {
+export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: string; apiKey: string; baseUrl: string; type: 'sandbox' | 'production' }>> {
   await ensureSandboxAccountsLoaded()
-  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey, baseUrl: a.baseUrl }))
+  return _sandboxAccounts.map((a) => ({ name: a.name, apiKey: a.apiKey, baseUrl: a.baseUrl, type: a.type }))
 }
 
 /**
