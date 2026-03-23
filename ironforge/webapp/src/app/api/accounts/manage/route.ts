@@ -55,8 +55,10 @@ async function tradierFetch(
   baseUrl: string = SANDBOX_URL,
 ): Promise<any> {
   try {
+    // Production API is slower than sandbox (~5s for balances) — use 15s timeout
+    const timeoutMs = baseUrl === PRODUCTION_URL ? 15_000 : 8_000
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000)
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
     const res = await fetch(`${baseUrl}${endpoint}`, {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       cache: 'no-store',
