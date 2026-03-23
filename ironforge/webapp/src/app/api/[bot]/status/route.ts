@@ -18,20 +18,24 @@ export async function GET(
   try {
     const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
     const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+    const accountTypeParam = req.nextUrl.searchParams.get('account_type')
+    const accountTypeFilter = accountTypeParam
+      ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
+      : ''
 
     const accountQuery = dbQuery(
       `SELECT starting_capital, current_balance, cumulative_pnl,
               total_trades, collateral_in_use, buying_power,
               high_water_mark, max_drawdown, is_active
        FROM ${botTable(bot, 'paper_account')}
-       WHERE is_active = TRUE ${dteFilter}
+       WHERE is_active = TRUE ${dteFilter} ${accountTypeFilter} ${personFilter}
        ORDER BY id DESC LIMIT 1`,
     )
 
     const positionCountQuery = dbQuery(
       `SELECT COUNT(*) as cnt
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${personFilter}`,
+       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     // Live reconciliation: compute realized P&L and trade count from actual closed positions
@@ -43,7 +47,7 @@ export async function GET(
        FROM ${botTable(bot, 'positions')}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
-         ${dteFilter} ${personFilter}`,
+         ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     // Today's realized P&L (trades closed today in CT)
@@ -55,7 +59,7 @@ export async function GET(
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-         ${dteFilter} ${personFilter}`,
+         ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     // Today's close reason breakdown (which PT tiers hit, with IC return data)
@@ -65,7 +69,7 @@ export async function GET(
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-         ${dteFilter} ${personFilter}
+         ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY close_time ASC`,
     )
 
@@ -73,7 +77,7 @@ export async function GET(
     const liveCollateralQuery = dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${personFilter}`,
+       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     const hbName = heartbeatName(bot)
@@ -112,7 +116,7 @@ export async function GET(
               call_short_strike, call_long_strike,
               contracts, total_credit, spread_width
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${personFilter}`,
+       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     // Pending order count (FLAME only — graceful fallback if table doesn't exist)

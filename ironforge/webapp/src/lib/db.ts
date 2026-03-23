@@ -338,10 +338,26 @@ async function ensureTables(): Promise<void> {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS person TEXT`)
         } catch { /* column already exists or table doesn't exist yet */ }
       }
+      // Add account_type column for production vs sandbox position tracking
+      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+        try {
+          await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'sandbox'`)
+        } catch { /* column already exists or table doesn't exist yet */ }
+      }
+      // Add person column to paper_account for per-person production tracking
+      try {
+        await client.query(`ALTER TABLE ${bot}_paper_account ADD COLUMN IF NOT EXISTS person TEXT`)
+      } catch { /* column already exists or table doesn't exist yet */ }
       // Backfill NULL person values to 'User' so existing data matches person filter
       for (const tbl of [`${bot}_positions`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
         try {
           await client.query(`UPDATE ${tbl} SET person = 'User' WHERE person IS NULL`)
+        } catch { /* table may not exist yet */ }
+      }
+      // Backfill NULL account_type to 'sandbox' for existing rows
+      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+        try {
+          await client.query(`UPDATE ${tbl} SET account_type = 'sandbox' WHERE account_type IS NULL`)
         } catch { /* table may not exist yet */ }
       }
     }
@@ -376,6 +392,34 @@ async function ensureTables(): Promise<void> {
         )
       }
     }
+    // Seed production paper_account for FLAME/Logan if not exists
+    // Logan's production account has capital_pct=15%, $10K equity → $1,500 starting capital
+    try {
+      const prodAcctRes = await client.query(
+        `SELECT id FROM flame_paper_account WHERE account_type = 'production' AND person = 'Logan' LIMIT 1`,
+      )
+      if (prodAcctRes.rows.length === 0) {
+        // Check if Logan has a production account in ironforge_accounts
+        const loganProd = await client.query(
+          `SELECT capital_pct FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+        )
+        if (loganProd.rows.length > 0) {
+          const pct = parseInt(loganProd.rows[0].capital_pct) || 15
+          const startCap = Math.round(10000 * pct / 100 * 100) / 100
+          await client.query(
+            `INSERT INTO flame_paper_account
+              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+               is_active, dte_mode, account_type, person)
+             VALUES ($1, $1, 0, $1, $1, 0, TRUE, '2DTE', 'production', 'Logan')`,
+            [startCap],
+          )
+          console.log(`  Seeded FLAME production paper_account for Logan: $${startCap}`)
+        }
+      }
+    } catch (err) {
+      console.warn('  Production paper_account seed failed (non-fatal):', err)
+    }
+
     // Seed shared ironforge_pdt_config if empty
     for (const [botName, maxDT, maxPerDay] of [
       ['FLAME', 3, 1],

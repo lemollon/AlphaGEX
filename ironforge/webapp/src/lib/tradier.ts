@@ -984,12 +984,14 @@ export interface SandboxOrderInfo {
   order_id: number
   contracts: number
   fill_price?: number | null
+  account_type?: 'sandbox' | 'production'
 }
 
 export interface SandboxCloseInfo {
   order_id: number
   contracts: number
   fill_price?: number | null
+  account_type?: 'sandbox' | 'production'
 }
 
 /**
@@ -1131,14 +1133,38 @@ export async function placeIcOrderAllAccounts(
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
 
-  // Filter accounts by bot — reads from ironforge_accounts DB (falls back to hardcoded BOT_ACCOUNTS)
-  const allowedAccounts = botName ? await getAccountsForBotAsync(botName) : null
-  const eligibleAccounts = allowedAccounts
-    ? _sandboxAccounts.filter((a) => allowedAccounts.includes(a.name))
-    : _sandboxAccounts
+  // Filter accounts by bot — reads from ironforge_accounts DB.
+  // Must check BOTH person AND account type (sandbox/production) to prevent
+  // placing orders on accounts that don't have this bot assigned.
+  // e.g., Logan has sandbox with FLAME but production WITHOUT FLAME — production should NOT get FLAME orders.
+  let eligibleAccounts = _sandboxAccounts
+  if (botName) {
+    try {
+      const { query: dbq } = await import('./db')
+      const botUpper = botName.toUpperCase()
+      const allowedRows = await dbq(
+        `SELECT DISTINCT person, type FROM ironforge_accounts
+         WHERE is_active = TRUE AND type IN ('sandbox', 'production')
+           AND (bot = $1 OR bot LIKE '%' || $1 || '%' OR bot = 'BOTH'
+                OR bot = 'FLAME,SPARK,INFERNO')
+         ORDER BY person, type`,
+        [botUpper],
+      )
+      // Build a set of "person:type" keys for efficient matching
+      const allowedKeys = new Set(allowedRows.map((r: any) => `${r.person}:${r.type}`))
+      eligibleAccounts = _sandboxAccounts.filter((a) => {
+        const key = `${a.name}:${a.type ?? 'sandbox'}`
+        return allowedKeys.has(key)
+      })
+    } catch {
+      // Fallback: use getAccountsForBotAsync (person-only matching)
+      const allowedPersons = await getAccountsForBotAsync(botName)
+      eligibleAccounts = _sandboxAccounts.filter((a) => allowedPersons.includes(a.name))
+    }
+  }
   console.log(
     `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
-    `eligible=[${eligibleAccounts.map(a => a.name).join(', ')}] (${allowedAccounts ? 'from DB' : 'all'})`,
+    `eligible=[${eligibleAccounts.map(a => `${a.name}:${a.type}`).join(', ')}]`,
   )
 
   // Shared OCC symbols — same strikes for all accounts
@@ -1259,10 +1285,13 @@ export async function placeIcOrderAllAccounts(
         } catch {
           // Non-fatal
         }
-        results[acct.name] = {
+        // Use composite key to avoid collision when same person has sandbox + production
+        const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+        results[resultKey] = {
           order_id: result.order.id,
           contracts: acctContracts,
           fill_price: fillPrice,
+          account_type: acct.type ?? 'sandbox',
         }
       }
     } catch (err: any) {
@@ -1651,7 +1680,9 @@ export async function closeIcOrderAllAccounts(
           }
         } catch (posErr: unknown) {
           // Fall back to paper count / sandbox open info
-          const acctInfo = sandboxOpenInfo?.[acct.name]
+          // Try composite key first, then legacy plain name key
+          const compositeKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+          const acctInfo = sandboxOpenInfo?.[compositeKey] ?? sandboxOpenInfo?.[acct.name]
           if (acctInfo && typeof acctInfo === 'object' && 'contracts' in acctInfo) {
             closeQty = acctInfo.contracts
           }
@@ -1682,11 +1713,14 @@ export async function closeIcOrderAllAccounts(
         // Limit orders may not fill immediately — poll for 60s vs unlimited for market
         const pollMs = effectiveOrderType === 'debit' ? 60_000 : 0
 
+        // Composite key avoids collision when same person has sandbox + production
+        const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+
         let result = await sandboxPost(`/accounts/${accountId}/orders`, body4leg, acct.apiKey, acct.baseUrl)
         if (result?.order?.id) {
           let fillPrice: number | null = null
           try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
-          results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
+          results[resultKey] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
           return
         }
 
@@ -1696,7 +1730,7 @@ export async function closeIcOrderAllAccounts(
         if (result?.order?.id) {
           let fillPrice: number | null = null
           try { fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollMs, acct.baseUrl) } catch { /* non-fatal */ }
-          results[acct.name] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice }
+          results[resultKey] = { order_id: result.order.id, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
           return
         }
 
@@ -1741,7 +1775,7 @@ export async function closeIcOrderAllAccounts(
               console.warn(`[tradier] ${acct.name}: 2x2-leg close: only call fill available ($${callFill.toFixed(4)}), put fill missing`)
             }
           } catch { /* non-fatal — fillPrice stays null, scanner uses estimated price */ }
-          results[acct.name] = { order_id: putId, contracts: closeQty, fill_price: fillPrice }
+          results[resultKey] = { order_id: putId, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
           return
         }
 
@@ -1813,7 +1847,7 @@ export async function closeIcOrderAllAccounts(
               )
             }
           } catch { /* non-fatal — fillPrice stays null, scanner uses estimated price */ }
-          results[acct.name] = { order_id: legOrders[0]?.orderId ?? -1, contracts: closeQty, fill_price: fillPrice }
+          results[resultKey] = { order_id: legOrders[0]?.orderId ?? -1, contracts: closeQty, fill_price: fillPrice, account_type: acct.type ?? 'sandbox' }
         } else {
           console.error(`Sandbox IC close ALL strategies FAILED [${acct.name}] — orphan likely`)
         }

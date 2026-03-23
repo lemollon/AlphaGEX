@@ -42,7 +42,7 @@ export async function POST(
               put_short_strike, put_long_strike, put_credit,
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss,
-              collateral_required, sandbox_order_id, person
+              collateral_required, sandbox_order_id, person, account_type
        FROM ${botTable(bot, 'positions')}
        WHERE position_id = $1 AND status = 'open'
          AND dte_mode = $2
@@ -159,6 +159,12 @@ export async function POST(
     }
 
     // 7. Update paper account — reconcile collateral from actual open positions
+    //    Route to the correct paper_account row based on the position's account_type
+    const posAccountType = pos.account_type || 'sandbox'
+    const accountTypeFilter = posAccountType === 'production'
+      ? `AND account_type = 'production' AND person = '${escapeSql(pos.person || '')}'`
+      : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
+
     const remainingCollateral = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) AS total_collateral
        FROM ${botTable(bot, 'positions')}
@@ -176,7 +182,8 @@ export async function POST(
            max_drawdown = GREATEST(max_drawdown,
              GREATEST(high_water_mark, current_balance + ${realizedPnl}) - (current_balance + ${realizedPnl})),
            updated_at = NOW()
-       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE is_active IS NOT NULL AND dte_mode = '${escapeSql(dte)}'
+         ${accountTypeFilter}`,
     )
 
     // 8. Update PDT log

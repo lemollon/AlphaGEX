@@ -17,13 +17,17 @@ export async function GET(
   const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeParam = req.nextUrl.searchParams.get('account_type')
+  const accountTypeFilter = accountTypeParam
+    ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
+    : ''
 
   try {
     const [capitalRows, curveRows, openPositions] = await Promise.all([
       dbQuery(
         `SELECT starting_capital
          FROM ${botTable(bot, 'paper_account')}
-         WHERE is_active = TRUE ${dteFilter}
+         WHERE is_active = TRUE ${dteFilter} ${accountTypeFilter}
          LIMIT 1`,
       ),
       dbQuery(
@@ -35,7 +39,7 @@ export async function GET(
         WHERE status IN ('closed', 'expired')
           AND realized_pnl IS NOT NULL
           AND close_time IS NOT NULL
-          ${dteFilter} ${personFilter}
+          ${dteFilter} ${personFilter} ${accountTypeFilter}
         ORDER BY close_time`,
       ),
       dbQuery(
@@ -44,7 +48,7 @@ export async function GET(
                 call_short_strike, call_long_strike,
                 contracts, total_credit, spread_width
          FROM ${botTable(bot, 'positions')}
-         WHERE status = 'open' ${dteFilter} ${personFilter}`,
+         WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
       ),
     ])
 

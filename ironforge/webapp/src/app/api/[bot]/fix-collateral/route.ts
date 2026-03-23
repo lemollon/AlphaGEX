@@ -25,22 +25,29 @@ export async function GET(
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Unknown dte_mode' }, { status: 400 })
 
+  const accountTypeParam = _req.nextUrl.searchParams.get('account_type')
+  const acctTypeFilter = accountTypeParam === 'production'
+    ? `AND account_type = 'production'`
+    : accountTypeParam === 'sandbox'
+      ? `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
+      : '' // no filter — show all
+
   try {
     // 1. Paper account state
     const acctRows = await dbQuery(
       `SELECT id, is_active, dte_mode, starting_capital, current_balance,
-              cumulative_pnl, collateral_in_use, buying_power, total_trades
+              cumulative_pnl, collateral_in_use, buying_power, total_trades, account_type
        FROM ${botTable(bot, 'paper_account')}
-       WHERE dte_mode = '${escapeSql(dte)}'
+       WHERE dte_mode = '${escapeSql(dte)}' ${acctTypeFilter}
        ORDER BY id`,
     )
 
     // 2. ALL open positions (any dte_mode — to find orphans)
     const allOpen = await dbQuery(
       `SELECT position_id, dte_mode, status, collateral_required,
-              total_credit, contracts, expiration, open_time
+              total_credit, contracts, expiration, open_time, account_type
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open'
+       WHERE status = 'open' ${acctTypeFilter}
        ORDER BY open_time`,
     )
 
@@ -51,13 +58,13 @@ export async function GET(
        FROM ${botTable(bot, 'positions')}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
-         AND dte_mode = '${escapeSql(dte)}'`,
+         AND dte_mode = '${escapeSql(dte)}' ${acctTypeFilter}`,
     )
 
     const liveColl = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) as total_collateral
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${acctTypeFilter}`,
     )
 
     const apiPnl = num(liveStats[0]?.total_pnl)
@@ -69,7 +76,7 @@ export async function GET(
     // 4. Detect stale positions
     const stalePositions = await dbQuery(
       `SELECT position_id, dte_mode, expiration, total_credit, contracts,
-              collateral_required, open_time,
+              collateral_required, open_time, account_type,
               CAST(expiration AS DATE) AS exp_date,
               CAST(open_time AS DATE) AS open_date,
               CURRENT_DATE AS today
@@ -81,6 +88,7 @@ export async function GET(
            OR dte_mode IS NULL
            OR dte_mode != '${escapeSql(dte)}'
          )
+         ${acctTypeFilter}
        ORDER BY open_time`,
     )
 
@@ -158,13 +166,20 @@ export async function POST(
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Unknown dte_mode' }, { status: 400 })
 
+  const accountTypeParam = _req.nextUrl.searchParams.get('account_type')
+  const acctTypeFilter = accountTypeParam === 'production'
+    ? `AND account_type = 'production'`
+    : accountTypeParam === 'sandbox'
+      ? `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
+      : '' // no filter — fix all
+
   try {
     const actions: string[] = []
 
     // Phase 1: Close stale/expired/orphan positions
     const staleRows = await dbQuery(
       `SELECT position_id, dte_mode, total_credit, contracts,
-              collateral_required,
+              collateral_required, account_type,
               CAST(expiration AS DATE) AS exp_date,
               CAST(open_time AS DATE) AS open_date,
               CURRENT_DATE AS today
@@ -176,6 +191,7 @@ export async function POST(
            OR dte_mode IS NULL
            OR dte_mode != '${escapeSql(dte)}'
          )
+         ${acctTypeFilter}
        ORDER BY open_time`,
     )
 
@@ -268,14 +284,14 @@ export async function POST(
        FROM ${botTable(bot, 'positions')}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
-         AND dte_mode = '${escapeSql(dte)}'`,
+         AND dte_mode = '${escapeSql(dte)}' ${acctTypeFilter}`,
     )
 
     const openRows = await dbQuery(
       `SELECT COALESCE(SUM(collateral_required), 0) as total_collateral,
               COUNT(*) as cnt
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${acctTypeFilter}`,
     )
 
     // Read starting_capital from paper_account (not hardcoded)
@@ -283,6 +299,7 @@ export async function POST(
       `SELECT COALESCE(starting_capital, 10000) as starting_capital
        FROM ${botTable(bot, 'paper_account')}
        WHERE is_active = TRUE AND dte_mode = '${escapeSql(dte)}'
+         ${acctTypeFilter}
        ORDER BY id DESC LIMIT 1`,
     )
     const startingCapital = num(startCapRows[0]?.starting_capital) || 10000
@@ -302,7 +319,8 @@ export async function POST(
            total_trades = ${actualTrades},
            high_water_mark = GREATEST(high_water_mark, ${expectedBalance}),
            updated_at = NOW()
-       WHERE dte_mode = '${escapeSql(dte)}'`,
+       WHERE dte_mode = '${escapeSql(dte)}'
+         ${acctTypeFilter}`,
     )
 
     actions.push(`Reconciled paper_account: balance=$${expectedBalance.toFixed(2)}, pnl=$${actualPnl.toFixed(2)}, collateral=$${actualCollateral.toFixed(2)}, trades=${actualTrades}`)

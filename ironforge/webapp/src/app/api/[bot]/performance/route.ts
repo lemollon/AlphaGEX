@@ -15,6 +15,10 @@ export async function GET(
   const filterByPerson = personParam && personParam !== 'all'
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeParam = req.nextUrl.searchParams.get('account_type')
+  const accountTypeFilter = accountTypeParam
+    ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'`
+    : ''
 
   try {
     const rows = await dbQuery(
@@ -30,7 +34,7 @@ export async function GET(
       FROM ${botTable(bot, 'positions')}
       WHERE status IN ('closed', 'expired')
         AND realized_pnl IS NOT NULL
-        ${dteFilter} ${personFilter}`,
+        ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
     const r = rows[0]

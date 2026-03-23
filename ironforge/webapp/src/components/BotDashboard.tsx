@@ -73,13 +73,40 @@ export default function BotDashboard({
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')
   const [selectedPerson, setSelectedPerson] = useState('all')
 
-  // Fetch available persons for the dropdown
+  // Fetch available persons for the dropdown (now includes account_type)
   const { data: personsData } = useSWR('/api/persons', fetcher)
-  const personEntries: Array<{ person: string; alias: string | null }> = personsData?.persons ?? []
-  const persons: string[] = personEntries.map((pe) => pe.person)
+  const personEntries: Array<{ person: string; alias: string | null; account_type?: string }> = personsData?.persons ?? []
 
-  // Query string fragment for person filtering (appended to all API calls)
-  const pq = selectedPerson !== 'all' ? `person=${encodeURIComponent(selectedPerson)}` : ''
+  // Build dropdown entries: if a person has multiple account types, show separate entries
+  // e.g., "Iron Viper (Production)" and "Iron Viper (Sandbox)"
+  const personCounts: Record<string, number> = {}
+  for (const pe of personEntries) {
+    personCounts[pe.person] = (personCounts[pe.person] || 0) + 1
+  }
+  const dropdownEntries = personEntries.map((pe) => {
+    const hasMultiple = (personCounts[pe.person] || 0) > 1
+    const displayName = pe.alias || pe.person
+    const suffix = hasMultiple && pe.account_type ? ` (${pe.account_type === 'production' ? 'Production' : 'Sandbox'})` : ''
+    // Encode both person and account_type in the value: "Logan:production" or "Logan:sandbox"
+    const value = pe.account_type && pe.account_type !== 'sandbox' ? `${pe.person}:${pe.account_type}` : pe.person
+    return { value, label: `${displayName}${suffix}`, person: pe.person, account_type: pe.account_type || 'sandbox' }
+  })
+  const persons: string[] = Array.from(new Set(personEntries.map((pe) => pe.person)))
+
+  // Parse selected value to extract person + account_type
+  const selectedIsProduction = selectedPerson.endsWith(':production')
+  const selectedPersonName = selectedPerson.includes(':') ? selectedPerson.split(':')[0] : selectedPerson
+  const selectedAccountType = selectedPerson.includes(':') ? selectedPerson.split(':')[1] : undefined
+
+  // Query string fragment for person + account_type filtering (appended to all API calls)
+  const buildPq = () => {
+    if (selectedPerson === 'all') return ''
+    const parts: string[] = []
+    parts.push(`person=${encodeURIComponent(selectedPersonName)}`)
+    if (selectedAccountType) parts.push(`account_type=${encodeURIComponent(selectedAccountType)}`)
+    return parts.join('&')
+  }
+  const pq = buildPq()
   const pqSep = (url: string) => url.includes('?') ? `${url}&${pq}` : `${url}?${pq}`
   const withPerson = (url: string) => pq ? pqSep(url) : url
 
@@ -116,7 +143,7 @@ export default function BotDashboard({
 
   /* ---- Broker (production) equity curve ---- */
   const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
-  const brokerPerson = selectedPerson !== 'all' ? selectedPerson : persons[0] ?? 'User'
+  const brokerPerson = selectedPerson !== 'all' ? selectedPersonName : persons[0] ?? 'User'
   const { data: brokerEquity } = useSWR(
     tab === 'Broker Equity'
       ? `/api/accounts/production/equity-curve?person=${encodeURIComponent(brokerPerson)}&mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
@@ -176,21 +203,21 @@ export default function BotDashboard({
 
   /* ---- Pending orders (FLAME only — lightweight, always fetched with status) ---- */
   const { data: pendingData } = useSWR(
-    bot === 'flame' ? `/api/${bot}/pending-orders` : null,
+    bot === 'flame' ? withPerson(`/api/${bot}/pending-orders`) : null,
     fetcher,
     { refreshInterval: STATUS_REFRESH },
   )
 
   /* ---- PDT ---- */
   const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
-    tab === 'PDT' ? `/api/${bot}/pdt` : null,
+    tab === 'PDT' ? withPerson(`/api/${bot}/pdt`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
 
   /* ---- Reconcile (FLAME only) ---- */
   const { data: reconData, error: reconErr } = useSWR(
-    tab === 'Reconcile' && bot === 'flame' ? `/api/${bot}/reconcile` : null,
+    tab === 'Reconcile' && bot === 'flame' ? withPerson(`/api/${bot}/reconcile`) : null,
     fetcher,
     { refreshInterval: 60_000 },
   )
@@ -258,17 +285,24 @@ export default function BotDashboard({
             {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
           </span>
         </div>
-        {persons.length > 1 && (
-          <select
-            value={selectedPerson}
-            onChange={(e) => setSelectedPerson(e.target.value)}
-            className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
-          >
-            <option value="all">All Accounts</option>
-            {personEntries.map((pe) => (
-              <option key={pe.person} value={pe.person}>{pe.alias || pe.person}</option>
-            ))}
-          </select>
+        {dropdownEntries.length > 1 && (
+          <div className="flex items-center gap-2">
+            {selectedIsProduction && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
+                LIVE TRADING
+              </span>
+            )}
+            <select
+              value={selectedPerson}
+              onChange={(e) => setSelectedPerson(e.target.value)}
+              className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
+            >
+              <option value="all">All Accounts</option>
+              {dropdownEntries.map((de) => (
+                <option key={de.value} value={de.value}>{de.label}</option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
 
