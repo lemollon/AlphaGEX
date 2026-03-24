@@ -1,9 +1,18 @@
 #!/bin/bash
 # IronForge Scanner Health Check — run in Render shell
-# Usage: bash check_scanner.sh <YOUR_RENDER_URL>
+# Usage: bash check_scanner.sh [URL]
 # Example: bash check_scanner.sh https://ironforge-xxxx.onrender.com
 
-BASE="${1:-http://localhost:3000}"
+# Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
+if [ -n "${IRONFORGE_API_URL:-}" ]; then
+  BASE="$IRONFORGE_API_URL"
+elif [ -n "${1:-}" ]; then
+  BASE="$1"
+else
+  BASE="http://localhost:${PORT:-3000}"
+fi
+BASE="${BASE%/}"
 
 echo "=== IronForge Scanner Health Check ==="
 echo "Target: $BASE"

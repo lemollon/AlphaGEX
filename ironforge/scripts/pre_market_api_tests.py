@@ -7,7 +7,7 @@ Usage:
     python ironforge/scripts/pre_market_api_tests.py
 
 Optional env vars:
-    VERCEL_URL              (default: https://ironforge-pi.vercel.app)
+    IRONFORGE_API_URL        (default: http://localhost:PORT)
     TRADIER_SANDBOX_KEY_USER (for sandbox account tests)
 """
 
@@ -19,8 +19,11 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERCEL_URL = os.environ.get("VERCEL_URL", "https://ironforge-pi.vercel.app")
-API = f"{VERCEL_URL}/api"
+# Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
+BASE_URL = os.environ.get("IRONFORGE_API_URL", f"http://localhost:{os.environ.get('PORT', '3000')}")
+BASE_URL = BASE_URL.rstrip("/")
+API = f"{BASE_URL}/api"
 SANDBOX_KEY = os.environ.get("TRADIER_SANDBOX_KEY_USER", "")
 
 # Sandbox account IDs (from position_monitor.py)
@@ -83,7 +86,7 @@ def fetch_headers(url, timeout=15):
 # ═══════════════════════════════════════════════════════════════
 print("=" * 60)
 print("  IronForge Pre-Market Validation — API Tests")
-print(f"  Vercel: {VERCEL_URL}")
+print(f"  Render: {BASE_URL}")
 print(f"  Time:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"  Sandbox key: {'SET' if SANDBOX_KEY else 'NOT SET'}")
 print("=" * 60)
@@ -218,15 +221,15 @@ for bot in ["spark", "flame", "inferno"]:
     status, headers = fetch_headers(f"{API}/{bot}/status")
 
     cache_control = headers.get("Cache-Control", headers.get("cache-control", ""))
-    x_vercel = headers.get("X-Vercel-Cache", headers.get("x-vercel-cache", ""))
+    x_render = headers.get("X-Render-Cache", headers.get("x-render-cache", headers.get("X-Vercel-Cache", headers.get("x-vercel-cache", ""))))
 
     print(f"    cache-control: {cache_control or '(not set)'}")
-    print(f"    x-vercel-cache: {x_vercel or '(not set)'}")
+    print(f"    x-render-cache: {x_render or '(not set)'}")
 
     if any(x in cache_control.lower() for x in ["no-store", "no-cache", "max-age=0"]):
         passed("Cache headers correct")
     elif not cache_control:
-        warned("No cache-control header — Vercel may cache responses")
+        warned("No cache-control header — Render may cache responses")
     else:
         warned(f"Unexpected cache-control: {cache_control}")
 

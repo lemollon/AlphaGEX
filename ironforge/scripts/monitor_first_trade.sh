@@ -10,12 +10,13 @@
 set -uo pipefail
 
 # Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
 if [ -n "${IRONFORGE_API_URL:-}" ]; then
   BASE="$IRONFORGE_API_URL"
 elif [ -n "${1:-}" ]; then
   BASE="$1"
 else
-  BASE="http://localhost:3000"
+  BASE="http://localhost:${PORT:-3000}"
 fi
 BASE="${BASE%/}"
 INTERVAL=30
