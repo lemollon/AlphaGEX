@@ -615,12 +615,18 @@ let _sandboxAccountsLoadedFromDb = false
  * orders to api.tradier.com (real money), sandbox to sandbox.tradier.com.
  * Called once on first use if env vars yielded zero accounts.
  */
+let _dbLoadAttempts = 0
+const DB_LOAD_MAX_RETRIES = 5
+
 async function ensureSandboxAccountsLoaded(): Promise<void> {
   // ALWAYS check DB — env vars only provide sandbox accounts, production accounts
   // live exclusively in the DB. The old check `if (_sandboxAccounts.length > 0) return`
   // caused production accounts to NEVER load when env vars were set.
   if (_sandboxAccountsLoadedFromDb) return
-  _sandboxAccountsLoadedFromDb = true
+
+  // Cap retries to avoid infinite DB queries on persistent failures
+  if (_dbLoadAttempts >= DB_LOAD_MAX_RETRIES) return
+  _dbLoadAttempts++
 
   try {
     const { query: dbq } = await import('./db')
@@ -649,10 +655,14 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
         `(${sandboxCount} sandbox, ${prodCount} production): ` +
         _sandboxAccounts.map(a => `${a.name}[${a.type}] (${a.apiKey.slice(0, 4)}...)`).join(', '),
       )
+      // Only mark as loaded once we successfully loaded accounts (including production)
+      _sandboxAccountsLoadedFromDb = true
+    } else {
+      console.warn(`[tradier] DB returned 0 active accounts (attempt ${_dbLoadAttempts}/${DB_LOAD_MAX_RETRIES}) — will retry next call`)
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[tradier] Failed to load trading accounts from DB: ${msg}`)
+    console.error(`[tradier] FAILED to load trading accounts from DB (attempt ${_dbLoadAttempts}/${DB_LOAD_MAX_RETRIES}): ${msg} — production accounts UNAVAILABLE, will retry next call`)
   }
 }
 
@@ -1194,7 +1204,11 @@ export async function placeIcOrderAllAccounts(
   async function placeForAccount(acct: SandboxAccount) {
     try {
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
-      if (!accountId) return
+      if (!accountId) {
+        const label = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING order.`)
+        return
+      }
 
       // Query this account's OPTION buying power (not stock/day-trade BP)
       const bp = await getSandboxBuyingPower(acct.apiKey, accountId, acct.baseUrl)
@@ -1302,9 +1316,12 @@ export async function placeIcOrderAllAccounts(
           fill_price: fillPrice,
           account_type: acct.type ?? 'sandbox',
         }
+      } else {
+        console.error(`${label}: Order POST returned response but NO order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
       }
     } catch (err: any) {
-      console.warn(`Sandbox IC order failed [${acct.name}]: ${err.message}`)
+      const errLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+      console.error(`${errLabel}: IC order FAILED: ${err.message}`)
     }
   }
 
@@ -1322,6 +1339,29 @@ export async function placeIcOrderAllAccounts(
       `[tradier] Placing orders on ${productionAccts.length} production account(s) independently`,
     )
     await Promise.all(productionAccts.map(placeForAccount))
+
+    // Summary: how many production accounts got orders vs silently dropped
+    const prodResults = Object.entries(results).filter(([, v]) => v.account_type === 'production')
+    const prodFilled = prodResults.filter(([, v]) => v.fill_price && v.fill_price > 0)
+    const prodNoFill = prodResults.filter(([, v]) => !v.fill_price || v.fill_price <= 0)
+    const prodDropped = productionAccts.length - prodResults.length
+    console.log(
+      `[tradier] PRODUCTION SUMMARY: ${productionAccts.length} eligible, ` +
+      `${prodFilled.length} filled, ${prodNoFill.length} no-fill, ` +
+      `${prodDropped} silently dropped (never reached results)`,
+    )
+    if (prodDropped > 0) {
+      const resultKeys = new Set(Object.keys(results))
+      for (const acct of productionAccts) {
+        const key = `${acct.name}:production`
+        if (!resultKeys.has(key)) {
+          console.error(`[tradier] PRODUCTION DROPPED: ${acct.name} — order never recorded. Check logs above for the cause.`)
+        }
+      }
+    }
+  } else if (eligibleAccounts.some(a => a.type === 'production')) {
+    // Shouldn't happen — production accounts in eligible but not in productionAccts
+    console.error(`[tradier] BUG: Production accounts exist in eligible but were filtered out of productionAccts`)
   }
 
   return results

@@ -1411,6 +1411,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         }
       }
 
+      // Log production fill summary for production-only mode
+      const prodOnlyEntries = Object.entries(sandboxOrderIds)
+      const prodOnlyFills = prodOnlyEntries.filter(([, v]) => v.account_type === 'production')
+      if (prodOnlyFills.length === 0 && prodOnlyEntries.length > 0) {
+        console.warn(
+          `[scanner] FLAME PRODUCTION-ONLY: ${prodOnlyEntries.length} order entries but 0 production — keys: ${prodOnlyEntries.map(([k]) => k).join(', ')}`,
+        )
+      } else if (prodOnlyFills.length === 0) {
+        console.warn(`[scanner] FLAME PRODUCTION-ONLY: placeIcOrderAllAccounts returned 0 entries — production account may not be loaded or eligible`)
+      }
+
       if (prodTraded) {
         console.log(`[scanner] FLAME PRODUCTION-ONLY: Successfully placed production trade(s)`)
         return `traded:${positionId}-production-only`
@@ -1622,6 +1633,25 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
       } catch (prodErr: unknown) {
         console.error(`[scanner] PRODUCTION position creation failed for ${prodPerson}:`, prodErr instanceof Error ? prodErr.message : prodErr)
+      }
+    }
+
+    // ── PRODUCTION FILL SUMMARY ──
+    {
+      const allEntries = Object.entries(sandboxOrderIds)
+      const prodEntries = allEntries.filter(([, v]) => v.account_type === 'production')
+      const prodWithFill = prodEntries.filter(([, v]) => v.fill_price && v.fill_price > 0)
+      const prodNoFill = prodEntries.filter(([, v]) => !v.fill_price || v.fill_price <= 0)
+      if (prodEntries.length === 0 && allEntries.length > 0) {
+        console.warn(
+          `[scanner] PRODUCTION FILL SUMMARY: 0 production entries in sandboxOrderIds (${allEntries.length} total entries: ${allEntries.map(([k]) => k).join(', ')}). ` +
+          `Production account may not have been eligible or order was silently dropped.`,
+        )
+      } else if (prodEntries.length > 0) {
+        console.log(
+          `[scanner] PRODUCTION FILL SUMMARY: ${prodWithFill.length} filled, ${prodNoFill.length} no-fill ` +
+          `(entries: ${prodEntries.map(([k, v]) => `${k}=$${v.fill_price ?? 'null'}`).join(', ')})`,
+        )
       }
     }
 
