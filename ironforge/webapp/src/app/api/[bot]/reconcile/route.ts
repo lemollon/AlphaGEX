@@ -71,10 +71,10 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  // Only FLAME has sandbox positions
+  // Only FLAME has sandbox/production positions
   if (bot !== 'flame') {
     return NextResponse.json({
-      error: `Reconciliation only available for FLAME (has Tradier sandbox). ${bot.toUpperCase()} is paper-only.`,
+      error: `Reconciliation only available for FLAME (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
     }, { status: 400 })
   }
 
@@ -85,8 +85,12 @@ export async function GET(
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
 
+  // Filter by account_type: production (Live Trading) or sandbox (Paper Trading)
+  const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
+  const accountTypeFilter = `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
+
   try {
-    // 1. Get all open paper positions
+    // 1. Get open positions filtered by account_type
     const paperRows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike, put_credit,
@@ -94,19 +98,20 @@ export async function GET(
               contracts, spread_width, total_credit,
               sandbox_order_id, open_time
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter}
+       WHERE status = 'open' ${dteFilter} ${accountTypeFilter}
        ORDER BY open_time DESC`,
     )
 
-    // 2. Get all sandbox accounts + their positions
-    const accounts = await getLoadedSandboxAccountsAsync()
+    // 2. Get Tradier accounts filtered by type (production = Logan only, sandbox = User/Matt/Logan sandbox)
+    const allAccounts = await getLoadedSandboxAccountsAsync()
+    const accounts = allAccounts.filter(a => a.type === accountType)
     const accountPositions: Record<string, Array<{
       symbol: string; quantity: number; cost_basis: number;
       market_value: number; gain_loss: number; gain_loss_percent: number;
     }>> = {}
 
     for (const acct of accounts) {
-      accountPositions[acct.name] = await getSandboxAccountPositions(acct.apiKey)
+      accountPositions[acct.name] = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
     }
 
     // 3. Build OCC symbols for each paper position and match

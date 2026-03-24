@@ -802,7 +802,7 @@ async function getAccountIdForKey(apiKey: string, baseUrl: string = SANDBOX_URL)
  *
  * See: https://documentation.tradier.com/brokerage-api/reference/response/balances
  */
-async function getSandboxBuyingPower(
+export async function getSandboxBuyingPower(
   apiKey: string,
   accountId: string,
   baseUrl: string = SANDBOX_URL,
@@ -1241,9 +1241,12 @@ export async function placeIcOrderAllAccounts(
       // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
       const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
-      // Equal share among all accounts assigned to this bot (DB-backed)
-      const botShare = botName && eligibleAccounts.length > 1
-        ? 1.0 / eligibleAccounts.length
+      // Equal share among accounts OF THE SAME TYPE assigned to this bot.
+      // Production and sandbox are separate pools — a production account shouldn't
+      // get 25% just because there are 3 sandbox accounts sharing the pie.
+      const sameTypeCount = eligibleAccounts.filter(a => a.type === acct.type).length
+      const botShare = botName && sameTypeCount > 1
+        ? 1.0 / sameTypeCount
         : 1.0
       // Apply capital_pct: if user allocated only 50% of their capital,
       // sandbox should not use more than 50% of its buying power either.
@@ -1685,14 +1688,16 @@ export async function getAccountsForBotAsync(botName: string): Promise<string[]>
 export async function getSandboxAccountPositions(
   apiKey: string,
   filterSymbols?: string[],
+  baseUrl: string = SANDBOX_URL,
 ): Promise<SandboxPosition[]> {
-  const accountId = await getAccountIdForKey(apiKey)
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return []
 
   const data = await sandboxGet(
     `/accounts/${accountId}/positions`,
     undefined,
     apiKey,
+    baseUrl,
   )
   if (!data) return []
 
