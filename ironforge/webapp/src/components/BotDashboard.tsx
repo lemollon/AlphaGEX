@@ -81,7 +81,8 @@ export default function BotDashboard({
   const [selectedPerson, setSelectedPerson] = useState('all')
 
   // Fetch available persons for the dropdown — only needed for bots with accounts
-  const { data: personsData } = useSWR(hasAccounts ? '/api/persons' : null, fetcher)
+  // Pass bot name so only persons assigned to this bot are shown
+  const { data: personsData } = useSWR(hasAccounts ? `/api/persons?bot=${bot}` : null, fetcher)
   const personEntries: Array<{ person: string; alias: string | null; account_type?: string }> = personsData?.persons ?? []
 
   // Build dropdown entries: if a person has multiple account types, show separate entries
@@ -95,7 +96,8 @@ export default function BotDashboard({
     const displayName = pe.alias || pe.person
     const suffix = hasMultiple && pe.account_type ? ` (${pe.account_type === 'production' ? 'Production' : 'Sandbox'})` : ''
     // Encode both person and account_type in the value: "Logan:production" or "Logan:sandbox"
-    const value = pe.account_type && pe.account_type !== 'sandbox' ? `${pe.person}:${pe.account_type}` : pe.person
+    // ALWAYS include account_type so sandbox view doesn't bleed production data
+    const value = hasMultiple ? `${pe.person}:${pe.account_type || 'sandbox'}` : pe.person
     return { value, label: `${displayName}${suffix}`, person: pe.person, account_type: pe.account_type || 'sandbox' }
   })
   const persons: string[] = Array.from(new Set(personEntries.map((pe) => pe.person)))

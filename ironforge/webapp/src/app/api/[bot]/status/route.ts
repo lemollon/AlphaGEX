@@ -130,7 +130,7 @@ export async function GET(
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
 
-    // Account balances — fetch real Tradier data for all bots (sandbox + production)
+    // Account balances — fetch real Tradier data, filtered by bot assignment
     const sandboxBalancesQuery = getSandboxAccountBalances().catch(() => [])
 
     // Fetch person aliases for sandbox account display names
@@ -138,8 +138,15 @@ export async function GET(
       `SELECT person, alias FROM ${sharedTable('ironforge_person_aliases')}`,
     ).catch(() => [])
 
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances, todayCloseReasonRows, aliasRows] =
-      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery, todayCloseReasonsQuery, aliasQuery])
+    // Which persons are assigned to this bot? Filter accounts to only show relevant ones.
+    const botAssignmentQuery = dbQuery(
+      `SELECT person, type FROM ${sharedTable('ironforge_accounts')}
+       WHERE is_active = TRUE AND bot ILIKE $1`,
+      [`%${bot}%`],
+    ).catch(() => [])
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows, scansTodayRows, lastErrorRows, openPositionRows, liveStatsRows, liveCollateralRows, pendingCountRows, todayRealizedRows, sandboxBalances, todayCloseReasonRows, aliasRows, botAssignmentRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery, scansTodayQuery, lastErrorQuery, openPositionsQuery, liveStatsQuery, liveCollateralQuery, pendingCountQuery, todayRealizedQuery, sandboxBalancesQuery, todayCloseReasonsQuery, aliasQuery, botAssignmentQuery])
 
     // Build person → alias lookup
     const aliasMap: Record<string, string> = {}
@@ -308,9 +315,13 @@ export async function GET(
         }
       }),
       sandbox_accounts: sandboxBalances
-        // When viewing a specific person+account_type (e.g. "Iron Viper (Production)"),
-        // only show that account — don't show all sandbox accounts alongside it.
         .filter((s) => {
+          // Only show accounts assigned to this bot
+          const assignedToBot = botAssignmentRows.some(
+            (r) => r.person === s.name && r.type === s.account_type,
+          )
+          if (botAssignmentRows.length > 0 && !assignedToBot) return false
+
           if (accountTypeParam) {
             // Show only accounts matching the selected type
             if (s.account_type !== accountTypeParam) return false

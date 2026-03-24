@@ -511,7 +511,26 @@ async function monitorSinglePosition(
   if (bot.name === 'flame' && pos.sandbox_close_order_id) {
     let pendingInfo: Record<string, any> = {}
     try { pendingInfo = JSON.parse(pos.sandbox_close_order_id) } catch { /* ignore */ }
-    const userPending = pendingInfo['User']
+
+    // Find the correct pending order — for sandbox positions use 'User' or 'User:sandbox',
+    // for production positions use the production account key (e.g., 'Logan:production')
+    const posAccountType = pos.account_type || 'sandbox'
+    const posPerson = pos.person || 'User'
+    let pendingKey = ''
+    let userPending: any = null
+
+    if (posAccountType === 'production') {
+      // Production positions: look for person:production key
+      pendingKey = `${posPerson}:production`
+      userPending = pendingInfo[pendingKey]
+    }
+    if (!userPending?.order_id) {
+      // Sandbox positions (or fallback): try User:sandbox, then User
+      pendingKey = 'User:sandbox'
+      userPending = pendingInfo['User:sandbox'] ?? pendingInfo['User']
+      if (!userPending?.order_id) pendingKey = 'User'
+    }
+
     if (userPending?.order_id && userPending.order_id > 0 && !userPending.fill_price) {
       // If past EOD cutoff, cancel the pending limit order and fall through
       // to the normal EOD market close logic below. A pending limit order
@@ -521,7 +540,16 @@ async function monitorSinglePosition(
           `[scanner] FLAME ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
           `canceling limit order and falling through to EOD market close`,
         )
-        try { await cancelSandboxOrder(userPending.order_id) } catch { /* non-fatal */ }
+        // Find the correct account to cancel the order
+        const cancelAccts = await getLoadedSandboxAccountsAsync()
+        const cancelAcct = posAccountType === 'production'
+          ? cancelAccts.find(a => a.name === posPerson && a.type === 'production')
+          : cancelAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? cancelAccts.find(a => a.name === 'User')
+        if (cancelAcct) {
+          try { await cancelSandboxOrder(userPending.order_id, cancelAcct.apiKey, cancelAcct.baseUrl) } catch { /* non-fatal */ }
+        } else {
+          try { await cancelSandboxOrder(userPending.order_id) } catch { /* non-fatal */ }
+        }
         // Clear the pending state so EOD close can proceed cleanly
         await query(
           `UPDATE ${botTable(bot.name, 'positions')}
@@ -532,21 +560,25 @@ async function monitorSinglePosition(
         // Fall through — do NOT return; the EOD/stale close logic below will handle it
       } else {
         // Normal re-poll during market hours
-        console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price...`)
+        console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price (${pendingKey})...`)
         try {
-          const userAcct = (await getLoadedSandboxAccountsAsync()).find(a => a.name === 'User')
-          if (userAcct) {
-            const accountId = await getAccountIdForKey(userAcct.apiKey)
+          // Find the correct account for re-polling
+          const allAccts = await getLoadedSandboxAccountsAsync()
+          const pollAcct = posAccountType === 'production'
+            ? allAccts.find(a => a.name === posPerson && a.type === 'production')
+            : allAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? allAccts.find(a => a.name === 'User')
+          if (pollAcct) {
+            const accountId = await getAccountIdForKey(pollAcct.apiKey, pollAcct.baseUrl)
             if (accountId) {
-              const fill = await getOrderFillPrice(userAcct.apiKey, accountId, userPending.order_id, 0)
+              const fill = await getOrderFillPrice(pollAcct.apiKey, accountId, userPending.order_id, 0)
               if (fill != null && fill > 0) {
-                console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close`)
+                console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close (${pendingKey})`)
                 // Complete the deferred close with actual fill
                 const closeReason = pendingInfo._pending_reason || 'deferred_fill'
                 const pnlPerContract = (entryCredit - fill) * 100
                 const realizedPnl = Math.round(pnlPerContract * contracts * 100) / 100
-                // Update sandbox_close_order_id with the fill price
-                pendingInfo['User'] = { ...userPending, fill_price: fill }
+                // Update the pending info with the fill price
+                pendingInfo[pendingKey] = { ...userPending, fill_price: fill }
                 delete pendingInfo._pending_reason
                 const rowsAffected = await dbExecute(
                   `UPDATE ${botTable(bot.name, 'positions')}
@@ -558,29 +590,39 @@ async function monitorSinglePosition(
                   [fill, realizedPnl, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
                 )
                 if (rowsAffected > 0) {
-                  await query(
-                    `UPDATE ${botTable(bot.name, 'paper_account')}
-                     SET current_balance = current_balance + $1,
-                         cumulative_pnl = cumulative_pnl + $1,
-                         total_trades = total_trades + 1,
-                         collateral_in_use = GREATEST(0, collateral_in_use - $2),
-                         buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
-                         updated_at = NOW()
-                     WHERE dte_mode = $3`,
-                    [realizedPnl, collateral, bot.dte],
-                  )
-                  const deferPersonRow = await query(
-                    `SELECT person FROM ${botTable(bot.name, 'positions')} WHERE position_id = $1 AND dte_mode = $2`,
-                    [pid, bot.dte],
-                  )
-                  const deferPerson = deferPersonRow[0]?.person || 'User'
+                  // Route paper_account update based on position's account_type
+                  if (posAccountType === 'production') {
+                    await query(
+                      `UPDATE ${botTable(bot.name, 'paper_account')}
+                       SET current_balance = current_balance + $1,
+                           cumulative_pnl = cumulative_pnl + $1,
+                           total_trades = total_trades + 1,
+                           collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                           buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
+                           updated_at = NOW()
+                       WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
+                      [realizedPnl, collateral, posPerson, bot.dte],
+                    )
+                  } else {
+                    await query(
+                      `UPDATE ${botTable(bot.name, 'paper_account')}
+                       SET current_balance = current_balance + $1,
+                           cumulative_pnl = cumulative_pnl + $1,
+                           total_trades = total_trades + 1,
+                           collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                           buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
+                           updated_at = NOW()
+                       WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $3`,
+                      [realizedPnl, collateral, bot.dte],
+                    )
+                  }
                   await query(
                     `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
                      VALUES (${CT_TODAY}, 0, 1, $1, $2)
                      ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
                        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
                        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-                    [realizedPnl, deferPerson],
+                    [realizedPnl, posPerson],
                   )
                   console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
@@ -802,7 +844,12 @@ async function closePosition(
     }
 
     // FLAME: log critical error if sandbox close still failed
-    const userCloseResult = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+    // For production positions, check the production account key; for sandbox, check User
+    const primaryCloseKey = posAccountType === 'production'
+      ? `${posPerson}:production`
+      : null
+    const userCloseResult = (primaryCloseKey ? sandboxCloseInfo[primaryCloseKey] : null)
+      ?? sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
     if (isFlameBotClose && !userCloseResult?.order_id) {
       console.error(
         `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
@@ -830,7 +877,10 @@ async function closePosition(
   // for successful closes. If still missing, DEFER the paper close — store the
   // sandbox close info on the position and let next cycle re-poll.
   let effectivePrice = estimatedPrice
-  const userClose = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+  // For production positions, prefer the production account's fill price
+  const prodCloseKey = posAccountType === 'production' ? `${posPerson}:production` : null
+  const userClose = (prodCloseKey ? sandboxCloseInfo[prodCloseKey] : null)
+    ?? sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
   if (userClose?.fill_price != null && userClose.fill_price > 0) {
     console.log(
       `[scanner] ${bot.name.toUpperCase()}: Actual close fill=$${userClose.fill_price.toFixed(4)} ` +

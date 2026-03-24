@@ -1906,9 +1906,10 @@ export async function closeIcOrderAllAccounts(
 export async function cancelSandboxOrder(
   orderId: number,
   apiKey?: string,
+  baseUrl?: string,
 ): Promise<boolean> {
   // Find the right API key — try all sandbox accounts if not provided
-  const accounts = apiKey ? [{ name: 'direct', apiKey, baseUrl: SANDBOX_URL }] : await getLoadedSandboxAccountsAsync()
+  const accounts = apiKey ? [{ name: 'direct', apiKey, baseUrl: baseUrl || SANDBOX_URL }] : await getLoadedSandboxAccountsAsync()
   for (const acct of accounts) {
     try {
       const acctBaseUrl = ('baseUrl' in acct ? acct.baseUrl : SANDBOX_URL) as string

@@ -612,14 +612,13 @@ export default function StatusCard({
         </div>
       </div>
 
-      {/* Tradier accounts — per-account P&L from Tradier */}
-      {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (
-        <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">
-            {data.sandbox_accounts.some((a: any) => a.account_type === 'production') ? 'Production Account' : 'Sandbox Accounts'}
-          </p>
+      {/* Tradier accounts — per-account P&L from Tradier, separated by type */}
+      {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (() => {
+        const prodAccounts = data.sandbox_accounts.filter((a: any) => a.account_type === 'production')
+        const sandboxAccounts = data.sandbox_accounts.filter((a: any) => a.account_type !== 'production')
+        const renderAccountCards = (accounts: any[]) => (
           <div className="grid grid-cols-3 gap-3">
-            {data.sandbox_accounts.map((acct, idx) => {
+            {accounts.map((acct, idx) => {
               const hasData = acct.account_id != null
               const dayPnl = acct.day_pnl ?? 0
               const dayPositive = dayPnl >= 0
@@ -660,8 +659,28 @@ export default function StatusCard({
               )
             })}
           </div>
-        </div>
-      )}
+        )
+        return (
+          <>
+            {prodAccounts.length > 0 && (
+              <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
+                <p className="text-[10px] text-forge-muted uppercase tracking-wider">
+                  Production Account{prodAccounts.length > 1 ? 's' : ''}
+                </p>
+                {renderAccountCards(prodAccounts)}
+              </div>
+            )}
+            {sandboxAccounts.length > 0 && (
+              <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
+                <p className="text-[10px] text-forge-muted uppercase tracking-wider">
+                  Sandbox Account{sandboxAccounts.length > 1 ? 's' : ''}
+                </p>
+                {renderAccountCards(sandboxAccounts)}
+              </div>
+            )}
+          </>
+        )
+      })()}
 
       {/* Config summary with editable allocation */}
       {config && (
