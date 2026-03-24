@@ -1677,12 +1677,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
 
-      // Retry sandbox order only (production already placed)
+      // Retry sandbox order only (production already placed — sandboxOnly prevents duplicate production orders)
       try {
         const retryResults = await placeIcOrderAllAccounts(
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit, positionId, bot.name,
+          { sandboxOnly: true },
         )
         // Merge only sandbox results (don't overwrite production)
         for (const [key, info] of Object.entries(retryResults)) {

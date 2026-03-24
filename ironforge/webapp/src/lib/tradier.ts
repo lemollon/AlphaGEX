@@ -616,6 +616,7 @@ let _sandboxAccountsLoadedFromDb = false
  * Called once on first use if env vars yielded zero accounts.
  */
 let _dbLoadAttempts = 0
+let _dbLoadLastAttemptTime = 0
 const DB_LOAD_MAX_RETRIES = 5
 
 async function ensureSandboxAccountsLoaded(): Promise<void> {
@@ -624,9 +625,19 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
   // caused production accounts to NEVER load when env vars were set.
   if (_sandboxAccountsLoadedFromDb) return
 
-  // Cap retries to avoid infinite DB queries on persistent failures
-  if (_dbLoadAttempts >= DB_LOAD_MAX_RETRIES) return
+  // Cap retries to avoid infinite DB queries on persistent failures.
+  // Auto-reset after 60s cooldown so the system self-heals without a redeploy
+  // (e.g., DB was slow on Render cold start but is now ready).
+  if (_dbLoadAttempts >= DB_LOAD_MAX_RETRIES) {
+    if (Date.now() - _dbLoadLastAttemptTime > 60_000) {
+      console.log('[tradier] DB load retry counter reset after 60s cooldown — retrying production account load')
+      _dbLoadAttempts = 0
+    } else {
+      return
+    }
+  }
   _dbLoadAttempts++
+  _dbLoadLastAttemptTime = Date.now()
 
   try {
     const { query: dbq } = await import('./db')
@@ -1144,6 +1155,7 @@ export async function placeIcOrderAllAccounts(
   totalCredit: number,
   tag?: string,
   botName?: string,
+  opts?: { sandboxOnly?: boolean },
 ): Promise<Record<string, SandboxOrderInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
@@ -1301,12 +1313,15 @@ export async function placeIcOrderAllAccounts(
         return
       }
       if (result?.order?.id) {
-        // Read back actual fill price
+        // Read back actual fill price.
+        // Production market orders WILL fill — poll forever (maxPollMs=0) until Tradier confirms.
+        // Sandbox uses 90s cap since sandbox fills are less critical.
         let fillPrice: number | null = null
+        const pollTimeout = acct.type === 'production' ? 0 : 90_000
         try {
-          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, 90_000, acct.baseUrl)
+          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollTimeout, acct.baseUrl)
         } catch {
-          // Non-fatal
+          // Non-fatal for sandbox; for production this shouldn't happen since we poll forever
         }
         // Use composite key to avoid collision when same person has sandbox + production
         const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
@@ -1334,7 +1349,8 @@ export async function placeIcOrderAllAccounts(
   // Step 3: Production accounts — run independently of sandbox fills.
   // Production and sandbox are separate systems; a sandbox rejection should
   // never prevent a production order from being placed.
-  if (productionAccts.length > 0) {
+  // Skip production on sandboxOnly mode (used by retry to prevent duplicate production orders).
+  if (productionAccts.length > 0 && !opts?.sandboxOnly) {
     console.log(
       `[tradier] Placing orders on ${productionAccts.length} production account(s) independently`,
     )
@@ -1520,9 +1536,10 @@ export async function getLoadedSandboxAccountsAsync(): Promise<Array<{ name: str
  * the scanner picks up changes immediately instead of on next restart.
  */
 export async function reloadSandboxAccounts(): Promise<void> {
-  // Clear caches
+  // Clear caches — including the retry counter so DB load actually happens
   _sandboxAccounts = []
   _sandboxAccountsLoadedFromDb = false
+  _dbLoadAttempts = 0
   for (const key of Object.keys(_accountIdCache)) {
     delete _accountIdCache[key]
   }
