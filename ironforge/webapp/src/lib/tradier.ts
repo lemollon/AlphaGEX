@@ -1685,14 +1685,16 @@ export async function getAccountsForBotAsync(botName: string): Promise<string[]>
 export async function getSandboxAccountPositions(
   apiKey: string,
   filterSymbols?: string[],
+  baseUrl: string = SANDBOX_URL,
 ): Promise<SandboxPosition[]> {
-  const accountId = await getAccountIdForKey(apiKey)
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
   if (!accountId) return []
 
   const data = await sandboxGet(
     `/accounts/${accountId}/positions`,
     undefined,
     apiKey,
+    baseUrl,
   )
   if (!data) return []
 
