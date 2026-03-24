@@ -565,9 +565,11 @@ async function ensureTables(): Promise<void> {
         )
 
         // 3. Reconcile pdt_config counter to match actual pdt_log count
+        //    Only count sandbox trades — production PDT is tracked separately
         const countRes = await client.query(
           `SELECT COUNT(*) as cnt FROM ${bot}_pdt_log
            WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND COALESCE(account_type, 'sandbox') = 'sandbox'
              AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
              AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
           [dte],

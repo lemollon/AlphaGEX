@@ -358,13 +358,14 @@ export async function POST(
                '${escapeSql(dte)}')`,
     )
 
-    // 13b. PDT entry
+    // 13b. PDT entry (scoped to account_type so sandbox/production PDT is separate)
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'pdt_log')} (
         trade_date, symbol, position_id, opened_at,
-        contracts, entry_credit, dte_mode
+        contracts, entry_credit, dte_mode, account_type
       ) VALUES (${CT_TODAY}, 'SPY', '${escapeSql(positionId)}', NOW(),
-                ${maxContracts}, ${credits.totalCredit}, '${escapeSql(dte)}')`,
+                ${maxContracts}, ${credits.totalCredit}, '${escapeSql(dte)}',
+                '${escapeSql(accountType)}')`,
     )
 
     // 14. Equity snapshot
