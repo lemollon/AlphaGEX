@@ -324,7 +324,7 @@ export default function BotDashboard({
 
       {/* PDT Management */}
       <ComponentErrorBoundary fallback="PDT card error">
-        <PdtCard bot={bot} accent={accent} botStatus={status} />
+        <PdtCard bot={bot} accent={accent} botStatus={status} accountType={hasAccounts ? (viewMode === 'live' ? 'production' : 'sandbox') : undefined} />
       </ComponentErrorBoundary>
 
       {/* PT Timeline */}

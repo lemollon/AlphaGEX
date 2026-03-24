@@ -340,7 +340,7 @@ async function ensureTables(): Promise<void> {
         } catch { /* column already exists or table doesn't exist yet */ }
       }
       // Add account_type column for production vs sandbox position tracking
-      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_pdt_log`]) {
         try {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'sandbox'`)
         } catch { /* column already exists or table doesn't exist yet */ }
@@ -356,7 +356,7 @@ async function ensureTables(): Promise<void> {
         } catch { /* table may not exist yet */ }
       }
       // Backfill NULL account_type to 'sandbox' for existing rows
-      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
+      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_pdt_log`]) {
         try {
           await client.query(`UPDATE ${tbl} SET account_type = 'sandbox' WHERE account_type IS NULL`)
         } catch { /* table may not exist yet */ }

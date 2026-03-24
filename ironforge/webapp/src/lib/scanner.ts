@@ -1938,12 +1938,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     ],
   )
 
-  // PDT log (include person for per-account daily trade tracking)
+  // PDT log (include person + account_type for per-account daily trade tracking)
   await query(
     `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
       trade_date, symbol, position_id, opened_at,
-      contracts, entry_credit, dte_mode, person
-    ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6)`,
+      contracts, entry_credit, dte_mode, person, account_type
+    ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6, 'sandbox')`,
     ['SPY', positionId, effectiveContracts, effectiveCredit, bot.dte, person],
   )
 
@@ -2486,8 +2486,10 @@ async function scanBot(bot: BotDef): Promise<void> {
       const storedCount = int(pdtCfgRow[0]?.day_trade_count)
       const syncResetAt = pdtCfgRow[0]?.last_reset_at ?? null
 
+      // Count only sandbox PDT trades for the auto-sync (production has separate tracking)
       let pdtCountSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
          WHERE is_day_trade = TRUE AND dte_mode = $1
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'
            AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
            AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
       const pdtCountParams: any[] = [bot.dte]

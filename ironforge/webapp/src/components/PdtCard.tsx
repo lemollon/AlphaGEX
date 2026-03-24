@@ -86,10 +86,12 @@ export default function PdtCard({
   bot,
   accent,
   botStatus,
+  accountType,
 }: {
   bot: 'flame' | 'spark' | 'inferno'
   accent: 'amber' | 'blue' | 'red'
   botStatus?: BotStatus | null
+  accountType?: 'sandbox' | 'production'
 }) {
   const [status, setStatus] = useState<PdtStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -101,7 +103,8 @@ export default function PdtCard({
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`/api/${bot}/pdt`)
+      const url = accountType ? `/api/${bot}/pdt?account_type=${accountType}` : `/api/${bot}/pdt`
+      const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setStatus(data)
@@ -109,7 +112,7 @@ export default function PdtCard({
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [bot])
+  }, [bot, accountType])
 
   useEffect(() => {
     fetchStatus()
