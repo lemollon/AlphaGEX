@@ -4,19 +4,28 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # Run from any machine with:
-#   - VERCEL_URL (default: https://ironforge-pi.vercel.app)
+#   - IRONFORGE_API_URL (or pass URL as $1; default: http://localhost:PORT)
 #   - TRADIER_SANDBOX_KEY_USER (for sandbox tests)
 #   - DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN (for DB comparison)
 #
-# Usage: bash ironforge/scripts/pre_market_validation.sh
+# Usage: bash ironforge/scripts/pre_market_validation.sh [URL]
 #
 # ALL TESTS ARE READ-ONLY. No positions opened, no data modified.
 # ═══════════════════════════════════════════════════════════════════════════
 
 set -uo pipefail
 
-VERCEL_URL="${VERCEL_URL:-https://ironforge-pi.vercel.app}"
-API="$VERCEL_URL/api"
+# Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
+if [ -n "${IRONFORGE_API_URL:-}" ]; then
+  BASE="$IRONFORGE_API_URL"
+elif [ -n "${1:-}" ]; then
+  BASE="$1"
+else
+  BASE="http://localhost:${PORT:-3000}"
+fi
+BASE="${BASE%/}"
+API="$BASE/api"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,7 +39,7 @@ info() { echo "  INFO: $1"; }
 
 echo "═══════════════════════════════════════════════════════════"
 echo "  IronForge Pre-Market Validation"
-echo "  Vercel: $VERCEL_URL"
+echo "  Render: $BASE"
 echo "  Time: $(date)"
 echo "═══════════════════════════════════════════════════════════"
 echo ""
@@ -299,18 +308,18 @@ echo ""
 for BOT in spark flame inferno; do
   HEADERS=$(curl -sI --max-time 15 "$API/$BOT/status" 2>/dev/null)
   CACHE=$(echo "$HEADERS" | grep -i "cache-control" | head -1 | tr -d '\r')
-  VERCEL_CACHE=$(echo "$HEADERS" | grep -i "x-vercel-cache" | head -1 | tr -d '\r')
+  RENDER_CACHE=$(echo "$HEADERS" | grep -i "x-render-cache\|x-vercel-cache" | head -1 | tr -d '\r')
   AGE=$(echo "$HEADERS" | grep -i "^age:" | head -1 | tr -d '\r')
 
   echo "  ${BOT^^}:"
   echo "    ${CACHE:-cache-control: (not set)}"
-  echo "    ${VERCEL_CACHE:-x-vercel-cache: (not set)}"
+  echo "    ${RENDER_CACHE:-x-render-cache: (not set)}"
   echo "    ${AGE:-age: (not set)}"
 
   if echo "$CACHE" | grep -qi "no-store\|no-cache\|max-age=0"; then
     pass "Cache headers correct"
   elif [ -z "$CACHE" ]; then
-    warn "No cache-control header — Vercel may cache responses"
+    warn "No cache-control header — Render may cache responses"
   else
     warn "Unexpected cache-control: $CACHE"
   fi

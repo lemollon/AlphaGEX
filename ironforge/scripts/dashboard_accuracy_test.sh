@@ -4,17 +4,26 @@
 # Compares Databricks DB values vs API responses for all three bots.
 # Run from any machine with:
 #   1. DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN set
-#   2. curl access to the Vercel deployment (ironforge-pi.vercel.app)
+#   2. curl access to the Render deployment
 #
-# Usage: bash ironforge/scripts/dashboard_accuracy_test.sh
+# Usage: bash ironforge/scripts/dashboard_accuracy_test.sh [URL]
 
 set -euo pipefail
 
-VERCEL_URL="${VERCEL_URL:-https://ironforge-pi.vercel.app}"
-API="$VERCEL_URL/api"
+# Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
+if [ -n "${IRONFORGE_API_URL:-}" ]; then
+  BASE="$IRONFORGE_API_URL"
+elif [ -n "${1:-}" ]; then
+  BASE="$1"
+else
+  BASE="http://localhost:${PORT:-3000}"
+fi
+BASE="${BASE%/}"
+API="$BASE/api"
 
 echo "=== IronForge Dashboard Accuracy Test ==="
-echo "Vercel URL: $VERCEL_URL"
+echo "Render URL: $BASE"
 echo "Databricks: $DATABRICKS_SERVER_HOSTNAME"
 echo ""
 
@@ -149,7 +158,7 @@ echo "=== Test Complete ==="
 echo ""
 echo "KEY:"
 echo "  [DB] = Raw Databricks paper_account table (may be stale)"
-echo "  [API] = Vercel API (recalculates from actual positions — source of truth)"
+echo "  [API] = Render API (recalculates from actual positions — source of truth)"
 echo "  MATCH = Values within $0.02"
 echo "  DRIFT = Values differ (expected if paper_account hasn't been reconciled)"
 echo ""

@@ -5,17 +5,18 @@
 # Usage (from Render shell):  bash post_deploy_verify.sh
 # Usage (from local):         bash post_deploy_verify.sh https://your-ironforge.onrender.com
 #
-# Auto-detects: IRONFORGE_API_URL env var → arg → localhost:3000
+# Auto-detects: IRONFORGE_API_URL env var → arg → localhost:$PORT
 
 set -euo pipefail
 
 # Auto-detect base URL
+# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
 if [ -n "${IRONFORGE_API_URL:-}" ]; then
   BASE="$IRONFORGE_API_URL"
 elif [ -n "${1:-}" ]; then
   BASE="$1"
 else
-  BASE="http://localhost:3000"
+  BASE="http://localhost:${PORT:-3000}"
 fi
 BASE="${BASE%/}"
 
