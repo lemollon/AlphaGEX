@@ -19,8 +19,10 @@ export async function GET(
   const dte = dteMode(bot)
   const personParam = req.nextUrl.searchParams.get('person')
   const filterByPerson = personParam && personParam !== 'all'
+  const accountType = req.nextUrl.searchParams.get('account_type') || undefined
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeFilter = accountType ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 50), 200)
@@ -34,7 +36,7 @@ export async function GET(
               total_credit, confidence, was_executed,
               skip_reason, reasoning, wings_adjusted, dte_mode
        FROM ${botTable(bot, 'signals')}
-       WHERE 1=1 ${dteFilter} ${personFilter}
+       WHERE 1=1 ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY signal_time DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )
