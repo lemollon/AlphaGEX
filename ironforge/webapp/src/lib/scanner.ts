@@ -1538,8 +1538,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           spot_price, vix, expected_move, call_wall, put_wall,
           gex_regime, put_short, put_long, call_short, call_long,
           total_credit, confidence, was_executed, skip_reason, reasoning,
-          wings_adjusted, dte_mode, person
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+          wings_adjusted, dte_mode, person, account_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
         [
           spot, vix, expectedMove, 0, 0,
           'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
@@ -1677,12 +1677,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
 
-      // Retry sandbox order only (production already placed)
+      // Retry sandbox order only (production already placed — sandboxOnly prevents duplicate production orders)
       try {
         const retryResults = await placeIcOrderAllAccounts(
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit, positionId, bot.name,
+          { sandboxOnly: true },
         )
         // Merge only sandbox results (don't overwrite production)
         for (const [key, info] of Object.entries(retryResults)) {
@@ -1699,8 +1700,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             spot_price, vix, expected_move, call_wall, put_wall,
             gex_regime, put_short, put_long, call_short, call_long,
             total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode, person
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+            wings_adjusted, dte_mode, person, account_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
           [
             spot, vix, expectedMove, 0, 0,
             'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
@@ -1905,14 +1906,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
   }
 
-  // Signal log (include person for per-account attribution)
+  // Signal log (include person + account_type for per-account attribution)
   await query(
     `INSERT INTO ${botTable(bot.name, 'signals')} (
       spot_price, vix, expected_move, call_wall, put_wall,
       gex_regime, put_short, put_long, call_short, call_long,
       total_credit, confidence, was_executed, reasoning,
-      wings_adjusted, dte_mode, person
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      wings_adjusted, dte_mode, person, account_type
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, 'sandbox')`,
     [
       spot, vix, expectedMove, 0, 0,
       'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
