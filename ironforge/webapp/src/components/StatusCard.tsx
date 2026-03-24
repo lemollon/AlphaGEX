@@ -93,6 +93,7 @@ export default function StatusCard({
   quotesDelayed,
   quoteAgeSeconds,
   todaysClosedTrades,
+  viewMode,
 }: {
   data: StatusData
   accent: 'amber' | 'blue' | 'red'
@@ -104,6 +105,7 @@ export default function StatusCard({
   quotesDelayed?: boolean
   quoteAgeSeconds?: number
   todaysClosedTrades?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
+  viewMode?: 'paper' | 'live'
 }) {
   const { account } = data
   const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
@@ -612,56 +614,65 @@ export default function StatusCard({
         </div>
       </div>
 
-      {/* Tradier accounts — per-account P&L from Tradier */}
-      {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (
-        <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">
-            {data.sandbox_accounts.some((a: any) => a.account_type === 'production') ? 'Production Account' : 'Sandbox Accounts'}
-          </p>
-          <div className="grid grid-cols-3 gap-3">
-            {data.sandbox_accounts.map((acct, idx) => {
-              const hasData = acct.account_id != null
-              const dayPnl = acct.day_pnl ?? 0
-              const dayPositive = dayPnl >= 0
-              const uPnl = acct.unrealized_pnl
-              const uPct = acct.unrealized_pnl_pct
-              const uPositive = (uPnl ?? 0) >= 0
-              const bp = acct.option_buying_power
-              const bpNeg = bp != null && bp < 0
-              return (
-                <div key={`${acct.name}-${acct.account_type || acct.account_id || idx}`} className="bg-forge-bg/50 rounded-lg px-3 py-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs font-medium text-gray-300">{acct.name}</span>
-                    <span className="text-[10px] text-gray-500">{acct.open_positions} pos</span>
-                  </div>
-                  {hasData ? (
-                    <>
-                      <p className={`text-sm font-semibold ${dayPnl === 0 ? 'text-gray-400' : dayPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {dayPnl === 0 ? '$0.00' : `${dayPositive ? '+' : ''}$${dayPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                        <span className="text-[10px] text-forge-muted ml-1">day P&L</span>
-                      </p>
-                      {uPnl != null && acct.open_positions > 0 && (
-                        <p className={`text-xs mt-0.5 font-medium ${uPnl === 0 ? 'text-gray-400' : uPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {uPnl === 0 ? '$0.00' : `${uPositive ? '+' : ''}$${uPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                          {uPct != null && uPnl !== 0 && (
-                            <span className="ml-1">({uPositive ? '+' : ''}{uPct.toFixed(1)}%)</span>
-                          )}
-                          <span className="text-[10px] text-forge-muted ml-1">unreal</span>
+      {/* Tradier accounts — show production or sandbox based on viewMode */}
+      {data.sandbox_accounts && data.sandbox_accounts.length > 0 && (() => {
+        const isLive = viewMode === 'live'
+        const visibleAccounts = data.sandbox_accounts.filter((a: any) =>
+          isLive ? a.account_type === 'production' : a.account_type !== 'production'
+        )
+        if (visibleAccounts.length === 0) return null
+        const sectionLabel = isLive ? 'Live Account' : 'Broker Account'
+        const sectionLabelPlural = visibleAccounts.length > 1 ? 's' : ''
+        return (
+          <div className="grid gap-2 mb-3 pt-3 border-t border-forge-border/30">
+            <p className="text-[10px] text-forge-muted uppercase tracking-wider">
+              {sectionLabel}{sectionLabelPlural}
+            </p>
+            <div className={`grid ${visibleAccounts.length > 1 ? 'grid-cols-3' : 'grid-cols-1 max-w-xs'} gap-3`}>
+              {visibleAccounts.map((acct: SandboxAccount, idx: number) => {
+                const hasData = acct.account_id != null
+                const dayPnl = acct.day_pnl ?? 0
+                const dayPositive = dayPnl >= 0
+                const uPnl = acct.unrealized_pnl
+                const uPct = acct.unrealized_pnl_pct
+                const uPositive = (uPnl ?? 0) >= 0
+                const bp = acct.option_buying_power
+                const bpNeg = bp != null && bp < 0
+                return (
+                  <div key={`${acct.name}-${acct.account_type || acct.account_id || idx}`} className="bg-forge-bg/50 rounded-lg px-3 py-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-gray-300">{acct.name}</span>
+                      <span className="text-[10px] text-gray-500">{acct.open_positions} pos</span>
+                    </div>
+                    {hasData ? (
+                      <>
+                        <p className={`text-sm font-semibold ${dayPnl === 0 ? 'text-gray-400' : dayPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {dayPnl === 0 ? '$0.00' : `${dayPositive ? '+' : ''}$${dayPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                          <span className="text-[10px] text-forge-muted ml-1">day P&L</span>
                         </p>
-                      )}
-                      <p className={`text-xs mt-0.5 ${bpNeg ? 'text-red-400 font-semibold' : 'text-gray-500'}`}>
-                        BP: ${bp != null ? bp.toLocaleString(undefined, { minimumFractionDigits: 0 }) : '—'}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-xs text-gray-600">Not configured</p>
-                  )}
-                </div>
-              )
-            })}
+                        {uPnl != null && acct.open_positions > 0 && (
+                          <p className={`text-xs mt-0.5 font-medium ${uPnl === 0 ? 'text-gray-400' : uPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {uPnl === 0 ? '$0.00' : `${uPositive ? '+' : ''}$${uPnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                            {uPct != null && uPnl !== 0 && (
+                              <span className="ml-1">({uPositive ? '+' : ''}{uPct.toFixed(1)}%)</span>
+                            )}
+                            <span className="text-[10px] text-forge-muted ml-1">unreal</span>
+                          </p>
+                        )}
+                        <p className={`text-xs mt-0.5 ${bpNeg ? 'text-red-400 font-semibold' : 'text-gray-500'}`}>
+                          BP: ${bp != null ? bp.toLocaleString(undefined, { minimumFractionDigits: 0 }) : '—'}
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-gray-600">Not configured</p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
 
       {/* Config summary with editable allocation */}
       {config && (

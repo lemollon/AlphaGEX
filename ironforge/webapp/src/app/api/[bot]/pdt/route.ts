@@ -36,13 +36,17 @@ function toISOString(val: any): string {
  * Count day trades in the rolling window.
  * Reads from {bot}_pdt_log (per-bot table the scanner writes to).
  * If last_reset_at is set, exclude trades created before the reset.
+ * If accountType is set, only count trades for that account type (sandbox/production).
  */
-function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null): string {
+function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null, accountType?: string): string {
   const table = botTable(bot, 'pdt_log')
   let sql = `SELECT COUNT(*) as cnt FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+  if (accountType) {
+    sql += ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
+  }
   if (lastResetAt) {
     sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
@@ -51,13 +55,17 @@ function dayTradeCountSql(bot: string, dte: string, lastResetAt: string | null):
 
 /**
  * Get trigger trades (dates that count toward PDT) from {bot}_pdt_log.
+ * If accountType is set, only return trades for that account type.
  */
-function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): string {
+function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null, accountType?: string): string {
   const table = botTable(bot, 'pdt_log')
   let sql = `SELECT trade_date, position_id FROM ${table}
      WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
      AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
      AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+  if (accountType) {
+    sql += ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
+  }
   if (lastResetAt) {
     sql += ` AND created_at > '${escapeSql(lastResetAt)}'`
   }
@@ -70,7 +78,7 @@ function triggerTradeSql(bot: string, dte: string, lastResetAt: string | null): 
 /* ------------------------------------------------------------------ */
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
@@ -78,9 +86,10 @@ export async function GET(
 
   const botName = bot.toUpperCase()
   const dte = dteMode(bot)!
+  const accountType = req.nextUrl.searchParams.get('account_type') || undefined
 
   try {
-    return await buildStatusResponse(bot, botName, dte)
+    return await buildStatusResponse(bot, botName, dte, accountType)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })
@@ -175,13 +184,14 @@ async function handleToggle(
            updated_at = NOW()
        WHERE bot_name = '${escapeSql(botName)}'`,
     )
-    // Clear pdt_log flags (best-effort)
+    // Clear pdt_log flags (best-effort) — only sandbox flags, production PDT is separate
     try {
       const dte = dteMode(bot)!
       await dbExecute(
         `UPDATE ${botTable(bot, 'pdt_log')}
          SET is_day_trade = FALSE
-         WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'`,
+         WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
       )
     } catch { /* non-critical */ }
   }
@@ -247,12 +257,13 @@ async function handleReset(
      WHERE bot_name = '${escapeSql(botName)}'`,
   )
 
-  // Clear pdt_log flags (best-effort)
+  // Clear pdt_log flags (best-effort) — only sandbox flags, production PDT is separate
   try {
     await dbExecute(
       `UPDATE ${botTable(bot, 'pdt_log')}
        SET is_day_trade = FALSE
-       WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'`,
+       WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte)}'
+         AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
     )
   } catch { /* non-critical — last_reset_at is the real reset mechanism */ }
 
@@ -275,8 +286,8 @@ async function handleReset(
 /*  Helper: get trigger trades                                         */
 /* ------------------------------------------------------------------ */
 
-async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | null) {
-  const rows = await dbQuery(triggerTradeSql(bot, dte, lastResetAt))
+async function getTriggerTrades(bot: string, dte: string, lastResetAt: string | null, accountType?: string) {
+  const rows = await dbQuery(triggerTradeSql(bot, dte, lastResetAt, accountType))
 
   // Group by trade_date
   const byDate = new Map<string, string[]>()
@@ -316,6 +327,7 @@ async function buildStatusResponse(
   bot: string,
   botName: string,
   dte: string,
+  accountType?: string,
 ): Promise<NextResponse> {
   const configRows = await dbQuery(
     `SELECT pdt_enabled, max_day_trades,
@@ -366,14 +378,15 @@ async function buildStatusResponse(
   // PostgreSQL returns timestamptz as JS Date — must convert to ISO string for SQL embedding
   const lastResetAt = cfg.last_reset_at ? toISOString(cfg.last_reset_at) : null
 
-  // Count from {bot}_pdt_log — respects last_reset_at
-  const countRows = await dbQuery(dayTradeCountSql(bot, dte, lastResetAt))
+  // Count from {bot}_pdt_log — respects last_reset_at and account_type filter
+  const countRows = await dbQuery(dayTradeCountSql(bot, dte, lastResetAt, accountType))
   const dayTradeCount = toInt(countRows[0]?.cnt)
 
+  const acctFilter = accountType ? ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'` : ''
   const todayRows = await dbQuery(
     `SELECT COUNT(*) as cnt, MIN(opened_at) as first_trade_time
      FROM ${botTable(bot, 'pdt_log')}
-     WHERE trade_date = ${CT_TODAY} AND dte_mode = '${escapeSql(dte)}'`,
+     WHERE trade_date = ${CT_TODAY} AND dte_mode = '${escapeSql(dte)}'${acctFilter}`,
   )
   const todayTradesCount = toInt(todayRows[0]?.cnt)
   const tradedToday = maxTradesPerDay > 0 && todayTradesCount >= maxTradesPerDay
@@ -402,7 +415,7 @@ async function buildStatusResponse(
     pdtStatus = 'CAN_TRADE'
   }
 
-  const triggerTrades = await getTriggerTrades(bot, dte, lastResetAt)
+  const triggerTrades = await getTriggerTrades(bot, dte, lastResetAt, accountType)
   const nextSlotOpens = triggerTrades.length > 0 ? triggerTrades[0].falls_off : null
   const nextAvailableDate = isBlocked && nextSlotOpens ? nextSlotOpens : null
 

@@ -64,6 +64,9 @@ const ACCOUNT_BOTS = new Set(['flame'])
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Broker Equity', 'Reconcile'])
 
+/** View mode: Paper (sandbox combined) or Live (production) */
+type ViewMode = 'paper' | 'live'
+
 const STATUS_REFRESH = 15_000   // Status refreshes every 15s
 const DATA_REFRESH = 30_000     // Tables/logs refresh every 30s
 const LIVE_REFRESH = 10_000     // Live position monitor refreshes every 10s
@@ -78,40 +81,13 @@ export default function BotDashboard({
   const hasAccounts = ACCOUNT_BOTS.has(bot)
   const [tab, setTab] = useState<Tab>('Equity Curve')
   const [equityPeriod, setEquityPeriod] = useState<Period>('intraday')
-  const [selectedPerson, setSelectedPerson] = useState('all')
+  const [viewMode, setViewMode] = useState<ViewMode>('paper')
 
-  // Fetch available persons for the dropdown — only needed for bots with accounts
-  const { data: personsData } = useSWR(hasAccounts ? '/api/persons' : null, fetcher)
-  const personEntries: Array<{ person: string; alias: string | null; account_type?: string }> = personsData?.persons ?? []
-
-  // Build dropdown entries: if a person has multiple account types, show separate entries
-  // e.g., "Iron Viper (Production)" and "Iron Viper (Sandbox)"
-  const personCounts: Record<string, number> = {}
-  for (const pe of personEntries) {
-    personCounts[pe.person] = (personCounts[pe.person] || 0) + 1
-  }
-  const dropdownEntries = personEntries.map((pe) => {
-    const hasMultiple = (personCounts[pe.person] || 0) > 1
-    const displayName = pe.alias || pe.person
-    const suffix = hasMultiple && pe.account_type ? ` (${pe.account_type === 'production' ? 'Production' : 'Sandbox'})` : ''
-    // Encode both person and account_type in the value: "Logan:production" or "Logan:sandbox"
-    const value = pe.account_type && pe.account_type !== 'sandbox' ? `${pe.person}:${pe.account_type}` : pe.person
-    return { value, label: `${displayName}${suffix}`, person: pe.person, account_type: pe.account_type || 'sandbox' }
-  })
-  const persons: string[] = Array.from(new Set(personEntries.map((pe) => pe.person)))
-
-  // Parse selected value to extract person + account_type
-  const selectedIsProduction = selectedPerson.endsWith(':production')
-  const selectedPersonName = selectedPerson.includes(':') ? selectedPerson.split(':')[0] : selectedPerson
-  const selectedAccountType = selectedPerson.includes(':') ? selectedPerson.split(':')[1] : undefined
-
-  // Query string fragment for person + account_type filtering (appended to all API calls)
+  // Query string fragment for account_type filtering (appended to all API calls)
+  // Paper = sandbox combined (all sandbox accounts), Live = production only
   const buildPq = () => {
-    if (selectedPerson === 'all') return ''
-    const parts: string[] = []
-    parts.push(`person=${encodeURIComponent(selectedPersonName)}`)
-    if (selectedAccountType) parts.push(`account_type=${encodeURIComponent(selectedAccountType)}`)
-    return parts.join('&')
+    if (!hasAccounts) return ''
+    return `account_type=${viewMode === 'live' ? 'production' : 'sandbox'}`
   }
   const pq = buildPq()
   const pqSep = (url: string) => url.includes('?') ? `${url}&${pq}` : `${url}?${pq}`
@@ -150,10 +126,9 @@ export default function BotDashboard({
 
   /* ---- Broker (production) equity curve — FLAME only ---- */
   const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
-  const brokerPerson = selectedPerson !== 'all' ? selectedPersonName : persons[0] ?? 'User'
   const { data: brokerEquity } = useSWR(
     hasAccounts && tab === 'Broker Equity'
-      ? `/api/accounts/production/equity-curve?person=${encodeURIComponent(brokerPerson)}&mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
+      ? `/api/accounts/production/equity-curve?mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
       : null,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
@@ -280,7 +255,7 @@ export default function BotDashboard({
 
   return (
     <div className="space-y-6">
-      {/* Title + Person Filter */}
+      {/* Title + Paper/Live Toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1
@@ -292,26 +267,30 @@ export default function BotDashboard({
             {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
           </span>
         </div>
-        {hasAccounts && dropdownEntries.length > 1 && (
-          <div className="flex items-center gap-2">
-            {selectedIsProduction && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">
-                LIVE TRADING
-              </span>
-            )}
-            <select
-              value={selectedPerson}
-              onChange={(e) => setSelectedPerson(e.target.value)}
-              className="bg-forge-card border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:border-amber-500 focus:outline-none"
+        {hasAccounts ? (
+          <div className="flex items-center gap-1 bg-forge-bg/80 rounded-lg p-0.5 border border-forge-border">
+            <button
+              onClick={() => setViewMode('paper')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                viewMode === 'paper'
+                  ? 'bg-forge-card text-white shadow-sm'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
             >
-              <option value="all">All Accounts</option>
-              {dropdownEntries.map((de) => (
-                <option key={de.value} value={de.value}>{de.label}</option>
-              ))}
-            </select>
+              Paper Trading
+            </button>
+            <button
+              onClick={() => setViewMode('live')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                viewMode === 'live'
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/30 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              Live Trading
+            </button>
           </div>
-        )}
-        {!hasAccounts && (
+        ) : (
           <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-gray-500/15 text-gray-400 border border-gray-600/30 uppercase tracking-wider">
             Paper Only
           </span>
@@ -331,6 +310,7 @@ export default function BotDashboard({
           quotesDelayed={positionMonitor?.quotes_delayed}
           quoteAgeSeconds={positionMonitor?.quote_age_seconds}
           todaysClosedTrades={positionMonitor?.todays_closed_trades}
+          viewMode={viewMode}
         />
       )}
 
@@ -344,7 +324,7 @@ export default function BotDashboard({
 
       {/* PDT Management */}
       <ComponentErrorBoundary fallback="PDT card error">
-        <PdtCard bot={bot} accent={accent} botStatus={status} />
+        <PdtCard bot={bot} accent={accent} botStatus={status} accountType={hasAccounts ? (viewMode === 'live' ? 'production' : 'sandbox') : undefined} />
       </ComponentErrorBoundary>
 
       {/* PT Timeline */}
@@ -384,7 +364,7 @@ export default function BotDashboard({
         {tab === 'Broker Equity' && (
           <BrokerEquityTab
             data={brokerEquity}
-            person={brokerPerson}
+            person="Production"
             period={brokerPeriod}
             onPeriodChange={setBrokerPeriod}
             accent={accent}
