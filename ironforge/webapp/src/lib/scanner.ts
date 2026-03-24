@@ -1148,9 +1148,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (maxTradesPerDay > 0) {
     const todayTradesSql = person && person !== 'all'
       ? `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1 AND person = $2`
+         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1 AND person = $2
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'`
       : `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1`
+         WHERE trade_date = ${CT_TODAY} AND dte_mode = $1
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'`
     const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
@@ -1177,6 +1179,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (pdtEnabled && maxDayTrades > 0) {
     let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
        WHERE is_day_trade = TRUE AND dte_mode = $1
+         AND COALESCE(account_type, 'sandbox') = 'sandbox'
          AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
          AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
     const pdtParams: any[] = [bot.dte]
