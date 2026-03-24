@@ -2,20 +2,33 @@
 # Monitor FLAME's first production trade after deploy.
 # Polls every 30 seconds until a production position appears or you ctrl-c.
 #
-# Usage: bash ironforge/scripts/monitor_first_trade.sh [BASE_URL]
-# Default: https://ironforge-pi.vercel.app
+# Usage (from Render shell):  bash monitor_first_trade.sh
+# Usage (from local):         bash monitor_first_trade.sh https://your-ironforge.onrender.com
 #
 # Run this at ~8:30 AM CT and leave it running until FLAME opens its first trade.
 
 set -uo pipefail
 
-BASE="${1:-https://ironforge-pi.vercel.app}"
+# Auto-detect base URL
+if [ -n "${IRONFORGE_API_URL:-}" ]; then
+  BASE="$IRONFORGE_API_URL"
+elif [ -n "${1:-}" ]; then
+  BASE="$1"
+else
+  BASE="http://localhost:3000"
+fi
+BASE="${BASE%/}"
 INTERVAL=30
 
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
 red()   { printf "\033[31m%s\033[0m\n" "$*"; }
 yellow(){ printf "\033[33m%s\033[0m\n" "$*"; }
 dim()   { printf "\033[2m%s\033[0m\n" "$*"; }
+
+# Use node for JSON parsing (guaranteed on Render Node.js service)
+jq_node() {
+  node -e "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); $1"
+}
 
 echo "================================================"
 echo "  FLAME First Production Trade Monitor"
@@ -31,15 +44,12 @@ while true; do
 
   # ── Check for open production positions ──────────────────────────
   PROD_POS=$(curl -sf "$BASE/api/flame/positions?account_type=production" 2>/dev/null || echo '{}')
-  POS_COUNT=$(echo "$PROD_POS" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-positions = d.get('positions', d if isinstance(d, list) else [])
-open_pos = [p for p in positions if p.get('status') == 'open']
-print(len(open_pos))
-" 2>/dev/null || echo 0)
+  POS_COUNT=$(echo "$PROD_POS" | jq_node "
+    const p=d.positions||(Array.isArray(d)?d:[]);
+    console.log(p.filter(x=>x.status==='open').length)
+  " 2>/dev/null || echo 0)
 
-  if [ "$POS_COUNT" -gt 0 ]; then
+  if [ "$POS_COUNT" -gt 0 ] 2>/dev/null; then
     echo ""
     green "=========================================="
     green "  PRODUCTION TRADE DETECTED!"
@@ -47,33 +57,21 @@ print(len(open_pos))
     echo ""
 
     # Print position details
-    echo "$PROD_POS" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-positions = d.get('positions', d if isinstance(d, list) else [])
-for p in positions:
-    if p.get('status') != 'open': continue
-    pid = p.get('position_id', '?')
-    contracts = p.get('contracts', '?')
-    credit = p.get('total_credit', 0) or 0
-    ps = p.get('put_short_strike', '?')
-    pl = p.get('put_long_strike', '?')
-    cs = p.get('call_short_strike', '?')
-    cl = p.get('call_long_strike', '?')
-    person = p.get('person', '?')
-    acct_type = p.get('account_type', '?')
-    print(f'  Position:  {pid}')
-    print(f'  Person:    {person} ({acct_type})')
-    print(f'  Contracts: {contracts}')
-    print(f'  Credit:    \${credit:.4f}' if isinstance(credit, (int, float)) else f'  Credit:    {credit}')
-    print(f'  Strikes:   {ps}/{pl}P {cs}/{cl}C')
-    print()
-" 2>/dev/null
+    echo "$PROD_POS" | jq_node "
+      const p=d.positions||(Array.isArray(d)?d:[]);
+      p.filter(x=>x.status==='open').forEach(x=>{
+        console.log('  Position:  '+x.position_id);
+        console.log('  Person:    '+(x.person||'?')+' ('+(x.account_type||'?')+')');
+        console.log('  Contracts: '+x.contracts);
+        console.log('  Credit:    \$'+(x.total_credit||0).toFixed(4));
+        console.log('  Strikes:   '+x.put_short_strike+'/'+x.put_long_strike+'P '+x.call_short_strike+'/'+x.call_long_strike+'C');
+        console.log('');
+      });
+    " 2>/dev/null
 
-    # Verify on Tradier
     echo "Next steps:"
     echo "  1. Check Tradier dashboard (account 6YB71371) for matching order"
-    echo "  2. Watch Live Trading tab at $BASE/flame (switch to Live)"
+    echo "  2. Watch Live Trading tab on FLAME dashboard"
     echo "  3. Monitor P&L updates every scan cycle"
     echo ""
     green "Monitor complete. Position is live."
@@ -82,30 +80,21 @@ for p in positions:
 
   # ── Check scanner status for skip reasons ────────────────────────
   SCANNER=$(curl -sf "$BASE/api/scanner/status" 2>/dev/null || echo '{}')
-  LAST_RESULT=$(echo "$SCANNER" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-bots = d.get('bots', {})
-flame = bots.get('flame', {})
-result = flame.get('last_result', 'unknown')
-print(result[:80] if isinstance(result, str) else 'unknown')
-" 2>/dev/null || echo unknown)
+  LAST_RESULT=$(echo "$SCANNER" | jq_node "
+    const f=(d.bots||{}).flame||{};
+    console.log((f.last_result||'unknown').slice(0,80))
+  " 2>/dev/null || echo unknown)
 
-  LAST_SCAN=$(echo "$SCANNER" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-bots = d.get('bots', {})
-flame = bots.get('flame', {})
-print(flame.get('last_scan', 'never')[:19])
-" 2>/dev/null || echo never)
+  LAST_SCAN=$(echo "$SCANNER" | jq_node "
+    const f=(d.bots||{}).flame||{};
+    console.log((f.last_scan||'never').slice(0,19))
+  " 2>/dev/null || echo never)
 
   # ── Check if production accounts are loaded ──────────────────────
   DIAG=$(curl -sf "$BASE/api/flame/diagnose-production" 2>/dev/null || echo '{}')
-  PROD_COUNT=$(echo "$DIAG" | python3 -c "
-import sys,json
-d=json.load(sys.stdin)
-print(len(d.get('production_accounts', [])))
-" 2>/dev/null || echo 0)
+  PROD_COUNT=$(echo "$DIAG" | jq_node "
+    console.log((d.production_accounts||[]).length)
+  " 2>/dev/null || echo 0)
 
   # ── Display status ───────────────────────────────────────────────
   if echo "$LAST_RESULT" | grep -q "^traded:"; then
