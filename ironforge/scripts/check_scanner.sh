@@ -4,13 +4,16 @@
 # Example: bash check_scanner.sh https://ironforge-xxxx.onrender.com
 
 # Auto-detect base URL
-# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
+# Render shell is a separate container — no PORT, no localhost access.
+RENDER_DEFAULT="https://ironforge-dashboard.onrender.com"
 if [ -n "${IRONFORGE_API_URL:-}" ]; then
   BASE="$IRONFORGE_API_URL"
+elif [ -n "${RENDER_EXTERNAL_URL:-}" ]; then
+  BASE="$RENDER_EXTERNAL_URL"
 elif [ -n "${1:-}" ]; then
   BASE="$1"
 else
-  BASE="http://localhost:${PORT:-3000}"
+  BASE="$RENDER_DEFAULT"
 fi
 BASE="${BASE%/}"
 
