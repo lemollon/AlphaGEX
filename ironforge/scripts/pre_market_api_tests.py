@@ -7,7 +7,7 @@ Usage:
     python ironforge/scripts/pre_market_api_tests.py
 
 Optional env vars:
-    IRONFORGE_API_URL        (default: http://localhost:PORT)
+    IRONFORGE_API_URL        (default: https://ironforge-899p.onrender.com)
     TRADIER_SANDBOX_KEY_USER (for sandbox account tests)
 """
 
@@ -20,8 +20,9 @@ import urllib.error
 from datetime import datetime, timezone
 
 # Auto-detect base URL
-# On Render, PORT env var is set (typically 10000). localhost:3000 won't work.
-BASE_URL = os.environ.get("IRONFORGE_API_URL", f"http://localhost:{os.environ.get('PORT', '3000')}")
+# Render shell is a separate container — no PORT, no localhost access.
+RENDER_DEFAULT = "https://ironforge-899p.onrender.com"
+BASE_URL = os.environ.get("IRONFORGE_API_URL") or os.environ.get("RENDER_EXTERNAL_URL") or RENDER_DEFAULT
 BASE_URL = BASE_URL.rstrip("/")
 API = f"{BASE_URL}/api"
 SANDBOX_KEY = os.environ.get("TRADIER_SANDBOX_KEY_USER", "")
