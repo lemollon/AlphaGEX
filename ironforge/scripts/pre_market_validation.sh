@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 #
 # Run from any machine with:
-#   - IRONFORGE_API_URL (or pass URL as $1; default: ironforge-dashboard.onrender.com)
+#   - IRONFORGE_API_URL (or pass URL as $1; default: ironforge-899p.onrender.com)
 #   - TRADIER_SANDBOX_KEY_USER (for sandbox tests)
 #   - DATABRICKS_SERVER_HOSTNAME, DATABRICKS_WAREHOUSE_ID, DATABRICKS_TOKEN (for DB comparison)
 #
@@ -17,7 +17,7 @@ set -uo pipefail
 
 # Auto-detect base URL
 # Render shell is a separate container — no PORT, no localhost access.
-RENDER_DEFAULT="https://ironforge-dashboard.onrender.com"
+RENDER_DEFAULT="https://ironforge-899p.onrender.com"
 if [ -n "${IRONFORGE_API_URL:-}" ]; then
   BASE="$IRONFORGE_API_URL"
 elif [ -n "${RENDER_EXTERNAL_URL:-}" ]; then

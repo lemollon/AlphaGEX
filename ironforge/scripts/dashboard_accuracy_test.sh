@@ -12,7 +12,7 @@ set -euo pipefail
 
 # Auto-detect base URL
 # Render shell is a separate container — no PORT, no localhost access.
-RENDER_DEFAULT="https://ironforge-dashboard.onrender.com"
+RENDER_DEFAULT="https://ironforge-899p.onrender.com"
 if [ -n "${IRONFORGE_API_URL:-}" ]; then
   BASE="$IRONFORGE_API_URL"
 elif [ -n "${RENDER_EXTERNAL_URL:-}" ]; then

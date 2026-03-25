@@ -7,7 +7,7 @@ Usage:
     python ironforge/scripts/pre_market_api_tests.py
 
 Optional env vars:
-    IRONFORGE_API_URL        (default: https://ironforge-dashboard.onrender.com)
+    IRONFORGE_API_URL        (default: https://ironforge-899p.onrender.com)
     TRADIER_SANDBOX_KEY_USER (for sandbox account tests)
 """
 
@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 # Auto-detect base URL
 # Render shell is a separate container — no PORT, no localhost access.
-RENDER_DEFAULT = "https://ironforge-dashboard.onrender.com"
+RENDER_DEFAULT = "https://ironforge-899p.onrender.com"
 BASE_URL = os.environ.get("IRONFORGE_API_URL") or os.environ.get("RENDER_EXTERNAL_URL") or RENDER_DEFAULT
 BASE_URL = BASE_URL.rstrip("/")
 API = f"{BASE_URL}/api"
