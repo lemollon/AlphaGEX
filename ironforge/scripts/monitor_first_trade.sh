@@ -85,7 +85,7 @@ while true; do
 
   # ── Check scanner status for skip reasons ────────────────────────
   # Response: {"status":"ok","bots":[{"bot":"flame","status":"active","last_action":"...","last_reason":"..."},...]}
-  SCANNER=$(curl -sf "$BASE/api/scanner/status" 2>/dev/null || echo '{}')
+  SCANNER=$(curl -s "$BASE/api/scanner/status" 2>/dev/null || echo '{}')
   FLAME_STATUS=$(echo "$SCANNER" | jq_node "
     const b=(d.bots||[]).find(x=>x.bot==='flame');
     if(!b){console.log('no_data');return}

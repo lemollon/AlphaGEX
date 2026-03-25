@@ -73,7 +73,7 @@ echo ""
 # ── 2. Scanner status ────────────────────────────────────────────────
 # Response: {"status":"ok"|"degraded"|"down","bots":[{"bot":"flame","status":"active","is_stale":false,...}],...}
 echo "2. Scanner Status"
-SCANNER=$(curl -sf "$BASE/api/scanner/status" 2>/dev/null || echo '{}')
+SCANNER=$(curl -s "$BASE/api/scanner/status" 2>/dev/null || echo '{}')
 SCANNER_OK=$(echo "$SCANNER" | jq_node "console.log(d.status==='ok'?'true':'false')" 2>/dev/null || echo false)
 warn_check "Scanner status OK" "$SCANNER_OK"
 

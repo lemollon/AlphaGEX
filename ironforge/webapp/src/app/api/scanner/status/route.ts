@@ -16,10 +16,12 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET() {
   try {
-    // All heartbeats in one query
+    // Only IronForge bots — AlphaGEX bots (FORTRESS, SAMSON, etc.) share the
+    // same bot_heartbeats table but their stale entries cause permanent "degraded"
     const heartbeats = await dbQuery(`
       SELECT bot_name, last_heartbeat, status, scan_count, details
       FROM bot_heartbeats
+      WHERE LOWER(bot_name) IN ('flame', 'spark', 'inferno')
       ORDER BY bot_name
     `)
 
