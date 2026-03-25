@@ -1216,12 +1216,22 @@ export async function placeIcOrderAllAccounts(
   if (collateralPer <= 0) return results
 
   // Separate sandbox and production accounts.
-  // Flow: User sandbox first → other sandbox in parallel → production ONLY if User sandbox filled.
-  // This ensures we never risk real money unless the sandbox trade is confirmed.
+  // Flow: User sandbox first → other sandbox in parallel → production independently.
   const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
-  const productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
   const userAccts = sandboxAccts.filter((a) => a.name === 'User')
   const otherSandboxAccts = sandboxAccts.filter((a) => a.name !== 'User')
+
+  // SAFETY: Only FLAME is allowed to place production orders.
+  // SPARK and INFERNO are paper-only bots — they must NEVER place real money orders.
+  const botUc = (botName || '').toUpperCase()
+  if (productionAccts.length > 0 && botUc !== 'FLAME') {
+    console.warn(
+      `[tradier] BLOCKED: ${botUc} attempted production orders on ${productionAccts.length} account(s). ` +
+      `Only FLAME can trade production. Removing production accounts from this order.`,
+    )
+    productionAccts = []
+  }
 
   async function placeForAccount(acct: SandboxAccount) {
     try {
