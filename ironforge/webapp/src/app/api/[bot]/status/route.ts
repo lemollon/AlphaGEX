@@ -227,7 +227,27 @@ export async function GET(
       ? Math.round((weightedReturnSum / totalWeight) * 10000) / 100
       : null
 
-    const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
+    // For PRODUCTION mode: supplement DB data with actual Tradier broker data.
+    // When positions exist on Tradier but aren't in the DB (orphans from failed recording),
+    // the scorecard should still show the real unrealized P&L and position count.
+    let effectiveUnrealizedPnl = unrealizedPnl
+    let effectiveOpenPositions = int(positionCountRows[0]?.cnt)
+    if (accountTypeParam === 'production') {
+      const prodBrokerData = sandboxBalances.find((s) => s.account_type === 'production')
+      if (prodBrokerData) {
+        // Use Tradier position count if DB has fewer (orphan positions not in DB)
+        const brokerPosCount = prodBrokerData.open_positions_count || 0
+        if (brokerPosCount > effectiveOpenPositions) {
+          effectiveOpenPositions = brokerPosCount
+        }
+        // Use Tradier unrealized P&L if DB has no positions to calculate from
+        if ((unrealizedPnl === null || unrealizedPnl === 0) && prodBrokerData.unrealized_pnl != null) {
+          effectiveUnrealizedPnl = prodBrokerData.unrealized_pnl
+        }
+      }
+    }
+
+    const totalPnl = realizedPnl + (effectiveUnrealizedPnl ?? 0)
     const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
     const hb = heartbeatRows[0]
@@ -272,7 +292,7 @@ export async function GET(
         starting_capital: startingCapital,
         balance,
         cumulative_pnl: realizedPnl,
-        unrealized_pnl: unrealizedPnl,
+        unrealized_pnl: effectiveUnrealizedPnl,
         today_realized_pnl: todayRealizedPnl,
         today_trades_closed: todayTradesClosed,
         today_ic_return_pct: todayIcReturnPct,
@@ -284,7 +304,7 @@ export async function GET(
         high_water_mark: num(acct?.high_water_mark),
         max_drawdown: num(acct?.max_drawdown),
       },
-      open_positions: int(positionCountRows[0]?.cnt),
+      open_positions: effectiveOpenPositions,
       pending_order_count: pendingOrderCount,
       last_scan: hb?.last_heartbeat || null,
       last_snapshot: snapshotRows[0]?.snapshot_time || null,
