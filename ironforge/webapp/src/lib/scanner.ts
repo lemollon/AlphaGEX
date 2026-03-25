@@ -1557,11 +1557,23 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
-      if (!info.fill_price || info.fill_price <= 0) continue
+
+      // CRITICAL: For production, we MUST record the position even if fill_price is null.
+      // The order was already placed on Tradier with REAL MONEY. If we skip recording,
+      // the position becomes an orphan — unmonitored, unmanaged, and never closed.
+      // Use the estimated credit as fallback when fill price polling fails.
+      const hasFill = info.fill_price != null && info.fill_price > 0
+      if (!hasFill) {
+        console.warn(
+          `[scanner] PRODUCTION WARNING: ${key} fill_price is ${info.fill_price} — ` +
+          `using estimated credit $${credits.totalCredit.toFixed(4)} as fallback. ` +
+          `Order was already placed on Tradier — MUST record position.`,
+        )
+      }
 
       const prodPerson = key.split(':')[0]
       const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
-      const prodCredit = info.fill_price
+      const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
       const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
       const prodMaxLoss = prodCollateral
       const prodMaxProfit = prodCredit * 100 * prodContracts
@@ -1635,7 +1647,20 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           ],
         )
       } catch (prodErr: unknown) {
-        console.error(`[scanner] PRODUCTION position creation failed for ${prodPerson}:`, prodErr instanceof Error ? prodErr.message : prodErr)
+        const prodErrMsg = prodErr instanceof Error ? prodErr.message : String(prodErr)
+        console.error(`[scanner] PRODUCTION position creation failed for ${prodPerson}:`, prodErrMsg)
+        // Log to DB so it's visible in the dashboard (console.error only goes to server logs)
+        try {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+             VALUES ('ERROR', $1, $2, $3, $4)`,
+            [
+              `PRODUCTION POSITION RECORD FAILED: ${prodPerson} — order was placed on Tradier but DB insert failed: ${prodErrMsg}`,
+              JSON.stringify({ position_id: prodPositionId, order_info: info, error: prodErrMsg }),
+              bot.dte, prodPerson,
+            ],
+          )
+        } catch { /* last resort — can't even log the error */ }
       }
     }
 
@@ -1646,10 +1671,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       const prodWithFill = prodEntries.filter(([, v]) => v.fill_price && v.fill_price > 0)
       const prodNoFill = prodEntries.filter(([, v]) => !v.fill_price || v.fill_price <= 0)
       if (prodEntries.length === 0 && allEntries.length > 0) {
-        console.warn(
-          `[scanner] PRODUCTION FILL SUMMARY: 0 production entries in sandboxOrderIds (${allEntries.length} total entries: ${allEntries.map(([k]) => k).join(', ')}). ` +
-          `Production account may not have been eligible or order was silently dropped.`,
-        )
+        const msg = `PRODUCTION FILL SUMMARY: 0 production entries in sandboxOrderIds (${allEntries.length} total: ${allEntries.map(([k]) => k).join(', ')}). Production account may not have been eligible or order was silently dropped.`
+        console.warn(`[scanner] ${msg}`)
+        // Log to DB for dashboard visibility
+        try {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, dte_mode)
+             VALUES ('WARN', $1, $2)`,
+            [msg, bot.dte],
+          )
+        } catch { /* non-fatal */ }
       } else if (prodEntries.length > 0) {
         console.log(
           `[scanner] PRODUCTION FILL SUMMARY: ${prodWithFill.length} filled, ${prodNoFill.length} no-fill ` +
