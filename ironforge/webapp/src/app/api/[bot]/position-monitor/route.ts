@@ -86,10 +86,14 @@ export async function GET(
       return NextResponse.json({
         positions: [],
         todays_closed_trades: closedTrades,
-        total_unrealized_pnl: 0,
+        // Production with no DB positions: return null so StatusCard falls through
+        // to the Tradier broker data from /status endpoint. The ?? operator only
+        // triggers on null/undefined, not on 0 — so returning 0 here would block
+        // the Tradier fallback even when real money positions exist as orphans.
+        total_unrealized_pnl: accountTypeParam === 'production' ? null : 0,
         spot_price: null,
         tradier_connected: isConfigured(),
-        pnl_source: 'none',
+        pnl_source: accountTypeParam === 'production' ? 'broker_fallback' : 'none',
       })
     }
 
