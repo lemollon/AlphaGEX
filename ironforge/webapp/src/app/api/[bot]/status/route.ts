@@ -241,14 +241,18 @@ export async function GET(
           effectiveOpenPositions = brokerPosCount
         }
         // Use Tradier unrealized P&L if DB has no positions to calculate from
+        // CRITICAL: coerce to number — Tradier may return strings, and string + number = NaN
         if ((unrealizedPnl === null || unrealizedPnl === 0) && prodBrokerData.unrealized_pnl != null) {
-          effectiveUnrealizedPnl = prodBrokerData.unrealized_pnl
+          const brokerUnrealized = Number(prodBrokerData.unrealized_pnl)
+          effectiveUnrealizedPnl = Number.isFinite(brokerUnrealized) ? brokerUnrealized : 0
         }
       }
     }
 
-    const totalPnl = realizedPnl + (effectiveUnrealizedPnl ?? 0)
-    const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
+    const rawTotalPnl = realizedPnl + (effectiveUnrealizedPnl ?? 0)
+    const totalPnl = Number.isFinite(rawTotalPnl) ? rawTotalPnl : 0
+    const rawReturnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
+    const returnPct = Number.isFinite(rawReturnPct) ? rawReturnPct : 0
 
     const hb = heartbeatRows[0]
     const lastErr = lastErrorRows[0]
