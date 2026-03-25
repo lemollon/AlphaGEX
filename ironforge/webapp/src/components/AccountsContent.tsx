@@ -88,9 +88,10 @@ function serializeBots(bots: string[]): string {
 /** Trading mode for each bot on a given account type */
 function getTradingMode(bot: string, accountType: string): { label: string; cls: string } {
   if (accountType === 'production') {
-    return { label: 'MONITOR', cls: 'bg-purple-500/20 text-purple-400 border-purple-500/30' }
+    // Production accounts place REAL orders with REAL money
+    return { label: 'LIVE', cls: 'bg-red-500/20 text-red-400 border-red-500/30' }
   }
-  // Sandbox: only FLAME places live orders; SPARK/INFERNO are paper-only
+  // Sandbox: only FLAME places live sandbox orders; SPARK/INFERNO are paper-only
   if (bot === 'FLAME') {
     return { label: 'LIVE', cls: 'bg-green-500/20 text-green-400 border-green-500/30' }
   }
@@ -996,7 +997,7 @@ function AccountCard({
               </span>
             </div>
             {account.type === 'production' && (
-              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">LIVE</span>
+              <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse">REAL MONEY</span>
             )}
             {account.open_positions > 0 && (
               <div>
