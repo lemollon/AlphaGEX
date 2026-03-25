@@ -872,19 +872,27 @@ export interface SandboxAccountBalance {
   account_type: 'sandbox' | 'production'
 }
 
+// Cache sandbox balances for 30s to avoid hammering Tradier on every SWR refresh
+let _sbBalanceCache: { data: SandboxAccountBalance[]; fetchedAt: number } | null = null
+const SB_BALANCE_CACHE_TTL = 30_000
+
 /**
  * Fetch full balance + position count for all configured sandbox accounts.
  * Returns one entry per account. Values are null when Tradier API is unreachable.
+ * Results are cached for 30s and sorted by name for stable display order.
  */
 export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance[]> {
+  if (_sbBalanceCache && Date.now() - _sbBalanceCache.fetchedAt < SB_BALANCE_CACHE_TTL) {
+    return _sbBalanceCache.data
+  }
   await ensureSandboxAccountsLoaded()
-  const results: SandboxAccountBalance[] = []
 
-  await Promise.all(
-    _sandboxAccounts.map(async (acct) => {
+  // Use Promise.all on mapped array to preserve stable order (matches _sandboxAccounts order)
+  const results = await Promise.all(
+    _sandboxAccounts.map(async (acct): Promise<SandboxAccountBalance> => {
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
       if (!accountId) {
-        results.push({
+        return {
           name: acct.name,
           account_id: null,
           total_equity: null,
@@ -894,8 +902,7 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
           unrealized_pnl_pct: null,
           open_positions_count: 0,
           account_type: acct.type,
-        })
-        return
+        }
       }
 
       // Fetch balances and positions in parallel
@@ -966,7 +973,7 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         ? (unrealizedPnl / absNetCb) * 100
         : null
 
-      results.push({
+      return {
         name: acct.name,
         account_id: accountId,
         total_equity: equity,
@@ -976,10 +983,13 @@ export async function getSandboxAccountBalances(): Promise<SandboxAccountBalance
         unrealized_pnl_pct: unrealizedPct != null ? Math.round(unrealizedPct * 10) / 10 : null,
         open_positions_count: posCount,
         account_type: acct.type,
-      })
+      }
     }),
   )
 
+  // Sort by person name for stable display order
+  results.sort((a, b) => a.name.localeCompare(b.name))
+  _sbBalanceCache = { data: results, fetchedAt: Date.now() }
   return results
 }
 
