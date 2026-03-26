@@ -1341,10 +1341,23 @@ export async function placeIcOrderAllAccounts(
         // Sandbox uses 90s cap since sandbox fills are less critical.
         let fillPrice: number | null = null
         const pollTimeout = acct.type === 'production' ? 0 : 90_000
-        try {
-          fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollTimeout, acct.baseUrl)
-        } catch {
-          // Non-fatal for sandbox; for production this shouldn't happen since we poll forever
+        const maxRetries = acct.type === 'production' ? 3 : 0
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, pollTimeout, acct.baseUrl)
+            break // Success — exit retry loop
+          } catch (pollErr: unknown) {
+            const pollMsg = pollErr instanceof Error ? pollErr.message : String(pollErr)
+            if (acct.type === 'production') {
+              console.error(
+                `${label}: Fill poll FAILED (attempt ${attempt + 1}/${maxRetries + 1}): ${pollMsg}`,
+              )
+              if (attempt < maxRetries) {
+                await new Promise((r) => setTimeout(r, 5000)) // 5s backoff before retry
+              }
+            }
+            // For sandbox: single attempt, no retry
+          }
         }
         // Use composite key to avoid collision when same person has sandbox + production
         const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`

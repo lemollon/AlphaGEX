@@ -43,6 +43,7 @@ interface StatusData {
   bot_state: string | null
   sandbox_accounts?: SandboxAccount[]
   today_close_reasons?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
+  data_integrity_warning?: string | null
 }
 
 interface ConfigData {
@@ -376,6 +377,13 @@ export default function StatusCard({
             ? `PT drops to ${ptState.next.nextLabel} in ${formatCountdown(ptState.next.seconds)}`
             : `PT changing to ${ptState.next.nextLabel}...`}
         </p>
+      )}
+
+      {/* Data integrity warning — orphan positions on Tradier not tracked in DB */}
+      {data.data_integrity_warning && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2 mb-3 text-xs text-amber-400">
+          <span className="font-semibold">Data Integrity Warning:</span> {data.data_integrity_warning}
+        </div>
       )}
 
       {/* Live market data */}
