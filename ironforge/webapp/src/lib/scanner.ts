@@ -1315,6 +1315,24 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // Sandbox already traded today but production hasn't. Place production
     // orders only — skip sandbox fill requirement and paper position.
     if (_productionOnlyMode) {
+      // Double-check: has production already traded today? _productionOnlyMode is set based
+      // on DB state, but verify again right before placing to prevent race conditions.
+      let prodOnlyAlreadyTraded = false
+      try {
+        const prodCheck = await query(
+          `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+           WHERE account_type = 'production'
+             AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+          [],
+        )
+        prodOnlyAlreadyTraded = int(prodCheck[0]?.cnt) > 0
+      } catch { /* non-fatal */ }
+
+      if (prodOnlyAlreadyTraded) {
+        console.log(`[scanner] FLAME PRODUCTION-ONLY: Production already traded today — skipping`)
+        return 'skip:production_already_traded_today'
+      }
+
       console.log(`[scanner] FLAME PRODUCTION-ONLY: Placing orders for production accounts only`)
       try {
         sandboxOrderIds = await placeIcOrderAllAccounts(
@@ -1328,16 +1346,26 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         return `skip:flame_production_only_failed(${msg})`
       }
 
-      // Record production positions (same logic as the normal FLAME path)
+      // Record production positions — MUST record even if fill_price is null.
+      // The order was already placed on Tradier with REAL MONEY. If we skip,
+      // the position becomes an orphan — unmonitored, unmanaged, never closed.
       const PRODUCTION_MAX_CONTRACTS = 2
       let prodTraded = false
       for (const [key, info] of Object.entries(sandboxOrderIds)) {
         if (info.account_type !== 'production') continue
-        if (!info.fill_price || info.fill_price <= 0) continue
+
+        const hasFill = info.fill_price != null && info.fill_price > 0
+        if (!hasFill) {
+          console.warn(
+            `[scanner] PRODUCTION-ONLY WARNING: ${key} fill_price=${info.fill_price} — ` +
+            `using estimated credit $${credits.totalCredit.toFixed(4)} as fallback. ` +
+            `Order was already placed on Tradier — MUST record position.`,
+          )
+        }
 
         const prodPerson = key.split(':')[0]
         const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
-        const prodCredit = info.fill_price
+        const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
         const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
         const prodMaxLoss = prodCollateral
         const prodMaxProfit = prodCredit * 100 * prodContracts
@@ -1410,7 +1438,20 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           )
           prodTraded = true
         } catch (prodErr: unknown) {
-          console.error(`[scanner] FLAME PRODUCTION-ONLY position creation failed for ${prodPerson}:`, prodErr instanceof Error ? prodErr.message : prodErr)
+          const prodErrMsg = prodErr instanceof Error ? prodErr.message : String(prodErr)
+          console.error(`[scanner] FLAME PRODUCTION-ONLY position creation failed for ${prodPerson}:`, prodErrMsg)
+          // Log to DB so it's visible in the dashboard (console.error only goes to server logs)
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+               VALUES ('ERROR', $1, $2, $3, $4)`,
+              [
+                `PRODUCTION-ONLY RECORD FAILED: ${prodPerson} — order placed on Tradier but DB insert failed: ${prodErrMsg}`,
+                JSON.stringify({ position_id: prodPositionId, order_info: info, error: prodErrMsg }),
+                bot.dte, prodPerson,
+              ],
+            )
+          } catch { /* last resort — can't even log the error */ }
         }
       }
 
@@ -1523,11 +1564,27 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // ── Place orders on ALL accounts (sandbox + production independently) ──
     // Production and sandbox are separate systems. Production orders are placed
     // and recorded regardless of whether sandbox fills or not.
+    // GUARD: Check if production already traded today to prevent duplicate orders.
+    let prodAlreadyTradedToday = false
+    try {
+      const prodDayCheck = await query(
+        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+         WHERE account_type = 'production'
+           AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+        [],
+      )
+      prodAlreadyTradedToday = int(prodDayCheck[0]?.cnt) > 0
+      if (prodAlreadyTradedToday) {
+        console.log(`[scanner] ${bot.name.toUpperCase()}: Production already traded today — sandboxOnly`)
+      }
+    } catch { /* non-fatal — proceed without guard */ }
+
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
         maxContracts, credits.totalCredit, positionId, bot.name,
+        prodAlreadyTradedToday ? { sandboxOnly: true } : undefined,
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)

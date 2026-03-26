@@ -227,32 +227,24 @@ export async function GET(
       ? Math.round((weightedReturnSum / totalWeight) * 10000) / 100
       : null
 
-    // For PRODUCTION mode: supplement DB data with actual Tradier broker data.
-    // When positions exist on Tradier but aren't in the DB (orphans from failed recording),
-    // the scorecard should still show the real unrealized P&L and position count.
-    let effectiveUnrealizedPnl = unrealizedPnl
-    let effectiveOpenPositions = int(positionCountRows[0]?.cnt)
+    // For PRODUCTION mode: detect orphan positions (Tradier has positions DB doesn't track).
+    // Do NOT substitute Tradier data into the scorecard — the DB is the source of truth.
+    // If positions are missing from DB, that's a data integrity error to surface, not mask.
+    let dataIntegrityWarning: string | null = null
     if (accountTypeParam === 'production') {
-      const prodBrokerData = sandboxBalances.find((s) => s.account_type === 'production')
+      const prodBrokerData = sandboxBalances.find((s: any) => s.account_type === 'production')
       if (prodBrokerData) {
-        // Use Tradier position count if DB has fewer (orphan positions not in DB)
         const brokerPosCount = prodBrokerData.open_positions_count || 0
-        if (brokerPosCount > effectiveOpenPositions) {
-          effectiveOpenPositions = brokerPosCount
-        }
-        // Use Tradier unrealized P&L if DB has no positions to calculate from
-        // CRITICAL: coerce to number — Tradier may return strings, and string + number = NaN
-        if ((unrealizedPnl === null || unrealizedPnl === 0) && prodBrokerData.unrealized_pnl != null) {
-          const brokerUnrealized = Number(prodBrokerData.unrealized_pnl)
-          effectiveUnrealizedPnl = Number.isFinite(brokerUnrealized) ? brokerUnrealized : 0
+        const dbPosCount = int(positionCountRows[0]?.cnt)
+        if (brokerPosCount > dbPosCount) {
+          dataIntegrityWarning = `Tradier has ${brokerPosCount} open legs but DB tracks ${dbPosCount}. ` +
+            `${brokerPosCount - dbPosCount} orphan leg(s) not tracked by IronForge.`
         }
       }
     }
 
-    const rawTotalPnl = realizedPnl + (effectiveUnrealizedPnl ?? 0)
-    const totalPnl = Number.isFinite(rawTotalPnl) ? rawTotalPnl : 0
-    const rawReturnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
-    const returnPct = Number.isFinite(rawReturnPct) ? rawReturnPct : 0
+    const totalPnl = realizedPnl + (unrealizedPnl ?? 0)
+    const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
     const hb = heartbeatRows[0]
     const lastErr = lastErrorRows[0]
@@ -296,7 +288,7 @@ export async function GET(
         starting_capital: startingCapital,
         balance,
         cumulative_pnl: realizedPnl,
-        unrealized_pnl: effectiveUnrealizedPnl,
+        unrealized_pnl: unrealizedPnl,
         today_realized_pnl: todayRealizedPnl,
         today_trades_closed: todayTradesClosed,
         today_ic_return_pct: todayIcReturnPct,
@@ -308,7 +300,8 @@ export async function GET(
         high_water_mark: num(acct?.high_water_mark),
         max_drawdown: num(acct?.max_drawdown),
       },
-      open_positions: effectiveOpenPositions,
+      open_positions: int(positionCountRows[0]?.cnt),
+      data_integrity_warning: dataIntegrityWarning,
       pending_order_count: pendingOrderCount,
       last_scan: hb?.last_heartbeat || null,
       last_snapshot: snapshotRows[0]?.snapshot_time || null,
