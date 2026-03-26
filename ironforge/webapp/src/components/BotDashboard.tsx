@@ -100,6 +100,14 @@ export default function BotDashboard({
     { refreshInterval: STATUS_REFRESH },
   )
 
+  /* ---- Derive production person for Broker Equity tab ---- */
+  const [brokerPerson, setBrokerPerson] = useState<string | null>(null)
+  useEffect(() => {
+    if (brokerPerson) return
+    const prodAccts = (status?.sandbox_accounts || []).filter((a: any) => a.account_type === 'production')
+    if (prodAccts.length > 0) setBrokerPerson(prodAccts[0].name)
+  }, [status, brokerPerson])
+
   /* ---- Config (always fetched, slow refresh) ---- */
   const { data: config } = useSWR(
     `/api/${bot}/config`,
@@ -127,8 +135,8 @@ export default function BotDashboard({
   /* ---- Broker (production) equity curve — FLAME only ---- */
   const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
   const { data: brokerEquity } = useSWR(
-    hasAccounts && tab === 'Broker Equity'
-      ? `/api/accounts/production/equity-curve?mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
+    hasAccounts && tab === 'Broker Equity' && brokerPerson
+      ? `/api/accounts/production/equity-curve?person=${encodeURIComponent(brokerPerson)}&mode=${brokerPeriod === 'intraday' ? 'intraday' : 'historical'}&period=${brokerPeriod === 'intraday' ? '1d' : brokerPeriod}`
       : null,
     fetcher,
     { refreshInterval: LIVE_REFRESH },
@@ -299,19 +307,21 @@ export default function BotDashboard({
 
       {/* Status card */}
       {status && (
-        <StatusCard
-          data={status}
-          accent={accent}
-          config={config}
-          bot={bot}
-          liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
-          liveUnrealizedPct={positionMonitor?.total_unrealized_pnl_pct}
-          pendingOrderCount={status?.pending_order_count ?? pendingData?.pending_count}
-          quotesDelayed={positionMonitor?.quotes_delayed}
-          quoteAgeSeconds={positionMonitor?.quote_age_seconds}
-          todaysClosedTrades={positionMonitor?.todays_closed_trades}
-          viewMode={viewMode}
-        />
+        <ComponentErrorBoundary fallback="Status card error">
+          <StatusCard
+            data={status}
+            accent={accent}
+            config={config}
+            bot={bot}
+            liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
+            liveUnrealizedPct={positionMonitor?.total_unrealized_pnl_pct}
+            pendingOrderCount={status?.pending_order_count ?? pendingData?.pending_count}
+            quotesDelayed={positionMonitor?.quotes_delayed}
+            quoteAgeSeconds={positionMonitor?.quote_age_seconds}
+            todaysClosedTrades={positionMonitor?.todays_closed_trades}
+            viewMode={viewMode}
+          />
+        </ComponentErrorBoundary>
       )}
 
       {/* EOD auto-close result banner */}
@@ -328,7 +338,9 @@ export default function BotDashboard({
       </ComponentErrorBoundary>
 
       {/* PT Timeline */}
-      <PTTimeline />
+      <ComponentErrorBoundary fallback="PT timeline error">
+        <PTTimeline />
+      </ComponentErrorBoundary>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">
@@ -350,25 +362,29 @@ export default function BotDashboard({
       {/* Tab content */}
       <div>
         {tab === 'Equity Curve' && (
-          <EquityChart
-            data={equity?.curve || []}
-            intradayData={intraday?.snapshots}
-            startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-            color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
-            title={`${bot.toUpperCase()} Equity Curve`}
-            liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
-            period={equityPeriod}
-            onPeriodChange={onPeriodChange}
-          />
+          <ComponentErrorBoundary fallback="Equity chart error">
+            <EquityChart
+              data={equity?.curve || []}
+              intradayData={intraday?.snapshots}
+              startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
+              color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
+              title={`${bot.toUpperCase()} Equity Curve`}
+              liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
+              period={equityPeriod}
+              onPeriodChange={onPeriodChange}
+            />
+          </ComponentErrorBoundary>
         )}
         {tab === 'Broker Equity' && (
-          <BrokerEquityTab
-            data={brokerEquity}
-            person="Production"
-            period={brokerPeriod}
-            onPeriodChange={setBrokerPeriod}
-            accent={accent}
-          />
+          <ComponentErrorBoundary fallback="Broker equity error">
+            <BrokerEquityTab
+              data={brokerEquity}
+              person={brokerPerson || 'Production'}
+              period={brokerPeriod}
+              onPeriodChange={setBrokerPeriod}
+              accent={accent}
+            />
+          </ComponentErrorBoundary>
         )}
         {tab === 'Performance' && (
           perfErr
@@ -422,7 +438,9 @@ export default function BotDashboard({
             ? <TabError message={reconErr.message} />
             : !reconData
               ? <TabLoading />
-              : <ReconcileTab data={reconData} />
+              : <ComponentErrorBoundary fallback="Reconcile error">
+                  <ReconcileTab data={reconData} />
+                </ComponentErrorBoundary>
         )}
       </div>
     </div>
@@ -492,13 +510,14 @@ function BrokerEquityTab({
 
   const first = points[0]
   const last = points[points.length - 1]
-  const firstEquity = first.total_equity
-  const lastEquity = last.total_equity
+  const firstEquity = first?.total_equity ?? 0
+  const lastEquity = last?.total_equity ?? 0
   const change = lastEquity - firstEquity
   const changePct = firstEquity > 0 ? (change / firstEquity) * 100 : 0
 
   // Find min/max for Y-axis
-  const equities = points.map((p: any) => p.total_equity).filter((v: number) => v > 0)
+  const equities = points.map((p: any) => p.total_equity ?? 0).filter((v: number) => v > 0)
+  if (equities.length === 0) return <TabLoading />
   const minEq = Math.min(...equities)
   const maxEq = Math.max(...equities)
   const range = maxEq - minEq || 1
@@ -738,17 +757,17 @@ function ReconcileTab({ data }: { data: any }) {
                     <div>
                       <p className="text-forge-muted">Tradier Entry</p>
                       <p className="font-medium text-gray-200">
-                        ${acct.implied_entry_credit?.toFixed(4)}
-                        <span className={`ml-1 ${Math.abs(acct.entry_credit_diff_pct) < 5 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          ({acct.entry_credit_diff_pct >= 0 ? '+' : ''}{acct.entry_credit_diff_pct.toFixed(1)}%)
+                        ${(acct.implied_entry_credit ?? 0).toFixed(4)}
+                        <span className={`ml-1 ${Math.abs(acct.entry_credit_diff_pct ?? 0) < 5 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          ({(acct.entry_credit_diff_pct ?? 0) >= 0 ? '+' : ''}{(acct.entry_credit_diff_pct ?? 0).toFixed(1)}%)
                         </span>
                       </p>
                     </div>
                     {/* Tradier unrealized */}
                     <div>
                       <p className="text-forge-muted">Tradier Unrealized</p>
-                      <p className={`font-medium ${acct.total_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {acct.total_gain_loss >= 0 ? '+' : ''}${acct.total_gain_loss.toFixed(2)}
+                      <p className={`font-medium ${(acct.total_gain_loss ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {(acct.total_gain_loss ?? 0) >= 0 ? '+' : ''}${(acct.total_gain_loss ?? 0).toFixed(2)}
                         {acct.tradier_unrealized_pct != null && (
                           <span className="ml-1">({acct.tradier_unrealized_pct.toFixed(1)}%)</span>
                         )}
@@ -757,10 +776,10 @@ function ReconcileTab({ data }: { data: any }) {
                     {/* Diff */}
                     <div>
                       <p className="text-forge-muted">Diff (Paper − Tradier)</p>
-                      <p className={`font-medium ${Math.abs(acct.unrealized_pct_diff) < 5 ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                        {acct.unrealized_pct_diff >= 0 ? '+' : ''}{acct.unrealized_pct_diff.toFixed(1)}pp
+                      <p className={`font-medium ${Math.abs(acct.unrealized_pct_diff ?? 0) < 5 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                        {(acct.unrealized_pct_diff ?? 0) >= 0 ? '+' : ''}{(acct.unrealized_pct_diff ?? 0).toFixed(1)}pp
                         <span className="text-forge-muted ml-1">
-                          (${acct.unrealized_pnl_diff >= 0 ? '+' : ''}{acct.unrealized_pnl_diff.toFixed(2)})
+                          (${(acct.unrealized_pnl_diff ?? 0) >= 0 ? '+' : ''}{(acct.unrealized_pnl_diff ?? 0).toFixed(2)})
                         </span>
                       </p>
                     </div>

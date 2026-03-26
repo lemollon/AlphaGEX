@@ -108,7 +108,23 @@ export default function StatusCard({
   todaysClosedTrades?: { close_reason: string; realized_pnl: number; ic_return_pct?: number }[]
   viewMode?: 'paper' | 'live'
 }) {
-  const { account } = data
+  const rawAccount = data.account || {}
+  // Null-safe account: ensure all numeric fields have defaults to prevent
+  // .toLocaleString() / .toFixed() crashes when production data has nulls
+  const account = {
+    balance: rawAccount.balance ?? 0,
+    cumulative_pnl: rawAccount.cumulative_pnl ?? 0,
+    unrealized_pnl: rawAccount.unrealized_pnl ?? null,
+    today_realized_pnl: rawAccount.today_realized_pnl ?? 0,
+    today_trades_closed: rawAccount.today_trades_closed ?? 0,
+    today_ic_return_pct: rawAccount.today_ic_return_pct ?? null,
+    total_pnl: rawAccount.total_pnl ?? 0,
+    return_pct: rawAccount.return_pct ?? 0,
+    buying_power: rawAccount.buying_power ?? 0,
+    total_trades: rawAccount.total_trades ?? 0,
+    collateral_in_use: rawAccount.collateral_in_use ?? 0,
+    starting_capital: rawAccount.starting_capital,
+  }
   const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
   const realizedPositive = account.cumulative_pnl >= 0
   // Realized as % of starting capital
