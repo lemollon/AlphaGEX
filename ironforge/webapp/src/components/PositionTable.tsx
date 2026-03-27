@@ -4,6 +4,17 @@ import { useState, useEffect } from 'react'
 import { getCurrentPTTier, getCTNow, formatCloseReason, type PTTier } from '@/lib/pt-tiers'
 import PositionDetail from './PositionDetail'
 
+function formatTimeCT(ts: string | null): string {
+  if (!ts) return '--'
+  try {
+    return new Date(ts).toLocaleString('en-US', {
+      timeZone: 'America/Chicago',
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+  } catch { return ts.slice(0, 16) }
+}
+
 interface Position {
   position_id: string
   expiration: string
@@ -418,7 +429,7 @@ function PositionCard({
       {/* Footer */}
       <div className="flex items-center gap-4 text-xs text-forge-muted">
         <span>Entry: ${pos.underlying_at_entry.toFixed(2)}</span>
-        <span>Opened: {pos.open_time?.slice(0, 16)}</span>
+        <span>Opened: {formatTimeCT(pos.open_time)}</span>
         <button
           onClick={() => setConfirmClose(true)}
           disabled={closing}

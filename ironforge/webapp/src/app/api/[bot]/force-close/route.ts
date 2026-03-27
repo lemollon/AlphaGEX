@@ -232,12 +232,12 @@ export async function POST(
                '${escapeSql(dte)}')`,
     )
 
-    // 11. Daily perf upsert
+    // 11. Daily perf upsert (unique constraint is on (trade_date, COALESCE(person, '')))
     const dailyTable = botTable(bot, 'daily_perf')
     await dbExecute(
       `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl)
        VALUES (${CT_TODAY}, 0, 1, ${realizedPnl})
-       ON CONFLICT (trade_date) DO UPDATE SET
+       ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
          positions_closed = ${dailyTable}.positions_closed + 1,
          realized_pnl = ${dailyTable}.realized_pnl + ${realizedPnl}`,
     )
