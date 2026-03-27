@@ -377,7 +377,7 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   else if (vix <= 28) { const a = -0.05; winProb += a; factors.push(['VIX_ELEVATED', a]) }
   else { const a = -0.15; winProb += a; factors.push(['VIX_HIGH_RISK', a]) }
 
-  const dow = new Date().getDay()
+  const dow = getCentralTime().getDay()
   if (dow >= 2 && dow <= 4) { const a = 0.08; winProb += a; factors.push(['DAY_OPTIMAL', a]) }
   else if (dow === 1) { const a = 0.03; winProb += a; factors.push(['DAY_MONDAY', a]) }
   else if (dow === 5) { const a = -0.10; winProb += a; factors.push(['DAY_FRIDAY_RISK', a]) }
@@ -441,7 +441,7 @@ function calculateStrikes(spot: number, expectedMove: number, sdMult: number) {
 }
 
 function getTargetExpiration(minDte: number): string {
-  const now = new Date()
+  const now = getCentralTime()
   const target = new Date(now)
   let counted = 0
   while (counted < minDte) {
@@ -449,7 +449,11 @@ function getTargetExpiration(minDte: number): string {
     const dow = target.getDay()
     if (dow !== 0 && dow !== 6) counted++
   }
-  return target.toISOString().slice(0, 10)
+  // Format as YYYY-MM-DD from the CT-based date (avoid toISOString which converts back to UTC)
+  const y = target.getFullYear()
+  const m = String(target.getMonth() + 1).padStart(2, '0')
+  const d = String(target.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 /* ------------------------------------------------------------------ */
@@ -1134,12 +1138,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     } catch { /* keep bot-level setting */ }
   }
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
-  const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
+  // max_trades_per_day: DB value wins if set, else bot config default.
+  // BUT if DB says 0 (unlimited) and bot config says >0, use bot config as safety floor.
+  // This prevents FLAME/SPARK from trading unlimited when DB config is stale/wrong.
+  // Only INFERNO (botCfg.max_trades=0) should truly be unlimited.
+  const dbMaxTrades = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
+  const maxTradesPerDay = (dbMaxTrades === 0 && botCfg.max_trades > 0) ? botCfg.max_trades : dbMaxTrades
   const lastResetAt = pdtCfg?.last_reset_at ?? null
 
   // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
   // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
-  // (0 = unlimited, used by INFERNO)
+  // (0 = unlimited, only when botCfg.max_trades is also 0, i.e. INFERNO)
   // Filter by person so sandbox trades don't block production (and vice versa).
   //
   // IMPORTANT: Sandbox trades must NOT block production. If sandbox already traded

@@ -7,6 +7,18 @@ interface LogEntry {
   details: string | null
 }
 
+function formatCT(ts: string | null): string {
+  if (!ts) return '--'
+  try {
+    const d = new Date(ts)
+    return d.toLocaleString('en-US', {
+      timeZone: 'America/Chicago',
+      month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+  } catch { return ts.slice(0, 16) }
+}
+
 const levelColors: Record<string, string> = {
   TRADE_OPEN: 'bg-emerald-500/20 text-emerald-400',
   TRADE_CLOSE: 'bg-blue-500/20 text-blue-400',
@@ -46,7 +58,7 @@ export default function LogsTable({ logs }: { logs: LogEntry[] }) {
           {logs.map((log, i) => (
             <tr key={i} className="border-b border-forge-border/50 hover:bg-forge-border/20">
               <td className="p-3 text-xs text-gray-400 whitespace-nowrap">
-                {log.timestamp?.slice(0, 19)}
+                {formatCT(log.timestamp)}
               </td>
               <td className="p-3">
                 <span className={`text-xs px-2 py-0.5 rounded ${levelColors[log.level] || 'bg-stone-600/30 text-gray-400'}`}>

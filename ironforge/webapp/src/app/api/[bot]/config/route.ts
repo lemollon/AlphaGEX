@@ -140,6 +140,14 @@ export async function PUT(
     if (sw != null && sw <= 0) {
       return NextResponse.json({ error: 'spread_width must be positive' }, { status: 422 })
     }
+    // Prevent setting max_trades_per_day=0 for FLAME/SPARK (0 means unlimited, only valid for INFERNO)
+    const mtpd = filtered.max_trades_per_day as number | undefined
+    if (mtpd != null && mtpd === 0 && bot !== 'inferno') {
+      return NextResponse.json(
+        { error: 'max_trades_per_day cannot be 0 for FLAME/SPARK (use 1+). Only INFERNO allows unlimited (0).' },
+        { status: 422 },
+      )
+    }
 
     // Build INSERT ... ON CONFLICT upsert for PostgreSQL
     const keys = Object.keys(filtered)

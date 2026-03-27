@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, sharedTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, sharedTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import {
   getQuote,
   getOptionExpirations,
@@ -26,8 +26,8 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   else if (vix <= 28) { const a = -0.05; winProb += a; factors.push(['VIX_ELEVATED', a]) }
   else { const a = -0.15; winProb += a; factors.push(['VIX_HIGH_RISK', a]) }
 
-  // Day of week
-  const dow = new Date().getDay()
+  // Day of week (Central Time)
+  const dow = getCentralTime().getDay()
   if (dow >= 2 && dow <= 4) { const a = 0.08; winProb += a; factors.push(['DAY_OPTIMAL', a]) }
   else if (dow === 1) { const a = 0.03; winProb += a; factors.push(['DAY_MONDAY', a]) }
   else if (dow === 5) { const a = -0.10; winProb += a; factors.push(['DAY_FRIDAY_RISK', a]) }
@@ -93,8 +93,12 @@ function calculateStrikes(spot: number, expectedMove: number) {
   return { putShort, putLong, callShort, callLong }
 }
 
+function getCentralTime(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+}
+
 function getTargetExpiration(minDte: number): string {
-  const now = new Date()
+  const now = getCentralTime()
   const target = new Date(now)
   let counted = 0
   while (counted < minDte) {
@@ -102,7 +106,10 @@ function getTargetExpiration(minDte: number): string {
     const dow = target.getDay()
     if (dow !== 0 && dow !== 6) counted++
   }
-  return target.toISOString().slice(0, 10)
+  const y = target.getFullYear()
+  const m = String(target.getMonth() + 1).padStart(2, '0')
+  const d = String(target.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 /* ------------------------------------------------------------------ */
@@ -139,6 +146,31 @@ export async function POST(
         { error: `${botName} already has an open position: ${openRows[0].position_id}` },
         { status: 409 },
       )
+    }
+
+    // 1b. Check daily trade limit (unless ?force=true)
+    const forceOverride = _req.nextUrl.searchParams.get('force') === 'true'
+    if (!forceOverride) {
+      const pdtCfg = await dbQuery(
+        `SELECT max_trades_per_day FROM ${sharedTable('ironforge_pdt_config')}
+         WHERE bot_name = '${escapeSql(botName)}' LIMIT 1`,
+      )
+      const maxPerDay = int(pdtCfg[0]?.max_trades_per_day)
+      // 0 means unlimited (INFERNO), >0 is the cap
+      if (maxPerDay > 0) {
+        const todayTrades = await dbQuery(
+          `SELECT COUNT(*) AS cnt FROM ${botTable(bot, 'positions')}
+           WHERE dte_mode = '${escapeSql(dte)}'
+             AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+        )
+        const tradesToday = int(todayTrades[0]?.cnt)
+        if (tradesToday >= maxPerDay) {
+          return NextResponse.json(
+            { error: `${botName} daily limit reached: ${tradesToday}/${maxPerDay} trades today. Use ?force=true to override.` },
+            { status: 429 },
+          )
+        }
+      }
     }
 
     // 2. Get market data
@@ -382,12 +414,12 @@ export async function POST(
                '${escapeSql(`force_trade:${positionId}`)}', '${escapeSql(dte)}')`,
     )
 
-    // 15. Daily perf upsert
+    // 15. Daily perf upsert (unique constraint is on (trade_date, COALESCE(person, '')))
     const dailyTable = botTable(bot, 'daily_perf')
     await dbExecute(
       `INSERT INTO ${dailyTable} (trade_date, trades_executed, positions_closed, realized_pnl)
        VALUES (${CT_TODAY}, 1, 0, 0)
-       ON CONFLICT (trade_date) DO UPDATE SET
+       ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
          trades_executed = ${dailyTable}.trades_executed + 1`,
     )
 

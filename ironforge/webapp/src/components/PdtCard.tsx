@@ -15,6 +15,7 @@ interface PdtStatus {
   day_trade_count: number
   max_day_trades: number
   trades_remaining: number
+  max_trades_per_day: number
   traded_today: boolean
   can_trade: boolean
   window_days: number
@@ -169,9 +170,13 @@ export default function PdtCard({
     pulsing = false
     primary = 'PDT BYPASSED'
     const src = status.pdt_override_source
-    secondary = src === 'bot_config' ? 'Unlimited trading \u2014 bot config'
-      : src === 'account' ? 'Unlimited trading \u2014 account override'
+    const dailyCap = status.max_trades_per_day > 0
+      ? `Max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day`
       : 'Unlimited trading'
+    const srcLabel = src === 'bot_config' ? ' \u2014 bot config'
+      : src === 'account' ? ' \u2014 account override'
+      : ''
+    secondary = dailyCap + srcLabel
   } else if (pdtStatus === 'BLOCKED') {
     bg = 'bg-red-900/30'
     dotColor = 'bg-red-400'

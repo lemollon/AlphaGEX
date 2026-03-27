@@ -521,6 +521,23 @@ async function ensureTables(): Promise<void> {
         )
       } catch { /* ignore if table doesn't exist yet */ }
     }
+    // FLAME/SPARK: ensure max_trades_per_day is at least 1 (never 0 = unlimited)
+    // Fixes stale DB rows where INSERT IF NOT EXISTS didn't update existing 0 values
+    for (const [botName, pdtBot] of [['FLAME', 'flame'], ['SPARK', 'spark']] as const) {
+      try {
+        await client.query(
+          `UPDATE ironforge_pdt_config SET max_trades_per_day = 1
+           WHERE bot_name = '${botName}' AND max_trades_per_day = 0`,
+        )
+      } catch { /* ignore if table doesn't exist yet */ }
+      try {
+        await client.query(
+          `UPDATE ${pdtBot}_pdt_config SET max_trades_per_day = 1
+           WHERE max_trades_per_day = 0`,
+        )
+      } catch { /* ignore if table doesn't exist yet */ }
+    }
+
     // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
     try {
       await client.query(

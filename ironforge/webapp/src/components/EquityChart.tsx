@@ -157,6 +157,7 @@ export default function EquityChart({
                   ? new Date(label).toLocaleTimeString('en-US', {
                       hour: 'numeric',
                       minute: '2-digit',
+                      timeZone: 'America/Chicago',
                     }) + ' CT'
                   : ''
               }
@@ -246,6 +247,7 @@ export default function EquityChart({
                     day: 'numeric',
                     hour: 'numeric',
                     minute: '2-digit',
+                    timeZone: 'America/Chicago',
                   })
                 : ''
             }
@@ -327,13 +329,17 @@ function PnlBadge({ value, label }: { value: number | null | undefined; label: s
 function formatDate(ts: string) {
   if (!ts) return ''
   const d = new Date(ts)
-  return `${d.getMonth() + 1}/${d.getDate()}`
+  return d.toLocaleDateString('en-US', {
+    month: 'numeric',
+    day: 'numeric',
+    timeZone: 'America/Chicago',
+  })
 }
 
 function formatTime(ts: string) {
   if (!ts) return ''
   const d = new Date(ts)
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Chicago' })
 }
 
 /* ------------------------------------------------------------------ */
