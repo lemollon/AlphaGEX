@@ -95,17 +95,18 @@ export default function EquityChart({
 
     // If position-monitor provided live unrealized P&L, correct the last point
     // so the chart line and badge match the header (single source of truth)
-    if (liveUnrealizedPnl !== undefined && points.length > 0) {
+    // Guard: liveUnrealizedPnl can be null (production mode with no DB positions) — treat as 0
+    if (liveUnrealizedPnl != null && points.length > 0) {
       const last = points[points.length - 1]
       points = [...points.slice(0, -1), {
         ...last,
         unrealized_pnl: liveUnrealizedPnl,
-        equity: last.balance + liveUnrealizedPnl,
+        equity: (last.balance ?? 0) + liveUnrealizedPnl,
       }]
     }
 
     const latest = points[points.length - 1]
-    const unrealizedForBadge = liveUnrealizedPnl ?? latest.unrealized_pnl
+    const unrealizedForBadge = liveUnrealizedPnl ?? latest.unrealized_pnl ?? 0
     const fillColor =
       latest.equity >= startingCapital
         ? 'rgba(16, 185, 129, 0.15)'
@@ -148,7 +149,8 @@ export default function EquityChart({
                     : name === 'unrealized_pnl'
                       ? 'Unrealized'
                       : name
-                return [`$${value.toFixed(2)}`, label]
+                const v = typeof value === 'number' ? value : 0
+                return [`$${v.toFixed(2)}`, label]
               }}
               labelFormatter={(label) =>
                 label
@@ -175,8 +177,8 @@ export default function EquityChart({
         </ResponsiveContainer>
         <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2">
           <span>{points.length} snapshots</span>
-          <span>Balance: ${latest.balance.toFixed(2)}</span>
-          <span>Open: {latest.open_positions}</span>
+          <span>Balance: ${(latest.balance ?? 0).toFixed(2)}</span>
+          <span>Open: {latest.open_positions ?? 0}</span>
         </div>
       </div>
     )
@@ -236,7 +238,7 @@ export default function EquityChart({
               borderRadius: 8,
             }}
             labelStyle={{ color: '#a8a29e' }}
-            formatter={(value: number) => [`$${value.toFixed(2)}`, 'Equity']}
+            formatter={(value: number) => [`$${(typeof value === 'number' ? value : 0).toFixed(2)}`, 'Equity']}
             labelFormatter={(label) =>
               label
                 ? new Date(label).toLocaleDateString('en-US', {
@@ -305,14 +307,15 @@ function PeriodSelector({
 /*  P&L Badge                                                          */
 /* ------------------------------------------------------------------ */
 
-function PnlBadge({ value, label }: { value: number; label: string }) {
+function PnlBadge({ value, label }: { value: number | null | undefined; label: string }) {
+  const v = value ?? 0
   return (
     <span
       className={`text-xs font-mono px-2 py-0.5 rounded ${
-        value >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+        v >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
       }`}
     >
-      {label}: {value >= 0 ? '+' : ''}${value.toFixed(2)}
+      {label}: {v >= 0 ? '+' : ''}${v.toFixed(2)}
     </span>
   )
 }
@@ -424,7 +427,7 @@ export function ComparisonChart({
           <Tooltip
             contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8 }}
             formatter={(value: number, name: string) => [
-              `$${value.toFixed(2)}`,
+              `$${(typeof value === 'number' ? value : 0).toFixed(2)}`,
               nameMap[name] || name,
             ]}
           />
