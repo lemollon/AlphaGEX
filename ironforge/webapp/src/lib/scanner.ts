@@ -377,7 +377,7 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   else if (vix <= 28) { const a = -0.05; winProb += a; factors.push(['VIX_ELEVATED', a]) }
   else { const a = -0.15; winProb += a; factors.push(['VIX_HIGH_RISK', a]) }
 
-  const dow = new Date().getDay()
+  const dow = getCentralTime().getDay()
   if (dow >= 2 && dow <= 4) { const a = 0.08; winProb += a; factors.push(['DAY_OPTIMAL', a]) }
   else if (dow === 1) { const a = 0.03; winProb += a; factors.push(['DAY_MONDAY', a]) }
   else if (dow === 5) { const a = -0.10; winProb += a; factors.push(['DAY_FRIDAY_RISK', a]) }
@@ -441,7 +441,7 @@ function calculateStrikes(spot: number, expectedMove: number, sdMult: number) {
 }
 
 function getTargetExpiration(minDte: number): string {
-  const now = new Date()
+  const now = getCentralTime()
   const target = new Date(now)
   let counted = 0
   while (counted < minDte) {
@@ -449,7 +449,11 @@ function getTargetExpiration(minDte: number): string {
     const dow = target.getDay()
     if (dow !== 0 && dow !== 6) counted++
   }
-  return target.toISOString().slice(0, 10)
+  // Format as YYYY-MM-DD from the CT-based date (avoid toISOString which converts back to UTC)
+  const y = target.getFullYear()
+  const m = String(target.getMonth() + 1).padStart(2, '0')
+  const d = String(target.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 /* ------------------------------------------------------------------ */
