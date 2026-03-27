@@ -1138,12 +1138,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     } catch { /* keep bot-level setting */ }
   }
   const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
-  const maxTradesPerDay = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
+  // max_trades_per_day: DB value wins if set, else bot config default.
+  // BUT if DB says 0 (unlimited) and bot config says >0, use bot config as safety floor.
+  // This prevents FLAME/SPARK from trading unlimited when DB config is stale/wrong.
+  // Only INFERNO (botCfg.max_trades=0) should truly be unlimited.
+  const dbMaxTrades = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
+  const maxTradesPerDay = (dbMaxTrades === 0 && botCfg.max_trades > 0) ? botCfg.max_trades : dbMaxTrades
   const lastResetAt = pdtCfg?.last_reset_at ?? null
 
   // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
   // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
-  // (0 = unlimited, used by INFERNO)
+  // (0 = unlimited, only when botCfg.max_trades is also 0, i.e. INFERNO)
   // Filter by person so sandbox trades don't block production (and vice versa).
   //
   // IMPORTANT: Sandbox trades must NOT block production. If sandbox already traded

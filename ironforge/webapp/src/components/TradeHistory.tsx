@@ -19,6 +19,18 @@ interface Trade {
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
 }
 
+function formatCT(ts: string | null): string {
+  if (!ts) return '--'
+  try {
+    const d = new Date(ts)
+    return d.toLocaleString('en-US', {
+      timeZone: 'America/Chicago',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+  } catch { return ts.slice(0, 16) }
+}
+
 export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: string }) {
   if (!trades.length) {
     return (
@@ -49,7 +61,7 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             const reason = formatCloseReason(trade.close_reason, bot)
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
-                <td className="p-3 text-xs text-gray-400">{trade.close_time?.slice(0, 16)}</td>
+                <td className="p-3 text-xs text-gray-400">{formatCT(trade.close_time)}</td>
                 <td className="p-3 font-mono">
                   <div>{trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C</div>
                   {hasSandbox && (
