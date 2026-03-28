@@ -401,6 +401,20 @@ async function ensureTables(): Promise<void> {
       `)
     } catch { /* constraint may already exist */ }
 
+    // Dedup paper accounts — race condition during concurrent ensureTables() can create duplicates.
+    // Keep only the highest-ID active sandbox account per bot/dte; deactivate the rest.
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
+      try {
+        await client.query(
+          `UPDATE ${bot}_paper_account SET is_active = FALSE
+           WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+             AND id < (SELECT MAX(id) FROM ${bot}_paper_account
+                       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox')`,
+          [dte],
+        )
+      } catch { /* table may not exist yet on first run */ }
+    }
+
     // Seed paper accounts if empty
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
       const res = await client.query(
