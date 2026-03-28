@@ -70,11 +70,6 @@ const FLAME_BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between 
 let _sandboxCleanupVerified = false
 let _sandboxCleanupVerifiedDate = ''
 
-// Post-stop-loss cooldown: block INFERNO re-entry for 30 min after a stop loss.
-// Keyed by bot name so each bot tracks independently.
-const _lastStopLossTime: Record<string, number> = {}
-const POST_SL_COOLDOWN_MS = 30 * 60 * 1000
-
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -748,8 +743,6 @@ async function monitorSinglePosition(
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
-    // Set cooldown timestamp for post-SL re-entry block
-    _lastStopLossTime[bot.name] = Date.now()
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
@@ -1119,44 +1112,6 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
-
-  // Daily loss circuit breaker — INFERNO only (3% of current balance)
-  if (bot.name === 'inferno') {
-    try {
-      const dailyPnlRows = await query(
-        `SELECT COALESCE(SUM(realized_pnl), 0) AS daily_pnl
-         FROM ${botTable(bot.name, 'positions')}
-         WHERE status = 'closed'
-           AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-           AND dte_mode = $1
-           AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
-        [bot.dte],
-      )
-      const dailyPnl = num(dailyPnlRows[0]?.daily_pnl)
-      const acctRows = await query(
-        `SELECT current_balance FROM ${botTable(bot.name, 'paper_account')}
-         WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-         ORDER BY id DESC LIMIT 1`,
-        [bot.dte],
-      )
-      if (acctRows.length > 0) {
-        const bal = num(acctRows[0].current_balance)
-        const threshold = -(bal * 0.03)
-        if (dailyPnl <= threshold) {
-          return `skip:daily_loss_breaker(pnl=$${dailyPnl.toFixed(2)},threshold=$${threshold.toFixed(2)})`
-        }
-      }
-    } catch { /* non-fatal — continue if query fails */ }
-  }
-
-  // Post-stop-loss cooldown — INFERNO only (30 min after any stop loss)
-  if (bot.name === 'inferno' && _lastStopLossTime[bot.name]) {
-    const elapsed = Date.now() - _lastStopLossTime[bot.name]
-    if (elapsed < POST_SL_COOLDOWN_MS) {
-      const remaining = Math.ceil((POST_SL_COOLDOWN_MS - elapsed) / 60000)
-      return `skip:post_sl_cooldown(${remaining}min remaining)`
-    }
-  }
 
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
