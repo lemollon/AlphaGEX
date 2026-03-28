@@ -10,6 +10,8 @@ interface PerfData {
   avg_loss: number
   best_trade: number
   worst_trade: number
+  profit_factor?: number | null
+  current_streak?: string | null
 }
 
 export default function PerformanceCard({
@@ -46,7 +48,7 @@ export default function PerformanceCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 text-sm border-t border-forge-border pt-3">
+      <div className="grid grid-cols-5 gap-4 text-sm border-t border-forge-border pt-3">
         <div>
           <p className="text-xs text-forge-muted">Record</p>
           <p className="font-medium">{data.wins}W / {data.losses}L</p>
@@ -58,6 +60,18 @@ export default function PerformanceCard({
         <div>
           <p className="text-xs text-forge-muted">Worst</p>
           <p className="font-medium text-red-400">${data.worst_trade.toFixed(2)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Profit Factor</p>
+          <p className={`font-medium ${(data.profit_factor ?? 0) >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {data.profit_factor != null ? data.profit_factor.toFixed(2) : '—'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-forge-muted">Streak</p>
+          <p className={`font-medium ${data.current_streak?.endsWith('W') ? 'text-emerald-400' : data.current_streak?.endsWith('L') ? 'text-red-400' : ''}`}>
+            {data.current_streak ?? '—'}
+          </p>
         </div>
       </div>
     </div>

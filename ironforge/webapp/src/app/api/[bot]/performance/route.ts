@@ -42,6 +42,40 @@ export async function GET(
     const wins = int(r?.wins)
     const winRate = total > 0 ? (wins / total) * 100 : 0
 
+    // Profit factor = gross wins / abs(gross losses)
+    const pfRows = await dbQuery(
+      `SELECT
+        COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as gross_wins,
+        COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as gross_losses
+      FROM ${botTable(bot, 'positions')}
+      WHERE status IN ('closed', 'expired')
+        AND realized_pnl IS NOT NULL
+        ${dteFilter} ${personFilter} ${accountTypeFilter}`,
+    )
+    const grossWins = num(pfRows[0]?.gross_wins)
+    const grossLosses = Math.abs(num(pfRows[0]?.gross_losses))
+    const profitFactor = grossLosses > 0 ? Math.round((grossWins / grossLosses) * 100) / 100 : (grossWins > 0 ? Infinity : 0)
+
+    // Current streak — walk most recent trades
+    const streakRows = await dbQuery(
+      `SELECT realized_pnl
+       FROM ${botTable(bot, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         ${dteFilter} ${personFilter} ${accountTypeFilter}
+       ORDER BY close_time DESC
+       LIMIT 100`,
+    )
+    let streakCount = 0
+    let streakType: 'W' | 'L' | null = null
+    for (const sr of streakRows) {
+      const isWin = num(sr.realized_pnl) > 0
+      const type = isWin ? 'W' : 'L'
+      if (streakType === null) { streakType = type; streakCount = 1 }
+      else if (type === streakType) { streakCount++ }
+      else { break }
+    }
+
     return NextResponse.json({
       total_trades: total,
       wins,
@@ -52,6 +86,8 @@ export async function GET(
       avg_loss: Math.round(num(r?.avg_loss) * 100) / 100,
       best_trade: Math.round(num(r?.best_trade) * 100) / 100,
       worst_trade: Math.round(num(r?.worst_trade) * 100) / 100,
+      profit_factor: profitFactor === Infinity ? null : profitFactor,
+      current_streak: streakCount > 0 ? `${streakCount}${streakType}` : null,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
