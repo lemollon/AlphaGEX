@@ -112,7 +112,7 @@ def inferno_config() -> BotConfig:
         min_dte=0,
         dte_mode="0DTE",
         max_trades_per_day=0,  # 0 = unlimited
-        max_contracts=20,  # Safety ceiling — Kelly criterion dynamically sizes below this
+        max_contracts=9999,  # Kelly Criterion sizes dynamically — no fixed cap
         profit_target_pct=50.0,
         stop_loss_pct=200.0,  # 200 = 2.0x entry credit (matches scanner sl_mult=2.0)
         sd_multiplier=1.0,
