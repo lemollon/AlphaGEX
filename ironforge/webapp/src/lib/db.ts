@@ -401,44 +401,50 @@ async function ensureTables(): Promise<void> {
       `)
     } catch { /* constraint may already exist */ }
 
-    // Seed paper accounts if empty
+    // Dedup paper accounts — race condition during concurrent ensureTables() can create duplicates.
+    // Keep only the highest-ID active sandbox account per bot/dte; deactivate the rest.
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
-      const res = await client.query(
-        `SELECT id FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1 LIMIT 1`,
-        [dte],
-      )
-      if (res.rows.length === 0) {
+      try {
         await client.query(
-          `INSERT INTO ${bot}_paper_account
-            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
-           VALUES (10000, 10000, 0, 10000, 10000, $1)`,
+          `UPDATE ${bot}_paper_account SET is_active = FALSE
+           WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+             AND id < (SELECT MAX(id) FROM ${bot}_paper_account
+                       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox')`,
           [dte],
         )
-      }
+      } catch { /* table may not exist yet on first run */ }
     }
-    // Seed production paper_account for FLAME/Logan if not exists
-    // Logan's production account has capital_pct=15%, $10K equity → $1,500 starting capital
-    try {
-      const prodAcctRes = await client.query(
-        `SELECT id FROM flame_paper_account WHERE account_type = 'production' AND person = 'Logan' LIMIT 1`,
+
+    // Seed paper accounts if empty — atomic INSERT ... WHERE NOT EXISTS to prevent race condition duplicates
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
+      await client.query(
+        `INSERT INTO ${bot}_paper_account
+          (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
+         SELECT 10000, 10000, 0, 10000, 10000, $1
+         WHERE NOT EXISTS (
+           SELECT 1 FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1
+         )`,
+        [dte],
       )
-      if (prodAcctRes.rows.length === 0) {
-        // Check if Logan has a production account in ironforge_accounts
-        const loganProd = await client.query(
-          `SELECT capital_pct FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+    }
+    // Seed production paper_account for FLAME/Logan if not exists — atomic to prevent race duplicates
+    try {
+      const loganProd = await client.query(
+        `SELECT capital_pct FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+      )
+      if (loganProd.rows.length > 0) {
+        const pct = parseInt(loganProd.rows[0].capital_pct) || 15
+        const startCap = Math.round(10000 * pct / 100 * 100) / 100
+        await client.query(
+          `INSERT INTO flame_paper_account
+            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+             is_active, dte_mode, account_type, person)
+           SELECT $1, $1, 0, $1, $1, 0, TRUE, '2DTE', 'production', 'Logan'
+           WHERE NOT EXISTS (
+             SELECT 1 FROM flame_paper_account WHERE account_type = 'production' AND person = 'Logan'
+           )`,
+          [startCap],
         )
-        if (loganProd.rows.length > 0) {
-          const pct = parseInt(loganProd.rows[0].capital_pct) || 15
-          const startCap = Math.round(10000 * pct / 100 * 100) / 100
-          await client.query(
-            `INSERT INTO flame_paper_account
-              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
-               is_active, dte_mode, account_type, person)
-             VALUES ($1, $1, 0, $1, $1, 0, TRUE, '2DTE', 'production', 'Logan')`,
-            [startCap],
-          )
-          console.log(`  Seeded FLAME production paper_account for Logan: $${startCap}`)
-        }
       }
     } catch (err) {
       console.warn('  Production paper_account seed failed (non-fatal):', err)

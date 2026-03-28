@@ -262,6 +262,7 @@ export default function PdtTabContent({
         count={count}
         nextAvailableDate={status.next_available_date}
         todayTradeTime={status.today_trade_time}
+        maxTradesPerDay={status.max_trades_per_day}
       />
 
       {/* ============================================ */}
@@ -338,7 +339,9 @@ export default function PdtTabContent({
           <span className="text-[11px] text-forge-muted max-w-[360px] text-right">
             {status.pdt_enabled
               ? `FINRA Rule 4210 \u2014 max ${max} day trades per rolling ${status.window_days} business days`
-              : `PDT bypassed \u2014 unlimited trades. Counter paused at ${count}.`}
+              : status.max_trades_per_day > 0
+                ? `PDT bypassed \u2014 max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day. Counter paused at ${count}.`
+                : `PDT bypassed \u2014 unlimited trades. Counter paused at ${count}.`}
           </span>
         </div>
       </div>
@@ -467,6 +470,7 @@ function StatusBanner({
   count,
   nextAvailableDate,
   todayTradeTime,
+  maxTradesPerDay,
 }: {
   pdtStatus: string
   remaining: number
@@ -474,6 +478,7 @@ function StatusBanner({
   count: number
   nextAvailableDate: string | null
   todayTradeTime: string | null
+  maxTradesPerDay: number
 }) {
   let bg: string, dotColor: string, pulsing: boolean, primary: string, secondary: string
 
@@ -482,7 +487,9 @@ function StatusBanner({
     dotColor = 'bg-gray-400'
     pulsing = false
     primary = 'PDT BYPASSED'
-    secondary = 'Unlimited trading \u2014 paper mode'
+    secondary = maxTradesPerDay > 0
+      ? `Max ${maxTradesPerDay} trade${maxTradesPerDay > 1 ? 's' : ''}/day \u2014 paper mode`
+      : 'Unlimited trading \u2014 paper mode'
   } else if (pdtStatus === 'BLOCKED') {
     bg = 'bg-red-900/30 border border-red-500/30'
     dotColor = 'bg-red-400'
