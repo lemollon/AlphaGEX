@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -338,6 +338,8 @@ export async function GET(
             (r) => r.person === s.name && r.type === s.account_type,
           )
           if (botAssignmentRows.length > 0 && !assignedToBot) return false
+          // Paper-only bots (no configured accounts AND no DB assignments) — hide all broker accounts
+          if (botAssignmentRows.length === 0 && getAccountsForBot(bot).length === 0) return false
 
           if (accountTypeParam) {
             // Show only accounts matching the selected type
