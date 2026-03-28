@@ -1105,6 +1105,119 @@ async function closePosition(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Kelly Criterion position sizing                                    */
+/*  Matches SAMSON (trading/samson/executor.py:612-703) pattern.        */
+/*  Uses ALL available trade history (no lookback window cutoff).       */
+/*  10-19 trades: quarter-Kelly. 20+ trades: half-Kelly.               */
+/*  Falls back to BP-based sizing when < 10 trades.                    */
+/* ------------------------------------------------------------------ */
+
+const KELLY_MIN_TRADES = 10       // minimum to activate Kelly at all
+const KELLY_ESTABLISHED = 20      // threshold for full half-Kelly
+const KELLY_FRACTION_EARLY = 0.25 // quarter-Kelly for 10-19 trades (higher uncertainty)
+const KELLY_FRACTION_FULL = 0.5   // half-Kelly for 20+ trades
+
+/**
+ * Calculate Kelly criterion position size for a bot.
+ * Uses ALL closed trade history (no 90-day cutoff) so new bots can
+ * activate Kelly as soon as they have 10+ trades.
+ *
+ * Returns { contracts, source, kellyPct, winRate, avgWin, avgLoss, sampleSize }.
+ * Falls back to BP-based sizing when trade history is insufficient.
+ */
+async function calculateKellyContracts(
+  bot: BotDef,
+  balance: number,
+  collateralPer: number,
+  bpContracts: number,
+): Promise<{ contracts: number; source: string; kellyPct: number; winRate: number; avgWin: number; avgLoss: number; sampleSize: number }> {
+  const fallback = { contracts: bpContracts, source: 'BP', kellyPct: 0, winRate: 0, avgWin: 0, avgLoss: 0, sampleSize: 0 }
+
+  try {
+    // Query ALL closed trades (no date cutoff — new bots need every trade to count)
+    const rows = await query(
+      `SELECT realized_pnl, contracts
+       FROM ${botTable(bot.name, 'positions')}
+       WHERE status = 'closed' AND dte_mode = $1
+         AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         AND realized_pnl IS NOT NULL`,
+      [bot.dte],
+    )
+
+    if (rows.length < KELLY_MIN_TRADES) {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} Kelly: insufficient history (${rows.length}/${KELLY_MIN_TRADES} trades) — using BP sizing`,
+      )
+      return fallback
+    }
+
+    // Calculate win rate and average P&L per contract
+    let wins = 0
+    let totalWinPerContract = 0
+    let totalLossPerContract = 0
+    let losses = 0
+
+    for (const r of rows) {
+      const pnl = num(r.realized_pnl)
+      const contracts = Math.max(1, int(r.contracts))
+      const pnlPerContract = pnl / contracts
+
+      if (pnl > 0) {
+        wins++
+        totalWinPerContract += pnlPerContract
+      } else {
+        losses++
+        totalLossPerContract += Math.abs(pnlPerContract)
+      }
+    }
+
+    const winRate = wins / rows.length
+    const avgWin = wins > 0 ? totalWinPerContract / wins : 0
+    const avgLoss = losses > 0 ? totalLossPerContract / losses : 1
+
+    // Kelly formula: f* = (b * p - q) / b
+    // where b = avgWin / avgLoss (payoff ratio), p = winRate, q = 1 - p
+    if (avgLoss <= 0 || avgWin <= 0) return fallback
+
+    const b = avgWin / avgLoss
+    const p = winRate
+    const q = 1 - p
+    const kellyOptimal = (b * p - q) / b
+
+    // If Kelly is negative or zero, edge is negative — size at minimum
+    if (kellyOptimal <= 0) {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} Kelly: NEGATIVE EDGE (kelly=${kellyOptimal.toFixed(4)}, ` +
+        `WR=${(winRate * 100).toFixed(1)}%, avgW=$${avgWin.toFixed(2)}, avgL=$${avgLoss.toFixed(2)}) — sizing at 1 contract`,
+      )
+      return { contracts: 1, source: 'KELLY_MIN', kellyPct: 0, winRate, avgWin, avgLoss, sampleSize: rows.length }
+    }
+
+    // Scale Kelly fraction based on sample size:
+    // 10-19 trades: quarter-Kelly (high uncertainty, be conservative)
+    // 20+ trades: half-Kelly (standard safe sizing)
+    const fraction = rows.length >= KELLY_ESTABLISHED ? KELLY_FRACTION_FULL : KELLY_FRACTION_EARLY
+    const fractionLabel = rows.length >= KELLY_ESTABLISHED ? 'half' : 'quarter'
+    const kellyPct = kellyOptimal * fraction
+    const maxRisk = balance * kellyPct
+    const kellyContracts = Math.max(1, Math.floor(maxRisk / collateralPer))
+
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} Kelly: WR=${(winRate * 100).toFixed(1)}% avgW=$${avgWin.toFixed(2)} ` +
+      `avgL=$${avgLoss.toFixed(2)} b=${b.toFixed(2)} kelly=${kellyOptimal.toFixed(4)} ` +
+      `${fractionLabel}=${kellyPct.toFixed(4)} maxRisk=$${maxRisk.toFixed(0)} → ${kellyContracts} contracts ` +
+      `(${rows.length} trades, ALL history)`,
+    )
+
+    return { contracts: kellyContracts, source: `KELLY_${fractionLabel.toUpperCase()}`, kellyPct, winRate, avgWin, avgLoss, sampleSize: rows.length }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] ${bot.name.toUpperCase()} Kelly calculation failed: ${msg} — using BP sizing`)
+    return fallback
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Open new trade (mirrors force-trade route exactly)                 */
 /*  Fix 10: Live buying power from open positions                      */
 /* ------------------------------------------------------------------ */
@@ -1295,7 +1408,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} after SD walk-in to ${usedSd.toFixed(1)})`
   }
 
-  // Sizing — INFERNO uses Fractional Kelly Criterion, others use fixed BP%
+  // Sizing — INFERNO + SPARK use Fractional Kelly Criterion, FLAME uses fixed BP%
   const spreadWidth = strikes.putShort - strikes.putLong
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
@@ -1308,8 +1421,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   let maxProfit: number
   let maxLoss: number
 
-  if (bot.name === 'inferno') {
-    // ── Fractional Kelly Criterion sizing ──
+  if (bot.name === 'inferno' || bot.name === 'spark') {
+    // ── Fractional Kelly Criterion sizing (INFERNO + SPARK) ──
     // Step 1: Reward/risk ratio for this specific trade
     const RR = credits.totalCredit / (spreadWidth - credits.totalCredit)
     if (RR <= 0) return 'skip:invalid_RR(credit >= spread_width)'
@@ -1325,7 +1438,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
     if (kellyRaw < -1.0) {
       console.warn(
-        `[scanner] INFERNO LOW_KELLY_WARNING: rawKelly=${kellyRaw.toFixed(3)}, sizing at floor`,
+        `[scanner] ${bot.name.toUpperCase()} LOW_KELLY_WARNING: rawKelly=${kellyRaw.toFixed(3)}, sizing at floor`,
       )
     }
 
@@ -1337,13 +1450,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     maxContracts = Math.max(1, bpContracts)
 
     console.log(
-      `[scanner] INFERNO sizing: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
+      `[scanner] ${bot.name.toUpperCase()} sizing: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
       `rawKelly=${kellyRaw.toFixed(3)} halfKelly=${kellyHalf.toFixed(3)} ` +
       `sizePct=${(kellySizePct * 100).toFixed(1)}% ` +
       `BP=$${buyingPower.toFixed(0)} collateral/lot=$${collateralPer.toFixed(0)} contracts=${maxContracts}`,
     )
   } else {
-    // FLAME/SPARK: fixed BP% sizing with max_contracts cap
+    // FLAME: fixed BP% sizing with max_contracts cap
     const usableBP = buyingPower * botCfg.bp_pct
     const bpContracts = Math.floor(usableBP / collateralPer)
     if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
