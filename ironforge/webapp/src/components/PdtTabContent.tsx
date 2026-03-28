@@ -340,8 +340,8 @@ export default function PdtTabContent({
             {status.pdt_enabled
               ? `FINRA Rule 4210 \u2014 max ${max} day trades per rolling ${status.window_days} business days`
               : status.max_trades_per_day > 0
-                ? `PDT bypassed \u2014 max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day. Counter paused at ${count}.`
-                : `PDT bypassed \u2014 unlimited trades. Counter paused at ${count}.`}
+                ? `PDT bypassed \u2014 max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day.`
+                : `PDT bypassed \u2014 unlimited trades.`}
           </span>
         </div>
       </div>
@@ -378,7 +378,7 @@ export default function PdtTabContent({
               RESET COUNTER
             </button>
             <span className="text-[10px] text-forge-muted">
-              Manual override \u2014 use only to correct errors
+              Manual override — use only to correct errors
             </span>
           </div>
           {status.last_reset_at && (
@@ -564,7 +564,7 @@ function WindowRow({
   if (!pdtEnabled) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 px-4 py-3">
-        <span className="text-xs text-amber-400/70">PDT bypassed \u2014 no window tracking</span>
+        <span className="text-xs text-amber-400/70">PDT bypassed — no window tracking</span>
       </div>
     )
   }
@@ -693,7 +693,7 @@ function NextAvailableTrade({
       <div className="rounded-xl bg-blue-900/20 border border-blue-500/20 px-4 py-3">
         <span className="text-xs text-blue-300">
           Next trade: <span className="text-white font-medium">tomorrow</span>
-          {' '}\u2014 {maxTradesPerDay}-trade/day limit resets at market open
+          {' '}— {maxTradesPerDay}-trade/day limit resets at market open
         </span>
       </div>
     )
@@ -704,7 +704,7 @@ function NextAvailableTrade({
       <div className="rounded-xl bg-amber-900/20 border border-amber-500/20 px-4 py-3">
         <span className="text-xs text-amber-300">
           Next trade: <span className="text-emerald-400 font-medium font-mono">{fmtDateFromStr(nextAvailableDate)}</span>
-          {' '}\u2014 PDT limit reached, slot opens when oldest trade expires
+          {' '}— PDT limit reached, slot opens when oldest trade expires
         </span>
       </div>
     )
@@ -713,7 +713,7 @@ function NextAvailableTrade({
   if (pdtStatus === 'BLOCKED') {
     return (
       <div className="rounded-xl bg-red-900/20 border border-red-500/20 px-4 py-3">
-        <span className="text-xs text-red-300">PDT blocked \u2014 calculating next available slot...</span>
+        <span className="text-xs text-red-300">PDT blocked — calculating next available slot...</span>
       </div>
     )
   }

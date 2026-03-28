@@ -354,7 +354,7 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
       {/* Summary */}
       <div className="mt-2 pt-2 border-t border-forge-border/30 text-[11px] text-forge-muted">
         {!status.pdt_enabled ? (
-          <span className="text-amber-400">PDT bypassed \u2014 all days available</span>
+          <span className="text-amber-400">PDT bypassed — all days available</span>
         ) : (
           <>
             Rolling {status.window_days}-day window
