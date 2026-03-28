@@ -97,7 +97,7 @@ interface BotConfig {
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 3, bp_pct: 0.85, starting_capital: 10000 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 20, bp_pct: 0.85, starting_capital: 10000 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -1100,6 +1100,111 @@ async function closePosition(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Kelly Criterion position sizing                                    */
+/*  Matches SAMSON (trading/samson/executor.py:612-703) pattern.        */
+/*  Uses half-Kelly for safety. Requires 20+ closed trades to activate.*/
+/*  Falls back to BP-based sizing when insufficient history.           */
+/* ------------------------------------------------------------------ */
+
+const KELLY_MIN_TRADES = 20
+const KELLY_LOOKBACK_DAYS = 90
+const KELLY_FRACTION = 0.5 // half-Kelly for safety
+
+/**
+ * Calculate Kelly criterion position size for a bot.
+ * Returns { contracts, source, kellyPct, winRate, avgWin, avgLoss, sampleSize }.
+ * Falls back to BP-based sizing when trade history is insufficient.
+ */
+async function calculateKellyContracts(
+  bot: BotDef,
+  balance: number,
+  collateralPer: number,
+  bpContracts: number,
+): Promise<{ contracts: number; source: string; kellyPct: number; winRate: number; avgWin: number; avgLoss: number; sampleSize: number }> {
+  const fallback = { contracts: bpContracts, source: 'BP', kellyPct: 0, winRate: 0, avgWin: 0, avgLoss: 0, sampleSize: 0 }
+
+  try {
+    // Query last 90 days of closed trades
+    const rows = await query(
+      `SELECT realized_pnl, contracts
+       FROM ${botTable(bot.name, 'positions')}
+       WHERE status = 'closed' AND dte_mode = $1
+         AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         AND close_time > NOW() - INTERVAL '${KELLY_LOOKBACK_DAYS} days'
+         AND realized_pnl IS NOT NULL`,
+      [bot.dte],
+    )
+
+    if (rows.length < KELLY_MIN_TRADES) {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} Kelly: insufficient history (${rows.length}/${KELLY_MIN_TRADES} trades) — using BP sizing`,
+      )
+      return fallback
+    }
+
+    // Calculate win rate and average P&L per contract
+    let wins = 0
+    let totalWinPerContract = 0
+    let totalLossPerContract = 0
+    let losses = 0
+
+    for (const r of rows) {
+      const pnl = num(r.realized_pnl)
+      const contracts = Math.max(1, int(r.contracts))
+      const pnlPerContract = pnl / contracts
+
+      if (pnl > 0) {
+        wins++
+        totalWinPerContract += pnlPerContract
+      } else {
+        losses++
+        totalLossPerContract += Math.abs(pnlPerContract)
+      }
+    }
+
+    const winRate = wins / rows.length
+    const avgWin = wins > 0 ? totalWinPerContract / wins : 0
+    const avgLoss = losses > 0 ? totalLossPerContract / losses : 1
+
+    // Kelly formula: f* = (b * p - q) / b
+    // where b = avgWin / avgLoss (payoff ratio), p = winRate, q = 1 - p
+    if (avgLoss <= 0 || avgWin <= 0) return fallback
+
+    const b = avgWin / avgLoss
+    const p = winRate
+    const q = 1 - p
+    const kellyOptimal = (b * p - q) / b
+
+    // If Kelly is negative or zero, edge is negative — size at minimum
+    if (kellyOptimal <= 0) {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} Kelly: NEGATIVE EDGE (kelly=${kellyOptimal.toFixed(4)}, ` +
+        `WR=${(winRate * 100).toFixed(1)}%, avgW=$${avgWin.toFixed(2)}, avgL=$${avgLoss.toFixed(2)}) — sizing at 1 contract`,
+      )
+      return { contracts: 1, source: 'KELLY_MIN', kellyPct: 0, winRate, avgWin, avgLoss, sampleSize: rows.length }
+    }
+
+    // Apply half-Kelly fraction for safety
+    const kellyPct = kellyOptimal * KELLY_FRACTION
+    const maxRisk = balance * kellyPct
+    const kellyContracts = Math.max(1, Math.floor(maxRisk / collateralPer))
+
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} Kelly: WR=${(winRate * 100).toFixed(1)}% avgW=$${avgWin.toFixed(2)} ` +
+      `avgL=$${avgLoss.toFixed(2)} b=${b.toFixed(2)} kelly=${kellyOptimal.toFixed(4)} ` +
+      `half=${kellyPct.toFixed(4)} maxRisk=$${maxRisk.toFixed(0)} → ${kellyContracts} contracts ` +
+      `(${rows.length} trades, ${KELLY_LOOKBACK_DAYS}d window)`,
+    )
+
+    return { contracts: kellyContracts, source: 'KELLY', kellyPct, winRate, avgWin, avgLoss, sampleSize: rows.length }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] ${bot.name.toUpperCase()} Kelly calculation failed: ${msg} — using BP sizing`)
+    return fallback
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Open new trade (mirrors force-trade route exactly)                 */
 /*  Fix 10: Live buying power from open positions                      */
 /* ------------------------------------------------------------------ */
@@ -1109,51 +1214,6 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
-
-  // INFERNO: Daily loss circuit breaker — stop trading if today's losses exceed 3% of balance
-  if (bot.name === 'inferno') {
-    try {
-      const dailyLossRows = await query(
-        `SELECT
-           COALESCE(SUM(realized_pnl), 0) as today_pnl
-         FROM ${botTable(bot.name, 'positions')}
-         WHERE status = 'closed' AND dte_mode = $1
-           AND COALESCE(account_type, 'sandbox') = 'sandbox'
-           AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
-        [bot.dte],
-      )
-      const todayPnl = num(dailyLossRows[0]?.today_pnl)
-      if (todayPnl < 0) {
-        const acctRows = await query(
-          `SELECT current_balance FROM ${botTable(bot.name, 'paper_account')}
-           WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-           LIMIT 1`,
-          [bot.dte],
-        )
-        const balance = num(acctRows[0]?.current_balance)
-        const lossLimit = balance * 0.03
-        if (Math.abs(todayPnl) >= lossLimit) {
-          return `skip:daily_loss_limit(today=$${todayPnl.toFixed(2)}, limit=-$${lossLimit.toFixed(2)})`
-        }
-      }
-    } catch { /* non-critical — proceed without limit */ }
-
-    // INFERNO: Post-stop-loss cooldown — wait 30 min after a stop loss before re-entry
-    try {
-      const lastSlRows = await query(
-        `SELECT close_time FROM ${botTable(bot.name, 'positions')}
-         WHERE status = 'closed' AND dte_mode = $1
-           AND close_reason = 'stop_loss'
-           AND COALESCE(account_type, 'sandbox') = 'sandbox'
-           AND close_time > NOW() - INTERVAL '30 minutes'
-         LIMIT 1`,
-        [bot.dte],
-      )
-      if (lastSlRows.length > 0) {
-        return 'skip:post_sl_cooldown(30min)'
-      }
-    } catch { /* non-critical */ }
-  }
 
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
@@ -1324,21 +1384,32 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} after SD walk-in to ${usedSd.toFixed(1)})`
   }
 
-  // Sizing (Fix 1: per-bot max_contracts and bp_pct)
+  // Sizing — Kelly criterion for INFERNO, BP-based for FLAME/SPARK
   const spreadWidth = strikes.putShort - strikes.putLong
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
   const bpContracts = Math.floor(usableBP / collateralPer)
   if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
-  // max_contracts=0 means unlimited (sized by BP only)
-  // SAFETY CAP: Never exceed 200 contracts regardless of BP calculation.
-  // Prevents runaway sizing from inflated buying power values.
-  const SCANNER_MAX_CONTRACTS = 200
-  const rawMax = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
-  const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
+
+  let maxContracts: number
+  if (bot.name === 'inferno') {
+    // INFERNO: Kelly criterion sizing (half-Kelly, 20+ trade minimum)
+    const kelly = await calculateKellyContracts(bot, balance, collateralPer, bpContracts)
+    // Cap Kelly result at both max_contracts config AND BP-derived limit
+    const SCANNER_MAX_CONTRACTS = 200
+    const cappedByConfig = botCfg.max_contracts > 0
+      ? Math.min(kelly.contracts, botCfg.max_contracts, bpContracts)
+      : Math.min(kelly.contracts, bpContracts)
+    maxContracts = Math.min(cappedByConfig, SCANNER_MAX_CONTRACTS)
+  } else {
+    // FLAME/SPARK: BP-based sizing with max_contracts cap
+    const SCANNER_MAX_CONTRACTS = 200
+    const rawMax = botCfg.max_contracts > 0
+      ? Math.min(botCfg.max_contracts, bpContracts)
+      : bpContracts
+    maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
+  }
   const totalCollateral = collateralPer * maxContracts
   const maxProfit = credits.totalCredit * 100 * maxContracts
   const maxLoss = totalCollateral
