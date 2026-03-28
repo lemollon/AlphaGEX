@@ -132,11 +132,14 @@ function cfg(bot: BotDef): BotConfig {
  */
 async function getStartingCapitalForBot(botName: string): Promise<number> {
   try {
-    // Use the hardcoded primary account (e.g., 'User' for FLAME) — not alphabetical first person.
-    // This ensures the sandbox paper account is based on the User account balance,
-    // not Iron Viper's (Logan) which may have a different equity.
+    // Only fetch Tradier balance for bots that actually have sandbox accounts (FLAME).
+    // Paper-only bots (SPARK, INFERNO) have no accounts — use configured default.
     const primaryAccounts = getAccountsForBot(botName)
-    const primaryPerson = primaryAccounts.length > 0 ? primaryAccounts[0] : 'User'
+    if (primaryAccounts.length === 0) {
+      // Paper-only bot — no Tradier account, use config starting_capital
+      return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
+    }
+    const primaryPerson = primaryAccounts[0]
     const allocated = await getAllocatedCapitalForAccount(primaryPerson, 'sandbox')
     if (allocated > 0) {
       console.log(
@@ -1427,34 +1430,47 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const RR = credits.totalCredit / (spreadWidth - credits.totalCredit)
     if (RR <= 0) return 'skip:invalid_RR(credit >= spread_width)'
 
-    // Step 2: Raw Kelly fraction (WP from advisor)
-    kellyRaw = adv.winProbability - ((1 - adv.winProbability) / RR)
-
-    // Step 3: Half Kelly (standard risk management)
-    kellyHalf = kellyRaw * 0.5
-
-    // Step 4: Clamp between 10% floor and 85% ceiling
-    kellySizePct = Math.max(0.10, Math.min(0.85, kellyHalf))
-
-    if (kellyRaw < -1.0) {
-      console.warn(
-        `[scanner] ${bot.name.toUpperCase()} LOW_KELLY_WARNING: rawKelly=${kellyRaw.toFixed(3)}, sizing at floor`,
-      )
+    // Step 2: Minimum R/R gate — block trades with catastrophic risk/reward
+    // RR < 0.05 means credit < ~$0.25 on a $5 spread (risk $475+ to make $25)
+    const MIN_RR = 0.05
+    if (RR < MIN_RR) {
+      return `skip:poor_rr(RR=${RR.toFixed(4)}, need>=${MIN_RR}, credit=$${credits.totalCredit.toFixed(2)})`
     }
 
-    // Step 5: Calculate contracts
+    // Step 3: Raw Kelly fraction (WP from advisor)
+    kellyRaw = adv.winProbability - ((1 - adv.winProbability) / RR)
+
+    // Step 4: Half Kelly (standard risk management)
+    kellyHalf = kellyRaw * 0.5
+
+    // Step 5: Size based on Kelly — NO artificial floor
+    // If Kelly is negative, the edge is negative. Size at 1 contract minimum.
+    // If Kelly is positive, use it directly (capped at 85%).
     if (buyingPower < collateralPer) {
       return `skip:insufficient_bp(need=$${collateralPer.toFixed(0)},have=$${buyingPower.toFixed(0)})`
     }
-    const bpContracts = Math.floor((buyingPower * kellySizePct) / collateralPer)
-    maxContracts = Math.max(1, bpContracts)
 
-    console.log(
-      `[scanner] ${bot.name.toUpperCase()} sizing: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
-      `rawKelly=${kellyRaw.toFixed(3)} halfKelly=${kellyHalf.toFixed(3)} ` +
-      `sizePct=${(kellySizePct * 100).toFixed(1)}% ` +
-      `BP=$${buyingPower.toFixed(0)} collateral/lot=$${collateralPer.toFixed(0)} contracts=${maxContracts}`,
-    )
+    if (kellyRaw <= 0) {
+      // Negative edge — Kelly says don't trade this setup.
+      // Size at absolute minimum (1 contract) since the advisor already approved the trade.
+      maxContracts = 1
+      kellySizePct = 0
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} NEGATIVE_KELLY: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
+        `rawKelly=${kellyRaw.toFixed(3)} → 1 contract (minimum)`,
+      )
+    } else {
+      // Positive edge — let Kelly size it, cap at 85%
+      kellySizePct = Math.min(0.85, kellyHalf)
+      const bpContracts = Math.floor((buyingPower * kellySizePct) / collateralPer)
+      maxContracts = Math.max(1, bpContracts)
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} sizing: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
+        `rawKelly=${kellyRaw.toFixed(3)} halfKelly=${kellyHalf.toFixed(3)} ` +
+        `sizePct=${(kellySizePct * 100).toFixed(1)}% ` +
+        `BP=$${buyingPower.toFixed(0)} collateral/lot=$${collateralPer.toFixed(0)} contracts=${maxContracts}`,
+      )
+    }
   } else {
     // FLAME: fixed BP% sizing with max_contracts cap
     const usableBP = buyingPower * botCfg.bp_pct
