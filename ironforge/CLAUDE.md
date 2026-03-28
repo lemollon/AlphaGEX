@@ -150,8 +150,8 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 - Profit target: 30% of credit (FLAME/SPARK), 50% (INFERNO)
 - Stop loss: 100% of credit / 2.0x (FLAME/SPARK), 100% of credit / 2.0x (INFERNO)
 - Max 1 trade/day (FLAME/SPARK), unlimited (INFERNO)
-- Position sizing: **Kelly criterion** (INFERNO, half-Kelly, 20+ trade min, 90-day window), BP-sized (FLAME/SPARK)
-- Max contracts safety ceiling: 20 (INFERNO), BP-derived (FLAME/SPARK)
+- Position sizing: **Per-trade Kelly criterion** (INFERNO + SPARK, half-Kelly clamped 10%-85%), BP-sized (FLAME)
+- No max_contracts ceiling — Kelly sizes dynamically based on WP × R/R ratio
 - VIX skip: > 32
 - PDT limit: 4 day trades / 5 rolling business days (matches FINRA Rule 4210)
 - Entry window: 8:30 AM - 2:00 PM CT (FLAME/SPARK), 8:30 AM - 2:30 PM CT (INFERNO)
