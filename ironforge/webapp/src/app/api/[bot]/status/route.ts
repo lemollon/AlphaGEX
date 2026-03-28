@@ -333,13 +333,13 @@ export async function GET(
       }),
       sandbox_accounts: sandboxBalances
         .filter((s) => {
+          // Paper-only bots never show broker accounts (SPARK, INFERNO have no Tradier orders)
+          if (getAccountsForBot(bot).length === 0) return false
           // Only show accounts assigned to this bot
           const assignedToBot = botAssignmentRows.some(
             (r) => r.person === s.name && r.type === s.account_type,
           )
           if (botAssignmentRows.length > 0 && !assignedToBot) return false
-          // Paper-only bots (no configured accounts AND no DB assignments) — hide all broker accounts
-          if (botAssignmentRows.length === 0 && getAccountsForBot(bot).length === 0) return false
 
           if (accountTypeParam) {
             // Show only accounts matching the selected type
