@@ -13,8 +13,10 @@ export async function GET(
   const dte = dteMode(bot)
   const personParam = req.nextUrl.searchParams.get('person')
   const filterByPerson = personParam && personParam !== 'all'
+  const accountType = req.nextUrl.searchParams.get('account_type') || undefined
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
+  const accountTypeFilter = accountType ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'` : ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50), 200)
@@ -24,7 +26,7 @@ export async function GET(
     const rows = await dbQuery(
       `SELECT log_time, level, message, details
        FROM ${botTable(bot, 'logs')}
-       WHERE 1=1 ${dteFilter} ${personFilter}
+       WHERE 1=1 ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY log_time DESC
        LIMIT ${limit} OFFSET ${offset}`,
     )
