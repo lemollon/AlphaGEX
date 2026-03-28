@@ -185,12 +185,17 @@ async function loadConfigOverrides(): Promise<void> {
       }
 
       // Override starting_capital from ironforge_accounts (capital_pct × real balance)
-      try {
-        const allocatedCap = await getStartingCapitalForBot(bot.name)
-        if (allocatedCap > 0) {
-          merged.starting_capital = allocatedCap
-        }
-      } catch { /* keep config default */ }
+      // Only for bots with Tradier accounts (FLAME). Paper-only bots (SPARK, INFERNO)
+      // use the starting_capital from their DB config table — not Tradier.
+      const botAccounts = getAccountsForBot(bot.name)
+      if (botAccounts.length > 0) {
+        try {
+          const allocatedCap = await getStartingCapitalForBot(bot.name)
+          if (allocatedCap > 0) {
+            merged.starting_capital = allocatedCap
+          }
+        } catch { /* keep config default */ }
+      }
 
       _botConfig[bot.name] = merged
       console.log(
