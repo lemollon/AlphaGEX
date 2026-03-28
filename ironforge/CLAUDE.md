@@ -148,14 +148,14 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 - Spread width: $5
 - SD multiplier: 1.2x (FLAME/SPARK), 1.0x (INFERNO)
 - Profit target: 30% of credit (FLAME/SPARK), 50% (INFERNO)
-- Stop loss: 100% of credit (FLAME/SPARK), 200% (INFERNO)
+- Stop loss: 100% of credit / 2.0x (FLAME/SPARK), 100% of credit / 2.0x (INFERNO)
 - Max 1 trade/day (FLAME/SPARK), unlimited (INFERNO)
-- 10 max contracts
+- 3 max contracts (INFERNO), BP-sized (FLAME/SPARK)
 - VIX skip: > 32
 - PDT limit: 4 day trades / 5 rolling business days (matches FINRA Rule 4210)
 - Entry window: 8:30 AM - 2:00 PM CT (FLAME/SPARK), 8:30 AM - 2:30 PM CT (INFERNO)
-- EOD cutoff: 2:45 PM CT (3:45 PM ET)
-- Scan frequency: every 5 minutes
+- EOD cutoff: 2:50 PM CT (scanner.ts isAfterEodCutoff >= 1450)
+- Scan frequency: every 1 minute (scanner.ts SCAN_INTERVAL_MS)
 
 ## Trading Cycle (trader.py `run_cycle()`)
 
@@ -177,8 +177,10 @@ FLAME and SPARK share identical config except `min_dte`. INFERNO uses FORTRESS-s
 | Trigger | Condition |
 |---------|-----------|
 | Profit target | Cost to close <= 70% of entry credit |
-| Stop loss | Cost to close >= 200% of entry credit |
-| EOD safety | Time >= 2:45 PM CT |
+| Stop loss | Cost to close >= 200% of entry credit (2.0x) |
+| EOD safety | Time >= 2:50 PM CT |
+| Daily loss limit | INFERNO: today's losses >= 3% of balance |
+| Post-SL cooldown | INFERNO: 30 min wait after stop loss before re-entry |
 | Stale/expired | Position from prior day or past expiration |
 | Data failure | 10 consecutive MTM failures |
 | Server restart | Force-close if market closed, resume if open |

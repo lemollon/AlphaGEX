@@ -97,7 +97,7 @@ interface BotConfig {
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 20, bp_pct: 0.85, starting_capital: 10000 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 3, bp_pct: 0.85, starting_capital: 10000 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -1109,6 +1109,51 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
+
+  // INFERNO: Daily loss circuit breaker — stop trading if today's losses exceed 3% of balance
+  if (bot.name === 'inferno') {
+    try {
+      const dailyLossRows = await query(
+        `SELECT
+           COALESCE(SUM(realized_pnl), 0) as today_pnl
+         FROM ${botTable(bot.name, 'positions')}
+         WHERE status = 'closed' AND dte_mode = $1
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+        [bot.dte],
+      )
+      const todayPnl = num(dailyLossRows[0]?.today_pnl)
+      if (todayPnl < 0) {
+        const acctRows = await query(
+          `SELECT current_balance FROM ${botTable(bot.name, 'paper_account')}
+           WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           LIMIT 1`,
+          [bot.dte],
+        )
+        const balance = num(acctRows[0]?.current_balance)
+        const lossLimit = balance * 0.03
+        if (Math.abs(todayPnl) >= lossLimit) {
+          return `skip:daily_loss_limit(today=$${todayPnl.toFixed(2)}, limit=-$${lossLimit.toFixed(2)})`
+        }
+      }
+    } catch { /* non-critical — proceed without limit */ }
+
+    // INFERNO: Post-stop-loss cooldown — wait 30 min after a stop loss before re-entry
+    try {
+      const lastSlRows = await query(
+        `SELECT close_time FROM ${botTable(bot.name, 'positions')}
+         WHERE status = 'closed' AND dte_mode = $1
+           AND close_reason = 'stop_loss'
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           AND close_time > NOW() - INTERVAL '30 minutes'
+         LIMIT 1`,
+        [bot.dte],
+      )
+      if (lastSlRows.length > 0) {
+        return 'skip:post_sl_cooldown(30min)'
+      }
+    } catch { /* non-critical */ }
+  }
 
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
