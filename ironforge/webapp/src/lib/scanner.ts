@@ -1115,12 +1115,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
-  // Friday skip — INFERNO only (data: -$298 on Fridays, positive all other days)
-  if (bot.name === 'inferno') {
-    const ct = getCentralTime()
-    if (ct.getDay() === 5) {
-      return `skip:friday_filter`
-    }
+  // Friday skip — INFERNO and SPARK (data: INFERNO -$298, SPARK -$735 on Fridays)
+  if ((bot.name === 'inferno' || bot.name === 'spark') && getCentralTime().getDay() === 5) {
+    return `skip:friday_filter`
   }
 
   // Resolve the primary person for this bot (used for position attribution)
