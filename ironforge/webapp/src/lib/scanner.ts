@@ -91,13 +91,14 @@ interface BotConfig {
   max_contracts: number
   bp_pct: number
   starting_capital: number
+  min_credit: number // minimum credit per contract to open a trade
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -109,6 +110,7 @@ const DB_TO_CFG: Record<string, { key: keyof BotConfig; transform?: (v: number) 
   max_trades_per_day:   { key: 'max_trades' },
   buying_power_usage_pct: { key: 'bp_pct' },
   starting_capital:     { key: 'starting_capital' },
+  min_credit:           { key: 'min_credit' },
 }
 
 /** Runtime config — mutated by loadConfigOverrides() each cycle */
@@ -1113,6 +1115,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
+  // Friday skip — INFERNO only (data: -$298 on Fridays, positive all other days)
+  if (bot.name === 'inferno') {
+    const ct = getCentralTime()
+    if (ct.getDay() === 5) {
+      return `skip:friday_filter`
+    }
+  }
+
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
   try {
@@ -1272,7 +1282,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
   )
 
-  while ((!credits || credits.totalCredit < 0.05) && usedSd - SD_STEP >= SD_FLOOR) {
+  while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
     usedSd = Math.round((usedSd - SD_STEP) * 10) / 10  // avoid float drift
     strikes = calculateStrikes(spot, expectedMove, usedSd)
     credits = await getIcEntryCredit(
@@ -1284,7 +1294,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     )
   }
 
-  if (!credits || credits.totalCredit < 0.05) {
+  if (!credits || credits.totalCredit < botCfg.min_credit) {
     return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} after SD walk-in to ${usedSd.toFixed(1)})`
   }
 
@@ -1909,8 +1919,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-      $31, $32, $33, $34, $35, $36, $37, $38,
-      'open', NOW(), ${CT_TODAY}, $39, $40, 'sandbox'
+      $31, $32, $33, $34, $35, $36, $37,
+      $38, NOW(), ${CT_TODAY}, $39, $40, 'sandbox'
     )`,
     [
       positionId, 'SPY', expiration,
@@ -1926,7 +1936,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       false, spreadWidth, spreadWidth,
       'PAPER', 'PAPER',
       kellyRaw || null, kellyHalf || null, kellySizePct || null,
-      bot.dte, person,
+      'open', bot.dte, person,
     ],
   )
 
