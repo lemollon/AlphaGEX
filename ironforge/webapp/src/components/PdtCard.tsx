@@ -279,7 +279,7 @@ export default function PdtCard({
             </div>
           </div>
         ) : (
-          <div className="text-[11px] text-amber-400/70">PDT bypassed \u2014 no window tracking</div>
+          <div className="text-[11px] text-amber-400/70">PDT bypassed — no window tracking</div>
         )}
 
         {/* ROW 3: Today's status dot */}

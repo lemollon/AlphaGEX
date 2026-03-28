@@ -344,7 +344,7 @@ async function ensureTables(): Promise<void> {
         } catch { /* column already exists or table doesn't exist yet */ }
       }
       // Add account_type column for production vs sandbox position tracking
-      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_pdt_log`, `${bot}_signals`]) {
+      for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_pdt_log`, `${bot}_signals`, `${bot}_logs`]) {
         try {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'sandbox'`)
         } catch { /* column already exists or table doesn't exist yet */ }
