@@ -70,6 +70,11 @@ const FLAME_BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between 
 let _sandboxCleanupVerified = false
 let _sandboxCleanupVerifiedDate = ''
 
+// Post-stop-loss cooldown: block INFERNO re-entry for 30 min after a stop loss.
+// Keyed by bot name so each bot tracks independently.
+const _lastStopLossTime: Record<string, number> = {}
+const POST_SL_COOLDOWN_MS = 30 * 60 * 1000
+
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -97,7 +102,7 @@ interface BotConfig {
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 3.0, entry_end: 1430, max_trades: 0, max_contracts: 20, bp_pct: 0.85, starting_capital: 10000 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -346,19 +351,22 @@ function isAfterEodCutoff(ct: Date): boolean {
  * PT slides DOWN as the day progresses.
  *
  * FLAME/SPARK (base=0.30): MORNING 30% → MIDDAY 20% → AFTERNOON 15%
- * INFERNO    (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 10%
+ * INFERNO    (0DTE):      MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
+ *   let theta work in afternoon (decay accelerates into close).
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
   const isInferno = botName === 'inferno'
 
   if (timeMinutes < 630) { // before 10:30 AM CT
+    if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
     if (isInferno) return [0.30, 'MIDDAY']
     return [Math.max(0.10, basePt - 0.10), 'MIDDAY']
   } else {
-    if (isInferno) return [0.10, 'AFTERNOON']
+    if (isInferno) return [0.50, 'AFTERNOON']
     return [Math.max(0.10, basePt - 0.15), 'AFTERNOON']
   }
 }
@@ -740,6 +748,8 @@ async function monitorSinglePosition(
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
+    // Set cooldown timestamp for post-SL re-entry block
+    _lastStopLossTime[bot.name] = Date.now()
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
@@ -1110,6 +1120,44 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // VIX filter
   if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
 
+  // Daily loss circuit breaker — INFERNO only (3% of current balance)
+  if (bot.name === 'inferno') {
+    try {
+      const dailyPnlRows = await query(
+        `SELECT COALESCE(SUM(realized_pnl), 0) AS daily_pnl
+         FROM ${botTable(bot.name, 'positions')}
+         WHERE status = 'closed'
+           AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+           AND dte_mode = $1
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
+        [bot.dte],
+      )
+      const dailyPnl = num(dailyPnlRows[0]?.daily_pnl)
+      const acctRows = await query(
+        `SELECT current_balance FROM ${botTable(bot.name, 'paper_account')}
+         WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         ORDER BY id DESC LIMIT 1`,
+        [bot.dte],
+      )
+      if (acctRows.length > 0) {
+        const bal = num(acctRows[0].current_balance)
+        const threshold = -(bal * 0.03)
+        if (dailyPnl <= threshold) {
+          return `skip:daily_loss_breaker(pnl=$${dailyPnl.toFixed(2)},threshold=$${threshold.toFixed(2)})`
+        }
+      }
+    } catch { /* non-fatal — continue if query fails */ }
+  }
+
+  // Post-stop-loss cooldown — INFERNO only (30 min after any stop loss)
+  if (bot.name === 'inferno' && _lastStopLossTime[bot.name]) {
+    const elapsed = Date.now() - _lastStopLossTime[bot.name]
+    if (elapsed < POST_SL_COOLDOWN_MS) {
+      const remaining = Math.ceil((POST_SL_COOLDOWN_MS - elapsed) / 60000)
+      return `skip:post_sl_cooldown(${remaining}min remaining)`
+    }
+  }
+
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
   try {
@@ -1237,6 +1285,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const adv = evaluateAdvisor(vix, spot, expectedMove, bot.dte)
   if (adv.advice === 'SKIP') return `skip:advisor(${adv.reasoning})`
 
+  // GEX data warning — log but don't block (GEX not yet integrated)
+  // When GEX is wired up, change this to a hard block
+  console.warn(
+    `[scanner] ${bot.name.toUpperCase()}: GEX_DATA_MISSING — all GEX fields zero, trading without gamma context`,
+  )
+
   // Expiration
   const targetExp = getTargetExpiration(bot.minDte)
   const expirations = await getOptionExpirations('SPY')
@@ -1279,24 +1333,68 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} after SD walk-in to ${usedSd.toFixed(1)})`
   }
 
-  // Sizing (Fix 1: per-bot max_contracts and bp_pct)
+  // Sizing — INFERNO uses Fractional Kelly Criterion, others use fixed BP%
   const spreadWidth = strikes.putShort - strikes.putLong
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
-  const usableBP = buyingPower * botCfg.bp_pct
-  const bpContracts = Math.floor(usableBP / collateralPer)
-  if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
-  // max_contracts=0 means unlimited (sized by BP only)
-  // SAFETY CAP: Never exceed 200 contracts regardless of BP calculation.
-  // Prevents runaway sizing from inflated buying power values.
-  const SCANNER_MAX_CONTRACTS = 200
-  const rawMax = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
-  const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
-  const totalCollateral = collateralPer * maxContracts
-  const maxProfit = credits.totalCredit * 100 * maxContracts
-  const maxLoss = totalCollateral
+
+  let kellyRaw = 0
+  let kellyHalf = 0
+  let kellySizePct = 0
+  let maxContracts: number
+  let totalCollateral: number
+  let maxProfit: number
+  let maxLoss: number
+
+  if (bot.name === 'inferno') {
+    // ── Fractional Kelly Criterion sizing ──
+    // Step 1: Reward/risk ratio for this specific trade
+    const RR = credits.totalCredit / (spreadWidth - credits.totalCredit)
+    if (RR <= 0) return 'skip:invalid_RR(credit >= spread_width)'
+
+    // Step 2: Raw Kelly fraction (WP from advisor)
+    kellyRaw = adv.winProbability - ((1 - adv.winProbability) / RR)
+
+    // Step 3: Half Kelly (standard risk management)
+    kellyHalf = kellyRaw * 0.5
+
+    // Step 4: Clamp between 10% floor and 85% ceiling
+    kellySizePct = Math.max(0.10, Math.min(0.85, kellyHalf))
+
+    if (kellyRaw < -1.0) {
+      console.warn(
+        `[scanner] INFERNO LOW_KELLY_WARNING: rawKelly=${kellyRaw.toFixed(3)}, sizing at floor`,
+      )
+    }
+
+    // Step 5: Calculate contracts
+    if (buyingPower < collateralPer) {
+      return `skip:insufficient_bp(need=$${collateralPer.toFixed(0)},have=$${buyingPower.toFixed(0)})`
+    }
+    const bpContracts = Math.floor((buyingPower * kellySizePct) / collateralPer)
+    maxContracts = Math.max(1, bpContracts)
+
+    console.log(
+      `[scanner] INFERNO sizing: WP=${adv.winProbability.toFixed(3)} RR=${RR.toFixed(3)} ` +
+      `rawKelly=${kellyRaw.toFixed(3)} halfKelly=${kellyHalf.toFixed(3)} ` +
+      `sizePct=${(kellySizePct * 100).toFixed(1)}% ` +
+      `BP=$${buyingPower.toFixed(0)} collateral/lot=$${collateralPer.toFixed(0)} contracts=${maxContracts}`,
+    )
+  } else {
+    // FLAME/SPARK: fixed BP% sizing with max_contracts cap
+    const usableBP = buyingPower * botCfg.bp_pct
+    const bpContracts = Math.floor(usableBP / collateralPer)
+    if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
+    const SCANNER_MAX_CONTRACTS = 200
+    const rawMax = botCfg.max_contracts > 0
+      ? Math.min(botCfg.max_contracts, bpContracts)
+      : bpContracts
+    maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
+  }
+
+  totalCollateral = collateralPer * maxContracts
+  maxProfit = credits.totalCredit * 100 * maxContracts
+  maxLoss = totalCollateral
 
   // Position ID
   const now = new Date()
@@ -1850,12 +1948,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
       wings_adjusted, original_put_width, original_call_width,
       put_order_id, call_order_id,
+      kelly_raw, kelly_half, kelly_size_pct,
       status, open_time, open_date, dte_mode, person, account_type
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
       $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
       $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-      $31, $32, $33, $34, $35, NOW(), ${CT_TODAY}, $36, $37, 'sandbox'
+      $31, $32, $33, $34, $35, $36, $37, $38,
+      'open', NOW(), ${CT_TODAY}, $39, $40, 'sandbox'
     )`,
     [
       positionId, 'SPY', expiration,
@@ -1870,7 +1970,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       adv.reasoning, JSON.stringify(adv.topFactors), false,
       false, spreadWidth, spreadWidth,
       'PAPER', 'PAPER',
-      'open', bot.dte, person,
+      kellyRaw || null, kellyHalf || null, kellySizePct || null,
+      bot.dte, person,
     ],
   )
 

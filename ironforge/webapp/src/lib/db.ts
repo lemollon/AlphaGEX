@@ -161,6 +161,9 @@ CREATE TABLE IF NOT EXISTS ${bot}_positions (
   original_call_width NUMERIC(10,2),
   put_order_id TEXT DEFAULT 'PAPER',
   call_order_id TEXT DEFAULT 'PAPER',
+  kelly_raw NUMERIC(8,4),
+  kelly_half NUMERIC(8,4),
+  kelly_size_pct NUMERIC(6,4),
   sandbox_order_id TEXT,
   sandbox_close_order_id TEXT,
   status TEXT NOT NULL DEFAULT 'open',
@@ -328,7 +331,8 @@ async function ensureTables(): Promise<void> {
 
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ['flame', 'spark', 'inferno']) {
-      for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT']) {
+      for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
+                          'kelly_raw NUMERIC(8,4)', 'kelly_half NUMERIC(8,4)', 'kelly_size_pct NUMERIC(6,4)']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
         } catch { /* column already exists or table doesn't exist yet */ }
