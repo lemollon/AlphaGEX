@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPARK (1DTE) & FLAME (2DTE) — SPY Iron Condor Backtester
+SPARK (1DTE) & FLAME (2DTE) -- SPY Iron Condor Backtester
 =========================================================
 Standalone backtest engine for SPY iron condors.
 Data source: philippdubach SPY options parquet files.
@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# BOT CONFIGS — exact live production parameters, do not change
+# BOT CONFIGS -- exact live production parameters, do not change
 # ---------------------------------------------------------------------------
 BOT_CONFIGS = {
     "spark": {
@@ -60,7 +60,7 @@ BOT_CONFIGS = {
 }
 
 # ---------------------------------------------------------------------------
-# COLUMN NORMALIZATION — auto-detect and map non-standard column names
+# COLUMN NORMALIZATION -- auto-detect and map non-standard column names
 # ---------------------------------------------------------------------------
 COLUMN_ALIASES = {
     "date": ["date", "quote_date", "trade_date"],
@@ -140,7 +140,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
             fp = os.path.join(data_dir, yf)
             size = os.path.getsize(fp)
             if size < 500:  # LFS pointer, not real data
-                print(f"  SKIP {yf} ({size} bytes — LFS pointer, not real data)")
+                print(f"  SKIP {yf} ({size} bytes -- LFS pointer, not real data)")
                 continue
             frames.append(pd.read_parquet(fp))
             print(f"  Loaded {yf}")
@@ -151,7 +151,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     else:
         size = os.path.getsize(parquet_path)
         if size < 500:
-            print(f"ERROR: {parquet_path} is only {size} bytes — likely an LFS pointer, not real data")
+            print(f"ERROR: {parquet_path} is only {size} bytes -- likely an LFS pointer, not real data")
             sys.exit(1)
         df = pd.read_parquet(parquet_path)
 
@@ -165,7 +165,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     actual_cols = set(df.columns)
     missing = [c for c in REQUIRED_COLUMNS if c not in actual_cols]
     if missing:
-        print(f"COLUMN MAPPING FAILED — found: {list(df.columns)} — missing: {missing}")
+        print(f"COLUMN MAPPING FAILED -- found: {list(df.columns)} -- missing: {missing}")
         sys.exit(1)
 
     # Normalize type values
@@ -188,7 +188,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     df = df[df["ask"] >= df["bid"]]
 
     print(f"Options data loaded: {len(df):,} rows | "
-          f"{df['date'].min().date()} → {df['date'].max().date()}")
+          f"{df['date'].min().date()} to {df['date'].max().date()}")
 
     _options_cache[parquet_path] = df
     return df
@@ -291,7 +291,16 @@ def run_backtest(
             skipped["VIX_TOO_HIGH"] += 1
             continue
 
-        # SPY price
+        # SPY price -- use Open for strike selection (simulates opening at 9:35am)
+        try:
+            spy_open = float(spy["Open"].asof(trade_date))
+        except Exception:
+            spy_open = None
+        if spy_open is None or np.isnan(spy_open):
+            skipped["MISSING_QUOTES"] += 1
+            continue
+
+        # SPY Close for same-day settlement
         try:
             spy_close = float(spy["Close"].asof(trade_date))
         except Exception:
@@ -310,12 +319,12 @@ def run_backtest(
 
         exp_date = exp_options["expiration"].iloc[0]
 
-        # Strike selection: 1.2 SD move from spot
+        # Strike selection: 1.2 SD move from SPY Open (simulates 9:35am entry)
         iv_approx = vix_val / 100.0
-        sd = spy_close * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
+        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
 
-        short_put_strike = round(spy_close - sd)
-        short_call_strike = round(spy_close + sd)
+        short_put_strike = round(spy_open - sd)
+        short_call_strike = round(spy_open + sd)
         long_put_strike = short_put_strike - cfg["spread_width"]
         long_call_strike = short_call_strike + cfg["spread_width"]
 
@@ -349,7 +358,8 @@ def run_backtest(
         position = {
             "entry_date": date_str,
             "expiration_date": pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
-            "spy_at_entry": round(spy_close, 2),
+            "spy_open": round(spy_open, 2),
+            "spy_close": round(spy_close, 2),
             "vix_at_entry": round(vix_val, 2),
             "short_put": short_put_strike,
             "short_call": short_call_strike,
@@ -364,78 +374,35 @@ def run_backtest(
             "realized_pnl": None,
         }
 
-        # Simulate exit: check each subsequent day up to expiration
-        pt_threshold = net_credit * (1 - cfg["profit_target_pct"] / 100.0)
-        sl_threshold = net_credit * (1 + cfg["stop_loss_pct"] / 100.0)
+        # SAME-DAY SETTLEMENT -- open at SPY Open, close at SPY Close
+        # Compute intrinsic value of IC at today's close
+        short_put_intrinsic = max(0, short_put_strike - spy_close)
+        short_call_intrinsic = max(0, spy_close - short_call_strike)
+        long_put_intrinsic = max(0, long_put_strike - spy_close)
+        long_call_intrinsic = max(0, spy_close - long_call_strike)
 
-        exit_found = False
-        check_dates = sorted(
-            options[
-                (options["date"] > trade_date) & (options["date"] <= exp_date)
-            ]["date"].unique()
+        settlement_cost = (
+            (short_put_intrinsic + short_call_intrinsic)
+            - (long_put_intrinsic + long_call_intrinsic)
         )
+        pnl = (net_credit - settlement_cost) * 100 * contracts
 
-        for check_date in check_dates:
-            check_chain = options[
-                (options["date"] == check_date) & (options["expiration"] == exp_date)
-            ]
+        # Classify exit reason based on PT/SL thresholds
+        pt_threshold = net_credit * (cfg["profit_target_pct"] / 100.0)
+        sl_threshold = net_credit * (cfg["stop_loss_pct"] / 100.0)
 
-            sp_ask_now = get_price(check_chain, short_put_strike, "put", "ask")
-            sc_ask_now = get_price(check_chain, short_call_strike, "call", "ask")
-            lp_bid_now = get_price(check_chain, long_put_strike, "put", "bid")
-            lc_bid_now = get_price(check_chain, long_call_strike, "call", "bid")
+        if pnl >= pt_threshold * 100 * contracts:
+            exit_reason = "PROFIT_TARGET"
+        elif pnl <= -(sl_threshold * 100 * contracts):
+            exit_reason = "STOP_LOSS"
+        else:
+            exit_reason = "SAME_DAY_SETTLE"
 
-            if any(p is None for p in [sp_ask_now, sc_ask_now, lp_bid_now, lc_bid_now]):
-                continue
-
-            current_cost = (sp_ask_now + sc_ask_now) - (lp_bid_now + lc_bid_now)
-
-            # Profit target
-            if current_cost <= pt_threshold:
-                pnl = (net_credit - current_cost) * 100 * contracts
-                position.update(
-                    exit_date=pd.Timestamp(check_date).strftime("%Y-%m-%d"),
-                    exit_reason="PROFIT_TARGET",
-                    realized_pnl=round(pnl, 2),
-                )
-                exit_found = True
-                break
-
-            # Stop loss
-            if current_cost >= sl_threshold:
-                pnl = (net_credit - current_cost) * 100 * contracts
-                position.update(
-                    exit_date=pd.Timestamp(check_date).strftime("%Y-%m-%d"),
-                    exit_reason="STOP_LOSS",
-                    realized_pnl=round(pnl, 2),
-                )
-                exit_found = True
-                break
-
-        # Expiration settlement if no early exit
-        if not exit_found:
-            try:
-                spy_exp_close = float(spy["Close"].asof(exp_date))
-            except Exception:
-                spy_exp_close = spy_close
-            if np.isnan(spy_exp_close):
-                spy_exp_close = spy_close
-
-            short_put_intrinsic = max(0, short_put_strike - spy_exp_close)
-            short_call_intrinsic = max(0, spy_exp_close - short_call_strike)
-            long_put_intrinsic = max(0, long_put_strike - spy_exp_close)
-            long_call_intrinsic = max(0, spy_exp_close - long_call_strike)
-
-            settlement_cost = (
-                (short_put_intrinsic + short_call_intrinsic)
-                - (long_put_intrinsic + long_call_intrinsic)
-            )
-            pnl = (net_credit - settlement_cost) * 100 * contracts
-            position.update(
-                exit_date=pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
-                exit_reason="EXPIRATION",
-                realized_pnl=round(pnl, 2),
-            )
+        position.update(
+            exit_date=date_str,
+            exit_reason=exit_reason,
+            realized_pnl=round(pnl, 2),
+        )
 
         account_balance += position["realized_pnl"]
         traded_dates.add(trade_date)
@@ -547,13 +514,214 @@ def build_results(
             "peak_margin_deployed": round(max(t["collateral"] for t in trades), 2),
         },
         "equity_curve": [round(e, 2) for e in equity.tolist()],
+        "yearly": yearly_breakdown(trades),
+        "monthly": monthly_breakdown(trades),
+        "streaks": streak_analysis(trades),
+        "distribution": trade_distribution(trades),
+        "exit_breakdown": exit_reason_breakdown(trades),
         "trade_log": trades,
     }
 
 
 # ---------------------------------------------------------------------------
+# DETAILED REPORTING
+# ---------------------------------------------------------------------------
+def yearly_breakdown(trades: list) -> list:
+    """Group trades by year with per-year stats."""
+    if not trades:
+        return []
+    by_year = {}
+    for t in trades:
+        year = t["entry_date"][:4]
+        by_year.setdefault(year, []).append(t)
+
+    rows = []
+    for year in sorted(by_year):
+        yr_trades = by_year[year]
+        wins = [t for t in yr_trades if t["realized_pnl"] > 0]
+        losses = [t for t in yr_trades if t["realized_pnl"] <= 0]
+        pnls = [t["realized_pnl"] for t in yr_trades]
+        total_pnl = sum(pnls)
+        rows.append({
+            "year": year,
+            "trades": len(yr_trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(len(wins) / len(yr_trades) * 100, 1) if yr_trades else 0,
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / len(yr_trades), 2),
+            "best_trade": round(max(pnls), 2),
+            "worst_trade": round(min(pnls), 2),
+        })
+    return rows
+
+
+def monthly_breakdown(trades: list) -> list:
+    """Group trades by YYYY-MM."""
+    if not trades:
+        return []
+    by_month = {}
+    for t in trades:
+        month = t["entry_date"][:7]
+        by_month.setdefault(month, []).append(t)
+
+    rows = []
+    for month in sorted(by_month):
+        mo_trades = by_month[month]
+        wins = [t for t in mo_trades if t["realized_pnl"] > 0]
+        pnls = [t["realized_pnl"] for t in mo_trades]
+        rows.append({
+            "month": month,
+            "trades": len(mo_trades),
+            "win_rate": round(len(wins) / len(mo_trades) * 100, 1) if mo_trades else 0,
+            "total_pnl": round(sum(pnls), 2),
+        })
+    return rows
+
+
+def streak_analysis(trades: list) -> dict:
+    """Compute winning/losing streaks."""
+    if not trades:
+        return {"longest_win": 0, "longest_loss": 0, "longest_win_pnl": 0,
+                "longest_loss_pnl": 0, "current_streak": 0, "current_type": "N/A"}
+
+    longest_win = longest_loss = 0
+    longest_win_pnl = longest_loss_pnl = 0
+    cur_streak = 0
+    cur_pnl = 0
+    cur_type = None
+
+    for t in trades:
+        is_win = t["realized_pnl"] > 0
+        if is_win:
+            if cur_type == "W":
+                cur_streak += 1
+                cur_pnl += t["realized_pnl"]
+            else:
+                cur_streak = 1
+                cur_pnl = t["realized_pnl"]
+                cur_type = "W"
+            if cur_streak > longest_win:
+                longest_win = cur_streak
+                longest_win_pnl = cur_pnl
+        else:
+            if cur_type == "L":
+                cur_streak += 1
+                cur_pnl += t["realized_pnl"]
+            else:
+                cur_streak = 1
+                cur_pnl = t["realized_pnl"]
+                cur_type = "L"
+            if cur_streak > longest_loss:
+                longest_loss = cur_streak
+                longest_loss_pnl = cur_pnl
+
+    return {
+        "longest_win": longest_win,
+        "longest_win_pnl": round(longest_win_pnl, 2),
+        "longest_loss": longest_loss,
+        "longest_loss_pnl": round(longest_loss_pnl, 2),
+        "current_streak": cur_streak,
+        "current_type": cur_type or "N/A",
+    }
+
+
+def trade_distribution(trades: list) -> list:
+    """P&L distribution buckets."""
+    if not trades:
+        return []
+    buckets = [
+        ("<-$500", lambda x: x < -500),
+        ("-$500 to -$200", lambda x: -500 <= x < -200),
+        ("-$200 to -$50", lambda x: -200 <= x < -50),
+        ("-$50 to $0", lambda x: -50 <= x <= 0),
+        ("$0 to $50", lambda x: 0 < x <= 50),
+        ("$50 to $200", lambda x: 50 < x <= 200),
+        ("$200 to $500", lambda x: 200 < x <= 500),
+        (">$500", lambda x: x > 500),
+    ]
+    total = len(trades)
+    rows = []
+    for label, test in buckets:
+        count = sum(1 for t in trades if test(t["realized_pnl"]))
+        rows.append({
+            "bucket": label,
+            "count": count,
+            "pct": round(count / total * 100, 1),
+        })
+    return rows
+
+
+def exit_reason_breakdown(trades: list) -> list:
+    """Exit reason counts and percentages."""
+    if not trades:
+        return []
+    counts = {}
+    for t in trades:
+        r = t["exit_reason"]
+        counts[r] = counts.get(r, 0) + 1
+    total = len(trades)
+    return [{"reason": r, "count": c, "pct": round(c / total * 100, 1)}
+            for r, c in sorted(counts.items(), key=lambda x: -x[1])]
+
+
+# ---------------------------------------------------------------------------
 # OUTPUT HELPERS
 # ---------------------------------------------------------------------------
+def print_detailed_report(result: dict):
+    """Print full detailed report for investor presentations."""
+    trades = result.get("trade_log", [])
+    if not trades:
+        print("  No trades to report.")
+        return
+
+    # Yearly breakdown
+    yearly = yearly_breakdown(trades)
+    if yearly:
+        print(f"\n  YEARLY BREAKDOWN")
+        print(f"  {'Year':<6} {'Trades':>7} {'Wins':>6} {'Losses':>7} {'WR%':>6} "
+              f"{'Total P&L':>12} {'Avg P&L':>10} {'Best':>10} {'Worst':>10}")
+        print(f"  {'-'*82}")
+        for y in yearly:
+            print(f"  {y['year']:<6} {y['trades']:>7} {y['wins']:>6} {y['losses']:>7} "
+                  f"{y['win_rate']:>5.1f}% {y['total_pnl']:>+11,.2f} "
+                  f"{y['avg_pnl']:>+9,.2f} {y['best_trade']:>+9,.2f} {y['worst_trade']:>+9,.2f}")
+
+    # Monthly breakdown (last 24 months only to keep output manageable)
+    monthly = monthly_breakdown(trades)
+    if monthly:
+        recent = monthly[-24:]
+        print(f"\n  MONTHLY BREAKDOWN (last 24 months)")
+        print(f"  {'Month':<9} {'Trades':>7} {'WR%':>6} {'P&L':>12}")
+        print(f"  {'-'*38}")
+        for m in recent:
+            print(f"  {m['month']:<9} {m['trades']:>7} {m['win_rate']:>5.1f}% {m['total_pnl']:>+11,.2f}")
+
+    # Streak analysis
+    streaks = streak_analysis(trades)
+    print(f"\n  STREAK ANALYSIS")
+    print(f"  Longest Win Streak:   {streaks['longest_win']} trades (${streaks['longest_win_pnl']:+,.2f})")
+    print(f"  Longest Loss Streak:  {streaks['longest_loss']} trades (${streaks['longest_loss_pnl']:+,.2f})")
+    print(f"  Current Streak:       {streaks['current_streak']} {streaks['current_type']}")
+
+    # P&L distribution
+    dist = trade_distribution(trades)
+    if dist:
+        print(f"\n  P&L DISTRIBUTION")
+        print(f"  {'Bucket':<18} {'Count':>7} {'%':>7}")
+        print(f"  {'-'*34}")
+        for d in dist:
+            bar = "#" * int(d["pct"] / 2)
+            print(f"  {d['bucket']:<18} {d['count']:>7} {d['pct']:>6.1f}% {bar}")
+
+    # Exit reasons
+    exits = exit_reason_breakdown(trades)
+    if exits:
+        print(f"\n  EXIT REASONS")
+        for e in exits:
+            print(f"  {e['reason']:<18} {e['count']:>7} ({e['pct']:.1f}%)")
+
+
 def print_summary(bot: str, result: dict):
     """Print formatted summary for a single backtest run."""
     s = result["summary"]
@@ -561,8 +729,8 @@ def print_summary(bot: str, result: dict):
     cfg = result["config"]
 
     print(f"\n{'='*60}")
-    print(f"{bot.upper()} ({cfg['dte']}DTE) — SPY Iron Condor Backtest")
-    print(f"Period: {result['period']['start']} → {result['period']['end']}")
+    print(f"{bot.upper()} ({cfg['dte']}DTE) -- SPY Iron Condor Backtest")
+    print(f"Period: {result['period']['start']} -> {result['period']['end']}")
     print(f"Config: PT={cfg['profit_target_pct']}% / SL={cfg['stop_loss_pct']}%")
     print(f"{'='*60}")
     print(f"  Total Trades:      {s['total_trades']}")
@@ -581,6 +749,7 @@ def print_summary(bot: str, result: dict):
     print(f"  Peak Margin:       ${r['peak_margin_deployed']:,.2f}")
     print(f"  Exit Reasons:      {s['exit_reasons']}")
     print(f"  Days Skipped:      {s['days_skipped']}")
+    print_detailed_report(result)
     print(f"{'='*60}")
 
 
@@ -626,7 +795,7 @@ def run_parameter_sweep(bot: str, start: str, end: str, export: bool,
 
     # Print sweep scorecard
     print(f"\n{'='*80}")
-    print(f"{bot.upper()} PARAMETER SWEEP — {start[:4]}-{end[:4]}")
+    print(f"{bot.upper()} PARAMETER SWEEP -- {start[:4]}-{end[:4]}")
     print(
         f"{'PT':>6} {'SL':>6} {'Trades':>8} {'WR%':>7} {'Return%':>9} "
         f"{'MaxDD%':>8} {'Sharpe':>8} {'PF':>7}"
@@ -643,6 +812,12 @@ def run_parameter_sweep(bot: str, start: str, end: str, export: bool,
                 f"{rk['max_drawdown_pct']:>8.1f} "
                 f"{rk['sharpe_ratio']:>8.2f} {s['profit_factor']:>7.2f}"
             )
+
+    # Print detailed report for baseline config
+    baseline_key = "PT30_SL100"
+    if baseline_key in results:
+        print(f"\n--- {bot.upper()} DETAILED REPORT (baseline PT30/SL100) ---")
+        print_detailed_report(results[baseline_key])
 
     if export:
         os.makedirs("backtest/results", exist_ok=True)
@@ -671,10 +846,10 @@ def print_consolidated_scorecard(spark_results: dict, flame_results: dict):
     fs, rf = fr["summary"], fr["risk"]
 
     print(f"\n{'='*71}")
-    print(f"SPARK vs FLAME — SPY Iron Condor Backtest | {sr['period']['start'][:4]}"
-          f"–{sr['period']['end'][:4]}")
+    print(f"SPARK vs FLAME -- SPY Iron Condor Backtest | {sr['period']['start'][:4]}"
+          f"-{sr['period']['end'][:4]}")
     print(f"{'='*71}")
-    print(f"BASELINE (30% PT / 100% SL — live config)\n")
+    print(f"BASELINE (30% PT / 100% SL -- live config)\n")
     print(f"{'Metric':<22} {'SPARK (1DTE)':>18} {'FLAME (2DTE)':>18}")
     print("-" * 71)
     def fmt_dollar(val):
@@ -742,12 +917,12 @@ def print_consolidated_scorecard(spark_results: dict, flame_results: dict):
 
     print(f"\n{'='*71}")
     print("KNOWN LIMITATIONS:")
-    print("  1. EOD data only — SL checks at close, not intraday")
-    print("  2. No PDT simulation — assumes one trade every eligible day")
-    print("  3. Fill model — entry: sell at bid/buy at ask; no commission")
-    print("  4. No GEX filter — live bots skip when GEX data is all zeros")
-    print("  5. 2008-2012 liquidity — wider spreads, thinner books expected")
-    print("  6. 1DTE availability — some dates have no 1DTE chain")
+    print("  1. EOD data only -- SL checks at close, not intraday")
+    print("  2. No PDT simulation -- assumes one trade every eligible day")
+    print("  3. Fill model -- entry: sell at bid/buy at ask; no commission")
+    print("  4. No GEX filter -- live bots skip when GEX data is all zeros")
+    print("  5. 2008-2012 liquidity -- wider spreads, thinner books expected")
+    print("  6. 1DTE availability -- some dates have no 1DTE chain")
     print(f"{'='*71}")
 
 
@@ -762,7 +937,7 @@ def main():
         "--bot", required=True, choices=["spark", "flame", "both"],
         help="Which bot to backtest",
     )
-    parser.add_argument("--start", default="2008-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--start", default="2019-06-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default="2025-11-30", help="End date (YYYY-MM-DD)")
     parser.add_argument(
         "--sweep", action="store_true",
