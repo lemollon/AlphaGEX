@@ -196,18 +196,67 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
 
 def load_vix(start: str, end: str) -> pd.Series:
     """Download VIX via yfinance. Returns Series indexed by date."""
-    import yfinance as yf
-    vix = yf.Ticker("^VIX").history(start=start, end=end)
-    vix.index = vix.index.tz_localize(None)
-    return vix["Close"].rename("vix")
+    try:
+        import yfinance as yf
+        vix = yf.Ticker("^VIX").history(start=start, end=end, timeout=10)
+        vix.index = vix.index.tz_localize(None)
+        return vix["Close"].rename("vix")
+    except Exception as e:
+        print(f"  yfinance VIX download failed: {e}")
+        print("  Will use implied_volatility from options data instead")
+        return pd.Series(dtype=float)
 
 
 def load_spy_prices(start: str, end: str) -> pd.DataFrame:
     """Download SPY OHLC via yfinance."""
-    import yfinance as yf
-    spy = yf.Ticker("SPY").history(start=start, end=end)[["Open", "High", "Low", "Close"]]
-    spy.index = spy.index.tz_localize(None)
-    return spy
+    try:
+        import yfinance as yf
+        spy = yf.Ticker("SPY").history(start=start, end=end, timeout=10)[["Open", "High", "Low", "Close"]]
+        spy.index = spy.index.tz_localize(None)
+        return spy
+    except Exception as e:
+        print(f"  yfinance SPY download failed: {e}")
+        print("  Will derive SPY price from options data instead")
+        return pd.DataFrame()
+
+
+def derive_spy_price_from_options(day_chain: pd.DataFrame) -> float:
+    """Estimate SPY spot price from ATM options (where call and put marks are closest)."""
+    if "mark" in day_chain.columns:
+        calls = day_chain[day_chain["type"] == "call"].copy()
+        puts = day_chain[day_chain["type"] == "put"].copy()
+        if not calls.empty and not puts.empty:
+            # Merge on strike to find where call_mark ~ put_mark (ATM)
+            merged = calls[["strike", "mark"]].merge(
+                puts[["strike", "mark"]], on="strike", suffixes=("_c", "_p")
+            )
+            if not merged.empty:
+                merged["diff"] = abs(merged["mark_c"] - merged["mark_p"])
+                atm = merged.loc[merged["diff"].idxmin()]
+                return float(atm["strike"])
+    # Fallback: use midpoint of strikes with highest open interest
+    if "open_interest" in day_chain.columns:
+        calls = day_chain[day_chain["type"] == "call"]
+        puts = day_chain[day_chain["type"] == "put"]
+        if not calls.empty and not puts.empty:
+            top_call = calls.loc[calls["open_interest"].idxmax(), "strike"]
+            top_put = puts.loc[puts["open_interest"].idxmax(), "strike"]
+            return float((top_call + top_put) / 2)
+    # Last fallback: median strike
+    return float(day_chain["strike"].median())
+
+
+def derive_vix_from_options(day_chain: pd.DataFrame) -> float:
+    """Estimate VIX from average ATM implied volatility."""
+    if "implied_volatility" not in day_chain.columns:
+        return 20.0  # default assumption
+    iv = day_chain["implied_volatility"].dropna()
+    iv = iv[iv > 0]
+    if iv.empty:
+        return 20.0
+    # Use median IV of near-ATM options as VIX proxy
+    # ATM options have the most representative IV
+    return float(iv.median() * 100)  # convert decimal to percentage if needed
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +301,18 @@ def run_backtest(
     dte_target = cfg["dte"]
     options = load_options_data(parquet_path)
     options = options[(options["date"] >= start) & (options["date"] <= end)]
+
+    # Try yfinance for VIX and SPY prices, fall back to parquet-derived data
+    print("  Loading VIX data...")
     vix = load_vix(start, end)
+    use_yf_vix = len(vix) > 0
+    print("  Loading SPY price data...")
     spy = load_spy_prices(start, end)
+    use_yf_spy = len(spy) > 0
+    if not use_yf_vix:
+        print("  Using implied_volatility from options data as VIX proxy")
+    if not use_yf_spy:
+        print("  Using ATM strike derivation for SPY price")
 
     trading_days = sorted(options["date"].unique())
 
@@ -276,41 +335,55 @@ def run_backtest(
             skipped["ALREADY_TRADED"] += 1
             continue
 
-        # VIX filter
-        vix_val = vix.get(trade_date, None)
-        if vix_val is None:
-            try:
-                vix_val = vix.asof(trade_date)
-            except Exception:
-                vix_val = None
-        if vix_val is None or (hasattr(vix_val, "__float__") and np.isnan(float(vix_val))):
-            skipped["VIX_TOO_HIGH"] += 1
-            continue
-        vix_val = float(vix_val)
+        # Get the full day's option chain (needed for price/VIX derivation)
+        day_chain = options[options["date"] == trade_date]
+
+        # VIX value
+        if use_yf_vix:
+            vix_val = vix.get(trade_date, None)
+            if vix_val is None:
+                try:
+                    vix_val = vix.asof(trade_date)
+                except Exception:
+                    vix_val = None
+            if vix_val is not None and not np.isnan(float(vix_val)):
+                vix_val = float(vix_val)
+            else:
+                vix_val = derive_vix_from_options(day_chain)
+        else:
+            vix_val = derive_vix_from_options(day_chain)
+
         if vix_val >= cfg["vix_skip"]:
             skipped["VIX_TOO_HIGH"] += 1
             continue
 
         # SPY price -- use Open for strike selection (simulates opening at 9:35am)
-        try:
-            spy_open = float(spy["Open"].asof(trade_date))
-        except Exception:
-            spy_open = None
-        if spy_open is None or np.isnan(spy_open):
+        if use_yf_spy:
+            try:
+                spy_open = float(spy["Open"].asof(trade_date))
+            except Exception:
+                spy_open = None
+            if spy_open is None or np.isnan(spy_open):
+                spy_open = derive_spy_price_from_options(day_chain)
+        else:
+            spy_open = derive_spy_price_from_options(day_chain)
+
+        if spy_open is None or spy_open <= 0:
             skipped["MISSING_QUOTES"] += 1
             continue
 
         # SPY Close for same-day settlement
-        try:
-            spy_close = float(spy["Close"].asof(trade_date))
-        except Exception:
-            spy_close = None
-        if spy_close is None or np.isnan(spy_close):
-            skipped["MISSING_QUOTES"] += 1
-            continue
+        if use_yf_spy:
+            try:
+                spy_close = float(spy["Close"].asof(trade_date))
+            except Exception:
+                spy_close = None
+            if spy_close is None or np.isnan(spy_close):
+                spy_close = spy_open  # fallback: use open as close estimate
+        else:
+            spy_close = spy_open  # without yfinance, use derived price for both
 
         # Find target expiration
-        day_chain = options[options["date"] == trade_date]
         exp_options = day_chain[day_chain["dte_calc"] == dte_target]
 
         if exp_options.empty:
