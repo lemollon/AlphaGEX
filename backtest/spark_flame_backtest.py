@@ -57,6 +57,32 @@ BOT_CONFIGS = {
         "max_contracts": 10,
         "account_size": 10000.0,
     },
+    "inferno_05": {
+        "dte": 0,
+        "symbol": "SPY",
+        "sd_multiplier": 1.0,
+        "spread_width": 5,
+        "min_credit": 0.05,
+        "profit_target_pct": 50.0,
+        "stop_loss_pct": 200.0,
+        "vix_skip": 32.0,
+        "buying_power_pct": 85.0,
+        "max_contracts": 10,
+        "account_size": 10000.0,
+    },
+    "inferno_15": {
+        "dte": 0,
+        "symbol": "SPY",
+        "sd_multiplier": 1.0,
+        "spread_width": 5,
+        "min_credit": 0.15,
+        "profit_target_pct": 50.0,
+        "stop_loss_pct": 200.0,
+        "vix_skip": 32.0,
+        "buying_power_pct": 85.0,
+        "max_contracts": 10,
+        "account_size": 10000.0,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -1007,8 +1033,9 @@ def main():
         description="SPARK/FLAME SPY Iron Condor Backtester"
     )
     parser.add_argument(
-        "--bot", required=True, choices=["spark", "flame", "both"],
-        help="Which bot to backtest",
+        "--bot", required=True,
+        choices=["spark", "flame", "inferno_05", "inferno_15", "inferno", "both", "all"],
+        help="Which bot to backtest (inferno = both inferno variants)",
     )
     parser.add_argument("--start", default="2019-06-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default="2025-11-30", help="End date (YYYY-MM-DD)")
@@ -1023,7 +1050,14 @@ def main():
     )
     args = parser.parse_args()
 
-    bots = ["spark", "flame"] if args.bot == "both" else [args.bot]
+    if args.bot == "both":
+        bots = ["spark", "flame"]
+    elif args.bot == "inferno":
+        bots = ["inferno_05", "inferno_15"]
+    elif args.bot == "all":
+        bots = ["spark", "flame", "inferno_05", "inferno_15"]
+    else:
+        bots = [args.bot]
 
     if args.sweep:
         all_sweep_results = {}
@@ -1031,7 +1065,7 @@ def main():
             all_sweep_results[bot] = run_parameter_sweep(
                 bot, args.start, args.end, args.export, args.parquet
             )
-        if len(bots) == 2:
+        if "spark" in all_sweep_results and "flame" in all_sweep_results:
             print_consolidated_scorecard(
                 all_sweep_results["spark"], all_sweep_results["flame"]
             )
