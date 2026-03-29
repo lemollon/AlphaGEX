@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPARK (1DTE) & FLAME (2DTE) — SPY Iron Condor Backtester
+SPARK (1DTE) & FLAME (2DTE) -- SPY Iron Condor Backtester
 =========================================================
 Standalone backtest engine for SPY iron condors.
 Data source: philippdubach SPY options parquet files.
@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
-# BOT CONFIGS — exact live production parameters, do not change
+# BOT CONFIGS -- exact live production parameters, do not change
 # ---------------------------------------------------------------------------
 BOT_CONFIGS = {
     "spark": {
@@ -60,7 +60,7 @@ BOT_CONFIGS = {
 }
 
 # ---------------------------------------------------------------------------
-# COLUMN NORMALIZATION — auto-detect and map non-standard column names
+# COLUMN NORMALIZATION -- auto-detect and map non-standard column names
 # ---------------------------------------------------------------------------
 COLUMN_ALIASES = {
     "date": ["date", "quote_date", "trade_date"],
@@ -140,7 +140,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
             fp = os.path.join(data_dir, yf)
             size = os.path.getsize(fp)
             if size < 500:  # LFS pointer, not real data
-                print(f"  SKIP {yf} ({size} bytes — LFS pointer, not real data)")
+                print(f"  SKIP {yf} ({size} bytes -- LFS pointer, not real data)")
                 continue
             frames.append(pd.read_parquet(fp))
             print(f"  Loaded {yf}")
@@ -151,7 +151,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     else:
         size = os.path.getsize(parquet_path)
         if size < 500:
-            print(f"ERROR: {parquet_path} is only {size} bytes — likely an LFS pointer, not real data")
+            print(f"ERROR: {parquet_path} is only {size} bytes -- likely an LFS pointer, not real data")
             sys.exit(1)
         df = pd.read_parquet(parquet_path)
 
@@ -165,7 +165,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     actual_cols = set(df.columns)
     missing = [c for c in REQUIRED_COLUMNS if c not in actual_cols]
     if missing:
-        print(f"COLUMN MAPPING FAILED — found: {list(df.columns)} — missing: {missing}")
+        print(f"COLUMN MAPPING FAILED -- found: {list(df.columns)} -- missing: {missing}")
         sys.exit(1)
 
     # Normalize type values
@@ -188,7 +188,7 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     df = df[df["ask"] >= df["bid"]]
 
     print(f"Options data loaded: {len(df):,} rows | "
-          f"{df['date'].min().date()} → {df['date'].max().date()}")
+          f"{df['date'].min().date()} to {df['date'].max().date()}")
 
     _options_cache[parquet_path] = df
     return df
@@ -291,7 +291,7 @@ def run_backtest(
             skipped["VIX_TOO_HIGH"] += 1
             continue
 
-        # SPY price — use Open for strike selection (simulates opening at 9:35am)
+        # SPY price -- use Open for strike selection (simulates opening at 9:35am)
         try:
             spy_open = float(spy["Open"].asof(trade_date))
         except Exception:
@@ -374,7 +374,7 @@ def run_backtest(
             "realized_pnl": None,
         }
 
-        # SAME-DAY SETTLEMENT — open at SPY Open, close at SPY Close
+        # SAME-DAY SETTLEMENT -- open at SPY Open, close at SPY Close
         # Compute intrinsic value of IC at today's close
         short_put_intrinsic = max(0, short_put_strike - spy_close)
         short_call_intrinsic = max(0, spy_close - short_call_strike)
@@ -729,8 +729,8 @@ def print_summary(bot: str, result: dict):
     cfg = result["config"]
 
     print(f"\n{'='*60}")
-    print(f"{bot.upper()} ({cfg['dte']}DTE) — SPY Iron Condor Backtest")
-    print(f"Period: {result['period']['start']} → {result['period']['end']}")
+    print(f"{bot.upper()} ({cfg['dte']}DTE) -- SPY Iron Condor Backtest")
+    print(f"Period: {result['period']['start']} -> {result['period']['end']}")
     print(f"Config: PT={cfg['profit_target_pct']}% / SL={cfg['stop_loss_pct']}%")
     print(f"{'='*60}")
     print(f"  Total Trades:      {s['total_trades']}")
@@ -795,7 +795,7 @@ def run_parameter_sweep(bot: str, start: str, end: str, export: bool,
 
     # Print sweep scorecard
     print(f"\n{'='*80}")
-    print(f"{bot.upper()} PARAMETER SWEEP — {start[:4]}-{end[:4]}")
+    print(f"{bot.upper()} PARAMETER SWEEP -- {start[:4]}-{end[:4]}")
     print(
         f"{'PT':>6} {'SL':>6} {'Trades':>8} {'WR%':>7} {'Return%':>9} "
         f"{'MaxDD%':>8} {'Sharpe':>8} {'PF':>7}"
@@ -846,10 +846,10 @@ def print_consolidated_scorecard(spark_results: dict, flame_results: dict):
     fs, rf = fr["summary"], fr["risk"]
 
     print(f"\n{'='*71}")
-    print(f"SPARK vs FLAME — SPY Iron Condor Backtest | {sr['period']['start'][:4]}"
-          f"–{sr['period']['end'][:4]}")
+    print(f"SPARK vs FLAME -- SPY Iron Condor Backtest | {sr['period']['start'][:4]}"
+          f"-{sr['period']['end'][:4]}")
     print(f"{'='*71}")
-    print(f"BASELINE (30% PT / 100% SL — live config)\n")
+    print(f"BASELINE (30% PT / 100% SL -- live config)\n")
     print(f"{'Metric':<22} {'SPARK (1DTE)':>18} {'FLAME (2DTE)':>18}")
     print("-" * 71)
     def fmt_dollar(val):
@@ -917,12 +917,12 @@ def print_consolidated_scorecard(spark_results: dict, flame_results: dict):
 
     print(f"\n{'='*71}")
     print("KNOWN LIMITATIONS:")
-    print("  1. EOD data only — SL checks at close, not intraday")
-    print("  2. No PDT simulation — assumes one trade every eligible day")
-    print("  3. Fill model — entry: sell at bid/buy at ask; no commission")
-    print("  4. No GEX filter — live bots skip when GEX data is all zeros")
-    print("  5. 2008-2012 liquidity — wider spreads, thinner books expected")
-    print("  6. 1DTE availability — some dates have no 1DTE chain")
+    print("  1. EOD data only -- SL checks at close, not intraday")
+    print("  2. No PDT simulation -- assumes one trade every eligible day")
+    print("  3. Fill model -- entry: sell at bid/buy at ask; no commission")
+    print("  4. No GEX filter -- live bots skip when GEX data is all zeros")
+    print("  5. 2008-2012 liquidity -- wider spreads, thinner books expected")
+    print("  6. 1DTE availability -- some dates have no 1DTE chain")
     print(f"{'='*71}")
 
 
