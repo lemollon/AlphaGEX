@@ -291,7 +291,16 @@ def run_backtest(
             skipped["VIX_TOO_HIGH"] += 1
             continue
 
-        # SPY price
+        # SPY price — use Open for strike selection (simulates opening at 9:35am)
+        try:
+            spy_open = float(spy["Open"].asof(trade_date))
+        except Exception:
+            spy_open = None
+        if spy_open is None or np.isnan(spy_open):
+            skipped["MISSING_QUOTES"] += 1
+            continue
+
+        # SPY Close for same-day settlement
         try:
             spy_close = float(spy["Close"].asof(trade_date))
         except Exception:
@@ -310,12 +319,12 @@ def run_backtest(
 
         exp_date = exp_options["expiration"].iloc[0]
 
-        # Strike selection: 1.2 SD move from spot
+        # Strike selection: 1.2 SD move from SPY Open (simulates 9:35am entry)
         iv_approx = vix_val / 100.0
-        sd = spy_close * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
+        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
 
-        short_put_strike = round(spy_close - sd)
-        short_call_strike = round(spy_close + sd)
+        short_put_strike = round(spy_open - sd)
+        short_call_strike = round(spy_open + sd)
         long_put_strike = short_put_strike - cfg["spread_width"]
         long_call_strike = short_call_strike + cfg["spread_width"]
 
@@ -349,7 +358,8 @@ def run_backtest(
         position = {
             "entry_date": date_str,
             "expiration_date": pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
-            "spy_at_entry": round(spy_close, 2),
+            "spy_open": round(spy_open, 2),
+            "spy_close": round(spy_close, 2),
             "vix_at_entry": round(vix_val, 2),
             "short_put": short_put_strike,
             "short_call": short_call_strike,
@@ -364,121 +374,35 @@ def run_backtest(
             "realized_pnl": None,
         }
 
-        # Simulate exit: check each subsequent day up to expiration
-        pt_threshold = net_credit * (1 - cfg["profit_target_pct"] / 100.0)
-        sl_threshold = net_credit * (1 + cfg["stop_loss_pct"] / 100.0)
+        # SAME-DAY SETTLEMENT — open at SPY Open, close at SPY Close
+        # Compute intrinsic value of IC at today's close
+        short_put_intrinsic = max(0, short_put_strike - spy_close)
+        short_call_intrinsic = max(0, spy_close - short_call_strike)
+        long_put_intrinsic = max(0, long_put_strike - spy_close)
+        long_call_intrinsic = max(0, spy_close - long_call_strike)
 
-        exit_found = False
-        check_dates = sorted(
-            options[
-                (options["date"] > trade_date) & (options["date"] <= exp_date)
-            ]["date"].unique()
+        settlement_cost = (
+            (short_put_intrinsic + short_call_intrinsic)
+            - (long_put_intrinsic + long_call_intrinsic)
         )
+        pnl = (net_credit - settlement_cost) * 100 * contracts
 
-        for check_date in check_dates:
-            check_chain = options[
-                (options["date"] == check_date) & (options["expiration"] == exp_date)
-            ]
+        # Classify exit reason based on PT/SL thresholds
+        pt_threshold = net_credit * (cfg["profit_target_pct"] / 100.0)
+        sl_threshold = net_credit * (cfg["stop_loss_pct"] / 100.0)
 
-            sp_ask_now = get_price(check_chain, short_put_strike, "put", "ask")
-            sc_ask_now = get_price(check_chain, short_call_strike, "call", "ask")
-            lp_bid_now = get_price(check_chain, long_put_strike, "put", "bid")
-            lc_bid_now = get_price(check_chain, long_call_strike, "call", "bid")
+        if pnl >= pt_threshold * 100 * contracts:
+            exit_reason = "PROFIT_TARGET"
+        elif pnl <= -(sl_threshold * 100 * contracts):
+            exit_reason = "STOP_LOSS"
+        else:
+            exit_reason = "SAME_DAY_SETTLE"
 
-            if any(p is None for p in [sp_ask_now, sc_ask_now, lp_bid_now, lc_bid_now]):
-                continue
-
-            current_cost = (sp_ask_now + sc_ask_now) - (lp_bid_now + lc_bid_now)
-
-            # Profit target
-            if current_cost <= pt_threshold:
-                pnl = (net_credit - current_cost) * 100 * contracts
-                position.update(
-                    exit_date=pd.Timestamp(check_date).strftime("%Y-%m-%d"),
-                    exit_reason="PROFIT_TARGET",
-                    realized_pnl=round(pnl, 2),
-                )
-                exit_found = True
-                break
-
-            # Stop loss
-            if current_cost >= sl_threshold:
-                pnl = (net_credit - current_cost) * 100 * contracts
-                position.update(
-                    exit_date=pd.Timestamp(check_date).strftime("%Y-%m-%d"),
-                    exit_reason="STOP_LOSS",
-                    realized_pnl=round(pnl, 2),
-                )
-                exit_found = True
-                break
-
-        # Exit if no PT/SL triggered
-        if not exit_found:
-            # For 2DTE+ (FLAME): force close at day 1 EOD prices (no overnight to day 2)
-            # For 1DTE (SPARK): settle at expiration via intrinsic value
-            if dte_target >= 2 and check_dates:
-                # Use the first check day's chain to force close at EOD
-                first_check = check_dates[0]
-                close_chain = options[
-                    (options["date"] == first_check) & (options["expiration"] == exp_date)
-                ]
-                sp_ask_c = get_price(close_chain, short_put_strike, "put", "ask")
-                sc_ask_c = get_price(close_chain, short_call_strike, "call", "ask")
-                lp_bid_c = get_price(close_chain, long_put_strike, "put", "bid")
-                lc_bid_c = get_price(close_chain, long_call_strike, "call", "bid")
-
-                if all(p is not None for p in [sp_ask_c, sc_ask_c, lp_bid_c, lc_bid_c]):
-                    close_cost = (sp_ask_c + sc_ask_c) - (lp_bid_c + lc_bid_c)
-                    pnl = (net_credit - close_cost) * 100 * contracts
-                    position.update(
-                        exit_date=pd.Timestamp(first_check).strftime("%Y-%m-%d"),
-                        exit_reason="EOD_CLOSE",
-                        realized_pnl=round(pnl, 2),
-                    )
-                else:
-                    # Fallback: use intrinsic value at day 1 close
-                    try:
-                        spy_d1_close = float(spy["Close"].asof(first_check))
-                    except Exception:
-                        spy_d1_close = spy_close
-                    if np.isnan(spy_d1_close):
-                        spy_d1_close = spy_close
-                    settlement_cost = (
-                        max(0, short_put_strike - spy_d1_close)
-                        + max(0, spy_d1_close - short_call_strike)
-                        - max(0, long_put_strike - spy_d1_close)
-                        - max(0, spy_d1_close - long_call_strike)
-                    )
-                    pnl = (net_credit - settlement_cost) * 100 * contracts
-                    position.update(
-                        exit_date=pd.Timestamp(first_check).strftime("%Y-%m-%d"),
-                        exit_reason="EOD_CLOSE",
-                        realized_pnl=round(pnl, 2),
-                    )
-            else:
-                # 1DTE (SPARK): settle at expiration via intrinsic value
-                try:
-                    spy_exp_close = float(spy["Close"].asof(exp_date))
-                except Exception:
-                    spy_exp_close = spy_close
-                if np.isnan(spy_exp_close):
-                    spy_exp_close = spy_close
-
-                short_put_intrinsic = max(0, short_put_strike - spy_exp_close)
-                short_call_intrinsic = max(0, spy_exp_close - short_call_strike)
-                long_put_intrinsic = max(0, long_put_strike - spy_exp_close)
-                long_call_intrinsic = max(0, spy_exp_close - long_call_strike)
-
-                settlement_cost = (
-                    (short_put_intrinsic + short_call_intrinsic)
-                    - (long_put_intrinsic + long_call_intrinsic)
-                )
-                pnl = (net_credit - settlement_cost) * 100 * contracts
-                position.update(
-                    exit_date=pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
-                    exit_reason="EXPIRATION",
-                    realized_pnl=round(pnl, 2),
-                )
+        position.update(
+            exit_date=date_str,
+            exit_reason=exit_reason,
+            realized_pnl=round(pnl, 2),
+        )
 
         account_balance += position["realized_pnl"]
         traded_dates.add(trade_date)
