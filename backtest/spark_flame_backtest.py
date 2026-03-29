@@ -418,9 +418,11 @@ def run_backtest(
 
         exp_date = exp_options["expiration"].iloc[0]
 
-        # Strike selection: 1.2 SD move from SPY Open (simulates 9:35am entry)
+        # Strike selection: SD move from SPY Open (simulates 9:35am entry)
         iv_approx = vix_val / 100.0
-        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
+        # For 0DTE, use 1 trading day for expected move calc (position is open ~6 hours)
+        dte_for_calc = max(dte_target, 1)
+        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_for_calc / 252.0)
 
         short_put_strike = round(spy_open - sd)
         short_call_strike = round(spy_open + sd)
