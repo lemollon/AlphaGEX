@@ -412,30 +412,73 @@ def run_backtest(
                 exit_found = True
                 break
 
-        # Expiration settlement if no early exit
+        # Exit if no PT/SL triggered
         if not exit_found:
-            try:
-                spy_exp_close = float(spy["Close"].asof(exp_date))
-            except Exception:
-                spy_exp_close = spy_close
-            if np.isnan(spy_exp_close):
-                spy_exp_close = spy_close
+            # For 2DTE+ (FLAME): force close at day 1 EOD prices (no overnight to day 2)
+            # For 1DTE (SPARK): settle at expiration via intrinsic value
+            if dte_target >= 2 and check_dates:
+                # Use the first check day's chain to force close at EOD
+                first_check = check_dates[0]
+                close_chain = options[
+                    (options["date"] == first_check) & (options["expiration"] == exp_date)
+                ]
+                sp_ask_c = get_price(close_chain, short_put_strike, "put", "ask")
+                sc_ask_c = get_price(close_chain, short_call_strike, "call", "ask")
+                lp_bid_c = get_price(close_chain, long_put_strike, "put", "bid")
+                lc_bid_c = get_price(close_chain, long_call_strike, "call", "bid")
 
-            short_put_intrinsic = max(0, short_put_strike - spy_exp_close)
-            short_call_intrinsic = max(0, spy_exp_close - short_call_strike)
-            long_put_intrinsic = max(0, long_put_strike - spy_exp_close)
-            long_call_intrinsic = max(0, spy_exp_close - long_call_strike)
+                if all(p is not None for p in [sp_ask_c, sc_ask_c, lp_bid_c, lc_bid_c]):
+                    close_cost = (sp_ask_c + sc_ask_c) - (lp_bid_c + lc_bid_c)
+                    pnl = (net_credit - close_cost) * 100 * contracts
+                    position.update(
+                        exit_date=pd.Timestamp(first_check).strftime("%Y-%m-%d"),
+                        exit_reason="EOD_CLOSE",
+                        realized_pnl=round(pnl, 2),
+                    )
+                else:
+                    # Fallback: use intrinsic value at day 1 close
+                    try:
+                        spy_d1_close = float(spy["Close"].asof(first_check))
+                    except Exception:
+                        spy_d1_close = spy_close
+                    if np.isnan(spy_d1_close):
+                        spy_d1_close = spy_close
+                    settlement_cost = (
+                        max(0, short_put_strike - spy_d1_close)
+                        + max(0, spy_d1_close - short_call_strike)
+                        - max(0, long_put_strike - spy_d1_close)
+                        - max(0, spy_d1_close - long_call_strike)
+                    )
+                    pnl = (net_credit - settlement_cost) * 100 * contracts
+                    position.update(
+                        exit_date=pd.Timestamp(first_check).strftime("%Y-%m-%d"),
+                        exit_reason="EOD_CLOSE",
+                        realized_pnl=round(pnl, 2),
+                    )
+            else:
+                # 1DTE (SPARK): settle at expiration via intrinsic value
+                try:
+                    spy_exp_close = float(spy["Close"].asof(exp_date))
+                except Exception:
+                    spy_exp_close = spy_close
+                if np.isnan(spy_exp_close):
+                    spy_exp_close = spy_close
 
-            settlement_cost = (
-                (short_put_intrinsic + short_call_intrinsic)
-                - (long_put_intrinsic + long_call_intrinsic)
-            )
-            pnl = (net_credit - settlement_cost) * 100 * contracts
-            position.update(
-                exit_date=pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
-                exit_reason="EXPIRATION",
-                realized_pnl=round(pnl, 2),
-            )
+                short_put_intrinsic = max(0, short_put_strike - spy_exp_close)
+                short_call_intrinsic = max(0, spy_exp_close - short_call_strike)
+                long_put_intrinsic = max(0, long_put_strike - spy_exp_close)
+                long_call_intrinsic = max(0, spy_exp_close - long_call_strike)
+
+                settlement_cost = (
+                    (short_put_intrinsic + short_call_intrinsic)
+                    - (long_put_intrinsic + long_call_intrinsic)
+                )
+                pnl = (net_credit - settlement_cost) * 100 * contracts
+                position.update(
+                    exit_date=pd.Timestamp(exp_date).strftime("%Y-%m-%d"),
+                    exit_reason="EXPIRATION",
+                    realized_pnl=round(pnl, 2),
+                )
 
         account_balance += position["realized_pnl"]
         traded_dates.add(trade_date)
@@ -547,13 +590,214 @@ def build_results(
             "peak_margin_deployed": round(max(t["collateral"] for t in trades), 2),
         },
         "equity_curve": [round(e, 2) for e in equity.tolist()],
+        "yearly": yearly_breakdown(trades),
+        "monthly": monthly_breakdown(trades),
+        "streaks": streak_analysis(trades),
+        "distribution": trade_distribution(trades),
+        "exit_breakdown": exit_reason_breakdown(trades),
         "trade_log": trades,
     }
 
 
 # ---------------------------------------------------------------------------
+# DETAILED REPORTING
+# ---------------------------------------------------------------------------
+def yearly_breakdown(trades: list) -> list:
+    """Group trades by year with per-year stats."""
+    if not trades:
+        return []
+    by_year = {}
+    for t in trades:
+        year = t["entry_date"][:4]
+        by_year.setdefault(year, []).append(t)
+
+    rows = []
+    for year in sorted(by_year):
+        yr_trades = by_year[year]
+        wins = [t for t in yr_trades if t["realized_pnl"] > 0]
+        losses = [t for t in yr_trades if t["realized_pnl"] <= 0]
+        pnls = [t["realized_pnl"] for t in yr_trades]
+        total_pnl = sum(pnls)
+        rows.append({
+            "year": year,
+            "trades": len(yr_trades),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": round(len(wins) / len(yr_trades) * 100, 1) if yr_trades else 0,
+            "total_pnl": round(total_pnl, 2),
+            "avg_pnl": round(total_pnl / len(yr_trades), 2),
+            "best_trade": round(max(pnls), 2),
+            "worst_trade": round(min(pnls), 2),
+        })
+    return rows
+
+
+def monthly_breakdown(trades: list) -> list:
+    """Group trades by YYYY-MM."""
+    if not trades:
+        return []
+    by_month = {}
+    for t in trades:
+        month = t["entry_date"][:7]
+        by_month.setdefault(month, []).append(t)
+
+    rows = []
+    for month in sorted(by_month):
+        mo_trades = by_month[month]
+        wins = [t for t in mo_trades if t["realized_pnl"] > 0]
+        pnls = [t["realized_pnl"] for t in mo_trades]
+        rows.append({
+            "month": month,
+            "trades": len(mo_trades),
+            "win_rate": round(len(wins) / len(mo_trades) * 100, 1) if mo_trades else 0,
+            "total_pnl": round(sum(pnls), 2),
+        })
+    return rows
+
+
+def streak_analysis(trades: list) -> dict:
+    """Compute winning/losing streaks."""
+    if not trades:
+        return {"longest_win": 0, "longest_loss": 0, "longest_win_pnl": 0,
+                "longest_loss_pnl": 0, "current_streak": 0, "current_type": "N/A"}
+
+    longest_win = longest_loss = 0
+    longest_win_pnl = longest_loss_pnl = 0
+    cur_streak = 0
+    cur_pnl = 0
+    cur_type = None
+
+    for t in trades:
+        is_win = t["realized_pnl"] > 0
+        if is_win:
+            if cur_type == "W":
+                cur_streak += 1
+                cur_pnl += t["realized_pnl"]
+            else:
+                cur_streak = 1
+                cur_pnl = t["realized_pnl"]
+                cur_type = "W"
+            if cur_streak > longest_win:
+                longest_win = cur_streak
+                longest_win_pnl = cur_pnl
+        else:
+            if cur_type == "L":
+                cur_streak += 1
+                cur_pnl += t["realized_pnl"]
+            else:
+                cur_streak = 1
+                cur_pnl = t["realized_pnl"]
+                cur_type = "L"
+            if cur_streak > longest_loss:
+                longest_loss = cur_streak
+                longest_loss_pnl = cur_pnl
+
+    return {
+        "longest_win": longest_win,
+        "longest_win_pnl": round(longest_win_pnl, 2),
+        "longest_loss": longest_loss,
+        "longest_loss_pnl": round(longest_loss_pnl, 2),
+        "current_streak": cur_streak,
+        "current_type": cur_type or "N/A",
+    }
+
+
+def trade_distribution(trades: list) -> list:
+    """P&L distribution buckets."""
+    if not trades:
+        return []
+    buckets = [
+        ("<-$500", lambda x: x < -500),
+        ("-$500 to -$200", lambda x: -500 <= x < -200),
+        ("-$200 to -$50", lambda x: -200 <= x < -50),
+        ("-$50 to $0", lambda x: -50 <= x <= 0),
+        ("$0 to $50", lambda x: 0 < x <= 50),
+        ("$50 to $200", lambda x: 50 < x <= 200),
+        ("$200 to $500", lambda x: 200 < x <= 500),
+        (">$500", lambda x: x > 500),
+    ]
+    total = len(trades)
+    rows = []
+    for label, test in buckets:
+        count = sum(1 for t in trades if test(t["realized_pnl"]))
+        rows.append({
+            "bucket": label,
+            "count": count,
+            "pct": round(count / total * 100, 1),
+        })
+    return rows
+
+
+def exit_reason_breakdown(trades: list) -> list:
+    """Exit reason counts and percentages."""
+    if not trades:
+        return []
+    counts = {}
+    for t in trades:
+        r = t["exit_reason"]
+        counts[r] = counts.get(r, 0) + 1
+    total = len(trades)
+    return [{"reason": r, "count": c, "pct": round(c / total * 100, 1)}
+            for r, c in sorted(counts.items(), key=lambda x: -x[1])]
+
+
+# ---------------------------------------------------------------------------
 # OUTPUT HELPERS
 # ---------------------------------------------------------------------------
+def print_detailed_report(result: dict):
+    """Print full detailed report for investor presentations."""
+    trades = result.get("trade_log", [])
+    if not trades:
+        print("  No trades to report.")
+        return
+
+    # Yearly breakdown
+    yearly = yearly_breakdown(trades)
+    if yearly:
+        print(f"\n  YEARLY BREAKDOWN")
+        print(f"  {'Year':<6} {'Trades':>7} {'Wins':>6} {'Losses':>7} {'WR%':>6} "
+              f"{'Total P&L':>12} {'Avg P&L':>10} {'Best':>10} {'Worst':>10}")
+        print(f"  {'-'*82}")
+        for y in yearly:
+            print(f"  {y['year']:<6} {y['trades']:>7} {y['wins']:>6} {y['losses']:>7} "
+                  f"{y['win_rate']:>5.1f}% {y['total_pnl']:>+11,.2f} "
+                  f"{y['avg_pnl']:>+9,.2f} {y['best_trade']:>+9,.2f} {y['worst_trade']:>+9,.2f}")
+
+    # Monthly breakdown (last 24 months only to keep output manageable)
+    monthly = monthly_breakdown(trades)
+    if monthly:
+        recent = monthly[-24:]
+        print(f"\n  MONTHLY BREAKDOWN (last 24 months)")
+        print(f"  {'Month':<9} {'Trades':>7} {'WR%':>6} {'P&L':>12}")
+        print(f"  {'-'*38}")
+        for m in recent:
+            print(f"  {m['month']:<9} {m['trades']:>7} {m['win_rate']:>5.1f}% {m['total_pnl']:>+11,.2f}")
+
+    # Streak analysis
+    streaks = streak_analysis(trades)
+    print(f"\n  STREAK ANALYSIS")
+    print(f"  Longest Win Streak:   {streaks['longest_win']} trades (${streaks['longest_win_pnl']:+,.2f})")
+    print(f"  Longest Loss Streak:  {streaks['longest_loss']} trades (${streaks['longest_loss_pnl']:+,.2f})")
+    print(f"  Current Streak:       {streaks['current_streak']} {streaks['current_type']}")
+
+    # P&L distribution
+    dist = trade_distribution(trades)
+    if dist:
+        print(f"\n  P&L DISTRIBUTION")
+        print(f"  {'Bucket':<18} {'Count':>7} {'%':>7}")
+        print(f"  {'-'*34}")
+        for d in dist:
+            bar = "#" * int(d["pct"] / 2)
+            print(f"  {d['bucket']:<18} {d['count']:>7} {d['pct']:>6.1f}% {bar}")
+
+    # Exit reasons
+    exits = exit_reason_breakdown(trades)
+    if exits:
+        print(f"\n  EXIT REASONS")
+        for e in exits:
+            print(f"  {e['reason']:<18} {e['count']:>7} ({e['pct']:.1f}%)")
+
+
 def print_summary(bot: str, result: dict):
     """Print formatted summary for a single backtest run."""
     s = result["summary"]
@@ -581,6 +825,7 @@ def print_summary(bot: str, result: dict):
     print(f"  Peak Margin:       ${r['peak_margin_deployed']:,.2f}")
     print(f"  Exit Reasons:      {s['exit_reasons']}")
     print(f"  Days Skipped:      {s['days_skipped']}")
+    print_detailed_report(result)
     print(f"{'='*60}")
 
 
@@ -643,6 +888,12 @@ def run_parameter_sweep(bot: str, start: str, end: str, export: bool,
                 f"{rk['max_drawdown_pct']:>8.1f} "
                 f"{rk['sharpe_ratio']:>8.2f} {s['profit_factor']:>7.2f}"
             )
+
+    # Print detailed report for baseline config
+    baseline_key = "PT30_SL100"
+    if baseline_key in results:
+        print(f"\n--- {bot.upper()} DETAILED REPORT (baseline PT30/SL100) ---")
+        print_detailed_report(results[baseline_key])
 
     if export:
         os.makedirs("backtest/results", exist_ok=True)
@@ -762,7 +1013,7 @@ def main():
         "--bot", required=True, choices=["spark", "flame", "both"],
         help="Which bot to backtest",
     )
-    parser.add_argument("--start", default="2008-01-01", help="Start date (YYYY-MM-DD)")
+    parser.add_argument("--start", default="2019-06-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default="2025-11-30", help="End date (YYYY-MM-DD)")
     parser.add_argument(
         "--sweep", action="store_true",
