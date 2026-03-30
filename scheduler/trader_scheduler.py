@@ -6108,23 +6108,21 @@ class AutonomousTraderScheduler:
         # =================================================================
         # FORTRESS JOB: Aggressive Iron Condor - runs every 5 minutes
         # Scans continuously for optimal 0DTE Iron Condor entry timing
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
-        # Internal market hours check still runs for edge cases (early close days).
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.fortress_trader:
             self.scheduler.add_job(
                 self.scheduled_fortress_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='fortress_trading',
                 name='FORTRESS - Aggressive Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ FORTRESS job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ FORTRESS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # FORTRESS EOD JOB: Force close ALL + process expired - runs at 3:01 PM CT
@@ -6170,23 +6168,21 @@ class AutonomousTraderScheduler:
         # =================================================================
         # SOLOMON JOB: GEX Directional Spreads - runs every 5 minutes
         # Uses live Tradier GEX data to find intraday opportunities
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
-        # Internal market hours check still runs for edge cases (early close days).
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.solomon_trader:
             self.scheduler.add_job(
                 self.scheduled_solomon_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='solomon_trading',
                 name='SOLOMON - GEX Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ SOLOMON job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ SOLOMON job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # SOLOMON EOD JOB: Process expired positions - runs at 3:01 PM CT
@@ -6211,23 +6207,21 @@ class AutonomousTraderScheduler:
         # =================================================================
         # ANCHOR JOB: SPX Iron Condors - runs every 5 minutes
         # Trades SPX options with $10 spread widths using SPXW symbols
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
-        # Internal market hours check still runs for edge cases (early close days).
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.anchor_trader:
             self.scheduler.add_job(
                 self.scheduled_anchor_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='anchor_trading',
                 name='ANCHOR - SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ANCHOR job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ ANCHOR job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # ANCHOR EOD JOB: Process expired positions - runs at 3:01 PM CT
@@ -6252,23 +6246,21 @@ class AutonomousTraderScheduler:
         # =================================================================
         # GIDEON JOB: Aggressive Directional Spreads - runs every 5 minutes
         # Uses relaxed GEX filters for more aggressive trading
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
-        # Internal market hours check still runs for edge cases (early close days).
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.gideon_trader:
             self.scheduler.add_job(
                 self.scheduled_gideon_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='gideon_trading',
                 name='GIDEON - Aggressive Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ GIDEON job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ GIDEON job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # GIDEON EOD JOB: Process expired positions - runs at 3:01 PM CT
@@ -6293,23 +6285,21 @@ class AutonomousTraderScheduler:
         # =================================================================
         # SAMSON JOB: Aggressive SPX Iron Condors - runs every 5 minutes
         # Trades SPX options with $12 spread widths, multiple trades per day with cooldown
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
-        # Internal market hours check still runs for edge cases (early close days).
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.samson_trader:
             self.scheduler.add_job(
                 self.scheduled_samson_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='samson_trading',
                 name='SAMSON - Aggressive SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ SAMSON job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ SAMSON job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # SAMSON EOD JOB: Process expired positions - runs at 3:01 PM CT
@@ -6334,15 +6324,13 @@ class AutonomousTraderScheduler:
         # =================================================================
         # FAITH JOB: 2DTE Paper Iron Condor - runs every 5 minutes
         # Paper-only bot with real Tradier data, $5K simulated capital
-        # CronTrigger limits to Mon-Fri 8AM-2:59PM CT (market hours only).
+        # Market hours are checked inside the job (FAITH's run_cycle handles it)
         # =================================================================
         if self.faith_trader:
             self.scheduler.add_job(
                 self.scheduled_faith_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='faith_trading',
@@ -6350,7 +6338,7 @@ class AutonomousTraderScheduler:
                 replace_existing=True,
                 max_instances=1
             )
-            logger.info("✅ FAITH job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ FAITH job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # FAITH EOD JOB: Safety net close - runs at 3:50 PM CT
@@ -6382,10 +6370,8 @@ class AutonomousTraderScheduler:
         if self.grace_trader:
             self.scheduler.add_job(
                 self.scheduled_grace_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='grace_trading',
@@ -6393,7 +6379,7 @@ class AutonomousTraderScheduler:
                 replace_existing=True,
                 max_instances=1
             )
-            logger.info("✅ GRACE job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ GRACE job scheduled (every 5 min, checks market hours internally)")
 
             self.scheduler.add_job(
                 self.scheduled_grace_eod_logic,
@@ -6418,10 +6404,8 @@ class AutonomousTraderScheduler:
         if self.flame_trader:
             self.scheduler.add_job(
                 self.scheduled_flame_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='flame_trading',
@@ -6429,7 +6413,7 @@ class AutonomousTraderScheduler:
                 replace_existing=True,
                 max_instances=1
             )
-            logger.info("✅ FLAME job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ FLAME job scheduled (every 5 min, checks market hours internally)")
 
             self.scheduler.add_job(
                 self.scheduled_flame_eod_logic,
@@ -6454,10 +6438,8 @@ class AutonomousTraderScheduler:
         if self.spark_trader:
             self.scheduler.add_job(
                 self.scheduled_spark_logic,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='spark_trading',
@@ -6465,7 +6447,7 @@ class AutonomousTraderScheduler:
                 replace_existing=True,
                 max_instances=1
             )
-            logger.info("✅ SPARK job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ SPARK job scheduled (every 5 min, checks market hours internally)")
 
             self.scheduler.add_job(
                 self.scheduled_spark_eod_logic,
@@ -6846,32 +6828,28 @@ class AutonomousTraderScheduler:
             # JUBILEE Equity Snapshots - runs every 30 minutes during market hours
             self.scheduler.add_job(
                 self.scheduled_jubilee_equity_snapshot,
-                trigger=CronTrigger(
-                    minute='0,30',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=30,
                     timezone='America/Chicago'
                 ),
                 id='jubilee_equity_snapshot',
                 name='JUBILEE - Equity Snapshot (30-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ JUBILEE equity snapshot job scheduled (every 30 min, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ JUBILEE equity snapshot job scheduled (every 30 min)")
 
             # JUBILEE Rate Analysis - runs hourly during market hours
             self.scheduler.add_job(
                 self.scheduled_jubilee_rate_analysis,
-                trigger=CronTrigger(
-                    minute=0,
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    hours=1,
                     timezone='America/Chicago'
                 ),
                 id='jubilee_rate_analysis',
                 name='JUBILEE - Rate Analysis (hourly)',
                 replace_existing=True
             )
-            logger.info("✅ JUBILEE rate analysis job scheduled (hourly, Mon-Fri 8AM-2:59PM CT)")
+            logger.info("✅ JUBILEE rate analysis job scheduled (hourly)")
         else:
             logger.warning("⚠️ JUBILEE not available - box spread synthetic borrowing disabled")
 
@@ -6889,10 +6867,8 @@ class AutonomousTraderScheduler:
         if JUBILEE_IC_AVAILABLE:
             self.scheduler.add_job(
                 self.scheduled_jubilee_ic_cycle,
-                trigger=CronTrigger(
-                    minute='*/5',
-                    hour='8-14',
-                    day_of_week='mon-fri',
+                trigger=IntervalTrigger(
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='jubilee_ic_trading',
@@ -6900,9 +6876,9 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             if self.jubilee_ic_trader:
-                logger.info("✅ JUBILEE IC job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT - trader active)")
+                logger.info("✅ JUBILEE IC job scheduled (every 5 min - trader active)")
             else:
-                logger.warning("⚠️ JUBILEE IC job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT - trader PENDING, will lazy-init)")
+                logger.warning("⚠️ JUBILEE IC job scheduled (every 5 min - trader PENDING, will lazy-init)")
 
             # JUBILEE IC MTM: Event-driven (on open/close) to match SAMSON
             # No separate scheduled MTM job needed
