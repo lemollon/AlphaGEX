@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, CT_TODAY } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +19,7 @@ export async function POST(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'
+  const dte = dteMode(bot) ?? '0DTE'
   const botName = bot.toUpperCase()
 
   try {

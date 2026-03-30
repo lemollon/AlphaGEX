@@ -130,7 +130,7 @@ export async function POST(
     )
   }
 
-  const dte = bot === 'flame' ? '2DTE' : bot === 'spark' ? '1DTE' : '0DTE'
+  const dte = dteMode(bot) ?? '0DTE'
   const minDte = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
   const botName = bot.toUpperCase()
   const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
@@ -161,6 +161,7 @@ export async function POST(
         const todayTrades = await dbQuery(
           `SELECT COUNT(*) AS cnt FROM ${botTable(bot, 'positions')}
            WHERE dte_mode = '${escapeSql(dte)}'
+             AND COALESCE(account_type, 'sandbox') = 'sandbox'
              AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
         )
         const tradesToday = int(todayTrades[0]?.cnt)

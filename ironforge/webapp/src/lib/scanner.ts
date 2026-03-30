@@ -58,17 +58,17 @@ import {
 const SCAN_INTERVAL_MS = 60 * 1000 // 1 minute
 const MAX_CONSECUTIVE_MTM_FAILURES = 10
 
-// Track consecutive FLAME sandbox rejections to avoid spamming Tradier
+// Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
 // with 1500+ rejected orders per day. After N consecutive rejections,
 // back off exponentially (skip cycles) before retrying.
-let _flameConsecutiveRejects = 0
-const FLAME_MAX_REJECTS_BEFORE_BACKOFF = 5  // After 5 rejections, start backing off
-const FLAME_BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retries
+const _consecutiveRejects: Record<string, number> = { flame: 0, spark: 0, inferno: 0 }
+const MAX_REJECTS_BEFORE_BACKOFF = 5  // After 5 rejections, start backing off
+const BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retries
 
-// Gate FLAME orders behind sandbox cleanup completion.
-// Set to true once daily cleanup verifies all stale positions are gone.
-let _sandboxCleanupVerified = false
-let _sandboxCleanupVerifiedDate = ''
+// Per-bot sandbox cleanup verification gates.
+// Each bot tracks its own cleanup state so one bot's failure doesn't block others.
+const _sandboxCleanupVerified: Record<string, boolean> = { flame: false, spark: false, inferno: false }
+const _sandboxCleanupVerifiedDate: Record<string, string> = { flame: '', spark: '', inferno: '' }
 
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
@@ -310,8 +310,11 @@ const _mtmFailureCounts: Map<string, number> = new Map()
 /*  Sandbox health state (Fix 8)                                       */
 /* ------------------------------------------------------------------ */
 
-let _sandboxPaperOnly = false
-let _lastSandboxCleanupDate: string | null = null
+// Per-bot paper-only mode: when a bot's sandbox accounts are unreachable,
+// only that bot switches to paper-only — other bots continue normally.
+const _sandboxPaperOnly: Record<string, boolean> = { flame: false, spark: false, inferno: false }
+// Per-bot daily cleanup tracking: prevents cleanup from running >1x per day per bot.
+const _lastSandboxCleanupDate: Record<string, string | null> = { flame: null, spark: null, inferno: null }
 
 /* ------------------------------------------------------------------ */
 /*  Market hours (Central Time)                                        */
@@ -881,7 +884,7 @@ async function closePosition(
           JSON.stringify({
             position_id: positionId, reason, attempts: MAX_CLOSE_ATTEMPTS,
             sandbox_close_info: sandboxCloseInfo,
-            sandbox_paper_only: _sandboxPaperOnly,
+            sandbox_paper_only: _sandboxPaperOnly[bot.name],
           }),
           bot.dte,
         ],
@@ -1512,31 +1515,31 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // FLAME: place sandbox order first — paper position depends on fill
-    if (_sandboxPaperOnly) {
+    if (_sandboxPaperOnly[bot.name]) {
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
     // Backoff after consecutive rejections — stop spamming Tradier with orders
     // that will just get rejected again (prevents 1500+ rejected orders/day).
-    if (_flameConsecutiveRejects >= FLAME_MAX_REJECTS_BEFORE_BACKOFF) {
-      // Only retry every FLAME_BACKOFF_CYCLES cycles (~10 min)
-      const cyclesSinceLastAttempt = _flameConsecutiveRejects - FLAME_MAX_REJECTS_BEFORE_BACKOFF
-      if (cyclesSinceLastAttempt % FLAME_BACKOFF_CYCLES !== 0) {
-        _flameConsecutiveRejects++
-        return `skip:flame_backoff(${_flameConsecutiveRejects} consecutive rejects, retrying every ${FLAME_BACKOFF_CYCLES} cycles)`
+    if (_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF) {
+      // Only retry every BACKOFF_CYCLES cycles (~10 min)
+      const cyclesSinceLastAttempt = _consecutiveRejects[bot.name] - MAX_REJECTS_BEFORE_BACKOFF
+      if (cyclesSinceLastAttempt % BACKOFF_CYCLES !== 0) {
+        _consecutiveRejects[bot.name]++
+        return `skip:flame_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
       }
-      console.log(`[scanner] FLAME: ${_flameConsecutiveRejects} consecutive rejects — retrying now (backoff cycle)`)
+      console.log(`[scanner] FLAME: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
     }
 
     // GATE: Don't place orders if sandbox cleanup hasn't verified clean.
     // Reset the verified flag if date changed (new day).
     const ctNow = getCentralTime()
     const todayStr = ctNow.toISOString().slice(0, 10)
-    if (_sandboxCleanupVerifiedDate !== todayStr) {
-      _sandboxCleanupVerified = false
+    if (_sandboxCleanupVerifiedDate[bot.name] !== todayStr) {
+      _sandboxCleanupVerified[bot.name] = false
     }
 
-    if (!_sandboxCleanupVerified) {
+    if (!_sandboxCleanupVerified[bot.name]) {
       // Quick check: are there actually stale positions right now?
       let staleCount = 0
       try {
@@ -1585,17 +1588,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         } catch { /* ignore */ }
 
         if (remaining > 0) {
-          _flameConsecutiveRejects++
+          _consecutiveRejects[bot.name]++
           return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
         }
         // All clear now
-        _sandboxCleanupVerified = true
-        _sandboxCleanupVerifiedDate = todayStr
-        console.log('[scanner] FLAME PRE-ORDER: All stale positions cleared — proceeding with order')
+        _sandboxCleanupVerified[bot.name] = true
+        _sandboxCleanupVerifiedDate[bot.name] = todayStr
+        console.log(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: All stale positions cleared — proceeding with order`)
       } else {
         // No stale positions — mark verified
-        _sandboxCleanupVerified = true
-        _sandboxCleanupVerifiedDate = todayStr
+        _sandboxCleanupVerified[bot.name] = true
+        _sandboxCleanupVerifiedDate[bot.name] = todayStr
       }
     }
 
@@ -1642,7 +1645,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           false, bot.dte, person,
         ],
       )
-      _flameConsecutiveRejects++
+      _consecutiveRejects[bot.name]++
       return `skip:flame_order_failed(${msg})`
     }
 
@@ -1835,13 +1838,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             false, bot.dte, person,
           ],
         )
-        _flameConsecutiveRejects++
+        _consecutiveRejects[bot.name]++
         return 'skip:flame_primary_no_fill'
       }
     }
 
     // Primary account filled — reset rejection counter
-    _flameConsecutiveRejects = 0
+    _consecutiveRejects[bot.name] = 0
 
     // Use Tradier's actual fill PRICE but keep paper-sized contracts.
     // Paper position = 85% of paper_account BP (maxContracts).
@@ -1905,7 +1908,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
 
   // SPARK + INFERNO: paper-only, no sandbox orders (getAccountsForBot returns [] → skip)
-  if (!isFlameFillOnly && !_sandboxPaperOnly) {
+  if (!isFlameFillOnly && !_sandboxPaperOnly[bot.name]) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
@@ -2199,7 +2202,9 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
   // that window (e.g., Tradier rejects close on expired options), stale
   // positions blocked ALL new orders for the rest of the day.
   // New behavior: keep retrying every cycle until cleanup succeeds.
-  if (_lastSandboxCleanupDate === todayStr) return
+  // Use FLAME's cleanup date as the global gate — sandbox cleanup is a shared operation
+  // that benefits all sandbox-using bots. Per-bot tracking prevents re-running unnecessarily.
+  if (_lastSandboxCleanupDate['flame'] === todayStr) return
   const hhmm = ctHHMM(ct)
   if (hhmm < 830) return  // Don't run before market open
 
@@ -2208,7 +2213,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
   try {
     const accounts = await getLoadedSandboxAccountsAsync()
     if (accounts.length === 0) {
-      _lastSandboxCleanupDate = todayStr
+      for (const b of BOTS) _lastSandboxCleanupDate[b.name] = todayStr
       console.log('[scanner] DAILY SANDBOX CLEANUP: No sandbox accounts configured, skipping')
       return
     }
@@ -2298,16 +2303,18 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       }
     }
 
-    // Mark cleanup complete and set verified flag for FLAME gate
+    // Mark cleanup complete and set verified flag for all sandbox-using bots
     if (totalFailed === 0) {
-      _lastSandboxCleanupDate = todayStr
-      _sandboxCleanupVerified = true
-      _sandboxCleanupVerifiedDate = todayStr
+      for (const b of BOTS) {
+        _lastSandboxCleanupDate[b.name] = todayStr
+        _sandboxCleanupVerified[b.name] = true
+        _sandboxCleanupVerifiedDate[b.name] = todayStr
+      }
     } else {
-      // Stale positions remain — FLAME will be blocked until next successful cleanup
-      _sandboxCleanupVerified = false
+      // Stale positions remain — sandbox-using bots blocked until next successful cleanup
+      for (const b of BOTS) _sandboxCleanupVerified[b.name] = false
       console.warn(
-        `[scanner] SANDBOX CLEANUP: ${totalFailed} positions still open — FLAME BLOCKED until resolved`,
+        `[scanner] SANDBOX CLEANUP: ${totalFailed} positions still open — sandbox bots BLOCKED until resolved`,
       )
     }
 
@@ -2326,8 +2333,10 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
 
     // No stale positions found at all — sandbox is clean
     if (totalStale === 0) {
-      _sandboxCleanupVerified = true
-      _sandboxCleanupVerifiedDate = todayStr
+      for (const b of BOTS) {
+        _sandboxCleanupVerified[b.name] = true
+        _sandboxCleanupVerifiedDate[b.name] = todayStr
+      }
     }
 
     console.log(`[scanner] DAILY SANDBOX CLEANUP COMPLETE: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`)
@@ -2397,7 +2406,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       const msg = orphanErr instanceof Error ? orphanErr.message : String(orphanErr)
       console.warn(`[scanner] ORPHAN DETECTION ERROR: ${msg}`)
       // Reset so we retry orphan detection next cycle
-      _lastSandboxCleanupDate = null
+      for (const b of BOTS) _lastSandboxCleanupDate[b.name] = null
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -2433,34 +2442,39 @@ async function prescanSandboxHealthCheck(): Promise<void> {
     }
   }
 
-  if (negativeCount > 0 && negativeCount >= totalChecked) {
-    if (!_sandboxPaperOnly) {
-      _sandboxPaperOnly = true
-      console.error('[scanner] SANDBOX HEALTH CRITICAL: ALL sandbox accounts unreachable — switching to paper-only mode')
+  // Sandbox health only affects bots that use Tradier sandbox (currently FLAME only).
+  // Per-bot scoping prevents FLAME's sandbox failures from blocking SPARK/INFERNO.
+  const sandboxBots = BOTS.filter(b => getAccountsForBot(b.name).length > 0)
+  for (const sBot of sandboxBots) {
+    if (negativeCount > 0 && negativeCount >= totalChecked) {
+      if (!_sandboxPaperOnly[sBot.name]) {
+        _sandboxPaperOnly[sBot.name] = true
+        console.error(`[scanner] SANDBOX HEALTH CRITICAL: ALL sandbox accounts unreachable — switching ${sBot.name.toUpperCase()} to paper-only mode`)
+        await query(
+          `INSERT INTO ${botTable(sBot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            'SANDBOX_HEALTH',
+            `CRITICAL: ALL sandbox accounts unreachable — auto-switched ${sBot.name.toUpperCase()} to paper-only`,
+            JSON.stringify({ action: 'auto_paper_only', source: 'prescan_health_check', negativeCount, totalChecked }),
+            sBot.dte,
+          ],
+        )
+      }
+    } else if (negativeCount === 0 && _sandboxPaperOnly[sBot.name]) {
+      _sandboxPaperOnly[sBot.name] = false
+      console.log(`[scanner] SANDBOX HEALTH: All accounts healthy — re-enabling ${sBot.name.toUpperCase()} sandbox mirroring`)
       await query(
-        `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+        `INSERT INTO ${botTable(sBot.name, 'logs')} (level, message, details, dte_mode)
          VALUES ($1, $2, $3, $4)`,
         [
           'SANDBOX_HEALTH',
-          'CRITICAL: ALL sandbox accounts unreachable — auto-switched to paper-only',
-          JSON.stringify({ action: 'auto_paper_only', source: 'prescan_health_check', negativeCount, totalChecked }),
-          '2DTE',
+          `RECOVERED: All sandbox accounts healthy — re-enabling ${sBot.name.toUpperCase()} sandbox`,
+          JSON.stringify({ source: 'prescan_health_check', action: 're_enable_sandbox' }),
+          sBot.dte,
         ],
       )
     }
-  } else if (negativeCount === 0 && _sandboxPaperOnly) {
-    _sandboxPaperOnly = false
-    console.log('[scanner] SANDBOX HEALTH: All accounts healthy — re-enabling sandbox mirroring')
-    await query(
-      `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        'SANDBOX_HEALTH',
-        'RECOVERED: All sandbox accounts healthy — re-enabling sandbox',
-        JSON.stringify({ source: 'prescan_health_check', action: 're_enable_sandbox' }),
-        '2DTE',
-      ],
-    )
   }
 }
 

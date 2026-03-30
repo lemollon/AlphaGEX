@@ -373,16 +373,16 @@ describe('Blockers That Could Prevent Production Trading', () => {
     // Verify paper_only check is AFTER production-only mode
     // (production-only has its own early return)
     const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const paperOnlyIdx = scannerSource.indexOf("if (_sandboxPaperOnly)")
+    const paperOnlyIdx = scannerSource.indexOf("if (_sandboxPaperOnly[bot.name])")
     expect(prodOnlyIdx).toBeGreaterThan(-1)
     expect(paperOnlyIdx).toBeGreaterThan(-1)
     expect(prodOnlyIdx).toBeLessThan(paperOnlyIdx)
   })
 
   it('consecutive reject backoff does NOT block production-only mode', () => {
-    // _productionOnlyMode check is BEFORE the _flameConsecutiveRejects check
+    // _productionOnlyMode check is BEFORE the per-bot _consecutiveRejects check
     const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const rejectIdx = scannerSource.indexOf('_flameConsecutiveRejects >= FLAME_MAX_REJECTS')
+    const rejectIdx = scannerSource.indexOf('_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF')
     expect(prodOnlyIdx).toBeGreaterThan(-1)
     expect(rejectIdx).toBeGreaterThan(-1)
     expect(prodOnlyIdx).toBeLessThan(rejectIdx)
@@ -399,9 +399,9 @@ describe('Blockers That Could Prevent Production Trading', () => {
     expect(prodOnlyReturnIdx).toBeLessThan(staleBlockIdx)
   })
 
-  it('DB load failure recovery: auto-reset after 60s cooldown', () => {
+  it('DB load failure recovery: auto-reset after 15s cooldown', () => {
     expect(tradierSource).toMatch(/_dbLoadLastAttemptTime/)
-    expect(tradierSource).toMatch(/60[_]?000/)
+    expect(tradierSource).toMatch(/15[_]?000/)
     expect(tradierSource).toMatch(/DB load retry counter reset/)
   })
 
@@ -504,5 +504,61 @@ describe('Production Collateral & P&L Arithmetic', () => {
     const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
 
     expect(prodCollateral).toBe(836) // $418 × 2
+  })
+})
+
+/* ================================================================== */
+/*  9. Cross-Bot State Isolation Guards                                */
+/* ================================================================== */
+
+describe('Cross-Bot State Isolation', () => {
+  it('no FLAME-specific mutable globals in scanner.ts (must be per-bot Records)', () => {
+    // These old patterns caused cross-bot state bleed when FLAME/SPARK/INFERNO
+    // ran in parallel via Promise.allSettled(). If you see a failure here,
+    // you probably added a module-level `let _flame*` or `let _sandbox*`
+    // variable — convert it to a Record<string, T> keyed by bot name instead.
+    const dangerousPatterns = [
+      /^let _flame/m,
+      /^let _spark/m,
+      /^let _inferno/m,
+      /^let _sandbox(?!Accounts)/m,  // _sandboxAccounts is in tradier.ts, not scanner
+    ]
+    for (const pattern of dangerousPatterns) {
+      expect(scannerSource).not.toMatch(pattern)
+    }
+  })
+
+  it('per-bot state variables are Record<string, *> with all 3 bot keys', () => {
+    // All mutable per-bot state must be declared as Record with flame/spark/inferno keys
+    const perBotVars = [
+      '_consecutiveRejects',
+      '_sandboxCleanupVerified',
+      '_sandboxCleanupVerifiedDate',
+      '_sandboxPaperOnly',
+      '_lastSandboxCleanupDate',
+    ]
+    for (const varName of perBotVars) {
+      expect(scannerSource).toContain(varName)
+      // Verify it's keyed with all 3 bots (declared as a Record literal)
+      const varRegex = new RegExp(
+        `${varName}[^=]*=\\s*\\{[^}]*flame[^}]*spark[^}]*inferno`,
+      )
+      expect(scannerSource).toMatch(varRegex)
+    }
+  })
+
+  it('per-bot state is accessed with [bot.name] not as bare scalar', () => {
+    // After the Phase 1 fix, all per-bot Records must be accessed with [bot.name]
+    // If this fails, someone is reading a per-bot Record without the bot key
+    expect(scannerSource).toMatch(/_consecutiveRejects\[bot\.name\]/)
+    expect(scannerSource).toMatch(/_sandboxPaperOnly\[bot\.name\]/)
+    expect(scannerSource).toMatch(/_sandboxCleanupVerified\[bot\.name\]/)
+  })
+
+  it('tradier.ts _sandboxAccounts uses atomic replacement (no .push)', () => {
+    // .push() on a shared array while 3 bots read it concurrently causes
+    // race conditions. Verify we use atomic replacement (reassignment) instead.
+    const pushPattern = /_sandboxAccounts\.push\(/
+    expect(tradierSource).not.toMatch(pushPattern)
   })
 })

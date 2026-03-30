@@ -618,6 +618,9 @@ let _sandboxAccountsLoadedFromDb = false
 let _dbLoadAttempts = 0
 let _dbLoadLastAttemptTime = 0
 const DB_LOAD_MAX_RETRIES = 5
+// Cooldown after max retries exhausted — reduced from 60s to 15s so concurrent
+// bot scans aren't blocked for a full minute by one bot's DB failure.
+const DB_LOAD_COOLDOWN_MS = 15_000
 
 async function ensureSandboxAccountsLoaded(): Promise<void> {
   // ALWAYS check DB — env vars only provide sandbox accounts, production accounts
@@ -629,7 +632,7 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
   // Auto-reset after 60s cooldown so the system self-heals without a redeploy
   // (e.g., DB was slow on Render cold start but is now ready).
   if (_dbLoadAttempts >= DB_LOAD_MAX_RETRIES) {
-    if (Date.now() - _dbLoadLastAttemptTime > 60_000) {
+    if (Date.now() - _dbLoadLastAttemptTime > DB_LOAD_COOLDOWN_MS) {
       console.log('[tradier] DB load retry counter reset after 60s cooldown — retrying production account load')
       _dbLoadAttempts = 0
     } else {
@@ -648,8 +651,11 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
        WHERE is_active = TRUE ORDER BY type, person`,
     )
     if (rows.length > 0) {
-      // Deduplicate by API key — env-var accounts may already be in _sandboxAccounts
-      const seen = new Set<string>(_sandboxAccounts.map(a => a.apiKey))
+      // Build a NEW array atomically — prevents race conditions where a concurrent
+      // reader iterates _sandboxAccounts while we're mutating it via .push().
+      // Start with existing env-var accounts, then merge DB accounts.
+      const merged: typeof _sandboxAccounts = [..._sandboxAccounts]
+      const seen = new Set<string>(merged.map(a => a.apiKey))
       for (const row of rows) {
         const key = row.api_key?.trim()
         if (!key || seen.has(key)) continue
@@ -657,8 +663,10 @@ async function ensureSandboxAccountsLoaded(): Promise<void> {
         const name = row.person || 'User'
         const acctType = row.type === 'production' ? 'production' as const : 'sandbox' as const
         const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
-        _sandboxAccounts.push({ name, apiKey: key, baseUrl, type: acctType })
+        merged.push({ name, apiKey: key, baseUrl, type: acctType })
       }
+      // Atomic replacement — any concurrent reader sees either the old or new array, never a partial state
+      _sandboxAccounts = merged
       const sandboxCount = _sandboxAccounts.filter(a => a.type === 'sandbox').length
       const prodCount = _sandboxAccounts.filter(a => a.type === 'production').length
       console.log(
