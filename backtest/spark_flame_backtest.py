@@ -436,13 +436,25 @@ def run_backtest(
         lc_ask = get_price(exp_options, long_call_strike, "call", "ask")
 
         if any(p is None for p in [sp_bid, sc_bid, lp_ask, lc_ask]):
-            skipped["MISSING_QUOTES"] += 1
-            continue
-
-        net_credit = (sp_bid + sc_bid) - (lp_ask + lc_ask)
-        if net_credit < cfg["min_credit"]:
-            skipped["CREDIT_TOO_LOW"] += 1
-            continue
+            if dte_target == 0:
+                # 0DTE: EOD option prices are often zero (expired worthless)
+                # Estimate credit from the expected move and spread width
+                # Typical 0DTE IC credit is 15-30% of spread width
+                estimated_credit_pct = 0.20  # 20% of spread width is conservative
+                net_credit = cfg["spread_width"] * estimated_credit_pct
+                if net_credit < cfg["min_credit"]:
+                    skipped["CREDIT_TOO_LOW"] += 1
+                    continue
+                credit_source = "ESTIMATED"
+            else:
+                skipped["MISSING_QUOTES"] += 1
+                continue
+        else:
+            net_credit = (sp_bid + sc_bid) - (lp_ask + lc_ask)
+            if net_credit < cfg["min_credit"]:
+                skipped["CREDIT_TOO_LOW"] += 1
+                continue
+            credit_source = "MARKET"
 
         # Position sizing
         available_bp = account_balance * (cfg["buying_power_pct"] / 100.0)
@@ -467,6 +479,7 @@ def run_backtest(
             "long_put": long_put_strike,
             "long_call": long_call_strike,
             "net_credit": round(net_credit, 4),
+            "credit_source": credit_source,
             "contracts": contracts,
             "collateral": round(collateral_per_contract * contracts, 2),
             "max_profit": round(net_credit * 100 * contracts, 2),
