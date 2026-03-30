@@ -373,16 +373,16 @@ describe('Blockers That Could Prevent Production Trading', () => {
     // Verify paper_only check is AFTER production-only mode
     // (production-only has its own early return)
     const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const paperOnlyIdx = scannerSource.indexOf("if (_sandboxPaperOnly)")
+    const paperOnlyIdx = scannerSource.indexOf("if (_sandboxPaperOnly[bot.name])")
     expect(prodOnlyIdx).toBeGreaterThan(-1)
     expect(paperOnlyIdx).toBeGreaterThan(-1)
     expect(prodOnlyIdx).toBeLessThan(paperOnlyIdx)
   })
 
   it('consecutive reject backoff does NOT block production-only mode', () => {
-    // _productionOnlyMode check is BEFORE the _flameConsecutiveRejects check
+    // _productionOnlyMode check is BEFORE the per-bot _consecutiveRejects check
     const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const rejectIdx = scannerSource.indexOf('_flameConsecutiveRejects >= FLAME_MAX_REJECTS')
+    const rejectIdx = scannerSource.indexOf('_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF')
     expect(prodOnlyIdx).toBeGreaterThan(-1)
     expect(rejectIdx).toBeGreaterThan(-1)
     expect(prodOnlyIdx).toBeLessThan(rejectIdx)
@@ -399,9 +399,9 @@ describe('Blockers That Could Prevent Production Trading', () => {
     expect(prodOnlyReturnIdx).toBeLessThan(staleBlockIdx)
   })
 
-  it('DB load failure recovery: auto-reset after 60s cooldown', () => {
+  it('DB load failure recovery: auto-reset after 15s cooldown', () => {
     expect(tradierSource).toMatch(/_dbLoadLastAttemptTime/)
-    expect(tradierSource).toMatch(/60[_]?000/)
+    expect(tradierSource).toMatch(/15[_]?000/)
     expect(tradierSource).toMatch(/DB load retry counter reset/)
   })
 
