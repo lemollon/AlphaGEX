@@ -230,9 +230,10 @@ class PaperExecutor:
         self, buying_power: float, collateral_per_contract: float
     ) -> int:
         """Calculate maximum contracts based on buying power (85% usage).
-        Always capped at ABSOLUTE_MAX=50 to prevent oversized Tradier orders.
+        Always capped at ABSOLUTE_MAX=200 to match scanner.ts SCANNER_MAX_CONTRACTS.
+        Per-bot max_contracts (e.g. 10 for FLAME) provides the tighter limit.
         """
-        ABSOLUTE_MAX = 50
+        ABSOLUTE_MAX = 200
         if collateral_per_contract <= 0:
             return 0
         usable_bp = buying_power * self.config.buying_power_usage_pct

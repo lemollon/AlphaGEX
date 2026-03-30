@@ -422,12 +422,22 @@ class Trader:
                     capped_cost = min(max(0, mtm), spread_width)
                     unrealized += (pos.total_credit - capped_cost) * 100 * pos.contracts
 
+            # Fetch spot/vix for snapshot context
+            snap_spot = None
+            snap_vix = None
+            market_data = self.signal_generator.get_market_data()
+            if market_data:
+                snap_spot = market_data.get("spot_price")
+                snap_vix = market_data.get("vix")
+
             self.db.save_equity_snapshot(
                 balance=account.balance,
                 realized_pnl=account.cumulative_pnl,
                 unrealized_pnl=round(unrealized, 2),
                 open_positions=len(positions),
                 note=f"cycle:{action}",
+                spot_price=snap_spot,
+                vix=snap_vix,
             )
         except Exception as e:
             logger.warning(f"{self.config.bot_name}: Periodic snapshot failed: {e}")

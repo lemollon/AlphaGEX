@@ -163,6 +163,16 @@ class SignalGenerator:
             )
             return target_expiration
 
+    @staticmethod
+    def _round_strike(value: float, direction: str) -> float:
+        """Round to nearest $0.50 strike (SPY uses half-dollar strikes).
+
+        direction: 'down' rounds toward zero, 'up' rounds away from zero.
+        """
+        if direction == "down":
+            return math.floor(value * 2) / 2
+        return math.ceil(value * 2) / 2
+
     def calculate_strikes(
         self, spot_price: float, expected_move: float, sd_override: float = 0.0,
     ) -> Dict[str, float]:
@@ -173,8 +183,8 @@ class SignalGenerator:
         min_expected_move = spot_price * 0.005
         effective_em = max(expected_move, min_expected_move)
 
-        put_short = math.floor(spot_price - sd * effective_em)
-        call_short = math.ceil(spot_price + sd * effective_em)
+        put_short = self._round_strike(spot_price - sd * effective_em, "down")
+        call_short = self._round_strike(spot_price + sd * effective_em, "up")
         put_long = put_short - width
         call_long = call_short + width
 

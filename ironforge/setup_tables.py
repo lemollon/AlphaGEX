@@ -73,6 +73,7 @@ def _position_table_ddl(bot: str) -> str:
         close_price NUMERIC(10, 4),
         close_reason TEXT,
         realized_pnl NUMERIC(10, 2),
+        spot_at_close NUMERIC(10, 2),
 
         dte_mode TEXT DEFAULT '2DTE',
 
@@ -129,6 +130,7 @@ def _logs_table_ddl(bot: str) -> str:
         level TEXT,
         message TEXT,
         details TEXT,
+        account_type TEXT DEFAULT 'sandbox',
         dte_mode TEXT DEFAULT '2DTE'
     )
     """
@@ -143,6 +145,8 @@ def _equity_snapshots_table_ddl(bot: str) -> str:
         unrealized_pnl NUMERIC(12, 2) DEFAULT 0,
         realized_pnl NUMERIC(12, 2) DEFAULT 0,
         open_positions INT DEFAULT 0,
+        spot_price NUMERIC(10, 2),
+        vix NUMERIC(6, 2),
         note TEXT,
         dte_mode TEXT DEFAULT '2DTE',
         created_at TIMESTAMPTZ DEFAULT NOW()
@@ -327,6 +331,26 @@ def setup_all_tables():
                 ADD COLUMN IF NOT EXISTS sandbox_close_order_id TEXT
             """)
         logger.info("  sandbox_order_id migration OK")
+
+        # Add columns from audit findings (March 2026)
+        for bot in ['flame', 'spark', 'inferno']:
+            cursor.execute(f"""
+                ALTER TABLE {bot}_logs
+                ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'sandbox'
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_equity_snapshots
+                ADD COLUMN IF NOT EXISTS spot_price NUMERIC(10, 2)
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_equity_snapshots
+                ADD COLUMN IF NOT EXISTS vix NUMERIC(6, 2)
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS spot_at_close NUMERIC(10, 2)
+            """)
+        logger.info("  audit column migrations OK")
 
     logger.info("All tables created successfully.")
 
