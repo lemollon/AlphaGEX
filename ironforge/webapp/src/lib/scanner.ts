@@ -1184,7 +1184,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
       // Sandbox hit max trades — but check if production still needs to trade.
-      // Production positions have account_type = 'production' in the positions table.
+      // Production-only mode only applies to FLAME, which has real sandbox accounts.
+      // SPARK and INFERNO are paper-only — they should never bypass the daily cap.
+      if (bot.name !== 'flame') {
+        return 'skip:already_traded_today'
+      }
+      // FLAME: Production positions have account_type = 'production' in the positions table.
       const prodTodayRows = await query(
         `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
          WHERE dte_mode = $1 AND account_type = 'production'
@@ -2705,9 +2710,26 @@ async function scanBot(bot: BotDef): Promise<void> {
     // max_trades: 0 = unlimited, 1 = single trade only, >1 = multi-trade with cap
     else if (isInEntryWindow(ct, bot)) {
       const maxTrades = botCfg.max_trades
+      // For bots with a daily cap (maxTrades > 0), count ALL positions opened today
+      // (open + closed), not just currently open ones. This prevents reopening
+      // after a same-day close (e.g., SPARK hits PT then tries to trade again).
+      // FLAME is excluded: its production-only mode (inside tryOpenTrade) handles
+      // the case where sandbox traded but production hasn't.
+      let tradedTodayCount = 0
+      if (maxTrades > 0 && bot.name !== 'flame') {
+        try {
+          const todayPosRows = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+            [bot.dte],
+          )
+          tradedTodayCount = int(todayPosRows[0]?.cnt)
+        } catch { /* non-fatal — tryOpenTrade has its own guard */ }
+      }
       const canOpenMore = (maxTrades === 0) ||
-        (maxTrades > 1 && openCount < maxTrades) ||
-        (maxTrades === 1 && !hasOpenPosition)
+        (bot.name === 'flame' && maxTrades === 1 && !hasOpenPosition) ||
+        (maxTrades > 0 && tradedTodayCount < maxTrades && !hasOpenPosition)
 
       if (canOpenMore) {
         if (!(await isConfiguredAsync())) {
@@ -2732,9 +2754,9 @@ async function scanBot(bot: BotDef): Promise<void> {
           }
         }
       } else if (!hasOpenPosition) {
-        // No position, but max_trades hit for today (shouldn't happen with proper PDT check)
+        // No position, but already traded today
         action = 'no_trade'
-        reason = `max_trades_reached(${openCount}/${maxTrades})`
+        reason = `max_trades_reached(${tradedTodayCount}/${maxTrades})`
       }
       // else: has position + monitoring already happened above
     } else if (!hasOpenPosition) {
