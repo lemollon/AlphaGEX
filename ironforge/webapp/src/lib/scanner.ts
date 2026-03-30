@@ -1320,9 +1320,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const maxProfit = credits.totalCredit * 100 * maxContracts
   const maxLoss = totalCollateral
 
-  // Position ID
+  // Position ID — use Central Time date (not UTC) so IDs stay consistent after 7 PM CT
   const now = new Date()
-  const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
+  const ctStr = now.toLocaleString('en-US', { timeZone: 'America/Chicago' })
+  const ctDate = new Date(ctStr)
+  const dateStr = `${ctDate.getFullYear()}${String(ctDate.getMonth() + 1).padStart(2, '0')}${String(ctDate.getDate()).padStart(2, '0')}`
   const hex = Math.random().toString(16).slice(2, 8).toUpperCase()
   const botName = bot.name.toUpperCase()
   const positionId = `${botName}-${dateStr}-${hex}`

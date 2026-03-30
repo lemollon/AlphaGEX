@@ -266,7 +266,8 @@ class TradingDatabase:
             return False
 
     def close_position(self, position_id: str, close_price: float,
-                       realized_pnl: float, close_reason: str) -> bool:
+                       realized_pnl: float, close_reason: str,
+                       spot_at_close: float = None) -> bool:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -274,9 +275,11 @@ class TradingDatabase:
                     UPDATE {self._t('positions')}
                     SET status = 'closed', close_time = NOW(),
                         close_price = %s, realized_pnl = %s,
-                        close_reason = %s, updated_at = NOW()
+                        close_reason = %s, spot_at_close = %s,
+                        updated_at = NOW()
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
-                """, [close_price, realized_pnl, close_reason, position_id, self.dte_mode])
+                """, [close_price, realized_pnl, close_reason, spot_at_close,
+                      position_id, self.dte_mode])
                 if c.rowcount == 0:
                     logger.warning(
                         f"{self.bot_name}: close_position no-op — "
@@ -843,15 +846,18 @@ class TradingDatabase:
 
     def save_equity_snapshot(self, balance: float, realized_pnl: float = 0,
                              unrealized_pnl: float = 0, open_positions: int = 0,
-                             note: str = "") -> bool:
+                             note: str = "",
+                             spot_price: float = None, vix: float = None) -> bool:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(f"""
                     INSERT INTO {self._t('equity_snapshots')}
-                    (snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-                    VALUES (NOW(), %s, %s, %s, %s, %s, %s)
-                """, [balance, realized_pnl, unrealized_pnl, open_positions, note, self.dte_mode])
+                    (snapshot_time, balance, realized_pnl, unrealized_pnl,
+                     open_positions, spot_price, vix, note, dte_mode)
+                    VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
+                """, [balance, realized_pnl, unrealized_pnl, open_positions,
+                      spot_price, vix, note, self.dte_mode])
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to save equity snapshot: {e}")
