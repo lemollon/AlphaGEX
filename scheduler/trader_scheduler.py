@@ -6438,8 +6438,10 @@ class AutonomousTraderScheduler:
         if self.spark_trader:
             self.scheduler.add_job(
                 self.scheduled_spark_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
+                trigger=CronTrigger(
+                    minute='*/5',
+                    hour='8-14',
+                    day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
                 id='spark_trading',
@@ -6447,7 +6449,7 @@ class AutonomousTraderScheduler:
                 replace_existing=True,
                 max_instances=1
             )
-            logger.info("✅ SPARK job scheduled (every 5 min, checks market hours internally)")
+            logger.info("✅ SPARK job scheduled (every 5 min, Mon-Fri 8AM-2:59PM CT)")
 
             self.scheduler.add_job(
                 self.scheduled_spark_eod_logic,
