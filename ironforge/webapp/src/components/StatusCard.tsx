@@ -662,11 +662,21 @@ export default function StatusCard({
                 const uPositive = (uPnl ?? 0) >= 0
                 const bp = acct.option_buying_power
                 const bpNeg = bp != null && bp < 0
+                // Orphan detection: broker has more positions than paper tracks
+                const paperOpenCount = data.open_positions ?? 0
+                // Each IC = 4 legs in Tradier. Paper tracks 1 position = 4 Tradier legs.
+                const expectedBrokerLegs = paperOpenCount * 4
+                const brokerLegs = acct.open_positions ?? 0
+                const orphanLegs = Math.max(0, brokerLegs - expectedBrokerLegs)
+                const hasOrphans = orphanLegs > 0
                 return (
                   <div key={`${acct.name}-${acct.account_type || acct.account_id || idx}`} className="bg-forge-bg/50 rounded-lg px-3 py-2">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs font-medium text-gray-300">{acct.name}</span>
-                      <span className="text-[10px] text-gray-500">{acct.open_positions} pos</span>
+                      <span className={`text-[10px] ${hasOrphans ? 'text-amber-400' : 'text-gray-500'}`}>
+                        {acct.open_positions} pos
+                        {hasOrphans && ` (${orphanLegs} orphan)`}
+                      </span>
                     </div>
                     {hasData ? (
                       <>
@@ -686,6 +696,11 @@ export default function StatusCard({
                         <p className={`text-xs mt-0.5 ${bpNeg ? 'text-red-400 font-semibold' : 'text-gray-500'}`}>
                           BP: ${bp != null ? bp.toLocaleString(undefined, { minimumFractionDigits: 0 }) : '—'}
                         </p>
+                        {hasOrphans && (
+                          <p className="text-[10px] mt-1 text-amber-400/80">
+                            {orphanLegs} orphan leg{orphanLegs !== 1 ? 's' : ''} not tracked by paper
+                          </p>
+                        )}
                       </>
                     ) : (
                       <p className="text-xs text-gray-600">Not configured</p>
@@ -694,6 +709,21 @@ export default function StatusCard({
                 )
               })}
             </div>
+            {/* Explain why broker unrealized may differ from paper unrealized */}
+            {(() => {
+              const totalBrokerOrphans = visibleAccounts.reduce((sum, a) => {
+                const expected = (data.open_positions ?? 0) * 4
+                return sum + Math.max(0, (a.open_positions ?? 0) - expected)
+              }, 0)
+              if (totalBrokerOrphans > 0) {
+                return (
+                  <p className="text-[10px] text-amber-400/70 mt-1">
+                    Broker unrealized includes {totalBrokerOrphans} orphan leg{totalBrokerOrphans !== 1 ? 's' : ''} from old trades — paper unrealized only tracks current positions.
+                  </p>
+                )
+              }
+              return null
+            })()}
           </div>
         )
       })()}

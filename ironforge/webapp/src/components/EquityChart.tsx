@@ -178,7 +178,7 @@ export default function EquityChart({
         </ResponsiveContainer>
         <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2">
           <span>{points.length} snapshots</span>
-          <span>Balance: ${(latest.balance ?? 0).toFixed(2)}</span>
+          <span>Balance: ${(latest.equity ?? latest.balance ?? 0).toFixed(2)}</span>
           <span>Open: {latest.open_positions ?? 0}</span>
         </div>
       </div>
