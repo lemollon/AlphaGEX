@@ -3051,6 +3051,37 @@ async function saveProductionEquitySnapshots(): Promise<void> {
 async function runAllScans(): Promise<void> {
   _scanCount++
   const start = Date.now()
+
+  // Skip scanning entirely outside market hours (before 8:30 AM or after 3:10 PM CT,
+  // or on weekends). No DB queries, no Tradier API calls, no collateral reconciliation.
+  const ct = getCentralTime()
+  const hhmm = ctHHMM(ct)
+  const dow = ct.getDay()
+
+  if (dow === 0 || dow === 6) {
+    // Log once per hour on weekends to avoid log spam
+    if (_scanCount === 1 || _scanCount % 60 === 0) {
+      console.log(`[scanner] === scan cycle #${_scanCount} skipped — weekend (${dow === 0 ? 'Sun' : 'Sat'}) ===`)
+    }
+    return
+  }
+
+  if (hhmm < 830) {
+    // Log once per hour before market open to avoid log spam
+    if (_scanCount === 1 || _scanCount % 60 === 0) {
+      console.log(`[scanner] === scan cycle #${_scanCount} skipped — pre-market (${hhmm} CT, opens 830) ===`)
+    }
+    return
+  }
+
+  if (hhmm > 1510) {
+    // Log once per hour after market close to avoid log spam
+    if (_scanCount === 1 || _scanCount % 60 === 0) {
+      console.log(`[scanner] === scan cycle #${_scanCount} skipped — market closed (${hhmm} CT) ===`)
+    }
+    return
+  }
+
   console.log(`[scanner] === scan cycle #${_scanCount} starting ===`)
 
   // Load config overrides from DB (Fix 1)
@@ -3066,7 +3097,6 @@ async function runAllScans(): Promise<void> {
   // to be rejected (1500+ rejections/day if not cleaned up).
   // This BLOCKS bot scanning until cleanup finishes — getting positions cleared
   // is more important than scanning 1 minute earlier.
-  const ct = getCentralTime()
   try {
     await dailySandboxCleanup(ct)
   } catch (err: unknown) {
@@ -3079,15 +3109,6 @@ async function runAllScans(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Sandbox health check failed (non-fatal): ${msg}`)
   })
-
-  // Skip scanning entirely after 3:10 PM CT — market closed, no work to do.
-  // Safety net runs in the 2:55-3:05 window, so we keep scanning until 3:10.
-  const hhmm = ctHHMM(ct)
-  if (hhmm > 1510) {
-    const elapsed = ((Date.now() - start) / 1000).toFixed(1)
-    console.log(`[scanner] === scan cycle #${_scanCount} skipped (${elapsed}s) — market closed (${hhmm} CT) ===`)
-    return
-  }
 
   // Run all bots in parallel
   await Promise.allSettled(
