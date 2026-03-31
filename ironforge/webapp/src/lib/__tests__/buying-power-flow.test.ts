@@ -296,7 +296,7 @@ describe('Flow 5: Config consistency across scanner and API', () => {
       sd_multiplier: 1.2,
       profit_target_pct: 0.30,
       stop_loss_pct: 1.00,
-      max_contracts: 10,
+      max_contracts: 0,
       max_trades_per_day: 1,
       buying_power_usage_pct: 0.85,
       entry_end: '14:00',
@@ -308,7 +308,7 @@ describe('Flow 5: Config consistency across scanner and API', () => {
       sd_multiplier: 1.2,
       profit_target_pct: 30.0,  // API stores as percentage (30 = 30%)
       stop_loss_pct: 200.0,     // API stores as percentage (200 = 200%)
-      max_contracts: 10,
+      max_contracts: 0,
       max_trades_per_day: 1,
       buying_power_usage_pct: 0.85,
       entry_end: '14:00',
@@ -337,7 +337,7 @@ describe('Flow 5: Config consistency across scanner and API', () => {
       sd_multiplier: 1.2,
       profit_target_pct: 0.30,
       stop_loss_pct: 1.00,
-      max_contracts: 10,
+      max_contracts: 0,
       max_trades_per_day: 1,
       entry_end: '14:00',
     }
@@ -378,13 +378,13 @@ describe('Flow 6: Scanner paper sizing matches API buying power', () => {
     expect(finalContracts).toBe(20) // capped at 20
   })
 
-  it('max_contracts=10 caps at 10 (FLAME/SPARK)', () => {
-    const maxContracts = 10
+  it('max_contracts=0 means unlimited for FLAME/SPARK (sized by BP only)', () => {
+    const maxContracts = 0
     const computedContracts = 50
     const finalContracts = maxContracts > 0
       ? Math.min(computedContracts, maxContracts)
       : computedContracts
-    expect(finalContracts).toBe(10) // capped
+    expect(finalContracts).toBe(50) // no cap — full BP sizing
   })
 })
 

@@ -290,7 +290,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_config (
   profit_target_pct NUMERIC(5,2) DEFAULT 30.0,
   stop_loss_pct NUMERIC(5,2) DEFAULT 100.0,
   vix_skip NUMERIC(5,2) DEFAULT 32.0,
-  max_contracts INT DEFAULT 10,
+  max_contracts INT DEFAULT 0,
   max_trades_per_day INT DEFAULT 1,
   buying_power_usage_pct NUMERIC(5,4) DEFAULT 0.85,
   risk_per_trade_pct NUMERIC(5,4) DEFAULT 0.15,
@@ -560,6 +560,17 @@ async function ensureTables(): Promise<void> {
         `UPDATE inferno_config SET pdt_max_day_trades = 0 WHERE pdt_max_day_trades > 0`,
       )
     } catch { /* ignore if table doesn't exist yet */ }
+
+    // FLAME/SPARK: fix max_contracts from legacy DB default of 10 → 0 (unlimited, sized by BP)
+    // The DB schema previously had DEFAULT 10 which gatekept sizing below 85% BP usage.
+    // max_contracts=0 means "no ceiling — size by buying power only" (matches scanner DEFAULT_CONFIG).
+    for (const bot of ['flame', 'spark']) {
+      try {
+        await client.query(
+          `UPDATE ${bot}_config SET max_contracts = 0 WHERE max_contracts = 10`,
+        )
+      } catch { /* ignore if table doesn't exist yet */ }
+    }
 
     // PDT cleanup on startup: clear stale is_day_trade flags outside the rolling
     // 6-day window, and reconcile pdt_config.day_trade_count to match reality.
