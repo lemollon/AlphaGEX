@@ -1060,11 +1060,14 @@ async function closePosition(
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
 
-  // Post-close: if same-day open+close = day trade, increment PDT counter on SHARED table
-  // (ironforge_pdt_config — same table the UI toggle reads/writes)
+  // Post-close: if same-day open+close = day trade, update PDT tracking.
+  // Production and sandbox PDT are tracked SEPARATELY:
+  //   - Sandbox: increments shared ironforge_pdt_config.day_trade_count (used by scanner gate)
+  //   - Production: pdt_log is_day_trade flag is set (used by API's dayTradeCountSql query)
+  // Both: pdt_log.is_day_trade is set via the UPDATE above (line ~1017-1025)
   try {
     const posRow = await query(
-      `SELECT open_time FROM ${botTable(bot.name, 'positions')}
+      `SELECT open_time, account_type FROM ${botTable(bot.name, 'positions')}
        WHERE position_id = $1 AND dte_mode = $2 LIMIT 1`,
       [positionId, bot.dte],
     )
@@ -1072,42 +1075,51 @@ async function closePosition(
       ? new Date(posRow[0].open_time).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
       : null
     const closeDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+    const closedAccountType = posRow[0]?.account_type || 'sandbox'
     if (openDate === closeDate) {
-      // Increment on shared table (ironforge_pdt_config)
-      const pdtRow = await query(
-        `SELECT day_trade_count FROM ironforge_pdt_config
-         WHERE bot_name = $1 LIMIT 1`,
-        [bot.name.toUpperCase()],
-      )
-      const oldCount = int(pdtRow[0]?.day_trade_count)
-      const newCount = oldCount + 1
-      await query(
-        `UPDATE ironforge_pdt_config
-         SET day_trade_count = $1, updated_at = NOW()
-         WHERE bot_name = $2`,
-        [newCount, bot.name.toUpperCase()],
-      )
-      // Also sync per-bot table for consistency
-      await query(
-        `UPDATE ${botTable(bot.name, 'pdt_config')}
-         SET day_trade_count = $1, updated_at = NOW()
-         WHERE bot_name = $2`,
-        [newCount, bot.name.toUpperCase()],
-      )
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'pdt_audit_log')}
-           (bot_name, action, old_value, new_value, reason, performed_by)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [
-          bot.name.toUpperCase(),
-          'day_trade_recorded',
-          JSON.stringify({ day_trade_count: oldCount }),
-          JSON.stringify({ day_trade_count: newCount }),
-          `Day trade: ${positionId} opened+closed on ${closeDate}`,
-          'scanner',
-        ],
-      )
-      console.log(`[scanner] ${bot.name.toUpperCase()} PDT: day trade recorded, count ${oldCount}→${newCount}`)
+      // Only increment shared ironforge_pdt_config counter for SANDBOX trades.
+      // Production PDT is tracked via pdt_log rows with account_type='production' —
+      // the API's dayTradeCountSql() reads from pdt_log filtered by account_type,
+      // so production PDT displays correctly without touching the shared counter.
+      if (closedAccountType !== 'production') {
+        // Increment on shared table (ironforge_pdt_config)
+        const pdtRow = await query(
+          `SELECT day_trade_count FROM ironforge_pdt_config
+           WHERE bot_name = $1 LIMIT 1`,
+          [bot.name.toUpperCase()],
+        )
+        const oldCount = int(pdtRow[0]?.day_trade_count)
+        const newCount = oldCount + 1
+        await query(
+          `UPDATE ironforge_pdt_config
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [newCount, bot.name.toUpperCase()],
+        )
+        // Also sync per-bot table for consistency
+        await query(
+          `UPDATE ${botTable(bot.name, 'pdt_config')}
+           SET day_trade_count = $1, updated_at = NOW()
+           WHERE bot_name = $2`,
+          [newCount, bot.name.toUpperCase()],
+        )
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'pdt_audit_log')}
+             (bot_name, action, old_value, new_value, reason, performed_by)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            bot.name.toUpperCase(),
+            'day_trade_recorded',
+            JSON.stringify({ day_trade_count: oldCount }),
+            JSON.stringify({ day_trade_count: newCount }),
+            `Day trade: ${positionId} opened+closed on ${closeDate}`,
+            'scanner',
+          ],
+        )
+        console.log(`[scanner] ${bot.name.toUpperCase()} PDT: sandbox day trade recorded, count ${oldCount}→${newCount}`)
+      } else {
+        console.log(`[scanner] ${bot.name.toUpperCase()} PDT: production day trade detected for ${positionId} — tracked via pdt_log (not shared counter)`)
+      }
     }
   } catch (pdtErr: unknown) {
     const msg = pdtErr instanceof Error ? pdtErr.message : String(pdtErr)
@@ -1230,6 +1242,33 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const pdtCount = int(liveCountRows[0]?.cnt)
     if (pdtCount >= maxDayTrades) {
       return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
+    }
+  }
+
+  // Production PDT rolling window check — block production orders if at PDT limit
+  // This is separate from the sandbox PDT gate above, which only checks sandbox pdt_log rows.
+  let _prodPdtBlocked = false
+  if (pdtEnabled && maxDayTrades > 0 && bot.name === 'flame') {
+    try {
+      let prodPdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+         WHERE is_day_trade = TRUE AND dte_mode = $1
+           AND account_type = 'production'
+           AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
+           AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+      const prodPdtParams: any[] = [bot.dte]
+      if (lastResetAt) {
+        prodPdtSql += ` AND created_at > $${prodPdtParams.length + 1}`
+        prodPdtParams.push(lastResetAt)
+      }
+      const prodPdtRows = await query(prodPdtSql, prodPdtParams)
+      const prodPdtCount = int(prodPdtRows[0]?.cnt)
+      if (prodPdtCount >= maxDayTrades) {
+        _prodPdtBlocked = true
+        console.log(`[scanner] ${bot.name.toUpperCase()} PRODUCTION PDT BLOCKED: ${prodPdtCount}/${maxDayTrades} day trades in rolling window`)
+      }
+    } catch (e: unknown) {
+      // Non-fatal — if we can't check production PDT, allow trading (fail-open for production)
+      console.warn(`[scanner] Production PDT check failed:`, e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -1356,6 +1395,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // Sandbox already traded today but production hasn't. Place production
     // orders only — skip sandbox fill requirement and paper position.
     if (_productionOnlyMode) {
+      // Block production-only mode if production PDT limit reached
+      if (_prodPdtBlocked) {
+        console.log(`[scanner] FLAME PRODUCTION-ONLY: Production PDT limit reached — skipping`)
+        return 'skip:production_pdt_blocked'
+      }
+
       // Double-check: has production already traded today? _productionOnlyMode is set based
       // on DB state, but verify again right before placing to prevent race conditions.
       let prodOnlyAlreadyTraded = false
@@ -1476,6 +1521,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
               JSON.stringify({ position_id: prodPositionId, order_info: info, mode: 'production_only' }),
               bot.dte, prodPerson,
             ],
+          )
+
+          // PDT log for production-only position (enables production PDT tracking on dashboard)
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
+              trade_date, symbol, position_id, opened_at,
+              contracts, entry_credit, dte_mode, person, account_type
+            ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6, 'production')`,
+            ['SPY', prodPositionId, prodContracts, prodCredit, bot.dte, prodPerson],
           )
           prodTraded = true
         } catch (prodErr: unknown) {
@@ -1620,6 +1674,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
     } catch { /* non-fatal — proceed without guard */ }
 
+    // Also block production if production PDT limit is reached
+    if (_prodPdtBlocked && !prodAlreadyTradedToday) {
+      prodAlreadyTradedToday = true // reuse flag to trigger sandboxOnly mode
+      console.log(`[scanner] ${bot.name.toUpperCase()}: Production PDT limit reached — sandboxOnly`)
+    }
+
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
@@ -1743,6 +1803,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             JSON.stringify({ position_id: prodPositionId, order_info: info }),
             bot.dte, prodPerson,
           ],
+        )
+
+        // PDT log for production position (enables production PDT tracking on dashboard)
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
+            trade_date, symbol, position_id, opened_at,
+            contracts, entry_credit, dte_mode, person, account_type
+          ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6, 'production')`,
+          ['SPY', prodPositionId, prodContracts, prodCredit, bot.dte, prodPerson],
         )
       } catch (prodErr: unknown) {
         const prodErrMsg = prodErr instanceof Error ? prodErr.message : String(prodErr)
