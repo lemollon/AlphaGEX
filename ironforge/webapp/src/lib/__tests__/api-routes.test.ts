@@ -271,7 +271,7 @@ describe('Config data contract', () => {
   const DEFAULTS = {
     flame: {
       sd_multiplier: 1.2, spread_width: 5.0, profit_target_pct: 30.0,
-      stop_loss_pct: 200.0, vix_skip: 32.0, max_contracts: 10,
+      stop_loss_pct: 200.0, vix_skip: 32.0, max_contracts: 0,
       max_trades_per_day: 1, buying_power_usage_pct: 0.85,
       entry_end: '14:00', starting_capital: 10000.0,
     },
