@@ -67,27 +67,27 @@ export async function GET(
 
       // 4. PDT log — trades recorded today
       dbQuery(
-        `SELECT trade_date, position_id, action
+        `SELECT trade_date, position_id, close_reason, is_day_trade
          FROM ${botTable(bot, 'pdt_log')}
          WHERE trade_date = ${CT_TODAY}
-         ORDER BY trade_date DESC`,
+         ORDER BY created_at DESC`,
       ),
 
       // 5. Paper account — buying power, balance
       dbQuery(
-        `SELECT balance, buying_power, collateral_held, cumulative_pnl,
+        `SELECT current_balance, buying_power, collateral_in_use, cumulative_pnl,
                 starting_capital, is_active
          FROM ${botTable(bot, 'paper_account')}
          WHERE is_active = TRUE ${dteFilter}
          LIMIT 1`,
       ),
 
-      // 6. Recent logs — last 20 scan entries to see skip reasons
+      // 6. Recent logs — last 30 scan entries to see skip reasons
       dbQuery(
-        `SELECT timestamp, action, reason, details
+        `SELECT log_time, level, message, details
          FROM ${botTable(bot, 'logs')}
-         WHERE (timestamp AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-         ORDER BY timestamp DESC
+         WHERE (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ORDER BY log_time DESC
          LIMIT 30`,
       ),
 
@@ -120,7 +120,7 @@ export async function GET(
     // Parse account
     const acct = accountRows[0]
     const buyingPower = num(acct?.buying_power)
-    const balance = num(acct?.balance)
+    const balance = num(acct?.current_balance)
     const isActive = acct?.is_active
 
     // Parse PDT
@@ -267,13 +267,14 @@ export async function GET(
     // Extract skip reasons from recent logs
     const skipLogs = recentLogs
       .filter((l) => {
-        const action = String(l.action || '').toUpperCase()
-        return action.includes('SKIP') || action.includes('NO_TRADE') || action.includes('BLOCKED') || action.includes('GATE')
+        const msg = String(l.message || '').toUpperCase()
+        const lvl = String(l.level || '').toUpperCase()
+        return msg.includes('SKIP') || msg.includes('NO_TRADE') || msg.includes('BLOCKED') || msg.includes('GATE') || lvl === 'SKIP'
       })
       .map((l) => ({
-        timestamp: l.timestamp,
-        action: l.action,
-        reason: l.reason,
+        log_time: l.log_time,
+        level: l.level,
+        message: l.message,
         details: l.details,
       }))
 
@@ -321,14 +322,15 @@ export async function GET(
         pdt_log_today: pdtLogRows.map((l) => ({
           trade_date: l.trade_date,
           position_id: l.position_id,
-          action: l.action,
+          close_reason: l.close_reason,
+          is_day_trade: l.is_day_trade,
         })),
       },
 
       account: {
         balance,
         buying_power: buyingPower,
-        collateral_held: num(acct?.collateral_held),
+        collateral_in_use: num(acct?.collateral_in_use),
         cumulative_pnl: num(acct?.cumulative_pnl),
         starting_capital: num(acct?.starting_capital),
         is_active: isActive,
@@ -338,9 +340,9 @@ export async function GET(
 
       recent_skip_logs: skipLogs,
       recent_logs: recentLogs.slice(0, 15).map((l) => ({
-        timestamp: l.timestamp,
-        action: l.action,
-        reason: l.reason,
+        log_time: l.log_time,
+        level: l.level,
+        message: l.message,
       })),
     })
   } catch (err: unknown) {
