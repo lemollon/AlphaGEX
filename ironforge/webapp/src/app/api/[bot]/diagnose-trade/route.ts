@@ -58,7 +58,7 @@ export async function GET(
 
       // 3. PDT config — is PDT enabled? What are the limits?
       dbQuery(
-        `SELECT bot_name, pdt_enabled, max_day_trades, rolling_window_days,
+        `SELECT bot_name, pdt_enabled, max_day_trades, window_days,
                 max_trades_per_day, day_trade_count
          FROM ${sharedTable('ironforge_pdt_config')}
          WHERE bot_name = '${escapeSql(hbName)}'
