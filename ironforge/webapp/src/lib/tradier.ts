@@ -1367,6 +1367,45 @@ export async function placeIcOrderAllAccounts(
             // For sandbox: single attempt, no retry
           }
         }
+
+        // SAFETY: If fill price is null, check whether the order was rejected.
+        // Tradier accepts orders (returns order ID) then rejects them asynchronously
+        // (e.g., "Not enough day trading buying power"). A null fill price after
+        // polling means either timeout or rejection. For PRODUCTION accounts, verify
+        // the actual order status before recording — rejected orders must NOT be
+        // recorded as positions.
+        if (fillPrice == null) {
+          try {
+            const orderCheck = await sandboxGet(
+              `/accounts/${accountId}/orders/${result.order.id}`,
+              undefined,
+              acct.apiKey,
+              acct.baseUrl,
+            )
+            const orderStatus = orderCheck?.order?.status || 'unknown'
+            const rejectReason = orderCheck?.order?.reason_description
+              || orderCheck?.order?.reject_reason
+              || orderCheck?.order?.reason
+              || ''
+            if (['rejected', 'canceled', 'expired'].includes(orderStatus)) {
+              console.error(
+                `${label}: Order ${result.order.id} was ${orderStatus.toUpperCase()} by Tradier: "${rejectReason}" — NOT recording position`,
+              )
+              return // Do NOT add to results — order never filled
+            }
+            // If status is still pending/open after timeout, log warning but still record
+            // (for sandbox this is acceptable; for production it means something unusual)
+            if (acct.type === 'production') {
+              console.warn(
+                `${label}: Order ${result.order.id} status="${orderStatus}" with no fill price after polling — recording with estimated credit`,
+              )
+            }
+          } catch (checkErr: unknown) {
+            const checkMsg = checkErr instanceof Error ? checkErr.message : String(checkErr)
+            console.warn(`${label}: Could not verify order status: ${checkMsg}`)
+          }
+        }
+
         // Use composite key to avoid collision when same person has sandbox + production
         const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
         results[resultKey] = {
