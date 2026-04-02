@@ -1150,34 +1150,44 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     if (persons.length > 0) person = persons[0]
   } catch { /* default to 'User' */ }
 
-  // PDT config check — read from shared ironforge_pdt_config (same table the UI writes to)
-  const pdtConfigRows = await query(
-    `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
-     FROM ironforge_pdt_config
-     WHERE bot_name = $1 LIMIT 1`,
-    [bot.name.toUpperCase()],
-  )
-  const pdtCfg = pdtConfigRows[0]
-  let pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : true
+  // ── PDT enforcement: FLAME PRODUCTION ONLY ──────────────────────────
+  // PDT (Pattern Day Trader) rules ONLY apply to FLAME's production account
+  // (under $25K). SPARK and INFERNO are paper-only bots with no production
+  // account — they must NEVER be subject to PDT restrictions.
+  // Sandbox accounts for ALL bots are above $25K and exempt from PDT.
+  const isFlamBot = bot.name === 'flame'
 
-  // Per-account PDT override: if the primary account has pdt_enabled=false, honor it.
-  if (pdtEnabled) {
-    try {
-      const acctPdt = await getPdtEnabledForAccount(person)
-      if (!acctPdt) {
-        pdtEnabled = false
-        console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
-      }
-    } catch { /* keep bot-level setting */ }
+  // PDT config — only read for FLAME, ignored for SPARK/INFERNO
+  let pdtEnabled = false
+  let maxDayTrades = 0
+  let lastResetAt: string | null = null
+  if (isFlamBot) {
+    const pdtConfigRows = await query(
+      `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
+       FROM ironforge_pdt_config
+       WHERE bot_name = $1 LIMIT 1`,
+      [bot.name.toUpperCase()],
+    )
+    const pdtCfg = pdtConfigRows[0]
+    pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : false
+
+    // Per-account PDT override: if the primary account has pdt_enabled=false, honor it.
+    if (pdtEnabled) {
+      try {
+        const acctPdt = await getPdtEnabledForAccount(person)
+        if (!acctPdt) {
+          pdtEnabled = false
+          console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
+        }
+      } catch { /* keep bot-level setting */ }
+    }
+    maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 3
+    lastResetAt = pdtCfg?.last_reset_at ?? null
   }
-  const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 4
-  // max_trades_per_day: DB value wins if set, else bot config default.
-  // BUT if DB says 0 (unlimited) and bot config says >0, use bot config as safety floor.
-  // This prevents FLAME/SPARK from trading unlimited when DB config is stale/wrong.
-  // Only INFERNO (botCfg.max_trades=0) should truly be unlimited.
-  const dbMaxTrades = pdtCfg?.max_trades_per_day != null ? int(pdtCfg.max_trades_per_day) : botCfg.max_trades
-  const maxTradesPerDay = (dbMaxTrades === 0 && botCfg.max_trades > 0) ? botCfg.max_trades : dbMaxTrades
-  const lastResetAt = pdtCfg?.last_reset_at ?? null
+
+  // max_trades_per_day: bot config default (1 for FLAME/SPARK, 0/unlimited for INFERNO)
+  // This is a daily safety cap independent of PDT — uses bot config, NOT PDT config.
+  const maxTradesPerDay = botCfg.max_trades
 
   // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
   // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
