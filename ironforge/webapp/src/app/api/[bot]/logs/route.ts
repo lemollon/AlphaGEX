@@ -16,7 +16,10 @@ export async function GET(
   const accountType = req.nextUrl.searchParams.get('account_type') || undefined
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
-  const accountTypeFilter = accountType ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'` : ''
+  // Logs are operational events (SCAN, TRADE_OPEN, PRODUCTION_ORDER, etc.)
+  // They belong to the bot, not a specific account type — always show all logs.
+  // Production-specific logs are identifiable by level='PRODUCTION_ORDER'.
+  const accountTypeFilter = ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50), 200)
