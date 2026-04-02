@@ -22,7 +22,9 @@ export async function GET(
   const accountType = req.nextUrl.searchParams.get('account_type') || undefined
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
-  const accountTypeFilter = accountType ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'` : ''
+  // Signals table has no account_type column — signals are global per bot.
+  // Always show all signals regardless of view mode.
+  const accountTypeFilter = ''
 
   const url = new URL(req.url)
   const limit = Math.min(Math.max(1, int(url.searchParams.get('limit')) || 50), 200)
