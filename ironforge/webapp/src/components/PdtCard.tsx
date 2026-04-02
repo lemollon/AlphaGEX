@@ -168,8 +168,8 @@ export default function PdtCard({
     bg = 'bg-gray-800/50'
     dotColor = 'bg-gray-400'
     pulsing = false
-    primary = src === 'sandbox_exempt' ? 'PDT EXEMPT' : 'PDT BYPASSED'
     const src = status.pdt_override_source
+    primary = src === 'sandbox_exempt' ? 'PDT EXEMPT' : 'PDT BYPASSED'
     const dailyCap = status.max_trades_per_day > 0
       ? `Max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day`
       : 'Unlimited trading'

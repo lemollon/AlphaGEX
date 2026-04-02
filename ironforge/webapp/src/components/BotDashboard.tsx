@@ -64,6 +64,9 @@ const ACCOUNT_BOTS = new Set(['flame'])
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Broker Equity', 'Reconcile'])
 
+/** PDT only applies to FLAME (production account under $25K). SPARK/INFERNO are paper-only. */
+const PDT_BOTS = new Set(['flame'])
+
 /** View mode: Paper (sandbox combined) or Live (production) */
 type ViewMode = 'paper' | 'live'
 
@@ -200,7 +203,7 @@ export default function BotDashboard({
 
   /* ---- PDT ---- */
   const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
-    tab === 'PDT' ? withPerson(`/api/${bot}/pdt`) : null,
+    tab === 'PDT' && PDT_BOTS.has(bot) ? withPerson(`/api/${bot}/pdt`) : null,
     fetcher,
     { refreshInterval: DATA_REFRESH },
   )
@@ -332,10 +335,12 @@ export default function BotDashboard({
         </div>
       )}
 
-      {/* PDT Management */}
-      <ComponentErrorBoundary fallback="PDT card error">
-        <PdtCard bot={bot} accent={accent} botStatus={status} accountType={hasAccounts ? (viewMode === 'live' ? 'production' : 'sandbox') : undefined} />
-      </ComponentErrorBoundary>
+      {/* PDT Management — FLAME only (production account under $25K) */}
+      {PDT_BOTS.has(bot) && (
+        <ComponentErrorBoundary fallback="PDT card error">
+          <PdtCard bot={bot} accent={accent} botStatus={status} accountType={hasAccounts ? (viewMode === 'live' ? 'production' : 'sandbox') : undefined} />
+        </ComponentErrorBoundary>
+      )}
 
       {/* PT Timeline */}
       <ComponentErrorBoundary fallback="PT timeline error">
@@ -344,7 +349,7 @@ export default function BotDashboard({
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">
-        {ALL_TABS.filter(t => !ACCOUNT_ONLY_TABS.has(t) || hasAccounts).map((t) => (
+        {ALL_TABS.filter(t => (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts) && (t !== 'PDT' || PDT_BOTS.has(bot))).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
