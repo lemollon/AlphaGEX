@@ -48,11 +48,12 @@ export async function GET(
       ),
 
       // 2. Open positions — are stale positions blocking?
+      //    Only count sandbox positions (production positions are tracked separately)
       dbQuery(
         `SELECT position_id, status, open_time, expiration, ticker,
-                put_short_strike, call_short_strike, total_credit
+                put_short_strike, call_short_strike, total_credit, account_type
          FROM ${botTable(bot, 'positions')}
-         WHERE status = 'open' ${dteFilter}
+         WHERE status = 'open' ${dteFilter} AND COALESCE(account_type, 'sandbox') = 'sandbox'
          ORDER BY open_time DESC`,
       ),
 
@@ -216,13 +217,16 @@ export async function GET(
       detail: `${tradesToday} trade(s) today, limit=${maxTradesPerDay}`,
     })
 
-    // Gate 6: PDT check
-    const pdtOk = !pdtEnabled || dayTradeCount < maxDayTrades
+    // Gate 6: PDT check — sandbox accounts are >$25K and exempt from PDT.
+    // The shared day_trade_count is the sandbox counter; production PDT is tracked
+    // separately via pdt_log rows with account_type='production'.
+    // For the scanner gate, sandbox PDT was removed — always passes.
+    const pdtOk = true  // Sandbox exempt from PDT; production checked separately in scanner
     gates.push({
       gate: 'pdt_check',
       pass: pdtOk,
       detail: pdtEnabled
-        ? `PDT enabled: ${dayTradeCount}/${maxDayTrades} day trades used`
+        ? `PDT enabled (sandbox exempt >$25K). Production: check pdt_log. Shared counter: ${dayTradeCount}/${maxDayTrades}`
         : 'PDT disabled',
     })
 
@@ -260,6 +264,41 @@ export async function GET(
       pass: !!isActive,
       detail: isActive ? 'Paper account is active' : 'Paper account NOT ACTIVE or NOT FOUND',
     })
+
+    // Production-specific diagnostics (FLAME only)
+    let productionDiag: Record<string, unknown> | null = null
+    if (bot === 'flame') {
+      try {
+        const [prodOpenRows, prodTodayRows, prodPdtRows] = await Promise.all([
+          dbQuery(
+            `SELECT position_id, status, open_time, expiration, account_type
+             FROM ${botTable(bot, 'positions')}
+             WHERE status = 'open' AND account_type = 'production' ${dteFilter}`,
+          ),
+          dbQuery(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'positions')}
+             WHERE account_type = 'production'
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+          ),
+          dbQuery(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot, 'pdt_log')}
+             WHERE is_day_trade = TRUE AND dte_mode = '${escapeSql(dte!)}'
+               AND account_type = 'production'
+               AND trade_date >= CURRENT_DATE - INTERVAL '6 days'
+               AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`,
+          ),
+        ])
+        const prodPdtCount = int(prodPdtRows[0]?.cnt)
+        productionDiag = {
+          open_positions: prodOpenRows.length,
+          open_position_ids: prodOpenRows.map((p) => p.position_id),
+          traded_today: int(prodTodayRows[0]?.cnt) > 0,
+          pdt_count: `${prodPdtCount}/${maxDayTrades}`,
+          pdt_blocked: prodPdtCount >= maxDayTrades,
+          can_trade: int(prodTodayRows[0]?.cnt) === 0 && prodPdtCount < maxDayTrades,
+        }
+      } catch { /* non-fatal */ }
+    }
 
     // Determine first failing gate
     const firstBlocker = gates.find((g) => !g.pass)
@@ -337,6 +376,8 @@ export async function GET(
       },
 
       tradier: tradierStatus,
+
+      production: productionDiag,
 
       recent_skip_logs: skipLogs,
       recent_logs: recentLogs.slice(0, 15).map((l) => ({
