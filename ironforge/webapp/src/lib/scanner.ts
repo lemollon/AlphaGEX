@@ -1276,12 +1276,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const botName = bot.name.toUpperCase()
   const positionId = `${botName}-${dateStr}-${hex}`
 
-  // ── FLAME Tradier fill (best-effort) ──────────────────────────────
-  // FLAME attempts to get real fill prices from Tradier sandbox accounts.
-  // If fill succeeds: paper position uses real fill price for P&L accuracy.
-  // If fill fails: paper position uses estimated credit (like SPARK/INFERNO).
-  // Paper position INSERT always runs — NEVER blocked by Tradier/PDT/production.
-  // SPARK/INFERNO are paper-only (no sandbox orders).
+  // ── FLAME Tradier fill (required for paper) ──────────────────────
+  // FLAME paper is a mirror of real Tradier sandbox fills.
+  // Paper position REQUIRES a real fill price — no estimated credit fallback.
+  // If sandbox can't fill, FLAME paper does NOT trade (unlike SPARK/INFERNO).
+  // Production gating (PDT) is handled INSIDE this block — never blocks sandbox.
+  // SPARK/INFERNO are paper-only (no sandbox orders, use estimated credit).
   const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
   const isFlameFillOnly = bot.name === 'flame'
 
@@ -1360,28 +1360,26 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Attempt Tradier sandbox fill ──
-    // skipTradier = true means we skip the Tradier API call but still trade paper with estimated credit
-    let skipTradier = false
+    // FLAME paper is a mirror of real Tradier sandbox fills — it MUST use real fill prices.
+    // If sandbox can't fill, FLAME paper does NOT trade (unlike SPARK/INFERNO which use estimates).
+    // These gates skip the entire trade, not just the Tradier call.
 
     if (_sandboxPaperOnly[bot.name]) {
-      skipTradier = true
-      console.log(`[scanner] FLAME: paper_only_mode — using estimated credit`)
+      return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
     // Backoff after consecutive rejections — stop spamming Tradier
-    if (!skipTradier && _consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF) {
+    if (_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF) {
       const cyclesSinceLastAttempt = _consecutiveRejects[bot.name] - MAX_REJECTS_BEFORE_BACKOFF
       if (cyclesSinceLastAttempt % BACKOFF_CYCLES !== 0) {
         _consecutiveRejects[bot.name]++
-        skipTradier = true
-        console.log(`[scanner] FLAME: backoff (${_consecutiveRejects[bot.name]} consecutive rejects) — using estimated credit`)
-      } else {
-        console.log(`[scanner] FLAME: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
+        return `skip:flame_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
       }
+      console.log(`[scanner] FLAME: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
     }
 
-    // Stale position cleanup gate — skip Tradier if stale positions exist (don't skip paper)
-    if (!skipTradier) {
+    // Stale position cleanup gate
+    {
       const ctNow = getCentralTime()
       const todayStr = ctNow.toISOString().slice(0, 10)
       if (_sandboxCleanupVerifiedDate[bot.name] !== todayStr) {
@@ -1438,8 +1436,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
         if (remaining > 0) {
           _consecutiveRejects[bot.name]++
-          skipTradier = true
-          console.warn(`[scanner] FLAME: ${remaining} stale positions still blocking — using estimated credit`)
+          return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
         } else {
           _sandboxCleanupVerified[bot.name] = true
           _sandboxCleanupVerifiedDate[bot.name] = todayStr
@@ -1454,7 +1451,6 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Place Tradier orders (sandbox + conditionally production) ──
-    if (!skipTradier) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
@@ -1464,28 +1460,25 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.warn(`[scanner] FLAME order placement failed — paper uses estimated credit: ${msg}`)
+      console.warn(`[scanner] FLAME order placement failed: ${msg}`)
+      // Log the rejected signal
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'signals')} (
+          spot_price, vix, expected_move, call_wall, put_wall,
+          gex_regime, put_short, put_long, call_short, call_long,
+          total_credit, confidence, was_executed, skip_reason, reasoning,
+          wings_adjusted, dte_mode, person, account_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
+        [
+          spot, vix, expectedMove, 0, 0,
+          'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+          credits.totalCredit, adv.confidence, false, 'order_failed', `Auto scan | ${adv.reasoning}`,
+          false, bot.dte, person,
+        ],
+      )
       _consecutiveRejects[bot.name]++
-      // Log the failed signal (paper will still trade with estimated credit)
-      try {
-        await query(
-          `INSERT INTO ${botTable(bot.name, 'signals')} (
-            spot_price, vix, expected_move, call_wall, put_wall,
-            gex_regime, put_short, put_long, call_short, call_long,
-            total_credit, confidence, was_executed, skip_reason, reasoning,
-            wings_adjusted, dte_mode, person, account_type
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
-          [
-            spot, vix, expectedMove, 0, 0,
-            'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-            credits.totalCredit, adv.confidence, true, 'order_failed_estimated',
-            `Auto scan [order failed, using estimated] | ${adv.reasoning}`,
-            false, bot.dte, person,
-          ],
-        )
-      } catch { /* non-fatal */ }
+      return `skip:flame_order_failed(${msg})`
     }
-    } // end if (!skipTradier)
 
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
     // Record production positions immediately. These are real money positions
@@ -1634,28 +1627,26 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
     }
 
-    // ── SANDBOX FILL: Extract fill price for paper position ──
-    // If no fill, retry once after cleanup. Paper always trades (estimated credit fallback).
+    // ── SANDBOX FILL CHECK: Retry sandbox only if it didn't fill ──
+    // Sandbox failure should NOT affect production (already saved above).
+    // Retry once after cleaning up stale positions.
     const primaryFill = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]
-    if (primaryFill?.fill_price && primaryFill.fill_price > 0) {
-      effectiveCredit = primaryFill.fill_price
-      effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
-      _consecutiveRejects[bot.name] = 0
-      console.log(
-        `[scanner] FLAME Tradier-fill: ${FLAME_PRIMARY_ACCOUNT} @ $${effectiveCredit.toFixed(4)} ` +
-        `(paper=${effectiveContracts} contracts, estimated=$${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
+    if (!primaryFill || !primaryFill.fill_price || primaryFill.fill_price <= 0) {
+      console.warn(
+        `[scanner] FLAME: ${FLAME_PRIMARY_ACCOUNT} sandbox did not fill — got: ${JSON.stringify(primaryFill)}`,
       )
-    } else if (!skipTradier) {
-      // No primary fill — retry once after cleanup
-      console.warn(`[scanner] FLAME: ${FLAME_PRIMARY_ACCOUNT} sandbox did not fill — retrying...`)
+      // Try emergency cleanup and one retry for sandbox only
+      console.log('[scanner] FLAME: Cleaning up stale sandbox positions before retry...')
       try {
         const retryAccounts = await getLoadedSandboxAccountsAsync()
         for (const a of retryAccounts) {
           if (a.type === 'production') continue
           await emergencyCloseSandboxPositions(a.apiKey, a.name)
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
+
+      // Retry sandbox order only (production already placed — sandboxOnly prevents duplicate)
       try {
         const retryResults = await placeIcOrderAllAccounts(
           'SPY', expiration,
@@ -1668,37 +1659,46 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             sandboxOrderIds[key] = info
           }
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore retry errors */ }
 
       const retryFill = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]
-      if (retryFill?.fill_price && retryFill.fill_price > 0) {
-        effectiveCredit = retryFill.fill_price
-        effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
-        _consecutiveRejects[bot.name] = 0
-        console.log(`[scanner] FLAME Tradier-fill (retry): @ $${effectiveCredit.toFixed(4)}`)
-      } else {
+      if (!retryFill || !retryFill.fill_price || retryFill.fill_price <= 0) {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'signals')} (
+            spot_price, vix, expected_move, call_wall, put_wall,
+            gex_regime, put_short, put_long, call_short, call_long,
+            total_credit, confidence, was_executed, skip_reason, reasoning,
+            wings_adjusted, dte_mode, person, account_type
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
+          [
+            spot, vix, expectedMove, 0, 0,
+            'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+            credits.totalCredit, adv.confidence, false, 'primary_no_fill', `Auto scan | ${adv.reasoning}`,
+            false, bot.dte, person,
+          ],
+        )
         _consecutiveRejects[bot.name]++
-        console.warn(`[scanner] FLAME: No sandbox fill after retry — paper uses estimated credit $${credits.totalCredit.toFixed(4)}`)
-        // Log the no-fill signal (paper will still trade with estimated credit)
-        try {
-          await query(
-            `INSERT INTO ${botTable(bot.name, 'signals')} (
-              spot_price, vix, expected_move, call_wall, put_wall,
-              gex_regime, put_short, put_long, call_short, call_long,
-              total_credit, confidence, was_executed, skip_reason, reasoning,
-              wings_adjusted, dte_mode, person, account_type
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'sandbox')`,
-            [
-              spot, vix, expectedMove, 0, 0,
-              'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-              credits.totalCredit, adv.confidence, true, 'sandbox_no_fill_estimated',
-              `Auto scan [sandbox no fill, using estimated] | ${adv.reasoning}`,
-              false, bot.dte, person,
-            ],
-          )
-        } catch { /* non-fatal */ }
+        return 'skip:flame_primary_no_fill'
       }
     }
+
+    // Primary account filled — reset rejection counter
+    _consecutiveRejects[bot.name] = 0
+
+    // Use Tradier's actual fill PRICE but keep paper-sized contracts.
+    // FLAME paper is a mirror of real sandbox — must use real fill price.
+    const primaryFillFinal = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]!
+    if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
+      return 'skip:flame_primary_no_fill'
+    }
+
+    effectiveCredit = primaryFillFinal.fill_price
+    // effectiveContracts stays as maxContracts (85% of paper BP)
+    effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
+    console.log(
+      `[scanner] FLAME Tradier-fill: ${FLAME_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `(paper=${effectiveContracts} contracts, estimated credit=$${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
+    )
   }
 
   const effectiveMaxLoss = effectiveCollateral
