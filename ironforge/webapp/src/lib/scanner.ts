@@ -1221,32 +1221,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
   }
 
-  // PDT rolling window check (only when PDT enforcement is ON)
-  // Filter by person so Person A's day trades don't block Person B
-  if (pdtEnabled && maxDayTrades > 0) {
-    let pdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-       WHERE is_day_trade = TRUE AND dte_mode = $1
-         AND COALESCE(account_type, 'sandbox') = 'sandbox'
-         AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
-         AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
-    const pdtParams: any[] = [bot.dte]
-    if (person && person !== 'all') {
-      pdtSql += ` AND person = $${pdtParams.length + 1}`
-      pdtParams.push(person)
-    }
-    if (lastResetAt) {
-      pdtSql += ` AND created_at > $${pdtParams.length + 1}`
-      pdtParams.push(lastResetAt)
-    }
-    const liveCountRows = await query(pdtSql, pdtParams)
-    const pdtCount = int(liveCountRows[0]?.cnt)
-    if (pdtCount >= maxDayTrades) {
-      return `skip:pdt_blocked(${pdtCount}/${maxDayTrades})`
-    }
-  }
+  // Sandbox PDT gate REMOVED — sandbox accounts are above $25K and exempt from PDT rules.
+  // Only production accounts (under $25K) are subject to PDT restrictions (checked below).
 
   // Production PDT rolling window check — block production orders if at PDT limit
-  // This is separate from the sandbox PDT gate above, which only checks sandbox pdt_log rows.
+  // Only applies to production accounts (under $25K). Sandbox accounts are exempt.
   let _prodPdtBlocked = false
   if (pdtEnabled && maxDayTrades > 0 && bot.name === 'flame') {
     try {

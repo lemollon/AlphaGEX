@@ -394,11 +394,15 @@ async function buildStatusResponse(
     ? toISOString(todayRows[0].first_trade_time)
     : null
 
-  // is_blocked = only rolling PDT limit
+  // Sandbox accounts are above $25K and exempt from PDT rules.
+  // Only production accounts (under $25K) are subject to FINRA PDT restrictions.
+  const isSandboxView = !accountType || accountType === 'sandbox'
+
+  // is_blocked = only rolling PDT limit, only for production
   let isBlocked = false
   let blockReason: string | null = null
 
-  if (pdtEnabled && maxDayTrades > 0 && dayTradeCount >= maxDayTrades) {
+  if (pdtEnabled && maxDayTrades > 0 && dayTradeCount >= maxDayTrades && !isSandboxView) {
     isBlocked = true
     blockReason = `${dayTradeCount}/${maxDayTrades} day trades used`
   }
@@ -407,6 +411,10 @@ async function buildStatusResponse(
   let pdtStatus: string
   if (!pdtEnabled) {
     pdtStatus = 'PDT_OFF'
+  } else if (isSandboxView) {
+    // Sandbox accounts are >$25K — exempt from PDT
+    pdtStatus = 'PDT_OFF'
+    pdtOverrideSource = 'sandbox_exempt'
   } else if (isBlocked) {
     pdtStatus = 'BLOCKED'
   } else if (tradedToday) {

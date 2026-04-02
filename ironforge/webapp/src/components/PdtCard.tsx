@@ -168,15 +168,16 @@ export default function PdtCard({
     bg = 'bg-gray-800/50'
     dotColor = 'bg-gray-400'
     pulsing = false
-    primary = 'PDT BYPASSED'
+    primary = src === 'sandbox_exempt' ? 'PDT EXEMPT' : 'PDT BYPASSED'
     const src = status.pdt_override_source
     const dailyCap = status.max_trades_per_day > 0
       ? `Max ${status.max_trades_per_day} trade${status.max_trades_per_day > 1 ? 's' : ''}/day`
       : 'Unlimited trading'
     const srcLabel = src === 'bot_config' ? ' \u2014 bot config'
       : src === 'account' ? ' \u2014 account override'
+      : src === 'sandbox_exempt' ? ' \u2014 sandbox >$25K exempt'
       : ''
-    secondary = dailyCap + srcLabel
+    secondary = src === 'sandbox_exempt' ? 'Account >$25K \u2014 PDT exempt' : dailyCap + srcLabel
   } else if (pdtStatus === 'BLOCKED') {
     bg = 'bg-red-900/30'
     dotColor = 'bg-red-400'
