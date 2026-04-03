@@ -1157,6 +1157,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   // Already traded today? (0 = unlimited, i.e. INFERNO)
   // Counts only sandbox/paper trades — production has its own check inside the FLAME block.
+  // For FLAME: if sandbox already traded but production hasn't, we continue in production-only mode.
+  // Paper never blocks production. Production never blocks paper.
+  let sandboxAlreadyTraded = false
   if (maxTradesPerDay > 0) {
     const todayTradesSql = person && person !== 'all'
       ? `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
@@ -1168,19 +1171,41 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
-      return 'skip:already_traded_today'
+      // FLAME: check if production still needs to trade before returning
+      if (bot.name === 'flame') {
+        let prodNeedsToTrade = false
+        try {
+          const prodDayCheck = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE account_type = 'production'
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+            [],
+          )
+          prodNeedsToTrade = int(prodDayCheck[0]?.cnt) === 0
+        } catch { /* assume production doesn't need to trade */ }
+
+        if (prodNeedsToTrade) {
+          sandboxAlreadyTraded = true
+          console.log(`[scanner] FLAME: Sandbox already traded today but production hasn't — continuing in production-only mode`)
+        } else {
+          return 'skip:already_traded_today'
+        }
+      } else {
+        return 'skip:already_traded_today'
+      }
     }
   }
 
   // Get sandbox paper account (production positions use Tradier fill data, not paper BP)
+  // When sandboxAlreadyTraded=true (FLAME production-only mode), paper account/BP checks are skipped.
   const accountRows = await query(
     `SELECT id, current_balance, buying_power FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
-  if (accountRows.length === 0) return 'skip:no_paper_account'
-  const acct = accountRows[0]
+  if (accountRows.length === 0 && !sandboxAlreadyTraded) return 'skip:no_paper_account'
+  const acct = accountRows[0] ?? { id: null, current_balance: 0, buying_power: 0 }
 
   // Fix 10: Derive buying power from LIVE open position collateral (not cached paper_account)
   // Filter by sandbox account_type so production collateral doesn't affect sandbox BP
@@ -1194,7 +1219,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
-  if (buyingPower < 200) return `skip:low_bp($${buyingPower.toFixed(0)})`
+  // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
+  if (buyingPower < 200 && !sandboxAlreadyTraded) return `skip:low_bp($${buyingPower.toFixed(0)})`
 
   const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
 
@@ -1256,11 +1282,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
   const bpContracts = Math.floor(usableBP / collateralPer)
-  if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
+  // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
+  if (bpContracts < 1 && !sandboxAlreadyTraded) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
   const SCANNER_MAX_CONTRACTS = 200
-  const rawMax = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
+  // In production-only mode, use a nominal maxContracts — placeIcOrderAllAccounts re-sizes
+  // based on real Tradier account equity anyway
+  const rawMax = bpContracts < 1
+    ? SCANNER_MAX_CONTRACTS  // production-only mode fallback
+    : botCfg.max_contracts > 0
+      ? Math.min(botCfg.max_contracts, bpContracts)
+      : bpContracts
   const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
 
   const totalCollateral = collateralPer * maxContracts
@@ -1357,6 +1388,135 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     } catch (e: unknown) {
       prodAlreadyTradedToday = true
       console.warn(`[scanner] Production status check failed:`, e instanceof Error ? e.message : String(e))
+    }
+
+    // ── Production-only mode: sandbox already traded, just need production ──
+    if (sandboxAlreadyTraded) {
+      if (prodAlreadyTradedToday) {
+        return 'skip:already_traded_today'
+      }
+      // Place production-only order
+      try {
+        sandboxOrderIds = await placeIcOrderAllAccounts(
+          'SPY', expiration,
+          strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+          maxContracts, credits.totalCredit, positionId, bot.name,
+          { productionOnly: true },
+        )
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.warn(`[scanner] FLAME production-only order failed: ${msg}`)
+        return `skip:flame_production_only_failed(${msg})`
+      }
+
+      // Record production positions (same logic as normal path below)
+      const PRODUCTION_MAX_CONTRACTS = 2
+      let prodRecorded = false
+      for (const [key, info] of Object.entries(sandboxOrderIds)) {
+        if (info.account_type !== 'production') continue
+        const hasFill = info.fill_price != null && info.fill_price > 0
+        if (!hasFill) {
+          console.warn(`[scanner] PRODUCTION WARNING: ${key} fill_price is ${info.fill_price} — using estimated credit $${credits.totalCredit.toFixed(4)} as fallback.`)
+        }
+        const prodPerson = key.split(':')[0]
+        const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+        const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
+        const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
+        const prodMaxLoss = prodCollateral
+        const prodMaxProfit = prodCredit * 100 * prodContracts
+        const prodPositionId = `${positionId}-prod-${prodPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+
+        console.log(`[scanner] PRODUCTION-ONLY POSITION: ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)}`)
+
+        try {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'positions')} (
+              position_id, ticker, expiration,
+              put_short_strike, put_long_strike, put_credit,
+              call_short_strike, call_long_strike, call_credit,
+              contracts, spread_width, total_credit, max_loss, max_profit,
+              collateral_required,
+              underlying_at_entry, vix_at_entry, expected_move,
+              call_wall, put_wall, gex_regime,
+              flip_point, net_gex,
+              oracle_confidence, oracle_win_probability, oracle_advice,
+              oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
+              wings_adjusted, original_put_width, original_call_width,
+              put_order_id, call_order_id,
+              sandbox_order_id,
+              status, open_time, open_date, dte_mode, person, account_type
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+              $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+              $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+              $31, $32, $33, $34, $35,
+              'open', NOW(), ${CT_TODAY}, $36, $37, 'production'
+            )`,
+            [
+              prodPositionId, 'SPY', expiration,
+              strikes.putShort, strikes.putLong, prodCredit / 2,
+              strikes.callShort, strikes.callLong, prodCredit / 2,
+              prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
+              prodCollateral,
+              spot, vix, expectedMove,
+              0, 0, 'UNKNOWN',
+              0, 0,
+              adv.confidence, adv.winProbability, adv.advice,
+              adv.reasoning, JSON.stringify(adv.topFactors), false,
+              false, spreadWidth, spreadWidth,
+              'PRODUCTION', 'PRODUCTION',
+              JSON.stringify({ [key]: info }),
+              bot.dte, prodPerson,
+            ],
+          )
+
+          await query(
+            `UPDATE ${botTable(bot.name, 'paper_account')}
+             SET collateral_in_use = collateral_in_use + $1,
+                 buying_power = buying_power - $1,
+                 updated_at = NOW()
+             WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+            [prodCollateral, prodPerson, bot.dte],
+          )
+
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+             VALUES ('PRODUCTION_ORDER', $1, $2, $3, $4)`,
+            [
+              `PRODUCTION-ONLY: ${prodPerson} ${prodContracts}x SPY IC ${strikes.putShort}/${strikes.putLong}P-${strikes.callShort}/${strikes.callLong}C @ $${prodCredit.toFixed(4)}`,
+              JSON.stringify({ position_id: prodPositionId, order_info: info, mode: 'production_only' }),
+              bot.dte, prodPerson,
+            ],
+          )
+
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
+              trade_date, symbol, position_id, opened_at,
+              contracts, entry_credit, dte_mode, person, account_type
+            ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6, 'production')`,
+            ['SPY', prodPositionId, prodContracts, prodCredit, bot.dte, prodPerson],
+          )
+          prodRecorded = true
+        } catch (prodErr: unknown) {
+          const prodErrMsg = prodErr instanceof Error ? prodErr.message : String(prodErr)
+          console.error(`[scanner] PRODUCTION-ONLY position creation failed for ${prodPerson}:`, prodErrMsg)
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+               VALUES ('ERROR', $1, $2, $3, $4)`,
+              [
+                `PRODUCTION-ONLY POSITION RECORD FAILED: ${prodPerson} — ${prodErrMsg}`,
+                JSON.stringify({ position_id: prodPositionId, order_info: info, error: prodErrMsg }),
+                bot.dte, prodPerson,
+              ],
+            )
+          } catch { /* last resort */ }
+        }
+      }
+
+      return prodRecorded
+        ? `traded:${positionId}(production_only)`
+        : 'skip:production_only_no_fills'
     }
 
     // ── Attempt Tradier sandbox fill ──
