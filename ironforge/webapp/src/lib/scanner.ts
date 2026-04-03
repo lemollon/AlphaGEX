@@ -1150,53 +1150,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     if (persons.length > 0) person = persons[0]
   } catch { /* default to 'User' */ }
 
-  // ── PDT enforcement: FLAME PRODUCTION ONLY ──────────────────────────
-  // PDT (Pattern Day Trader) rules ONLY apply to FLAME's production account
-  // (under $25K). SPARK and INFERNO are paper-only bots with no production
-  // account — they must NEVER be subject to PDT restrictions.
-  // Sandbox accounts for ALL bots are above $25K and exempt from PDT.
-  const isFlamBot = bot.name === 'flame'
-
-  // PDT config — only read for FLAME, ignored for SPARK/INFERNO
-  let pdtEnabled = false
-  let maxDayTrades = 0
-  let lastResetAt: string | null = null
-  if (isFlamBot) {
-    const pdtConfigRows = await query(
-      `SELECT pdt_enabled, max_day_trades, max_trades_per_day, last_reset_at
-       FROM ironforge_pdt_config
-       WHERE bot_name = $1 LIMIT 1`,
-      [bot.name.toUpperCase()],
-    )
-    const pdtCfg = pdtConfigRows[0]
-    pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : false
-
-    // Per-account PDT override: if the primary account has pdt_enabled=false, honor it.
-    if (pdtEnabled) {
-      try {
-        const acctPdt = await getPdtEnabledForAccount(person)
-        if (!acctPdt) {
-          pdtEnabled = false
-          console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
-        }
-      } catch { /* keep bot-level setting */ }
-    }
-    maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 3
-    lastResetAt = pdtCfg?.last_reset_at ?? null
-  }
-
   // max_trades_per_day: bot config default (1 for FLAME/SPARK, 0/unlimited for INFERNO)
-  // This is a daily safety cap independent of PDT — uses bot config, NOT PDT config.
+  // This is a daily safety cap for paper/sandbox trades — uses bot config, NOT PDT config.
+  // PDT enforcement for FLAME's production account is handled inside the FLAME block below.
   const maxTradesPerDay = botCfg.max_trades
 
-  // Already traded today? max_trades_per_day enforced REGARDLESS of PDT on/off.
-  // PDT controls the rolling 5-day window, but the daily cap is a separate safety gate.
-  // (0 = unlimited, only when botCfg.max_trades is also 0, i.e. INFERNO)
-  // Filter by person so sandbox trades don't block production (and vice versa).
-  //
-  // IMPORTANT: Sandbox trades must NOT block production. If sandbox already traded
-  // but production hasn't, allow a new cycle that will place production-only orders.
-  let _productionOnlyMode = false
+  // Already traded today? (0 = unlimited, i.e. INFERNO)
+  // Counts only sandbox/paper trades — production has its own check inside the FLAME block.
+  // For FLAME: if sandbox already traded but production hasn't, we continue in production-only mode.
+  // Paper never blocks production. Production never blocks paper.
+  let sandboxAlreadyTraded = false
   if (maxTradesPerDay > 0) {
     const todayTradesSql = person && person !== 'all'
       ? `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
@@ -1208,68 +1171,41 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
-      // Sandbox hit max trades — but check if production still needs to trade.
-      // Production-only mode only applies to FLAME, which has real sandbox accounts.
-      // SPARK and INFERNO are paper-only — they should never bypass the daily cap.
-      if (bot.name !== 'flame') {
+      // FLAME: check if production still needs to trade before returning
+      if (bot.name === 'flame') {
+        let prodNeedsToTrade = false
+        try {
+          const prodDayCheck = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE account_type = 'production'
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+            [],
+          )
+          prodNeedsToTrade = int(prodDayCheck[0]?.cnt) === 0
+        } catch { /* assume production doesn't need to trade */ }
+
+        if (prodNeedsToTrade) {
+          sandboxAlreadyTraded = true
+          console.log(`[scanner] FLAME: Sandbox already traded today but production hasn't — continuing in production-only mode`)
+        } else {
+          return 'skip:already_traded_today'
+        }
+      } else {
         return 'skip:already_traded_today'
       }
-      // FLAME: Production positions have account_type = 'production' in the positions table.
-      const prodTodayRows = await query(
-        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-         WHERE dte_mode = $1 AND account_type = 'production'
-           AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
-        [bot.dte],
-      )
-      const prodTradedToday = int(prodTodayRows[0]?.cnt) > 0
-      if (prodTradedToday) {
-        return 'skip:already_traded_today'
-      }
-      // Production hasn't traded — allow cycle in production-only mode
-      console.log(`[scanner] ${bot.name.toUpperCase()}: Sandbox already traded today but production has NOT — entering production-only mode`)
-      _productionOnlyMode = true
-    }
-  }
-
-  // Sandbox PDT gate REMOVED — sandbox accounts are above $25K and exempt from PDT rules.
-  // Only production accounts (under $25K) are subject to PDT restrictions (checked below).
-
-  // Production PDT rolling window check — block production orders if at PDT limit
-  // Only applies to production accounts (under $25K). Sandbox accounts are exempt.
-  let _prodPdtBlocked = false
-  if (pdtEnabled && maxDayTrades > 0 && bot.name === 'flame') {
-    try {
-      let prodPdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-         WHERE is_day_trade = TRUE AND dte_mode = $1
-           AND account_type = 'production'
-           AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
-           AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
-      const prodPdtParams: any[] = [bot.dte]
-      if (lastResetAt) {
-        prodPdtSql += ` AND created_at > $${prodPdtParams.length + 1}`
-        prodPdtParams.push(lastResetAt)
-      }
-      const prodPdtRows = await query(prodPdtSql, prodPdtParams)
-      const prodPdtCount = int(prodPdtRows[0]?.cnt)
-      if (prodPdtCount >= maxDayTrades) {
-        _prodPdtBlocked = true
-        console.log(`[scanner] ${bot.name.toUpperCase()} PRODUCTION PDT BLOCKED: ${prodPdtCount}/${maxDayTrades} day trades in rolling window`)
-      }
-    } catch (e: unknown) {
-      // Non-fatal — if we can't check production PDT, allow trading (fail-open for production)
-      console.warn(`[scanner] Production PDT check failed:`, e instanceof Error ? e.message : String(e))
     }
   }
 
   // Get sandbox paper account (production positions use Tradier fill data, not paper BP)
+  // When sandboxAlreadyTraded=true (FLAME production-only mode), paper account/BP checks are skipped.
   const accountRows = await query(
     `SELECT id, current_balance, buying_power FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
-  if (accountRows.length === 0) return 'skip:no_paper_account'
-  const acct = accountRows[0]
+  if (accountRows.length === 0 && !sandboxAlreadyTraded) return 'skip:no_paper_account'
+  const acct = accountRows[0] ?? { id: null, current_balance: 0, buying_power: 0 }
 
   // Fix 10: Derive buying power from LIVE open position collateral (not cached paper_account)
   // Filter by sandbox account_type so production collateral doesn't affect sandbox BP
@@ -1283,7 +1219,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
-  if (buyingPower < 200) return `skip:low_bp($${buyingPower.toFixed(0)})`
+  // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
+  if (buyingPower < 200 && !sandboxAlreadyTraded) return `skip:low_bp($${buyingPower.toFixed(0)})`
 
   const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
 
@@ -1345,11 +1282,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   if (collateralPer <= 0) return 'skip:bad_collateral'
   const usableBP = buyingPower * botCfg.bp_pct
   const bpContracts = Math.floor(usableBP / collateralPer)
-  if (bpContracts < 1) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
+  // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
+  if (bpContracts < 1 && !sandboxAlreadyTraded) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
   const SCANNER_MAX_CONTRACTS = 200
-  const rawMax = botCfg.max_contracts > 0
-    ? Math.min(botCfg.max_contracts, bpContracts)
-    : bpContracts
+  // In production-only mode, use a nominal maxContracts — placeIcOrderAllAccounts re-sizes
+  // based on real Tradier account equity anyway
+  const rawMax = bpContracts < 1
+    ? SCANNER_MAX_CONTRACTS  // production-only mode fallback
+    : botCfg.max_contracts > 0
+      ? Math.min(botCfg.max_contracts, bpContracts)
+      : bpContracts
   const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
 
   const totalCollateral = collateralPer * maxContracts
@@ -1365,12 +1307,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const botName = bot.name.toUpperCase()
   const positionId = `${botName}-${dateStr}-${hex}`
 
-  // ── FLAME Tradier-fill-only mode ──────────────────────────────────
-  // FLAME only records trades that Tradier actually fills.
-  // Place sandbox order FIRST; if User's account doesn't fill, reject.
-  // Paper position uses: actual fill PRICE + paper-sized contracts (85% of paper BP).
-  // Each Tradier sandbox account independently sizes at 85% of its own BP.
-  // SPARK/INFERNO are paper-only (no sandbox orders).
+  // ── FLAME Tradier fill (required for paper) ──────────────────────
+  // FLAME paper is a mirror of real Tradier sandbox fills.
+  // Paper position REQUIRES a real fill price — no estimated credit fallback.
+  // If sandbox can't fill, FLAME paper does NOT trade (unlike SPARK/INFERNO).
+  // Production gating (PDT) is handled INSIDE this block — never blocks sandbox.
+  // SPARK/INFERNO are paper-only (no sandbox orders, use estimated credit).
   const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
   const isFlameFillOnly = bot.name === 'flame'
 
@@ -1380,64 +1322,102 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   let effectiveCollateral = totalCollateral
 
   if (isFlameFillOnly) {
-    // ── PRODUCTION-ONLY MODE ──────────────────────────────────────────
-    // Sandbox already traded today but production hasn't. Place production
-    // orders only — skip sandbox fill requirement and paper position.
-    if (_productionOnlyMode) {
-      // Block production-only mode if production PDT limit reached
-      if (_prodPdtBlocked) {
-        console.log(`[scanner] FLAME PRODUCTION-ONLY: Production PDT limit reached — skipping`)
-        return 'skip:production_pdt_blocked'
+    // ── FLAME: Tradier sandbox fill (BEST-EFFORT) ──────────────────────
+    // Sandbox fill provides real fill prices for paper P&L accuracy.
+    // If sandbox fails for ANY reason, paper uses estimated credit (like SPARK/INFERNO).
+    // Production orders are placed alongside sandbox and recorded independently.
+    // Paper position INSERT always runs after this block — NEVER blocked by Tradier.
+
+    // ── Production gating (PDT + already-traded check) ──
+    // PDT rules only apply to FLAME's production account (<$25K).
+    // This determines whether production orders are included in the Tradier call.
+    let prodAlreadyTradedToday = false
+    try {
+      const pdtConfigRows = await query(
+        `SELECT pdt_enabled, max_day_trades, last_reset_at
+         FROM ironforge_pdt_config
+         WHERE bot_name = $1 LIMIT 1`,
+        [bot.name.toUpperCase()],
+      )
+      const pdtCfg = pdtConfigRows[0]
+      let pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : false
+      if (pdtEnabled) {
+        try {
+          const acctPdt = await getPdtEnabledForAccount(person)
+          if (!acctPdt) {
+            pdtEnabled = false
+            console.log(`[scanner] FLAME PDT disabled by account (${person})`)
+          }
+        } catch { /* keep bot-level setting */ }
+      }
+      const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 3
+      const lastResetAt: string | null = pdtCfg?.last_reset_at ?? null
+
+      // Production PDT rolling window check
+      if (pdtEnabled && maxDayTrades > 0) {
+        let prodPdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
+           WHERE is_day_trade = TRUE AND dte_mode = $1
+             AND account_type = 'production'
+             AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
+             AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
+        const prodPdtParams: any[] = [bot.dte]
+        if (lastResetAt) {
+          prodPdtSql += ` AND created_at > $${prodPdtParams.length + 1}`
+          prodPdtParams.push(lastResetAt)
+        }
+        const prodPdtRows = await query(prodPdtSql, prodPdtParams)
+        if (int(prodPdtRows[0]?.cnt) >= maxDayTrades) {
+          prodAlreadyTradedToday = true
+          console.log(`[scanner] FLAME PRODUCTION PDT BLOCKED: ${int(prodPdtRows[0]?.cnt)}/${maxDayTrades} day trades in rolling window`)
+        }
       }
 
-      // Double-check: has production already traded today? _productionOnlyMode is set based
-      // on DB state, but verify again right before placing to prevent race conditions.
-      let prodOnlyAlreadyTraded = false
-      try {
-        const prodCheck = await query(
+      // Check if production already traded today
+      if (!prodAlreadyTradedToday) {
+        const prodDayCheck = await query(
           `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
            WHERE account_type = 'production'
              AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
           [],
         )
-        prodOnlyAlreadyTraded = int(prodCheck[0]?.cnt) > 0
-      } catch { /* non-fatal */ }
-
-      if (prodOnlyAlreadyTraded) {
-        console.log(`[scanner] FLAME PRODUCTION-ONLY: Production already traded today — skipping`)
-        return 'skip:production_already_traded_today'
+        prodAlreadyTradedToday = int(prodDayCheck[0]?.cnt) > 0
       }
+      if (prodAlreadyTradedToday) {
+        console.log(`[scanner] FLAME: Production already traded or PDT blocked — sandboxOnly`)
+      }
+    } catch (e: unknown) {
+      prodAlreadyTradedToday = true
+      console.warn(`[scanner] Production status check failed:`, e instanceof Error ? e.message : String(e))
+    }
 
-      console.log(`[scanner] FLAME PRODUCTION-ONLY: Placing orders for production accounts only`)
+    // ── Production-only mode: sandbox already traded, just need production ──
+    if (sandboxAlreadyTraded) {
+      if (prodAlreadyTradedToday) {
+        return 'skip:already_traded_today'
+      }
+      // Place production-only order
       try {
         sandboxOrderIds = await placeIcOrderAllAccounts(
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit, positionId, bot.name,
+          { productionOnly: true },
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
-        console.warn(`[scanner] FLAME PRODUCTION-ONLY order failed: ${msg}`)
+        console.warn(`[scanner] FLAME production-only order failed: ${msg}`)
         return `skip:flame_production_only_failed(${msg})`
       }
 
-      // Record production positions — MUST record even if fill_price is null.
-      // The order was already placed on Tradier with REAL MONEY. If we skip,
-      // the position becomes an orphan — unmonitored, unmanaged, never closed.
+      // Record production positions (same logic as normal path below)
       const PRODUCTION_MAX_CONTRACTS = 2
-      let prodTraded = false
+      let prodRecorded = false
       for (const [key, info] of Object.entries(sandboxOrderIds)) {
         if (info.account_type !== 'production') continue
-
         const hasFill = info.fill_price != null && info.fill_price > 0
         if (!hasFill) {
-          console.warn(
-            `[scanner] PRODUCTION-ONLY WARNING: ${key} fill_price=${info.fill_price} — ` +
-            `using estimated credit $${credits.totalCredit.toFixed(4)} as fallback. ` +
-            `Order was already placed on Tradier — MUST record position.`,
-          )
+          console.warn(`[scanner] PRODUCTION WARNING: ${key} fill_price is ${info.fill_price} — using estimated credit $${credits.totalCredit.toFixed(4)} as fallback.`)
         }
-
         const prodPerson = key.split(':')[0]
         const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
         const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
@@ -1446,10 +1426,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         const prodMaxProfit = prodCredit * 100 * prodContracts
         const prodPositionId = `${positionId}-prod-${prodPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
 
-        console.log(
-          `[scanner] FLAME PRODUCTION-ONLY POSITION: ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)} ` +
-          `(collateral=$${prodCollateral.toFixed(0)}, maxLoss=$${prodMaxLoss.toFixed(0)})`,
-        )
+        console.log(`[scanner] PRODUCTION-ONLY POSITION: ${prodPerson} ${prodContracts} contracts @ $${prodCredit.toFixed(4)}`)
 
         try {
           await query(
@@ -1512,7 +1489,6 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             ],
           )
 
-          // PDT log for production-only position (enables production PDT tracking on dashboard)
           await query(
             `INSERT INTO ${botTable(bot.name, 'pdt_log')} (
               trade_date, symbol, position_id, opened_at,
@@ -1520,52 +1496,40 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             ) VALUES (${CT_TODAY}, $1, $2, NOW(), $3, $4, $5, $6, 'production')`,
             ['SPY', prodPositionId, prodContracts, prodCredit, bot.dte, prodPerson],
           )
-          prodTraded = true
+          prodRecorded = true
         } catch (prodErr: unknown) {
           const prodErrMsg = prodErr instanceof Error ? prodErr.message : String(prodErr)
-          console.error(`[scanner] FLAME PRODUCTION-ONLY position creation failed for ${prodPerson}:`, prodErrMsg)
-          // Log to DB so it's visible in the dashboard (console.error only goes to server logs)
+          console.error(`[scanner] PRODUCTION-ONLY position creation failed for ${prodPerson}:`, prodErrMsg)
           try {
             await query(
               `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
                VALUES ('ERROR', $1, $2, $3, $4)`,
               [
-                `PRODUCTION-ONLY RECORD FAILED: ${prodPerson} — order placed on Tradier but DB insert failed: ${prodErrMsg}`,
+                `PRODUCTION-ONLY POSITION RECORD FAILED: ${prodPerson} — ${prodErrMsg}`,
                 JSON.stringify({ position_id: prodPositionId, order_info: info, error: prodErrMsg }),
                 bot.dte, prodPerson,
               ],
             )
-          } catch { /* last resort — can't even log the error */ }
+          } catch { /* last resort */ }
         }
       }
 
-      // Log production fill summary for production-only mode
-      const prodOnlyEntries = Object.entries(sandboxOrderIds)
-      const prodOnlyFills = prodOnlyEntries.filter(([, v]) => v.account_type === 'production')
-      if (prodOnlyFills.length === 0 && prodOnlyEntries.length > 0) {
-        console.warn(
-          `[scanner] FLAME PRODUCTION-ONLY: ${prodOnlyEntries.length} order entries but 0 production — keys: ${prodOnlyEntries.map(([k]) => k).join(', ')}`,
-        )
-      } else if (prodOnlyFills.length === 0) {
-        console.warn(`[scanner] FLAME PRODUCTION-ONLY: placeIcOrderAllAccounts returned 0 entries — production account may not be loaded or eligible`)
-      }
-
-      if (prodTraded) {
-        console.log(`[scanner] FLAME PRODUCTION-ONLY: Successfully placed production trade(s)`)
-        return `traded:${positionId}-production-only`
-      }
-      return 'skip:flame_production_only_no_fills'
+      return prodRecorded
+        ? `traded:${positionId}(production_only)`
+        : 'skip:production_only_no_fills'
     }
 
-    // FLAME: place sandbox order first — paper position depends on fill
+    // ── Attempt Tradier sandbox fill ──
+    // FLAME paper is a mirror of real Tradier sandbox fills — it MUST use real fill prices.
+    // If sandbox can't fill, FLAME paper does NOT trade (unlike SPARK/INFERNO which use estimates).
+    // These gates skip the entire trade, not just the Tradier call.
+
     if (_sandboxPaperOnly[bot.name]) {
       return 'skip:flame_requires_tradier(paper_only_mode)'
     }
 
-    // Backoff after consecutive rejections — stop spamming Tradier with orders
-    // that will just get rejected again (prevents 1500+ rejected orders/day).
+    // Backoff after consecutive rejections — stop spamming Tradier
     if (_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF) {
-      // Only retry every BACKOFF_CYCLES cycles (~10 min)
       const cyclesSinceLastAttempt = _consecutiveRejects[bot.name] - MAX_REJECTS_BEFORE_BACKOFF
       if (cyclesSinceLastAttempt % BACKOFF_CYCLES !== 0) {
         _consecutiveRejects[bot.name]++
@@ -1574,15 +1538,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       console.log(`[scanner] FLAME: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
     }
 
-    // GATE: Don't place orders if sandbox cleanup hasn't verified clean.
-    // Reset the verified flag if date changed (new day).
-    const ctNow = getCentralTime()
-    const todayStr = ctNow.toISOString().slice(0, 10)
-    if (_sandboxCleanupVerifiedDate[bot.name] !== todayStr) {
-      _sandboxCleanupVerified[bot.name] = false
-    }
+    // Stale position cleanup gate
+    {
+      const ctNow = getCentralTime()
+      const todayStr = ctNow.toISOString().slice(0, 10)
+      if (_sandboxCleanupVerifiedDate[bot.name] !== todayStr) {
+        _sandboxCleanupVerified[bot.name] = false
+      }
 
-    if (!_sandboxCleanupVerified[bot.name]) {
+      if (!_sandboxCleanupVerified[bot.name]) {
       // Quick check: are there actually stale positions right now?
       let staleCount = 0
       try {
@@ -1633,42 +1597,20 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         if (remaining > 0) {
           _consecutiveRejects[bot.name]++
           return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
+        } else {
+          _sandboxCleanupVerified[bot.name] = true
+          _sandboxCleanupVerifiedDate[bot.name] = todayStr
+          console.log(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: All stale positions cleared — proceeding with order`)
         }
-        // All clear now
-        _sandboxCleanupVerified[bot.name] = true
-        _sandboxCleanupVerifiedDate[bot.name] = todayStr
-        console.log(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: All stale positions cleared — proceeding with order`)
       } else {
         // No stale positions — mark verified
         _sandboxCleanupVerified[bot.name] = true
         _sandboxCleanupVerifiedDate[bot.name] = todayStr
       }
-    }
-
-    // ── Place orders on ALL accounts (sandbox + production independently) ──
-    // Production and sandbox are separate systems. Production orders are placed
-    // and recorded regardless of whether sandbox fills or not.
-    // GUARD: Check if production already traded today to prevent duplicate orders.
-    let prodAlreadyTradedToday = false
-    try {
-      const prodDayCheck = await query(
-        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-         WHERE account_type = 'production'
-           AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
-        [],
-      )
-      prodAlreadyTradedToday = int(prodDayCheck[0]?.cnt) > 0
-      if (prodAlreadyTradedToday) {
-        console.log(`[scanner] ${bot.name.toUpperCase()}: Production already traded today — sandboxOnly`)
       }
-    } catch { /* non-fatal — proceed without guard */ }
-
-    // Also block production if production PDT limit is reached
-    if (_prodPdtBlocked && !prodAlreadyTradedToday) {
-      prodAlreadyTradedToday = true // reuse flag to trigger sandboxOnly mode
-      console.log(`[scanner] ${bot.name.toUpperCase()}: Production PDT limit reached — sandboxOnly`)
     }
 
+    // ── Place Tradier orders (sandbox + conditionally production) ──
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
@@ -1856,15 +1798,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       // Try emergency cleanup and one retry for sandbox only
       console.log('[scanner] FLAME: Cleaning up stale sandbox positions before retry...')
       try {
-        const accounts = await getLoadedSandboxAccountsAsync()
-        for (const acct of accounts) {
-          if (acct.type === 'production') continue  // Don't touch production accounts
-          await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+        const retryAccounts = await getLoadedSandboxAccountsAsync()
+        for (const a of retryAccounts) {
+          if (a.type === 'production') continue
+          await emergencyCloseSandboxPositions(a.apiKey, a.name)
         }
       } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
 
-      // Retry sandbox order only (production already placed — sandboxOnly prevents duplicate production orders)
+      // Retry sandbox order only (production already placed — sandboxOnly prevents duplicate)
       try {
         const retryResults = await placeIcOrderAllAccounts(
           'SPY', expiration,
@@ -1872,7 +1814,6 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           maxContracts, credits.totalCredit, positionId, bot.name,
           { sandboxOnly: true },
         )
-        // Merge only sandbox results (don't overwrite production)
         for (const [key, info] of Object.entries(retryResults)) {
           if (info.account_type !== 'production') {
             sandboxOrderIds[key] = info
@@ -1905,19 +1846,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     _consecutiveRejects[bot.name] = 0
 
     // Use Tradier's actual fill PRICE but keep paper-sized contracts.
-    // Paper position = 85% of paper_account BP (maxContracts).
-    // Each Tradier sandbox account independently sizes at 85% of its own BP.
+    // FLAME paper is a mirror of real sandbox — must use real fill price.
     const primaryFillFinal = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]!
     if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
       return 'skip:flame_primary_no_fill'
     }
 
-    // Use real fill price for paper P&L accuracy, but paper-sized contract count
     effectiveCredit = primaryFillFinal.fill_price
     // effectiveContracts stays as maxContracts (85% of paper BP)
     effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
     console.log(
-      `[scanner] FLAME Tradier-fill-only: ${FLAME_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `[scanner] FLAME Tradier-fill: ${FLAME_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
       `(paper=${effectiveContracts} contracts, estimated credit=$${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
     )
   }

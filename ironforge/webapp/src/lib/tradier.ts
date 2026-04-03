@@ -1173,7 +1173,7 @@ export async function placeIcOrderAllAccounts(
   totalCredit: number,
   tag?: string,
   botName?: string,
-  opts?: { sandboxOnly?: boolean },
+  opts?: { sandboxOnly?: boolean; productionOnly?: boolean },
 ): Promise<Record<string, SandboxOrderInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
@@ -1424,10 +1424,13 @@ export async function placeIcOrderAllAccounts(
   }
 
   // Step 1: User sandbox first (sequential) — must fill before other sandbox accounts
-  for (const acct of userAccts) await placeForAccount(acct)
+  // Skip sandbox steps in productionOnly mode (used when sandbox already traded today)
+  if (!opts?.productionOnly) {
+    for (const acct of userAccts) await placeForAccount(acct)
 
-  // Step 2: Other sandbox accounts in parallel (mirror trades)
-  await Promise.all(otherSandboxAccts.map(placeForAccount))
+    // Step 2: Other sandbox accounts in parallel (mirror trades)
+    await Promise.all(otherSandboxAccts.map(placeForAccount))
+  }
 
   // Step 3: Production accounts — run independently of sandbox fills.
   // Production and sandbox are separate systems; a sandbox rejection should
