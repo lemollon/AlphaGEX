@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X } from 'lucide-react';
+import { Layers, BarChart3, Activity, Clock, Menu, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -150,6 +150,7 @@ function BuilderPage() {
   const [viewMode, setViewMode] = useState('graph');
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const { candles, spotPrice, loading: candlesLoading, error: candlesError, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const [manualSpot, setManualSpot] = useState(null);
@@ -192,23 +193,32 @@ function BuilderPage() {
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <StrategyPanel
-        symbol={symbol}
-        spotPrice={effectiveSpot}
-        gexData={gexData}
-        onCalculate={handleCalculate}
-        calcLoading={calcLoading}
-        calcError={calcError}
-        calcResult={calcResult}
-        alerts={alerts}
-        onRefreshAlerts={fetchAlerts}
-        apiError={candlesError}
-        onManualSpotChange={setManualSpot}
-      />
+      {sidebarOpen && (
+        <StrategyPanel
+          symbol={symbol}
+          spotPrice={effectiveSpot}
+          gexData={gexData}
+          onCalculate={handleCalculate}
+          calcLoading={calcLoading}
+          calcError={calcError}
+          calcResult={calcResult}
+          alerts={alerts}
+          onRefreshAlerts={fetchAlerts}
+          apiError={candlesError}
+          onManualSpotChange={setManualSpot}
+        />
+      )}
       <div className="flex-1 flex flex-col min-w-0 overflow-auto">
         {/* Chart Header */}
         <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border-subtle font-[var(--font-ui)] text-[13px]"
           style={{ background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)' }}>
+          <button
+            className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-white/[0.06] transition-all duration-150 border border-transparent hover:border-border-subtle"
+            onClick={() => setSidebarOpen((v) => !v)}
+            title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          >
+            {sidebarOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          </button>
           <SymbolSelector value={symbol} onChange={handleSymbolChange} />
           <span className="text-text-muted text-xs font-medium">
             {interval === '15min' ? '15M' : interval === '1h' ? '1H' : '4H'}

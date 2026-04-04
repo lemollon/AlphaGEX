@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Zap, Save, Send, Bell, Plus, X, Sparkles, AlertTriangle } from 'lucide-react';
+import { Zap, Save, Send, Bell, Plus, X, Sparkles, AlertTriangle, Calendar } from 'lucide-react';
 
 const STRATEGY_TYPES = {
   DOUBLE_DIAGONAL: 'double_diagonal',
@@ -143,6 +143,43 @@ function ExpirationInput({ label, value, inputMode, expirations, expirationsWith
         disabled={disabled}
         className="sw-input"
       />
+    </div>
+  );
+}
+
+/** Return YYYY-MM-DD for today + dte trading days (skips weekends). */
+function dteToDate(dte) {
+  const d = new Date();
+  // Use CT date
+  const ct = new Date(d.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
+  let remaining = dte;
+  const result = new Date(ct.getFullYear(), ct.getMonth(), ct.getDate());
+  while (remaining > 0) {
+    result.setDate(result.getDate() + 1);
+    const day = result.getDay();
+    if (day !== 0 && day !== 6) remaining--;
+  }
+  return result.toISOString().split('T')[0];
+}
+
+const DTE_OPTIONS = [0, 1, 2, 3, 4, 5, 14, 30];
+
+function DteQuickButtons({ onSelect }) {
+  return (
+    <div className="flex flex-wrap gap-1 mt-1.5 mb-1">
+      <span className="text-text-muted text-[10px] font-semibold mr-1 flex items-center gap-1">
+        <Calendar size={10} />DTE
+      </span>
+      {DTE_OPTIONS.map((dte) => (
+        <button
+          key={dte}
+          type="button"
+          onClick={() => onSelect(dte)}
+          className="px-2 py-0.5 text-[10px] font-semibold rounded-md border border-border-subtle text-text-secondary hover:text-accent hover:border-accent/40 hover:bg-accent/5 transition-all duration-150"
+        >
+          {dte}
+        </button>
+      ))}
     </div>
   );
 }
@@ -479,6 +516,19 @@ export default function StrategyPanel({
     setLegs((prev) => ({ ...prev, [field]: value }));
   };
 
+  const handleDteSelect = (dte) => {
+    const expDate = dteToDate(dte);
+    if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
+      const longDate = dteToDate(dte + 7);
+      setLegs((prev) => ({ ...prev, shortExpiration: expDate, longExpiration: longDate }));
+    } else if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR) {
+      const backDate = dteToDate(dte + 7);
+      setLegs((prev) => ({ ...prev, frontExpiration: expDate, backExpiration: backDate }));
+    } else if (strategy === STRATEGY_TYPES.IRON_CONDOR || strategy === STRATEGY_TYPES.BUTTERFLY || strategy === STRATEGY_TYPES.IRON_BUTTERFLY) {
+      setLegs((prev) => ({ ...prev, expiration: expDate }));
+    }
+  };
+
   const handleCalculate = () => {
     if (!onCalculate) return;
     onCalculate({
@@ -657,6 +707,7 @@ export default function StrategyPanel({
               <span>Expirations</span>
               <div className="line bg-text-tertiary/20" />
             </div>
+            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
@@ -679,6 +730,7 @@ export default function StrategyPanel({
               <span>Type &amp; Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
+            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
             <div className="flex gap-2 mb-1.5">
               <div className="flex-1 flex flex-col gap-1">
                 <span className="sw-label">Option Type</span>
@@ -714,6 +766,7 @@ export default function StrategyPanel({
               <span>Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
+            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
@@ -740,6 +793,7 @@ export default function StrategyPanel({
               <span>Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
+            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
@@ -770,6 +824,7 @@ export default function StrategyPanel({
               <span>Expirations</span>
               <div className="line bg-accent/15" />
             </div>
+            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
