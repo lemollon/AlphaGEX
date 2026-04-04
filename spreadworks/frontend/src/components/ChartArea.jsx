@@ -15,6 +15,7 @@ export default function ChartArea({
   calcResult,
   height = 500,
   rangePct = 2.2,
+  fetchError,
 }) {
   // Compute shared price range from candles + strikes + GEX
   const { minPrice, maxPrice } = useMemo(() => {
@@ -49,6 +50,7 @@ export default function ChartArea({
         strikes={strikes}
         gexData={gexData}
         spotPrice={spotPrice}
+        fetchError={fetchError}
       />
       <PayoffPanel
         pnlCurve={calcResult?.pnl_curve}

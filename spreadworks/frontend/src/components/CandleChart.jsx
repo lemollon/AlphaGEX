@@ -32,6 +32,7 @@ export default function CandleChart({
   strikes,
   gexData,
   spotPrice,
+  fetchError,
 }) {
   const chartData = useMemo(() => {
     if (!candles || candles.length === 0) return null;
@@ -90,11 +91,25 @@ export default function CandleChart({
 
   if (!chartData) {
     return (
-      <div className="flex-[3] flex flex-col items-center justify-center text-text-secondary font-[var(--font-mono)] text-sm bg-bg-base gap-2">
-        <span>No candle data available</span>
-        <span className="text-xs text-text-tertiary">
-          Load SpreadWorks during market hours to populate the cache for offline use.
-        </span>
+      <div className="flex-[3] flex flex-col items-center justify-center font-[var(--font-mono)] text-sm bg-bg-base gap-3 px-6">
+        {fetchError ? (
+          <>
+            <span className="text-sw-red font-semibold">Cannot load chart data</span>
+            <span className="text-xs text-text-secondary text-center max-w-[400px] leading-relaxed">
+              {fetchError}
+            </span>
+            <span className="text-[10px] text-text-tertiary text-center max-w-[400px]">
+              Tip: Access SpreadWorks via the backend URL (not the static site). The backend serves both the UI and API on the same origin.
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-text-secondary">No candle data available</span>
+            <span className="text-xs text-text-tertiary">
+              Load SpreadWorks during market hours to populate the cache for offline use.
+            </span>
+          </>
+        )}
       </div>
     );
   }

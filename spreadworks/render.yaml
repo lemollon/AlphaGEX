@@ -21,9 +21,14 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
+        # REQUIRED: Set to the spreadworks-backend URL in Render dashboard
+        # e.g. https://spreadworks-backend.onrender.com
+        # Without this, all API calls fail (static site can't reach backend)
         sync: false
 
   # SERVICE 2: Python Backend API (FastAPI)
+  # NOTE: The backend also serves the frontend at /
+  # You can skip the static frontend service and access this URL directly
   - type: web
     name: spreadworks-backend
     runtime: python
