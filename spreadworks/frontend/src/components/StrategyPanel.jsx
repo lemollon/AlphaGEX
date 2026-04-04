@@ -157,6 +157,8 @@ export default function StrategyPanel({
   calcResult,
   alerts,
   onRefreshAlerts,
+  apiError,
+  onManualSpotChange,
 }) {
   const [strategy, setStrategy] = useState(STRATEGY_TYPES.DOUBLE_DIAGONAL);
   const [inputMode, setInputMode] = useState(INPUT_MODES.MANUAL);
@@ -608,10 +610,28 @@ export default function StrategyPanel({
         <span className="text-white font-extrabold text-[15px] font-[var(--font-mono)]">{symbol}</span>
         <span className="w-1 h-1 rounded-full bg-border-default" />
         <span className="text-text-tertiary text-[11px] font-semibold">Spot</span>
-        <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(68, 138, 255, 0.3)' }}>
-          {spotPrice ? `$${spotPrice.toFixed(2)}` : '--'}
-        </span>
+        {spotPrice ? (
+          <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(68, 138, 255, 0.3)' }}>
+            ${spotPrice.toFixed(2)}
+          </span>
+        ) : (
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Enter spot"
+            className="sw-input w-[90px] text-center text-accent-bright font-bold text-[13px]"
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              if (onManualSpotChange && !isNaN(val) && val > 0) onManualSpotChange(val);
+            }}
+          />
+        )}
       </div>
+      {apiError && (
+        <div className="px-3 py-2 rounded-lg border border-sw-red/20 bg-sw-red-dim text-[11px] text-sw-red font-medium">
+          API offline — enter spot price manually to calculate spreads
+        </div>
+      )}
 
       {/* Strike Inputs */}
       <div className="sw-card p-3.5">

@@ -151,7 +151,8 @@ function BuilderPage() {
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
 
-  const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
+  const { candles, spotPrice, loading: candlesLoading, error: candlesError, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
+  const [manualSpot, setManualSpot] = useState(null);
   const { gexData, refetch: refetchGex } = useGex(symbol);
   const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
 
@@ -163,6 +164,7 @@ function BuilderPage() {
   const { isOpen, secondsAgo, markRefreshed, statusText } = useMarketHours();
 
   const strikes = lastPayload?.legs || null;
+  const effectiveSpot = spotPrice || manualSpot;
 
   const fetchAlerts = useCallback(async () => {
     try {
@@ -192,7 +194,7 @@ function BuilderPage() {
     <div className="flex flex-1 overflow-hidden">
       <StrategyPanel
         symbol={symbol}
-        spotPrice={spotPrice}
+        spotPrice={effectiveSpot}
         gexData={gexData}
         onCalculate={handleCalculate}
         calcLoading={calcLoading}
@@ -200,6 +202,8 @@ function BuilderPage() {
         calcResult={calcResult}
         alerts={alerts}
         onRefreshAlerts={fetchAlerts}
+        apiError={candlesError}
+        onManualSpotChange={setManualSpot}
       />
       <div className="flex-1 flex flex-col min-w-0 overflow-auto">
         {/* Chart Header */}
@@ -211,9 +215,9 @@ function BuilderPage() {
           </span>
           <span className="text-text-muted">&middot;</span>
           <span className="text-text-secondary font-medium">Price + Spread Payoff</span>
-          {spotPrice && (
+          {effectiveSpot && (
             <span className="text-accent font-bold text-sm font-[var(--font-mono)] ml-1">
-              ${spotPrice.toFixed(2)}
+              ${effectiveSpot.toFixed(2)}
             </span>
           )}
           {!isOpen && dataAsOf && (
@@ -237,8 +241,9 @@ function BuilderPage() {
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
           ) : (
-            <ChartArea candles={candles} spotPrice={spotPrice} gexData={gexData}
-              strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct} />
+            <ChartArea candles={candles} spotPrice={effectiveSpot} gexData={gexData}
+              strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct}
+              fetchError={candlesError} />
           )}
         </div>
 
