@@ -19,7 +19,7 @@ import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor,
 
 const Plot = createPlotlyComponent(Plotly);
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../lib/api';
 
 // ── Helpers ─────────────────────────────────────────────────────
 

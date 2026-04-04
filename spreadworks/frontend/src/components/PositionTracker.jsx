@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { STRAT_LABELS } from '../lib/strategies';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_URL } from '../lib/api';
 
 export default function PositionTracker() {
   const [positions, setPositions] = useState([]);

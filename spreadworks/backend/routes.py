@@ -370,8 +370,8 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
             _cache_candles(symbol, interval, candles, last_price)
             if last_price:
                 _cache_quote(symbol, last_price)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[candles] Tradier timesales failed for {symbol}: {e}")
 
     # Fallback: if timesales returned nothing, try quote then cache
     if not candles:
@@ -380,8 +380,8 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
             last_price = q.get("last")
             if last_price:
                 _cache_quote(symbol, last_price)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[candles] Quote fallback failed for {symbol}: {e}")
 
     # If still no candles (market closed, API down, etc.), read from cache
     if not candles:
@@ -444,9 +444,9 @@ async def get_gex(request: Request, symbol: str = "SPY"):
             _cache_gex(symbol, result)
             return result
     except httpx.TimeoutException:
-        pass
-    except Exception:
-        pass
+        logger.warning(f"[gex] Watchtower timeout for {symbol}")
+    except Exception as e:
+        logger.warning(f"[gex] Watchtower fetch failed for {symbol}: {e}")
 
     # Fallback to simple GEX endpoint
     try:
@@ -469,9 +469,9 @@ async def get_gex(request: Request, symbol: str = "SPY"):
             _cache_gex(symbol, result)
             return result
     except httpx.TimeoutException:
-        pass
-    except Exception:
-        pass
+        logger.warning(f"[gex] Simple GEX timeout for {symbol}")
+    except Exception as e:
+        logger.warning(f"[gex] Simple GEX fetch failed for {symbol}: {e}")
 
     # All live sources failed — try cache
     cached = _read_cached_gex(symbol)

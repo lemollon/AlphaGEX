@@ -90,9 +90,9 @@ export default function CandleChart({
 
   if (!chartData) {
     return (
-      <div className="flex-[3] flex flex-col items-center justify-center text-text-muted font-[var(--font-mono)] text-xs bg-bg-base gap-1.5">
+      <div className="flex-[3] flex flex-col items-center justify-center text-text-secondary font-[var(--font-mono)] text-sm bg-bg-base gap-2">
         <span>No candle data available</span>
-        <span className="text-[10px] text-text-muted/60">
+        <span className="text-xs text-text-tertiary">
           Load SpreadWorks during market hours to populate the cache for offline use.
         </span>
       </div>
