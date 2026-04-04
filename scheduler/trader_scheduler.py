@@ -58,18 +58,41 @@ except ImportError:
     IntervalTrigger = None
     print("Warning: APScheduler not installed. Autonomous trading scheduler will be disabled.")
 
-from core.autonomous_paper_trader import AutonomousPaperTrader
-from core_classes_and_engines import TradingVolatilityAPI
-from database_adapter import get_connection
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
-# Texas Central Time - standard timezone for all AlphaGEX operations
-CENTRAL_TZ = ZoneInfo("America/Chicago")
 import logging
 import traceback
 from pathlib import Path
 import json
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# Core imports - wrapped in try/except to prevent cascading crash that kills ALL bots.
+# If any of these fail, the scheduler can still start (with reduced functionality)
+# instead of the entire module failing to load and ALL bots being dead.
+CORE_IMPORTS_AVAILABLE = True
+try:
+    from core.autonomous_paper_trader import AutonomousPaperTrader
+except ImportError as e:
+    CORE_IMPORTS_AVAILABLE = False
+    AutonomousPaperTrader = None
+    print(f"WARNING: AutonomousPaperTrader import failed: {e}")
+    print("  LAZARUS bot will be disabled.")
+
+try:
+    from core_classes_and_engines import TradingVolatilityAPI
+except ImportError as e:
+    TradingVolatilityAPI = None
+    print(f"WARNING: TradingVolatilityAPI import failed: {e}")
+    print("  GEX data fetching will be unavailable.")
+
+try:
+    from database_adapter import get_connection
+except ImportError as e:
+    get_connection = None
+    print(f"CRITICAL: database_adapter import failed: {e}")
+    print("  ALL bots requiring database will be disabled.")
 
 # Import CORNERSTONE (SPX Wheel Trader)
 try:
@@ -265,7 +288,7 @@ except ImportError:
 
 # Import IronForge FLAME (2DTE Paper IC) and SPARK (1DTE Paper IC)
 try:
-    from databricks.trading.trader import create_flame_trader, create_spark_trader
+    from ironforge.trading.trader import create_flame_trader, create_spark_trader
     IRONFORGE_AVAILABLE = True
 except ImportError:
     IRONFORGE_AVAILABLE = False
@@ -725,7 +748,7 @@ class AutonomousTraderScheduler:
         if IRONFORGE_AVAILABLE:
             # Ensure IronForge tables exist in PostgreSQL
             try:
-                from databricks.setup_tables import setup_all_tables as setup_ironforge_tables
+                from ironforge.setup_tables import setup_all_tables as setup_ironforge_tables
                 setup_ironforge_tables()
                 logger.info("✅ IronForge tables verified/created in PostgreSQL")
             except Exception as e:
