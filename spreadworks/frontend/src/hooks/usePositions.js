@@ -50,7 +50,7 @@ export default function usePositions(statusFilter = 'open') {
     return data;
   };
 
-  const closePosition = async (id, closePrice) => {
+  const closePosition = async (id, closePrice = 0) => {
     const res = await fetch(`${API_URL}/api/spreadworks/positions/${id}/close`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

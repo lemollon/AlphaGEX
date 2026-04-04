@@ -26,6 +26,12 @@ export default function PositionsPage() {
     } catch { /* silent */ }
   };
 
+  const handleExpireWorthless = async (id) => {
+    try {
+      await closePosition(id, 0);
+    } catch { /* silent */ }
+  };
+
   const handleDelete = async (id) => {
     if (!confirm('Delete this position permanently?')) return;
     try { await deletePosition(id); } catch { /* silent */ }
@@ -84,6 +90,7 @@ export default function PositionsPage() {
               key={pos.id}
               position={pos}
               onClose={(p) => setClosingPos(p)}
+              onExpireWorthless={handleExpireWorthless}
               onDelete={handleDelete}
             />
           ))}

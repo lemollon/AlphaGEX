@@ -4,7 +4,7 @@ import { STRAT_LABELS, isCreditStrategy } from '../../lib/strategies';
 
 import { API_URL } from '../../lib/api';
 
-export default function PositionCard({ position, onClose, onDelete }) {
+export default function PositionCard({ position, onClose, onExpireWorthless, onDelete }) {
   const [pnl, setPnl] = useState(null);
   const [discordPushing, setDiscordPushing] = useState(false);
   const [discordDone, setDiscordDone] = useState(false);
@@ -13,6 +13,7 @@ export default function PositionCard({ position, onClose, onDelete }) {
   const [payoffLoading, setPayoffLoading] = useState(false);
 
   const isOpen = position.status === 'open';
+  const isExpired = position.dte != null && position.dte <= 0;
   const strat = STRAT_LABELS[position.strategy] || position.strategy;
 
   useEffect(() => {
@@ -75,7 +76,9 @@ export default function PositionCard({ position, onClose, onDelete }) {
         </div>
         <div className="flex gap-1.5 items-center">
           {position.dte != null && (
-            <span className="sw-badge">{position.dte}DTE</span>
+            <span className={`sw-badge ${isExpired && isOpen ? '!bg-sw-red/10 !text-sw-red !border-sw-red/20' : ''}`}>
+              {isExpired && isOpen ? 'EXPIRED' : `${position.dte}DTE`}
+            </span>
           )}
           <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider ${
             isOpen ? 'bg-sw-green/10 text-sw-green border border-sw-green/20' : 'bg-bg-elevated/30 text-text-tertiary border border-border-subtle'
@@ -187,6 +190,15 @@ export default function PositionCard({ position, onClose, onDelete }) {
       <div className="flex gap-1.5 mt-3 border-t border-border-subtle pt-2.5">
         {isOpen && (
           <>
+            {isExpired && onExpireWorthless && (
+              <button
+                className="sw-btn-danger !px-3 !py-1.5 !text-[11px] flex items-center gap-1 !bg-sw-yellow/10 !border-sw-yellow/30 !text-sw-yellow hover:!bg-sw-yellow/20"
+                onClick={() => onExpireWorthless(position.id)}
+                title="Close at $0 — all legs expired worthless"
+              >
+                Expire Worthless
+              </button>
+            )}
             <button className="sw-btn-danger !px-3 !py-1.5 !text-[11px] flex items-center gap-1" onClick={() => onClose(position)}>
               <X size={11} /> Close
             </button>
