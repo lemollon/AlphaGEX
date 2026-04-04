@@ -1707,7 +1707,7 @@ class PositionUpdate(BaseModel):
 
 
 class PositionCloseBody(BaseModel):
-    close_price: float  # per-contract debit to close
+    close_price: float = 0.0  # per-contract debit to close (0 = expired worthless)
 
 
 # --- GET /positions?status=open|closed|all ---
