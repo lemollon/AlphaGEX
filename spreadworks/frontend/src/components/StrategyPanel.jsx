@@ -52,7 +52,7 @@ const DEFAULT_LEGS = {
   },
 };
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../lib/api';
 
 function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
   const isGreen = color === '#00e676' || color === '#22c55e';

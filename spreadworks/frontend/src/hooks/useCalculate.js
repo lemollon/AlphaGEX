@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../lib/api';
 
 export default function useCalculate() {
   const [calcResult, setCalcResult] = useState(null);

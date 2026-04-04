@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, RotateCcw, Send, BarChart3 } from 'lucide-react';
 import { STRAT_LABELS, isCreditStrategy } from '../../lib/strategies';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+import { API_URL } from '../../lib/api';
 
 export default function PositionCard({ position, onClose, onDelete }) {
   const [pnl, setPnl] = useState(null);

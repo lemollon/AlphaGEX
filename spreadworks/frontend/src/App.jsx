@@ -16,6 +16,7 @@ import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 import SymbolSelector from './components/SymbolSelector';
 import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
+import { API_URL } from './lib/api';
 
 const CHART_HEIGHT = 500;
 
@@ -150,8 +151,6 @@ function BuilderPage() {
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || '';
-
   const { candles, spotPrice, loading: candlesLoading, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const { gexData, refetch: refetchGex } = useGex(symbol);
   const { calcResult, calcLoading, calcError, calculate, clearResult } = useCalculate();
@@ -172,7 +171,7 @@ function BuilderPage() {
       const data = await res.json();
       setAlerts(data.alerts || []);
     } catch { /* silent */ }
-  }, [API_URL]);
+  }, []);
 
   useEffect(() => { fetchAlerts(); }, [fetchAlerts]);
 
@@ -202,7 +201,7 @@ function BuilderPage() {
         alerts={alerts}
         onRefreshAlerts={fetchAlerts}
       />
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-auto">
         {/* Chart Header */}
         <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border-subtle font-[var(--font-ui)] text-[13px]"
           style={{ background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)' }}>
@@ -233,7 +232,7 @@ function BuilderPage() {
         </div>
 
         {/* Chart Area */}
-        <div className="flex-1 min-h-0 flex relative">
+        <div className="min-h-[500px] flex relative">
           {calcLoading && <CalcOverlay />}
           {viewMode === 'table' ? (
             <PnLTable calcResult={calcResult} viewMode={tableViewMode} />
