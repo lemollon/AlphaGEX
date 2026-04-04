@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Layers, BarChart3, Activity, Clock, Menu, X, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -151,6 +151,10 @@ function BuilderPage() {
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [candleSpacing, setCandleSpacing] = useState(9);
+
+  const zoomIn = () => setCandleSpacing((s) => Math.min(s + 3, 30));
+  const zoomOut = () => setCandleSpacing((s) => Math.max(s - 3, 3));
 
   const { candles, spotPrice, loading: candlesLoading, error: candlesError, dataAsOf, refetch: refetchCandles } = useCandles(symbol, interval);
   const [manualSpot, setManualSpot] = useState(null);
@@ -225,6 +229,22 @@ function BuilderPage() {
           </span>
           <span className="text-text-muted">&middot;</span>
           <span className="text-text-secondary font-medium">Price + Spread Payoff</span>
+          <div className="flex items-center gap-0.5 ml-2">
+            <button
+              className="p-1 rounded text-text-secondary hover:text-white hover:bg-white/[0.06] transition-all duration-150"
+              onClick={zoomOut}
+              title="Zoom out (more bars)"
+            >
+              <ZoomOut size={14} />
+            </button>
+            <button
+              className="p-1 rounded text-text-secondary hover:text-white hover:bg-white/[0.06] transition-all duration-150"
+              onClick={zoomIn}
+              title="Zoom in (fewer bars)"
+            >
+              <ZoomIn size={14} />
+            </button>
+          </div>
           {effectiveSpot && (
             <span className="text-accent font-bold text-sm font-[var(--font-mono)] ml-1">
               ${effectiveSpot.toFixed(2)}
@@ -253,7 +273,7 @@ function BuilderPage() {
           ) : (
             <ChartArea candles={candles} spotPrice={effectiveSpot} gexData={gexData}
               strikes={strikes} calcResult={calcResult} height={CHART_HEIGHT} rangePct={rangePct}
-              fetchError={candlesError} />
+              fetchError={candlesError} candleSpacing={candleSpacing} />
           )}
         </div>
 

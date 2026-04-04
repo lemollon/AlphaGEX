@@ -19,8 +19,7 @@ import { priceToY } from '../utils/priceScale';
 
 const CHART_LEFT_MARGIN = 50;
 const CHART_RIGHT_MARGIN = 80;
-const CANDLE_SPACING = 9;
-const BAR_WIDTH = 6;
+const DEFAULT_CANDLE_SPACING = 9;
 const TOP_PAD = 10;
 const BOTTOM_PAD = 28;
 
@@ -33,23 +32,26 @@ export default function CandleChart({
   gexData,
   spotPrice,
   fetchError,
+  candleSpacing = DEFAULT_CANDLE_SPACING,
 }) {
+  const barWidth = Math.max(2, Math.round(candleSpacing * 0.67));
+
   const chartData = useMemo(() => {
     if (!candles || candles.length === 0) return null;
 
     const svgWidth = 900;
     const availableWidth = svgWidth - CHART_LEFT_MARGIN - CHART_RIGHT_MARGIN;
-    const maxCandles = Math.floor(availableWidth / CANDLE_SPACING);
+    const maxCandles = Math.floor(availableWidth / candleSpacing);
     const visibleCandles = candles.slice(-maxCandles);
 
     const plotH = height - TOP_PAD - BOTTOM_PAD;
     const maxVol = Math.max(...visibleCandles.map(c => c.volume || 0), 1);
     const pToY = (p) => TOP_PAD + priceToY(p, minPrice, maxPrice, plotH);
-    const lastCandleX = CHART_LEFT_MARGIN + (visibleCandles.length - 1) * CANDLE_SPACING;
+    const lastCandleX = CHART_LEFT_MARGIN + (visibleCandles.length - 1) * candleSpacing;
 
     const bars = visibleCandles.map((c, i) => {
-      const x = CHART_LEFT_MARGIN + i * CANDLE_SPACING - BAR_WIDTH / 2;
-      const centerX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
+      const x = CHART_LEFT_MARGIN + i * candleSpacing - barWidth / 2;
+      const centerX = CHART_LEFT_MARGIN + i * candleSpacing;
       const isUp = c.close >= c.open;
       const color = isUp ? '#26a69a' : '#ef5350';
       const bodyTop = pToY(Math.max(c.open, c.close));
@@ -68,9 +70,10 @@ export default function CandleChart({
     });
 
     const dateLabels = [];
-    for (let i = 0; i < visibleCandles.length; i += 20) {
+    const labelEvery = Math.max(10, Math.round(20 * DEFAULT_CANDLE_SPACING / candleSpacing));
+    for (let i = 0; i < visibleCandles.length; i += labelEvery) {
       const c = visibleCandles[i];
-      const labelX = CHART_LEFT_MARGIN + i * CANDLE_SPACING;
+      const labelX = CHART_LEFT_MARGIN + i * candleSpacing;
       if (c && c.time && labelX < svgWidth - CHART_RIGHT_MARGIN) {
         const d = new Date(c.time);
         const label = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -87,7 +90,7 @@ export default function CandleChart({
     }
 
     return { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX };
-  }, [candles, minPrice, maxPrice, height]);
+  }, [candles, minPrice, maxPrice, height, candleSpacing, barWidth]);
 
   if (!chartData) {
     return (
@@ -190,14 +193,14 @@ export default function CandleChart({
 
         {/* Volume bars */}
         {bars.map((b, i) => (
-          <rect key={`vol-${i}`} x={b.x} y={b.volY} width={BAR_WIDTH} height={b.volH} fill={b.volColor} />
+          <rect key={`vol-${i}`} x={b.x} y={b.volY} width={barWidth} height={b.volH} fill={b.volColor} />
         ))}
 
         {/* Candlestick bars */}
         {bars.map((b, i) => (
           <g key={`candle-${i}`}>
             <line x1={b.centerX} y1={b.wickTop} x2={b.centerX} y2={b.wickBottom} stroke={b.color} strokeWidth="1" />
-            <rect x={b.x} y={b.bodyTop} width={BAR_WIDTH} height={b.bodyHeight} fill={b.color} />
+            <rect x={b.x} y={b.bodyTop} width={barWidth} height={b.bodyHeight} fill={b.color} />
           </g>
         ))}
 

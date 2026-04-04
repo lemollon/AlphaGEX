@@ -707,7 +707,7 @@ export default function StrategyPanel({
               <span>Expirations</span>
               <div className="line bg-text-tertiary/20" />
             </div>
-            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
+            <DteQuickButtons onSelect={handleDteSelect} />
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Short Exp" value={legs.shortExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('shortExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Long Exp" value={legs.longExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('longExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
@@ -730,7 +730,7 @@ export default function StrategyPanel({
               <span>Type &amp; Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
-            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
+            <DteQuickButtons onSelect={handleDteSelect} />
             <div className="flex gap-2 mb-1.5">
               <div className="flex-1 flex flex-col gap-1">
                 <span className="sw-label">Option Type</span>
@@ -766,7 +766,7 @@ export default function StrategyPanel({
               <span>Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
-            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
+            <DteQuickButtons onSelect={handleDteSelect} />
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
@@ -793,7 +793,7 @@ export default function StrategyPanel({
               <span>Expiration</span>
               <div className="line bg-text-tertiary/20" />
             </div>
-            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
+            <DteQuickButtons onSelect={handleDteSelect} />
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Expiration" value={legs.expiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('expiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
@@ -824,7 +824,7 @@ export default function StrategyPanel({
               <span>Expirations</span>
               <div className="line bg-accent/15" />
             </div>
-            {inputMode !== INPUT_MODES.GEX_SUGGEST && <DteQuickButtons onSelect={handleDteSelect} />}
+            <DteQuickButtons onSelect={handleDteSelect} />
             <div className="flex gap-2 mb-1.5">
               <ExpirationInput label="Front (Sell)" value={legs.frontExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('frontExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
               <ExpirationInput label="Back (Buy)" value={legs.backExpiration} inputMode={inputMode} expirations={expirations} expirationsWithDte={expirationsWithDte} onChange={(v) => updateLeg('backExpiration', v)} onFetchStrikes={fetchStrikes} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
