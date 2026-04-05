@@ -608,12 +608,23 @@ class AgapeSpotSignalGenerator:
         if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
             return (SignalAction.WAIT, f"LOW_CONFIDENCE_{confidence}")
 
-        # Per-ticker entry filter: require actual funding data before entering
+        # Per-ticker entry filter: funding data quality check.
+        # Previously this was a hard block that returned WAIT when CoinGlass
+        # funding data was unavailable.  This killed ALL trades for XRP, SHIB,
+        # DOGE whenever CoinGlass API was down or API key was missing.
+        # Now: log a warning and reduce confidence instead of blocking.
+        # The downstream EV gate and choppy market gate already handle
+        # low-quality signals — duplicate blocking is unnecessary.
         entry_filters = self.config.get_entry_filters(ticker)
         if entry_filters.get("require_funding_data"):
             funding_regime = market_data.get("funding_regime", "UNKNOWN")
             if funding_regime in ("UNKNOWN", "", None):
-                return (SignalAction.WAIT, "NO_FUNDING_DATA")
+                logger.warning(
+                    f"AGAPE-SPOT: {ticker} has no funding data "
+                    f"(CoinGlass unavailable) — reducing confidence, not blocking"
+                )
+                # Downgrade confidence so EV gate and choppy gate can still evaluate
+                confidence = "LOW"
 
         # ETH-leader filter: use ETH's Deribit GEX as directional compass
         eth_ok, eth_reason = self.check_eth_leader(ticker)
