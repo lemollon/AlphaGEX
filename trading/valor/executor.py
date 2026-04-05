@@ -433,16 +433,19 @@ class TastytradeExecutor:
         Returns:
             (success, message, order_id)
         """
-        # Pre-trade margin check (STRICT - MES futures use leverage, must verify margin)
+        # Pre-trade margin check - strict only in LIVE mode.
+        # Paper mode uses strict=False so trades aren't blocked when the margin
+        # monitor can't determine equity from the database.
         from trading.margin.pre_trade_check import check_margin_before_trade
         ticker = getattr(signal, 'ticker', None) or "MES"
+        is_live = self.config.mode != TradingMode.PAPER
         approved, reason = check_margin_before_trade(
             bot_name="VALOR",
             symbol=ticker,
             side=signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction),
             quantity=float(signal.contracts),
             entry_price=signal.entry_price,
-            strict=True,
+            strict=is_live,
         )
         if not approved:
             logger.warning(f"VALOR: Trade BLOCKED by margin check: {reason}")
@@ -819,9 +822,9 @@ class TastytradeExecutor:
         - init_error: Any initialization error message
         """
         return {
-            "can_execute": self.session is not None,
+            "can_execute": self.session_token is not None,
             "auth_method": self.auth_method,
-            "session_active": self.session is not None,
+            "session_active": self.session_token is not None,
             "market_open": self.is_market_open(),
-            "init_error": None if self.session else "No active session - check credentials"
+            "init_error": None if self.session_token else "No active session - check credentials"
         }
