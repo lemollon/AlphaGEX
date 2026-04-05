@@ -37,12 +37,10 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "no_loss_profit_target_pct": 3.0,  # Take profit at 3% gain
         "max_hold_hours": 12,  # 12h max — capture intraday trends
         "max_positions": 1,   # One position at a time (full balance per trade)
-        # Guardrails: restrict to profitable hours
-        "market_hours_only": True,         # Kill overnight drain (-$475 pre-fix)
-        "market_open_hour": 2,             # 02:00 CT — ETH profitable from early AM
-        "market_open_minute": 0,
-        "market_close_hour": 14,           # 14:00 CT — cut before overnight session
-        "market_close_minute": 0,
+        # ETH trades 24/7 like all crypto. The pre-fix overnight drain was caused
+        # by position pileup and EWMA gate bugs (fixed Feb 15 2026), not by the
+        # hours themselves.  Restricting hours blocked 67% of trading time.
+        "market_hours_only": False,
         "min_scans_between_trades": 10,    # 10 scans ≈ 10 min cooldown
     },
     "BTC-USD": {

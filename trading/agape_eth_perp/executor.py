@@ -59,15 +59,18 @@ class AgapeEthPerpExecutor:
         if not signal.is_valid:
             return None
 
-        # Pre-trade margin check (STRICT - perpetuals use leverage, must verify margin)
+        # Pre-trade margin check - strict only in LIVE mode.
+        # Paper mode uses strict=False so trades aren't blocked when the margin
+        # monitor can't determine equity from the database.
         from trading.margin.pre_trade_check import check_margin_before_trade
+        is_live = self.config.mode == TradingMode.LIVE
         approved, reason = check_margin_before_trade(
             bot_name="AGAPE_ETH_PERP",
             symbol="ETH-PERP",
             side=signal.side or "long",
             quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
-            strict=True,
+            strict=is_live,
         )
         if not approved:
             logger.warning(f"AGAPE-ETH-PERP: Trade BLOCKED by margin check: {reason}")
