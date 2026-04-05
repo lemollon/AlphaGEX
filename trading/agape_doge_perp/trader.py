@@ -52,6 +52,7 @@ class AgapeDogePerpTrader:
         self.consecutive_losses = 0
         self.loss_streak_pause_until = None
         self._liquidated = False
+        self._liquidation_recovery_at = None
         self._direction_tracker = get_agape_doge_perp_direction_tracker(self.config)
         self._startup_recovery()
         self.db.log("INFO", "INIT", f"AGAPE-DOGE-PERP initialized AGGRESSIVE (mode={self.config.mode.value})")
@@ -173,11 +174,30 @@ class AgapeDogePerpTrader:
             for pos in open_positions:
                 if self._close_position(pos, current_price, "MARGIN_LIQUIDATION"):
                     liq_closed += 1
-            self._enabled = False
-            self._liquidated = True
-            self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
-                f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
+            if self.config.mode == TradingMode.PAPER:
+                self._enabled = False
+                self._liquidated = True
+                self._liquidation_recovery_at = datetime.now(CENTRAL_TZ) + timedelta(hours=1)
+                self.db.log("WARNING", "MARGIN_LIQUIDATION_PAPER",
+                    f"Paper account liquidated at equity ${equity:.2f}. "
+                    f"{liq_closed} positions closed. Will auto-recover in 1 hour.")
+            else:
+                self._enabled = False
+                self._liquidated = True
+                self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
+                    f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
             return (len(open_positions), liq_closed)
+        # Paper mode liquidation recovery: re-enable after cooldown
+        if (self.config.mode == TradingMode.PAPER
+                and self._liquidated
+                and self._liquidation_recovery_at
+                and datetime.now(CENTRAL_TZ) >= self._liquidation_recovery_at):
+            logger.info("AGAPE-DOGE-PERP: Paper mode liquidation recovery — re-enabling bot")
+            self._enabled = True
+            self._liquidated = False
+            self._liquidation_recovery_at = None
+            self.db.log("INFO", "LIQUIDATION_RECOVERY",
+                "Paper account recovered from liquidation. Bot re-enabled.")
         closed = 0
         now = datetime.now(CENTRAL_TZ)
         for pos in open_positions:

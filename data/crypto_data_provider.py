@@ -961,12 +961,29 @@ class CryptoDataProvider:
             prev = self._snapshot_cache.get(snapshot.symbol)
             if prev and prev.spot_price > 0:
                 price_change_pct = (spot - prev.spot_price) / prev.spot_price
-                if abs(price_change_pct) > 0.002:  # >0.2% move since last snapshot
+                # Lowered from 0.2% to 0.05%: the old 0.2% threshold required
+                # a large move in 30 seconds, which rarely happens in calm
+                # markets.  This caused ALL crypto bots to get WAIT signals
+                # whenever CoinGlass and Deribit APIs were unavailable.
+                if abs(price_change_pct) > 0.0005:  # >0.05% move since last snapshot
                     if price_change_pct > 0:
                         return ("LONG", "LOW")  # Momentum following
                     else:
                         return ("SHORT", "LOW")
-                # Small move: range-bound
+                # Small move: range-bound (still tradeable for long-only bots)
+                return ("RANGE_BOUND", "LOW")
+            else:
+                # First cycle after startup: no previous snapshot for comparison.
+                # Return RANGE_BOUND instead of WAIT so bots can evaluate entry
+                # conditions rather than blanket-blocking the first scan.
+                logger.info(
+                    f"CryptoDataProvider: No previous snapshot for {snapshot.symbol}, "
+                    f"defaulting to RANGE_BOUND (first cycle)"
+                )
                 return ("RANGE_BOUND", "LOW")
 
+        logger.warning(
+            f"CryptoDataProvider: All signal sources exhausted for "
+            f"{snapshot.symbol} — no GEX, no CoinGlass, no momentum data"
+        )
         return ("WAIT", "LOW")

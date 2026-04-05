@@ -3225,9 +3225,17 @@ class AutonomousTraderScheduler:
                 for err in result["errors"]:
                     logger.error(f"AGAPE-SPOT: {err}")
             else:
-                # Log status every 60 scans (~1 hour) to avoid log spam at 1-min intervals
+                # Log outcomes every 60 scans (~1 hour) to diagnose why no trades
                 if self.agape_spot_trader._cycle_count % 60 == 0:
-                    logger.debug(f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count}")
+                    # Collect per-ticker outcomes for diagnostics
+                    outcomes = {
+                        t: r.get("outcome", "?")
+                        for t, r in result.get("tickers", {}).items()
+                    }
+                    logger.info(
+                        f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count} "
+                        f"(no trades) — outcomes: {outcomes}"
+                    )
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
@@ -3362,7 +3370,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-ETH-PERP: Cycle error: {result['error']}")
             else:
                 if self.agape_eth_perp_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-ETH-PERP scan #{self.agape_eth_perp_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-ETH-PERP scan #{self.agape_eth_perp_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-ETH-PERP scan: {str(e)}")
@@ -3410,7 +3418,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-BTC-PERP: Cycle error: {result['error']}")
             else:
                 if self.agape_btc_perp_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-BTC-PERP scan #{self.agape_btc_perp_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-BTC-PERP scan #{self.agape_btc_perp_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-BTC-PERP scan: {str(e)}")
@@ -3458,7 +3466,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-XRP-PERP: Cycle error: {result['error']}")
             else:
                 if self.agape_xrp_perp_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-XRP-PERP scan #{self.agape_xrp_perp_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-XRP-PERP scan #{self.agape_xrp_perp_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-XRP-PERP scan: {str(e)}")
@@ -3506,7 +3514,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-DOGE-PERP: Cycle error: {result['error']}")
             else:
                 if self.agape_doge_perp_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-DOGE-PERP scan #{self.agape_doge_perp_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-DOGE-PERP scan #{self.agape_doge_perp_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-DOGE-PERP scan: {str(e)}")
@@ -3554,7 +3562,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-SHIB-PERP: Cycle error: {result['error']}")
             else:
                 if self.agape_shib_perp_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-SHIB-PERP scan #{self.agape_shib_perp_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-SHIB-PERP scan #{self.agape_shib_perp_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SHIB-PERP scan: {str(e)}")
