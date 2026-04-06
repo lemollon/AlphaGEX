@@ -3273,6 +3273,25 @@ class AutonomousTraderScheduler:
                 self._agape_spot_none_logged = True
             return
 
+        # Write first-scan marker to DB for remote diagnostics
+        if not getattr(self, '_agape_spot_first_scan_logged', False):
+            self._agape_spot_first_scan_logged = True
+            try:
+                if get_connection:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO autonomous_config (key, value) VALUES ('first_agape_spot_scan', %s) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                        (datetime.now(CENTRAL_TZ).isoformat(),)
+                    )
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+                    logger.info("✅ First AGAPE-SPOT scan marker written to DB")
+            except Exception:
+                pass
+
         try:
             result = self.agape_spot_trader.run_cycle()
 
@@ -7525,6 +7544,26 @@ class AutonomousTraderScheduler:
                 logger.error("🚨 CRITICAL: Scheduler started but NO JOBS scheduled!")
             else:
                 logger.info(f"✅ Scheduler started with {len(jobs)} jobs scheduled")
+                # Write start confirmation to DB for remote diagnostics
+                try:
+                    if get_connection:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "INSERT INTO autonomous_config (key, value) VALUES ('scheduler_start_confirmed', %s) "
+                            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                            (json.dumps({
+                                'time': datetime.now(CENTRAL_TZ).isoformat(),
+                                'jobs_count': len(jobs),
+                                'job_names': [j.name for j in jobs],
+                            }),)
+                        )
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        logger.info("✅ Scheduler start confirmation written to DB")
+                except Exception as db_err:
+                    logger.error(f"Failed to write start confirmation: {db_err}")
 
         except Exception as e:
             logger.error(f"CRITICAL: Failed to start scheduler: {e}")
