@@ -78,6 +78,19 @@ def _send_webhook_sync(embed: dict) -> bool:
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
+_last_posted = {}  # dedup guard: {message_key: timestamp} — prevents duplicate posts
+
+
+def _dedup_ok(key: str, cooldown_seconds: int = 300) -> bool:
+    """Return True if this message type hasn't been posted in the last N seconds."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    last = _last_posted.get(key)
+    if last and (now - last).total_seconds() < cooldown_seconds:
+        logger.warning(f"[SpreadWorks] Dedup blocked: {key} was posted {(now - last).total_seconds():.0f}s ago")
+        return False
+    _last_posted[key] = now
+    return True
 
 
 def _start_scheduler(app: FastAPI):
@@ -138,6 +151,8 @@ def _start_scheduler(app: FastAPI):
         if not content_loaded or not _is_trading_day():
             logger.info("[SpreadWorks] Skipping market open message (not trading day or no content)")
             return
+        if not _dedup_ok("market_open_msg"):
+            return
 
         import asyncio
         now = get_central_now()
@@ -171,6 +186,8 @@ def _start_scheduler(app: FastAPI):
         """8:05 AM CT — Economic event countdown."""
         if not content_loaded or not _is_trading_day():
             logger.info("[SpreadWorks] Skipping economic countdown (not trading day or no content)")
+            return
+        if not _dedup_ok("economic_countdown"):
             return
 
         import asyncio
@@ -235,6 +252,8 @@ def _start_scheduler(app: FastAPI):
 
     async def _fire_open_post():
         """Market open post — 8:00 AM CT = 13:00 or 14:00 UTC depending on DST."""
+        if not _dedup_ok("open_post"):
+            return
         logger.info("[SpreadWorks] Scheduler firing market open Discord post")
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -248,6 +267,8 @@ def _start_scheduler(app: FastAPI):
         """3:00 PM CT — Market close reflection."""
         if not content_loaded or not _is_trading_day():
             logger.info("[SpreadWorks] Skipping market close message (not trading day or no content)")
+            return
+        if not _dedup_ok("market_close_msg"):
             return
 
         import asyncio
@@ -285,6 +306,8 @@ def _start_scheduler(app: FastAPI):
 
     async def _fire_eod_post():
         """Market close post — 3:00 PM CT = 20:00 or 21:00 UTC depending on DST."""
+        if not _dedup_ok("eod_post"):
+            return
         logger.info("[SpreadWorks] Scheduler firing EOD Discord post")
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -300,6 +323,8 @@ def _start_scheduler(app: FastAPI):
     async def _fire_gex_briefing():
         """8:30 AM CT — Morning GEX Briefing with engagement prompt."""
         if not _is_trading_day():
+            return
+        if not _dedup_ok("gex_briefing"):
             return
 
         import asyncio
@@ -379,6 +404,8 @@ def _start_scheduler(app: FastAPI):
     async def _fire_midday_pulse():
         """12:00 PM CT — Midday market pulse with position P&L and engagement."""
         if not _is_trading_day():
+            return
+        if not _dedup_ok("midday_pulse"):
             return
 
         import asyncio
@@ -483,6 +510,8 @@ def _start_scheduler(app: FastAPI):
     async def _fire_scoreboard():
         """3:05 PM CT — Weekly scoreboard with win/loss record and streaks."""
         if not _is_trading_day():
+            return
+        if not _dedup_ok("scoreboard"):
             return
 
         import asyncio
@@ -591,6 +620,8 @@ def _start_scheduler(app: FastAPI):
     async def _fire_weekend_playbook():
         """Saturday 10:00 AM CT — Next week's economic calendar + engagement."""
         if not content_loaded:
+            return
+        if not _dedup_ok("weekend_playbook"):
             return
 
         import asyncio
@@ -778,40 +809,40 @@ def _start_scheduler(app: FastAPI):
     # --- Morning block ---
     # 8:00 CT — Bible verse + tip (30 min before open)
     scheduler.add_job(_fire_market_open_message, "cron", hour=8, minute=0,
-                      day_of_week="mon-fri", id="discord_market_open_msg")
+                      day_of_week="mon-fri", id="discord_market_open_msg", replace_existing=True)
     # 8:00:30 CT — Open positions summary
     scheduler.add_job(_fire_open_post, "cron", hour=8, minute=0, second=30,
-                      day_of_week="mon-fri", id="discord_open")
+                      day_of_week="mon-fri", id="discord_open", replace_existing=True)
     # 8:05 CT — Economic event countdown
     scheduler.add_job(_fire_economic_countdown, "cron", hour=8, minute=5,
-                      day_of_week="mon-fri", id="discord_economic")
+                      day_of_week="mon-fri", id="discord_economic", replace_existing=True)
     # 8:30 CT — GEX Briefing (market open)
     scheduler.add_job(_fire_gex_briefing, "cron", hour=8, minute=30,
-                      day_of_week="mon-fri", id="discord_gex_briefing")
+                      day_of_week="mon-fri", id="discord_gex_briefing", replace_existing=True)
 
     # --- Intraday ---
     # 12:00 CT — Midday Pulse Check
     scheduler.add_job(_fire_midday_pulse, "cron", hour=12, minute=0,
-                      day_of_week="mon-fri", id="discord_midday_pulse")
+                      day_of_week="mon-fri", id="discord_midday_pulse", replace_existing=True)
     # Every 5 min 8:30-15:00 CT — GEX shift detection + snapshot
     scheduler.add_job(_fire_gex_shift_check, "cron", minute="*/5",
-                      hour="8-14", day_of_week="mon-fri", id="discord_gex_shift")
+                      hour="8-14", day_of_week="mon-fri", id="discord_gex_shift", replace_existing=True)
 
     # --- Close block ---
     # 15:00 CT — Market close reflection
     scheduler.add_job(_fire_market_close_message, "cron", hour=15, minute=0,
-                      day_of_week="mon-fri", id="discord_market_close_msg")
+                      day_of_week="mon-fri", id="discord_market_close_msg", replace_existing=True)
     # 15:00:30 CT — EOD summary with AI commentary (right at close)
     scheduler.add_job(_fire_eod_post, "cron", hour=15, minute=0, second=30,
-                      day_of_week="mon-fri", id="discord_eod")
+                      day_of_week="mon-fri", id="discord_eod", replace_existing=True)
     # 15:05 CT — Position Scoreboard
     scheduler.add_job(_fire_scoreboard, "cron", hour=15, minute=5,
-                      day_of_week="mon-fri", id="discord_scoreboard")
+                      day_of_week="mon-fri", id="discord_scoreboard", replace_existing=True)
 
     # --- Weekend ---
     # Saturday 10:00 AM CT — Weekend Playbook
     scheduler.add_job(_fire_weekend_playbook, "cron", hour=10, minute=0,
-                      day_of_week="sat", id="discord_weekend_playbook")
+                      day_of_week="sat", id="discord_weekend_playbook", replace_existing=True)
 
     scheduler.start()
     _active_scheduler = scheduler
