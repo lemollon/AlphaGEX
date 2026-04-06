@@ -649,6 +649,63 @@ async function monitorSinglePosition(
                 _mtmFailureCounts.delete(pid)
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
               } else {
+                // Re-poll returned no fill — check if broker position even exists anymore.
+                // If the broker legs are gone, the position was closed/expired at the broker
+                // and we should close the DB position instead of retrying forever.
+                let brokerLegsExist = true
+                try {
+                  const ticker = pos.ticker || 'SPY'
+                  const exp = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
+                  const occPs = buildOccSymbol(ticker, exp, num(pos.put_short_strike), 'P')
+                  const brokerPositions = await getSandboxAccountPositions(pollAcct.apiKey, undefined, pollAcct.baseUrl)
+                  const shortPutLeg = brokerPositions.find((p: any) => p.symbol === occPs && p.quantity !== 0)
+                  brokerLegsExist = !!shortPutLeg
+                } catch { /* assume legs exist if check fails — don't close on API error */ }
+
+                if (!brokerLegsExist) {
+                  // Broker position is gone — close DB at entry credit (0 P&L)
+                  console.warn(
+                    `[scanner] FLAME ${pid}: Re-poll returned no fill AND broker position is gone — ` +
+                    `closing DB position at entry credit (0 P&L)`,
+                  )
+                  const closeReason = pendingInfo._pending_reason || 'deferred_broker_gone'
+                  const rowsAffected = await dbExecute(
+                    `UPDATE ${botTable(bot.name, 'positions')}
+                     SET status = 'closed', close_time = NOW(),
+                         close_price = $1, realized_pnl = 0,
+                         close_reason = $2, sandbox_close_order_id = $3,
+                         updated_at = NOW()
+                     WHERE position_id = $4 AND status = 'open' AND dte_mode = $5`,
+                    [entryCredit, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
+                  )
+                  if (rowsAffected > 0) {
+                    if (posAccountType === 'production') {
+                      await query(
+                        `UPDATE ${botTable(bot.name, 'paper_account')}
+                         SET total_trades = total_trades + 1,
+                             collateral_in_use = GREATEST(0, collateral_in_use - $1),
+                             buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+                             updated_at = NOW()
+                         WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+                        [collateral, posPerson, bot.dte],
+                      )
+                    } else {
+                      await query(
+                        `UPDATE ${botTable(bot.name, 'paper_account')}
+                         SET total_trades = total_trades + 1,
+                             collateral_in_use = GREATEST(0, collateral_in_use - $1),
+                             buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+                             updated_at = NOW()
+                         WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $2`,
+                        [collateral, bot.dte],
+                      )
+                    }
+                    console.log(`[scanner] FLAME DEFERRED BROKER-GONE CLOSE: ${pid} closed at entry credit $${entryCredit.toFixed(4)} (0 P&L)`)
+                  }
+                  _mtmFailureCounts.delete(pid)
+                  return { status: `closed:deferred_broker_gone`, unrealizedPnl: 0 }
+                }
+
                 console.warn(`[scanner] FLAME ${pid}: Re-poll returned no fill — will retry next cycle`)
                 return { status: `monitoring:pending_close_fill(order=${userPending.order_id})`, unrealizedPnl: 0 }
               }
@@ -2188,6 +2245,138 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Production broker reconciliation                                    */
+/*  Detects when production Tradier positions are closed at the broker  */
+/*  but the DB still shows them as open. Closes the DB records.         */
+/* ------------------------------------------------------------------ */
+
+async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
+  try {
+    const posTable = botTable(bot.name, 'positions')
+    const acctTable = botTable(bot.name, 'paper_account')
+
+    // Get all open production positions from DB
+    const openProdPositions = await query(
+      `SELECT position_id, ticker, expiration,
+              put_short_strike, put_long_strike,
+              call_short_strike, call_long_strike,
+              contracts, total_credit, collateral_required,
+              person, account_type
+       FROM ${posTable}
+       WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production'`,
+      [bot.dte],
+    )
+
+    if (openProdPositions.length === 0) return
+
+    // Get all production Tradier accounts
+    const allAccounts = await getLoadedSandboxAccountsAsync()
+    const prodAccounts = allAccounts.filter(a => a.type === 'production')
+    if (prodAccounts.length === 0) return
+
+    // Build a map of broker positions per person
+    const brokerPositionsByPerson: Record<string, Array<{ symbol: string; quantity: number }>> = {}
+    for (const acct of prodAccounts) {
+      try {
+        brokerPositionsByPerson[acct.name] = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
+      } catch {
+        // If we can't reach the broker, skip reconciliation (don't close DB positions on API failure)
+        console.warn(`[scanner] Production reconcile: Can't reach ${acct.name} broker — skipping`)
+        return
+      }
+    }
+
+    // For each open DB position, check if broker still has the legs
+    for (const pos of openProdPositions) {
+      const person = pos.person || ''
+      const brokerPositions = brokerPositionsByPerson[person]
+      if (!brokerPositions) continue // No broker data for this person
+
+      const ticker = pos.ticker || 'SPY'
+      const exp = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
+      const ps = num(pos.put_short_strike)
+      const pl = num(pos.put_long_strike)
+      const cs = num(pos.call_short_strike)
+      const cl = num(pos.call_long_strike)
+
+      // Check if the short put leg exists at the broker (primary indicator)
+      const occPs = buildOccSymbol(ticker, exp, ps, 'P')
+      const occCs = buildOccSymbol(ticker, exp, cs, 'C')
+      const shortPutExists = brokerPositions.some(p => p.symbol === occPs && p.quantity !== 0)
+      const shortCallExists = brokerPositions.some(p => p.symbol === occCs && p.quantity !== 0)
+
+      // If BOTH short legs are gone, the position is closed at the broker
+      if (!shortPutExists && !shortCallExists) {
+        const entryCredit = num(pos.total_credit)
+        const contracts = int(pos.contracts)
+        const collateral = num(pos.collateral_required)
+        const pid = pos.position_id
+
+        console.warn(
+          `[scanner] PRODUCTION BROKER RECONCILE: ${pid} — broker (${person}) has NO legs. ` +
+          `Closing DB position at entry credit (0 P&L).`,
+        )
+
+        // Close the DB position at entry credit (conservative: 0 P&L)
+        // We don't know the actual close price since the broker already closed it.
+        const rowsAffected = await dbExecute(
+          `UPDATE ${posTable}
+           SET status = 'closed', close_time = NOW(),
+               close_price = $1, realized_pnl = 0,
+               close_reason = 'broker_position_gone',
+               updated_at = NOW()
+           WHERE position_id = $2 AND status = 'open' AND dte_mode = $3`,
+          [entryCredit, pid, bot.dte],
+        )
+
+        if (rowsAffected > 0) {
+          // Release collateral from production paper_account
+          await query(
+            `UPDATE ${acctTable}
+             SET total_trades = total_trades + 1,
+                 collateral_in_use = GREATEST(0, collateral_in_use - $1),
+                 buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+                 updated_at = NOW()
+             WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+            [collateral, person, bot.dte],
+          )
+
+          // Log the reconciliation
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              'BROKER_RECONCILE',
+              `PRODUCTION POSITION CLOSED (broker gone): ${pid} — ${person} ${contracts}x IC closed at entry credit (0 P&L)`,
+              JSON.stringify({
+                position_id: pid,
+                person,
+                entry_credit: entryCredit,
+                contracts,
+                collateral,
+                reason: 'broker_position_gone',
+                broker_put_leg: occPs,
+                broker_call_leg: occCs,
+              }),
+              bot.dte,
+              person,
+            ],
+          )
+
+          console.log(
+            `[scanner] PRODUCTION BROKER RECONCILE COMPLETE: ${pid} closed (${person}, ` +
+            `${contracts}x @ $${entryCredit.toFixed(4)}, collateral $${collateral.toFixed(0)} released)`,
+          )
+        }
+      }
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] ${bot.name.toUpperCase()} production broker reconciliation error: ${msg}`)
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Daily sandbox cleanup (Fix 7)                                      */
 /* ------------------------------------------------------------------ */
 
@@ -2618,6 +2807,12 @@ async function scanBot(bot: BotDef): Promise<void> {
     // Collateral reconciliation every cycle (Fix 4)
     await reconcileCollateral(bot)
 
+    // Production broker reconciliation — detect when production Tradier positions
+    // are closed at the broker but DB still shows them as open (FLAME only)
+    if (bot.name === 'flame') {
+      await reconcileProductionBrokerPositions(bot)
+    }
+
     // Auto-decrement PDT counter — sync SHARED ironforge_pdt_config with live pdt_log count
     try {
       const pdtCfgRow = await query(
@@ -2689,8 +2884,19 @@ async function scanBot(bot: BotDef): Promise<void> {
     const openCount = openRows.length
     const hasOpenPosition = openCount > 0
 
-    // Step 1: Always monitor open positions first
-    if (hasOpenPosition) {
+    // Also check for open PRODUCTION positions — these must be monitored independently
+    // of sandbox. Previously, production positions were only monitored as a side-effect
+    // of sandbox positions being open. If sandbox closed first and the production close
+    // was deferred, the production position would never be re-polled/closed.
+    const prodOpenRows = await query(
+      `SELECT position_id FROM ${botTable(bot.name, 'positions')}
+       WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production'`,
+      [bot.dte],
+    )
+    const hasAnyOpenPosition = hasOpenPosition || prodOpenRows.length > 0
+
+    // Step 1: Always monitor open positions first (sandbox OR production)
+    if (hasAnyOpenPosition) {
       const monitorResult = await monitorPosition(bot, ct)
       action = monitorResult.status.startsWith('closed:') ? 'closed' : 'monitoring'
       reason = monitorResult.status
@@ -2712,7 +2918,7 @@ async function scanBot(bot: BotDef): Promise<void> {
 
     // Step 2: If market closed, just log and return
     if (!isMarketOpen(ct)) {
-      if (!hasOpenPosition) {
+      if (!hasAnyOpenPosition) {
         action = 'outside_window'
         reason = `Market closed (${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT)`
       }
