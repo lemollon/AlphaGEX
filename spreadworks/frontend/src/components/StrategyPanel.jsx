@@ -302,12 +302,14 @@ export default function StrategyPanel({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.detail || 'Failed to save');
+        const detail = data.detail;
+        const msg = typeof detail === 'string' ? detail : JSON.stringify(detail) || 'Failed to save';
+        throw new Error(msg);
       }
       setSaveMsg('Saved!');
       setTimeout(() => setSaveMsg(''), 3000);
     } catch (err) {
-      setSaveMsg(err.message);
+      setSaveMsg(typeof err?.message === 'string' ? err.message : String(err));
     } finally {
       setSaving(false);
     }
@@ -401,11 +403,15 @@ export default function StrategyPanel({
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || 'Failed to post');
+      if (!res.ok) {
+        const detail = data.detail;
+        const msg = typeof detail === 'string' ? detail : JSON.stringify(detail) || 'Failed to post';
+        throw new Error(msg);
+      }
       setPushMsg('Posted!');
       setTimeout(() => setPushMsg(''), 3000);
     } catch (err) {
-      setPushMsg(err.message);
+      setPushMsg(typeof err?.message === 'string' ? err.message : String(err));
     } finally {
       setPushing(false);
     }
