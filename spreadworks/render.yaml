@@ -36,7 +36,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm install && npm run build && cd ..
     startCommand: cd spreadworks && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
