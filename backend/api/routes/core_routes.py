@@ -980,19 +980,18 @@ async def crypto_bot_diagnostics():
 
         for bot_name, table in scan_tables.items():
             try:
+                # Try 'timestamp' column first (actual name), fall back to 'scan_time'
                 cursor.execute(
-                    "SELECT scan_time AT TIME ZONE 'America/Chicago' as scan_ct,"
-                    " outcome, ticker"
+                    "SELECT timestamp AT TIME ZONE 'America/Chicago' as scan_ct,"
+                    " outcome"
                     " FROM " + table +
-                    " ORDER BY scan_time DESC LIMIT 5"
+                    " ORDER BY timestamp DESC LIMIT 5"
                 )
                 rows = cursor.fetchall()
                 if rows:
                     last_outcomes = []
                     for r in rows:
                         entry = {"time": str(r[0]), "outcome": r[1]}
-                        if len(r) > 2:
-                            entry["ticker"] = r[2]
                         last_outcomes.append(entry)
                     results[bot_name] = {
                         "status": "RUNNING",
@@ -1009,7 +1008,7 @@ async def crypto_bot_diagnostics():
                     results[bot_name] = {"status": "ERROR", "message": err_str}
                 conn.rollback()
 
-        # 2. Check open positions for each bot
+        # 2. Check open positions AND recent trades for each bot
         position_tables = {
             "AGAPE-SPOT": "agape_spot_positions",
             "AGAPE-ETH-PERP": "agape_eth_perp_positions",
@@ -1035,30 +1034,90 @@ async def crypto_bot_diagnostics():
                         "open_positions": open_count,
                         "total_positions_ever": total_count,
                     }
+
+                # Show actual open positions details
+                if open_count > 0:
+                    cols = "ticker, " if "spot" in table else ""
+                    cursor.execute(
+                        "SELECT " + cols + "status, entry_price,"
+                        " open_time AT TIME ZONE 'America/Chicago' as open_ct,"
+                        " account_label"
+                        " FROM " + table +
+                        " WHERE status = 'open'"
+                        " ORDER BY open_time DESC LIMIT 5"
+                    )
+                    open_rows = cursor.fetchall()
+                    open_details = []
+                    for r in open_rows:
+                        if "spot" in table:
+                            open_details.append({
+                                "ticker": r[0], "status": r[1],
+                                "entry_price": float(r[2]) if r[2] else None,
+                                "open_time": str(r[3]),
+                                "account": r[4],
+                            })
+                        else:
+                            open_details.append({
+                                "status": r[0],
+                                "entry_price": float(r[1]) if r[1] else None,
+                                "open_time": str(r[2]),
+                                "account": r[3] if len(r) > 3 else None,
+                            })
+                    results[bot_name]["open_position_details"] = open_details
+
+                # Show last 3 closed trades (to see if bot traded recently)
+                cursor.execute(
+                    "SELECT close_time AT TIME ZONE 'America/Chicago' as close_ct,"
+                    " realized_pnl, close_reason"
+                    " FROM " + table +
+                    " WHERE status = 'closed' AND close_time IS NOT NULL"
+                    " ORDER BY close_time DESC LIMIT 3"
+                )
+                closed_rows = cursor.fetchall()
+                if closed_rows:
+                    results[bot_name]["last_closed_trades"] = [
+                        {
+                            "close_time": str(r[0]),
+                            "pnl": float(r[1]) if r[1] else 0,
+                            "reason": r[2],
+                        }
+                        for r in closed_rows
+                    ]
+
             except Exception as e:
                 if bot_name not in results:
                     results[bot_name] = {}
                 results[bot_name]["positions_error"] = str(e)
                 conn.rollback()
 
-        # 3. Check activity logs for init/error messages
-        try:
-            cursor.execute(
-                "SELECT bot_name, action, message,"
-                " timestamp AT TIME ZONE 'America/Chicago' as ts"
-                " FROM agape_spot_activity_log"
-                " WHERE action IN ('INIT', 'CYCLE_ERROR', 'ERROR', 'MARGIN_LIQUIDATION',"
-                " 'MARGIN_LIQUIDATION_PAPER', 'LIQUIDATION_RECOVERY', 'BOT_DISABLED')"
-                " ORDER BY timestamp DESC LIMIT 10"
-            )
-            rows = cursor.fetchall()
-            log_entries = []
-            for r in rows:
-                log_entries.append({"bot": r[0], "action": r[1], "message": r[2], "time": str(r[3])})
-            results["recent_activity_logs"] = log_entries
-        except Exception as e:
-            results["recent_activity_logs"] = {"error": str(e)}
-            conn.rollback()
+        # 3. Check activity logs (use correct column names)
+        log_tables = [
+            ("AGAPE-SPOT", "agape_spot_activity_log", True),
+            ("AGAPE-ETH-PERP", "agape_eth_perp_activity_log", False),
+        ]
+        recent_logs = []
+        for log_name, log_table, has_ticker in log_tables:
+            try:
+                ticker_col = "ticker, " if has_ticker else "'' as ticker, "
+                cursor.execute(
+                    "SELECT " + ticker_col + "action, message,"
+                    " timestamp AT TIME ZONE 'America/Chicago' as ts"
+                    " FROM " + log_table +
+                    " WHERE action IN ('INIT', 'CYCLE_ERROR', 'ERROR', 'MARGIN_LIQUIDATION',"
+                    " 'MARGIN_LIQUIDATION_PAPER', 'LIQUIDATION_RECOVERY', 'BOT_DISABLED',"
+                    " 'NEW_TRADE', 'POSITION_CLOSED')"
+                    " ORDER BY timestamp DESC LIMIT 5"
+                )
+                rows = cursor.fetchall()
+                for r in rows:
+                    recent_logs.append({
+                        "bot": log_name, "ticker": r[0],
+                        "action": r[1], "message": r[2], "time": str(r[3]),
+                    })
+            except Exception as e:
+                recent_logs.append({"bot": log_name, "error": str(e)})
+                conn.rollback()
+        results["recent_activity_logs"] = recent_logs
 
         cursor.close()
         conn.close()
