@@ -2521,8 +2521,38 @@ async def startup_event():
                 scheduler = get_scheduler()
 
                 if not scheduler.is_running:
-                    scheduler.start()
-                    print("✅ FORTRESS + CORNERSTONE Scheduler started successfully")
+                    try:
+                        scheduler.start()
+                        print("✅ FORTRESS + CORNERSTONE Scheduler started successfully")
+                    except Exception as start_err:
+                        # Write the EXACT error to DB for remote diagnosis
+                        # (stdout/logs are often invisible from Render shell)
+                        print(f"❌ Scheduler start() FAILED: {start_err}")
+                        import traceback as tb
+                        tb.print_exc()
+                        try:
+                            from database_adapter import get_connection as _get_conn
+                            import json as _json
+                            from datetime import datetime as _dt
+                            from zoneinfo import ZoneInfo as _ZI
+                            _conn = _get_conn()
+                            _cur = _conn.cursor()
+                            _cur.execute(
+                                "INSERT INTO autonomous_config (key, value) VALUES ('scheduler_start_error', %s) "
+                                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                                (_json.dumps({
+                                    'time': _dt.now(_ZI('America/Chicago')).isoformat(),
+                                    'error': str(start_err)[:500],
+                                    'traceback': tb.format_exc()[-1000:],
+                                }),)
+                            )
+                            _conn.commit()
+                            _cur.close()
+                            _conn.close()
+                            print("📝 Error details written to DB (key: scheduler_start_error)")
+                        except Exception:
+                            pass
+                        raise  # Let watchdog handle restart
                 else:
                     print("ℹ️  FORTRESS + CORNERSTONE Scheduler already running")
 
