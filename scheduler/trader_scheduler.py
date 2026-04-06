@@ -7533,6 +7533,23 @@ class AutonomousTraderScheduler:
         else:
             logger.info(f"✅ Active bots: {', '.join(active_bots)}")
 
+        # Diagnostic: confirm all job registrations completed (before scheduler.start())
+        try:
+            if get_connection:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO autonomous_config (key, value) VALUES ('scheduler_jobs_registered', %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (datetime.now(CENTRAL_TZ).isoformat(),)
+                )
+                conn.commit()
+                cursor.close()
+                conn.close()
+                logger.info("✅ Job registration checkpoint written to DB")
+        except Exception:
+            pass
+
         # Start the scheduler with proper exception handling
         try:
             self.scheduler.start()
@@ -7568,6 +7585,21 @@ class AutonomousTraderScheduler:
         except Exception as e:
             logger.error(f"CRITICAL: Failed to start scheduler: {e}")
             logger.error(traceback.format_exc())
+            # Write error to DB for remote diagnostics (can't rely on logs)
+            try:
+                if get_connection:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO autonomous_config (key, value) VALUES ('scheduler_start_error', %s) "
+                        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                        (json.dumps({'time': datetime.now(CENTRAL_TZ).isoformat(), 'error': str(e)[:500]}),)
+                    )
+                    conn.commit()
+                    cursor.close()
+                    conn.close()
+            except Exception:
+                pass
             self.is_running = False
             self.scheduler = None
             raise RuntimeError(f"Scheduler failed to start: {e}")
