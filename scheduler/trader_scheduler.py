@@ -655,19 +655,16 @@ class AutonomousTraderScheduler:
                 self.cornerstone_trader = None
 
         # FORTRESS V2 - SPY Iron Condors (10% monthly target)
-        # DISABLED: FORTRESS disconnected from sandbox accounts (Feb 27, 2026)
-        # Positions closed at market open, no new trades will be placed.
-        # To re-enable: uncomment the block below and remove this comment.
+        # Re-enabled: Apr 6, 2026 — PAPER mode only (AlphaGEX internal capital, no Tradier execution)
         self.fortress_trader = None
-        # if FORTRESS_AVAILABLE:
-        #     try:
-        #         config = FortressConfig(mode=FortressTradingMode.LIVE)
-        #         self.fortress_trader = FortressTrader(config=config)
-        #         logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
-        #     except Exception as e:
-        #         logger.warning(f"FORTRESS V2 initialization failed: {e}")
-        #         self.fortress_trader = None
-        logger.info("⚠️ FORTRESS V2 DISABLED - disconnected from sandbox accounts")
+        if FORTRESS_AVAILABLE:
+            try:
+                config = FortressConfig(mode=FortressTradingMode.PAPER)
+                self.fortress_trader = FortressTrader(config=config)
+                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, PAPER mode - AlphaGEX internal)")
+            except Exception as e:
+                logger.warning(f"FORTRESS V2 initialization failed: {e}")
+                self.fortress_trader = None
 
         # SOLOMON V2 - SPY Directional Spreads
         # Uses GEX + ML signals for directional spread trading
@@ -997,6 +994,46 @@ class AutonomousTraderScheduler:
             logger.info(f"   ✅ ALIVE: {', '.join(alive)}")
         if dead:
             logger.error(f"   ❌ DEAD (init failed): {', '.join(dead)}")
+
+        # ---- WRITE BOT INIT STATUS TO DB FOR REMOTE DIAGNOSTICS ----
+        # This allows checking worker health via:
+        #   SELECT key, value FROM autonomous_config WHERE key LIKE 'trader_worker_%' OR key = 'bot_init_status';
+        all_bot_status = {
+            "FORTRESS": self.fortress_trader is not None,
+            "SOLOMON": self.solomon_trader is not None,
+            "ANCHOR": self.anchor_trader is not None,
+            "SAMSON": self.samson_trader is not None,
+            "GIDEON": self.gideon_trader is not None,
+            "CORNERSTONE": self.cornerstone_trader is not None,
+            "JUBILEE": getattr(self, 'jubilee_trader', None) is not None,
+            "VALOR": getattr(self, 'valor_trader', None) is not None,
+            "FAITH": getattr(self, 'faith_trader', None) is not None,
+            "GRACE": getattr(self, 'grace_trader', None) is not None,
+            **crypto_status,
+        }
+        try:
+            if get_connection:
+                conn = get_connection()
+                cursor = conn.cursor()
+                startup_time = datetime.now(CENTRAL_TZ).isoformat()
+                cursor.execute(
+                    "INSERT INTO autonomous_config (key, value) VALUES ('trader_worker_last_startup', %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (startup_time,)
+                )
+                cursor.execute(
+                    "INSERT INTO autonomous_config (key, value) VALUES ('bot_init_status', %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (json.dumps(all_bot_status),)
+                )
+                conn.commit()
+                cursor.close()
+                conn.close()
+                logger.info(f"✅ Startup record written to DB at {startup_time}")
+            else:
+                logger.error("Cannot write startup record: get_connection not available")
+        except Exception as e:
+            logger.error(f"Failed to write startup/init record to DB: {e}")
 
         self.is_running = False
         self.last_trade_check = None

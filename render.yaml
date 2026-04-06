@@ -104,6 +104,15 @@ services:
         sync: false
       - key: TASTYTRADE_REFRESH_TOKEN
         sync: false
+      # Coinbase API for AGAPE-SPOT crypto trading (REQUIRED for spot execution)
+      - key: COINBASE_API_KEY
+        sync: false
+      - key: COINBASE_API_SECRET
+        sync: false
+      - key: COINBASE_DEDICATED_API_KEY
+        sync: false
+      - key: COINBASE_DEDICATED_API_SECRET
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
