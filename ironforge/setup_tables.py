@@ -9,7 +9,6 @@ Usage:
 """
 
 import logging
-import sys
 
 from config import Config
 from trading.db_adapter import db_connection
@@ -272,7 +271,7 @@ def setup_all_tables():
     valid, msg = Config.validate()
     if not valid:
         logger.error(f"Configuration invalid: {msg}")
-        sys.exit(1)
+        raise RuntimeError(f"IronForge configuration invalid: {msg}")
 
     logger.info("Setting up IronForge tables in PostgreSQL")
 
