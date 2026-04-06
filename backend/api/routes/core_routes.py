@@ -945,3 +945,129 @@ async def verify_holiday_fixes():
         results["message"] = "Some systems awaiting their first scheduled run"
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO BOT DIAGNOSTIC - shows exactly what's happening in the database
+# ---------------------------------------------------------------------------
+
+@router.get("/api/diagnostics/crypto-bots")
+async def crypto_bot_diagnostics():
+    """Diagnostic endpoint: queries ALL crypto bot tables directly.
+
+    Shows whether bots are running, what their last scan outcomes are,
+    and whether any positions exist. Uses raw SQL — works even if
+    trader classes fail to initialize.
+    """
+    if not get_connection:
+        return {"error": "No database connection available"}
+
+    results = {}
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # 1. Check recent scan activity for each bot
+        scan_tables = {
+            "AGAPE-SPOT": "agape_spot_scan_activity",
+            "AGAPE-ETH-PERP": "agape_eth_perp_scan_activity",
+            "AGAPE-BTC-PERP": "agape_btc_perp_scan_activity",
+            "AGAPE-XRP-PERP": "agape_xrp_perp_scan_activity",
+            "AGAPE-DOGE-PERP": "agape_doge_perp_scan_activity",
+            "AGAPE-SHIB-PERP": "agape_shib_perp_scan_activity",
+        }
+
+        for bot_name, table in scan_tables.items():
+            try:
+                cursor.execute(
+                    "SELECT scan_time AT TIME ZONE 'America/Chicago' as scan_ct,"
+                    " outcome, ticker"
+                    " FROM " + table +
+                    " ORDER BY scan_time DESC LIMIT 5"
+                )
+                rows = cursor.fetchall()
+                if rows:
+                    last_outcomes = []
+                    for r in rows:
+                        entry = {"time": str(r[0]), "outcome": r[1]}
+                        if len(r) > 2:
+                            entry["ticker"] = r[2]
+                        last_outcomes.append(entry)
+                    results[bot_name] = {
+                        "status": "RUNNING",
+                        "last_scan": str(rows[0][0]),
+                        "last_outcomes": last_outcomes,
+                    }
+                else:
+                    results[bot_name] = {"status": "NO_SCANS_EVER", "message": "Table exists but zero rows"}
+            except Exception as e:
+                err_str = str(e)
+                if "does not exist" in err_str:
+                    results[bot_name] = {"status": "TABLE_MISSING", "message": "Table " + table + " does not exist"}
+                else:
+                    results[bot_name] = {"status": "ERROR", "message": err_str}
+                conn.rollback()
+
+        # 2. Check open positions for each bot
+        position_tables = {
+            "AGAPE-SPOT": "agape_spot_positions",
+            "AGAPE-ETH-PERP": "agape_eth_perp_positions",
+            "AGAPE-BTC-PERP": "agape_btc_perp_positions",
+            "AGAPE-XRP-PERP": "agape_xrp_perp_positions",
+            "AGAPE-DOGE-PERP": "agape_doge_perp_positions",
+            "AGAPE-SHIB-PERP": "agape_shib_perp_positions",
+        }
+
+        for bot_name, table in position_tables.items():
+            try:
+                cursor.execute("SELECT COUNT(*) FROM " + table + " WHERE status = 'open'")
+                open_count = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM " + table)
+                total_count = cursor.fetchone()[0]
+
+                if bot_name in results:
+                    results[bot_name]["open_positions"] = open_count
+                    results[bot_name]["total_positions_ever"] = total_count
+                else:
+                    results[bot_name] = {
+                        "open_positions": open_count,
+                        "total_positions_ever": total_count,
+                    }
+            except Exception as e:
+                if bot_name not in results:
+                    results[bot_name] = {}
+                results[bot_name]["positions_error"] = str(e)
+                conn.rollback()
+
+        # 3. Check activity logs for init/error messages
+        try:
+            cursor.execute(
+                "SELECT bot_name, action, message,"
+                " timestamp AT TIME ZONE 'America/Chicago' as ts"
+                " FROM agape_spot_activity_log"
+                " WHERE action IN ('INIT', 'CYCLE_ERROR', 'ERROR', 'MARGIN_LIQUIDATION',"
+                " 'MARGIN_LIQUIDATION_PAPER', 'LIQUIDATION_RECOVERY', 'BOT_DISABLED')"
+                " ORDER BY timestamp DESC LIMIT 10"
+            )
+            rows = cursor.fetchall()
+            log_entries = []
+            for r in rows:
+                log_entries.append({"bot": r[0], "action": r[1], "message": r[2], "time": str(r[3])})
+            results["recent_activity_logs"] = log_entries
+        except Exception as e:
+            results["recent_activity_logs"] = {"error": str(e)}
+            conn.rollback()
+
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return {"error": "Database query failed: " + str(e)}
+
+    return results

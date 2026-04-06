@@ -980,6 +980,24 @@ class AutonomousTraderScheduler:
         logger.info(f"   RESERVE: ${CAPITAL_ALLOCATION['RESERVE']:,}")
         logger.info(f"   TOTAL:   ${CAPITAL_ALLOCATION['TOTAL']:,}")
 
+        # ---- CRYPTO BOT INIT SUMMARY (critical for diagnosing zero-trade issues) ----
+        crypto_status = {
+            "AGAPE-SPOT": self.agape_spot_trader is not None,
+            "AGAPE-BTC": self.agape_btc_trader is not None if hasattr(self, 'agape_btc_trader') else False,
+            "AGAPE-ETH-PERP": self.agape_eth_perp_trader is not None,
+            "AGAPE-BTC-PERP": self.agape_btc_perp_trader is not None,
+            "AGAPE-XRP-PERP": self.agape_xrp_perp_trader is not None,
+            "AGAPE-DOGE-PERP": self.agape_doge_perp_trader is not None,
+            "AGAPE-SHIB-PERP": self.agape_shib_perp_trader is not None,
+        }
+        alive = [k for k, v in crypto_status.items() if v]
+        dead = [k for k, v in crypto_status.items() if not v]
+        logger.info(f"🔑 CRYPTO BOT INIT SUMMARY: {len(alive)} alive, {len(dead)} dead")
+        if alive:
+            logger.info(f"   ✅ ALIVE: {', '.join(alive)}")
+        if dead:
+            logger.error(f"   ❌ DEAD (init failed): {', '.join(dead)}")
+
         self.is_running = False
         self.last_trade_check = None
         self.last_position_check = None
@@ -3212,6 +3230,10 @@ class AutonomousTraderScheduler:
         No market hours restrictions - trades around the clock.
         """
         if not self.agape_spot_trader:
+            # Log this ONCE so we know the bot failed to initialize
+            if not getattr(self, '_agape_spot_none_logged', False):
+                logger.error("AGAPE-SPOT: trader is None — initialization failed. Bot will NOT trade.")
+                self._agape_spot_none_logged = True
             return
 
         try:
@@ -3225,15 +3247,17 @@ class AutonomousTraderScheduler:
                 for err in result["errors"]:
                     logger.error(f"AGAPE-SPOT: {err}")
             else:
-                # Log outcomes every 60 scans (~1 hour) to diagnose why no trades
-                if self.agape_spot_trader._cycle_count % 60 == 0:
+                cycle = self.agape_spot_trader._cycle_count
+                # Log EVERY scan for first 10 cycles, then every 10 cycles for first hour,
+                # then every 60 cycles (~1 hour) — so we can diagnose quickly after deploy
+                if cycle <= 10 or (cycle <= 60 and cycle % 10 == 0) or cycle % 60 == 0:
                     # Collect per-ticker outcomes for diagnostics
                     outcomes = {
                         t: r.get("outcome", "?")
                         for t, r in result.get("tickers", {}).items()
                     }
                     logger.info(
-                        f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count} "
+                        f"AGAPE-SPOT scan #{cycle} "
                         f"(no trades) — outcomes: {outcomes}"
                     )
 
@@ -3249,6 +3273,9 @@ class AutonomousTraderScheduler:
         Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
         """
         if not self.agape_btc_trader:
+            if not getattr(self, '_agape_btc_none_logged', False):
+                logger.error("AGAPE-BTC: trader is None — initialization failed. Bot will NOT trade.")
+                self._agape_btc_none_logged = True
             return
 
         try:
@@ -3263,7 +3290,7 @@ class AutonomousTraderScheduler:
                 logger.error(f"AGAPE-BTC: Cycle error: {result['error']}")
             else:
                 if self.agape_btc_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-BTC scan #{self.agape_btc_trader._cycle_count}: {outcome}")
+                    logger.info(f"AGAPE-BTC scan #{self.agape_btc_trader._cycle_count}: {outcome}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-BTC scan: {str(e)}")
@@ -3356,6 +3383,9 @@ class AutonomousTraderScheduler:
         Uses real Deribit/CoinGlass/Coinbase data for signals.
         """
         if not self.agape_eth_perp_trader:
+            if not getattr(self, '_eth_perp_none_logged', False):
+                logger.error("AGAPE-ETH-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._eth_perp_none_logged = True
             return
 
         try:
@@ -3404,6 +3434,9 @@ class AutonomousTraderScheduler:
         Perpetual contracts trade around the clock on crypto exchanges.
         """
         if not self.agape_btc_perp_trader:
+            if not getattr(self, '_btc_perp_none_logged', False):
+                logger.error("AGAPE-BTC-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._btc_perp_none_logged = True
             return
 
         try:
@@ -3452,6 +3485,9 @@ class AutonomousTraderScheduler:
         Perpetual contracts trade around the clock on crypto exchanges.
         """
         if not self.agape_xrp_perp_trader:
+            if not getattr(self, '_xrp_perp_none_logged', False):
+                logger.error("AGAPE-XRP-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._xrp_perp_none_logged = True
             return
 
         try:
@@ -3500,6 +3536,9 @@ class AutonomousTraderScheduler:
         Perpetual contracts trade around the clock on crypto exchanges.
         """
         if not self.agape_doge_perp_trader:
+            if not getattr(self, '_doge_perp_none_logged', False):
+                logger.error("AGAPE-DOGE-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._doge_perp_none_logged = True
             return
 
         try:
@@ -3548,6 +3587,9 @@ class AutonomousTraderScheduler:
         Perpetual contracts trade around the clock on crypto exchanges.
         """
         if not self.agape_shib_perp_trader:
+            if not getattr(self, '_shib_perp_none_logged', False):
+                logger.error("AGAPE-SHIB-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._shib_perp_none_logged = True
             return
 
         try:
