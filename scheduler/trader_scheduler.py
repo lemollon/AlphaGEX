@@ -7484,23 +7484,6 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ TRADIER SANDBOX startup check scheduled (runs NOW)")
-
-            # =================================================================
-            # ONE-TIME: Close all sandbox positions at market open Feb 27, 2026
-            # Ensures all FORTRESS positions are closed before disconnecting.
-            # This job runs once at 8:31 AM CT and can be removed after Feb 27.
-            # =================================================================
-            feb27_open = CENTRAL_TZ.localize(datetime(2026, 2, 27, 8, 31, 0))
-            if datetime.now(CENTRAL_TZ) < feb27_open:
-                self.scheduler.add_job(
-                    self.scheduled_tradier_sandbox_eod_close,
-                    trigger='date',
-                    run_date=feb27_open,
-                    id='tradier_sandbox_feb27_open_close',
-                    name='TRADIER SANDBOX - Close All at Open (Feb 27 one-time)',
-                    replace_existing=True
-                )
-                logger.info("✅ TRADIER SANDBOX one-time close scheduled: Feb 27, 2026 at 8:31 AM CT")
         else:
             logger.warning("⚠️ TRADIER SANDBOX EOD Closer not available - sandbox positions may not auto-close")
 
