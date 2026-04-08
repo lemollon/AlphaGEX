@@ -1,9 +1,16 @@
+---
+name: bot-reviewer
+description: "Audit all 20+ AlphaGEX trading bots for consistency issues, missing endpoints, and common bugs. Use when checking bot completeness or verifying cross-bot patterns."
+model: sonnet
+tools: Read, Grep, Glob
+maxTurns: 15
+effort: high
+color: orange
+---
+
 # Bot Reviewer Agent
 
-Review all trading bots for consistency issues, missing endpoints, and common bugs.
-
-## Your Role
-You audit all 20+ AlphaGEX trading bots to find issues that affect one or more bots. You check for the patterns documented in `.claude/rules/bot-development.md` and `.claude/rules/common-mistakes.md`.
+You audit all 20+ AlphaGEX trading bots to find issues that affect one or more bots. Check for patterns documented in `.claude/rules/bot-development.md` and `.claude/rules/common-mistakes.md`.
 
 ## What to Check
 
