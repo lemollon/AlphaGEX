@@ -1,7 +1,5 @@
 # CLAUDE.md - AlphaGEX AI Assistant Guide
 
-This document provides comprehensive context for AI assistants working with the AlphaGEX codebase.
-
 ## Project Overview
 
 **AlphaGEX** is an autonomous options trading platform built around GEX (Gamma Exposure) analysis. It predicts market maker behavior to generate profitable options trading signals.
@@ -64,194 +62,52 @@ AlphaGEX/
 │   ├── api/
 │   │   ├── bot_names.py        # Greek→Biblical name mapping (master registry)
 │   │   ├── routes/             # 69 route modules
-│   │   │   ├── core_routes.py      # Health, time endpoints
-│   │   │   ├── gex_routes.py       # GEX data endpoints
-│   │   │   ├── gamma_routes.py     # Gamma analysis
-│   │   │   ├── fortress_routes.py  # FORTRESS (ARES) Iron Condor bot
-│   │   │   ├── solomon_routes.py   # SOLOMON (ATHENA) Directional spreads
-│   │   │   ├── samson_routes.py    # SAMSON (TITAN) Aggressive IC bot
-│   │   │   ├── anchor_routes.py    # ANCHOR (PEGASUS) Weekly IC bot
-│   │   │   ├── gideon_routes.py    # GIDEON (ICARUS) Aggressive Directional
-│   │   │   ├── jubilee_routes.py   # JUBILEE (PROMETHEUS) Box Spread + IC
-│   │   │   ├── valor_routes.py     # VALOR (HERACLES) MES Futures
-│   │   │   ├── faith_routes.py     # FAITH - 2DTE Paper IC
-│   │   │   ├── grace_routes.py     # GRACE - 1DTE Paper IC
-│   │   │   ├── prophet_routes.py   # PROPHET (Oracle) ML advisory
-│   │   │   ├── ml_routes.py        # WISDOM (SAGE) ML endpoints
-│   │   │   ├── watchtower_routes.py # WATCHTOWER (ARGUS) gamma viz
-│   │   │   ├── discernment_routes.py # DISCERNMENT (APOLLO) ML scanner
-│   │   │   ├── proverbs_routes.py  # PROVERBS feedback loop
-│   │   │   ├── glory_routes.py     # GLORY (HYPERION) weekly gamma
-│   │   │   ├── agape_spot_routes.py # AGAPE-SPOT crypto spot
-│   │   │   ├── agape_routes.py     # AGAPE ETH micro futures
-│   │   │   ├── agape_*_perp_routes.py # AGAPE perpetual variants (5 files)
-│   │   │   ├── logs_routes.py      # Unified logging (22+ tables)
-│   │   │   ├── data_transparency_routes.py  # Hidden data exposure
-│   │   │   ├── trader_routes.py    # Trading operations
-│   │   │   ├── tastytrade_routes.py # Tastytrade futures broker
-│   │   │   └── ...                 # 40+ more route files
 │   │   ├── dependencies.py     # Shared API dependencies
 │   │   └── utils.py            # API utilities
 │   ├── services/               # Background services
 │   ├── tests/                  # Backend unit tests
 │   └── requirements.txt        # Backend dependencies
-│
 ├── frontend/                   # Next.js React frontend
 │   ├── src/
 │   │   ├── app/                # Next.js App Router (70+ pages)
-│   │   │   ├── page.tsx            # Dashboard home
-│   │   │   ├── fortress/           # FORTRESS (ARES) Iron Condor page
-│   │   │   ├── solomon/            # SOLOMON (ATHENA) spreads page
-│   │   │   ├── samson/             # SAMSON (TITAN) Aggressive IC page
-│   │   │   ├── anchor/             # ANCHOR (PEGASUS) Weekly IC page
-│   │   │   ├── gideon/             # GIDEON (ICARUS) Aggressive Directional
-│   │   │   ├── jubilee/            # JUBILEE (PROMETHEUS) Box Spread + IC
-│   │   │   ├── valor/              # VALOR (HERACLES) MES Futures
-│   │   │   ├── faith/              # FAITH 2DTE Paper IC
-│   │   │   ├── grace/              # GRACE 1DTE Paper IC
-│   │   │   ├── wisdom/             # WISDOM (SAGE) ML Advisor dashboard
-│   │   │   ├── prophet/            # PROPHET (Oracle) predictions
-│   │   │   ├── watchtower/         # WATCHTOWER (ARGUS) gamma viz
-│   │   │   ├── discernment/        # DISCERNMENT (APOLLO) ML scanner
-│   │   │   ├── proverbs/           # PROVERBS feedback loop
-│   │   │   ├── glory/              # GLORY (HYPERION) weekly gamma
-│   │   │   ├── covenant/           # COVENANT (NEXUS) neural network
-│   │   │   ├── gamma/0dte/         # 0DTE Gamma Expiration Tracker
-│   │   │   ├── gex/                # GEX analysis
-│   │   │   ├── agape-spot/         # AGAPE-SPOT crypto spot
-│   │   │   ├── perpetuals-crypto/  # Crypto perpetual contracts
-│   │   │   └── ...                 # 45+ more pages
 │   │   ├── components/         # Reusable React components
 │   │   ├── hooks/              # Custom React hooks
-│   │   └── lib/
-│   │       └── api.ts          # API client with types
+│   │   └── lib/api.ts          # API client with types
 │   ├── __tests__/              # Frontend unit tests (Jest)
-│   ├── package.json            # npm dependencies
-│   └── tailwind.config.ts      # Tailwind CSS config
-│
+│   └── package.json            # npm dependencies
 ├── core/                       # Core trading logic
 │   ├── autonomous_paper_trader.py  # Main trader (LAZARUS/PHOENIX)
-│   ├── intelligence_and_strategies.py  # AI strategies
-│   ├── psychology_trap_detector.py    # Psychology system
-│   ├── market_regime_classifier.py    # Regime detection
-│   ├── probability_calculator.py      # Probability engine
-│   ├── watchtower_engine.py           # WATCHTOWER (ARGUS) gamma engine
-│   ├── shared_gamma_engine.py         # Shared gamma calculations
-│   ├── discernment_ml_engine.py       # DISCERNMENT (APOLLO) ML scanner
-│   ├── omega_orchestrator.py          # OMEGA orchestration
-│   ├── math_optimizers.py             # Mathematical optimization
-│   └── ...
-│
+│   ├── watchtower_engine.py        # WATCHTOWER (ARGUS) gamma engine
+│   ├── shared_gamma_engine.py      # Shared gamma calculations
+│   └── discernment_ml_engine.py    # DISCERNMENT (APOLLO) ML scanner
 ├── trading/                    # Trading execution (23 directories)
 │   ├── fortress_v2/            # FORTRESS (ARES) Iron Condor bot
-│   │   ├── trader.py               # FortressTrader class
-│   │   ├── models.py               # FortressConfig
-│   │   ├── db.py                   # FortressDatabase
-│   │   ├── executor.py             # Order execution
-│   │   └── signals.py              # Signal generation
-│   ├── solomon_v2/             # SOLOMON (ATHENA) Directional Spreads bot
-│   │   └── (same structure as fortress_v2)
-│   ├── samson/                 # SAMSON (TITAN) Aggressive SPX IC bot
-│   │   └── (same structure as fortress_v2)
-│   ├── anchor/                 # ANCHOR (PEGASUS) SPX Weekly IC bot
-│   │   └── (same structure as fortress_v2)
+│   ├── solomon_v2/             # SOLOMON (ATHENA) Directional Spreads
+│   ├── samson/                 # SAMSON (TITAN) Aggressive SPX IC
+│   ├── anchor/                 # ANCHOR (PEGASUS) SPX Weekly IC
 │   ├── gideon/                 # GIDEON (ICARUS) Aggressive Directional
-│   │   └── (same structure as fortress_v2)
 │   ├── jubilee/                # JUBILEE (PROMETHEUS) Box Spread + IC
-│   │   ├── models.py               # BoxSpreadPosition, JubileeConfig
-│   │   ├── db.py                   # JubileeDatabase
-│   │   ├── signals.py              # BoxSpreadSignalGenerator
-│   │   ├── executor.py             # Order execution, MTM calculation
-│   │   └── trader.py               # JubileeTrader orchestrator
-│   ├── valor/                  # VALOR (HERACLES) MES Futures Scalping
-│   │   └── (same structure as fortress_v2)
-│   ├── faith/                  # FAITH - 2DTE Paper Iron Condor
-│   │   └── (same structure as fortress_v2)
-│   ├── grace/                  # GRACE - 1DTE Paper Iron Condor
-│   │   └── (same structure as fortress_v2)
-│   ├── agape_spot/             # AGAPE-SPOT 24/7 Crypto Spot Trading
-│   ├── agape/                  # AGAPE ETH Micro Futures
-│   ├── agape_btc/              # AGAPE BTC Spot
-│   ├── agape_xrp/              # AGAPE XRP Spot
-│   ├── agape_eth_perp/         # AGAPE-ETH-PERP Perpetual Contract
-│   ├── agape_btc_perp/         # AGAPE-BTC-PERP Perpetual Contract
-│   ├── agape_xrp_perp/         # AGAPE-XRP-PERP Perpetual Contract
-│   ├── agape_doge_perp/        # AGAPE-DOGE-PERP Perpetual Contract
-│   ├── agape_shib_perp/        # AGAPE-SHIB-PERP Perpetual Contract
-│   ├── spx_wheel_system.py     # SPX Wheel strategy (CORNERSTONE/ATLAS)
-│   ├── risk_management.py      # Risk controls
-│   ├── mixins/                 # Trading behavior mixins
-│   ├── config/                 # Shared bot configuration
-│   ├── shared/                 # Shared utilities
-│   └── strategies/             # Strategy implementations
-│
+│   ├── valor/                  # VALOR (HERACLES) MES Futures
+│   ├── faith/                  # FAITH - 2DTE Paper IC
+│   ├── grace/                  # GRACE - 1DTE Paper IC
+│   ├── agape_spot/             # AGAPE-SPOT 24/7 Crypto Spot
+│   ├── agape_*_perp/           # AGAPE Perpetual Contracts (5 bots)
+│   └── spx_wheel_system.py     # SPX Wheel (CORNERSTONE/ATLAS)
 ├── ai/                         # AI/ML integration (COUNSELOR/GEXIS)
-│   ├── counselor_*.py          # COUNSELOR AI assistant (11+ modules)
-│   │   ├── counselor_personality.py    # Core identity, J.A.R.V.I.S. persona
-│   │   ├── counselor_tools.py          # 17 agentic tools
-│   │   ├── counselor_knowledge.py      # System knowledge base
-│   │   ├── counselor_commands.py       # Slash commands
-│   │   ├── counselor_learning_memory.py # Prediction tracking
-│   │   ├── counselor_extended_thinking.py # Extended thinking
-│   │   ├── counselor_cache.py          # TTL-based caching
-│   │   ├── counselor_rate_limiter.py   # Token bucket rate limiting
-│   │   └── counselor_tracing.py        # Request tracing
-│   ├── position_management_agent.py    # Position management
-│   ├── trade_journal_agent.py          # Trade journaling
-│   └── autonomous_ml_pattern_learner.py # ML pattern learning
-│
+│   └── counselor_*.py          # COUNSELOR AI assistant (11+ modules)
 ├── quant/                      # Quantitative analysis
 │   ├── prophet_advisor.py      # PROPHET (Oracle) ML predictions
 │   ├── gex_probability_models.py   # STARS (ORION) GEX ML models
-│   ├── proverbs_feedback_loop.py   # PROVERBS feedback system
-│   ├── proverbs_ai_analyst.py      # PROVERBS AI analysis
-│   ├── proverbs_enhancements.py    # PROVERBS enhancements
-│   ├── proverbs_notifications.py   # PROVERBS notifications
-│   ├── fortress_ml_advisor.py      # FORTRESS ML advisor
-│   ├── bayesian_crypto_tracker.py  # Bayesian crypto tracking
-│   ├── monte_carlo_kelly.py    # Kelly criterion
-│   ├── chronicles_gex_calculator.py # CHRONICLES (KRONOS) GEX calc
-│   └── walk_forward_optimizer.py   # Parameter optimization
-│
-├── data/                       # Data providers
-│   ├── unified_data_provider.py    # Tradier/Polygon unified
-│   ├── tradier_data_fetcher.py     # Tradier API
-│   ├── polygon_data_fetcher.py     # Polygon.io API
-│   └── gex_calculator.py       # GEX calculations
-│
+│   └── proverbs_feedback_loop.py   # PROVERBS feedback system
+├── data/                       # Data providers (Tradier, Polygon)
 ├── gamma/                      # Gamma-specific modules
-│   ├── gamma_expiration_builder.py
-│   ├── gamma_alerts.py
-│   └── forward_magnets_detector.py
-│
 ├── backtest/                   # Backtesting engines
-│   ├── backtest_framework.py   # Core backtest engine
-│   ├── zero_dte_*.py           # 0DTE strategy backtests
-│   └── wheel_backtest.py       # Wheel strategy backtest
-│
 ├── monitoring/                 # System monitoring
-│   ├── autonomous_monitoring.py
-│   ├── alerts_system.py
-│   └── data_quality_dashboard.py
-│
-├── scheduler/                  # Background job schedulers
-│   └── trader_scheduler.py     # Bot scheduling
-│
+├── scheduler/trader_scheduler.py   # Central bot orchestration
 ├── scripts/                    # Utility scripts (236+ files)
-│   ├── test_*.py               # Test scripts
-│   ├── train_*.py              # ML training scripts
-│   └── verify_*.py             # Verification scripts
-│
-├── tests/                      # Main test suite
-│   ├── conftest.py             # Shared pytest fixtures
-│   ├── test_*.py               # Test files (~115 files)
-│   └── e2e/                    # End-to-end tests
-│
+├── tests/                      # Main test suite (~115 files)
 ├── config.py                   # Central configuration
 ├── database_adapter.py         # PostgreSQL adapter
-├── core_classes_and_engines.py # Core trading classes
-├── unified_trading_engine.py   # Unified trading interface
-├── requirements.txt            # Python dependencies
 ├── render.yaml                 # Render deployment config
 └── pytest.ini                  # Pytest configuration
 ```
@@ -261,725 +117,97 @@ AlphaGEX/
 ## Tech Stack
 
 ### Backend
-- **Framework**: FastAPI 0.115+
-- **Python**: 3.11
+- **Framework**: FastAPI 0.115+, Python 3.11
 - **Database**: PostgreSQL (via psycopg2)
 - **AI/ML**: Anthropic Claude (direct SDK), scikit-learn, XGBoost 2.x
 - **Data Sources**: Tradier (primary), Polygon.io (fallback), TradingVolatility API
-- **Futures Broker**: Tastytrade (for VALOR MES futures)
-- **Crypto Exchange**: Coinbase Advanced Trade (for AGAPE spot/perp)
+- **Futures Broker**: Tastytrade (for VALOR)
+- **Crypto Exchange**: Coinbase Advanced Trade (for AGAPE)
 
 ### Frontend
-- **Framework**: Next.js 14.2 (App Router)
-- **React**: 18.2
-- **Language**: TypeScript 5.7
-- **Styling**: Tailwind CSS 3.4
-- **State Management**: SWR for data fetching
+- **Framework**: Next.js 14.2 (App Router), React 18.2, TypeScript 5.7
+- **Styling**: Tailwind CSS 3.4, Radix UI primitives
+- **Data Fetching**: SWR
 - **Charts**: Recharts, Plotly.js, Lightweight Charts
-- **UI Components**: Radix UI primitives
 
 ### Infrastructure
-- **Backend Hosting**: Render (web service + workers)
-- **Frontend Hosting**: Vercel
+- **Backend**: Render (web service + 3 workers)
+- **Frontend**: Vercel (auto-deploy from main)
 - **Database**: Render PostgreSQL
-
----
-
-## Development Workflows
-
-### Starting the Backend
-
-```bash
-# From project root
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Run development server
-python main.py
-# OR
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-API docs available at: http://localhost:8000/docs
-
-### Starting the Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Frontend available at: http://localhost:3000
-
-### Running Tests
-
-```bash
-# Backend tests (from project root)
-pytest -v
-
-# With coverage
-pytest --cov=core --cov=trading --cov-report=html
-
-# Specific test file
-pytest tests/test_gex_calculator.py -v
-
-# Frontend tests
-cd frontend
-npm test
-npm run test:coverage
-
-# E2E tests (Playwright)
-npm run test:e2e
-```
 
 ---
 
 ## Environment Variables
 
-### Required Variables
-
+### Required
 ```bash
-# Database (Required)
 DATABASE_URL=postgresql://user:password@host:5432/alphagex
-
-# GEX Data (Required for GEX features)
-TRADING_VOLATILITY_API_KEY=your_key
-# OR
-TV_USERNAME=your_username
-
-# Live Trading (Required for FORTRESS/SOLOMON options bots)
+TRADING_VOLATILITY_API_KEY=your_key   # OR TV_USERNAME=your_username
 TRADIER_API_KEY=your_production_key
 TRADIER_ACCOUNT_ID=your_account_id
 TRADIER_SANDBOX_API_KEY=your_sandbox_key
 TRADIER_SANDBOX_ACCOUNT_ID=your_sandbox_account
 ```
 
-### Optional Variables
-
+### Optional
 ```bash
-# Polygon.io (fallback data source)
-POLYGON_API_KEY=your_polygon_key
-
-# AI Features
-ANTHROPIC_API_KEY=your_claude_key
-CLAUDE_API_KEY=your_claude_key
-
-# Tastytrade (Required for VALOR futures trading)
-TASTYTRADE_USERNAME=your_username
+POLYGON_API_KEY=your_key              # Fallback data source
+ANTHROPIC_API_KEY=your_key            # AI features
+TASTYTRADE_USERNAME=your_username     # VALOR futures
 TASTYTRADE_PASSWORD=your_password
-TASTYTRADE_ACCOUNT_ID=your_account_id
-TASTYTRADE_CLIENT_SECRET=your_secret       # OAuth method (preferred)
-TASTYTRADE_REFRESH_TOKEN=your_token
-
-# ORAT Database (for CHRONICLES backtester)
-ORAT_DATABASE_URL=postgresql://...
-
-# CORS (production)
+ORAT_DATABASE_URL=postgresql://...    # CHRONICLES backtester
 CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 ---
 
-## Key Trading Bots
-
-AlphaGEX operates 20+ specialized trading bots, all advised by the PROPHET (Oracle) ML system.
-Format: **DISPLAY_NAME (internal_codename)**
-
-### Options Trading Bots
-
-### FORTRESS (ARES) - SPY Iron Condor 0DTE ✓ LIVE
-- **Schedule**: 8:30 AM - 3:30 PM CT, every 5 min
-- **Strategy**: Iron Condor with dynamic strike selection on SPY
-- **Files**: `trading/fortress_v2/`, `backend/api/routes/fortress_routes.py`
-- **Trader class**: `FortressTrader`
-- **29 API endpoints** - Most mature bot
-
-### SOLOMON (ATHENA) - Directional Spreads ✓ LIVE
-- **Schedule**: 8:35 AM - 2:30 PM CT, every 5 min
-- **Strategy**: GEX-based directional spreads on SPY
-- **Files**: `trading/solomon_v2/`, `backend/api/routes/solomon_routes.py`
-- **Trader class**: `SolomonTrader`
-
-### SAMSON (TITAN) - Aggressive SPX Iron Condor ✓ LIVE
-- **Schedule**: Multiple trades daily with 30-min cooldown
-- **Strategy**: Aggressive Iron Condor on SPX with tighter parameters
-- **Parameters**: 15% risk/trade (vs 10%), 40% min win prob (vs 50%), 0.8 SD strikes
-- **Files**: `trading/samson/`, `backend/api/routes/samson_routes.py`
-
-### ANCHOR (PEGASUS) - SPX Weekly Iron Condor ✓ LIVE
-- **Schedule**: Every 5 min during market hours
-- **Strategy**: Standard SPX Iron Condor, more conservative than SAMSON
-- **Files**: `trading/anchor/`, `backend/api/routes/anchor_routes.py`
-
-### GIDEON (ICARUS) - Aggressive Directional ✓ LIVE
-- **Schedule**: Every 5 min during market hours
-- **Strategy**: Aggressive directional variant of SOLOMON on SPY
-- **Files**: `trading/gideon/`, `backend/api/routes/gideon_routes.py`
-
-### JUBILEE (PROMETHEUS) - Standalone Box Spread + IC Trading ✓ PAPER
-A self-contained two-part system: borrows capital via box spreads, then trades Iron Condors with that capital.
-
-**Part 1: Box Spread Manager**
-- **Schedule**: Daily at 9:30 AM CT (position management cycle)
-- **Strategy**: Synthetic borrowing via SPX box spreads
-- **Parameters**: 50pt strike width default, 90+ DTE, 30-day roll threshold
-
-**Part 2: IC Trader**
-- **Schedule**: Every 5-15 min during market hours
-- **Strategy**: Iron Condors using borrowed capital to generate returns
-- **Parameters**: PROPHET-approved trades, 0DTE-1DTE SPX options
-
-**Files**: `trading/jubilee/`, `backend/api/routes/jubilee_routes.py`
-**Dashboard**: `/jubilee` - 5 tabs (Overview, Positions, Analytics, Education, Calculator)
-
-**Key Features**:
-  - Production Tradier API quotes for realistic paper trading
-  - Real-time mark-to-market with actual bid/ask spreads
-  - JUBILEE trades its own ICs (not deploying to FORTRESS/SAMSON/ANCHOR)
-  - Rolling interest rate transparency and daily briefings
-  - Combined performance tracking: IC returns vs borrowing costs
-  - Educational mode with comprehensive explanations
-
-**IC Trading Endpoints** (per STANDARDS.md Bot-Specific Requirements):
-- `/ic/status` - IC trading status and configuration
-- `/ic/positions` - Open IC positions with unrealized P&L
-- `/ic/closed-trades` - IC trade history
-- `/ic/equity-curve` - Historical IC equity curve
-- `/ic/equity-curve/intraday` - Today's IC equity snapshots
-- `/ic/performance` - IC win rate, P&L, statistics
-- `/ic/logs` - IC activity log for audit trail
-- `/ic/signals/recent` - Recent IC signals (scan activity)
-
-**60+ API endpoints** including Box Spread MTM, IC trading, combined performance
-
-### LAZARUS (PHOENIX) - 0DTE Options ⚠️ PAPER (Partial Implementation)
-- **Schedule**: Every 5 min during market hours
-- **Strategy**: 0DTE SPY/SPX options via AutonomousPaperTrader
-- **Files**: `core/autonomous_paper_trader.py`
-- **Note**: No dedicated API routes - uses internal trading logic only
-
-### CORNERSTONE (ATLAS) - SPX Wheel ⚠️ LIVE (Partial Implementation)
-- **Schedule**: Daily at 9:05 AM CT
-- **Strategy**: SPX Wheel premium collection
-- **Files**: `trading/spx_wheel_system.py`, `backend/api/routes/wheel_routes.py`
-- **Dashboard**: `/cornerstone`
-
-### SHEPHERD (HERMES) - Manual Wheel Manager (Not Automated)
-- **Type**: Manual UI-driven bot, not scheduled
-- **Strategy**: Manual wheel strategy management via frontend
-- **Dashboard**: `/shepherd`
-
-### Paper/Research Bots
-
-### FAITH - 2DTE Paper Iron Condor ⚠️ PAPER
-- **Strategy**: Paper trading 2DTE Iron Condors for research
-- **Files**: `trading/faith/`, `backend/api/routes/faith_routes.py`
-- **Dashboard**: `/faith`
-
-### GRACE - 1DTE Paper Iron Condor ⚠️ PAPER
-- **Strategy**: Paper trading 1DTE Iron Condors for research
-- **Files**: `trading/grace/`, `backend/api/routes/grace_routes.py`
-- **Dashboard**: `/grace`
-
-### Futures Trading
-
-### VALOR (HERACLES) - MES Futures Scalping ✓ LIVE
-- **Schedule**: During market hours
-- **Strategy**: MES (Micro E-mini S&P 500) futures scalping via Tastytrade
-- **Files**: `trading/valor/`, `backend/api/routes/valor_routes.py`
-- **Trader class**: `ValorTrader`
-- **Dashboard**: `/valor`
-
-### Cryptocurrency Trading (AGAPE Family)
-
-### AGAPE - ETH Micro Futures
-- **Files**: `trading/agape/`, `backend/api/routes/agape_routes.py`
-
-### AGAPE-SPOT - 24/7 Crypto Spot Trading ✓ LIVE
-- **Exchange**: Coinbase Advanced Trade (spot only)
-- **Tickers**: ETH-USD, BTC-USD, DOGE-USD, XRP-USD, SHIB-USD
-- **Files**: `trading/agape_spot/`, `backend/api/routes/agape_spot_routes.py`
-- **Dashboard**: `/agape-spot`
-- **See**: AGAPE-SPOT Crypto Trading System section below for full details
-
-### AGAPE Perpetual Contracts (5 bots)
-Each perpetual bot has its own directory and route file:
-- **AGAPE-ETH-PERP**: `trading/agape_eth_perp/`, `agape_eth_perp_routes.py`
-- **AGAPE-BTC-PERP**: `trading/agape_btc_perp/`, `agape_btc_perp_routes.py`
-- **AGAPE-XRP-PERP**: `trading/agape_xrp_perp/`, `agape_xrp_perp_routes.py`
-- **AGAPE-DOGE-PERP**: `trading/agape_doge_perp/`, `agape_doge_perp_routes.py`
-- **AGAPE-SHIB-PERP**: `trading/agape_shib_perp/`, `agape_shib_perp_routes.py`
-
----
-
-## ML Advisory Systems
-
-Format: **DISPLAY_NAME (internal_codename)**
-
-### PROPHET (Oracle) - Primary Decision Maker
-PROPHET is the central ML advisory system that all trading bots consult before taking positions.
-
-- **Role**: Strategy recommendation (IC vs Directional), win probability estimation
-- **Inputs**: WISDOM predictions, market regime, VIX levels, GEX data
-- **Staleness Monitoring**: Tracks `hours_since_training`, `is_model_fresh`, `model_trained_at`
-- **Training Sources**: Live outcomes → Database backtests → CHRONICLES data
-- **Files**: `quant/prophet_advisor.py`, `backend/api/routes/prophet_routes.py`
-- **Dashboard**: `/prophet`
-
-### WISDOM (SAGE) - Strategic Algorithmic Guidance Engine
-XGBoost-based ML system that feeds probability predictions into PROPHET.
-
-- **Model**: XGBoost classifier for trade outcome prediction
-- **Training Data**: CHRONICLES backtests, live trade outcomes
-- **Features Used**:
-  - Volatility: VIX, VIX percentile, VIX change, expected move
-  - GEX: Regime, normalized value, distance to flip point
-  - Timing: Day of week, price change, 30-day win rate
-- **Capabilities**: Favorable condition identification, position sizing adjustment, calibrated probabilities
-- **Limitations**: Cannot predict black swans, does not replace risk management
-- **Files**: `backend/api/routes/ml_routes.py` (WISDOM endpoints)
-- **Dashboard**: `/wisdom` page with 6 tabs (Overview, Predictions, Features, Performance, Decision Logs, Training)
-
-### STARS (ORION) - GEX Probability Models for WATCHTOWER/GLORY
-STARS provides ML-powered probability predictions that guide WATCHTOWER (0DTE) and GLORY (Weekly) gamma visualizations.
-
-- **Model**: 5 XGBoost sub-models (classifiers and regressors)
-- **Sub-Models**:
-  1. **Direction Probability** - UP/DOWN/FLAT classification
-  2. **Flip Gravity** - Probability price moves toward flip point
-  3. **Magnet Attraction** - Probability price reaches nearest magnet (used for strike probabilities)
-  4. **Volatility Estimate** - Expected price range prediction
-  5. **Pin Zone Behavior** - Probability of staying pinned between magnets
-- **Integration**: Hybrid probability calculation: `combined = (0.6 × ML_prob) + (0.4 × distance_prob)`
-- **Auto-Loading**: Models auto-load from PostgreSQL on initialization (singleton pattern)
-- **Auto-Training**: Every Sunday at 6:00 PM CT (after QUANT training at 5 PM)
-  - Only retrains if models older than 7 days
-  - Trains on SPX and SPY historical data
-  - Saves to database for persistence across deploys
-- **Fallback**: When models not trained, uses 100% distance-based probability
-- **Data Sources**:
-  - Primary: `gex_structure_daily` table
-  - Fallback: `gex_history` table (aggregates intraday snapshots)
-- **Files**:
-  - Core: `quant/gex_probability_models.py` (GEXProbabilityModels, GEXSignalGenerator)
-  - Shared Engine: `core/shared_gamma_engine.py` (calculate_probability_hybrid)
-  - WATCHTOWER Engine: `core/watchtower_engine.py` (gamma_structure building)
-  - Scheduler: `scheduler/trader_scheduler.py` (scheduled_gex_ml_training_logic)
-- **API Endpoints**:
-  ```
-  GET  /api/ml/gex-models/status      # Model status, staleness, sub-model states
-  POST /api/ml/gex-models/train       # Trigger training on GEX historical data
-  POST /api/ml/gex-models/predict     # Get combined prediction
-  GET  /api/ml/gex-models/data-status # Training data availability (both sources)
-  ```
-- **Dashboard**: `/gex-ml` - STARS page with model status, training controls, auto-schedule info
-
-### COUNSELOR (GEXIS) - AI Trading Assistant
-J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform.
-
-- **Personality**: Time-aware greetings, Central Time, professional demeanor, "Optionist Prime" user
-- **Files** (11+ modules in `ai/`):
-  - `counselor_personality.py` - Core identity and prompts
-  - `counselor_tools.py` - 17 agentic tools (database, market data, bot control)
-  - `counselor_knowledge.py` - Knowledge base (285+ database tables documented)
-  - `counselor_commands.py` - Slash commands (`/market-hours`, `/suggestion`, `/risk`)
-  - `counselor_learning_memory.py` - Self-improving prediction accuracy tracking
-  - `counselor_extended_thinking.py` - Claude Extended Thinking for complex analysis
-  - `counselor_cache.py` - TTL-based caching (60s market, 30s positions)
-  - `counselor_rate_limiter.py` - Token bucket rate limiting
-  - `counselor_tracing.py` - Request tracing and telemetry
-  - `position_management_agent.py` - Position management agent
-  - `trade_journal_agent.py` - Trade journaling agent
-  - `autonomous_ml_pattern_learner.py` - ML pattern learning
-- **Frontend**: `FloatingChatbot.tsx` - Streaming chat widget
-- **API Routes**: `backend/api/routes/ai_routes.py` - 35+ endpoints
-- **Dashboard**: `/counselor-commands`
-- **Capabilities**:
-  - Real-time market data and bot status queries
-  - Bot control with 2-minute confirmation windows
-  - Trade opportunity analysis with extended thinking
-  - Economic calendar integration (NFP, CPI, FOMC)
-  - Learning from prediction outcomes by market regime
-  - Conversation export (markdown/JSON)
-
-### DISCERNMENT (APOLLO) - ML Scanner
-ML-powered pattern detection and signal scanning system.
-
-- **Files**: `core/discernment_ml_engine.py`, `core/discernment_outcome_tracker.py`
-- **Routes**: `backend/api/routes/discernment_routes.py`
-- **Dashboard**: `/discernment`
-
-### PROVERBS - Feedback Loop Intelligence
-AI-powered continuous improvement system that analyzes trade outcomes and feeds insights back into bot parameters.
-
-- **Files** (4 modules in `quant/`):
-  - `proverbs_feedback_loop.py` - Core feedback loop
-  - `proverbs_ai_analyst.py` - AI-powered analysis
-  - `proverbs_enhancements.py` - Enhancement integration
-  - `proverbs_notifications.py` - Alert notifications
-- **Routes**: `backend/api/routes/proverbs_routes.py`
-- **Dashboard**: `/proverbs`
-
-### CHRONICLES (KRONOS) - Backtesting Engine
-Historical backtesting infrastructure for strategy validation.
-
-- **Files**: `quant/chronicles_gex_calculator.py`, `backend/services/`
-- **Routes**: `backend/api/routes/spx_backtest_routes.py`
-
-### GLORY (HYPERION) - Weekly Gamma Analysis
-Weekly gamma visualization and analysis dashboard.
-
-- **Routes**: `backend/api/routes/glory_routes.py`
-- **Dashboard**: `/glory`
-
-### COVENANT (NEXUS) - Neural Network Visualization
-3D neural network visualization system.
-
-- **Dashboard**: `/covenant`, `/covenant-demo`
-
----
-
-## Removed Legacy Systems (January 2025)
-
-The following systems were removed in favor of **PROPHET (Oracle) as the sole decision authority**:
-
-### Circuit Breaker (REMOVED)
-- **Old File**: `trading/circuit_breaker.py` - **DELETED**
-- **Reason**: PROPHET provides all risk management decisions directly
-
-### Ensemble Strategy (REMOVED)
-- **Old File**: `quant/ensemble_strategy.py` - **DELETED**
-- **Reason**: "PROPHET is god" - weighted voting replaced by PROPHET sole authority
-- **API behavior**: `/api/quant/ensemble` endpoints return unavailable status
-
-### ML Regime Classifier (REMOVED)
-- **Old File**: `quant/ml_regime_classifier.py` - **DELETED**
-- **Reason**: "Only blocked trades unnecessarily" - PROPHET handles all regime decisions
-- **API behavior**: Routes gracefully handle module absence
-
-### GEX Directional ML (REMOVED)
-- **Status**: Removed from all bot signal files
-- **Reason**: Redundant with PROPHET predictions
-
-### Kill Switch (REMOVED)
-- **Status**: Functionality removed
-- **Note**: "Always allow trading" - PROPHET controls trade frequency instead
-
-### Daily Trade Limits (REMOVED)
-- **Status**: Removed from FORTRESS, GIDEON traders
-- **Note**: PROPHET now decides trade frequency
-
-### LangChain AI System (REMOVED)
-- **Old Files**: `ai/langchain_*.py`, `ai/ai_trade_advisor.py`, `ai/ai_trade_recommendations.py`, `ai/ai_strategy_optimizer.py`, `ai/autonomous_ai_reasoning.py`
-- **Reason**: Unnecessary abstraction layer - COUNSELOR provides all AI capabilities via direct Anthropic SDK
-- **Replacement**: COUNSELOR AI assistant (`ai/counselor_*.py`) - 11+ modules, 17 tools
-- **API behavior**: `/api/ai/optimize-strategy`, `/api/ai/trade-advice`, `/api/optimizer/*` return 503 with redirect to COUNSELOR
-- **Dependencies removed**: `langchain`, `langchain-anthropic`, `langchain-community`, `langchain-core`
-
-### Solomon Enhancements (REMOVED)
-- **Old File**: `quant/solomon_enhancements.py` - **DELETED**
-- **Reason**: PROPHET absorbed all risk management functionality
-
----
-
-## Dashboard Features
-
-### 0DTE Gamma Expiration Tracker (`/gamma/0dte`)
-Real-time 0DTE gamma analysis with actionable trading strategies.
-
-**Analysis Views**:
-1. **TODAY'S IMPACT** - Intraday trading opportunities
-   - Directional prediction (UPWARD/DOWNWARD/SIDEWAYS with probabilities)
-   - Current day gamma impact
-   - Fade the Close strategy (3:45pm entries)
-   - ATM Straddle into expiration
-
-2. **WEEKLY EVOLUTION** - Positional trading
-   - Weekly gamma structure with decay patterns
-   - Daily risk levels for entire week
-   - Aggressive Theta Farming (Mon-Wed)
-   - Delta Buying (Thu-Fri)
-
-3. **VOLATILITY CLIFFS** - Risk management by day
-   - Flip point calculations
-   - Call/put wall identification
-   - Pre-Expiration Volatility Scalp (Friday)
-   - Post-Expiration Directional Positioning
-
-**0DTE Straddle Playbook**:
-- Entry timing: 9:30-10:30 AM ET
-- Strike selection methodology
-- Exit rules with profit targets
-- Risk/reward calculations
-
-**Files**: `frontend/src/app/gamma/0dte/page.tsx` (715 lines)
-
-### WATCHTOWER (ARGUS) - Real-Time 0DTE Gamma Visualization (`/watchtower`)
-Named after the "all-seeing" giant with 100 eyes from Greek mythology. WATCHTOWER provides real-time gamma analysis with comprehensive market structure signals.
-
-**Core Features**:
-- Real-time gamma visualization with per-strike data
-- Danger zone detection (BUILDING/COLLAPSING/SPIKE gamma)
-- Pin strike prediction with ML-enhanced probability
-- Magnet identification (high gamma attractors)
-- Gamma regime tracking (POSITIVE/NEGATIVE/NEUTRAL)
-- **ML Integration**: Uses STARS (GEX Probability Models) for hybrid probability (60% ML + 40% distance)
-
-**Market Structure Panel** (9 signals comparing today vs prior day):
-
-| Signal | What It Shows | Trading Use |
-|--------|--------------|-------------|
-| **Flip Point** | RISING/FALLING/STABLE | Dealer repositioning - where support/resistance moved |
-| **±1 Std Bounds** | SHIFTED_UP/DOWN/STABLE/MIXED | Options market's price expectations |
-| **Range Width** | WIDENING/NARROWING/STABLE | Volatility expansion/contraction |
-| **Gamma Walls** | PUT CLOSER/CALL CLOSER/BALANCED | Asymmetric risk profile |
-| **Intraday Vol** | EXPANDING/CONTRACTING/STABLE | Real-time vol vs open |
-| **VIX Regime** | LOW/NORMAL/ELEVATED/HIGH/EXTREME | Sizing and strategy context |
-| **Gamma Regime** | MEAN_REVERSION/MOMENTUM | IC safety vs breakout reliability |
-| **GEX Momentum** | STRONG_BULLISH/FADING/etc | Dealer conviction direction |
-| **Wall Break Risk** | HIGH/ELEVATED/MODERATE/LOW | Imminent breakout warning |
-
-**Combined Signal Logic Matrix**:
-
-| Flip Point | Bounds | Width | Gamma Regime | Combined Signal |
-|------------|--------|-------|--------------|-----------------|
-| RISING | SHIFTED_UP | WIDENING | NEGATIVE | BULLISH_BREAKOUT (HIGH confidence) |
-| RISING | SHIFTED_UP | * | POSITIVE | BULLISH_GRIND (MEDIUM confidence) |
-| FALLING | SHIFTED_DOWN | WIDENING | NEGATIVE | BEARISH_BREAKOUT (HIGH confidence) |
-| FALLING | SHIFTED_DOWN | * | POSITIVE | BEARISH_GRIND (MEDIUM confidence) |
-| STABLE | STABLE | NARROWING | POSITIVE | SELL_PREMIUM (HIGH confidence) |
-| STABLE | STABLE | NARROWING | NEGATIVE | SELL_PREMIUM_CAUTION (LOW confidence) |
-| * | * | WIDENING | STABLE | VOL_EXPANSION_NO_DIRECTION |
-| RISING | SHIFTED_DOWN | * | * | DIVERGENCE_BULLISH_DEALERS |
-| FALLING | SHIFTED_UP | * | * | DIVERGENCE_BEARISH_DEALERS |
-
-**Wall Break Risk Logic**:
-```
-HIGH RISK = Distance <0.3% AND (gamma COLLAPSING at wall OR NEGATIVE regime)
-ELEVATED = Distance <0.3% OR (Distance <0.7% AND COLLAPSING)
-MODERATE = Distance 0.3-0.7%
-LOW = Distance >0.7%
+## Development Workflows
+
+### Starting Services
+```bash
+# Backend
+cd backend && python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8000  # API docs at /docs
+
+# Frontend
+cd frontend && npm install && npm run dev  # http://localhost:3000
 ```
 
-When wall break is HIGH, it overrides other signals with `CALL_WALL_BREAK_IMMINENT` or `PUT_WALL_BREAK_IMMINENT`.
-
-**VIX Regime Thresholds**:
-- LOW: VIX < 15 (thin premiums, favor directional)
-- NORMAL: 15-22 (ideal for Iron Condors)
-- ELEVATED: 22-28 (widen IC strikes)
-- HIGH: 28-35 (reduce size 50%)
-- EXTREME: >35 (skip ICs, small directional only)
-
-**Key Thresholds**:
-- Flip point change: ±$2 or ±0.3% = significant
-- Bounds shift: ±$0.50 = significant
-- Width change: ±5% = significant
-- Intraday EM change: ±3% = significant
-
-**Actionable Trade Recommendations** (`/api/watchtower/trade-action`):
-Instead of generic "BULLISH" signals, provides executable trades:
-- Exact trade structure: "SELL SPY 588/586 PUT SPREAD @ $0.45 credit"
-- Position sizing based on account size and risk tolerance
-- THE WHY: Reasoning for each decision (gamma regime, order flow, VIX)
-- Entry triggers and exit rules (profit target, stop loss, time stop)
-- Four scenarios: Iron Condor, Put/Call Credit Spread, Debit Spread
-
-**Signal Tracking** (`/api/watchtower/signals/*`):
-Track hypothetical performance of WATCHTOWER recommendations:
-- Log signals manually or auto-log all non-WAIT signals
-- Outcome detection at market close (WIN/LOSS based on strike placement)
-- Performance stats: win rate, total P&L, avg win/loss, by action type
-- Recent signals list with status indicators
-
-**Files**:
-- Backend: `backend/api/routes/watchtower_routes.py`
-- Frontend: `frontend/src/app/watchtower/page.tsx`
-- Engine: `core/watchtower_engine.py`
-
-**API Endpoints**:
-```
-GET  /api/watchtower/snapshot           # Full gamma snapshot with market structure
-GET  /api/watchtower/history            # Historical gamma for sparklines
-GET  /api/watchtower/danger-zones       # Active danger zone alerts
-GET  /api/watchtower/pattern-matching   # Historical pattern analysis
-POST /api/watchtower/commentary         # Generate AI commentary
-GET  /api/watchtower/trade-action       # Actionable trade with strikes, sizing, WHY
-POST /api/watchtower/signals/log        # Log signal for tracking
-GET  /api/watchtower/signals/recent     # Recent signals with outcomes
-GET  /api/watchtower/signals/performance # Win rate, P&L, stats
-POST /api/watchtower/signals/update-outcomes # Update open signal outcomes
+### Running Tests
+```bash
+pytest -v                                    # All backend tests
+pytest --cov=core --cov=trading --cov-report=html  # With coverage
+pytest -k "test_gex" -v                      # Pattern match
+cd frontend && npm test                      # Frontend tests
 ```
 
-### Key Dashboard Components
-- `WisdomStatusWidget.tsx` - ML Advisor status and bot integration
-- `DriftStatusCard.tsx` - Backtest vs Live performance comparison
-- `EquityCurveChart.tsx` - Shared equity curve visualization
-- `DashboardScanFeed.tsx` - Real-time scan activity feed
-- `ProphetRecommendationWidget.tsx` - PROPHET prediction display
-- `BotStatusOverview.tsx` - All bots status (FORTRESS, SOLOMON, GIDEON, ANCHOR, SAMSON)
-
----
-
-## API Structure
-
-### Route Naming Convention
-All routes are in `backend/api/routes/`. Each file follows the pattern:
-- `*_routes.py` - Route handlers
-- Router prefix matches the domain (e.g., `/api/gex/`, `/api/fortress/`)
-- Bot routes use biblical display names in URLs (e.g., `/api/fortress/` not `/api/ares/`)
-
-### Key API Endpoints
-
-```
-# Health & System
-GET  /health                    # System health check
-GET  /api/system-health         # Comprehensive health (includes PROPHET staleness)
-GET  /ready                     # Kubernetes readiness probe
-
-# GEX Data
-GET  /api/gex/{symbol}          # GEX data for symbol
-GET  /api/gex/{symbol}/levels   # Support/resistance levels
-GET  /api/gamma/0dte            # 0DTE gamma expiration data
-
-# WATCHTOWER (Real-time 0DTE Gamma)
-GET  /api/watchtower/snapshot        # Full gamma snapshot with market structure (9 signals)
-GET  /api/watchtower/history         # Historical gamma for sparklines
-GET  /api/watchtower/danger-zones    # Active danger zone alerts
-GET  /api/watchtower/pattern-matching # Historical pattern analysis
-GET  /api/watchtower/gamma-flip-history # Regime flip history
-POST /api/watchtower/commentary      # Generate AI commentary
-GET  /api/watchtower/trade-action    # Actionable trade recommendation
-POST /api/watchtower/signals/log     # Log signal for performance tracking
-GET  /api/watchtower/signals/recent  # Recent signals with outcomes
-GET  /api/watchtower/signals/performance # Win rate, total P&L, stats by action type
-POST /api/watchtower/signals/update-outcomes # Update open signal outcomes
-
-# Trading Bots (20+ bots, 200+ endpoints total)
-GET  /api/fortress/status       # FORTRESS bot status
-POST /api/fortress/analyze      # Analyze IC opportunity
-GET  /api/solomon/status        # SOLOMON bot status
-GET  /api/samson/status         # SAMSON bot status
-GET  /api/samson/positions      # SAMSON open positions
-GET  /api/samson/equity-curve   # SAMSON equity curve
-GET  /api/anchor/status         # ANCHOR bot status
-GET  /api/gideon/status         # GIDEON bot status
-GET  /api/valor/status          # VALOR bot status
-GET  /api/trader/performance    # Unified trading performance
-
-# PROPHET (ML Advisory)
-GET  /api/prophet/health        # PROPHET health with staleness metrics
-GET  /api/prophet/status        # Detailed PROPHET status
-POST /api/prophet/strategy-recommendation  # IC vs Directional recommendation
-GET  /api/prophet/vix-regimes   # VIX regime definitions
-
-# WISDOM (ML Predictions)
-GET  /api/ml/sage/status        # WISDOM model status
-POST /api/ml/sage/predict       # Run prediction
-POST /api/ml/sage/train         # Trigger training
-GET  /api/ml/sage/feature-importance  # Feature importance rankings
-
-# AI & COUNSELOR (35+ endpoints)
-POST /api/ai/analyze            # AI market analysis
-GET  /api/ai/gexis/info         # COUNSELOR system info
-GET  /api/ai/gexis/welcome      # Welcome message
-GET  /api/ai/gexis/daily-briefing  # Market briefing
-POST /api/ai/gexis/command      # Execute slash commands
-POST /api/ai/gexis/agentic-chat # Full agentic chat with tools
-POST /api/ai/gexis/agentic-chat/stream  # Streaming responses
-POST /api/ai/gexis/extended-thinking    # Deep analysis mode
-GET  /api/ai/gexis/learning-memory/stats  # Prediction accuracy
-
-# PROVERBS (Feedback Loop)
-GET  /api/proverbs/status       # Feedback loop status
-GET  /api/proverbs/insights     # Latest insights
-
-# DISCERNMENT (ML Scanner)
-GET  /api/discernment/status    # Scanner status
-
-# Transparency & Logging
-GET  /api/logs/summary          # Summary of all 22+ log tables
-GET  /api/logs/bot-decisions    # All bot trading decisions
-GET  /api/data-transparency/summary  # Hidden data categories
-GET  /api/data-transparency/regime-signals  # All 80+ regime signals
+### Running Backtests
+**IMPORTANT**: Always pipe through `| tee` — Render's web shell has no scrollback.
+```bash
+python backtest/run_ic_matrix.py 2>&1 | tee /tmp/ic_matrix_results.txt
 ```
 
----
+### Adding a New API Route
+1. Create `backend/api/routes/new_feature_routes.py`
+2. Define router: `router = APIRouter(tags=["NewFeature"])`
+3. Import in `backend/main.py`
+4. Include router: `app.include_router(new_feature_routes.router)`
 
-## Database Schema
-
-285+ tables across all systems. Each bot has its own set of tables (positions, closed_trades, equity_snapshots, scan_activity, config).
-
-### Core Trading Tables
-- `autonomous_open_positions` - Active positions
-- `autonomous_closed_trades` - Completed trades
-- `autonomous_trade_log` - Trade history
-- `unified_trades` - Unified trade records
-- `trading_decisions` - Bot trading decisions with full audit trail
-
-### Bot-Specific Tables (pattern: `{bot}_*`)
-Each bot (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON, JUBILEE, VALOR, FAITH, GRACE) has:
-- `{bot}_positions` - Open positions
-- `{bot}_closed_trades` - Completed trades
-- `{bot}_equity_snapshots` - Equity curve data
-- `{bot}_scan_activity` - Scan logs
-- `{bot}_config` - Bot configuration
-
-Example: `samson_positions`, `samson_closed_trades`, `samson_equity_snapshots`, `samson_scan_activity`
-
-### Crypto Tables (AGAPE family)
-- `agape_spot_positions` - AGAPE-SPOT positions
-- `agape_spot_scan_activity` - Scan logs
-- `agape_spot_win_tracker` - Bayesian tracking
-- `agape_spot_equity_snapshots` - Equity curve
-- Plus similar tables for each perpetual variant
-
-### ML & PROPHET Tables
-- `prophet_predictions` - PROPHET prediction history
-- `ml_decision_logs` - WISDOM decision audit trail
-- `sage_training_history` - WISDOM model training records
-- `ml_model_metadata` - Model versioning and metrics
-- `proverbs_*` - PROVERBS feedback loop tables (12+)
-
-### Analytics Tables
-- `gex_history` - Historical GEX data
-- `gamma_history` - Gamma exposure history
-- `regime_classifications` - Market regime data (80+ columns)
-- `backtest_results` - Backtest outcomes
-- `drift_analysis` - Backtest vs live drift metrics
-
-### Logging Tables (22+ tables)
-- `ai_analysis_history` - AI analysis with confidence scores
-- `psychology_analysis` - Psychology trap detection logs
-- `wheel_activity_log` - SPX Wheel activity
-- `gex_change_log` - GEX change events
-- `fortress_ml_outcomes` - FORTRESS ML prediction outcomes
-
-### Configuration Tables
-- `autonomous_config` - Bot configuration
-- `alerts` - Alert definitions
-- `push_subscriptions` - Push notification subscribers
+### Adding a New Frontend Page
+1. Create `frontend/src/app/new-page/page.tsx` with `'use client'`
+2. Use SWR for data fetching, Tailwind for styling
 
 ---
 
 ## Coding Conventions
 
 ### Python Style
-- Use type hints for function signatures
-- Docstrings for public functions
-- Import organization: stdlib, third-party, local
-- Use `try/except` with fallbacks for optional dependencies
-- Log with `logging` module, not print statements
-
-### Error Handling Pattern
 ```python
-# Common pattern - graceful fallback for imports
+# Graceful fallback for imports
 TradingVolatilityAPI = None
 try:
     from core_classes_and_engines import TradingVolatilityAPI
-    print("  Backend: TradingVolatilityAPI loaded")
 except ImportError as e:
     print(f"  Backend: TradingVolatilityAPI import failed: {e}")
 ```
@@ -993,7 +221,6 @@ router = APIRouter(tags=["Domain"])
 async def endpoint_name():
     """Docstring describing the endpoint"""
     try:
-        # Implementation
         return {"status": "success", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1002,101 +229,21 @@ async def endpoint_name():
 ### Frontend Component Pattern
 ```tsx
 'use client'
-
-import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 
 export default function ComponentName() {
   const { data, error, isLoading } = useSWR('/api/endpoint', fetcher)
-
   if (isLoading) return <LoadingState />
   if (error) return <ErrorState error={error} />
-
-  return (
-    <div className="tailwind-classes">
-      {/* Component content */}
-    </div>
-  )
+  return <div className="tailwind-classes">{/* content */}</div>
 }
 ```
 
----
-
-## Testing Conventions
-
-### Pytest Configuration
-```ini
-# pytest.ini
-testpaths = tests backend/tests
-python_files = test_*.py
-python_classes = Test*
-python_functions = test_*
-```
-
-### Test Fixtures (from conftest.py)
-```python
-@pytest.fixture
-def mock_spot_price():
-    return 585.50
-
-@pytest.fixture
-def mock_vix():
-    return 15.5
-
-@pytest.fixture
-def mock_market_data(mock_spot_price, mock_vix):
-    return {
-        "symbol": "SPY",
-        "spot_price": mock_spot_price,
-        "vix": mock_vix,
-        # ...
-    }
-```
-
-### Running Specific Tests
+### Testing
 ```bash
-# Run tests matching pattern
-pytest -k "test_gex" -v
-
-# Run with output
-pytest -v -s tests/test_gex_calculator.py
-
-# Skip slow tests
-pytest -m "not slow"
-```
-
----
-
-## Common Tasks
-
-### Adding a New API Route
-1. Create `backend/api/routes/new_feature_routes.py`
-2. Define router: `router = APIRouter(tags=["NewFeature"])`
-3. Import in `backend/main.py`
-4. Include router: `app.include_router(new_feature_routes.router)`
-
-### Adding a New Frontend Page
-1. Create directory: `frontend/src/app/new-page/`
-2. Add `page.tsx` with 'use client' directive
-3. Import components from `@/components/`
-4. Use SWR for data fetching from API
-
-### Running Backtests
-
-**IMPORTANT**: Always pipe long-running scripts through `| tee` to save output. Render's web shell has no scrollback — output that scrolls off screen is lost forever.
-
-```bash
-# ALWAYS use | tee for backtests and long-running scripts
-python backtest/run_ic_matrix.py 2>&1 | tee /tmp/ic_matrix_results.txt
-python scripts/run_spx_backtest.sh 2>&1 | tee /tmp/backtest_results.txt
-python scripts/run_all_backtests.py 2>&1 | tee /tmp/all_backtests.txt
-```
-
-### Training ML Models
-```bash
-python scripts/train_gex_probability_models.py
-python scripts/train_prophet_model.py
-python scripts/train_directional_ml.py
+pytest -k "test_gex" -v        # Pattern match
+pytest -v -s tests/test_gex_calculator.py  # With output
+pytest -m "not slow"           # Skip slow tests
 ```
 
 ---
@@ -1104,89 +251,15 @@ python scripts/train_directional_ml.py
 ## Deployment
 
 ### Render (Backend)
-Configured via `render.yaml` (zero-downtime deployment with gracePeriodSeconds):
-- `alphagex-api`: Main FastAPI service (69 route modules)
-- `alphagex-trader`: Trading bot worker (all 20+ bots: FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON, JUBILEE, VALOR, etc.)
-- `alphagex-collector`: Data collection worker
+Configured via `render.yaml`:
+- `alphagex-api`: Main FastAPI service
+- `alphagex-trader`: All 20+ trading bots
+- `alphagex-collector`: Data collection
 - `alphagex-backtester`: Backtest worker
-- `alphagex-db`: PostgreSQL database (285+ tables)
+- `alphagex-db`: PostgreSQL (285+ tables)
 
 ### Vercel (Frontend)
-- Auto-deploys from `main` branch
-- Environment variable: `NEXT_PUBLIC_API_URL`
-
-### Manual Deploy Commands
-```bash
-# Backend (Render handles via render.yaml)
-git push origin main
-
-# Frontend (Vercel handles automatically)
-git push origin main
-```
-
----
-
-## Development Standards
-
-### Production-Ready Implementation
-When implementing features, **always deliver production-ready, end-to-end implementations**:
-
-1. **Don't just write scaffolding** - Wire it up to actually run in production
-2. **Complete the full loop**: Database schema → Backend logic → API endpoint → Frontend display
-3. **If adding data fields**, integrate them into the code that populates them
-4. **If adding UI components**, ensure the backend sends the data they need
-5. **If adding new analysis systems**, integrate them into the bots that use them
-
-**Example**: If asked to "add ML analysis to scan activity":
-- BAD: Add database columns and UI components, but leave bots unchanged
-- GOOD: Add columns, update bots to call ML systems, pass data to logger, display in UI
-
-### Trigger Phrases
-When the user says any of these, ensure full end-to-end implementation:
-- "make it production-ready"
-- "implement end-to-end"
-- "wire it up"
-- "make it actually work"
-- "activate it"
-
-### Bot Completeness Requirements
-**CRITICAL: Each trading bot is an independent system.** When fixing issues or adding features to ANY bot, treat it as a complete web application that must work end-to-end:
-
-**Each bot (FORTRESS, SAMSON, ANCHOR, SOLOMON, GIDEON, VALOR, FAITH, GRACE) MUST have:**
-
-1. **Historical Equity Curve** (`/equity-curve`)
-   - Query ALL closed trades (no date filter on SQL - filter output only)
-   - Cumulative P&L = running sum of all realized_pnl
-   - Equity = starting_capital + cumulative_pnl
-   - starting_capital from config table (NOT hardcoded)
-
-2. **Intraday Equity Curve** (`/equity-curve/intraday`)
-   - Read from `{bot}_equity_snapshots` table
-   - Include unrealized P&L from open positions
-   - Market open equity = starting_capital + previous_day_cumulative_pnl
-
-3. **Position Management**
-   - `close_position()` must set: `close_time = NOW()`, `realized_pnl`
-   - `expire_position()` must exist and set same fields
-   - All position status changes must update `close_time`
-
-4. **Data Consistency**
-   - Same starting_capital lookup in ALL endpoints (config table)
-   - Same P&L formula everywhere: `(close_price - entry_price) * contracts * 100`
-   - Timezone handling: `::timestamptz AT TIME ZONE 'America/Chicago'`
-
-**When fixing ONE bot, check ALL bots for the same issue.** Don't fix FORTRESS and leave SAMSON broken.
-
-**Common Bot Endpoints to Verify:**
-| Endpoint | Purpose | Key Checks |
-|----------|---------|------------|
-| `/status` | Bot health | Config loaded, positions counted |
-| `/positions` | Open positions | All fields populated |
-| `/equity-curve` | Historical P&L | Cumulative math correct |
-| `/equity-curve/intraday` | Today's P&L | Snapshots being saved |
-| `/performance` | Statistics | Win rate, total P&L accurate |
-| `/logs` | Activity log | Actions being logged |
-| `/scan-activity` | Scan history | Scans recorded |
+Auto-deploys from `main` branch. Env var: `NEXT_PUBLIC_API_URL`.
 
 ---
 
@@ -1199,318 +272,44 @@ When the user says any of these, ensure full end-to-end implementation:
 4. **Test changes** - Run relevant tests before committing
 5. **Use Central Time** - All market times are in America/Chicago timezone
 
-### Known Technical Debt
-- Bare except clauses - Could be more specific
-- Some incomplete function implementations
-- Test coverage gaps in AI modules and route handlers
-- **LAZARUS (PHOENIX) lacks full API integration**: No dedicated route files
-- **Legacy Flask dashboard**: `dashboard/app.py` still exists but unused
-
 ### Critical Files (Handle with Care)
-- `backend/main.py` - Main application entry point (~2.7K lines)
+- `backend/main.py` - Application entry point (~2.7K lines)
 - `backend/api/bot_names.py` - Greek→Biblical name mapping (master registry)
-- `core/autonomous_paper_trader.py` - Core trading logic (LAZARUS/PHOENIX)
 - `config.py` - System-wide configuration
 - `database_adapter.py` - Database connections
-- `trading/fortress_v2/trader.py` - FORTRESS live trading execution
-- `trading/solomon_v2/trader.py` - SOLOMON live trading execution
-- `trading/samson/trader.py` - SAMSON trading execution
-- `trading/anchor/trader.py` - ANCHOR trading execution
-- `trading/gideon/trader.py` - GIDEON trading execution
-- `trading/jubilee/trader.py` - JUBILEE box spread + IC trading
-- `trading/valor/trader.py` - VALOR MES futures execution
-- `quant/prophet_advisor.py` - PROPHET ML advisory system (sole trade authority)
+- `quant/prophet_advisor.py` - PROPHET ML advisory (sole trade authority)
 - `scheduler/trader_scheduler.py` - Central bot orchestration
-- `backend/api/routes/prophet_routes.py` - PROPHET API endpoints
+- All `trading/*/trader.py` - Live trading execution
 
 ### Market Hours (Central Time)
+- Pre-market: 7:00 AM - 8:30 AM CT
 - Market Open: 8:30 AM CT
 - Market Close: 3:00 PM CT
-- Pre-market: 7:00 AM - 8:30 AM CT
 - After-hours: 3:00 PM - 5:00 PM CT
 
----
-
-## AGAPE-SPOT Crypto Trading System
-
-### Architecture
-- **Location**: `trading/agape_spot/` (trader.py, signals.py, models.py, executor.py, db.py)
-- **Routes**: `backend/api/routes/agape_spot_routes.py`
-- **Exchange**: Coinbase Advanced Trade (spot only, no futures)
-- **Tickers**: ETH-USD, BTC-USD, DOGE-USD, XRP-USD, SHIB-USD
-- **Strategy**: Long-only spot crypto with Bayesian win tracking, funding regime gates, EWMA choppy market filter
-- **Accounts**: `default` (main), `dedicated` (per-ticker), `paper` (shadow)
-
-### Key Tables
-- `agape_spot_positions` - All positions (open + closed), columns: position_id, ticker, status, entry_price, close_price, quantity, realized_pnl, close_reason, account_label, funding_regime_at_entry, open_time, close_time, sell_fail_count, entry_fee_usd, exit_fee_usd
-- `agape_spot_scan_activity` - Every scan cycle with outcome (TRADE, NO_TRADE, BLOCKED_BY_CAPACITY, etc.)
-- `agape_spot_win_tracker` - Bayesian alpha/beta per ticker per funding regime
-- `agape_spot_equity_snapshots` - Periodic equity snapshots with eth_price
-- `agape_spot_ml_shadow` - ML prediction shadow logging (actual_outcome column, not actual_win)
-
-### Profitability Analysis Scripts
-- `scripts/analyze_agape_spot_profitability.py` - P1-P17 baseline queries (overall summary, win/loss asymmetry, funding regime, close reasons, hold duration, hour-of-day, day-of-week, Bayesian tracker, capital allocator, scan activity, alpha vs B&H, fees, loss streaks, paper vs live, recent trend, orphans, EV gate)
-- `scripts/analyze_agape_spot_profitability_p2.py` - P18-P30 deep dive (account breakdown, position stacking, BTC deep dive, signal actions, Bayesian accuracy, drawdown, time-to-loss, weekly trajectory, fallback audit, close reason heatmap, burst detection, unrealized P&L, post-fix validation)
-- `scripts/analyze_agape_spot_postfix.py` - PF1-PF11 post-fix monitoring (comparison vs pre-fix baseline, fix validation, overtrading, close reasons, time-of-day, fee tracking, loss streaks, R:R ratio, scan effectiveness, health dashboard, GO/NO-GO decisions)
-
-### Feb 15 2026 Audit Findings (Pre-Fix Baseline)
-All data below is from BEFORE the fixes deployed Feb 15 ~20:00 UTC.
-
-**P&L Summary (pre-fix, live non-fallback only):**
-| Ticker | Trades | P&L | WR | Avg Win | Avg Loss | EV/trade | Verdict |
-|--------|--------|-----|-----|---------|----------|----------|---------|
-| ETH-USD | 196 | +$188.05 | 58.2% | $7.99 | -$8.82 | +$0.96 | Profitable but loses $475 overnight |
-| DOGE-USD | 303 | +$45.79 | 61.1% | $0.31 | -$0.09 | +$0.15 | Overtrading (42.6/day), fees ~$116/wk eat all profit |
-| BTC-USD | 19 | +$0.24 | 52.6% | $0.06 | -$0.03 | +$0.02 | 17/19 expired MAX_HOLD, wrong timeout |
-| XRP-USD | 117 | -$0.55 | 50.4% | $0.05 | -$0.06 | -$0.005 | Negative EV, WR below 54.5% breakeven |
-| SHIB-USD | 142 | -$0.64 | 48.6% | $0.07 | -$0.08 | -$0.007 | Negative EV, WR below 53.3% breakeven |
-
-**Critical Issues Found:**
-1. **Fee blindness**: Only 3 of 777 trades had fee data. Estimated real P&L after Coinbase fees: ~$30-50 (not $233)
-2. **ETH overnight drain**: +$545 during 9am-2pm CT, -$475 during 5pm-8am CT (net only +$188)
-3. **DOGE overtrading**: 42.6 trades/day at ~$0.38/trade in fees but only $0.15 avg P&L = net negative after fees
-4. **Position pileup**: 93 simultaneous BTC positions when limit should be 36, blocking 1068/1400 ETH scans
-5. **Fallback pollution**: 359 BTC_fallback positions at 3.3% WR = -$90 in phantom losses
-6. **BTC wrong timeout**: Global 6h default used instead of configured 4h; trend scaling pushed to 12h
-7. **Max loss streaks**: ETH=32, SHIB=21, DOGE=17, XRP=13 (ETH streak cost ~$282, more than total profit)
-
-**Fixes Deployed Feb 15 2026:**
-- F1: Silent sell retry (DB stays open if Coinbase sell fails, retries next cycle)
-- F2: Position pileup fix (force-expire positions past 2x max_hold when price unavailable)
-- F3: EWMA dynamic choppy gate (replaces flat $0.50 threshold)
-- F4: BTC tightened (max_hold 4h, max 2 positions, 5-scan cooldown)
-- F5: Major/altcoin bias split removed (all tickers get 0.3 base)
-- F6: Momentum filter relaxed (-0.2% to -0.5%)
-- F7: Orphan auto-sell (market sells stranded Coinbase coins)
-- F8: ETH max positions 5->3 (flash crash exposure cut 40%)
-- F9: DOGE funding gate enforced (no more zero-signal ALTCOIN_BASE_LONG entries)
-- F10: Fallback position cleanup (legacy ghosts closed at entry price)
-- F11: Per-ticker max_hold_hours (BTC uses 4h not global 6h)
-- F12: Paper mirrors live exactly (paper = shadow of live fills)
-
-**Post-Fix Monitoring:**
-- Run `python scripts/analyze_agape_spot_postfix.py` every 48-72h
-- Fix cutoff: `2026-02-15 20:00:00+00`
-- After 7 days post-fix data, use PF11 GO/NO-GO to decide each ticker
-- Key metrics to watch: ETH overnight P&L (should be $0 if restricted), DOGE trades/day (should drop from 42 to <10), fee tracking coverage (should be >95%), loss streaks (should be shorter)
-
-**Still Not Fixed (action items):**
-- Fee tracking in executor.py (entry_fee_usd/exit_fee_usd still not populated for most trades)
-- No time-of-day trading restriction (ETH should only trade 9am-2pm CT)
-- XRP-USD and SHIB-USD should be disabled (negative EV, no fix addresses their core issue)
+### Known Technical Debt
+- Bare except clauses in some modules
+- Test coverage gaps in AI modules and route handlers
+- LAZARUS (PHOENIX) lacks dedicated API routes
+- Legacy Flask dashboard `dashboard/app.py` still exists but unused
 
 ---
 
-## Common Mistakes to Avoid
+## Detailed Documentation (in `.claude/rules/`)
 
-These are real, recurring bugs from our codebase history. Every single item below caused a production issue at least once. AI assistants MUST review this section before making changes.
+Domain-specific rules are loaded automatically based on context:
+- `bot-registry.md` - All 20+ bot descriptions, ML systems, removed legacy systems
+- `bot-development.md` - Bot completeness requirements, production-ready standards
+- `common-mistakes.md` - 26 categories of real production bugs (90+ rules)
+- `dashboard-features.md` - WATCHTOWER signals, 0DTE tracker, dashboard components
+- `api-and-database.md` - 800+ API endpoints, 285+ database tables
+- `agape-spot.md` - AGAPE-SPOT crypto system, Feb 2026 audit findings
 
-### 1. Equity Curve / Snapshot Bugs (11 fixes — Most Recurring)
-- **Never use per-trade P&L for equity curves** — always use CUMULATIVE running sum of realized_pnl
-- **Every bot MUST save equity snapshots every cycle** — if snapshots aren't saved, intraday equity charts are blank
-- **Equity chart endpoints must query the DATABASE directly** — never require the Trader class to be initialized (e.g., use `JubileeDatabase` not `JubileeICTrader`)
-- **Always add a "live snapshot fallback"** — if no snapshots exist yet today, calculate one from open positions so the chart is never blank
-- **Intraday chart must draw a LINE from open to now** — a single dot is useless; always have at least 2 data points (market open + current)
-- **Filter equity curves by instrument** when the bot trades multiple instruments (VALOR lesson)
-- **Never return an empty chart without explanation** — show "No closed trades yet" or similar, not a blank screen
-- **Historical equity must query ALL closed trades** — no date filter on SQL; filter the output only
-
-### 2. Position Closing / Stranded Positions (10 fixes)
-- **Always implement EOD (End of Day) position closing** — positions left open overnight cause accounting nightmares
-- **EOD closers MUST have fallback logic** — if a 4-leg spread close is rejected, fall back to 2x 2-leg spreads, then 4 individual legs (cascade)
-- **Handle "quotes unavailable" in close logic** — if you can't get a quote, don't crash; use last known price or market order
-- **Detect stale/overnight holdover positions** — add catch-up logic that finds positions that should have been closed yesterday
-- **Close ALL positions before market close on Fridays** — never hold 0DTE/1DTE over the weekend
-- **Implement orphan detection** — positions can exist at the broker but not in the database (or vice versa); reconcile regularly
-- **Add a close-only mode** — when things go wrong, the bot should be able to only close positions without opening new ones
-- **Track stranded positions** — if 5 positions are stuck open, you need a SQL script or API to force-close them
-
-### 3. Trader Initialization Failures (6 fixes)
-- **Never let data/read endpoints depend on Trader class initialization** — if the Trader fails to init (bad config, missing API key), ALL endpoints return 500s, even read-only ones like `/positions` or `/equity-curve`
-- **Decouple data endpoints from trading logic** — use the Database class directly for read operations
-- **If Trader init fails, the scheduler job must still register** — don't skip scheduling just because init threw an exception; use lazy re-initialization
-- **Add heartbeat logging** — if a bot is silently dead, you won't know without periodic "I'm alive" logs
-- **Never fatal re-raise in `_ensure_tables()`** — if table creation fails, log it and continue; crashing here kills the entire bot
-- **Add emergency checks** — a bot should detect if it's been down for hours and take recovery actions
-
-### 4. TypeScript / Frontend Build Failures (7 fixes)
-- **Never spread a `Set` in TypeScript** — `[...mySet]` and `Set` iteration cause build failures; use `Array.from()` or plain arrays
-- **Always handle `null`/`undefined` in TypeScript** — add null guards before accessing nested properties (especially in chart components and timestamps)
-- **Type `catch` errors as `unknown`, not `Error`** — TypeScript strict mode rejects `(error as Error).message`; use type narrowing
-- **Don't forget to copy static assets** in standalone Next.js builds — CSS/images will be missing in production
-- **Enable `output: 'standalone'`** in `next.config.js` for Render deployments — default builds don't work
-- **Always add missing helper functions** — if you reference `isMarketOpen()` in a page, make sure it's imported or defined; one missing helper = build fails
-- **Run `npm run build` before pushing frontend changes** — TypeScript catches errors at build time that dev mode ignores
-
-### 5. Timezone Bugs (5 fixes)
-- **ALL timestamps must be Central Time (America/Chicago)** — never display UTC or server time to the user
-- **Use `::timestamptz AT TIME ZONE 'America/Chicago'`** in SQL queries — raw `timestamp` columns will show wrong times
-- **Chart X-axes must format in CT** — a chart showing UTC confuses every trading decision
-- **Tooltip times must be formatted in CT** — even if the chart axis is correct, tooltips can still show UTC
-- **Session windows must be consistent across ALL files** — VALOR had overnight session defined as 5PM-3PM in one file and different in another
-
-### 6. NULL Database Values Crashing Everything (6 fixes)
-- **Always handle NULL `realized_pnl`** — open positions have NULL P&L; if you sum without `COALESCE`, you get NULL instead of a number
-- **Backfill NULL columns after schema changes** — adding a new column leaves all existing rows as NULL; write a migration to set defaults
-- **Frontend must null-guard ALL API response fields** — if any field is unexpectedly null, the entire page crashes (React error boundary)
-- **Never let a single failing API call crash the whole page** — wrap each data fetch independently; one 500 shouldn't blank the dashboard
-- **Bot reports must handle 0-trade days** — if there are no trades, the report should still generate (with zeros), not crash
-- **DriftStatusCard, OracleWidget, and similar shared components MUST have null guards** — they receive data from multiple bots that may not all be running
-
-### 7. API Key / Secret Management (5 fixes)
-- **Never hardcode API keys in source code** — use environment variables exclusively (even for sandbox keys)
-- **Add `.env.local` to `.gitignore` immediately** — sandbox keys in git history are permanent
-- **Separate sandbox URLs from production URLs** — using the wrong base URL sends paper trades to your real account (or vice versa)
-- **Verify API keys are actually wired up** — a bot can appear to "work" while silently using fallback/mock data because the key env var was never set
-- **Add `node_modules` and lock files to `.gitignore` early** — committing node_modules bloats the repo permanently
-
-### 8. Broker Order Execution (Iron Condors) (7 fixes)
-- **Brokers reject spread orders unpredictably** — always implement cascade fallback: 4-leg → 2x 2-leg → 4 individual legs
-- **Use market orders for sandbox** — limit orders in sandbox accounts rarely fill, making testing impossible
-- **MTM (Mark-to-Market) must use real quotes** — verify the actual parameter names match the API; wrong param names = silently using stale/zero prices
-- **Use batch quote API, not individual calls** — individual `get_quote()` calls are slow and hit rate limits; use `get_quotes([list])` for multiple symbols
-- **OCC symbol root matters** — use `SPX` for monthly expirations, `SPXW` for weeklies; using the wrong root = order rejected
-- **Round strikes to valid intervals** — SPX uses $5 intervals; submitting $587.50 will be rejected; always `round(strike / 5) * 5`
-- **Box spread pricing: verify bid/ask leg direction** — mirroring bid/ask legs causes `mid_price = 0`, making the entire position worth nothing
-
-### 9. Frontend Performance (7 fixes)
-- **Never fire 50+ API calls on page load** — batch related endpoints into a single `/batch` endpoint
-- **Lazy-load heavy pages** — pages over 200KB should use `dynamic(() => import(...), { ssr: false })`
-- **Lazy-load the chatbot widget** — it's on every page but rarely used immediately
-- **Gate API calls behind active tab** — if a page has tabs, only fetch data for the visible tab (JUBILEE went from 19 calls to 1)
-- **Increase DB connection pool for production** — default `max=15` isn't enough when 10+ bots share one database; use `max=40, min=5`
-- **Track bundle size** — install Speed Insights; pages over 200KB need code splitting
-- **Never load ALL bot data on a dashboard** — only load data for bots the user is actively viewing
-
-### 10. Database Table & Migration Issues (7 fixes)
-- **Auto-create tables on first use** — don't assume tables exist; a fresh deploy with no migrations = instant 500s
-- **Use savepoints in migrations** — if one `CREATE TABLE` fails, don't let it poison the entire transaction
-- **Never use `DEFAULT` values in Databricks table definitions** — only PostgreSQL supports them
-- **Migration order matters** — if table B references table A, create A first; wrong order = FK constraint error
-- **Verify table names in BOT_REGISTRY match actual tables** — `titan_closed_trades` vs `titan_trades` silently returns empty results
-- **Remove legacy columns before INSERT** — if you remove columns from a table, update ALL insert statements; leaving them causes silent failures
-- **Run a `SELECT 1 FROM table LIMIT 1` health check** after table creation to verify it actually worked
-
-### 11. Hardcoded Values That Break (5 fixes)
-- **Never hardcode `starting_capital`** — read from config table; different bots/accounts have different balances
-- **Never hardcode position limits** — read from config; `max_positions` varies per ticker and per bot
-- **Never hardcode box spread notional** — use config capital, not magic numbers like `$495,000`
-- **Never hardcode paper account balances** — they change; use config or query the broker
-- **PDT rules differ between live and sandbox** — sandbox accounts have no day trade limits; don't apply PDT rules to paper trading
-
-### 12. Stale Data / Caching (5 fixes)
-- **Database config can override code config** — if you add a new ticker in code but the DB has a stale config row, the DB wins and the ticker is silently excluded
-- **Add diagnostic logging at every gate/filter** — when a trade is blocked, log WHY so you can trace stale cache vs genuine rejection
-- **Kill switches can get stuck** — always add auto-resume logic and stale detection; a kill switch activated during a crash may never deactivate
-- **Tradier cache blocks TradingVolatility data** — when Tradier returns stale after-hours data, it prevents the fallback data source from being used
-- **Freeze after-hours data** — after market close, stop updating values; otherwise stale quotes overwrite valid closing data
-
-### 13. Trading Gates That Block Everything (8 fixes — Second Most Recurring)
-- **Overly strict gates silently kill all trading** — a bot that generates 100% NO_TRADE signals is worse than useless; it looks alive but does nothing
-- **RTH-only gates block extended-hours bots** — if a bot is designed to trade overnight (VALOR), don't apply regular-trading-hours restrictions
-- **Negative gamma regime restriction was too strict** — it blocked profitable trades; Oracle should decide, not a blanket gate
-- **Negative confidence scores mean the gate math is wrong** — if confidence is negative, the formula is broken, not the market
-- **Cold start floors needed** — new bots with no history will fail confidence checks; add a minimum floor so they can start trading
-- **Test overnight signal generation separately** — overnight thresholds are different from daytime; one set of params can't serve both
-- **Quote re-fetch gates can hard-block trading** — if a quote refresh fails, don't block the trade; use the last known quote
-- **When removing gates, remove ALL related code** — dead kill switch code once caused a syntax error that crashed the entire module
-
-### 14. Market Hours & Session Handling (8 fixes)
-- **Pre-market and after-hours candles must be included** — filtering to `session=open` misses extended hours data
-- **After market close, load next trading day's data** — don't show stale today's data; switch to tomorrow's GEX
-- **Session fallback must walk past holidays** — if today is a holiday, go back day-by-day until you find a valid session
-- **When market is closed, show last session data** — never show a blank chart; always fall back to the most recent session
-- **Friday expirations need special handling** — on Fridays, trade next Friday's expiration (7 DTE) for better premium, not today's 0DTE
-- **Overnight persistence for WebSocket data** — streaming charts lose data on reconnect; persist to DB and reload
-- **Data source switching at market open** — use TradingVolatility for pre-market GEX, switch to Tradier at open
-- **Different session windows for different strategies** — VALOR uses 5PM-3PM; ARES uses 8:30AM-3:00PM; don't mix them up
-
-### 15. Wrong Method Names & Parameter Mismatches (5 fixes)
-- **Tradier API method names change** — `get_expirations()` vs `get_option_expirations()` — always verify against the actual client
-- **MTM parameter names must match the API exactly** — wrong param names are silently ignored, returning zero/stale values
-- **Database adapter methods get deprecated** — `DatabaseAdapter.execute_query()` was removed; calling dead methods crashes silently in try/except blocks
-- **Prophet vs Tradier method names differ** — when switching data providers, every method call must be updated
-- **Field names in database vs code diverge** — `jubilee_capital_deployments` had old column names from a previous schema; INSERT fails silently
-
-### 16. Chart & Visualization Iterations (10 fixes)
-- **Bar chart direction is counterintuitive** — Net GEX bars went through 5 iterations (extend right → left → right-to-left → leftward → correct); define direction FIRST before coding
-- **Y-axis range must accommodate all data** — too narrow and strikes get cut off; too wide and data looks flat
-- **Sort strikes by proximity to current price** — don't just show the first 40; show the 40 nearest the current price
-- **Reference lines (zero line, mean, etc.) disappear behind data** — set z-index / layer order explicitly
-- **GEX zone bands must update with price** — static bands become useless when price moves
-- **Tooltips must show formatted values** — raw timestamps and unformatted numbers confuse users
-- **Add countdown timers to candles** — users need to know when the next candle closes
-- **Chart backgrounds must be solid** — transparent backgrounds make charts unreadable on dark themes
-- **Test chart rendering with NO data, ONE data point, and FULL data** — each has different failure modes
-- **When migrating chart libraries (Recharts → Plotly), clean up ALL old code** — leaving dead Recharts imports increases bundle size
-
-### 17. Capital Architecture & Position Sizing (6 fixes)
-- **Box spread is the sole capital source for JUBILEE/PROMETHEUS** — IC trading capital comes from the box spread; if box spread isn't funded, IC trading is blocked
-- **Box spread opens ONCE, IC trader trades DAILY** — don't re-open box spreads every cycle
-- **Paper box spreads should auto-extend, not roll** — rolling creates unnecessary transactions in simulation
-- **Position sizing must be balance-aware** — read actual account balance, not assumed balance; multi-account live trading requires per-account sizing
-- **Kelly criterion sizing requires real data** — if the DatabaseAdapter method is dead, Kelly returns garbage; verify the data pipeline
-- **Capital deployment tables need schema alignment** — legacy columns cause INSERT failures; clean up old columns
-
-### 18. Bot Registration & Wiring (4 fixes)
-- **New bots must be registered in bot branding** — FAITH was created but not in the branding system; it showed as "Unknown Bot"
-- **New bots must be added to unified metrics** — skipping this means the bot doesn't appear on the main dashboard
-- **New bots must be added to the scheduler** — creating a bot without scheduling it = it never runs
-- **New bots must have ALL standard endpoints** — missing toggle, force-close, daily-perf, config, or advisor endpoints means incomplete functionality
-
-### 19. Destructive Auto-Resets (CRITICAL)
-- **NEVER auto-reset equity or position data** — if numbers look wrong, RECONCILE (compare DB to broker), don't wipe and restart
-- **VALOR lost all position history from an auto-reset** — this is unrecoverable
-- **Always prefer reconciliation over reset** — compare your database to the broker's records and fix discrepancies
-
-### 20. Deployment & Infrastructure (6 fixes)
-- **Next.js standalone mode is required for Render** — default Next.js builds don't include node_modules in output
-- **CSS/static assets must be copied in standalone builds** — they're not included by default
-- **Verification scripts must use external Render URLs** — `localhost` doesn't work from your machine to Render
-- **CI must pass before merge** — resolve backend test AND frontend build failures; don't merge with broken CI
-- **Always run post-deploy verification** — have a script that hits key endpoints after every deploy
-- **Databricks and Render have different SQL dialects** — `DEFAULT` values, `CREATE CATALOG`, schema syntax all differ
-
-### 21. WebSocket & Real-Time Streaming (6 fixes)
-- **WebSocket handlers need extended hours support** — `session_filter=open` misses pre-market and after-hours data
-- **Persist streaming data to DB** — WebSocket reconnects lose all in-memory data; save to database every interval
-- **Fallback to last session after hours** — streaming stops at close; show historical data instead of nothing
-- **Don't replace working chart implementations** — the Plotly candlestick chart was accidentally replaced by a LiveSpyChart; had to be reverted
-- **Test streaming with market open, closed, and pre-market** — each state has different behavior
-- **Harden every section** — one streaming audit found 7 separate failure modes; audit systematically
-
-### 22. Duplicate Work Across Branches (Pattern from git history)
-- **Check if a feature already exists on another branch** — GEX Profile page was built twice on different branches with slightly different implementations
-- **Clean up dead code when migrating** — Recharts-to-Plotly migration left dead imports on two separate branches
-- **Resolve merge conflicts carefully** — omega simulate page had import conflicts from parallel work
-- **Don't build the same feature frontend+backend on separate PRs** — scorecard was added to frontend+backend, then frontend was reverted; keep them together
-
-### 23. Multi-Instrument / Multi-Account Gotchas (5 fixes)
-- **Portfolio stats must filter by selected instrument** — showing combined stats when user selected "MES" is confusing
-- **Instrument count must be derived dynamically** — hardcoding `5 instruments` breaks when you add MGC or MSTU
-- **Pagination is required for account balance API** — Tradier returns paginated results; without pagination you get partial data
-- **Mirror trades to multiple sandbox accounts carefully** — restrict mirroring per-bot; not every bot should mirror to every account
-- **Per-instrument GEX data** — when adding new instruments (MGC), ensure GEX calculations support the new symbol
-
-### 24. Report Generation (3 fixes)
-- **Reports must generate even on 0-trade days** — skipping days creates gaps in the reporting timeline
-- **Surface trade fetch errors in reports** — if the data query fails, show the error; don't silently produce an empty report
-- **Add report diagnostics endpoint** — when reports look wrong, you need an API to inspect what data they're reading
-
-### 25. Backtest vs Production Alignment (4 fixes)
-- **Backtest defaults must match production config** — FORTRESS backtest used different parameters than live, making results meaningless
-- **Use the correct database URL** — ORAT_DATABASE_URL for backtest data, DATABASE_URL for production; mixing them up gives wrong historical data
-- **Verify code against production before running** — 8 corrections were needed on the FORTRESS backtest prompt before it was accurate
-- **Add GO/NO-GO gates** — backtest results should have explicit pass/fail criteria before going live
-
-### 26. Long-Running Script Output Lost (1 fix)
-- **ALWAYS pipe backtests and long-running scripts through `| tee /tmp/output.txt`** — Render's web shell has zero scrollback; once output scrolls off screen it's gone forever; re-running an 8-hour backtest because you forgot `| tee` is painful
+## Custom Agents (in `.claude/agents/`)
+- `bot-reviewer.md` - Audit all bots for consistency and completeness
+- `backtest-analyzer.md` - Run and analyze backtests with proper output capture
+- `cross-bot-fixer.md` - Apply the same fix across all 20+ bots systematically
 
 ---
 
-*Last Updated: February 26, 2026*
-*Major update: Greek→Biblical naming convention applied throughout (ARES→FORTRESS, Oracle→PROPHET, etc.)*
-*Added 10+ missing bots (VALOR, FAITH, GRACE, AGAPE family), updated all file counts and references*
-*Added Common Mistakes to Avoid section (25 categories, 90+ rules from 330 commits)*
-*AGAPE-SPOT audit findings and post-fix monitoring added*
-*JUBILEE (PROMETHEUS) updated to standalone system with IC trading*
+*Last Updated: April 8, 2026*
