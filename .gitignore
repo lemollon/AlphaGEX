@@ -42,8 +42,10 @@ node_modules/
 *.pem
 *.key
 
-# Claude AI assistant
-.claude/
+# Claude AI assistant - ignore settings but track rules and agents
+.claude/*
+!.claude/rules/
+!.claude/agents/
 
 # OS
 .DS_Store
