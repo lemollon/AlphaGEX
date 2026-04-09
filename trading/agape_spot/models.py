@@ -78,8 +78,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
         "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
         "max_hold_hours": 8,               # 8h max
-        # Signal quality gates
-        "require_funding_data": True,
+        # Signal quality gates — require_funding_data was True, which degraded
+        # ALL XRP signals to LOW confidence when CoinGlass API was unavailable,
+        # causing negative EV and auto-demotion to PROBATION.  With the key now
+        # in render.yaml the data will be available; False lets XRP trade even
+        # during CoinGlass outages (EV gate still protects against bad signals).
+        "require_funding_data": False,
         "allow_base_long": False,
         "use_eth_leader": True,
         "use_momentum_filter": True,

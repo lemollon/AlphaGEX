@@ -2383,3 +2383,83 @@ async def force_close_positions(
     except Exception as e:
         logger.error(f"AGAPE-SPOT force-close error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Ticker Probation Management
+# ---------------------------------------------------------------------------
+
+@router.get("/probation")
+async def get_probation_statuses():
+    """Get probation status for all tickers.
+
+    Statuses: LIVE (normal trading), PROBATION (paper-only), DISABLED (no trading).
+    Tickers are auto-demoted to PROBATION when trailing EV is negative.
+    DISABLED tickers are auto-promoted to PROBATION on bot startup.
+    """
+    trader = _get_trader()
+    if not trader:
+        # Fall back to direct DB query so status is visible even when trader is down
+        try:
+            from trading.agape_spot.db import AgapeSpotDatabase
+            db = AgapeSpotDatabase()
+            statuses = db.get_all_probation_statuses()
+            return {
+                "success": True,
+                "source": "database",
+                "data": {t: {"status": statuses.get(t, "LIVE")} for t in _VALID_TICKERS},
+                "fetched_at": _format_ct(),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"AGAPE-SPOT not available: {e}")
+
+    try:
+        return {
+            "success": True,
+            "source": "trader",
+            "data": trader.get_probation_statuses(),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT probation status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/probation/{ticker}")
+async def set_probation_status(
+    ticker: str,
+    status: str = Query(description="New status: LIVE, PROBATION, or DISABLED"),
+    reason: str = Query(default="Manual override via API", description="Reason for the change"),
+):
+    """Manually set probation status for a ticker.
+
+    Use this to re-enable a ticker that was auto-demoted, or to disable
+    a ticker that is underperforming.
+    """
+    ticker = ticker.upper()
+    if ticker not in _VALID_TICKERS:
+        raise HTTPException(status_code=400, detail=f"Invalid ticker: {ticker}. Valid: {sorted(_VALID_TICKERS)}")
+    status = status.upper()
+    if status not in ("LIVE", "PROBATION", "DISABLED"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}. Must be LIVE, PROBATION, or DISABLED")
+
+    trader = _get_trader()
+    if not trader:
+        raise HTTPException(status_code=503, detail="AGAPE-SPOT not available")
+
+    try:
+        success = trader.set_probation_status(ticker, status, reason)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to update probation status")
+        return {
+            "success": True,
+            "ticker": ticker,
+            "new_status": status,
+            "reason": reason,
+            "fetched_at": _format_ct(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT probation update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
