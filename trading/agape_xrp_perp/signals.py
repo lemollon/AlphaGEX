@@ -312,6 +312,12 @@ class AgapeXrpPerpSignalGenerator:
             score += 0.3
         elif crypto_gex < 0:
             score -= 0.3
+        # Price momentum tiebreaker when all microstructure data is at defaults
+        # (XRP has no Deribit GEX and CoinGlass may be unavailable).  Without
+        # this, score stays 0 and the bot returns RANGE_BOUND_NO_BIAS → WAIT
+        # on every single cycle, permanently preventing any trades.
+        if score == 0 and spot > 0:
+            score += self._get_price_momentum_score(market_data)
         if score > 0:
             skip, reason = tracker.should_skip_direction("LONG")
             return (SignalAction.WAIT, None, f"RANGE_BLOCKED_{reason}") if skip else (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
@@ -362,7 +368,47 @@ class AgapeXrpPerpSignalGenerator:
             skip, _ = tracker.should_skip_direction("SHORT")
             if not skip:
                 return (SignalAction.SHORT, "short", self._build_reasoning("MILD_FUNDING_SHORT", market_data))
+        # Price momentum fallback for coins without Deribit/CoinGlass coverage.
+        # Without this, XRP/DOGE/SHIB perp bots hit NO_FALLBACK_SIGNAL on every
+        # cycle because all upstream signals (squeeze, funding, GEX) are defaults.
+        momentum = self._get_price_momentum_score(market_data)
+        if momentum > 0:
+            skip, _ = tracker.should_skip_direction("LONG")
+            if not skip:
+                return (SignalAction.LONG, "long", self._build_reasoning("MOMENTUM_LONG", market_data))
+        elif momentum < 0:
+            skip, _ = tracker.should_skip_direction("SHORT")
+            if not skip:
+                return (SignalAction.SHORT, "short", self._build_reasoning("MOMENTUM_SHORT", market_data))
         return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
+
+    def _get_price_momentum_score(self, market_data) -> float:
+        """Return a directional score based on spot price change since last snapshot.
+
+        XRP has no Deribit options data and CoinGlass may be unavailable, so
+        all microstructure signals (funding, L/S ratio, GEX) are at their
+        defaults.  This leaves _derive_range_bound_direction with score=0 and
+        _derive_fallback_direction with no triggers — both return WAIT.
+
+        Use the price change between the current and previous CryptoDataProvider
+        snapshot as a lightweight momentum signal.  The provider caches snapshots
+        every 30s, so this measures short-term price direction.
+        """
+        if not self._crypto_provider:
+            return 0.0
+        spot = market_data.get("spot_price", 0)
+        if spot <= 0:
+            return 0.0
+        prev = self._crypto_provider._snapshot_cache.get(self.config.ticker)
+        if not prev or prev.spot_price <= 0:
+            return 0.0
+        change_pct = (spot - prev.spot_price) / prev.spot_price
+        # >0.05% move → directional signal; ≤0.05% → no signal
+        if change_pct > 0.0005:
+            return 0.5
+        elif change_pct < -0.0005:
+            return -0.5
+        return 0.0
 
     def _build_reasoning(self, direction, market_data):
         parts = [direction, f"funding={market_data.get('funding_regime', 'UNKNOWN')}",
