@@ -4,9 +4,6 @@ Verify CoinGlass API returns real data for XRP, DOGE, and SHIB.
 
 Run on Render (where COINGLASS_API_KEY is set):
     python scripts/verify_coinglass_xrp.py 2>&1 | tee /tmp/coinglass_verify.txt
-
-This script makes direct API calls to all CoinGlass endpoints used by
-CryptoDataProvider and reports exactly what data comes back for each coin.
 """
 
 import os
@@ -22,117 +19,110 @@ if not API_KEY:
 
 HEADERS = {"coinglassSecret": API_KEY}
 V2_BASE = "https://open-api.coinglass.com/public/v2"
-V3_BASE = "https://open-api-v3.coinglass.com/api"
-SYMBOLS = ["XRP", "DOGE", "SHIB", "ETH", "BTC"]  # ETH/BTC as control group
-
-results = {}
-
-
-def test_endpoint(name, url, params, use_v2=True):
-    """Test a single API endpoint and return structured result."""
-    try:
-        resp = requests.get(url, headers=HEADERS, params=params, timeout=15)
-        status = resp.status_code
-        if status == 200:
-            data = resp.json()
-            success = data.get("success") or data.get("code") == "0"
-            return {
-                "status": status,
-                "success": success,
-                "has_data": data.get("data") is not None,
-                "data_type": type(data.get("data")).__name__,
-                "data_preview": str(data.get("data", ""))[:500],
-                "msg": data.get("msg", ""),
-            }
-        return {"status": status, "success": False, "error": resp.text[:200]}
-    except Exception as e:
-        return {"status": 0, "success": False, "error": str(e)}
-
+SYMBOLS = ["XRP", "DOGE", "SHIB", "ETH", "BTC"]
 
 print("=" * 70)
 print(f"COINGLASS API VERIFICATION — {datetime.now().isoformat()}")
 print(f"API Key: {API_KEY[:6]}...{API_KEY[-4:]}")
 print("=" * 70)
 
-for symbol in SYMBOLS:
-    print(f"\n{'─' * 70}")
-    print(f"  SYMBOL: {symbol}")
-    print(f"{'─' * 70}")
+# ── TEST 1: Funding Rates (v2 — the only working CoinGlass endpoint) ──
+# The v2 /funding endpoint returns ALL symbols in a single response.
+# We make ONE call and parse out each symbol.
 
-    # 1. Funding Rate (v2) — this is the one confirmed working
-    r = test_endpoint(
-        "Funding Rate (v2)",
+print("\n[TEST 1] Funding Rate — GET /public/v2/funding")
+print("-" * 70)
+
+try:
+    resp = requests.get(
         f"{V2_BASE}/funding",
-        {"symbol": symbol, "time_type": "all"},
+        headers=HEADERS,
+        params={"time_type": "all"},
+        timeout=15,
     )
-    print(f"\n  [1] Funding Rate (v2): HTTP {r['status']}, success={r.get('success')}")
-    if r.get("success") and r.get("has_data"):
-        # Parse out exchange-level rates
-        try:
-            data = json.loads(r["data_preview"]) if isinstance(r["data_preview"], str) else r["data_preview"]
-        except json.JSONDecodeError:
-            data = None
-        if data and isinstance(data, list):
-            for entry in data:
-                if entry.get("symbol", "").upper() == symbol:
-                    exchanges = entry.get("uMarginList", [])
-                    rates = [(ex.get("exchangeName"), ex.get("rate")) for ex in exchanges if ex.get("rate") is not None]
-                    print(f"    Exchanges with data: {len(rates)}")
-                    for name, rate in rates[:8]:
-                        print(f"      {name}: {float(rate):.6f}")
-                    if len(rates) > 8:
-                        print(f"      ... and {len(rates) - 8} more")
-                    avg = sum(float(r) for _, r in rates) / len(rates) if rates else 0
-                    print(f"    Average rate: {avg:.6f}")
-                    print(f"    ✅ FUNDING DATA CONFIRMED FOR {symbol}")
-                    break
-            else:
-                print(f"    ⚠️ Symbol {symbol} not found in response")
-        else:
-            print(f"    Raw preview: {r['data_preview'][:200]}")
-    else:
-        print(f"    ❌ No data. Error: {r.get('error', r.get('msg', 'unknown'))}")
+    print(f"HTTP Status: {resp.status_code}")
 
-    # 2. Long/Short Ratio (v3)
-    r = test_endpoint(
-        "L/S Ratio (v3)",
-        f"{V3_BASE}/futures/global-long-short-account-ratio",
-        {"symbol": symbol},
-    )
-    print(f"\n  [2] L/S Ratio (v3): HTTP {r['status']}, success={r.get('success')}")
-    if r.get("success") and r.get("has_data"):
-        print(f"    Data: {r['data_preview'][:300]}")
-        print(f"    ✅ L/S RATIO DATA CONFIRMED FOR {symbol}")
-    else:
-        print(f"    ❌ No data. Error: {r.get('error', r.get('msg', 'unknown'))}")
+    if resp.status_code != 200:
+        print(f"ERROR: {resp.text[:300]}")
+        sys.exit(1)
 
-    # 3. Liquidation Heatmap (v3)
-    r = test_endpoint(
-        "Liquidation Heatmap (v3)",
-        f"{V3_BASE}/futures/liquidation-heatmap",
-        {"symbol": symbol},
-    )
-    print(f"\n  [3] Liquidation Heatmap (v3): HTTP {r['status']}, success={r.get('success')}")
-    if r.get("success") and r.get("has_data"):
-        print(f"    Data type: {r['data_type']}")
-        print(f"    ✅ LIQUIDATION DATA CONFIRMED FOR {symbol}")
-    else:
-        print(f"    ❌ No data. Error: {r.get('error', r.get('msg', 'unknown'))}")
+    payload = resp.json()
+    print(f"API success: {payload.get('success')}")
 
-    # 4. Open Interest (v2)
-    r = test_endpoint(
-        "Open Interest (v2)",
-        f"{V2_BASE}/futures/open-interest",
-        {"symbol": symbol},
-    )
-    print(f"\n  [4] Open Interest (v2): HTTP {r['status']}, success={r.get('success')}")
-    if r.get("success") and r.get("has_data"):
-        print(f"    ✅ OPEN INTEREST DATA CONFIRMED FOR {symbol}")
-    else:
-        print(f"    ❌ No data. Error: {r.get('error', r.get('msg', 'unknown'))}")
+    data = payload.get("data", [])
+    if not isinstance(data, list):
+        print(f"ERROR: Expected list, got {type(data).__name__}")
+        sys.exit(1)
+
+    print(f"Total symbols in response: {len(data)}")
+
+    # Build lookup by symbol
+    by_symbol = {}
+    for entry in data:
+        sym = entry.get("symbol", "").upper()
+        if sym:
+            by_symbol[sym] = entry
+
+    # Show available symbols (first 30)
+    all_syms = sorted(by_symbol.keys())
+    print(f"Available symbols ({len(all_syms)}): {', '.join(all_syms[:30])}{'...' if len(all_syms) > 30 else ''}")
+
+    # Check each target symbol
+    for symbol in SYMBOLS:
+        print(f"\n  ── {symbol} ──")
+        entry = by_symbol.get(symbol)
+        if not entry:
+            print(f"  ❌ {symbol} NOT FOUND in CoinGlass response")
+            continue
+
+        exchanges = entry.get("uMarginList", [])
+        rates = []
+        for ex in exchanges:
+            rate = ex.get("rate")
+            name = ex.get("exchangeName", "unknown")
+            if rate is not None:
+                rates.append((name, float(rate)))
+
+        if not rates:
+            print(f"  ❌ {symbol} found but no exchange rates returned")
+            continue
+
+        print(f"  ✅ {symbol} CONFIRMED — {len(rates)} exchanges reporting")
+        for name, rate in sorted(rates, key=lambda x: x[0]):
+            annualized = rate * 3 * 365
+            print(f"     {name:20s}  rate={rate:+.6f}  (annualized: {annualized:+.1f}%)")
+        avg = sum(r for _, r in rates) / len(rates)
+        print(f"     {'AVERAGE':20s}  rate={avg:+.6f}  (annualized: {avg * 3 * 365:+.1f}%)")
+
+except Exception as e:
+    print(f"FATAL: {e}")
+    import traceback
+    traceback.print_exc()
+
+# ── TEST 2: v3 endpoint status check ──
+print(f"\n{'=' * 70}")
+print("[TEST 2] v3 Endpoints Status (known broken since Feb 2026)")
+print("-" * 70)
+
+v3_endpoints = [
+    ("L/S Ratio", "https://open-api-v3.coinglass.com/api/futures/global-long-short-account-ratio", {"symbol": "BTC"}),
+    ("Liquidation", "https://open-api-v3.coinglass.com/api/futures/liquidation-heatmap", {"symbol": "BTC"}),
+]
+
+for name, url, params in v3_endpoints:
+    try:
+        resp = requests.get(url, headers=HEADERS, params=params, timeout=10)
+        print(f"  {name:20s}  HTTP {resp.status_code}  {'✅ WORKING' if resp.status_code == 200 else '❌ BROKEN'}")
+    except Exception as e:
+        print(f"  {name:20s}  ❌ ERROR: {e}")
 
 print(f"\n{'=' * 70}")
-print("VERIFICATION COMPLETE")
+print("SUMMARY")
 print("=" * 70)
-print("\nRun this on Render to get real results:")
-print("  python scripts/verify_coinglass_xrp.py 2>&1 | tee /tmp/coinglass_verify.txt")
+found = [s for s in SYMBOLS if s in by_symbol and any(ex.get("rate") is not None for ex in by_symbol[s].get("uMarginList", []))]
+missing = [s for s in SYMBOLS if s not in found]
+print(f"Funding rates available: {', '.join(found) if found else 'NONE'}")
+if missing:
+    print(f"Funding rates missing:   {', '.join(missing)}")
+print(f"\nThis data flows into CryptoDataProvider → _derive_signals() →")
+print(f"snapshot.funding_regime → perp bot signal scoring")
