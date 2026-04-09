@@ -309,6 +309,9 @@ class AgapeShibPerpSignalGenerator:
             score += 0.3
         elif crypto_gex < 0:
             score -= 0.3
+        # Price momentum tiebreaker when all microstructure data is at defaults
+        if score == 0 and spot > 0:
+            score += self._get_price_momentum_score(market_data)
         if score > 0:
             skip, reason = tracker.should_skip_direction("LONG")
             return (SignalAction.WAIT, None, f"RANGE_BLOCKED_{reason}") if skip else (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
@@ -359,7 +362,34 @@ class AgapeShibPerpSignalGenerator:
             skip, _ = tracker.should_skip_direction("SHORT")
             if not skip:
                 return (SignalAction.SHORT, "short", self._build_reasoning("MILD_FUNDING_SHORT", market_data))
+        # Price momentum fallback for coins without Deribit/CoinGlass coverage
+        momentum = self._get_price_momentum_score(market_data)
+        if momentum > 0:
+            skip, _ = tracker.should_skip_direction("LONG")
+            if not skip:
+                return (SignalAction.LONG, "long", self._build_reasoning("MOMENTUM_LONG", market_data))
+        elif momentum < 0:
+            skip, _ = tracker.should_skip_direction("SHORT")
+            if not skip:
+                return (SignalAction.SHORT, "short", self._build_reasoning("MOMENTUM_SHORT", market_data))
         return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
+
+    def _get_price_momentum_score(self, market_data) -> float:
+        """Return directional score from spot price change since last snapshot."""
+        if not self._crypto_provider:
+            return 0.0
+        spot = market_data.get("spot_price", 0)
+        if spot <= 0:
+            return 0.0
+        prev = self._crypto_provider._snapshot_cache.get(self.config.ticker)
+        if not prev or prev.spot_price <= 0:
+            return 0.0
+        change_pct = (spot - prev.spot_price) / prev.spot_price
+        if change_pct > 0.0005:
+            return 0.5
+        elif change_pct < -0.0005:
+            return -0.5
+        return 0.0
 
     def _build_reasoning(self, direction, market_data):
         parts = [direction, f"funding={market_data.get('funding_regime', 'UNKNOWN')}",

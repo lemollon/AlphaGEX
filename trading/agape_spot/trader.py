@@ -1603,11 +1603,29 @@ class AgapeSpotTrader:
     # ------------------------------------------------------------------
 
     def _load_probation_statuses(self):
-        """Load probation statuses from DB. Missing tickers default to LIVE."""
+        """Load probation statuses from DB. Missing tickers default to LIVE.
+
+        On startup, any DISABLED ticker is automatically promoted to PROBATION
+        so it can prove itself in paper trading.  A permanently DISABLED ticker
+        is a dead end — the only way to re-enable it would be a manual DB edit.
+        Promoting to PROBATION lets the automatic evaluation loop re-assess
+        with (potentially) better data (e.g. CoinGlass API key now configured).
+        """
         try:
             db_statuses = self.db.get_all_probation_statuses()
             for ticker in self.config.tickers:
-                self._probation_statuses[ticker] = db_statuses.get(ticker, "LIVE")
+                status = db_statuses.get(ticker, "LIVE")
+                if status == "DISABLED":
+                    logger.info(
+                        f"AGAPE-SPOT PROBATION: {ticker} was DISABLED — "
+                        f"promoting to PROBATION on startup for re-evaluation"
+                    )
+                    self.db.set_ticker_probation(
+                        ticker, "PROBATION",
+                        "Auto-promoted from DISABLED on startup for re-evaluation",
+                    )
+                    status = "PROBATION"
+                self._probation_statuses[ticker] = status
             logger.info(
                 f"AGAPE-SPOT PROBATION: Loaded statuses: "
                 f"{dict(self._probation_statuses)}"
@@ -1620,6 +1638,34 @@ class AgapeSpotTrader:
     def _is_on_probation(self, ticker: str) -> bool:
         """Return True if ticker is on probation (paper-only)."""
         return self._probation_statuses.get(ticker, "LIVE") == "PROBATION"
+
+    def set_probation_status(self, ticker: str, status: str, reason: str) -> bool:
+        """Manually set probation status for a ticker. Used by API endpoints.
+
+        Valid statuses: LIVE, PROBATION, DISABLED.
+        """
+        if status not in ("LIVE", "PROBATION", "DISABLED"):
+            return False
+        if ticker not in self.config.tickers:
+            return False
+        self.db.set_ticker_probation(ticker, status, reason)
+        self._probation_statuses[ticker] = status
+        logger.info(f"AGAPE-SPOT PROBATION: {ticker} manually set to {status} — {reason}")
+        return True
+
+    def get_probation_statuses(self) -> dict:
+        """Return current probation status for all tickers."""
+        result = {}
+        for ticker in self.config.tickers:
+            status = self._probation_statuses.get(ticker, "LIVE")
+            info = self.db.get_ticker_probation(ticker)
+            result[ticker] = {
+                "status": status,
+                "reason": info.get("reason", ""),
+                "demoted_at": info.get("demoted_at"),
+                "promoted_at": info.get("promoted_at"),
+            }
+        return result
 
     def _get_eligible_accounts(self, ticker: str) -> list:
         """Get accounts eligible for trading this ticker.
