@@ -36,6 +36,11 @@ class AgapeXrpPerpExecutor:
 
     def execute_trade(self, signal: AgapeXrpPerpSignal) -> Optional[AgapeXrpPerpPosition]:
         if not signal.is_valid:
+            logger.warning(
+                f"AGAPE-XRP-PERP: Signal invalid — action={signal.action}, "
+                f"confidence={signal.confidence}, quantity={signal.quantity}, "
+                f"entry_price={signal.entry_price}"
+            )
             return None
 
         # Pre-trade margin check - strict only in LIVE mode.
@@ -88,7 +93,7 @@ class AgapeXrpPerpExecutor:
                 high_water_mark=fill_price,
             )
         except Exception as e:
-            logger.error(f"AGAPE-XRP-PERP Executor: Paper execution failed: {e}")
+            logger.error(f"AGAPE-XRP-PERP Executor: Paper execution failed: {e}", exc_info=True)
             return None
 
     def _execute_live(self, signal: AgapeXrpPerpSignal) -> Optional[AgapeXrpPerpPosition]:
