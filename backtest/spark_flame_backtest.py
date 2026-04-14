@@ -123,6 +123,16 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
     if parquet_path in _options_cache:
         return _options_cache[parquet_path]
 
+    # Guard: file removed from Git LFS in April 2026. If we find a stale LFS
+    # pointer, stop early with a clear message instead of crashing in pandas.
+    if os.path.exists(parquet_path) and os.path.getsize(parquet_path) < 1000:
+        print(
+            f"ERROR: {parquet_path} is a Git LFS pointer ({os.path.getsize(parquet_path)} bytes), "
+            f"not the real dataset. This file was removed from Git LFS — see "
+            f"backtest/data/README.md for how to obtain it locally."
+        )
+        sys.exit(1)
+
     if not os.path.exists(parquet_path):
         # Try loading yearly files
         data_dir = os.path.dirname(parquet_path)
@@ -132,7 +142,10 @@ def load_options_data(parquet_path: str = "backtest/data/spy_options.parquet") -
         ) if os.path.isdir(data_dir) else []
 
         if not yearly_files:
-            print(f"ERROR: No parquet data found at {parquet_path} or as yearly files in {data_dir}")
+            print(
+                f"ERROR: No parquet data found at {parquet_path} or as yearly files in {data_dir}. "
+                f"See backtest/data/README.md for how to obtain the dataset."
+            )
             sys.exit(1)
 
         frames = []
