@@ -891,7 +891,12 @@ class CryptoDataProvider:
                         return ("LONG", "LOW")
                     else:
                         return ("SHORT", "LOW")
-                return ("RANGE_BOUND", "LOW")
+                # No L/S data, no liquidations, no GEX. Falling back to
+                # RANGE_BOUND here masks real directional moves for assets
+                # like XRP/DOGE/SHIB that lack Deribit GEX and often lack
+                # L/S coverage. Fall through to the price-momentum block
+                # below so we classify based on actual short-term movement
+                # rather than defaulting every scan to RANGE_BOUND.
 
             if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG") and bias == "BEARISH":
                 if squeeze in ("HIGH", "ELEVATED"):

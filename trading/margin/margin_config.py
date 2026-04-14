@@ -342,7 +342,14 @@ MARKET_DEFAULTS: Dict[str, MarketConfig] = {
         maintenance_margin_rate=0.025,
         is_margin_per_contract=False,
         max_leverage=20.0,
-        default_leverage=5.0,
+        # default_leverage bumped from 5x to 10x to match ETH-PERP/BTC-PERP.
+        # At 5x, the bot's default $9K / 5% risk / 2% stop sizing produced a
+        # ~$22.5K notional position whose $4.5K margin was 50% of equity —
+        # above the 40% max_single_position_margin_pct cap, causing every
+        # trade to be rejected by the pre-trade margin check (see
+        # margin_engine.py:932). At 10x the same position uses ~25% of
+        # equity, which is in line with ETH-PERP and BTC-PERP behavior.
+        default_leverage=10.0,
         contract_multiplier=1.0,
         tick_size=0.0001,
         tick_value=0.0001,

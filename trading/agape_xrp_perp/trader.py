@@ -155,16 +155,18 @@ class AgapeXrpPerpTrader:
                     f"{signal.side.upper()} {signal.quantity:.2f} XRP-PERP @ ${position.entry_price:.4f}",
                     details=signal.to_dict())
             else:
+                failure_reason = getattr(self.executor, "last_failure_reason", None) or "unknown"
                 result["outcome"] = "EXECUTION_FAILED"
+                result["error"] = failure_reason
                 logger.error(
                     f"AGAPE-XRP-PERP: EXECUTION_FAILED — signal was valid "
                     f"(action={signal.action.value}, side={signal.side}, "
                     f"qty={signal.quantity:.2f}, entry=${signal.entry_price}, "
-                    f"confidence={signal.confidence}). Check executor logs for root cause."
+                    f"confidence={signal.confidence}). Reason: {failure_reason}"
                 )
                 self.db.log("ERROR", "EXECUTION_FAILED",
-                    f"Valid signal rejected by executor: {signal.side} {signal.quantity:.2f} @ ${signal.entry_price}",
-                    details=signal.to_dict())
+                    f"Valid signal rejected by executor: {signal.side} {signal.quantity:.2f} @ ${signal.entry_price} | {failure_reason}",
+                    details={**signal.to_dict(), "failure_reason": failure_reason})
             self._log_scan(result, scan_ctx, signal=signal)
             return result
         except Exception as e:
