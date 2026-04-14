@@ -87,8 +87,12 @@ def audit_parquet(parquet_path: str):
     size = os.path.getsize(parquet_path)
     print(f"  File size: {size / 1e6:.1f} MB")
 
-    if size < 500:
-        print("  ERROR: File too small — likely an LFS pointer")
+    if size < 1000:
+        print(
+            f"  ERROR: File too small ({size} bytes) — likely a stale Git LFS pointer.\n"
+            f"  This file was removed from Git LFS — see backtest/data/README.md "
+            f"for how to obtain the real dataset."
+        )
         return
 
     df = pd.read_parquet(parquet_path)

@@ -72,6 +72,9 @@ data/prices/
 # Backtest results (auto-generated)
 backtest/results/
 
+# Large backtest source data — NOT checked in (see backtest/data/README.md)
+backtest/data/*.parquet
+
 # Logs (runtime artifacts - only root logs directory)
 /logs/
 *.log
