@@ -6156,6 +6156,154 @@ class AutonomousTraderScheduler:
             import traceback
             traceback.print_exc()
 
+    # ============================================================================
+    # DB RETENTION — daily prune + weekly vacuum
+    # ============================================================================
+    # These are the high-volume log / scan / signal / snapshot tables that
+    # accumulate bloat and caused an alphagex-db 90% storage warning in April 2026.
+    # The one-time cleanup recovered ~374 MB (771 → 397 MB). These scheduled jobs
+    # keep the database from growing back into the same corner.
+    #
+    # Format: (table_name, timestamp_column, retention_days)
+    # Chosen windows keep whatever dashboards/ML training actually reads back:
+    #   - 30d for logs & per-cycle scan activity (dashboards show ≤14d)
+    #   - 60d for equity snapshots (intraday-chart historical runway)
+    #   - 90d for alerts / danger-zone (compliance/audit)
+    #   -  7d for watchtower_gamma_history (tick data, intraday replay only)
+    _DB_RETENTION_TABLES = [
+        ('scan_activity',                 'timestamp',           30),
+        ('agape_spot_scan_activity',      'timestamp',           30),
+        ('agape_spot_activity_log',       'timestamp',           30),
+        ('valor_scan_activity',           'scan_time',           30),
+        ('valor_logs',                    'log_time',            30),
+        ('valor_signals',                 'signal_time',         30),
+        ('proverbs_audit_log',            'created_at',          30),
+        ('autonomous_trade_activity',     'activity_timestamp',  30),
+        ('agape_activity_log',            'timestamp',           30),
+        ('flame_logs',                    'log_time',            30),
+        ('watchtower_danger_zone_logs',   'detected_at',         90),
+        ('watchtower_alerts',             'triggered_at',        90),
+        ('watchtower_gamma_history',      'recorded_at',          7),
+        ('agape_spot_equity_snapshots',   'timestamp',           60),
+        ('valor_equity_snapshots',        'snapshot_time',       60),
+        ('production_equity_snapshots',   'snapshot_time',       60),
+        ('valor_ml_shadow',               'created_at',          60),
+    ]
+
+    def daily_db_retention(self):
+        """
+        DB_RETENTION — runs daily at 3:05 PM CT (Mon-Fri, after market close).
+
+        Deletes old rows from log/scan/signal/snapshot tables and old inactive
+        prophet_trained_models blobs. Per-table error isolation so one bad
+        table doesn't abort the rest.
+        """
+        if get_connection is None:
+            logger.error("DB_RETENTION: get_connection unavailable — skipping")
+            return
+
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"DB_RETENTION: Starting daily cleanup at {now.strftime('%H:%M:%S %Z')}")
+
+        total_deleted = 0
+        for table_name, ts_col, days in self._DB_RETENTION_TABLES:
+            conn = None
+            try:
+                conn = get_connection()
+                if not conn:
+                    continue
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"DELETE FROM {table_name} WHERE {ts_col} < NOW() - INTERVAL '{int(days)} days'"
+                )
+                deleted = cursor.rowcount or 0
+                conn.commit()
+                total_deleted += deleted
+                if deleted > 0:
+                    logger.info(f"DB_RETENTION:   {table_name:32s} ({days}d): deleted {deleted}")
+            except Exception as e:
+                logger.error(f"DB_RETENTION:   {table_name}: ERROR - {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+        # prophet_trained_models: keep active + last 3 days inactive
+        conn = None
+        try:
+            conn = get_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM prophet_trained_models "
+                    "WHERE is_active = FALSE AND created_at < NOW() - INTERVAL '3 days'"
+                )
+                deleted = cursor.rowcount or 0
+                conn.commit()
+                total_deleted += deleted
+                if deleted > 0:
+                    logger.info(f"DB_RETENTION:   prophet_trained_models           (3d): deleted {deleted}")
+        except Exception as e:
+            logger.error(f"DB_RETENTION:   prophet_trained_models: ERROR - {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        logger.info(f"DB_RETENTION: Complete — {total_deleted} rows deleted across {len(self._DB_RETENTION_TABLES) + 1} tables")
+
+    def weekly_vacuum(self):
+        """
+        VACUUM — runs Sundays at 2:00 AM CT.
+
+        Runs VACUUM (ANALYZE) on the retention tables to reclaim dead-tuple
+        space for reuse and refresh planner statistics. Non-blocking: uses
+        SHARE UPDATE EXCLUSIVE lock which does not block normal reads/writes.
+        """
+        if get_connection is None:
+            logger.error("VACUUM: get_connection unavailable — skipping")
+            return
+
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"VACUUM: Starting weekly maintenance at {now.strftime('%H:%M:%S %Z')}")
+
+        tables = [t[0] for t in self._DB_RETENTION_TABLES] + ['prophet_trained_models']
+        for table_name in tables:
+            conn = None
+            try:
+                conn = get_connection()
+                if not conn:
+                    continue
+                # VACUUM cannot run inside a transaction block. The PostgreSQL
+                # driver defaults to autocommit=False, so flip it for this call.
+                raw = getattr(conn, '_conn', None) or conn
+                old_autocommit = getattr(raw, 'autocommit', False)
+                try:
+                    raw.autocommit = True
+                    cursor = raw.cursor()
+                    cursor.execute(f"VACUUM (ANALYZE) {table_name}")
+                    cursor.close()
+                    logger.info(f"VACUUM:   {table_name}: complete")
+                finally:
+                    try:
+                        raw.autocommit = old_autocommit
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.error(f"VACUUM:   {table_name}: ERROR - {e}")
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+
+        logger.info("VACUUM: Complete")
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -6185,6 +6333,8 @@ class AutonomousTraderScheduler:
         logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"BOT_REPORTS Schedule: DAILY at 3:15 PM CT (end-of-day analysis reports)")
         logger.info(f"REPORTS_PURGE Schedule: WEEKLY on Sunday at 6:30 PM CT (5-year retention cleanup)")
+        logger.info(f"DB_RETENTION Schedule: DAILY at 3:05 PM CT (log/scan/snapshot pruning + prophet cleanup)")
+        logger.info(f"VACUUM Schedule: WEEKLY on Sunday at 2:00 AM CT (dead-tuple reclaim + ANALYZE)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -7434,6 +7584,44 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ REPORTS_PURGE job scheduled (WEEKLY on Sunday at 6:30 PM CT)")
+
+        # =================================================================
+        # DB_RETENTION JOB: log/scan/signal table pruning + prophet model cleanup
+        # Runs daily at 3:05 PM CT (after market close) — keeps the DB from
+        # growing into the 90% storage warning wall again.
+        # =================================================================
+        self.scheduler.add_job(
+            self.daily_db_retention,
+            trigger=CronTrigger(
+                hour=15,       # 3:00 PM CT
+                minute=5,      # 3:05 PM CT
+                day_of_week='mon-fri',
+                timezone='America/Chicago'
+            ),
+            id='db_retention',
+            name='DB_RETENTION - Daily log/scan/snapshot cleanup',
+            replace_existing=True
+        )
+        logger.info("✅ DB_RETENTION job scheduled (DAILY at 3:05 PM CT, Mon-Fri)")
+
+        # =================================================================
+        # VACUUM JOB: weekly dead-tuple reclaim + statistics refresh
+        # Runs Sunday at 2:00 AM CT — uses plain VACUUM (not FULL) so it
+        # does NOT block normal reads/writes on the tables.
+        # =================================================================
+        self.scheduler.add_job(
+            self.weekly_vacuum,
+            trigger=CronTrigger(
+                hour=2,        # 2:00 AM CT
+                minute=0,
+                day_of_week='sun',
+                timezone='America/Chicago'
+            ),
+            id='weekly_vacuum',
+            name='VACUUM - Weekly dead-tuple reclaim + ANALYZE',
+            replace_existing=True
+        )
+        logger.info("✅ VACUUM job scheduled (WEEKLY on Sunday at 2:00 AM CT)")
 
         # =================================================================
         # TRADIER SANDBOX EOD CLOSE: Bulletproof position closer
