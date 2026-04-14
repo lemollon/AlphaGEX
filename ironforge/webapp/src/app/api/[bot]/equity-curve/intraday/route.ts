@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
+import { isMarketOpen } from '@/lib/pt-tiers'
 
 export const dynamic = 'force-dynamic'
 
@@ -87,8 +88,11 @@ export async function GET(
       liveUnrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
     }
 
-    // Append a live snapshot with current unrealized P&L
-    if (snapshots.length > 0) {
+    // Append a live snapshot with current unrealized P&L — ONLY while market is open.
+    // After 3:00 PM CT (or weekends), don't extend the chart with a synthetic 'now' point;
+    // the curve should end at the last real scanner snapshot.
+    const marketIsOpen = isMarketOpen()
+    if (marketIsOpen && snapshots.length > 0) {
       const latest = snapshots[snapshots.length - 1]
       snapshots.push({
         timestamp: new Date().toISOString(),
@@ -99,7 +103,7 @@ export async function GET(
         open_positions: openPositions.length,
         note: 'live',
       })
-    } else if (openPositions.length > 0) {
+    } else if (marketIsOpen && openPositions.length > 0) {
       // Morning edge case: no snapshots yet today but positions are open.
       // Create TWO synthetic snapshots so the chart draws a line, not a single dot.
       // First point = market open baseline, second point = current live state.
