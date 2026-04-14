@@ -2981,62 +2981,67 @@ async function scanBot(bot: BotDef): Promise<void> {
       reason = `Past entry cutoff (${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT, cutoff ${botCfg.entry_end})`
     }
 
-    // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production
-    try {
-      // Sandbox snapshot
-      const acctRows = await query(
-        `SELECT current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
-         WHERE dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-         ORDER BY id DESC LIMIT 1`, [bot.dte],
-      )
-      const openPosCount = await query(
-        `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-         WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`, [bot.dte],
-      )
-      // Resolve person for equity snapshot attribution
-      let snapPerson = 'User'
+    // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production.
+    // Gate by isMarketOpen(ct) so snapshots only persist during 8:30 AM - 3:00 PM CT (Mon-Fri).
+    // The outer runAllScans() gate runs until 3:10 PM CT to allow EOD safety-net work, but
+    // snapshots written after 3:00 PM pollute the intraday equity chart.
+    if (isMarketOpen(ct)) {
       try {
-        const snapPersons = await getAccountsForBotAsync(bot.name)
-        if (snapPersons.length > 0) snapPerson = snapPersons[0]
-      } catch { /* default */ }
-      if (acctRows.length > 0) {
-        await query(
-          `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')`,
-          [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
-           unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
+        // Sandbox snapshot
+        const acctRows = await query(
+          `SELECT current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
+           WHERE dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           ORDER BY id DESC LIMIT 1`, [bot.dte],
         )
-      }
-
-      // Production snapshots (one per production paper_account)
-      const prodAccts = await query(
-        `SELECT person, current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
-         WHERE dte_mode = $1 AND account_type = 'production' AND is_active = TRUE`, [bot.dte],
-      )
-      for (const pa of prodAccts) {
-        const prodOpenCount = await query(
+        const openPosCount = await query(
           `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
-           WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production' AND person = $2`,
-          [bot.dte, pa.person],
+           WHERE status = 'open' AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'`, [bot.dte],
         )
-        // Calculate production unrealized PNL from open production positions
-        let prodUnrealized = 0
-        if (int(prodOpenCount[0]?.cnt) > 0 && unrealizedPnl !== 0) {
-          // Use same unrealized PNL as sandbox (same IC, same MTM quotes)
-          prodUnrealized = unrealizedPnl
+        // Resolve person for equity snapshot attribution
+        let snapPerson = 'User'
+        try {
+          const snapPersons = await getAccountsForBotAsync(bot.name)
+          if (snapPersons.length > 0) snapPerson = snapPersons[0]
+        } catch { /* default */ }
+        if (acctRows.length > 0) {
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
+             (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')`,
+            [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
+             unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
+          )
         }
-        await query(
-          `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-           (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'production')`,
-          [num(pa.current_balance), num(pa.cumulative_pnl),
-           prodUnrealized, int(prodOpenCount[0]?.cnt), `scan:${action}`, bot.dte, pa.person],
+
+        // Production snapshots (one per production paper_account)
+        const prodAccts = await query(
+          `SELECT person, current_balance, cumulative_pnl FROM ${botTable(bot.name, 'paper_account')}
+           WHERE dte_mode = $1 AND account_type = 'production' AND is_active = TRUE`, [bot.dte],
         )
+        for (const pa of prodAccts) {
+          const prodOpenCount = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production' AND person = $2`,
+            [bot.dte, pa.person],
+          )
+          // Calculate production unrealized PNL from open production positions
+          let prodUnrealized = 0
+          if (int(prodOpenCount[0]?.cnt) > 0 && unrealizedPnl !== 0) {
+            // Use same unrealized PNL as sandbox (same IC, same MTM quotes)
+            prodUnrealized = unrealizedPnl
+          }
+          await query(
+            `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
+             (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'production')`,
+            [num(pa.current_balance), num(pa.cumulative_pnl),
+             prodUnrealized, int(prodOpenCount[0]?.cnt), `scan:${action}`, bot.dte, pa.person],
+          )
+        }
+      } catch (snapErr: unknown) {
+        const msg = snapErr instanceof Error ? snapErr.message : String(snapErr)
+        console.warn(`[scanner] ${botName} snapshot error: ${msg}`)
       }
-    } catch (snapErr: unknown) {
-      const msg = snapErr instanceof Error ? snapErr.message : String(snapErr)
-      console.warn(`[scanner] ${botName} snapshot error: ${msg}`)
     }
 
   } catch (err: unknown) {
@@ -3255,10 +3260,14 @@ async function runAllScans(): Promise<void> {
 
   // Save production account equity snapshots every cycle (same as paper snapshots).
   // This gives production accounts their own equity curve based on real Tradier balances.
-  saveProductionEquitySnapshots().catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] Production equity snapshot failed (non-fatal): ${msg}`)
-  })
+  // Gate by isMarketOpen(ct) — runAllScans() runs until 3:10 PM CT to allow the EOD safety
+  // sweep, but snapshots after 3:00 PM pollute the intraday equity chart.
+  if (isMarketOpen(ct)) {
+    saveProductionEquitySnapshots().catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] Production equity snapshot failed (non-fatal): ${msg}`)
+    })
+  }
 
   // EOD safety net: at 2:55 PM CT, sweep ALL bots for any stranded positions
   // This catches positions that survived the normal EOD close (scanner restart,
