@@ -67,9 +67,21 @@ class AgapeXrpConfig:
     tick_value: float = 0.25           # Dollar value per tick
 
     # Margin requirements (CME /XRP Micro Futures)
-    initial_margin_per_contract: float = 150.0      # CME initial margin per contract
-    maintenance_margin_per_contract: float = 120.0   # CME maintenance margin per contract
-    max_margin_usage_pct: float = 80.0               # Max % of equity used as margin
+    # CME Micro XRP futures margin is ~$1,650/contract per the shared margin
+    # engine's MARKET_DEFAULTS (trading/margin/margin_config.py). The old
+    # $150 value here was fictional and caused the bot's internal sizing to
+    # compute 2-3 contracts that the shared pre-trade margin check then
+    # silently rejected as exceeding 40% single-position concentration,
+    # stopping the bot from trading from mid-February 2026 onward. Align
+    # the two so the bot sizes itself to what the margin system will
+    # actually approve.
+    initial_margin_per_contract: float = 1650.0      # CME initial margin per contract
+    maintenance_margin_per_contract: float = 1500.0   # CME maintenance margin per contract
+    # Cap at 40% (matches the shared margin engine's
+    # max_single_position_margin_pct) so contracts_by_margin naturally
+    # reduces to 1 contract on the default $5K equity. Prior 80% allowed
+    # the bot to size 2+ contracts that the shared engine always rejected.
+    max_margin_usage_pct: float = 40.0               # Max % of equity used as margin
     margin_call_threshold_pct: float = 120.0         # Warn when equity < 120% of maintenance
     auto_liquidation_threshold_pct: float = 100.0    # Force close when equity <= 100% of maintenance
 

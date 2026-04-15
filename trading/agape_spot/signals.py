@@ -762,7 +762,7 @@ class AgapeSpotSignalGenerator:
     ) -> Tuple[SignalAction, str]:
         """Derive direction from range-bound market. LONG or WAIT only.
 
-        LONG-ONLY system: all tickers get a +0.3 base long bias because
+        LONG-ONLY system: all tickers get a +1.0 base long bias because
         we can only buy, never short. A single bearish microstructure
         factor should not prevent trading when the overall signal is
         RANGE_BOUND (not SHORT).
@@ -778,7 +778,16 @@ class AgapeSpotSignalGenerator:
         # All tickers get long bias — this is a LONG-ONLY system.
         # RANGE_BOUND means "no strong direction" — lean long and let
         # the EV gate + stops manage risk.
-        score = 0.3
+        #
+        # Bumped from 0.3 -> 1.0: at 0.3 a single funding-contrarian
+        # penalty (-1.0 when funding_rate > min_funding_rate_signal)
+        # immediately pushed score to -0.7, firing
+        # RANGE_BOUND_BEARISH_LONG_ONLY on every scan for XRP despite
+        # the docstring's stated "TWO or more bearish factors" rule.
+        # At 1.0 base, a single -1.0 funding penalty lands at 0 (NO_BIAS,
+        # not bearish) and it genuinely takes two bearish factors to
+        # flip the score negative, matching the documented intent.
+        score = 1.0
 
         if funding_rate < -self.config.min_funding_rate_signal:
             score += 1.0
