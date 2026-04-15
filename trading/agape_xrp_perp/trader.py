@@ -112,6 +112,21 @@ class AgapeXrpPerpTrader:
         result = {"cycle": self._cycle_count, "timestamp": now.isoformat(), "outcome": "UNKNOWN",
                   "positions_managed": 0, "positions_closed": 0, "new_trade": False, "signal": None, "error": None}
         scan_ctx = {}
+        # Paper mode liquidation recovery — must run BEFORE _manage_positions
+        # because that function early-returns when there are no open positions
+        # (which is the state the bot is in after a liquidation closed them
+        # all). Without this, a one-time paper liquidation left the bot in
+        # BOT_DISABLED forever because the recovery check never fired.
+        if (self.config.mode == TradingMode.PAPER
+                and self._liquidated
+                and self._liquidation_recovery_at
+                and now >= self._liquidation_recovery_at):
+            logger.info("AGAPE-XRP-PERP: Paper mode liquidation recovery — re-enabling bot")
+            self._enabled = True
+            self._liquidated = False
+            self._liquidation_recovery_at = None
+            self.db.log("INFO", "LIQUIDATION_RECOVERY",
+                "Paper account recovered from liquidation. Bot re-enabled.")
         try:
             market_data = self.signals.get_market_data()
             if market_data:

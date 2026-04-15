@@ -833,15 +833,23 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AG
                 </td>
                 <td className="px-4 py-2 text-xs text-gray-400">{scan.oracle_advice || 'Advisory'}</td>
                 <td className="px-4 py-2">
-                  <span className={`text-xs px-2 py-0.5 rounded ${
-                    scan.outcome?.includes('TRADED') ? `${brand.badgeBg} ${brand.badgeText}` :
-                    scan.outcome?.includes('SAR') ? 'bg-violet-900/50 text-violet-300' :
-                    scan.outcome?.includes('ERROR') ? 'bg-red-900/50 text-red-300' :
-                    scan.outcome?.includes('LOSS_STREAK') ? 'bg-orange-900/50 text-orange-300' :
-                    'bg-gray-800 text-gray-500'
-                  }`}>
+                  <span
+                    title={scan.error_message || scan.signal_reasoning || scan.outcome}
+                    className={`text-xs px-2 py-0.5 rounded cursor-help ${
+                      scan.outcome?.includes('TRADED') ? `${brand.badgeBg} ${brand.badgeText}` :
+                      scan.outcome?.includes('SAR') ? 'bg-violet-900/50 text-violet-300' :
+                      scan.outcome?.includes('ERROR') ? 'bg-red-900/50 text-red-300' :
+                      scan.outcome?.includes('FAIL') ? 'bg-red-900/50 text-red-300' :
+                      scan.outcome?.includes('LOSS_STREAK') ? 'bg-orange-900/50 text-orange-300' :
+                      'bg-gray-800 text-gray-500'
+                    }`}>
                     {scan.outcome}
                   </span>
+                  {scan.error_message && (
+                    <div className="text-[10px] text-red-400/70 mt-0.5 font-mono truncate max-w-xs">
+                      {scan.error_message}
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}
