@@ -61,6 +61,19 @@ ALPHAGEX_BASE_URL = os.getenv("ALPHAGEX_BASE_URL", "http://localhost:8000")
 RISK_FREE_RATE = float(os.getenv("RISK_FREE_RATE", "0.05"))
 
 # ---------------------------------------------------------------------------
+# Cache freshness TTLs (seconds).  Without these, the DB cache will happily
+# serve data that's days or weeks old whenever the live upstream is briefly
+# unreachable, which is the "stale data" bug users see in the builder UI.
+# ---------------------------------------------------------------------------
+GEX_CACHE_MAX_AGE_OPEN_SEC = 15 * 60            # 15 min while market is open
+GEX_CACHE_MAX_AGE_CLOSED_SEC = 20 * 60 * 60     # 20h when closed (prior session OK)
+CANDLE_CACHE_MAX_AGE_OPEN_SEC = 10 * 60         # 10 min while market is open
+CANDLE_CACHE_MAX_AGE_CLOSED_SEC = 20 * 60 * 60  # 20h when closed
+# If GEX's reported spot_price disagrees with the current market by more than
+# this fraction, we flag the snapshot as stale even if the cache is "fresh".
+GEX_SPOT_DRIFT_THRESHOLD = 0.02                 # 2%
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -197,7 +210,18 @@ def _cache_chain(symbol: str, expiration: str, chain_data: dict):
     _cache_write(_write)
 
 
-def _read_cached_candles(symbol: str, interval: str = "15min") -> dict | None:
+def _cache_age_seconds(fetched_at: datetime | None) -> float | None:
+    """Return age in seconds of a cache row's fetched_at, or None if unknown."""
+    if fetched_at is None:
+        return None
+    if fetched_at.tzinfo is None:
+        fetched_at = fetched_at.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - fetched_at).total_seconds()
+
+
+def _read_cached_candles(
+    symbol: str, interval: str = "15min", max_age_sec: float | None = None
+) -> dict | None:
     if SessionLocal is None:
         return None
     try:
@@ -207,12 +231,21 @@ def _read_cached_candles(symbol: str, interval: str = "15min") -> dict | None:
                 CandleCache.symbol == symbol,
                 CandleCache.interval == interval,
             ).first()
-            if row and row.candles_json:
-                return {
-                    "candles": json.loads(row.candles_json),
-                    "last_price": row.last_price,
-                    "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
-                }
+            if not row or not row.candles_json:
+                return None
+            age = _cache_age_seconds(row.fetched_at)
+            if max_age_sec is not None and age is not None and age > max_age_sec:
+                logger.info(
+                    "[candles] Skipping stale cache for %s %s — age %.0fs > max %.0fs",
+                    symbol, interval, age, max_age_sec,
+                )
+                return None
+            return {
+                "candles": json.loads(row.candles_json),
+                "last_price": row.last_price,
+                "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+                "age_seconds": age,
+            }
         finally:
             db.close()
     except Exception:
@@ -220,24 +253,33 @@ def _read_cached_candles(symbol: str, interval: str = "15min") -> dict | None:
     return None
 
 
-def _read_cached_gex(symbol: str) -> dict | None:
+def _read_cached_gex(symbol: str, max_age_sec: float | None = None) -> dict | None:
     if SessionLocal is None:
         return None
     try:
         db = SessionLocal()
         try:
             row = db.query(GexCache).filter(GexCache.symbol == symbol).first()
-            if row:
-                return {
-                    "flip_point": row.flip_point,
-                    "call_wall": row.call_wall,
-                    "put_wall": row.put_wall,
-                    "gamma_regime": row.gamma_regime,
-                    "spot_price": row.spot_price,
-                    "vix": row.vix,
-                    "source": f"{row.source}_cached",
-                    "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
-                }
+            if not row:
+                return None
+            age = _cache_age_seconds(row.fetched_at)
+            if max_age_sec is not None and age is not None and age > max_age_sec:
+                logger.info(
+                    "[gex] Skipping stale cache for %s — age %.0fs > max %.0fs",
+                    symbol, age, max_age_sec,
+                )
+                return None
+            return {
+                "flip_point": row.flip_point,
+                "call_wall": row.call_wall,
+                "put_wall": row.put_wall,
+                "gamma_regime": row.gamma_regime,
+                "spot_price": row.spot_price,
+                "vix": row.vix,
+                "source": f"{row.source}_cached",
+                "fetched_at": row.fetched_at.isoformat() if row.fetched_at else None,
+                "age_seconds": age,
+            }
         finally:
             db.close()
     except Exception:
@@ -383,9 +425,15 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
         except Exception as e:
             logger.warning(f"[candles] Quote fallback failed for {symbol}: {e}")
 
-    # If still no candles (market closed, API down, etc.), read from cache
+    # If still no candles (market closed, API down, etc.), read from cache with
+    # a TTL so we never serve days-old data as if it were current.
     if not candles:
-        cached = _read_cached_candles(symbol, interval)
+        max_age = (
+            CANDLE_CACHE_MAX_AGE_OPEN_SEC
+            if _is_market_open_now()
+            else CANDLE_CACHE_MAX_AGE_CLOSED_SEC
+        )
+        cached = _read_cached_candles(symbol, interval, max_age_sec=max_age)
         if cached:
             candles = cached["candles"]
             last_price = last_price or cached["last_price"]
@@ -411,13 +459,51 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
 # ---------------------------------------------------------------------------
 
 
+async def _annotate_gex_staleness(
+    request: Request, result: dict, symbol: str
+) -> dict:
+    """Compare GEX spot_price against current market quote. Flag as stale if
+    the upstream snapshot disagrees with reality (e.g. walls reported for
+    yesterday's price range while SPY has moved several percent since)."""
+    try:
+        current_spot = None
+        try:
+            q = await _get_quote(request, symbol)
+            current_spot = q.get("last")
+        except Exception:
+            cached_q = _read_cached_quote(symbol)
+            if cached_q:
+                current_spot = cached_q.get("last")
+
+        gex_spot = result.get("spot_price")
+        if current_spot and gex_spot and gex_spot > 0:
+            drift = abs(current_spot - gex_spot) / gex_spot
+            result["current_spot"] = current_spot
+            result["spot_drift_pct"] = round(drift * 100, 3)
+            if drift > GEX_SPOT_DRIFT_THRESHOLD:
+                result["stale"] = True
+                result["stale_reason"] = (
+                    f"GEX spot ${gex_spot:.2f} differs from market ${current_spot:.2f} "
+                    f"by {drift * 100:.1f}% (> {GEX_SPOT_DRIFT_THRESHOLD * 100:.0f}%)"
+                )
+    except Exception as e:
+        logger.debug("[gex] Staleness annotation failed: %s", e)
+    return result
+
+
 @router.get("/gex")
 async def get_gex(request: Request, symbol: str = "SPY"):
-    """Proxy GEX levels from AlphaGEX. Falls back to cache when unavailable."""
+    """Proxy GEX levels from AlphaGEX. Falls back to cache when unavailable.
+
+    Every response carries ``fetched_at`` and, when the upstream snapshot looks
+    stale (too old, or reported spot diverges from the market), a ``stale:true``
+    flag with ``stale_reason`` so the frontend can warn the user rather than
+    silently render days-old walls."""
     import httpx
 
     http = request.app.state.http
     _timeout = 5.0
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Try WATCHTOWER first
     try:
@@ -432,6 +518,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
             ms = d.get("market_structure", {})
             fp_obj = ms.get("flip_point", {})
             gw = ms.get("gamma_walls", {})
+            upstream_fetched_at = d.get("fetched_at") or d.get("data_timestamp")
             result = {
                 "flip_point": fp_obj.get("current") if isinstance(fp_obj, dict) else fp_obj,
                 "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
@@ -440,9 +527,11 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
                 "source": "watchtower",
+                "fetched_at": upstream_fetched_at or now_iso,
+                "stale": False,
             }
             _cache_gex(symbol, result)
-            return result
+            return await _annotate_gex_staleness(request, result, symbol)
     except httpx.TimeoutException:
         logger.warning(f"[gex] Watchtower timeout for {symbol}")
     except Exception as e:
@@ -457,6 +546,7 @@ async def get_gex(request: Request, symbol: str = "SPY"):
         if resp.status_code == 200:
             body = resp.json()
             d = body.get("data", body)
+            upstream_fetched_at = d.get("fetched_at") or d.get("data_timestamp")
             result = {
                 "flip_point": d.get("flip_point"),
                 "call_wall": d.get("call_wall"),
@@ -465,20 +555,47 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
                 "source": "gex",
+                "fetched_at": upstream_fetched_at or now_iso,
+                "stale": False,
             }
             _cache_gex(symbol, result)
-            return result
+            return await _annotate_gex_staleness(request, result, symbol)
     except httpx.TimeoutException:
         logger.warning(f"[gex] Simple GEX timeout for {symbol}")
     except Exception as e:
         logger.warning(f"[gex] Simple GEX fetch failed for {symbol}: {e}")
 
-    # All live sources failed — try cache
-    cached = _read_cached_gex(symbol)
+    # All live sources failed — try cache, but only if it's not expired.
+    max_age = (
+        GEX_CACHE_MAX_AGE_OPEN_SEC
+        if _is_market_open_now()
+        else GEX_CACHE_MAX_AGE_CLOSED_SEC
+    )
+    cached = _read_cached_gex(symbol, max_age_sec=max_age)
     if cached:
-        return cached
+        # Cache came back — flag it explicitly so the UI can label it as cached
+        # data rather than live, and still run the spot-drift sanity check.
+        cached["stale"] = False
+        return await _annotate_gex_staleness(request, cached, symbol)
 
-    return {"error": "GEX data unavailable", "detail": "Could not reach AlphaGEX backend"}
+    # Check if there's an expired cache row we deliberately skipped — surface
+    # that to the caller instead of silently returning "unavailable", so the
+    # frontend can show "data is X minutes old" rather than a mystery error.
+    expired = _read_cached_gex(symbol, max_age_sec=None)
+    if expired:
+        expired["stale"] = True
+        expired["stale_reason"] = (
+            f"Upstream GEX unavailable; last cached snapshot is "
+            f"{int((expired.get('age_seconds') or 0) / 60)} min old"
+        )
+        return expired
+
+    return {
+        "error": "GEX data unavailable",
+        "detail": "Could not reach AlphaGEX backend",
+        "fetched_at": now_iso,
+        "stale": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -628,11 +745,25 @@ async def gex_suggest(
     gex = await get_gex(request, symbol)
     if "error" in gex:
         raise HTTPException(502, gex["error"])
+    if gex.get("stale"):
+        # Don't silently suggest strikes built from stale walls — that's the
+        # exact "call wall $652 while SPY is $695" bug.  Tell the caller so
+        # the UI can refuse to populate and prompt the user.
+        raise HTTPException(
+            409,
+            gex.get("stale_reason") or "GEX snapshot is stale — refusing to suggest strikes",
+        )
     flip = gex.get("flip_point")
     call_wall = gex.get("call_wall")
     put_wall = gex.get("put_wall")
     spot = gex.get("spot_price")
     regime = gex.get("gamma_regime")
+
+    # Prefer the live market spot (passed through from the staleness annotation)
+    # over the possibly-older spot that came back with the GEX snapshot, so
+    # suggestions are anchored to current price.
+    if gex.get("current_spot"):
+        spot = gex["current_spot"]
 
     if not flip or not spot:
         raise HTTPException(
