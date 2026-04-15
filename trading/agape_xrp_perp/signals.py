@@ -444,6 +444,41 @@ class AgapeXrpPerpSignalGenerator:
         raw_quantity = max_risk_usd / risk_per_xrp
         quantity = max(self.config.min_quantity, min(round(raw_quantity, 2), self.config.max_quantity))
 
+        # Margin-aware notional cap.
+        # The risk-based formula (max_risk / stop_distance) ignores how the
+        # resulting notional interacts with the shared margin engine. At
+        # risk=5% / stop=2% / lev=10x the per-position margin is 25% of
+        # equity, so with max_open_positions=3 the 3rd trade is always
+        # rejected by max_margin_usage_pct=70% and the bot gets stuck
+        # permanently at EXECUTION_FAILED once 2 positions are open.
+        # Cap each position's notional so `max_open_positions` can coexist
+        # inside the margin limits with a safety buffer.
+        try:
+            from trading.margin.margin_config import get_bot_margin_config
+            margin_cfg = get_bot_margin_config("AGAPE_XRP_PERP")
+            leverage = margin_cfg.effective_leverage if margin_cfg else 10.0
+            total_budget_pct = min(
+                margin_cfg.max_margin_usage_pct if margin_cfg else 70.0, 70.0
+            ) - 10.0  # 10pp buffer below the hard cap
+            per_pos_margin_pct = total_budget_pct / max(self.config.max_open_positions, 1)
+            # Also respect the single-position concentration cap with buffer
+            single_cap_pct = (margin_cfg.max_single_position_margin_pct if margin_cfg else 40.0) - 5.0
+            per_pos_margin_pct = min(per_pos_margin_pct, single_cap_pct)
+            max_notional = capital * (per_pos_margin_pct / 100.0) * leverage
+            max_qty_by_notional = max_notional / spot_price if spot_price > 0 else quantity
+            if max_qty_by_notional > 0 and max_qty_by_notional < quantity:
+                logger.debug(
+                    f"AGAPE-XRP-PERP: notional cap reducing size "
+                    f"{quantity:.0f} -> {max_qty_by_notional:.0f} XRP "
+                    f"(per_pos={per_pos_margin_pct:.1f}% margin, lev={leverage}x)"
+                )
+                quantity = round(max_qty_by_notional, 2)
+                quantity = max(self.config.min_quantity, quantity)
+        except Exception as e:
+            # If margin config is unavailable for any reason, keep original
+            # risk-based sizing rather than blocking the trade.
+            logger.debug(f"AGAPE-XRP-PERP: notional cap skipped: {e}")
+
         actual_risk = round(quantity * risk_per_xrp, 2)
         return (quantity, actual_risk)
 
