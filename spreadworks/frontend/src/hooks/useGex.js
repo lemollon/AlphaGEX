@@ -12,7 +12,12 @@ export default function useGex(symbol) {
       const res = await fetch(`${API_URL}/api/spreadworks/gex?symbol=${symbol}`);
       if (!res.ok) return;
       const data = await res.json();
-      setGexData(data);
+      // Backend now attaches fetched_at + stale + stale_reason. If the payload
+      // is an error or no flip point is present, keep prior data so the chart
+      // doesn't flicker, but surface the stale flag so the UI can warn.
+      if (data && (data.flip_point || data.error)) {
+        setGexData(data);
+      }
     } catch {
       // GEX unavailable — hide silently
     }

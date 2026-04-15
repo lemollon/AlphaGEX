@@ -633,6 +633,31 @@ export default function StrategyPanel({
         </div>
       )}
 
+      {/* GEX staleness warning (shown whenever GEX data is flagged stale,
+          independent of input mode — helps users notice that the walls the
+          chart is drawing may no longer reflect current market structure). */}
+      {gexData && (gexData.stale || gexData.error) && (
+        <div className="bg-sw-yellow-dim border border-sw-yellow/30 rounded-lg px-3 py-2 text-[11px] text-sw-yellow font-medium flex items-start gap-1.5 animate-fade-in">
+          <AlertTriangle size={14} className="shrink-0 mt-[1px]" />
+          <div className="leading-relaxed">
+            <div className="font-bold">GEX data may be stale</div>
+            <div className="text-text-secondary mt-0.5">
+              {gexData.stale_reason || gexData.detail || 'Upstream GEX unavailable'}
+              {gexData.fetched_at && (
+                <span> &middot; last update {new Date(gexData.fetched_at).toLocaleString('en-US', {
+                  timeZone: 'America/New_York',
+                  month: 'short',
+                  day: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                  hour12: true,
+                })} ET</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* GEX Suggestion */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
         <div className="bg-accent-dim border border-accent/20 rounded-lg px-3 py-2.5 text-[11px] text-accent animate-fade-in">
