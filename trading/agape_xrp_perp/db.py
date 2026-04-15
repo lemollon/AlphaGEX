@@ -525,7 +525,8 @@ class AgapeXrpPerpDatabase:
             cursor.execute("""
                 SELECT timestamp, outcome, xrp_price, funding_rate, funding_regime,
                        ls_ratio, squeeze_risk, combined_signal, combined_confidence,
-                       oracle_advice, oracle_win_prob, signal_action, signal_reasoning, position_id
+                       oracle_advice, oracle_win_prob, signal_action, signal_reasoning,
+                       position_id, error_message
                 FROM agape_xrp_perp_scan_activity ORDER BY timestamp DESC LIMIT %s
             """, (limit,))
             return [
@@ -535,7 +536,8 @@ class AgapeXrpPerpDatabase:
                  "funding_regime": r[4], "ls_ratio": float(r[5]) if r[5] else None,
                  "squeeze_risk": r[6], "combined_signal": r[7], "combined_confidence": r[8],
                  "oracle_advice": r[9], "oracle_win_prob": float(r[10]) if r[10] else None,
-                 "signal_action": r[11], "signal_reasoning": r[12], "position_id": r[13]}
+                 "signal_action": r[11], "signal_reasoning": r[12], "position_id": r[13],
+                 "error_message": r[14]}
                 for r in cursor.fetchall()
             ]
         except Exception:

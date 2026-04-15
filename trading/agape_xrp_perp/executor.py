@@ -33,14 +33,19 @@ class AgapeXrpPerpExecutor:
     def __init__(self, config: AgapeXrpPerpConfig, db=None):
         self.config = config
         self.db = db
+        # Last failure reason so the trader can surface it in scan activity
+        # instead of a bare EXECUTION_FAILED with no cause logged to the DB.
+        self.last_failure_reason: Optional[str] = None
 
     def execute_trade(self, signal: AgapeXrpPerpSignal) -> Optional[AgapeXrpPerpPosition]:
+        self.last_failure_reason = None
         if not signal.is_valid:
-            logger.warning(
-                f"AGAPE-XRP-PERP: Signal invalid — action={signal.action}, "
-                f"confidence={signal.confidence}, quantity={signal.quantity}, "
-                f"entry_price={signal.entry_price}"
+            reason = (
+                f"signal_invalid: action={signal.action}, confidence={signal.confidence}, "
+                f"quantity={signal.quantity}, entry_price={signal.entry_price}"
             )
+            self.last_failure_reason = reason
+            logger.warning(f"AGAPE-XRP-PERP: {reason}")
             return None
 
         # Pre-trade margin check - strict only in LIVE mode.
@@ -55,7 +60,12 @@ class AgapeXrpPerpExecutor:
             strict=is_live,
         )
         if not approved:
-            logger.warning(f"AGAPE-XRP-PERP: Trade BLOCKED by margin check: {reason}")
+            self.last_failure_reason = f"margin_rejected: {reason}"
+            logger.error(
+                f"AGAPE-XRP-PERP: Trade BLOCKED by margin check: {reason} "
+                f"(side={signal.side}, qty={signal.quantity:.2f}, "
+                f"price=${signal.entry_price or signal.spot_price:.4f})"
+            )
             return None
 
         if self.config.mode == TradingMode.LIVE:
@@ -93,6 +103,7 @@ class AgapeXrpPerpExecutor:
                 high_water_mark=fill_price,
             )
         except Exception as e:
+            self.last_failure_reason = f"paper_exception: {type(e).__name__}: {e}"
             logger.error(f"AGAPE-XRP-PERP Executor: Paper execution failed: {e}", exc_info=True)
             return None
 
