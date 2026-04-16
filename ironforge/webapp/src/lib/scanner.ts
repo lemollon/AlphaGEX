@@ -891,11 +891,14 @@ async function closePosition(
           ticker, expiration, putShort, putLong, callShort, callLong,
           contracts, estimatedPrice, positionId, sandboxOpenInfo,
           orderType, limitPrice,
+          posAccountType as 'sandbox' | 'production',
         )
 
         // Check if primary account actually closed (FLAME requirement)
         // Use composite key 'User:sandbox' (closeIcOrderAllAccounts returns composite keys)
-        const userCloseInfo = sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+        const userCloseInfo = posAccountType === 'production'
+          ? sandboxCloseInfo[`${posPerson}:production`]
+          : sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
         if (isFlameBotClose && !userCloseInfo?.order_id) {
           console.error(
             `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +

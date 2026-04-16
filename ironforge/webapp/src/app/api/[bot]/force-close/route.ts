@@ -90,7 +90,8 @@ export async function POST(
       closePrice = 0
     }
 
-    // 3. Mirror close to sandbox accounts
+    // 3. Mirror close to broker accounts (scoped to this position's account type)
+    const posAccountType = (pos.account_type || 'sandbox') as 'sandbox' | 'production'
     let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
     let sandboxOpenInfo: Record<string, SandboxOrderInfo | number> | null = null
     if (pos.sandbox_order_id) {
@@ -110,10 +111,12 @@ export async function POST(
         closePrice,
         position_id,
         sandboxOpenInfo,
+        undefined, undefined,
+        posAccountType,
       )
     } catch (sbErr: unknown) {
       const sbMsg = sbErr instanceof Error ? sbErr.message : String(sbErr)
-      console.warn(`Sandbox close mirror failed for ${position_id}: ${sbMsg}`)
+      console.warn(`Broker close failed for ${position_id}: ${sbMsg}`)
     }
 
     // 4. Use User's actual fill price if available
@@ -160,7 +163,6 @@ export async function POST(
 
     // 7. Update paper account — reconcile collateral from actual open positions
     //    Route to the correct paper_account row based on the position's account_type
-    const posAccountType = pos.account_type || 'sandbox'
     const accountTypeFilter = posAccountType === 'production'
       ? `AND account_type = 'production' AND person = '${escapeSql(pos.person || '')}'`
       : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`

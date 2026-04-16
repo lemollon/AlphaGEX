@@ -246,7 +246,8 @@ export async function POST(
         try {
           const posRows = await dbQuery(
             `SELECT ticker, expiration, put_short_strike, put_long_strike,
-                    call_short_strike, call_long_strike, sandbox_order_id
+                    call_short_strike, call_long_strike, sandbox_order_id,
+                    COALESCE(account_type, 'sandbox') as account_type
              FROM ${botTable(bot, 'positions')}
              WHERE position_id = '${escapeSql(String(pid))}'`,
           )
@@ -256,6 +257,7 @@ export async function POST(
             if (p.sandbox_order_id) {
               try { sandboxOpenInfo = JSON.parse(p.sandbox_order_id) } catch { /* malformed */ }
             }
+            const staleAccountType = (p.account_type || 'sandbox') as 'sandbox' | 'production'
             await closeIcOrderAllAccounts(
               String(p.ticker || 'SPY'),
               String(p.expiration || '').slice(0, 10),
@@ -267,6 +269,8 @@ export async function POST(
               closePrice,
               String(pid),
               sandboxOpenInfo,
+              undefined, undefined,
+              staleAccountType,
             )
           }
         } catch (sandboxErr) {

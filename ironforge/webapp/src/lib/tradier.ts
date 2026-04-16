@@ -1828,6 +1828,7 @@ export async function closeIcOrderAllAccounts(
   sandboxOpenInfo?: Record<string, SandboxOrderInfo | number> | null,
   orderType?: 'market' | 'debit',
   limitPrice?: number,
+  accountType?: 'sandbox' | 'production',
 ): Promise<Record<string, SandboxCloseInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxCloseInfo> = {}
@@ -1837,8 +1838,14 @@ export async function closeIcOrderAllAccounts(
   const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
   const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
 
+  // Filter accounts by type: sandbox closes only go to sandbox, production only to production.
+  // Without this filter, closing a sandbox position cascades to production (and vice versa).
+  const accounts = accountType
+    ? _sandboxAccounts.filter(a => (a.type ?? 'sandbox') === accountType)
+    : _sandboxAccounts
+
   await Promise.all(
-    _sandboxAccounts.map(async (acct) => {
+    accounts.map(async (acct) => {
       try {
         const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
         if (!accountId) return

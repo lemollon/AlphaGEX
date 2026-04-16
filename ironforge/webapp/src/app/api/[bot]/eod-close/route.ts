@@ -92,22 +92,29 @@ export async function POST(
       if (pos.sandbox_order_id) {
         try { sandboxOpenInfo = JSON.parse(pos.sandbox_order_id) } catch { /* ignore */ }
       }
+      const posAccountType = (pos.account_type || 'sandbox') as 'sandbox' | 'production'
+      const posPerson = pos.person || 'User'
       try {
         sandboxCloseInfo = await closeIcOrderAllAccounts(
           ticker, expiration,
           num(pos.put_short_strike), num(pos.put_long_strike),
           num(pos.call_short_strike), num(pos.call_long_strike),
           contracts, closePrice, positionId, sandboxOpenInfo,
+          undefined, undefined,
+          posAccountType,
         )
       } catch {
         // Non-fatal — continue with paper close
       }
 
-      // Use User's actual fill price if available
+      // Use the position's own account fill price (not always 'User')
       let effectivePrice = closePrice
-      const userClose = sandboxCloseInfo['User']
-      if (userClose?.fill_price != null && userClose.fill_price > 0) {
-        effectivePrice = userClose.fill_price
+      const primaryKey = posAccountType === 'production'
+        ? `${posPerson}:production`
+        : 'User:sandbox'
+      const primaryClose = sandboxCloseInfo[primaryKey] ?? sandboxCloseInfo['User']
+      if (primaryClose?.fill_price != null && primaryClose.fill_price > 0) {
+        effectivePrice = primaryClose.fill_price
       }
 
       // Calculate P&L
