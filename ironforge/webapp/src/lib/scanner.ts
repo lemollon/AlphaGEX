@@ -1306,8 +1306,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     expiration = nearest
   }
 
-  // Strikes + credits — dynamic SD walk-in
-  // Start at configured SD, step down by 0.1 until we get viable credit or hit floor.
+  // Strikes + credits
+  // FLAME: fixed SD, no walk-in. Walking strikes closer to ATM produced sub-breakeven
+  // setups (0.85 SD effective vs 1.2 target) that lost money consistently. Removed April 2026.
+  // SPARK/INFERNO: keep SD walk-in (step down by 0.1 until viable credit or floor).
   const SD_STEP = 0.1
   const SD_FLOOR = 0.5
   let usedSd = botCfg.sd
@@ -1317,20 +1319,22 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
   )
 
-  while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
-    usedSd = Math.round((usedSd - SD_STEP) * 10) / 10  // avoid float drift
-    strikes = calculateStrikes(spot, expectedMove, usedSd)
-    credits = await getIcEntryCredit(
-      'SPY', expiration,
-      strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-    )
-    console.log(
-      `[scanner] ${bot.name.toUpperCase()} SD walk-in: sd=${usedSd.toFixed(1)} → credit=$${credits?.totalCredit?.toFixed(4) ?? '0'}`,
-    )
+  if (bot.name !== 'flame') {
+    while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
+      usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
+      strikes = calculateStrikes(spot, expectedMove, usedSd)
+      credits = await getIcEntryCredit(
+        'SPY', expiration,
+        strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
+      )
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} SD walk-in: sd=${usedSd.toFixed(1)} → credit=$${credits?.totalCredit?.toFixed(4) ?? '0'}`,
+      )
+    }
   }
 
   if (!credits || credits.totalCredit < botCfg.min_credit) {
-    return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} after SD walk-in to ${usedSd.toFixed(1)})`
+    return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} at sd=${usedSd.toFixed(1)})`
   }
 
   // Sizing — BP% for all bots. Trade quality filtered by min_credit in config.
