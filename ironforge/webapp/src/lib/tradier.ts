@@ -2101,19 +2101,20 @@ export async function cancelSandboxOrder(
 export async function emergencyCloseSandboxPositions(
   apiKey: string,
   accountName: string,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<{ closed: number; failed: number; details: string[] }> {
   const details: string[] = []
   let closed = 0
   let failed = 0
 
   try {
-    const accountId = await getAccountIdForKey(apiKey)
+    const accountId = await getAccountIdForKey(apiKey, baseUrl)
     if (!accountId) {
       details.push(`No account ID found for ${accountName}`)
       return { closed, failed: 1, details }
     }
 
-    const positions = await getSandboxAccountPositions(apiKey)
+    const positions = await getSandboxAccountPositions(apiKey, undefined, baseUrl)
     const openPositions = positions.filter(p => p.quantity !== 0)
 
     if (openPositions.length === 0) {
@@ -2137,7 +2138,7 @@ export async function emergencyCloseSandboxPositions(
           type: 'market',
           duration: 'day',
         }
-        const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey)
+        const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey, baseUrl)
         if (result?.errors) {
           failed++
           details.push(`${accountName}: ORDER REJECTED ${pos.symbol} x${qty}: ${JSON.stringify(result.errors)}`)
@@ -2148,7 +2149,7 @@ export async function emergencyCloseSandboxPositions(
           // Old behavior just counted order ID as "closed" but the order
           // could be rejected by Tradier, leaving the position open.
           const orderId = result.order.id
-          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000) // 15s timeout
+          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000, baseUrl) // 15s timeout
           if (fillPrice != null) {
             closed++
             details.push(`${accountName}: Closed ${pos.symbol} x${qty} → order ${orderId} filled @ $${fillPrice.toFixed(4)}`)
@@ -2185,19 +2186,20 @@ export async function closeOrphanSandboxPositions(
   apiKey: string,
   accountName: string,
   orphanSymbols: Set<string>,
+  baseUrl: string = SANDBOX_URL,
 ): Promise<{ closed: number; failed: number; details: string[] }> {
   const details: string[] = []
   let closed = 0
   let failed = 0
 
   try {
-    const accountId = await getAccountIdForKey(apiKey)
+    const accountId = await getAccountIdForKey(apiKey, baseUrl)
     if (!accountId) {
       details.push(`No account ID found for ${accountName}`)
       return { closed, failed: 1, details }
     }
 
-    const positions = await getSandboxAccountPositions(apiKey)
+    const positions = await getSandboxAccountPositions(apiKey, undefined, baseUrl)
     const toClose = positions.filter(p => p.quantity !== 0 && orphanSymbols.has(p.symbol))
 
     if (toClose.length === 0) {
@@ -2221,7 +2223,7 @@ export async function closeOrphanSandboxPositions(
           type: 'market',
           duration: 'day',
         }
-        const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey)
+        const result = await sandboxPost(`/accounts/${accountId}/orders`, body, apiKey, baseUrl)
         if (result?.errors) {
           failed++
           details.push(`${accountName}: ORPHAN CLOSE REJECTED ${pos.symbol} x${qty}: ${JSON.stringify(result.errors)}`)
@@ -2229,7 +2231,7 @@ export async function closeOrphanSandboxPositions(
         }
         if (result?.order?.id) {
           const orderId = result.order.id
-          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000)
+          const fillPrice = await getOrderFillPrice(apiKey, accountId, orderId, 15_000, baseUrl)
           if (fillPrice != null) {
             closed++
             details.push(`${accountName}: Orphan closed ${pos.symbol} x${qty} → order ${orderId} filled @ $${fillPrice.toFixed(4)}`)

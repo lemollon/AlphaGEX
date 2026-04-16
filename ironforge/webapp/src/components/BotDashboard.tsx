@@ -444,7 +444,7 @@ export default function BotDashboard({
             : !reconData
               ? <TabLoading />
               : <ComponentErrorBoundary fallback="Reconcile error">
-                  <ReconcileTab data={reconData} />
+                  <ReconcileTab data={reconData} apiUrl={withPerson(`/api/${bot}/reconcile`)} />
                 </ComponentErrorBoundary>
         )}
       </div>
@@ -662,7 +662,7 @@ function BrokerEquityTab({
    ================================================================ */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ReconcileTab({ data }: { data: any }) {
+function ReconcileTab({ data, apiUrl }: { data: any; apiUrl: string }) {
   const s = data?.summary
   const positions = data?.positions || []
   const orphans = data?.orphans || {}
@@ -671,6 +671,9 @@ function ReconcileTab({ data }: { data: any }) {
   const passChecks = checks.filter((c: any) => c.pass)
   const failChecks = checks.filter((c: any) => !c.pass)
   const orphanCount = Object.values(orphans).reduce((sum: number, arr: any) => sum + (arr as any[]).length, 0)
+
+  const [closing, setClosing] = useState(false)
+  const [closeResult, setCloseResult] = useState<any>(null)
 
   return (
     <div className="space-y-4">
@@ -811,13 +814,57 @@ function ReconcileTab({ data }: { data: any }) {
       {/* Orphans */}
       {orphanCount > 0 && (
         <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-4">
-          <p className="text-sm font-semibold text-yellow-400 mb-2">
-            Orphan Tradier Positions ({orphanCount} legs)
-          </p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-semibold text-yellow-400">
+              Orphan Tradier Positions ({orphanCount} legs)
+            </p>
+            <button
+              onClick={async () => {
+                if (closing) return
+                setClosing(true)
+                setCloseResult(null)
+                try {
+                  const res = await fetch(apiUrl, { method: 'POST' })
+                  const json = await res.json()
+                  setCloseResult(json)
+                } catch (err: unknown) {
+                  setCloseResult({ error: err instanceof Error ? err.message : String(err) })
+                } finally {
+                  setClosing(false)
+                }
+              }}
+              disabled={closing}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                closing
+                  ? 'bg-yellow-500/20 text-yellow-400/50 cursor-wait'
+                  : 'bg-yellow-500/30 text-yellow-300 hover:bg-yellow-500/50'
+              }`}
+            >
+              {closing ? 'Closing...' : 'Close Orphans'}
+            </button>
+          </div>
           <p className="text-xs text-yellow-400/70 mb-3">
-            These Tradier positions have no matching FLAME paper position.
-            The orphan cleanup should close them on next scan cycle.
+            These Tradier positions have no matching paper position.
+            Close them to free buying power and stop the data integrity warning.
           </p>
+
+          {/* Close result banner */}
+          {closeResult && (
+            <div className={`rounded-lg border p-3 mb-3 text-xs ${
+              closeResult.error
+                ? 'border-red-500/30 bg-red-500/10 text-red-400'
+                : closeResult.total_failed > 0
+                  ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-400'
+                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+            }`}>
+              {closeResult.error
+                ? `Error: ${closeResult.error}`
+                : `Closed ${closeResult.total_closed}/${closeResult.total_orphans_found} orphan legs` +
+                  (closeResult.total_failed > 0 ? ` (${closeResult.total_failed} failed — market may be closed)` : '')
+              }
+            </div>
+          )}
+
           {Object.entries(orphans).map(([acctName, legs]: [string, any]) => (
             <div key={acctName} className="mb-2">
               <p className="text-xs font-medium text-gray-300 mb-1">{acctName}</p>
