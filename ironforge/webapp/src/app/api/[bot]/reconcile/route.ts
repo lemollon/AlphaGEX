@@ -1,26 +1,22 @@
 /**
- * FLAME ↔ Tradier Sandbox Reconciliation
+ * FLAME ↔ Tradier Reconciliation
  *
  * GET /api/flame/reconcile
+ *   Compare paper positions to Tradier (sandbox or production).
+ *   Detects orphan legs, entry credit drift, and unrealized P&L mismatches.
  *
- * For each open FLAME paper position, finds the matching 4 legs in each Tradier
- * sandbox account and compares:
- *   - Entry credit (paper) vs cost basis (Tradier)
- *   - Unrealized P&L $ and % (paper vs Tradier)
- *   - Contracts / quantity
- *   - Orphan detection (Tradier positions with no paper match)
- *   - Missing detection (paper positions not in Tradier)
- *
- * This is the trust test: when you put real money in, FLAME's numbers should
- * match Tradier's numbers 1:1.
+ * POST /api/flame/reconcile
+ *   Close orphan Tradier positions that have no matching paper position.
+ *   Only closes legs not tracked by the database — preserves matched positions.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 import {
   buildOccSymbol,
   getLoadedSandboxAccountsAsync,
   getSandboxAccountPositions,
   getIcMarkToMarket,
+  closeOrphanSandboxPositions,
   isConfigured,
 } from '@/lib/tradier'
 
@@ -341,6 +337,141 @@ export async function GET(
       positions: results,
       orphans,
       checks,
+    })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
+}
+
+/**
+ * POST /api/flame/reconcile
+ *
+ * Close orphan Tradier positions that have no matching paper position.
+ * Uses the same detection logic as GET, then calls closeOrphanSandboxPositions
+ * to close only the unmatched legs — preserving positions tracked by the DB.
+ */
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: { bot: string } },
+) {
+  const bot = validateBot(params.bot)
+  if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
+
+  if (bot !== 'flame') {
+    return NextResponse.json({
+      error: `Orphan close only available for FLAME (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
+    }, { status: 400 })
+  }
+
+  if (!isConfigured()) {
+    return NextResponse.json({ error: 'Tradier not configured' }, { status: 503 })
+  }
+
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
+
+  const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
+  const accountTypeFilter = `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
+
+  try {
+    // 1. Get open paper positions to build matched OCC symbols
+    const paperRows = await dbQuery(
+      `SELECT ticker, expiration,
+              put_short_strike, put_long_strike,
+              call_short_strike, call_long_strike,
+              contracts
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' ${dteFilter} ${accountTypeFilter}
+       ORDER BY open_time DESC`,
+    )
+
+    // Build set of OCC symbols that correspond to tracked paper positions
+    const matchedSymbols = new Set<string>()
+    for (const row of paperRows) {
+      const ticker = row.ticker || 'SPY'
+      const exp = row.expiration?.toISOString?.()?.slice(0, 10) ||
+        (row.expiration ? String(row.expiration).slice(0, 10) : '')
+      for (const [strike, type] of [
+        [num(row.put_short_strike), 'P'], [num(row.put_long_strike), 'P'],
+        [num(row.call_short_strike), 'C'], [num(row.call_long_strike), 'C'],
+      ] as [number, string][]) {
+        matchedSymbols.add(buildOccSymbol(ticker, exp, strike, type as 'P' | 'C'))
+      }
+    }
+
+    // 2. Get Tradier accounts filtered by type
+    const allAccounts = await getLoadedSandboxAccountsAsync()
+    const accounts = allAccounts.filter(a => a.type === accountType)
+
+    if (accounts.length === 0) {
+      return NextResponse.json({ error: `No ${accountType} accounts configured` }, { status: 400 })
+    }
+
+    // 3. For each account, find orphan positions and close them
+    const results: Array<{
+      account: string
+      orphans_found: number
+      closed: number
+      failed: number
+      details: string[]
+    }> = []
+    let totalClosed = 0
+    let totalFailed = 0
+    let totalOrphans = 0
+
+    for (const acct of accounts) {
+      const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
+      const orphans = positions.filter(p => p.quantity !== 0 && !matchedSymbols.has(p.symbol))
+
+      if (orphans.length === 0) {
+        results.push({
+          account: acct.name,
+          orphans_found: 0,
+          closed: 0,
+          failed: 0,
+          details: [`${acct.name}: No orphan positions to close`],
+        })
+        continue
+      }
+
+      totalOrphans += orphans.length
+      const orphanSymbols = new Set(orphans.map(o => o.symbol))
+      const closeResult = await closeOrphanSandboxPositions(acct.apiKey, acct.name, orphanSymbols, acct.baseUrl)
+
+      totalClosed += closeResult.closed
+      totalFailed += closeResult.failed
+      results.push({
+        account: acct.name,
+        orphans_found: orphans.length,
+        closed: closeResult.closed,
+        failed: closeResult.failed,
+        details: closeResult.details,
+      })
+    }
+
+    // 4. Log the action
+    try {
+      await dbExecute(
+        `INSERT INTO ${botTable(bot, 'logs')} (log_time, level, message, details, dte_mode)
+         VALUES (NOW(), 'RECONCILE',
+                 $1, $2, '${escapeSql(dte || '2DTE')}')`,
+        [
+          `Manual orphan close (${accountType}): ${totalOrphans} found, ${totalClosed} closed, ${totalFailed} failed`,
+          JSON.stringify({ account_type: accountType, results, source: 'reconcile-api-post' }),
+        ],
+      )
+    } catch {
+      // Non-fatal
+    }
+
+    return NextResponse.json({
+      action: 'close_orphans',
+      account_type: accountType,
+      total_orphans_found: totalOrphans,
+      total_closed: totalClosed,
+      total_failed: totalFailed,
+      results,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

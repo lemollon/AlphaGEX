@@ -1613,7 +1613,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       try {
         const accounts = await getLoadedSandboxAccountsAsync()
         for (const acct of accounts) {
-          const positions = await getSandboxAccountPositions(acct.apiKey)
+          const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
           for (const p of positions) {
             if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
             try {
@@ -1631,7 +1631,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         try {
           const accounts = await getLoadedSandboxAccountsAsync()
           for (const acct of accounts) {
-            const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+            const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
             for (const detail of result.details) {
               console.log(`[scanner] FLAME PRE-ORDER: ${detail}`)
             }
@@ -1643,7 +1643,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         try {
           const accounts = await getLoadedSandboxAccountsAsync()
           for (const acct of accounts) {
-            const positions = await getSandboxAccountPositions(acct.apiKey)
+            const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
             for (const p of positions) {
               if (!p.symbol || p.symbol.length < 15 || p.quantity === 0) continue
               try {
@@ -1862,7 +1862,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         const retryAccounts = await getLoadedSandboxAccountsAsync()
         for (const a of retryAccounts) {
           if (a.type === 'production') continue
-          await emergencyCloseSandboxPositions(a.apiKey, a.name)
+          await emergencyCloseSandboxPositions(a.apiKey, a.name, a.baseUrl)
         }
       } catch { /* ignore cleanup errors */ }
       await new Promise((r) => setTimeout(r, 2000))
@@ -2414,7 +2414,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
     const cleanupDetails: Record<string, { stale: number; closed: number; failed: number }> = {}
 
     for (const acct of accounts) {
-      const positions = await getSandboxAccountPositions(acct.apiKey)
+      const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
       let acctStale = 0
       let acctClosed = 0
       let acctFailed = 0
@@ -2448,7 +2448,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
         console.log(
           `[scanner] SANDBOX CLEANUP [${acct.name}]: Closing ${staleSymbols.length} stale positions...`,
         )
-        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
         acctClosed = result.closed
         acctFailed = result.failed
         for (const detail of result.details) {
@@ -2472,7 +2472,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       // Re-query to see if positions are actually gone despite "failed" close orders
       let remainingStale = 0
       for (const acct of accounts) {
-        const freshPositions = await getSandboxAccountPositions(acct.apiKey)
+        const freshPositions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
         for (const pos of freshPositions) {
           if (!pos.symbol || pos.symbol.length < 15 || pos.quantity === 0) continue
           try {
@@ -2561,7 +2561,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       // Old behavior: emergencyCloseSandboxPositions closed ALL positions including the matched
       // one, which broke paper↔sandbox 1:1 sync. New behavior: targeted orphan-only close.
       for (const acct of accounts) {
-        const positions = await getSandboxAccountPositions(acct.apiKey)
+        const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
         const orphans = positions.filter(p => p.quantity !== 0 && !paperOccPrefixes.has(p.symbol))
         if (orphans.length > 0) {
           const orphanSymbols = new Set(orphans.map(o => o.symbol))
@@ -2573,7 +2573,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
           for (const o of orphans) {
             console.error(`[scanner]   ORPHAN: ${o.symbol} qty=${o.quantity} cost=${o.cost_basis} mv=${o.market_value}`)
           }
-          const result = await closeOrphanSandboxPositions(acct.apiKey, acct.name, orphanSymbols)
+          const result = await closeOrphanSandboxPositions(acct.apiKey, acct.name, orphanSymbols, acct.baseUrl)
           await query(
             `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
              VALUES ($1, $2, $3, $4)`,
@@ -2617,7 +2617,7 @@ async function prescanSandboxHealthCheck(): Promise<void> {
 
   for (const acct of accounts) {
     try {
-      const positions = await getSandboxAccountPositions(acct.apiKey)
+      const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
       // We check positions count as a proxy — if account is accessible, it's alive
       totalChecked++
       // Note: A more thorough check would query balances, but getSandboxBuyingPower
@@ -2686,7 +2686,7 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
 
   for (const acct of accounts) {
     try {
-      const positions = await getSandboxAccountPositions(acct.apiKey)
+      const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
       // Filter to today's or future positions
       const todayPositions = positions.filter(p => {
         const symbol = p.symbol
@@ -2702,7 +2702,7 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
         )
 
         // Actually close the stranded positions instead of just logging
-        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name)
+        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
 
         await query(
           `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
