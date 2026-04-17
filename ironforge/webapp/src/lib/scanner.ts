@@ -1474,7 +1474,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
 
       // Record production positions (same logic as normal path below)
-      const PRODUCTION_MAX_CONTRACTS = 2
+      const PRODUCTION_MAX_CONTRACTS = 1  // Iron Viper: exactly 1 IC per day
       let prodRecorded = false
       for (const [key, info] of Object.entries(sandboxOrderIds)) {
         if (info.account_type !== 'production') continue
@@ -1707,7 +1707,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
     // Record production positions immediately. These are real money positions
     // that must be tracked regardless of what happens with sandbox.
-    const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap
+    const PRODUCTION_MAX_CONTRACTS = 1  // Iron Viper: exactly 1 IC per day
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
 
@@ -2012,7 +2012,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Production positions only exist if placeIcOrderAllAccounts confirmed a Tradier fill
   // (sandbox must fill first — production is only mirrored after sandbox success).
   if (!isFlameFillOnly) {
-    const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap for production
+    const PRODUCTION_MAX_CONTRACTS = 1  // Iron Viper: exactly 1 IC per day for production
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
       if (!info.fill_price || info.fill_price <= 0) continue
