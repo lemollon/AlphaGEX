@@ -43,9 +43,9 @@ class SignalGenerator:
         )
 
     def _init_tradier(self) -> None:
-        """Initialize Tradier API client."""
+        """Initialize Tradier API client (bot-aware routing)."""
         try:
-            client = TradierClient()
+            client = TradierClient(bot=getattr(self.config, 'bot_name', None))
             test_quote = client.get_quote("SPY")
             if test_quote and test_quote.get("last", 0) > 0:
                 self.tradier = client

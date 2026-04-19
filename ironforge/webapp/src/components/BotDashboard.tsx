@@ -14,6 +14,7 @@ import PTTimeline from './PTTimeline'
 import PdtCard from './PdtCard'
 import PdtTabContent from './PdtTabContent'
 import SignalsTable from './SignalsTable'
+import ProductionTab from './dashboard/ProductionTab'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -55,17 +56,17 @@ function TabLoading() {
   )
 }
 
-const ALL_TABS = ['Equity Curve', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+const ALL_TABS = ['Equity Curve', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
 type Tab = (typeof ALL_TABS)[number]
 
-/** Only FLAME has sandbox/production accounts. SPARK and INFERNO are paper-only. */
-const ACCOUNT_BOTS = new Set(['flame'])
+/** Only SPARK has sandbox/production accounts. FLAME and INFERNO are paper-only. */
+const ACCOUNT_BOTS = new Set(['spark'])
 
 /** Tabs that only make sense for bots with broker accounts */
-const ACCOUNT_ONLY_TABS = new Set<Tab>(['Broker Equity', 'Reconcile'])
+const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
 
-/** PDT only applies to FLAME (production account under $25K). SPARK/INFERNO are paper-only. */
-const PDT_BOTS = new Set(['flame'])
+/** PDT only applies to SPARK (production account under $25K). FLAME/INFERNO are paper-only. */
+const PDT_BOTS = new Set(['spark'])
 
 /** View mode: Paper (sandbox combined) or Live (production) */
 type ViewMode = 'paper' | 'live'
@@ -135,7 +136,7 @@ export default function BotDashboard({
     { refreshInterval: LIVE_REFRESH },
   )
 
-  /* ---- Broker (production) equity curve — FLAME only ---- */
+  /* ---- Broker (production) equity curve — production bot only ---- */
   const [brokerPeriod, setBrokerPeriod] = useState<'intraday' | '1d' | '1w' | '1m' | '3m' | 'all'>('intraday')
   const { data: brokerEquity } = useSWR(
     hasAccounts && tab === 'Broker Equity' && brokerPerson
@@ -194,9 +195,9 @@ export default function BotDashboard({
     { refreshInterval: DATA_REFRESH },
   )
 
-  /* ---- Pending orders (FLAME only — lightweight, always fetched with status) ---- */
+  /* ---- Pending orders (production bot only — lightweight, always fetched with status) ---- */
   const { data: pendingData } = useSWR(
-    bot === 'flame' ? withPerson(`/api/${bot}/pending-orders`) : null,
+    hasAccounts ? withPerson(`/api/${bot}/pending-orders`) : null,
     fetcher,
     { refreshInterval: STATUS_REFRESH },
   )
@@ -208,7 +209,7 @@ export default function BotDashboard({
     { refreshInterval: DATA_REFRESH },
   )
 
-  /* ---- Reconcile (FLAME only) ---- */
+  /* ---- Reconcile (production bot only) ---- */
   const { data: reconData, error: reconErr } = useSWR(
     tab === 'Reconcile' && hasAccounts ? withPerson(`/api/${bot}/reconcile`) : null,
     fetcher,
@@ -335,7 +336,7 @@ export default function BotDashboard({
         </div>
       )}
 
-      {/* PDT Management — FLAME only (production account under $25K) */}
+      {/* PDT Management — production bot only (production account under $25K) */}
       {PDT_BOTS.has(bot) && (
         <ComponentErrorBoundary fallback="PDT card error">
           <PdtCard bot={bot} accent={accent} botStatus={status} accountType={hasAccounts ? (viewMode === 'live' ? 'production' : 'sandbox') : undefined} />
@@ -378,6 +379,11 @@ export default function BotDashboard({
               period={equityPeriod}
               onPeriodChange={onPeriodChange}
             />
+          </ComponentErrorBoundary>
+        )}
+        {tab === 'Production' && hasAccounts && (
+          <ComponentErrorBoundary fallback="Production tab error">
+            <ProductionTab bot={bot} person={brokerPerson} accent={accent} />
           </ComponentErrorBoundary>
         )}
         {tab === 'Broker Equity' && (

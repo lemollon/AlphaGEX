@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 
 class PaperExecutor:
     """
-    Paper trade executor for SPARK and FLAME bots.
+    Paper / production trade executor for FLAME / SPARK / INFERNO.
 
     Uses real Tradier bid/ask for fill simulation.
     Tracks paper account balance, collateral, and P&L.
-    FLAME trades are mirrored to all 3 Tradier sandbox accounts;
-    SPARK is paper-only.
+    SPARK is the real-money production bot and places live orders; FLAME and
+    INFERNO stay paper-only with optional sandbox mirroring.
     """
 
     def __init__(self, config: BotConfig, db: TradingDatabase):
@@ -50,9 +50,13 @@ class PaperExecutor:
 
     @property
     def tradier(self) -> TradierClient:
-        """Lazy-init Tradier client for market data."""
+        """Lazy-init Tradier client for market data / primary broker calls.
+
+        Routing is bot-aware: SPARK resolves to the production endpoint + key,
+        others stay on sandbox/market-data. See config.get_tradier_base_url.
+        """
         if self._tradier is None:
-            self._tradier = TradierClient()
+            self._tradier = TradierClient(bot=getattr(self.config, 'bot_name', None))
         return self._tradier
 
     @property

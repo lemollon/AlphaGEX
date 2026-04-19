@@ -705,15 +705,15 @@ describe('VIX Gate', () => {
 })
 
 /* ================================================================== */
-/*  15. FLAME Tradier-fill-only design                                 */
+/*  15. SPARK production Tradier-fill-only design                      */
 /* ================================================================== */
 
-describe('FLAME Tradier-Fill-Only', () => {
-  it('FLAME is the only bot in fill-only mode', () => {
-    // Only flame uses Tradier fills as source of truth
-    expect(BOTS[0].name).toBe('flame')
-    // SPARK and INFERNO use paper-first mode
+describe('SPARK Tradier-Fill-Only', () => {
+  it('SPARK is the only bot in fill-only mode', () => {
+    // SPARK is the production bot — uses Tradier fills as source of truth
     expect(BOTS[1].name).toBe('spark')
+    // FLAME and INFERNO use paper-first mode
+    expect(BOTS[0].name).toBe('flame')
     expect(BOTS[2].name).toBe('inferno')
   })
 
@@ -762,15 +762,15 @@ describe('FLAME Tradier-Fill-Only', () => {
     expect(pnl).not.toBe(wrongPnl)
   })
 
-  it('SPARK and INFERNO are NOT affected by fill-only mode', () => {
-    // Verify SPARK/INFERNO would use paper estimates
-    const sparkBot = BOTS[1]
+  it('FLAME and INFERNO are NOT affected by fill-only mode', () => {
+    // Verify FLAME/INFERNO would use paper estimates
+    const flameBot = BOTS[0]
     const infernoBot = BOTS[2]
-    expect(sparkBot.name).toBe('spark')
+    expect(flameBot.name).toBe('flame')
     expect(infernoBot.name).toBe('inferno')
-    // These bots use isFlameFillOnly = false in tryOpenTrade
-    expect(sparkBot.name === 'flame').toBe(false)
-    expect(infernoBot.name === 'flame').toBe(false)
+    // These bots use isProductionFillOnly = false in tryOpenTrade
+    expect(flameBot.name === 'spark').toBe(false)
+    expect(infernoBot.name === 'spark').toBe(false)
   })
 })
 
