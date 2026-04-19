@@ -1478,7 +1478,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
         console.warn(`[scanner] ${bot.name.toUpperCase()} production-only order failed: ${msg}`)
-        return `skip:flame_production_only_failed(${msg})`
+        return `skip:production_only_order_failed(${msg})`
       }
 
       // Record production positions (same logic as normal path below)
@@ -1597,7 +1597,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // These gates skip the entire trade, not just the Tradier call.
 
     if (_sandboxPaperOnly[bot.name]) {
-      return 'skip:flame_requires_tradier(paper_only_mode)'
+      return 'skip:production_requires_tradier(paper_only_mode)'
     }
 
     // Backoff after consecutive rejections — stop spamming Tradier
@@ -1605,7 +1605,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       const cyclesSinceLastAttempt = _consecutiveRejects[bot.name] - MAX_REJECTS_BEFORE_BACKOFF
       if (cyclesSinceLastAttempt % BACKOFF_CYCLES !== 0) {
         _consecutiveRejects[bot.name]++
-        return `skip:flame_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
+        return `skip:production_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
       }
       console.log(`[scanner] ${bot.name.toUpperCase()}: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
     }
@@ -1668,7 +1668,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
         if (remaining > 0) {
           _consecutiveRejects[bot.name]++
-          return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
+          return `skip:production_stale_positions_blocking(${remaining} stale positions still consuming BP)`
         } else {
           _sandboxCleanupVerified[bot.name] = true
           _sandboxCleanupVerifiedDate[bot.name] = todayStr
@@ -1709,7 +1709,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         ],
       )
       _consecutiveRejects[bot.name]++
-      return `skip:flame_order_failed(${msg})`
+      return `skip:production_order_failed(${msg})`
     }
 
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
@@ -1868,7 +1868,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         `[scanner] ${bot.name.toUpperCase()}: ${PRODUCTION_PRIMARY_ACCOUNT} sandbox did not fill — got: ${JSON.stringify(primaryFill)}`,
       )
       // Try emergency cleanup and one retry for sandbox only
-      console.log('[scanner] ${bot.name.toUpperCase()}: Cleaning up stale sandbox positions before retry...')
+      console.log(`[scanner] ${bot.name.toUpperCase()}: Cleaning up stale sandbox positions before retry...`)
       try {
         const retryAccounts = await getLoadedSandboxAccountsAsync()
         for (const a of retryAccounts) {
@@ -1910,7 +1910,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           ],
         )
         _consecutiveRejects[bot.name]++
-        return 'skip:flame_primary_no_fill'
+        return 'skip:production_primary_no_fill'
       }
     }
 
@@ -1921,7 +1921,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // FLAME paper is a mirror of real sandbox — must use real fill price.
     const primaryFillFinal = sandboxOrderIds[`${PRODUCTION_PRIMARY_ACCOUNT}:sandbox`]!
     if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
-      return 'skip:flame_primary_no_fill'
+      return 'skip:production_primary_no_fill'
     }
 
     effectiveCredit = primaryFillFinal.fill_price

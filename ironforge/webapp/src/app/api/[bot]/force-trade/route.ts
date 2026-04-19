@@ -136,14 +136,18 @@ export async function POST(
   const accountType = _req.nextUrl.searchParams.get('account_type') || 'sandbox'
 
   try {
-    // 1. Check for existing open position
+    // 1. Check for existing open position (scoped to the requested account_type so
+    //    a sandbox open doesn't block a production force-trade)
+    const openTypeFilter = accountType === 'production'
+      ? `AND account_type = 'production'`
+      : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
     const openRows = await dbQuery(
       `SELECT position_id FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' LIMIT 1`,
+       WHERE status = 'open' AND dte_mode = '${escapeSql(dte)}' ${openTypeFilter} LIMIT 1`,
     )
     if (openRows.length > 0) {
       return NextResponse.json(
-        { error: `${botName} already has an open position: ${openRows[0].position_id}` },
+        { error: `${botName} already has an open ${accountType} position: ${openRows[0].position_id}` },
         { status: 409 },
       )
     }
@@ -158,10 +162,15 @@ export async function POST(
       const maxPerDay = int(pdtCfg[0]?.max_trades_per_day)
       // 0 means unlimited (INFERNO), >0 is the cap
       if (maxPerDay > 0) {
+        // Daily-limit check is scoped to the requested account_type so a production
+        // force-trade doesn't get blocked by earlier sandbox trades (and vice versa).
+        const dailyLimitTypeFilter = accountType === 'production'
+          ? `AND account_type = 'production'`
+          : `AND COALESCE(account_type, 'sandbox') = 'sandbox'`
         const todayTrades = await dbQuery(
           `SELECT COUNT(*) AS cnt FROM ${botTable(bot, 'positions')}
            WHERE dte_mode = '${escapeSql(dte)}'
-             AND COALESCE(account_type, 'sandbox') = 'sandbox'
+             ${dailyLimitTypeFilter}
              AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
         )
         const tradesToday = int(todayTrades[0]?.cnt)

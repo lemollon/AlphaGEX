@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,13 +119,16 @@ export async function GET(
        WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
 
-    // Pending order count (FLAME only — graceful fallback if table doesn't exist)
-    const pendingCountQuery = bot === 'flame'
+    // Pending order count (production bot only — graceful fallback if table doesn't exist).
+    // The schema only guarantees id, position_id, ticker, expiration, strikes,
+    // contracts, total_credit, status, created_at, updated_at, dte_mode — so we
+    // filter on created_at (not the optional created_date column).
+    const pendingCountQuery = bot === PRODUCTION_BOT
       ? dbQuery(
           `SELECT COUNT(*) as cnt
            FROM ${botTable(bot, 'pending_orders')}
            WHERE status = 'pending'
-             AND created_date = ${CT_TODAY}
+             AND (created_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
              ${dteFilter}`,
         ).catch(() => [{ cnt: 0 }])
       : Promise.resolve([{ cnt: 0 }])
@@ -274,9 +277,8 @@ export async function GET(
       : 'unknown'
 
     const dteNum = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
-    const strategy = bot === 'flame' ? '2DTE Paper Iron Condor'
-      : bot === 'spark' ? '1DTE Paper Iron Condor'
-      : '0DTE Paper Iron Condor'
+    const tradeMode = bot === PRODUCTION_BOT ? 'Live' : 'Paper'
+    const strategy = `${dteNum}DTE ${tradeMode} Iron Condor`
 
     return NextResponse.json({
       bot_name: bot.toUpperCase(),

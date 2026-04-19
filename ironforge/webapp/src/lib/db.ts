@@ -431,51 +431,66 @@ async function ensureTables(): Promise<void> {
         [dte],
       )
     }
-    // Seed production paper_account for FLAME/Logan if not exists — atomic to prevent race duplicates
+    // Seed production paper_account for SPARK on each configured production account.
+    // SPARK is the sole real-money production bot; we do NOT re-seed a production
+    // row for FLAME/INFERNO (they're paper-only now). Any pre-existing
+    // flame_paper_account production rows are left in place for historical P&L
+    // continuity but will never be written to by the scanner going forward.
     try {
-      const loganProd = await client.query(
-        `SELECT capital_pct FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+      const prodAccounts = await client.query(
+        `SELECT person, capital_pct FROM ironforge_accounts
+         WHERE type = 'production' AND is_active = TRUE`,
       )
-      if (loganProd.rows.length > 0) {
-        const pct = parseInt(loganProd.rows[0].capital_pct) || 15
+      for (const row of prodAccounts.rows) {
+        const person = row.person
+        if (!person) continue
+        const pct = parseInt(row.capital_pct) || 15
         const startCap = Math.round(10000 * pct / 100 * 100) / 100
         await client.query(
-          `INSERT INTO flame_paper_account
+          `INSERT INTO spark_paper_account
             (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
              is_active, dte_mode, account_type, person)
-           SELECT $1, $1, 0, $1, $1, 0, TRUE, '2DTE', 'production', 'Logan'
+           SELECT $1, $1, 0, $1, $1, 0, TRUE, '1DTE', 'production', $2
            WHERE NOT EXISTS (
-             SELECT 1 FROM flame_paper_account WHERE account_type = 'production' AND person = 'Logan'
+             SELECT 1 FROM spark_paper_account
+             WHERE account_type = 'production' AND person = $2
            )`,
-          [startCap],
+          [startCap, person],
         )
       }
     } catch (err) {
-      console.warn('  Production paper_account seed failed (non-fatal):', err)
+      console.warn('  SPARK production paper_account seed failed (non-fatal):', err)
     }
 
-    // Ensure FLAME is assigned to Logan's production account (was missing — only had SPARK,INFERNO)
+    // Normalize ironforge_accounts.bot on production accounts to own SPARK.
+    // After the FLAME→SPARK cutover, any leftover FLAME membership must be
+    // removed so getAccountsForBotAsync('flame') no longer returns production
+    // persons (the tradier.ts safety gate is a second line of defense, not
+    // the first). SPARK is added if missing.
     try {
-      const loganProdBot = await client.query(
-        `SELECT id, bot FROM ironforge_accounts WHERE person = 'Logan' AND type = 'production' AND is_active = TRUE LIMIT 1`,
+      const prodAccts = await client.query(
+        `SELECT id, person, bot FROM ironforge_accounts
+         WHERE type = 'production' AND is_active = TRUE`,
       )
-      if (loganProdBot.rows.length > 0) {
-        const currentBot = loganProdBot.rows[0].bot || ''
-        if (!currentBot.includes('FLAME')) {
-          const parts = currentBot.split(',').map((b: string) => b.trim()).filter(Boolean)
-          if (!parts.includes('FLAME')) parts.unshift('FLAME')
-          // Normalize: FLAME first, then SPARK, then INFERNO
-          const ordered = ['FLAME', 'SPARK', 'INFERNO'].filter(b => parts.includes(b))
-          const newBot = ordered.join(',')
+      for (const acct of prodAccts.rows) {
+        const currentBot = acct.bot || ''
+        const parts = currentBot.split(',').map((b: string) => b.trim()).filter(Boolean)
+        const dedup = Array.from(new Set(parts))
+        const filtered = dedup.filter((b) => b !== 'FLAME')
+        if (!filtered.includes('SPARK')) filtered.unshift('SPARK')
+        // Canonical order: SPARK first (production owner), then INFERNO if present.
+        const ordered = ['SPARK', 'INFERNO'].filter((b) => filtered.includes(b))
+        const newBot = ordered.join(',')
+        if (newBot && newBot !== currentBot) {
           await client.query(
             `UPDATE ironforge_accounts SET bot = $1, updated_at = NOW() WHERE id = $2`,
-            [newBot, loganProdBot.rows[0].id],
+            [newBot, acct.id],
           )
-          console.log(`  Added FLAME to Logan production account: '${currentBot}' → '${newBot}'`)
+          console.log(`  Rewrote production bot for ${acct.person}: '${currentBot}' → '${newBot}'`)
         }
       }
     } catch (err) {
-      console.warn('  Logan production bot update failed (non-fatal):', err)
+      console.warn('  Production bot column normalization failed (non-fatal):', err)
     }
 
     // Seed shared ironforge_pdt_config if empty
