@@ -109,6 +109,14 @@ CREATE TABLE IF NOT EXISTS ironforge_pdt_config (
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ironforge_production_pause (
+  bot_name TEXT PRIMARY KEY,
+  paused BOOLEAN NOT NULL DEFAULT FALSE,
+  paused_at TIMESTAMPTZ,
+  paused_by TEXT,
+  paused_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ` + ['flame', 'spark', 'inferno'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

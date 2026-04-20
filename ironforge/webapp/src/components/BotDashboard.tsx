@@ -210,6 +210,45 @@ export default function BotDashboard({
     { refreshInterval: STATUS_REFRESH },
   )
 
+  /* ---- Production pause state (production bot only, polled every 15s so
+         the banner flips quickly after a toggle) ---- */
+  const { data: pauseState, mutate: mutatePause } = useSWR<{
+    paused: boolean
+    paused_at: string | null
+    paused_by: string | null
+    paused_reason: string | null
+  }>(
+    hasAccounts ? `/api/${bot}/production-pause` : null,
+    fetcher,
+    { refreshInterval: STATUS_REFRESH },
+  )
+  const [pauseBusy, setPauseBusy] = useState(false)
+  const [pauseErr, setPauseErr] = useState<string | null>(null)
+  async function togglePause(next: boolean) {
+    setPauseBusy(true)
+    setPauseErr(null)
+    try {
+      const body: Record<string, unknown> = { paused: next, by: 'dashboard' }
+      if (next) {
+        const reason = typeof window !== 'undefined'
+          ? window.prompt('Reason for pausing production trading (optional):') || 'operator paused'
+          : 'operator paused'
+        body.reason = reason
+      }
+      const res = await fetch(`/api/${bot}/production-pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      await mutatePause()
+    } catch (e: unknown) {
+      setPauseErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPauseBusy(false)
+    }
+  }
+
   /* ---- PDT ---- */
   const { data: pdtData, error: pdtErr, mutate: mutatePdt } = useSWR(
     tab === 'PDT' && PDT_BOTS.has(bot) ? withPerson(`/api/${bot}/pdt`) : null,
@@ -316,6 +355,73 @@ export default function BotDashboard({
           </span>
         )}
       </div>
+
+      {/* Production pause banner — production bot only. Rendered even in
+          Paper view (as a compact info card) so an operator toggling back
+          to Live can immediately see the current state. Prominent red card
+          with resume button when paused; muted strip with pause button when
+          live. */}
+      {hasAccounts && pauseState && (
+        <div>
+          {pauseState.paused ? (
+            <div className="rounded-xl border-2 border-red-500/60 bg-red-500/15 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-bold text-red-300 uppercase tracking-wider">
+                    PRODUCTION TRADING PAUSED
+                  </p>
+                  <p className="text-xs text-red-200/90 mt-1">
+                    {bot.toUpperCase()} will NOT place real-money orders on the live account.
+                    Paper and sandbox trading continue normally.
+                  </p>
+                  {pauseState.paused_reason && (
+                    <p className="text-xs text-red-200/70 mt-1">
+                      Reason: <span className="font-mono">{pauseState.paused_reason}</span>
+                    </p>
+                  )}
+                  {pauseState.paused_at && (
+                    <p className="text-[10px] text-red-200/60 mt-0.5">
+                      Paused at {new Date(pauseState.paused_at).toLocaleString('en-US', { timeZone: 'America/Chicago' })}
+                      {pauseState.paused_by ? ` by ${pauseState.paused_by}` : ''}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => togglePause(false)}
+                  disabled={pauseBusy}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors border ${
+                    pauseBusy
+                      ? 'bg-gray-500/20 text-gray-400 border-gray-500/30 cursor-wait'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                  }`}
+                >
+                  {pauseBusy ? 'Working...' : 'Resume Production'}
+                </button>
+              </div>
+              {pauseErr && (
+                <p className="text-xs text-red-400 mt-2">Toggle failed: {pauseErr}</p>
+              )}
+            </div>
+          ) : viewMode === 'live' ? (
+            <div className="rounded-xl border border-forge-border bg-forge-card/60 px-3 py-2 flex items-center justify-between">
+              <span className="text-[11px] uppercase tracking-wider text-forge-muted">
+                Production trading: <span className="text-emerald-400 font-semibold">ACTIVE</span>
+              </span>
+              <button
+                onClick={() => togglePause(true)}
+                disabled={pauseBusy}
+                className={`px-3 py-1 rounded text-xs font-semibold transition-colors border ${
+                  pauseBusy
+                    ? 'bg-gray-500/20 text-gray-400 border-gray-500/30 cursor-wait'
+                    : 'bg-red-500/15 text-red-300 border-red-500/30 hover:bg-red-500/25'
+                }`}
+              >
+                {pauseBusy ? 'Working...' : 'Pause Production'}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Status card */}
       {status && (

@@ -1236,6 +1236,26 @@ export async function placeIcOrderAllAccounts(
   const userAccts = sandboxAccts.filter((a) => a.name === 'User')
   const otherSandboxAccts = sandboxAccts.filter((a) => a.name !== 'User')
 
+  // SAFETY (defense in depth): drop production accounts when the bot has
+  // explicitly paused production trading. `getProductionAccountsForBot`
+  // already returns [] when paused, but this path can be reached via
+  // `eligibleAccounts` composed upstream from _sandboxAccounts directly —
+  // we check the pause flag here too so no production order can slip
+  // through after an operator hits the Pause button.
+  if (productionAccts.length > 0 && botName) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] ${botName.toUpperCase()} production trading PAUSED ` +
+          `(reason=${pause.paused_reason ?? 'n/a'}) — removing ${productionAccts.length} ` +
+          `production account(s) from this order. Sandbox/paper unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — fall through to the primary gate below */ }
+  }
+
   // SAFETY: Only SPARK is allowed to place production orders.
   // FLAME and INFERNO are paper-only bots — they must NEVER place real money orders.
   const productionBotUc = PRODUCTION_BOT.toUpperCase()
@@ -2316,13 +2336,88 @@ export interface ProductionAccount {
   accountId: string | null
 }
 
+export interface ProductionPauseState {
+  bot_name: string
+  paused: boolean
+  paused_at: string | null
+  paused_by: string | null
+  paused_reason: string | null
+  updated_at: string | null
+}
+
+/**
+ * Read the production-pause flag for a bot from ironforge_production_pause.
+ * When `paused=true`, the scanner MUST skip all production order placement
+ * for that bot — paper/sandbox continue untouched. This is the canonical
+ * source of truth; the scanner, balance helpers, and preflight all check
+ * the same row so pausing is a single operator action.
+ */
+export async function getProductionPauseState(botName: string): Promise<ProductionPauseState> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT bot_name, paused, paused_at, paused_by, paused_reason, updated_at
+       FROM ironforge_production_pause
+       WHERE bot_name = $1
+       LIMIT 1`,
+      [botName.toUpperCase()],
+    )
+    if (rows.length > 0) {
+      const r = rows[0] as {
+        bot_name: string
+        paused: boolean | string
+        paused_at: Date | string | null
+        paused_by: string | null
+        paused_reason: string | null
+        updated_at: Date | string | null
+      }
+      const toIso = (v: Date | string | null): string | null =>
+        v == null ? null : v instanceof Date ? v.toISOString() : String(v)
+      return {
+        bot_name: r.bot_name,
+        paused: r.paused === true || r.paused === 'true' || r.paused === 't',
+        paused_at: toIso(r.paused_at),
+        paused_by: r.paused_by,
+        paused_reason: r.paused_reason,
+        updated_at: toIso(r.updated_at),
+      }
+    }
+  } catch {
+    // Table may not exist yet on pre-migration deploys — treat as unpaused
+    // (default safe behavior is "no pause active").
+  }
+  return {
+    bot_name: botName.toUpperCase(),
+    paused: false,
+    paused_at: null,
+    paused_by: null,
+    paused_reason: null,
+    updated_at: null,
+  }
+}
+
 /**
  * Resolve the production-type broker accounts assigned to a bot.
  * Returns the live production accounts (api.tradier.com) this bot is
  * authorized to trade on. Filters out sandbox accounts.
+ *
+ * When production trading is paused for this bot, returns an empty array
+ * so no code path can place real-money orders. The `getProductionPauseState`
+ * reader is called by the API/UI/preflight to display pause status — so
+ * this function staying empty is the single load-bearing behavior of the
+ * pause flag on the trade side.
  */
 export async function getProductionAccountsForBot(botName: string): Promise<ProductionAccount[]> {
   if (botName !== PRODUCTION_BOT) return []
+  const pauseState = await getProductionPauseState(botName)
+  if (pauseState.paused) {
+    console.warn(
+      `[tradier] ${botName.toUpperCase()} production trading PAUSED ` +
+      `(reason=${pauseState.paused_reason ?? 'n/a'}, since=${pauseState.paused_at ?? 'n/a'}) — ` +
+      `returning zero production accounts. Scanner will skip production orders; sandbox/paper unaffected.`,
+    )
+    return []
+  }
   const allowedNames = new Set(await getAccountsForBotAsync(botName))
   const loaded = await getLoadedSandboxAccountsAsync()
   const prod = loaded.filter(a => a.type === 'production' && allowedNames.has(a.name))
