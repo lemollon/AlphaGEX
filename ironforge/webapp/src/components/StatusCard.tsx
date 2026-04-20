@@ -177,7 +177,10 @@ export default function StatusCard({
     setSavedField(null)
     setSaveError(null)
     try {
-      const res = await fetch(`/api/${bot}/config`, {
+      // Route writes to the siloed config row matching the current view mode
+      // so edits made in Live Trading do not overwrite the Paper Trading row.
+      const accountType = viewMode === 'live' ? 'production' : 'sandbox'
+      const res = await fetch(`/api/${bot}/config?account_type=${accountType}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ [field]: value }),
@@ -809,12 +812,25 @@ export default function StatusCard({
               />
               <span className="text-xs text-gray-500">capital</span>
             </span>
+          ) : viewMode === 'live' ? (
+            // Live: capital is the real Tradier account equity, not a paper
+            // seed. Read-only because live sizing is driven by capital_pct in
+            // ironforge_accounts × broker equity — editing starting_capital
+            // here would not change how many contracts the live order places.
+            <span className="inline-flex items-center gap-1">
+              <span
+                className="text-xs font-mono text-red-300"
+                title="Live account equity from Tradier (read-only). Live sizing uses capital_pct × broker equity."
+              >
+                ${Math.round(account.balance).toLocaleString()} capital
+              </span>
+            </span>
           ) : (
             <span className="inline-flex items-center gap-1">
               <button
                 onClick={() => { setCapitalDraft(String(config.starting_capital ?? 10000)); setEditingCapital(true) }}
                 className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
-                title="Click to edit starting capital"
+                title="Click to edit starting capital (paper only — Live uses Tradier equity × capital_pct)"
               >
                 ${(config.starting_capital ?? 10000).toLocaleString()} capital
               </button>

@@ -1318,9 +1318,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   }
 
   // Strikes + credits
-  // FLAME: fixed SD, no walk-in. Walking strikes closer to ATM produced sub-breakeven
-  // setups (0.85 SD effective vs 1.2 target) that lost money consistently. Removed April 2026.
-  // SPARK/INFERNO: keep SD walk-in (step down by 0.1 until viable credit or floor).
+  // Production bot (SPARK): fixed SD, no walk-in. Walking strikes closer to ATM
+  // produced sub-breakeven setups (0.85 SD effective vs 1.2 target) in historical
+  // testing and consistently lost money on real capital — removed April 2026.
+  // Paper bots (FLAME/INFERNO): keep SD walk-in (step down by 0.1 until viable
+  // credit or floor) because they only risk paper balances.
   const SD_STEP = 0.1
   const SD_FLOOR = 0.5
   let usedSd = botCfg.sd
