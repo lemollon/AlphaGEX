@@ -112,9 +112,12 @@ export default function BotDashboard({
     if (prodAccts.length > 0) setBrokerPerson(prodAccts[0].name)
   }, [status, brokerPerson])
 
-  /* ---- Config (always fetched, slow refresh) ---- */
+  /* ---- Config (always fetched, slow refresh) ----
+     Config is siloed by account_type so Paper edits don't bleed into Live
+     (and vice versa). Fetch the scope that matches the current view mode. */
+  const configAccountType = viewMode === 'live' ? 'production' : 'sandbox'
   const { data: config } = useSWR(
-    `/api/${bot}/config`,
+    `/api/${bot}/config?account_type=${configAccountType}`,
     fetcher,
     { refreshInterval: 60_000 },
   )

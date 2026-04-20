@@ -41,33 +41,55 @@ const STRING_FIELDS = ['entry_start', 'entry_end', 'eod_cutoff_et']
 const ALL_FIELDS = NUMERIC_FIELDS.concat(INT_FIELDS, STRING_FIELDS)
 
 /**
- * GET /api/[bot]/config
+ * Normalize the account_type query param. Paper/sandbox are aliased to
+ * 'sandbox' (the legacy/default scope); anything labelled 'live' or
+ * 'production' is routed to the 'production' scope. Invalid values fall
+ * back to 'sandbox' so a mistyped param never silently rewrites a Live row.
+ */
+function resolveAccountType(param: string | null): 'sandbox' | 'production' {
+  if (!param) return 'sandbox'
+  const v = param.toLowerCase()
+  if (v === 'production' || v === 'live') return 'production'
+  return 'sandbox'
+}
+
+/**
+ * GET /api/[bot]/config?account_type=sandbox|production
  *
- * Returns merged config: DB overrides on top of factory defaults.
+ * Returns merged config: DB overrides on top of factory defaults, scoped to
+ * the requested account_type. Paper and Live are siloed — edits to one do
+ * not affect the other. Default scope is 'sandbox' (paper).
  */
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot) ?? '0DTE'
+  const accountType = resolveAccountType(req.nextUrl.searchParams.get('account_type'))
 
   try {
+    // Prefer an exact (dte, account_type) match; fall back to the legacy
+    // unscoped row (where account_type is NULL or 'sandbox') so deployments
+    // that haven't migrated yet still return something coherent.
     const rows = await dbQuery(
       `SELECT sd_multiplier, spread_width, min_credit, profit_target_pct,
               stop_loss_pct, vix_skip, max_contracts, max_trades_per_day,
               buying_power_usage_pct, risk_per_trade_pct, min_win_probability,
               entry_start, entry_end, eod_cutoff_et, pdt_max_day_trades,
-              starting_capital
+              starting_capital, COALESCE(account_type, 'sandbox') AS account_type
        FROM ${botTable(bot, 'config')}
-       WHERE dte_mode = '${escapeSql(dte)}' LIMIT 1`,
+       WHERE dte_mode = '${escapeSql(dte)}'
+         AND COALESCE(account_type, 'sandbox') IN ('${escapeSql(accountType)}', 'sandbox')
+       ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}' THEN 0 ELSE 1 END
+       LIMIT 1`,
     )
 
     const defaults = DEFAULTS[bot] ?? DEFAULTS.inferno
     if (rows.length === 0) {
-      return NextResponse.json({ ...defaults, source: 'defaults' })
+      return NextResponse.json({ ...defaults, account_type: accountType, source: 'defaults' })
     }
 
     const row = rows[0]
@@ -80,18 +102,24 @@ export async function GET(
         else merged[key] = row[key]
       }
     }
-    merged.source = 'database'
+    merged.account_type = accountType
+    // Mark whether the row we matched was an exact (account_type) hit or a
+    // fallback from the sandbox row. Operators debugging bleed-over can use
+    // this to confirm they're editing the intended scope.
+    merged.source = row.account_type === accountType ? 'database' : 'database_fallback_sandbox'
     return NextResponse.json(merged)
   } catch {
     // Config table might not exist yet — return defaults
-    return NextResponse.json({ ...DEFAULTS[bot], source: 'defaults' })
+    return NextResponse.json({ ...DEFAULTS[bot], account_type: accountType, source: 'defaults' })
   }
 }
 
 /**
- * PUT /api/[bot]/config
+ * PUT /api/[bot]/config?account_type=sandbox|production
  *
- * Save config overrides. Only allowed fields are persisted.
+ * Save config overrides for the requested account_type scope only. Paper
+ * and Live are siloed: a PUT to account_type=production will NEVER modify
+ * the sandbox row and vice versa.
  *
  * Body: { "sd_multiplier": 1.5, "profit_target_pct": 40, ... }
  */
@@ -103,6 +131,7 @@ export async function PUT(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = dteMode(bot) ?? '0DTE'
+  const accountType = resolveAccountType(req.nextUrl.searchParams.get('account_type'))
 
   try {
     const body = await req.json()
@@ -149,12 +178,19 @@ export async function PUT(
       )
     }
 
-    // Build INSERT ... ON CONFLICT upsert for PostgreSQL
+    // Build INSERT ... ON CONFLICT upsert scoped to (dte_mode, account_type).
+    // This depends on the new composite unique constraint added in db.ts
+    // bootstrap — a deploy against a pre-migration DB will fall back to the
+    // single-column constraint and raise here, which is caught below.
     const keys = Object.keys(filtered)
-    const insertCols = ['dte_mode', ...keys].join(', ')
-    const insertVals = [`'${escapeSql(dte)}'`, ...keys.map(k =>
-      typeof filtered[k] === 'string' ? `'${escapeSql(filtered[k] as string)}'` : String(filtered[k])
-    )].join(', ')
+    const insertCols = ['dte_mode', 'account_type', ...keys].join(', ')
+    const insertVals = [
+      `'${escapeSql(dte)}'`,
+      `'${escapeSql(accountType)}'`,
+      ...keys.map(k =>
+        typeof filtered[k] === 'string' ? `'${escapeSql(filtered[k] as string)}'` : String(filtered[k]),
+      ),
+    ].join(', ')
     const updateSet = keys.map(k =>
       typeof filtered[k] === 'string'
         ? `${k} = '${escapeSql(filtered[k] as string)}'`
@@ -164,19 +200,20 @@ export async function PUT(
     const table = botTable(bot, 'config')
     await dbExecute(
       `INSERT INTO ${table} (${insertCols}) VALUES (${insertVals})
-       ON CONFLICT (dte_mode) DO UPDATE SET ${updateSet}`,
+       ON CONFLICT (dte_mode, account_type) DO UPDATE SET ${updateSet}`,
     )
 
-    // Log
+    // Log (scoped so the audit trail records which silo was touched)
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
-       VALUES ('CONFIG', 'Config updated: ${escapeSql(keys.join(', '))}',
-               '${escapeSql(JSON.stringify({ ...filtered, source: 'config_api' }))}',
+       VALUES ('CONFIG', 'Config updated [${escapeSql(accountType)}]: ${escapeSql(keys.join(', '))}',
+               '${escapeSql(JSON.stringify({ ...filtered, account_type: accountType, source: 'config_api' }))}',
                '${escapeSql(dte)}')`,
     )
 
     return NextResponse.json({
       success: true,
+      account_type: accountType,
       updated_fields: keys,
       values: filtered,
     })

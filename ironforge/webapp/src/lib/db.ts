@@ -365,6 +365,25 @@ async function ensureTables(): Promise<void> {
           await client.query(`UPDATE ${tbl} SET account_type = 'sandbox' WHERE account_type IS NULL`)
         } catch { /* table may not exist yet */ }
       }
+
+      // Silo {bot}_config by account_type so Paper and Live configs don't bleed
+      // into each other. Add the column if missing, backfill, swap the unique
+      // constraint from (dte_mode) to (dte_mode, account_type), and seed the
+      // Live row for the production bot so Live edits have somewhere to land.
+      try {
+        await client.query(`ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS account_type TEXT DEFAULT 'sandbox'`)
+        await client.query(`UPDATE ${bot}_config SET account_type = 'sandbox' WHERE account_type IS NULL`)
+        // Drop the legacy single-column unique constraint if present.
+        // Name is Postgres's auto-generated default: '{bot}_config_dte_mode_key'.
+        await client.query(`ALTER TABLE ${bot}_config DROP CONSTRAINT IF EXISTS ${bot}_config_dte_mode_key`)
+        // Idempotent add of the composite unique constraint.
+        try {
+          await client.query(
+            `ALTER TABLE ${bot}_config
+             ADD CONSTRAINT ${bot}_config_dte_mode_account_type_key UNIQUE (dte_mode, account_type)`,
+          )
+        } catch { /* constraint may already exist on re-run */ }
+      } catch { /* table may not exist yet */ }
     }
 
     // Add missing columns to ironforge_accounts (needed for production trading)
@@ -562,6 +581,31 @@ async function ensureTables(): Promise<void> {
         )
       } catch { /* ignore if table doesn't exist yet */ }
     }
+
+    // Seed a production row in spark_config so Live config edits have somewhere
+    // to land without falling back to the sandbox row. Idempotent: only inserts
+    // if no production row exists for 1DTE. Copies any already-seeded sandbox
+    // values so Live starts aligned with Paper and diverges on explicit edits.
+    try {
+      await client.query(
+        `INSERT INTO spark_config (dte_mode, account_type, sd_multiplier, spread_width, min_credit,
+                                    profit_target_pct, stop_loss_pct, vix_skip, max_contracts,
+                                    max_trades_per_day, buying_power_usage_pct, risk_per_trade_pct,
+                                    min_win_probability, entry_start, entry_end, eod_cutoff_et,
+                                    pdt_max_day_trades, starting_capital)
+         SELECT dte_mode, 'production', sd_multiplier, spread_width, min_credit,
+                profit_target_pct, stop_loss_pct, vix_skip, max_contracts,
+                max_trades_per_day, buying_power_usage_pct, risk_per_trade_pct,
+                min_win_probability, entry_start, entry_end, eod_cutoff_et,
+                pdt_max_day_trades, starting_capital
+         FROM spark_config
+         WHERE dte_mode = '1DTE' AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           AND NOT EXISTS (
+             SELECT 1 FROM spark_config
+             WHERE dte_mode = '1DTE' AND account_type = 'production'
+           )`,
+      )
+    } catch { /* table or constraint may not be ready yet */ }
 
     // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
     try {
