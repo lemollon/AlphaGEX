@@ -311,8 +311,8 @@ describe('Production Close Path', () => {
 /* ================================================================== */
 
 describe('Full Tomorrow Morning Scenario', () => {
-  it('FLAME is recognized as requiring sandbox fills (isFlameFillOnly)', () => {
-    expect(scannerSource).toMatch(/isFlameFillOnly\s*=\s*bot\.name\s*===\s*'flame'/)
+  it('the production bot is recognized as requiring broker fills (isProductionFillOnly)', () => {
+    expect(scannerSource).toMatch(/isProductionFillOnly\s*=\s*bot\.name\s*===\s*PRODUCTION_BOT/)
   })
 
   it('production orders are placed INDEPENDENTLY of sandbox results', () => {

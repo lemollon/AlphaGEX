@@ -10,10 +10,11 @@ import {
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/flame/diagnose-production
+ * GET /api/{bot}/diagnose-production
  *
  * Simulates the exact production order path without placing any orders.
  * Shows every gate and exactly where production gets blocked.
+ * Only the production bot (SPARK) has a meaningful answer here.
  */
 export async function GET(
   _req: NextRequest,
@@ -100,7 +101,7 @@ export async function GET(
     return NextResponse.json({
       checks,
       verdict: 'BLOCKED at step 3 — no production rows match bot filter. ' +
-        'Check ironforge_accounts.bot column for production row — must contain "FLAME".',
+        `Check ironforge_accounts.bot column for production row — must contain "${bot.toUpperCase()}".`,
     })
   }
 

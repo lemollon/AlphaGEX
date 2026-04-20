@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, List
 
 import requests
 
-from config import Config
+from config import Config, get_tradier_api_key, get_tradier_base_url, get_tradier_account_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,30 @@ class TradierClient:
     Sandbox orders mirror paper trades for real simulated execution.
     """
 
-    def __init__(self, api_key: str = None, base_url: str = None, account_id: str = None):
-        self.api_key = api_key or Config.TRADIER_API_KEY
-        self.base_url = base_url or Config.TRADIER_BASE_URL
-        self._account_id = account_id or getattr(Config, 'TRADIER_ACCOUNT_ID', '') or None
+    def __init__(
+        self,
+        api_key: str = None,
+        base_url: str = None,
+        account_id: str = None,
+        bot: str = None,
+        person: str = None,
+    ):
+        # When `bot` is given we resolve credentials through config helpers so
+        # SPARK gets the production endpoint/key and paper bots stay in sandbox.
+        # Explicit api_key/base_url still win for callers that construct clients
+        # for a specific sandbox person (see executor.sandbox_clients).
+        if bot is not None:
+            resolved_base = base_url or get_tradier_base_url(bot)
+            resolved_key = api_key or get_tradier_api_key(bot, person)
+            resolved_acct = account_id or get_tradier_account_id(bot, person)
+        else:
+            resolved_base = base_url or Config.TRADIER_BASE_URL
+            resolved_key = api_key or Config.TRADIER_API_KEY
+            resolved_acct = account_id or getattr(Config, 'TRADIER_ACCOUNT_ID', '') or None
+
+        self.api_key = resolved_key
+        self.base_url = resolved_base
+        self._account_id = resolved_acct or None
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.api_key}",

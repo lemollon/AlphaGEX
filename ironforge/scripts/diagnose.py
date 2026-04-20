@@ -58,11 +58,23 @@ def main():
         bool(Config.TRADIER_API_KEY),
         f"{Config.TRADIER_API_KEY[:8]}..." if Config.TRADIER_API_KEY else "EMPTY",
     )
-    all_ok &= check(
-        "TRADIER_BASE_URL",
-        bool(Config.TRADIER_BASE_URL),
-        Config.TRADIER_BASE_URL,
-    )
+    # Per-bot routing: SPARK resolves to production, everyone else to sandbox.
+    from config import PRODUCTION_BOT, get_tradier_base_url
+    for bot_name in ("flame", "spark", "inferno"):
+        try:
+            url = get_tradier_base_url(bot_name)
+            label = "production" if bot_name == PRODUCTION_BOT else "sandbox"
+            all_ok &= check(
+                f"TRADIER base URL [{bot_name}]",
+                bool(url),
+                f"{url} ({label})",
+            )
+        except Exception as e:
+            all_ok &= check(
+                f"TRADIER base URL [{bot_name}]",
+                False,
+                f"unresolved: {e}",
+            )
 
     # ---- 2. Database ----
     section("2. DATABASE CONNECTION")
@@ -109,7 +121,9 @@ def main():
     try:
         from trading.tradier_client import TradierClient
 
-        client = TradierClient()
+        # Use the production-bot router so diagnose verifies the endpoint SPARK
+        # will actually hit, not the sandbox default.
+        client = TradierClient(bot=PRODUCTION_BOT) if Config.TRADIER_PROD_API_KEY else TradierClient()
         quote = client.get_quote("SPY")
         if quote and quote.get("last", 0) > 0:
             spot = float(quote["last"])

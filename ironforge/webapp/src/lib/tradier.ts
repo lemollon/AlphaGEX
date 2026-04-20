@@ -552,10 +552,10 @@ interface SandboxAccount {
 /**
  * Bot → sandbox account mapping.
  *
- * FLAME:   User only — 1:1 sandbox mirror for unrealized P&L comparison.
- *          Paper position = 85% of paper_account BP (contracts) + Tradier fill price.
- *          User sandbox account sizes at 85% of its own BP.
- * SPARK:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
+ * SPARK:   User only — 1DTE real-money production bot. Trades on the User
+ *          production account via api.tradier.com and is mirrored to the User
+ *          sandbox for unrealized P&L comparison.
+ * FLAME:   Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  * INFERNO: Paper-only — NO sandbox orders. Sizes from paper_account × 85%.
  *          Can hold multiple simultaneous positions (max 20 contracts).
  *
@@ -570,18 +570,24 @@ interface BotAccountConfig {
 
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
-    accounts: ['User'],
-    bpShare:  { User: 1.0 },
-  },
-  spark: {
     accounts: [],  // Paper-only — no sandbox orders
     bpShare:  {},
+  },
+  spark: {
+    accounts: ['User'],
+    bpShare:  { User: 1.0 },
   },
   inferno: {
     accounts: [],  // Paper-only — no sandbox orders
     bpShare:  {},
   },
 }
+
+/**
+ * Bot allowed to place real-money production orders.
+ * SPARK is the sole production bot; everyone else is strictly paper/sandbox.
+ */
+export const PRODUCTION_BOT = 'spark'
 
 /** Get sandbox accounts that a specific bot trades on. */
 export function getAccountsForBot(botName: string): string[] {
@@ -1230,13 +1236,14 @@ export async function placeIcOrderAllAccounts(
   const userAccts = sandboxAccts.filter((a) => a.name === 'User')
   const otherSandboxAccts = sandboxAccts.filter((a) => a.name !== 'User')
 
-  // SAFETY: Only FLAME is allowed to place production orders.
-  // SPARK and INFERNO are paper-only bots — they must NEVER place real money orders.
+  // SAFETY: Only SPARK is allowed to place production orders.
+  // FLAME and INFERNO are paper-only bots — they must NEVER place real money orders.
+  const productionBotUc = PRODUCTION_BOT.toUpperCase()
   const botUc = (botName || '').toUpperCase()
-  if (productionAccts.length > 0 && botUc !== 'FLAME') {
+  if (productionAccts.length > 0 && botUc !== productionBotUc) {
     console.warn(
       `[tradier] BLOCKED: ${botUc} attempted production orders on ${productionAccts.length} account(s). ` +
-      `Only FLAME can trade production. Removing production accounts from this order.`,
+      `Only ${productionBotUc} can trade production. Removing production accounts from this order.`,
     )
     productionAccts = []
   }
@@ -2296,6 +2303,168 @@ export async function closeAllSandboxPositions(apiKey: string): Promise<number> 
     } catch { /* best-effort */ }
   }
   return closed
+}
+
+/* ------------------------------------------------------------------ */
+/*  Production account helpers (Production tab)                        */
+/* ------------------------------------------------------------------ */
+
+export interface ProductionAccount {
+  name: string
+  apiKey: string
+  baseUrl: string
+  accountId: string | null
+}
+
+/**
+ * Resolve the production-type broker accounts assigned to a bot.
+ * Returns the live production accounts (api.tradier.com) this bot is
+ * authorized to trade on. Filters out sandbox accounts.
+ */
+export async function getProductionAccountsForBot(botName: string): Promise<ProductionAccount[]> {
+  if (botName !== PRODUCTION_BOT) return []
+  const allowedNames = new Set(await getAccountsForBotAsync(botName))
+  const loaded = await getLoadedSandboxAccountsAsync()
+  const prod = loaded.filter(a => a.type === 'production' && allowedNames.has(a.name))
+  const result: ProductionAccount[] = []
+  for (const a of prod) {
+    const accountId = await getAccountIdForKey(a.apiKey, a.baseUrl)
+    result.push({ name: a.name, apiKey: a.apiKey, baseUrl: a.baseUrl, accountId })
+  }
+  return result
+}
+
+export interface TradierBalanceDetail {
+  account_id: string | null
+  account_number: string | null
+  total_equity: number | null
+  total_cash: number | null
+  option_buying_power: number | null
+  stock_buying_power: number | null
+  day_trade_buying_power: number | null
+  cash_available: number | null
+  open_pl: number | null
+  close_pl: number | null
+  market_value: number | null
+}
+
+/** Fetch Tradier /accounts/{id}/balances and normalize the fields the UI cares about. */
+export async function getTradierBalanceDetail(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+): Promise<TradierBalanceDetail | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/balances`, undefined, apiKey, baseUrl)
+  if (!data) return null
+  const b = data.balances || {}
+  const margin = b.margin || {}
+  const pdt = b.pdt || {}
+  const cash = b.cash || {}
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    account_id: accountId,
+    account_number: b.account_number ?? accountId,
+    total_equity: numOrNull(b.total_equity),
+    total_cash: numOrNull(b.total_cash),
+    option_buying_power: numOrNull(margin.option_buying_power ?? pdt.option_buying_power),
+    stock_buying_power: numOrNull(margin.stock_buying_power ?? pdt.stock_buying_power),
+    day_trade_buying_power: numOrNull(pdt.day_trade_buying_power),
+    cash_available: numOrNull(cash.cash_available),
+    open_pl: numOrNull(b.open_pl),
+    close_pl: numOrNull(b.close_pl),
+    market_value: numOrNull(b.market_value),
+  }
+}
+
+export interface TradierOrderLeg {
+  option_symbol: string | null
+  side: string | null
+  quantity: number | null
+  exec_quantity: number | null
+  last_fill_price: number | null
+  type: string | null
+}
+
+export interface TradierOrder {
+  id: number | string
+  status: string
+  type: string | null
+  duration: string | null
+  side: string | null
+  symbol: string | null
+  quantity: number | null
+  price: number | null
+  avg_fill_price: number | null
+  exec_quantity: number | null
+  last_fill_price: number | null
+  class: string | null
+  create_date: string | null
+  transaction_date: string | null
+  tag: string | null
+  reason_description: string | null
+  legs: TradierOrderLeg[]
+}
+
+/**
+ * List orders for a Tradier account. `status` filters server-side.
+ * Typical values: 'open' (unfilled/working), 'filled', 'canceled', 'all'.
+ */
+export async function getTradierOrders(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+  status: 'open' | 'filled' | 'canceled' | 'all' = 'all',
+): Promise<TradierOrder[]> {
+  const params: Record<string, string> = { includeTags: 'true' }
+  // Tradier supports ?status=open / filled / canceled. 'all' means omit the filter.
+  if (status !== 'all') params.status = status
+  const data = await sandboxGet(`/accounts/${accountId}/orders`, params, apiKey, baseUrl)
+  if (!data) return []
+  let orders = data.orders?.order
+  if (!orders) return []
+  if (!Array.isArray(orders)) orders = [orders]
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  return orders.map((o: any): TradierOrder => {
+    let legs = o.leg
+    if (legs && !Array.isArray(legs)) legs = [legs]
+    const legArr: TradierOrderLeg[] = Array.isArray(legs)
+      ? legs.map((l: any) => ({
+          option_symbol: l.option_symbol ?? null,
+          side: l.side ?? null,
+          quantity: numOrNull(l.quantity),
+          exec_quantity: numOrNull(l.exec_quantity),
+          last_fill_price: numOrNull(l.last_fill_price),
+          type: l.type ?? null,
+        }))
+      : []
+    return {
+      id: o.id,
+      status: String(o.status ?? ''),
+      type: o.type ?? null,
+      duration: o.duration ?? null,
+      side: o.side ?? null,
+      symbol: o.symbol ?? null,
+      quantity: numOrNull(o.quantity),
+      price: numOrNull(o.price),
+      avg_fill_price: numOrNull(o.avg_fill_price),
+      exec_quantity: numOrNull(o.exec_quantity),
+      last_fill_price: numOrNull(o.last_fill_price),
+      class: o.class ?? null,
+      create_date: o.create_date ?? null,
+      transaction_date: o.transaction_date ?? null,
+      tag: o.tag ?? null,
+      reason_description: o.reason_description ?? null,
+      legs: legArr,
+    }
+  })
 }
 
 // Expose for scanner re-poll and testing

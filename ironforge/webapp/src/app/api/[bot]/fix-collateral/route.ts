@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { closeIcOrderAllAccounts } from '@/lib/tradier'
+import { closeIcOrderAllAccounts, PRODUCTION_BOT } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -241,8 +241,8 @@ export async function POST(
         continue
       }
 
-      // FLAME: also close on sandbox accounts (cascade close)
-      if (bot === 'flame') {
+      // Production bot: also close on sandbox/production accounts (cascade close)
+      if (bot === PRODUCTION_BOT) {
         try {
           const posRows = await dbQuery(
             `SELECT ticker, expiration, put_short_strike, put_long_strike,

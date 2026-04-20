@@ -58,6 +58,14 @@ import {
 const SCAN_INTERVAL_MS = 60 * 1000 // 1 minute
 const MAX_CONSECUTIVE_MTM_FAILURES = 10
 
+/**
+ * Bot that owns real-money production trading.
+ * Kept in sync with `PRODUCTION_BOT` in tradier.ts (safety gate).
+ * SPARK is the sole production bot — paper-only for everyone else.
+ */
+const PRODUCTION_BOT = 'spark'
+const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
+
 // Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
 // with 1500+ rejected orders per day. After N consecutive rejections,
 // back off exponentially (skip cycles) before retrying.
@@ -528,7 +536,7 @@ async function monitorSinglePosition(
   // If sandbox_close_order_id is set but status is still 'open', a previous close
   // fired on Tradier but the fill price wasn't available. Re-poll for the fill
   // and complete the paper close once we have it.
-  if (bot.name === 'flame' && pos.sandbox_close_order_id) {
+  if (bot.name === PRODUCTION_BOT && pos.sandbox_close_order_id) {
     let pendingInfo: Record<string, any> = {}
     try { pendingInfo = JSON.parse(pos.sandbox_close_order_id) } catch { /* ignore */ }
 
@@ -557,7 +565,7 @@ async function monitorSinglePosition(
       // should never block the EOD safety close.
       if (isAfterEodCutoff(ct)) {
         console.log(
-          `[scanner] FLAME ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
+          `[scanner] ${bot.name.toUpperCase()} ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
           `canceling limit order and falling through to EOD market close`,
         )
         // Find the correct account to cancel the order
@@ -580,7 +588,7 @@ async function monitorSinglePosition(
         // Fall through — do NOT return; the EOD/stale close logic below will handle it
       } else {
         // Normal re-poll during market hours
-        console.log(`[scanner] FLAME ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price (${pendingKey})...`)
+        console.log(`[scanner] ${bot.name.toUpperCase()} ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price (${pendingKey})...`)
         try {
           // Find the correct account for re-polling
           const allAccts = await getLoadedSandboxAccountsAsync()
@@ -592,7 +600,7 @@ async function monitorSinglePosition(
             if (accountId) {
               const fill = await getOrderFillPrice(pollAcct.apiKey, accountId, userPending.order_id, 0)
               if (fill != null && fill > 0) {
-                console.log(`[scanner] FLAME ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close (${pendingKey})`)
+                console.log(`[scanner] ${bot.name.toUpperCase()} ${pid}: Pending close fill received! $${fill.toFixed(4)} — completing paper close (${pendingKey})`)
                 // Complete the deferred close with actual fill
                 const closeReason = pendingInfo._pending_reason || 'deferred_fill'
                 const pnlPerContract = (entryCredit - fill) * 100
@@ -644,7 +652,7 @@ async function monitorSinglePosition(
                        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
                     [realizedPnl, posPerson],
                   )
-                  console.log(`[scanner] FLAME DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
+                  console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
                 _mtmFailureCounts.delete(pid)
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
@@ -665,7 +673,7 @@ async function monitorSinglePosition(
                 if (!brokerLegsExist) {
                   // Broker position is gone — close DB at entry credit (0 P&L)
                   console.warn(
-                    `[scanner] FLAME ${pid}: Re-poll returned no fill AND broker position is gone — ` +
+                    `[scanner] ${bot.name.toUpperCase()} ${pid}: Re-poll returned no fill AND broker position is gone — ` +
                     `closing DB position at entry credit (0 P&L)`,
                   )
                   const closeReason = pendingInfo._pending_reason || 'deferred_broker_gone'
@@ -700,20 +708,20 @@ async function monitorSinglePosition(
                         [collateral, bot.dte],
                       )
                     }
-                    console.log(`[scanner] FLAME DEFERRED BROKER-GONE CLOSE: ${pid} closed at entry credit $${entryCredit.toFixed(4)} (0 P&L)`)
+                    console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED BROKER-GONE CLOSE: ${pid} closed at entry credit $${entryCredit.toFixed(4)} (0 P&L)`)
                   }
                   _mtmFailureCounts.delete(pid)
                   return { status: `closed:deferred_broker_gone`, unrealizedPnl: 0 }
                 }
 
-                console.warn(`[scanner] FLAME ${pid}: Re-poll returned no fill — will retry next cycle`)
+                console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: Re-poll returned no fill — will retry next cycle`)
                 return { status: `monitoring:pending_close_fill(order=${userPending.order_id})`, unrealizedPnl: 0 }
               }
             }
           }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
-          console.error(`[scanner] FLAME ${pid}: Pending close re-poll failed: ${msg} — will retry next cycle`)
+          console.error(`[scanner] ${bot.name.toUpperCase()} ${pid}: Pending close re-poll failed: ${msg} — will retry next cycle`)
           return { status: `monitoring:pending_close_repoll_error`, unrealizedPnl: 0 }
         }
       }
@@ -867,10 +875,10 @@ async function closePosition(
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
   // SPARK + INFERNO: paper-only, no Tradier positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  const isFlameBotClose = bot.name === 'flame'
+  const isProductionBotClose = bot.name === PRODUCTION_BOT
 
   // Only FLAME has real Tradier positions (sandbox OR production). SPARK/INFERNO are paper-only.
-  const shouldCloseSandbox = isFlameBotClose
+  const shouldCloseSandbox = isProductionBotClose
 
   if (shouldCloseSandbox) {
     const sbRows = await query(
@@ -899,9 +907,9 @@ async function closePosition(
         const userCloseInfo = posAccountType === 'production'
           ? sandboxCloseInfo[`${posPerson}:production`]
           : sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
-        if (isFlameBotClose && !userCloseInfo?.order_id) {
+        if (isProductionBotClose && !userCloseInfo?.order_id) {
           console.error(
-            `[scanner] FLAME SANDBOX CLOSE: User account missing from results ` +
+            `[scanner] ${bot.name.toUpperCase()} SANDBOX CLOSE: User account missing from results ` +
             `(attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}) — ${positionId}`,
           )
           if (attempt < MAX_CLOSE_ATTEMPTS) {
@@ -914,7 +922,7 @@ async function closePosition(
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
         console.error(
-          `[scanner] ${isFlameBotClose ? 'FLAME' : bot.name.toUpperCase()} ` +
+          `[scanner] ${bot.name.toUpperCase()} ` +
           `SANDBOX CLOSE FAILED (attempt ${attempt}/${MAX_CLOSE_ATTEMPTS}): ${positionId} — ${msg}`,
         )
         if (attempt < MAX_CLOSE_ATTEMPTS) {
@@ -930,13 +938,13 @@ async function closePosition(
       : null
     const userCloseResult = (primaryCloseKey ? sandboxCloseInfo[primaryCloseKey] : null)
       ?? sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
-    if (isFlameBotClose && !userCloseResult?.order_id) {
+    if (isProductionBotClose && !userCloseResult?.order_id) {
       console.error(
-        `[scanner] *** FLAME SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
+        `[scanner] *** ${bot.name.toUpperCase()} SANDBOX CLOSE FAILED AFTER ${MAX_CLOSE_ATTEMPTS} ATTEMPTS *** ` +
         `Position ${positionId} closed on paper but Tradier positions may still be open!`,
       )
       await query(
-        `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
          VALUES ($1, $2, $3, $4)`,
         [
           'CRITICAL',
@@ -967,12 +975,12 @@ async function closePosition(
       `(estimated=$${estimatedPrice.toFixed(4)}, diff=${(userClose.fill_price - estimatedPrice).toFixed(4)})`,
     )
     effectivePrice = userClose.fill_price
-  } else if (isFlameBotClose && userClose?.order_id && userClose.order_id > 0) {
+  } else if (isProductionBotClose && userClose?.order_id && userClose.order_id > 0) {
     // Sandbox close order exists but fill price is missing (should be rare with unlimited polling).
     // DEFER: store the close info on the position so next cycle can re-poll.
     // Do NOT close paper with estimated price — that causes drift.
     console.warn(
-      `[scanner] FLAME ${positionId}: Close order ${userClose.order_id} placed but no fill price. ` +
+      `[scanner] ${bot.name.toUpperCase()} ${positionId}: Close order ${userClose.order_id} placed but no fill price. ` +
       `DEFERRING paper close — will re-poll next cycle.`,
     )
     const pendingInfo = { ...sandboxCloseInfo, _pending_reason: reason }
@@ -983,7 +991,7 @@ async function closePosition(
       [JSON.stringify(pendingInfo), positionId, bot.dte],
     )
     await query(
-      `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
       [
         'WARNING',
@@ -993,16 +1001,16 @@ async function closePosition(
       ],
     )
     return // Exit without closing paper — next cycle will re-poll
-  } else if (isFlameBotClose) {
+  } else if (isProductionBotClose) {
     // Sandbox close failed entirely (no order_id). Log critical error.
     // Still close paper to prevent stranded positions, but mark the reason.
     console.error(
-      `[scanner] *** FLAME CLOSE: NO SANDBOX ORDER *** Position ${positionId} — ` +
+      `[scanner] *** ${bot.name.toUpperCase()} CLOSE: NO SANDBOX ORDER *** Position ${positionId} — ` +
       `Tradier close failed. Closing paper with estimated $${estimatedPrice.toFixed(4)}. ` +
       `Check sandbox for orphaned positions.`,
     )
     await query(
-      `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
       [
         'CRITICAL',
@@ -1232,7 +1240,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
       // FLAME: check if production still needs to trade before returning
-      if (bot.name === 'flame') {
+      if (bot.name === PRODUCTION_BOT) {
         let prodNeedsToTrade = false
         try {
           const prodDayCheck = await query(
@@ -1246,7 +1254,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
         if (prodNeedsToTrade) {
           sandboxAlreadyTraded = true
-          console.log(`[scanner] FLAME: Sandbox already traded today but production hasn't — continuing in production-only mode`)
+          console.log(`[scanner] ${bot.name.toUpperCase()}: Sandbox already traded today but production hasn't — continuing in production-only mode`)
         } else {
           return 'skip:already_traded_today'
         }
@@ -1322,7 +1330,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
   )
 
-  if (bot.name !== 'flame') {
+  if (bot.name !== PRODUCTION_BOT) {
     while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
       usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
       strikes = calculateStrikes(spot, expectedMove, usedSd)
@@ -1377,15 +1385,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // If sandbox can't fill, FLAME paper does NOT trade (unlike SPARK/INFERNO).
   // Production gating (PDT) is handled INSIDE this block — never blocks sandbox.
   // SPARK/INFERNO are paper-only (no sandbox orders, use estimated credit).
-  const FLAME_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
-  const isFlameFillOnly = bot.name === 'flame'
+  const PRODUCTION_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
+  const isProductionFillOnly = bot.name === PRODUCTION_BOT
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
   let effectiveCredit = credits.totalCredit
   let effectiveContracts = maxContracts
   let effectiveCollateral = totalCollateral
 
-  if (isFlameFillOnly) {
+  if (isProductionFillOnly) {
     // ── FLAME: Tradier sandbox fill (BEST-EFFORT) ──────────────────────
     // Sandbox fill provides real fill prices for paper P&L accuracy.
     // If sandbox fails for ANY reason, paper uses estimated credit (like SPARK/INFERNO).
@@ -1410,7 +1418,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           const acctPdt = await getPdtEnabledForAccount(person)
           if (!acctPdt) {
             pdtEnabled = false
-            console.log(`[scanner] FLAME PDT disabled by account (${person})`)
+            console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
           }
         } catch { /* keep bot-level setting */ }
       }
@@ -1432,7 +1440,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         const prodPdtRows = await query(prodPdtSql, prodPdtParams)
         if (int(prodPdtRows[0]?.cnt) >= maxDayTrades) {
           prodAlreadyTradedToday = true
-          console.log(`[scanner] FLAME PRODUCTION PDT BLOCKED: ${int(prodPdtRows[0]?.cnt)}/${maxDayTrades} day trades in rolling window`)
+          console.log(`[scanner] ${bot.name.toUpperCase()} PRODUCTION PDT BLOCKED: ${int(prodPdtRows[0]?.cnt)}/${maxDayTrades} day trades in rolling window`)
         }
       }
 
@@ -1447,7 +1455,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         prodAlreadyTradedToday = int(prodDayCheck[0]?.cnt) > 0
       }
       if (prodAlreadyTradedToday) {
-        console.log(`[scanner] FLAME: Production already traded or PDT blocked — sandboxOnly`)
+        console.log(`[scanner] ${bot.name.toUpperCase()}: Production already traded or PDT blocked — sandboxOnly`)
       }
     } catch (e: unknown) {
       prodAlreadyTradedToday = true
@@ -1469,8 +1477,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
-        console.warn(`[scanner] FLAME production-only order failed: ${msg}`)
-        return `skip:flame_production_only_failed(${msg})`
+        console.warn(`[scanner] ${bot.name.toUpperCase()} production-only order failed: ${msg}`)
+        return `skip:production_only_order_failed(${msg})`
       }
 
       // Record production positions (same logic as normal path below)
@@ -1589,7 +1597,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // These gates skip the entire trade, not just the Tradier call.
 
     if (_sandboxPaperOnly[bot.name]) {
-      return 'skip:flame_requires_tradier(paper_only_mode)'
+      return 'skip:production_requires_tradier(paper_only_mode)'
     }
 
     // Backoff after consecutive rejections — stop spamming Tradier
@@ -1597,9 +1605,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       const cyclesSinceLastAttempt = _consecutiveRejects[bot.name] - MAX_REJECTS_BEFORE_BACKOFF
       if (cyclesSinceLastAttempt % BACKOFF_CYCLES !== 0) {
         _consecutiveRejects[bot.name]++
-        return `skip:flame_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
+        return `skip:production_backoff(${_consecutiveRejects[bot.name]} consecutive rejects, retrying every ${BACKOFF_CYCLES} cycles)`
       }
-      console.log(`[scanner] FLAME: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
+      console.log(`[scanner] ${bot.name.toUpperCase()}: ${_consecutiveRejects[bot.name]} consecutive rejects — retrying now (backoff cycle)`)
     }
 
     // Stale position cleanup gate
@@ -1630,13 +1638,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
       if (staleCount > 0) {
         // Try emergency cleanup right now
-        console.warn(`[scanner] FLAME PRE-ORDER: ${staleCount} stale positions blocking orders — cleaning up...`)
+        console.warn(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: ${staleCount} stale positions blocking orders — cleaning up...`)
         try {
           const accounts = await getLoadedSandboxAccountsAsync()
           for (const acct of accounts) {
             const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
             for (const detail of result.details) {
-              console.log(`[scanner] FLAME PRE-ORDER: ${detail}`)
+              console.log(`[scanner] ${bot.name.toUpperCase()} PRE-ORDER: ${detail}`)
             }
           }
         } catch { /* ignore */ }
@@ -1660,7 +1668,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
         if (remaining > 0) {
           _consecutiveRejects[bot.name]++
-          return `skip:flame_stale_positions_blocking(${remaining} stale positions still consuming BP)`
+          return `skip:production_stale_positions_blocking(${remaining} stale positions still consuming BP)`
         } else {
           _sandboxCleanupVerified[bot.name] = true
           _sandboxCleanupVerifiedDate[bot.name] = todayStr
@@ -1684,7 +1692,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.warn(`[scanner] FLAME order placement failed: ${msg}`)
+      console.warn(`[scanner] ${bot.name.toUpperCase()} order placement failed: ${msg}`)
       // Log the rejected signal
       await query(
         `INSERT INTO ${botTable(bot.name, 'signals')} (
@@ -1701,7 +1709,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         ],
       )
       _consecutiveRejects[bot.name]++
-      return `skip:flame_order_failed(${msg})`
+      return `skip:production_order_failed(${msg})`
     }
 
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
@@ -1854,13 +1862,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // ── SANDBOX FILL CHECK: Retry sandbox only if it didn't fill ──
     // Sandbox failure should NOT affect production (already saved above).
     // Retry once after cleaning up stale positions.
-    const primaryFill = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]
+    const primaryFill = sandboxOrderIds[`${PRODUCTION_PRIMARY_ACCOUNT}:sandbox`]
     if (!primaryFill || !primaryFill.fill_price || primaryFill.fill_price <= 0) {
       console.warn(
-        `[scanner] FLAME: ${FLAME_PRIMARY_ACCOUNT} sandbox did not fill — got: ${JSON.stringify(primaryFill)}`,
+        `[scanner] ${bot.name.toUpperCase()}: ${PRODUCTION_PRIMARY_ACCOUNT} sandbox did not fill — got: ${JSON.stringify(primaryFill)}`,
       )
       // Try emergency cleanup and one retry for sandbox only
-      console.log('[scanner] FLAME: Cleaning up stale sandbox positions before retry...')
+      console.log(`[scanner] ${bot.name.toUpperCase()}: Cleaning up stale sandbox positions before retry...`)
       try {
         const retryAccounts = await getLoadedSandboxAccountsAsync()
         for (const a of retryAccounts) {
@@ -1885,7 +1893,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         }
       } catch { /* ignore retry errors */ }
 
-      const retryFill = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]
+      const retryFill = sandboxOrderIds[`${PRODUCTION_PRIMARY_ACCOUNT}:sandbox`]
       if (!retryFill || !retryFill.fill_price || retryFill.fill_price <= 0) {
         await query(
           `INSERT INTO ${botTable(bot.name, 'signals')} (
@@ -1902,7 +1910,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           ],
         )
         _consecutiveRejects[bot.name]++
-        return 'skip:flame_primary_no_fill'
+        return 'skip:production_primary_no_fill'
       }
     }
 
@@ -1911,16 +1919,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
     // Use Tradier's actual fill PRICE but keep paper-sized contracts.
     // FLAME paper is a mirror of real sandbox — must use real fill price.
-    const primaryFillFinal = sandboxOrderIds[`${FLAME_PRIMARY_ACCOUNT}:sandbox`]!
+    const primaryFillFinal = sandboxOrderIds[`${PRODUCTION_PRIMARY_ACCOUNT}:sandbox`]!
     if (!primaryFillFinal || !primaryFillFinal.fill_price || primaryFillFinal.fill_price <= 0) {
-      return 'skip:flame_primary_no_fill'
+      return 'skip:production_primary_no_fill'
     }
 
     effectiveCredit = primaryFillFinal.fill_price
     // effectiveContracts stays as maxContracts (85% of paper BP)
     effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
     console.log(
-      `[scanner] FLAME Tradier-fill: ${FLAME_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
+      `[scanner] ${bot.name.toUpperCase()} Tradier-fill: ${PRODUCTION_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
       `(paper=${effectiveContracts} contracts, estimated credit=$${credits.totalCredit.toFixed(4)}, diff=${(effectiveCredit - credits.totalCredit).toFixed(4)})`,
     )
   }
@@ -1953,8 +1961,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     )`,
     [
       positionId, 'SPY', expiration,
-      strikes.putShort, strikes.putLong, isFlameFillOnly ? effectiveCredit / 2 : credits.putCredit,
-      strikes.callShort, strikes.callLong, isFlameFillOnly ? effectiveCredit / 2 : credits.callCredit,
+      strikes.putShort, strikes.putLong, isProductionFillOnly ? effectiveCredit / 2 : credits.putCredit,
+      strikes.callShort, strikes.callLong, isProductionFillOnly ? effectiveCredit / 2 : credits.callCredit,
       effectiveContracts, spreadWidth, effectiveCredit, effectiveMaxLoss, effectiveMaxProfit,
       effectiveCollateral,
       spot, vix, expectedMove,
@@ -1969,7 +1977,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   )
 
   // SPARK + INFERNO: paper-only, no sandbox orders (getAccountsForBot returns [] → skip)
-  if (!isFlameFillOnly && !_sandboxPaperOnly[bot.name]) {
+  if (!isProductionFillOnly && !_sandboxPaperOnly[bot.name]) {
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
         'SPY', expiration,
@@ -2011,7 +2019,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Record production positions for NON-FLAME bots (FLAME handles this in its own block above).
   // Production positions only exist if placeIcOrderAllAccounts confirmed a Tradier fill
   // (sandbox must fill first — production is only mirrored after sandbox success).
-  if (!isFlameFillOnly) {
+  if (!isProductionFillOnly) {
     const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap for production
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
@@ -2109,7 +2117,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       spot, vix, expectedMove, 0, 0,
       'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
       effectiveCredit, adv.confidence, true,
-      `Auto scan${isFlameFillOnly ? ' [Tradier-fill]' : ''} | ${adv.reasoning}`,
+      `Auto scan${isProductionFillOnly ? ' [Tradier-fill]' : ''} | ${adv.reasoning}`,
       false, bot.dte, person,
     ],
   )
@@ -2120,11 +2128,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
      VALUES ($1, $2, $3, $4, $5)`,
     [
       'TRADE_OPEN',
-      `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)}${isFlameFillOnly ? ' [Tradier-fill]' : ''}`,
+      `AUTO TRADE: ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)}${isProductionFillOnly ? ' [Tradier-fill]' : ''}`,
       JSON.stringify({
         position_id: positionId, contracts: effectiveContracts,
         credit: effectiveCredit, collateral: effectiveCollateral,
-        source: isFlameFillOnly ? 'tradier_fill' : 'scanner',
+        source: isProductionFillOnly ? 'tradier_fill' : 'scanner',
         estimated_credit: credits.totalCredit,
         sandbox_order_ids: sandboxOrderIds,
         config: { sd: botCfg.sd, used_sd: usedSd, pt_pct: botCfg.pt_pct, sl_mult: botCfg.sl_mult },
@@ -2163,7 +2171,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [person],
   )
 
-  console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isFlameFillOnly ? ' [Tradier-fill-only]' : ''}`)
+  console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isProductionFillOnly ? ' [Tradier-fill-only]' : ''}`)
   return `traded:${positionId}`
 }
 
@@ -2397,7 +2405,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
   // New behavior: keep retrying every cycle until cleanup succeeds.
   // Use FLAME's cleanup date as the global gate — sandbox cleanup is a shared operation
   // that benefits all sandbox-using bots. Per-bot tracking prevents re-running unnecessarily.
-  if (_lastSandboxCleanupDate['flame'] === todayStr) return
+  if (_lastSandboxCleanupDate[PRODUCTION_BOT] === todayStr) return
   const hhmm = ctHHMM(ct)
   if (hhmm < 830) return  // Don't run before market open
 
@@ -2513,13 +2521,13 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
 
     if (totalStale > 0) {
       await query(
-        `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+        `INSERT INTO ${botTable(PRODUCTION_BOT, 'logs')} (level, message, details, dte_mode)
          VALUES ($1, $2, $3, $4)`,
         [
           totalFailed > 0 ? 'CRITICAL' : 'SANDBOX_CLEANUP',
           `Daily sandbox cleanup: ${totalStale} stale, ${totalClosed} closed, ${totalFailed} failed`,
           JSON.stringify({ event: 'daily_sandbox_cleanup', date: todayStr, totalStale, totalClosed, totalFailed, perAccount: cleanupDetails }),
-          '2DTE',
+          PRODUCTION_BOT_DTE,
         ],
       )
     }
@@ -2539,12 +2547,13 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
     // failure) but Tradier positions survived. The stale check above only catches
     // EXPIRED positions; orphans may have future expirations.
     try {
-      // Get all open FLAME paper positions
+      // Get all open production-bot paper positions
       const openPaperRows = await query(
         `SELECT put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                 expiration, ticker
-         FROM ${botTable('flame', 'positions')}
-         WHERE status = 'open' AND dte_mode = '2DTE'`,
+         FROM ${botTable(PRODUCTION_BOT, 'positions')}
+         WHERE status = 'open' AND dte_mode = $1`,
+        [PRODUCTION_BOT_DTE],
       )
       // Build a set of OCC symbol prefixes from open paper positions
       const paperOccPrefixes = new Set<string>()
@@ -2578,7 +2587,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
           }
           const result = await closeOrphanSandboxPositions(acct.apiKey, acct.name, orphanSymbols, acct.baseUrl)
           await query(
-            `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+            `INSERT INTO ${botTable(PRODUCTION_BOT, 'logs')} (level, message, details, dte_mode)
              VALUES ($1, $2, $3, $4)`,
             [
               'CRITICAL',
@@ -2590,7 +2599,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
                 matched_preserved: matched,
                 close_result: result,
               }),
-              '2DTE',
+              PRODUCTION_BOT_DTE,
             ],
           )
         }
@@ -2708,7 +2717,7 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
         const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
 
         await query(
-          `INSERT INTO ${botTable('flame', 'logs')} (level, message, details, dte_mode)
+          `INSERT INTO ${botTable(PRODUCTION_BOT, 'logs')} (level, message, details, dte_mode)
            VALUES ($1, $2, $3, $4)`,
           [
             result.failed > 0 ? 'CRITICAL' : 'POST_EOD_CHECK',
@@ -2718,7 +2727,7 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
               positions: todayPositions.map(p => ({ symbol: p.symbol, qty: p.quantity })),
               close_result: result,
             }),
-            '2DTE',
+            PRODUCTION_BOT_DTE,
           ],
         )
       }
@@ -2816,7 +2825,7 @@ async function scanBot(bot: BotDef): Promise<void> {
 
     // Production broker reconciliation — detect when production Tradier positions
     // are closed at the broker but DB still shows them as open (FLAME only)
-    if (bot.name === 'flame') {
+    if (bot.name === PRODUCTION_BOT) {
       await reconcileProductionBrokerPositions(bot)
     }
 
@@ -2914,7 +2923,7 @@ async function scanBot(bot: BotDef): Promise<void> {
     // after EOD cutoff, not just when a position was just closed.
     // This catches stranded Tradier positions when the sandbox close fails
     // during the EOD close (e.g., orders rejected near market close).
-    if (bot.name === 'flame' && isAfterEodCutoff(ct)) {
+    if (bot.name === PRODUCTION_BOT && isAfterEodCutoff(ct)) {
       try {
         await postEodSandboxVerify(ct)
       } catch (err: unknown) {
@@ -2940,7 +2949,7 @@ async function scanBot(bot: BotDef): Promise<void> {
       // FLAME is excluded: its production-only mode (inside tryOpenTrade) handles
       // the case where sandbox traded but production hasn't.
       let tradedTodayCount = 0
-      if (maxTrades > 0 && bot.name !== 'flame') {
+      if (maxTrades > 0 && bot.name !== PRODUCTION_BOT) {
         try {
           const todayPosRows = await query(
             `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
@@ -2952,7 +2961,7 @@ async function scanBot(bot: BotDef): Promise<void> {
         } catch { /* non-fatal — tryOpenTrade has its own guard */ }
       }
       const canOpenMore = (maxTrades === 0) ||
-        (bot.name === 'flame' && maxTrades === 1 && !hasOpenPosition) ||
+        (bot.name === PRODUCTION_BOT && maxTrades === 1 && !hasOpenPosition) ||
         (maxTrades > 0 && tradedTodayCount < maxTrades && !hasOpenPosition)
 
       if (canOpenMore) {

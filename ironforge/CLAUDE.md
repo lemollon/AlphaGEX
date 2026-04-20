@@ -285,6 +285,36 @@ IronForge lives inside the AlphaGEX monorepo at `ironforge/` but is **completely
 
 The `ironforge/webapp/` directory contains the Next.js dashboard + scanner, deployed on Render as a single web service.
 
+## HARD RULE: Scope Discipline
+
+The user cares more about shipping the requested change cleanly than about
+catching every adjacent bug. Stay inside the approved scope:
+
+1. **Fix only what was asked.** If an audit or grep surfaces extra bugs that
+   are not in the approved plan, report them at the end of the task and ask
+   before touching them. Do not silently expand scope with "while I'm in
+   here" cleanups — every extra file in a diff is more review surface and
+   more regression risk on a real-money system.
+2. **Don't run or fix tests outside the files you changed.** `npm run build`
+   is the default verification. Running the full Jest / Vitest suite drags in
+   pre-existing failures that have nothing to do with the current change,
+   wastes reviewer attention, and tempts scope creep. Only run the test files
+   you touched or the ones that directly assert against code you changed.
+3. **Don't refactor adjacent code.** Renames, formatting, doc rewrites, and
+   dead-code removal belong in their own PR unless the user explicitly asked
+   for them. A bug fix should be a minimal diff that only contains the fix.
+4. **When auditing, report — don't fix.** Audit prompts should return a
+   ranked bug list with file:line citations. Applying fixes from the audit
+   without a follow-up user approval pushes scope beyond what was authorized.
+5. **If a "nice-to-have" keeps cropping up, name it and defer it.** List it
+   under "Still outstanding" in the task summary and let the user decide
+   whether to spin a follow-up. Do not ship it alongside the current work.
+6. **Operational vs code fixes.** Data-state problems (stranded positions,
+   orphan DB rows, config drift) are usually operational — prefer a single
+   diagnostic/fix endpoint per the pattern below over ad-hoc edits. Keep
+   each endpoint focused on one cleanup; don't fold multiple fixes into one
+   route just because they're "related."
+
 ## HARD RULE: All Backend Fixes Must Live in the Webapp
 
 **ALL diagnostic tools, fix scripts, and backend operations MUST be implemented as API routes in `ironforge/webapp/src/app/api/`.** Do NOT create:

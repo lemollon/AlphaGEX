@@ -1,11 +1,11 @@
 /**
- * FLAME ↔ Tradier Reconciliation
+ * Production-bot ↔ Tradier Reconciliation
  *
- * GET /api/flame/reconcile
+ * GET /api/{production_bot}/reconcile
  *   Compare paper positions to Tradier (sandbox or production).
  *   Detects orphan legs, entry credit drift, and unrealized P&L mismatches.
  *
- * POST /api/flame/reconcile
+ * POST /api/{production_bot}/reconcile
  *   Close orphan Tradier positions that have no matching paper position.
  *   Only closes legs not tracked by the database — preserves matched positions.
  */
@@ -18,6 +18,7 @@ import {
   getIcMarkToMarket,
   closeOrphanSandboxPositions,
   isConfigured,
+  PRODUCTION_BOT,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -67,10 +68,10 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  // Only FLAME has sandbox/production positions
-  if (bot !== 'flame') {
+  // Only the production bot has sandbox/production positions
+  if (bot !== PRODUCTION_BOT) {
     return NextResponse.json({
-      error: `Reconciliation only available for FLAME (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
+      error: `Reconciliation only available for ${PRODUCTION_BOT.toUpperCase()} (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
     }, { status: 400 })
   }
 
@@ -358,9 +359,9 @@ export async function POST(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  if (bot !== 'flame') {
+  if (bot !== PRODUCTION_BOT) {
     return NextResponse.json({
-      error: `Orphan close only available for FLAME (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
+      error: `Orphan close only available for ${PRODUCTION_BOT.toUpperCase()} (has Tradier accounts). ${bot.toUpperCase()} is paper-only.`,
     }, { status: 400 })
   }
 

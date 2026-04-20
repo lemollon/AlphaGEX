@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, dteMode, heartbeatName, CT_TODAY } from '@/lib/db'
-import { isConfigured, getQuote } from '@/lib/tradier'
+import { isConfigured, getQuote, PRODUCTION_BOT } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -265,9 +265,9 @@ export async function GET(
       detail: isActive ? 'Paper account is active' : 'Paper account NOT ACTIVE or NOT FOUND',
     })
 
-    // Production-specific diagnostics (FLAME only)
+    // Production-specific diagnostics (production bot only)
     let productionDiag: Record<string, unknown> | null = null
-    if (bot === 'flame') {
+    if (bot === PRODUCTION_BOT) {
       try {
         const [prodOpenRows, prodTodayRows, prodPdtRows] = await Promise.all([
           dbQuery(
