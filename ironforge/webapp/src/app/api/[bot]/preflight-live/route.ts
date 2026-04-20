@@ -277,34 +277,14 @@ export async function GET(
     )
   }
 
-  // 7. ironforge_pdt_config has a SPARK row with finite limits
-  try {
-    const pdtRows = await dbQuery(
-      `SELECT pdt_enabled, max_day_trades, window_days, max_trades_per_day
-       FROM ${sharedTable('ironforge_pdt_config')}
-       WHERE bot_name = $1
-       LIMIT 1`,
-      [bot.toUpperCase()],
-    )
-    if (pdtRows.length === 0) {
-      fail(
-        '7. ironforge_pdt_config[SPARK]',
-        'No SPARK row in ironforge_pdt_config — PDT enforcement will fall back to defaults.',
-        'Restart the webapp; db.ts bootstrap seeds this row.',
-      )
-    } else {
-      const r = pdtRows[0] as { pdt_enabled: boolean | string; max_day_trades: number; window_days: number; max_trades_per_day: number }
-      pass(
-        '7. ironforge_pdt_config[SPARK]',
-        `pdt_enabled=${r.pdt_enabled}, max_day_trades=${r.max_day_trades}/${r.window_days}d, max_trades_per_day=${r.max_trades_per_day}`,
-      )
-    }
-  } catch (err: unknown) {
-    fail(
-      '7. ironforge_pdt_config[SPARK]',
-      `query failed: ${err instanceof Error ? err.message : String(err)}`,
-    )
-  }
+  // 7. PDT — production bot is structurally exempt (over-$25K account).
+  // This used to verify the ironforge_pdt_config row existed; SPARK now
+  // bypasses PDT in the scanner regardless of that row, so the check
+  // records the exemption as a pass instead of gating readiness on it.
+  pass(
+    '7. PDT exemption',
+    `${bot.toUpperCase()} is PDT-exempt (over-$25K production account). Scanner PDT gate is hardcoded off for PRODUCTION_BOT.`,
+  )
 
   // 8. Scanner heartbeat is recent
   try {
