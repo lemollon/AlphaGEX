@@ -3205,6 +3205,34 @@ async function saveProductionEquitySnapshots(): Promise<void> {
   }
 }
 
+/**
+ * Write a lightweight liveness heartbeat for every bot when runAllScans is
+ * about to early-return (weekend / pre-market / after-market). Without this,
+ * the bot_heartbeats row stays frozen at the last in-hours scan, and the
+ * /preflight-live check can't distinguish "scanner crashed" from "scanner
+ * is idle because markets are closed". We write the ping every cycle
+ * (once per minute) so staleness is always sub-minute during off-hours.
+ */
+async function writeOffHoursHeartbeats(reason: string): Promise<void> {
+  for (const bot of BOTS) {
+    try {
+      await query(
+        `INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+         VALUES ($1, NOW(), 'idle', 1, $2)
+         ON CONFLICT (bot_name) DO UPDATE SET
+           last_heartbeat = NOW(), status = 'idle',
+           scan_count = bot_heartbeats.scan_count + 1,
+           details = EXCLUDED.details`,
+        [bot.name.toUpperCase(), JSON.stringify({ action: 'skip', reason })],
+      )
+    } catch (err: unknown) {
+      // Non-fatal — DB transient errors shouldn't kill the off-hours loop.
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] off-hours heartbeat error [${bot.name}]: ${msg}`)
+    }
+  }
+}
+
 async function runAllScans(): Promise<void> {
   _scanCount++
   const start = Date.now()
@@ -3220,6 +3248,7 @@ async function runAllScans(): Promise<void> {
     if (_scanCount === 1 || _scanCount % 60 === 0) {
       console.log(`[scanner] === scan cycle #${_scanCount} skipped — weekend (${dow === 0 ? 'Sun' : 'Sat'}) ===`)
     }
+    await writeOffHoursHeartbeats(dow === 0 ? 'idle_weekend_sun' : 'idle_weekend_sat')
     return
   }
 
@@ -3228,6 +3257,7 @@ async function runAllScans(): Promise<void> {
     if (_scanCount === 1 || _scanCount % 60 === 0) {
       console.log(`[scanner] === scan cycle #${_scanCount} skipped — pre-market (${hhmm} CT, opens 830) ===`)
     }
+    await writeOffHoursHeartbeats(`idle_pre_market_${hhmm}`)
     return
   }
 
@@ -3236,6 +3266,7 @@ async function runAllScans(): Promise<void> {
     if (_scanCount === 1 || _scanCount % 60 === 0) {
       console.log(`[scanner] === scan cycle #${_scanCount} skipped — market closed (${hhmm} CT) ===`)
     }
+    await writeOffHoursHeartbeats(`idle_after_market_${hhmm}`)
     return
   }
 
