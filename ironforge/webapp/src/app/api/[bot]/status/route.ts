@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -158,15 +158,56 @@ export async function GET(
     }
 
     const acct = accountRows[0]
-    const startingCapital = num(acct?.starting_capital) || 10000
+    let startingCapital = num(acct?.starting_capital) || 10000
 
     // Use LIVE stats from actual positions (source of truth), not stale paper_account
     const liveStats = liveStatsRows[0]
     const realizedPnl = Math.round(num(liveStats?.actual_realized_pnl) * 100) / 100
     const totalTrades = int(liveStats?.actual_total_trades)
-    const liveCollateral = num(liveCollateralRows[0]?.actual_collateral)
-    const balance = Math.round((startingCapital + realizedPnl) * 100) / 100
-    const buyingPower = Math.round((balance - liveCollateral) * 100) / 100
+    let liveCollateral = num(liveCollateralRows[0]?.actual_collateral)
+    let balance = Math.round((startingCapital + realizedPnl) * 100) / 100
+    let buyingPower = Math.round((balance - liveCollateral) * 100) / 100
+
+    // Live-trading override: when the production bot is viewed in production mode,
+    // mirror the broker's actual numbers instead of the seeded paper_account row.
+    // Realized P&L and trade counts stay from the DB ledger (IronForge's record
+    // of trades it has booked); balance/BP/unrealized/collateral come from Tradier.
+    // `account.source` documents which path produced these values.
+    let accountSource: 'tradier' | 'paper_account' = 'paper_account'
+    let tradierBalanceFetchError: string | null = null
+    let tradierOpenPlOverride: number | null = null
+    if (accountTypeParam === 'production' && bot === PRODUCTION_BOT) {
+      try {
+        const prodAccts = await getProductionAccountsForBot(bot)
+        let tradierEquity = 0
+        let tradierBp = 0
+        let tradierOpenPl = 0
+        let haveTradierData = false
+        for (const pa of prodAccts) {
+          if (!pa.accountId) continue
+          const bal = await getTradierBalanceDetail(pa.apiKey, pa.accountId, pa.baseUrl)
+          if (!bal || bal.total_equity == null || bal.option_buying_power == null) continue
+          haveTradierData = true
+          tradierEquity += bal.total_equity
+          tradierBp += bal.option_buying_power
+          tradierOpenPl += bal.open_pl ?? 0
+        }
+        if (haveTradierData) {
+          balance = Math.round(tradierEquity * 100) / 100
+          buyingPower = Math.round(tradierBp * 100) / 100
+          liveCollateral = Math.round(Math.max(0, tradierEquity - tradierBp) * 100) / 100
+          // Back-compute starting_capital so balance = startingCapital + realizedPnl still holds
+          startingCapital = Math.round((balance - realizedPnl) * 100) / 100
+          tradierOpenPlOverride = Math.round(tradierOpenPl * 100) / 100
+          accountSource = 'tradier'
+        } else {
+          tradierBalanceFetchError = 'no_production_balance_returned'
+        }
+      } catch (err: unknown) {
+        tradierBalanceFetchError = err instanceof Error ? err.message : String(err)
+        console.warn(`[status] ${bot}: production balance fetch failed (${tradierBalanceFetchError}) — falling back to paper_account`)
+      }
+    }
 
     // Compute live unrealized P&L from open positions via Tradier
     let unrealizedPnl: number | null = null
@@ -206,6 +247,14 @@ export async function GET(
       unrealizedPnl = null
     } else {
       unrealizedPnl = 0
+    }
+
+    // Live-trading override: prefer Tradier-reported open_pl over per-leg MTM
+    // when we successfully fetched the production balance above. Tradier's
+    // open_pl already reflects the broker's mark and matches what the operator
+    // sees on tradier.com, which is the authoritative number for a live account.
+    if (accountSource === 'tradier' && tradierOpenPlOverride !== null) {
+      unrealizedPnl = tradierOpenPlOverride
     }
 
     const todayRealizedPnl = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
@@ -301,6 +350,11 @@ export async function GET(
         buying_power: buyingPower,
         high_water_mark: num(acct?.high_water_mark),
         max_drawdown: num(acct?.max_drawdown),
+        // Diagnostic: 'tradier' = balance/BP/unrealized came from the live broker;
+        // 'paper_account' = fell back to the DB-seeded paper account row.
+        // UI does not render this; use `curl ... | jq .account.source` to verify.
+        source: accountSource,
+        source_error: tradierBalanceFetchError,
       },
       open_positions: int(positionCountRows[0]?.cnt),
       data_integrity_warning: dataIntegrityWarning,
