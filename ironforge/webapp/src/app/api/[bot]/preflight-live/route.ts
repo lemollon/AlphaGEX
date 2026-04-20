@@ -38,6 +38,12 @@ export const dynamic = 'force-dynamic'
 interface Check {
   name: string
   pass: boolean
+  /**
+   * When true, a failing check is informational only and does NOT flip
+   * `ready: false`. Used for prerequisites that affect sibling tooling
+   * (e.g. Python scripts) but not the webapp scanner's live-trade path.
+   */
+  advisory?: boolean
   detail: string
   remediation?: string
 }
@@ -61,6 +67,12 @@ export async function GET(
   const fail = (name: string, detail: string, remediation?: string) => {
     checks.push({ name, pass: false, detail, ...(remediation ? { remediation } : {}) })
   }
+  const warn = (name: string, detail: string, remediation?: string) => {
+    // Advisory-only failure: surfaces the issue in the report but does NOT
+    // flip `ready` to false. Use when the missing prereq is required by a
+    // sibling system (e.g. Python tooling) but not by the webapp trader.
+    checks.push({ name, pass: false, advisory: true, detail, ...(remediation ? { remediation } : {}) })
+  }
   const pass = (name: string, detail: string) => {
     checks.push({ name, pass: true, detail })
   }
@@ -76,23 +88,31 @@ export async function GET(
   }
   pass('1. bot_is_production_bot', `bot=${bot} matches PRODUCTION_BOT`)
 
-  // 2. Required env vars
+  // 2. Optional env vars (Python-side tooling only)
+  //
+  // The webapp scanner loads production credentials from ironforge_accounts
+  // (see check 3+4+5 below), so these env vars are NOT required for SPARK
+  // to place live orders. They ARE used by ironforge/scripts/*.py and
+  // ironforge/trading/tradier_client.py — Python-only tooling that's marked
+  // "reference only" in ironforge/CLAUDE.md. We report them as advisory so
+  // operators who run those scripts know to set them, but missing env vars
+  // do NOT flip `ready` to false.
   const prodKey = process.env.TRADIER_PROD_API_KEY || ''
   const prodAcctId = process.env.TRADIER_PROD_ACCOUNT_ID || ''
   if (!prodKey) {
-    fail(
-      '2a. env.TRADIER_PROD_API_KEY',
-      'Not set. SPARK cannot route orders to api.tradier.com.',
-      'Set TRADIER_PROD_API_KEY in the Render service env vars.',
+    warn(
+      '2a. env.TRADIER_PROD_API_KEY (advisory)',
+      'Not set. Required only by Python scripts in ironforge/scripts/ and ironforge/trading/; the webapp scanner uses ironforge_accounts.api_key instead.',
+      'Set TRADIER_PROD_API_KEY in Render if you plan to run Python tooling against production.',
     )
   } else {
     pass('2a. env.TRADIER_PROD_API_KEY', `present (${prodKey.length} chars)`)
   }
   if (!prodAcctId) {
-    fail(
-      '2b. env.TRADIER_PROD_ACCOUNT_ID',
-      'Not set. The Python config helper will refuse to start SPARK.',
-      'Set TRADIER_PROD_ACCOUNT_ID in the Render service env vars.',
+    warn(
+      '2b. env.TRADIER_PROD_ACCOUNT_ID (advisory)',
+      'Not set. Required only by Python scripts; the webapp scanner resolves account_id per-key from Tradier.',
+      'Set TRADIER_PROD_ACCOUNT_ID in Render if you plan to run Python tooling against production.',
     )
   } else {
     pass('2b. env.TRADIER_PROD_ACCOUNT_ID', `present (${prodAcctId})`)
@@ -333,14 +353,22 @@ export async function GET(
     `'${PRODUCTION_BOT}' (scanner.ts must match this exact string in its local PRODUCTION_BOT constant)`,
   )
 
-  const ready = checks.every(c => c.pass)
+  // `ready` reflects blocking failures only — advisory checks surface in
+  // the report but don't gate live trading.
+  const blockingFails = checks.filter(c => !c.pass && !c.advisory)
+  const advisories = checks.filter(c => !c.pass && c.advisory)
+  const ready = blockingFails.length === 0
   return NextResponse.json({
     ready,
     bot,
     production_bot: PRODUCTION_BOT,
     summary: ready
-      ? `READY — all ${checks.length} checks passed. SPARK is configured for live trading.`
-      : `NOT READY — ${checks.filter(c => !c.pass).length}/${checks.length} check(s) failed. See remediation per check.`,
+      ? advisories.length === 0
+        ? `READY — all ${checks.length} checks passed. SPARK is configured for live trading.`
+        : `READY — ${checks.length - advisories.length}/${checks.length} checks passed; ${advisories.length} advisory note(s) below.`
+      : `NOT READY — ${blockingFails.length} blocking check(s) failed${advisories.length ? `, ${advisories.length} advisory note(s)` : ''}. See remediation per check.`,
+    blocking_failures: blockingFails.length,
+    advisories: advisories.length,
     balances: balanceSummaries,
     checks,
   })
