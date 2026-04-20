@@ -31,6 +31,7 @@ import {
   getProductionAccountsForBot,
   getTradierBalanceDetail,
   getAccountsForBotAsync,
+  getProductionPauseState,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -332,6 +333,30 @@ export async function GET(
     '9. tradier.ts PRODUCTION_BOT',
     `'${PRODUCTION_BOT}' (scanner.ts must match this exact string in its local PRODUCTION_BOT constant)`,
   )
+
+  // 10. Production pause (advisory). Surfaces the operator-controlled
+  // kill-switch state so preflight reflects "intentionally paused" vs
+  // "misconfigured". An active pause does NOT fail readiness — SPARK is
+  // still READY to trade, the operator has just said "not today".
+  try {
+    const pause = await getProductionPauseState(bot)
+    if (pause.paused) {
+      warn(
+        '10. production pause',
+        `PAUSED — scanner will skip production orders${pause.paused_reason ? ` (reason: ${pause.paused_reason})` : ''}` +
+          `${pause.paused_at ? `, since ${pause.paused_at}` : ''}. Paper/sandbox unaffected.`,
+        `POST /api/${bot}/production-pause with { "paused": false } to resume.`,
+      )
+    } else {
+      pass('10. production pause', 'Active (not paused). Scanner will place production orders during market hours.')
+    }
+  } catch (err: unknown) {
+    warn(
+      '10. production pause',
+      `state query failed: ${err instanceof Error ? err.message : String(err)}`,
+      'Check that ironforge_production_pause table exists (auto-created by db.ts bootstrap).',
+    )
+  }
 
   // `ready` reflects blocking failures only — advisory checks surface in
   // the report but don't gate live trading.
