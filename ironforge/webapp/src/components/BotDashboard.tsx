@@ -65,8 +65,13 @@ const ACCOUNT_BOTS = new Set(['spark'])
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
 
-/** PDT only applies to SPARK (production account under $25K). FLAME/INFERNO are paper-only. */
-const PDT_BOTS = new Set(['spark'])
+/**
+ * Bots gated by PDT. Empty for now: SPARK trades on a > $25K production
+ * account (Iron Viper) which is exempt from FINRA Rule 4210's day-trade
+ * cap, and FLAME / INFERNO are paper-only. Kept as a Set so re-adding a
+ * bot later is a one-line change.
+ */
+const PDT_BOTS = new Set<string>()
 
 /** View mode: Paper (sandbox combined) or Live (production) */
 type ViewMode = 'paper' | 'live'

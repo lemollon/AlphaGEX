@@ -1403,8 +1403,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // Paper position INSERT always runs after this block — NEVER blocked by Tradier.
 
     // ── Production gating (PDT + already-traded check) ──
-    // PDT rules only apply to FLAME's production account (<$25K).
-    // This determines whether production orders are included in the Tradier call.
+    // PDT is STRUCTURALLY BYPASSED for the production bot:
+    // SPARK trades on a > $25K production account (Iron Viper), which is
+    // exempt from FINRA Rule 4210's day-trade cap. We still write pdt_log
+    // rows for audit, but the scanner gate is disabled here so flipping
+    // ironforge_pdt_config.pdt_enabled=true can never accidentally block a
+    // legitimate trade on a PDT-exempt account.
     let prodAlreadyTradedToday = false
     try {
       const pdtConfigRows = await query(
@@ -1414,20 +1418,21 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         [bot.name.toUpperCase()],
       )
       const pdtCfg = pdtConfigRows[0]
-      let pdtEnabled = pdtCfg ? ![false, 'false', 'f', 0, '0'].includes(pdtCfg.pdt_enabled) : false
-      if (pdtEnabled) {
-        try {
-          const acctPdt = await getPdtEnabledForAccount(person)
-          if (!acctPdt) {
-            pdtEnabled = false
-            console.log(`[scanner] ${bot.name.toUpperCase()} PDT disabled by account (${person})`)
-          }
-        } catch { /* keep bot-level setting */ }
-      }
+      // PDT is structurally disabled for the production bot regardless of the
+      // DB row: this entire block only executes inside the `isProductionFillOnly`
+      // (bot.name === PRODUCTION_BOT) guard above, and SPARK's production
+      // account is over $25K and therefore exempt from FINRA Rule 4210. We
+      // still read pdtCfg above so pdt_log writes downstream continue to work
+      // for audit purposes, but the gate is a no-op.
+      // Reference the unused helper so dead-code lints don't yank it (we still
+      // use getPdtEnabledForAccount elsewhere in the scanner).
+      void getPdtEnabledForAccount
+      void pdtCfg
+      const pdtEnabled = false
       const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 3
       const lastResetAt: string | null = pdtCfg?.last_reset_at ?? null
 
-      // Production PDT rolling window check
+      // Production PDT rolling window check (no-op for production bot — pdtEnabled is false above)
       if (pdtEnabled && maxDayTrades > 0) {
         let prodPdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
            WHERE is_day_trade = TRUE AND dte_mode = $1

@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, sharedTable, botTable, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
-import { getAccountsForBotAsync, getPdtEnabledForAccount } from '@/lib/tradier'
+import { getAccountsForBotAsync, getPdtEnabledForAccount, PRODUCTION_BOT } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
 const PDT_CONFIG = sharedTable('ironforge_pdt_config')
+
+/**
+ * Bots that are NOT subject to PDT, regardless of DB state. SPARK trades on
+ * a > $25K production account (Iron Viper) which is exempt from FINRA Rule
+ * 4210's day-trade cap. We short-circuit the PDT API for these bots so the
+ * scanner, UI, and diagnostic endpoints all agree: no PDT for SPARK.
+ */
+const PDT_EXEMPT_BOTS = new Set<string>([PRODUCTION_BOT])
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -88,6 +96,25 @@ export async function GET(
   const dte = dteMode(bot)!
   const accountType = req.nextUrl.searchParams.get('account_type') || undefined
 
+  // PDT-exempt bots (e.g. SPARK trading on a > $25K production account) get
+  // a short-circuited response so the scanner / dashboard / preflight all
+  // agree PDT does not apply, regardless of DB rows or env state.
+  if (PDT_EXEMPT_BOTS.has(bot)) {
+    return NextResponse.json({
+      bot: botName,
+      bypassed: true,
+      bypass_reason: 'over_25k_production_account',
+      pdt_enabled: false,
+      max_day_trades: 0,
+      max_trades_per_day: 0,
+      window_days: 5,
+      day_trade_count: 0,
+      trigger_trades: [],
+      can_trade_today: true,
+      source: 'pdt_exempt',
+    })
+  }
+
   try {
     return await buildStatusResponse(bot, botName, dte, accountType)
   } catch (err: unknown) {
@@ -108,6 +135,19 @@ export async function POST(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const botName = bot.toUpperCase()
+
+  // Refuse PDT toggle/reset for exempt bots so a UI click or stray curl can't
+  // silently flip state that won't take effect anyway (the scanner gate is
+  // hardcoded to ignore PDT for PRODUCTION_BOT).
+  if (PDT_EXEMPT_BOTS.has(bot)) {
+    return NextResponse.json(
+      {
+        error: `${botName} is PDT-exempt (over-$25K production account). Toggle/reset not applicable.`,
+        bypassed: true,
+      },
+      { status: 400 },
+    )
+  }
 
   try {
     const body = await req.json()
