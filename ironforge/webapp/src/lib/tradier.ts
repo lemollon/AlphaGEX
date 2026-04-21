@@ -2690,6 +2690,56 @@ export async function getTradierOrders(
 // Expose for scanner re-poll and testing
 export { getOrderFillPrice, getAccountIdForKey }
 
+/**
+ * Single-order detail fetch. Returns the broker's current view of a
+ * specific order — status, fill price, exec qty — in one call. Used by
+ * the scanner's broker-gone recovery path (scanner.ts) and by the
+ * fix-zero-pnl-trades backfill endpoint to recover the real close price
+ * when the re-poll path bailed out too early.
+ *
+ * Returns null on network failure or if the response is unparseable —
+ * caller decides the fallback.
+ */
+export interface TradierOrderDetails {
+  order_id: number | string
+  status: string | null
+  type: string | null
+  avg_fill_price: number | null
+  last_fill_price: number | null
+  exec_quantity: number | null
+  quantity: number | null
+  create_date: string | null
+  transaction_date: string | null
+}
+
+export async function getTradierOrderDetails(
+  apiKey: string,
+  accountId: string,
+  orderId: number | string,
+  baseUrl: string,
+): Promise<TradierOrderDetails | null> {
+  const data = await sandboxGet(`/accounts/${accountId}/orders/${orderId}`, undefined, apiKey, baseUrl)
+  if (!data) return null
+  const o = data.order
+  if (!o) return null
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    order_id: o.id,
+    status: o.status ?? null,
+    type: o.type ?? null,
+    avg_fill_price: numOrNull(o.avg_fill_price),
+    last_fill_price: numOrNull(o.last_fill_price),
+    exec_quantity: numOrNull(o.exec_quantity),
+    quantity: numOrNull(o.quantity),
+    create_date: o.create_date ?? null,
+    transaction_date: o.transaction_date ?? null,
+  }
+}
+
 export const _testing = {
   getOrderFillPrice,
   // Circuit breaker internals
