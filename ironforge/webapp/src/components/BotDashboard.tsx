@@ -57,7 +57,7 @@ function TabLoading() {
   )
 }
 
-const ALL_TABS = ['Equity Curve', 'Builder', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+const ALL_TABS = ['Equity Curve', 'IC Chart', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
 type Tab = (typeof ALL_TABS)[number]
 
 /** Only SPARK has sandbox/production accounts. FLAME and INFERNO are paper-only. */
@@ -496,8 +496,8 @@ export default function BotDashboard({
             />
           </ComponentErrorBoundary>
         )}
-        {tab === 'Builder' && (
-          <ComponentErrorBoundary fallback="Builder tab error">
+        {tab === 'IC Chart' && (
+          <ComponentErrorBoundary fallback="IC Chart tab error">
             <BuilderTab
               bot={bot}
               accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
