@@ -168,8 +168,13 @@ async function getStartingCapitalForBot(botName: string): Promise<number> {
 async function loadConfigOverrides(): Promise<void> {
   for (const bot of BOTS) {
     try {
+      // Always load the SANDBOX/paper config row for the global _botConfig.
+      // Live/production uses its own siloed row loaded per-order via
+      // loadProductionConfigFor() — paper and live configs never share state.
       const rows = await query(
-        `SELECT * FROM ${botTable(bot.name, 'config')} WHERE dte_mode = $1 LIMIT 1`,
+        `SELECT * FROM ${botTable(bot.name, 'config')}
+         WHERE dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+         LIMIT 1`,
         [bot.dte],
       )
       if (rows.length === 0) continue
@@ -219,6 +224,50 @@ async function loadConfigOverrides(): Promise<void> {
 
   // Sync paper_account starting_capital if it changed
   await syncPaperAccountCapital()
+}
+
+/**
+ * Load the PRODUCTION-scope config row for a bot. Returns `null` if no
+ * production row exists (caller must treat as fatal for production sizing;
+ * we refuse to size on paper values). Called from the per-production-account
+ * sizing branch in tradier.ts via the config loader passed through
+ * `placeIcOrderAllAccounts`.
+ *
+ * Paper/sandbox config stays in the module-level `_botConfig` map; production
+ * config is fetched fresh every order so a config edit in Live view takes
+ * effect on the next trade without a scanner restart.
+ */
+export async function loadProductionConfigFor(botName: string): Promise<BotConfig | null> {
+  const bot = BOTS.find(b => b.name === botName)
+  if (!bot) return null
+  try {
+    const rows = await query(
+      `SELECT * FROM ${botTable(bot.name, 'config')}
+       WHERE dte_mode = $1 AND account_type = 'production'
+       LIMIT 1`,
+      [bot.dte],
+    )
+    if (rows.length === 0) return null
+    const row = rows[0]
+    const merged: BotConfig = { ...DEFAULT_CONFIG[bot.name] }
+    for (const [dbCol, mapping] of Object.entries(DB_TO_CFG)) {
+      const val = row[dbCol]
+      if (val == null) continue
+      const n = Number(val)
+      if (isNaN(n)) continue
+      merged[mapping.key] = mapping.transform ? mapping.transform(n) : n
+    }
+    const entryEndStr = row.entry_end
+    if (entryEndStr && typeof entryEndStr === 'string' && entryEndStr.includes(':')) {
+      const [h, m] = entryEndStr.split(':').map(Number)
+      if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
+    }
+    return merged
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] ${botName.toUpperCase()} production config load failed: ${msg}`)
+    return null
+  }
 }
 
 /**
@@ -1488,8 +1537,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         return `skip:production_only_order_failed(${msg})`
       }
 
-      // Record production positions (same logic as normal path below)
-      const PRODUCTION_MAX_CONTRACTS = 2
+      // Record production positions (same logic as normal path below).
+      // Contract count = exactly what Tradier filled (info.contracts). Sizing
+      // is now capped upstream in placeIcOrderAllAccounts via bp_pct ×
+      // Tradier OBP and the optional spark_config.production.max_contracts
+      // ceiling — no post-fill cap here (that used to hardcode 2 and created
+      // a record-vs-broker mismatch).
       let prodRecorded = false
       for (const [key, info] of Object.entries(sandboxOrderIds)) {
         if (info.account_type !== 'production') continue
@@ -1498,7 +1551,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           console.warn(`[scanner] PRODUCTION WARNING: ${key} fill_price is ${info.fill_price} — using estimated credit $${credits.totalCredit.toFixed(4)} as fallback.`)
         }
         const prodPerson = key.split(':')[0]
-        const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+        const prodContracts = info.contracts
         const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
         const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
         const prodMaxLoss = prodCollateral
@@ -1722,7 +1775,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
     // Record production positions immediately. These are real money positions
     // that must be tracked regardless of what happens with sandbox.
-    const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap
+    // Sizing cap lives upstream in placeIcOrderAllAccounts (bp_pct × Tradier OBP
+    // + optional spark_config.production.max_contracts). No post-fill cap here
+    // or the DB record diverges from what the broker actually filled.
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
 
@@ -1740,7 +1795,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
 
       const prodPerson = key.split(':')[0]
-      const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+      const prodContracts = info.contracts
       const prodCredit = hasFill ? info.fill_price! : credits.totalCredit
       const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
       const prodMaxLoss = prodCollateral
@@ -2023,17 +2078,18 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [effectiveCollateral, acct.id],
   )
 
-  // Record production positions for NON-FLAME bots (FLAME handles this in its own block above).
-  // Production positions only exist if placeIcOrderAllAccounts confirmed a Tradier fill
-  // (sandbox must fill first — production is only mirrored after sandbox success).
+  // Record production positions for NON-production bots (the production bot
+  // handles this in its own block above). Production positions only exist if
+  // placeIcOrderAllAccounts confirmed a Tradier fill (sandbox must fill first
+  // — production is only mirrored after sandbox success).
+  // Sizing cap lives upstream in placeIcOrderAllAccounts; no post-fill cap.
   if (!isProductionFillOnly) {
-    const PRODUCTION_MAX_CONTRACTS = 2  // Safety cap for production
     for (const [key, info] of Object.entries(sandboxOrderIds)) {
       if (info.account_type !== 'production') continue
       if (!info.fill_price || info.fill_price <= 0) continue
 
       const prodPerson = key.split(':')[0]
-      const prodContracts = Math.min(info.contracts, PRODUCTION_MAX_CONTRACTS)
+      const prodContracts = info.contracts
       const prodCredit = info.fill_price
       const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
       const prodMaxLoss = prodCollateral

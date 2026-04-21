@@ -1268,6 +1268,54 @@ export async function placeIcOrderAllAccounts(
     productionAccts = []
   }
 
+  // Load the PRODUCTION-scope config row ONCE per order so every production
+  // account in this call sizes off the same knobs. We load it lazily (only
+  // when production accounts are actually in scope) so sandbox-only paths
+  // never touch the production config row.
+  //   bp_pct      → deployment fraction of Tradier OBP (default 0.15)
+  //   max_contracts → 0 = unlimited (bp_pct is the real cap)
+  // If the production row is missing or malformed, we log + skip all
+  // production accounts rather than falling back to paper values — matches
+  // the plan's "no silent drop" requirement.
+  let prodBpPct = 0
+  let prodMaxContracts = 0
+  let productionConfigOk = false
+  if (productionAccts.length > 0 && botName) {
+    try {
+      const { loadProductionConfigFor } = await import('./scanner')
+      const prodCfg = await loadProductionConfigFor(botName)
+      if (prodCfg && prodCfg.bp_pct > 0 && prodCfg.bp_pct <= 1) {
+        prodBpPct = prodCfg.bp_pct
+        prodMaxContracts = Math.max(0, prodCfg.max_contracts)
+        productionConfigOk = true
+      } else {
+        console.error(
+          `[tradier] PRODUCTION_SIZE_DROP: no valid production config row for ${botName.toUpperCase()} ` +
+          `(bp_pct=${prodCfg?.bp_pct ?? 'null'}). SKIPPING production accounts to prevent wrong-size orders.`,
+        )
+        // Also write to spark_logs so the failure has a durable audit trail
+        try {
+          const { dbExecute, botTable } = await import('./db')
+          await dbExecute(
+            `INSERT INTO ${botTable(botName, 'logs')} (level, message, details, dte_mode)
+             VALUES ($1, $2, $3, $4)`,
+            [
+              'ERROR',
+              `PRODUCTION_SIZE_DROP: production config missing or invalid (bp_pct=${prodCfg?.bp_pct ?? 'null'})`,
+              JSON.stringify({ event: 'production_size_drop', bot: botName, cfg: prodCfg }),
+              '1DTE',
+            ],
+          )
+        } catch { /* audit write is best-effort; console is the canonical trace */ }
+        productionAccts = []
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[tradier] PRODUCTION_SIZE_DROP: config load threw (${msg}) — SKIPPING production accounts`)
+      productionAccts = []
+    }
+  }
+
   async function placeForAccount(acct: SandboxAccount) {
     try {
       const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
@@ -1287,58 +1335,75 @@ export async function placeIcOrderAllAccounts(
         return
       }
 
-      // Size to ~85% of this account's buying power.
-      // FLAME: all 3 accounts (fill-only). SPARK+INFERNO: paper-only (no sandbox).
-      // Math.floor guarantees whole contracts — no fractional orders.
+      // Sizing model (one bp_pct per scope, no double-dip):
       //
-      // CRITICAL: Use BROKER margin (spread_width * 100), NOT net collateral.
-      // Tradier requires margin = spread_width * 100 per contract (ignores credit offset).
-      // Using net collateral (spread_width - credit) * 100 oversizes by ~40-60%.
+      //   Paper/Sandbox: usableBP = bp × botShare × 0.85           (85% hardcoded,
+      //                                                             matches paper
+      //                                                             ledger semantics)
+      //   Live/Production: usableBP = bp × botShare × prodBpPct    (0.15 from
+      //                                                             spark_config's
+      //                                                             production row)
+      //
+      // Contract count is floor(usableBP / broker_margin_per_contract). Tradier
+      // requires margin = spread_width * 100 per contract (NOT net collateral).
+      //
+      // Production is NOT capped by paperContracts — production is sized
+      // independently from the live Tradier account per operator's 15% rule.
+      // The scanner's paper-sized paperContracts is only a cap for sandbox/paper
+      // mirror orders (which must match paper contract count 1:1).
       const SANDBOX_MAX_CONTRACTS = 200
       const brokerMarginPer = spreadWidth * 100  // Tradier margin: $500 for $5 spread
-      // Equal share among accounts OF THE SAME TYPE assigned to this bot.
-      // Production and sandbox are separate pools — a production account shouldn't
-      // get 25% just because there are 3 sandbox accounts sharing the pie.
       const sameTypeCount = eligibleAccounts.filter(a => a.type === acct.type).length
       const botShare = botName && sameTypeCount > 1
         ? 1.0 / sameTypeCount
         : 1.0
-      // Apply capital_pct: if user allocated only 50% of their capital,
-      // sandbox should not use more than 50% of its buying power either.
-      // PRODUCTION SAFETY: If capital_pct lookup fails for a production account,
-      // skip the account entirely instead of defaulting to 100%.
-      let capitalPct = 100
-      try {
-        capitalPct = await getCapitalPctForAccount(acct.name, acct.type)
-      } catch (cpErr: unknown) {
-        const cpMsg = cpErr instanceof Error ? cpErr.message : String(cpErr)
-        if (acct.type === 'production') {
-          console.error(`PRODUCTION [${acct.name}]: capital_pct lookup FAILED (${cpMsg}) — SKIPPING account to prevent 100% default`)
-          return
-        }
-        console.warn(`Sandbox [${acct.name}]: capital_pct lookup failed (${cpMsg}), defaulting to 100%`)
+
+      // Per-scope bp_pct. Production reads from the siloed config row loaded
+      // above; sandbox is hardcoded 0.85 (matches paper ledger).
+      const bpPct = acct.type === 'production'
+        ? prodBpPct  // 0.15 default; refuses to size if productionConfigOk=false
+                     // (productionAccts was cleared above in that case, so we
+                     // never reach here for prod without valid config)
+        : 0.85
+
+      if (acct.type === 'production' && !productionConfigOk) {
+        // Defensive — should have been filtered out already
+        console.error(`PRODUCTION [${acct.name}]: no valid production config, refusing to size`)
+        return
       }
-      const bpAfterCapitalPct = bp * (capitalPct / 100)
-      const usableBP = bpAfterCapitalPct * botShare * 0.85
+
+      const usableBP = bp * botShare * bpPct
       const bpContracts = Math.floor(usableBP / brokerMarginPer)
       if (bpContracts < 1) {
         const bpLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
         console.warn(
-          `${bpLabel}: capital_pct=${capitalPct}% → usableBP=$${usableBP.toFixed(0)} insufficient for 1 contract ($${brokerMarginPer}/ea)`,
+          `${bpLabel}: bp_pct=${(bpPct * 100).toFixed(1)}% → usableBP=$${usableBP.toFixed(0)} insufficient for 1 contract ($${brokerMarginPer}/ea)`,
         )
         return
       }
-      // Cap at paper-sized contracts (respects capital_pct from scanner sizing)
-      // and absolute safety cap of 200 contracts.
-      const acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
+
+      // Contract-count cap depends on scope:
+      //   Sandbox: min(hardCap, bpContracts, paperContracts) — must mirror paper
+      //   Production: min(hardCap, bpContracts, spark_config.production.max_contracts)
+      //               where max_contracts=0 means unlimited (bp_pct is the real cap)
+      let acctContracts: number
+      if (acct.type === 'production') {
+        const prodCeiling = prodMaxContracts > 0 ? prodMaxContracts : Number.POSITIVE_INFINITY
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling)
+      } else {
+        acctContracts = Math.min(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts)
+      }
 
       const totalMargin = acctContracts * brokerMarginPer
       const sizeLabel = acct.type === 'production' ? `PRODUCTION [${acct.name}]` : `Sandbox [${acct.name}]`
+      const capsDetail = acct.type === 'production'
+        ? `bp_calc=${bpContracts}, prodMax=${prodMaxContracts > 0 ? prodMaxContracts : '∞'}, hardCap=${SANDBOX_MAX_CONTRACTS}`
+        : `bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}`
       console.log(
-        `${sizeLabel}: optionBP=$${bp.toFixed(0)}, capital_pct=${capitalPct}%, ` +
-        `usable=$${usableBP.toFixed(0)} (${capitalPct}% × ${(botShare * 100).toFixed(0)}% × 85%), ` +
+        `${sizeLabel}: optionBP=$${bp.toFixed(0)}, bp_pct=${(bpPct * 100).toFixed(1)}%, ` +
+        `usable=$${usableBP.toFixed(0)} (${(bpPct * 100).toFixed(1)}% × ${(botShare * 100).toFixed(0)}%), ` +
         `margin/contract=$${brokerMarginPer}, ` +
-        `contracts=${acctContracts} (bp_calc=${bpContracts}, paperCap=${paperContracts}, hardCap=${SANDBOX_MAX_CONTRACTS}), ` +
+        `contracts=${acctContracts} (${capsDetail}), ` +
         `totalMargin=$${totalMargin.toFixed(0)}`,
       )
 

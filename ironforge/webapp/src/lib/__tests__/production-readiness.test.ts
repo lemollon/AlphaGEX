@@ -138,11 +138,18 @@ describe('Capital Sizing with capital_pct', () => {
     expect(pct).toBe(100)
   })
 
-  it('tradier.ts applies capital_pct in sizing math (structural)', () => {
-    // Verify the sizing formula is in placeIcOrderAllAccounts
-    expect(tradierSource).toMatch(/bpAfterCapitalPct\s*=\s*bp\s*\*\s*\(capitalPct\s*\/\s*100\)/)
-    expect(tradierSource).toMatch(/usableBP\s*=\s*bpAfterCapitalPct\s*\*\s*botShare\s*\*\s*0\.85/)
+  it('tradier.ts applies per-scope bp_pct in sizing math (structural)', () => {
+    // Sizing model post-Commit-A: one bp_pct per scope, no capital_pct double-dip.
+    //   Paper/Sandbox: usableBP = bp * botShare * 0.85
+    //   Live/Production: usableBP = bp * botShare * prodBpPct (from siloed config)
+    // Contract count is floor(usableBP / brokerMarginPer) as before.
+    expect(tradierSource).toMatch(/const bpPct = acct\.type === 'production'/)
+    expect(tradierSource).toMatch(/\? prodBpPct/)
+    expect(tradierSource).toMatch(/: 0\.85/)
+    expect(tradierSource).toMatch(/const usableBP = bp \* botShare \* bpPct/)
     expect(tradierSource).toMatch(/bpContracts\s*=\s*Math\.floor\(usableBP\s*\/\s*brokerMarginPer\)/)
+    // Legacy double-dip formula must be gone — would re-introduce 15% × 0.85 = 12.75% bug.
+    expect(tradierSource).not.toMatch(/usableBP\s*=\s*bpAfterCapitalPct\s*\*\s*botShare\s*\*\s*0\.85/)
   })
 })
 
@@ -150,32 +157,37 @@ describe('Capital Sizing with capital_pct', () => {
 /*  2. PRODUCTION_MAX_CONTRACTS Safety Cap                             */
 /* ================================================================== */
 
-describe('PRODUCTION_MAX_CONTRACTS Safety Cap', () => {
-  it('is exactly 2 in ALL three code paths (production-only, FLAME normal, non-FLAME)', () => {
-    // Find all declarations of PRODUCTION_MAX_CONTRACTS in scanner.ts
+describe('Production Contract Ceiling (Config-Driven, Commit A)', () => {
+  it('hardcoded PRODUCTION_MAX_CONTRACTS is gone from scanner.ts', () => {
+    // Pre-Commit-A: three hardcoded `PRODUCTION_MAX_CONTRACTS = 2` declarations
+    // post-fill capped Tradier's filled qty, creating a record-vs-broker
+    // mismatch and defeating the 15% sizing. Commit A removed them; the cap
+    // now lives upstream via spark_config.production.max_contracts
+    // (default 0 = unlimited, bp_pct × Tradier OBP is the real risk bound).
     const matches = scannerSource.match(/PRODUCTION_MAX_CONTRACTS\s*=\s*\d+/g) ?? []
-    expect(matches.length).toBe(3)
-    for (const m of matches) {
-      expect(m).toMatch(/PRODUCTION_MAX_CONTRACTS\s*=\s*2/)
-    }
+    expect(matches.length).toBe(0)
   })
 
-  it('Math.min caps production contracts when Tradier returns more than limit', () => {
-    const PRODUCTION_MAX_CONTRACTS = 2
-    expect(Math.min(5, PRODUCTION_MAX_CONTRACTS)).toBe(2)
-    expect(Math.min(10, PRODUCTION_MAX_CONTRACTS)).toBe(2)
-    expect(Math.min(200, PRODUCTION_MAX_CONTRACTS)).toBe(2)
-  })
-
-  it('below-limit contracts pass through unchanged', () => {
-    const PRODUCTION_MAX_CONTRACTS = 2
-    expect(Math.min(1, PRODUCTION_MAX_CONTRACTS)).toBe(1)
-    expect(Math.min(2, PRODUCTION_MAX_CONTRACTS)).toBe(2)
-  })
-
-  it('cap is applied via Math.min in all three code paths (structural)', () => {
+  it('no post-fill Math.min cap against info.contracts', () => {
+    // Ensure nothing re-introduces a hardcoded cap that shrinks Tradier's
+    // actual filled quantity before we record the position.
     const capUsages = scannerSource.match(/Math\.min\(info\.contracts,\s*PRODUCTION_MAX_CONTRACTS\)/g) ?? []
-    expect(capUsages.length).toBe(3)
+    expect(capUsages.length).toBe(0)
+  })
+
+  it('production ceiling reads from spark_config.production.max_contracts', () => {
+    // tradier.ts now resolves the ceiling from the siloed production config
+    // at sizing time. 0 means unlimited.
+    expect(tradierSource).toMatch(/prodMaxContracts\s*=\s*Math\.max\(0, prodCfg\.max_contracts\)/)
+    expect(tradierSource).toMatch(/prodCeiling\s*=\s*prodMaxContracts\s*>\s*0\s*\?\s*prodMaxContracts\s*:\s*Number\.POSITIVE_INFINITY/)
+  })
+
+  it('production sizing uses Tradier OBP × bp_pct (no paperContracts cap)', () => {
+    // Production must size independently of paperContracts (which was the
+    // cap that shrank prod orders to paper-sized count). Sandbox still mirrors
+    // paper contracts.
+    expect(tradierSource).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, prodCeiling\)/)
+    expect(tradierSource).toMatch(/acctContracts = Math\.min\(SANDBOX_MAX_CONTRACTS, bpContracts, paperContracts\)/)
   })
 })
 
@@ -423,12 +435,17 @@ describe('Blockers That Could Prevent Production Trading', () => {
     expect(tradierSource).toMatch(/acct\.type\s*===\s*'production'\s*\?\s*0/)
   })
 
-  it('capital_pct SKIP guard prevents production order with failed lookup', () => {
-    // If getCapitalPctForAccount throws for production → skip account entirely
-    expect(tradierSource).toMatch(/PRODUCTION.*capital_pct.*SKIP/i)
-    expect(tradierSource).toMatch(
-      /acct\.type\s*===\s*'production'[\s\S]*?SKIPPING account/,
-    )
+  it('production config SKIP guard prevents production order with missing/invalid config', () => {
+    // Post-Commit-A: capital_pct is gone — production sizing knob is
+    // spark_config.production.buying_power_usage_pct (bp_pct). If the
+    // production config row is missing or bp_pct is invalid (<= 0 or > 1),
+    // production accounts are cleared BEFORE placeForAccount is invoked,
+    // and a PRODUCTION_SIZE_DROP audit row is written to spark_logs.
+    expect(tradierSource).toMatch(/PRODUCTION_SIZE_DROP/)
+    expect(tradierSource).toMatch(/productionConfigOk\s*=\s*true/)
+    expect(tradierSource).toMatch(/loadProductionConfigFor/)
+    // Defense-in-depth: sizing branch also refuses if the flag is false.
+    expect(tradierSource).toMatch(/!productionConfigOk/)
   })
 
   it('VIX gate blocks production same as sandbox (VIX > 32)', () => {
@@ -490,20 +507,22 @@ describe('Production Collateral & P&L Arithmetic', () => {
     expect(prodMaxLoss).toBe(418)
   })
 
-  it('PRODUCTION_MAX_CONTRACTS caps at 2 even if BP allows more', () => {
-    const PRODUCTION_MAX_CONTRACTS = 2
-    // Suppose Tradier fills 10 contracts (BP allows it)
+  it('production records Tradier-filled contract count (no post-fill cap after Commit A)', () => {
+    // Post-Commit-A: scanner records exactly what Tradier filled. Cap lives
+    // upstream via spark_config.production.max_contracts (pre-submit) and
+    // bp_pct × Tradier OBP. No Math.min hardcode that would desync the DB
+    // record from the broker's actual position.
     const tradierFillContracts = 10
-    const prodContracts = Math.min(tradierFillContracts, PRODUCTION_MAX_CONTRACTS)
+    const prodContracts = tradierFillContracts // pass-through, no cap
 
-    expect(prodContracts).toBe(2)
+    expect(prodContracts).toBe(10)
 
-    // Collateral for 2 contracts
+    // Collateral tracks actual filled contracts
     const spreadWidth = 5
     const prodCredit = 0.82
     const prodCollateral = Math.max(0, (spreadWidth - prodCredit) * 100) * prodContracts
 
-    expect(prodCollateral).toBe(836) // $418 × 2
+    expect(prodCollateral).toBe(4180) // $418 × 10
   })
 })
 

@@ -173,13 +173,18 @@ describe('placeIcOrderAllAccounts — Production Account Handling (Structural)',
     expect(tradierSource).toContain('sandbox.tradier.com')
   })
 
-  it('skips production account when capital_pct lookup fails', () => {
-    // The ABORT guard for production
-    expect(tradierSource).toMatch(/PRODUCTION.*capital_pct.*SKIP/i)
+  it('skips production accounts when production config row is missing/invalid', () => {
+    // Post-Commit-A: capital_pct replaced by spark_config.production.bp_pct.
+    // The ABORT guard now fires on a missing/invalid production config row
+    // and writes a PRODUCTION_SIZE_DROP audit log so the skip is visible.
+    expect(tradierSource).toMatch(/PRODUCTION_SIZE_DROP/)
+    expect(tradierSource).toMatch(/productionConfigOk\s*=\s*false/)
   })
 
-  it('calls getCapitalPctForAccount for each account', () => {
-    expect(tradierSource).toMatch(/getCapitalPctForAccount/)
+  it('loads per-scope production config before sizing any production account', () => {
+    // loadProductionConfigFor is imported from scanner.ts and called once
+    // per placeIcOrderAllAccounts invocation that touches production accounts.
+    expect(tradierSource).toMatch(/loadProductionConfigFor/)
   })
 
   it('returns results keyed by person:account_type', () => {
@@ -193,8 +198,13 @@ describe('placeIcOrderAllAccounts — Production Account Handling (Structural)',
 /* ================================================================== */
 
 describe('Scanner Production Position Recording (Structural)', () => {
-  it('defines PRODUCTION_MAX_CONTRACTS safety cap', () => {
-    expect(scannerSource).toMatch(/PRODUCTION_MAX_CONTRACTS\s*=\s*2/)
+  it('records exact Tradier-filled contract count (no hardcoded post-fill cap)', () => {
+    // Post-Commit-A: the `PRODUCTION_MAX_CONTRACTS = 2` hardcode was removed
+    // from all three scanner code paths. The DB record now matches what the
+    // broker actually filled. The ceiling lives upstream in
+    // spark_config.production.max_contracts (default 0 = unlimited).
+    expect(scannerSource).not.toMatch(/PRODUCTION_MAX_CONTRACTS\s*=/)
+    expect(scannerSource).toMatch(/const prodContracts = info\.contracts/)
   })
 
   it('filters production fills by account_type', () => {
@@ -211,8 +221,12 @@ describe('Scanner Production Position Recording (Structural)', () => {
     expect(scannerSource).toMatch(/prodPerson/)
   })
 
-  it('caps production contracts at PRODUCTION_MAX_CONTRACTS', () => {
-    expect(scannerSource).toMatch(/Math\.min\(.*PRODUCTION_MAX_CONTRACTS\)/)
+  it('production contract ceiling is enforced upstream via spark_config (not post-fill)', () => {
+    // No post-fill Math.min against PRODUCTION_MAX_CONTRACTS (removed);
+    // the enforcement point is placeIcOrderAllAccounts in tradier.ts,
+    // reading spark_config.production.max_contracts.
+    expect(scannerSource).not.toMatch(/Math\.min\(.*PRODUCTION_MAX_CONTRACTS\)/)
+    expect(tradierSource).toMatch(/prodMaxContracts\s*=\s*Math\.max\(0, prodCfg\.max_contracts\)/)
   })
 
   it('deducts collateral from production paper_account', () => {
@@ -330,13 +344,29 @@ describe('DB Schema Production Columns (Structural)', () => {
     expect(dbSource).toMatch(/paper_account.*ADD COLUMN.*person/)
   })
 
-  it('seeds production paper_account for Logan', () => {
-    expect(dbSource).toMatch(/production.*Logan/s)
-    expect(dbSource).toMatch(/flame_paper_account/)
+  it('seeds production paper_account rows for every active production account (spark_paper_account)', () => {
+    // After FLAME→SPARK cutover + Commit A: bootstrap seeds spark_paper_account
+    // rows for every active production person in ironforge_accounts, not a
+    // Logan-hardcoded flame_paper_account. Idempotent via NOT EXISTS.
+    expect(dbSource).toMatch(/INSERT INTO spark_paper_account/)
+    expect(dbSource).toMatch(/account_type = 'production'/)
+    expect(dbSource).toMatch(/WHERE NOT EXISTS/)
   })
 
-  it('ensures FLAME is assigned to Logan production account', () => {
-    expect(dbSource).toMatch(/FLAME.*Logan.*production/s)
+  it('normalizes production bot assignment to SPARK (strips legacy FLAME)', () => {
+    // Legacy deploys had FLAME listed on production rows. Bootstrap now
+    // rewrites ironforge_accounts.bot so SPARK is the production bot.
+    expect(dbSource).toMatch(/filtered\.includes\('SPARK'\)/)
+    expect(dbSource).toMatch(/filter\(\(b\) => b !== 'FLAME'\)/)
+  })
+
+  it('seeds spark_config production row with bp_pct=0.15 and max_contracts=0', () => {
+    // Commit A: the production config row MUST override bp_pct to 0.15
+    // (operator's 15% rule) and max_contracts to 0 (unlimited; bp_pct is
+    // the cap). The clone-from-sandbox pattern would otherwise inherit
+    // bp_pct=0.85 — the exact double-dip bug Commit A fixes.
+    expect(dbSource).toMatch(/0 AS max_contracts/)
+    expect(dbSource).toMatch(/0\.15 AS buying_power_usage_pct/)
   })
 
   it('defaults account_type to sandbox', () => {
