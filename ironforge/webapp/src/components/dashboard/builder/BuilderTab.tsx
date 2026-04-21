@@ -1,25 +1,29 @@
 'use client'
 
 /**
- * BuilderTab — the four SpreadWorks "builder chart" pieces composed into a
- * single view on /{bot} → Builder. Display-only: no strategy input, no
- * trade execution. Renders whatever IC is currently open for this bot in
- * the requested account_type scope (Paper or Live).
+ * BuilderTab — the SpreadWorks "builder chart" pieces composed into a single
+ * view on /{bot} → IC Chart. Display-only: no strategy input, no trade
+ * execution. Renders whatever IC is currently open for this bot in the
+ * requested account_type scope (Paper or Live).
+ *
+ * Layout (matches SpreadWorks' ChartArea exactly):
+ *   [ CandleChart                flex-[3]  ] [ PayoffPanel  220px ]
+ *   shared price Y-axis via minPrice/maxPrice computed in ChartArea.
  *
  * Data:
  *   /api/{bot}/builder/snapshot?account_type=... → position/legs/payoff/metrics/mtm
  *   /api/{bot}/builder/candles?symbol=SPY&minutes=120
  *
  * Polling cadence:
- *   snapshot: 30s (quotes + greeks)
- *   candles: 60s (intraday bars)
+ *   snapshot: 30s  (quotes + greeks + MTM)
+ *   candles:  60s  (intraday bars)
  */
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import MetricsBar from './MetricsBar'
-import PayoffDiagram from './PayoffDiagram'
-import CandleChart, { type Candle } from './CandleChart'
+import ChartArea from './ChartArea'
 import LegBreakdown, { type BuilderLeg } from './LegBreakdown'
+import type { Candle } from '@/lib/price-scale'
 
 const SNAPSHOT_REFRESH_MS = 30_000
 const CANDLES_REFRESH_MS = 60_000
@@ -105,7 +109,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
   if (snapErr) {
     return (
       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
-        <p className="text-red-400 text-sm">Builder snapshot failed: {snapErr.message}</p>
+        <p className="text-red-400 text-sm">IC Chart snapshot failed: {snapErr.message}</p>
       </div>
     )
   }
@@ -113,7 +117,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
   if (!snap) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-        <p className="text-forge-muted text-sm animate-pulse">Loading builder...</p>
+        <p className="text-forge-muted text-sm animate-pulse">Loading IC chart...</p>
       </div>
     )
   }
@@ -123,7 +127,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
         <p className="text-gray-200 text-sm font-semibold mb-1">No open IC for this scope</p>
         <p className="text-forge-muted text-xs">
-          Builder renders when {bot.toUpperCase()} has an open Iron Condor in the <span className="font-mono">{accountType}</span> scope.
+          IC Chart renders when {bot.toUpperCase()} has an open Iron Condor in the <span className="font-mono">{accountType}</span> scope.
           Open a position (or switch the Paper/Live toggle above) to see the payoff diagram, candle chart with strike walls, leg breakdown, and metrics.
         </p>
       </div>
@@ -131,14 +135,26 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
   }
 
   const p = snap.position
-  const strikes = {
-    putLong: p.put_long_strike,
-    putShort: p.put_short_strike,
-    callShort: p.call_short_strike,
-    callLong: p.call_long_strike,
+
+  // Map IronForge snake_case strike keys to SpreadWorks-style long*/short*
+  // keys used by the ported components (priceScale, CandleChart, PayoffPanel).
+  const spreadworksStrikes = {
+    longPutStrike: p.put_long_strike,
+    longCallStrike: p.call_long_strike,
+    shortPutStrike: p.put_short_strike,
+    shortCallStrike: p.call_short_strike,
   }
-  const breakevens = snap.metrics
-    ? { lower: snap.metrics.breakeven_low, upper: snap.metrics.breakeven_high }
+
+  // Reshape the snapshot payoff into SpreadWorks' `calcResult` shape that
+  // PayoffPanel expects via ChartArea.
+  const calcResult = snap.payoff
+    ? {
+        pnl_curve: snap.payoff.pnl_curve,
+        max_profit: snap.payoff.max_profit,
+        max_loss: snap.payoff.max_loss,
+        lower_breakeven: snap.payoff.breakeven_low,
+        upper_breakeven: snap.payoff.breakeven_high,
+      }
     : null
 
   return (
@@ -193,37 +209,17 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       {/* Metrics */}
       <MetricsBar metrics={snap.metrics ?? null} legs={snap.legs ?? []} />
 
-      {/* Side-by-side: price chart + payoff diagram */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-[10px] uppercase tracking-wider text-forge-muted">Price (SPY, 1m)</h3>
-            <span className="text-[10px] text-forge-muted font-mono">
-              {candlesData?.candles?.length ?? 0} bars
-            </span>
-          </div>
-          <CandleChart
-            candles={candlesData?.candles}
-            spotPrice={snap.spot_price}
-            strikes={strikes}
-            height={320}
-          />
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-[10px] uppercase tracking-wider text-forge-muted">Payoff at Expiration</h3>
-            <span className="text-[10px] text-forge-muted font-mono">
-              BE ${snap.metrics?.breakeven_low?.toFixed(2) ?? '—'} — ${snap.metrics?.breakeven_high?.toFixed(2) ?? '—'}
-            </span>
-          </div>
-          <PayoffDiagram
-            pnlCurve={snap.payoff?.pnl_curve}
-            spotPrice={snap.spot_price}
-            breakevens={breakevens}
-            strikes={strikes}
-            height={320}
-          />
-        </div>
+      {/* Unified chart: CandleChart + PayoffPanel in a flex container with a
+          shared price Y-axis. Matches SpreadWorks' ChartArea.jsx exactly. */}
+      <div className="flex flex-col" style={{ height: 500 }}>
+        <ChartArea
+          candles={candlesData?.candles}
+          spotPrice={snap.spot_price}
+          strikes={spreadworksStrikes}
+          calcResult={calcResult}
+          height={500}
+          rangePct={2.2}
+        />
       </div>
 
       {/* Legs */}
