@@ -51,6 +51,14 @@ interface PayoffPanelProps {
   maxProfit?: number | null
   maxLoss?: number | null
   breakevens?: { lower?: number | null; upper?: number | null } | null
+  /** Commit G: when the IC has already closed, these override the live
+   * "Now: ..." badge with a "Closed: +$X" badge anchored at the close
+   * price's Y-coordinate. When `isOpen` is true (default), the live
+   * interpolation-at-spot badge renders as before. */
+  closedPrice?: number | null
+  closedRealizedPnl?: number | null
+  closedRealizedPct?: number | null
+  isOpen?: boolean
 }
 
 function formatDollarPnl(pnl: number): string {
@@ -72,6 +80,10 @@ export default function PayoffPanel({
   maxProfit,
   maxLoss,
   breakevens,
+  closedPrice,
+  closedRealizedPnl,
+  closedRealizedPct,
+  isOpen = true,
 }: PayoffPanelProps) {
   const plotH = height - 10 - 28 // match candle chart TOP_PAD + BOTTOM_PAD
   const topPad = 10
@@ -280,35 +292,93 @@ export default function PayoffPanel({
           </g>
         )}
 
-        {/* "Now: +$X (+X.X%)" badge at spot price, on LEFT of panel */}
-        {paths && spotY != null && pnlAtSpotPoint != null && (() => {
-          const { pnl, pctOfRisk } = pnlAtSpotPoint
-          const isProfit = pnl > 0
-          const nearBreakeven = Math.abs(pctOfRisk) < 10
-          const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#22c55e' : '#ef4444'
-          const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#22c55e22' : '#ef444422'
-          const label = `Now: ${formatDollarPnl(pnl)} (${formatSignedPct(pctOfRisk)})`
-          const badgeW = 140
-          const badgeH = 18
-          const rawX = 4
-          let badgeY = spotY - badgeH / 2
-          badgeY = Math.max(10, Math.min(badgeY, height - 28 - badgeH))
-          return (
-            <g>
-              <rect x={rawX} y={badgeY} width={badgeW} height={badgeH} rx={3} fill={bgColor} stroke={badgeColor} strokeWidth="0.8" />
-              <text
-                x={rawX + badgeW / 2}
-                y={badgeY + 12}
-                textAnchor="middle"
-                fill={badgeColor}
-                fontSize="9"
-                fontWeight="700"
-                fontFamily="monospace"
-              >
-                {label}
-              </text>
-            </g>
-          )
+        {/* "Now: +$X (+X.X%)" badge at spot (open positions) OR
+            "Closed: +$X (+X.X%)" badge at close_price (closed positions). */}
+        {paths && (() => {
+          // Branch: closed position wins over open. We show the closed
+          // outcome anchored at close_price's Y so the operator sees
+          // exactly where on the payoff curve the exit landed.
+          if (!isOpen && closedPrice != null && closedRealizedPnl != null) {
+            const closeY = pToY(closedPrice)
+            const pct = closedRealizedPct ?? 0
+            const isProfit = closedRealizedPnl > 0
+            const nearBreakeven = Math.abs(pct) < 10
+            const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#22c55e' : '#ef4444'
+            const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#22c55e22' : '#ef444422'
+            const label = `Closed: ${formatDollarPnl(closedRealizedPnl)} (${formatSignedPct(pct)})`
+            const badgeW = 150
+            const badgeH = 18
+            const rawX = 4
+            let badgeY = closeY - badgeH / 2
+            badgeY = Math.max(10, Math.min(badgeY, height - 28 - badgeH))
+            return (
+              <g>
+                {/* Small yellow horizontal tick at close price for visual anchor */}
+                <line
+                  x1={0}
+                  y1={closeY}
+                  x2={VIEW_WIDTH}
+                  y2={closeY}
+                  stroke="#ffd600"
+                  strokeWidth="1"
+                  strokeDasharray="2,3"
+                  opacity="0.6"
+                />
+                <rect
+                  x={rawX}
+                  y={badgeY}
+                  width={badgeW}
+                  height={badgeH}
+                  rx={3}
+                  fill={bgColor}
+                  stroke={badgeColor}
+                  strokeWidth="0.8"
+                />
+                <text
+                  x={rawX + badgeW / 2}
+                  y={badgeY + 12}
+                  textAnchor="middle"
+                  fill={badgeColor}
+                  fontSize="9"
+                  fontWeight="700"
+                  fontFamily="monospace"
+                >
+                  {label}
+                </text>
+              </g>
+            )
+          }
+          // Open position: live badge anchored at spot.
+          if (spotY != null && pnlAtSpotPoint != null) {
+            const { pnl, pctOfRisk } = pnlAtSpotPoint
+            const isProfit = pnl > 0
+            const nearBreakeven = Math.abs(pctOfRisk) < 10
+            const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#22c55e' : '#ef4444'
+            const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#22c55e22' : '#ef444422'
+            const label = `Now: ${formatDollarPnl(pnl)} (${formatSignedPct(pctOfRisk)})`
+            const badgeW = 140
+            const badgeH = 18
+            const rawX = 4
+            let badgeY = spotY - badgeH / 2
+            badgeY = Math.max(10, Math.min(badgeY, height - 28 - badgeH))
+            return (
+              <g>
+                <rect x={rawX} y={badgeY} width={badgeW} height={badgeH} rx={3} fill={bgColor} stroke={badgeColor} strokeWidth="0.8" />
+                <text
+                  x={rawX + badgeW / 2}
+                  y={badgeY + 12}
+                  textAnchor="middle"
+                  fill={badgeColor}
+                  fontSize="9"
+                  fontWeight="700"
+                  fontFamily="monospace"
+                >
+                  {label}
+                </text>
+              </g>
+            )
+          }
+          return null
         })()}
 
         {/* No payoff data placeholder */}

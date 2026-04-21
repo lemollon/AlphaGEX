@@ -25,6 +25,13 @@ interface ChartAreaProps {
     max_loss?: number | null
     lower_breakeven?: number | null
     upper_breakeven?: number | null
+    // Commit G: when the IC has already closed, these carry the realized
+    // outcome so the payoff panel can anchor a "Closed: +$X" badge at
+    // the close_price instead of a live "Now: ..." badge at spot.
+    closed_price?: number | null
+    closed_realized_pnl?: number | null
+    closed_realized_pct?: number | null
+    is_open?: boolean
   } | null
   height?: number
   /** Symmetric range % around spot — 2.2 gives ±2.2% of spot as the base
@@ -86,6 +93,10 @@ export default function ChartArea({
         maxProfit={calcResult?.max_profit ?? null}
         maxLoss={calcResult?.max_loss ?? null}
         breakevens={breakevens}
+        closedPrice={calcResult?.closed_price ?? null}
+        closedRealizedPnl={calcResult?.closed_realized_pnl ?? null}
+        closedRealizedPct={calcResult?.closed_realized_pct ?? null}
+        isOpen={calcResult?.is_open ?? true}
       />
     </div>
   )
