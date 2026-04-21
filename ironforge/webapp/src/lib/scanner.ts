@@ -49,6 +49,7 @@ import {
   getSandboxAccountBalances,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
+  type IcMtmResult,
 } from './tradier'
 
 /* ------------------------------------------------------------------ */
@@ -636,6 +637,192 @@ async function monitorSinglePosition(
         )
         // Fall through — do NOT return; the EOD/stale close logic below will handle it
       } else {
+        // ── Commit B: Sliding-PT tier-advance + slippage guard ─────────────
+        // Before waiting on the existing limit, check whether the sliding PT
+        // has moved on to a more lenient tier since this limit was placed
+        // (morning 30% → midday 20% → afternoon 15%). If so, cancel the
+        // stale limit and CLEAR the pending state so the normal PT evaluator
+        // below places a fresh limit at the current tier's price this cycle.
+        //
+        // Edge behavior: if the pending JSON lacks _limit_price (older format
+        // from pre-Commit-B deploys), we treat "no recorded limit" as
+        // "always safe to reprice" — cancel + clear, which yields the same
+        // effect as if the new cycle started fresh. No data loss; worst case
+        // is one extra cancel.
+        const existingLimitPrice = typeof userPending._limit_price === 'number'
+          ? userPending._limit_price
+          : (typeof pendingInfo._limit_price === 'number' ? pendingInfo._limit_price : null)
+        const placedAtMs = typeof pendingInfo._placed_at_ms === 'number' ? pendingInfo._placed_at_ms : null
+        const storedMinCost = typeof pendingInfo._min_cost_seen === 'number' ? pendingInfo._min_cost_seen : null
+
+        // Compute the current tier target for THIS position (uses bot's
+        // siloed pt_pct — production bot config for production positions).
+        let tierAdvance = false
+        let currentTierLabel = ''
+        let currentTierTarget = 0
+        try {
+          const [ptFraction, ptTier] = getSlidingProfitTarget(ct, botCfg.pt_pct, bot.name)
+          currentTierLabel = ptTier
+          currentTierTarget = Math.round(entryCredit * (1 - ptFraction) * 10000) / 10000
+          const epsilon = 0.001
+          if (existingLimitPrice != null && currentTierTarget > existingLimitPrice + epsilon) {
+            tierAdvance = true
+          }
+        } catch { /* helper failed — leave tierAdvance=false, fall through to re-poll */ }
+
+        if (tierAdvance) {
+          const cancelAccts = await getLoadedSandboxAccountsAsync()
+          const cancelAcct = posAccountType === 'production'
+            ? cancelAccts.find(a => a.name === posPerson && a.type === 'production')
+            : cancelAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? cancelAccts.find(a => a.name === 'User')
+          try {
+            if (cancelAcct) await cancelSandboxOrder(userPending.order_id, cancelAcct.apiKey, cancelAcct.baseUrl)
+            else await cancelSandboxOrder(userPending.order_id)
+          } catch { /* non-fatal — order may already be canceled broker-side */ }
+          await query(
+            `UPDATE ${botTable(bot.name, 'positions')}
+             SET sandbox_close_order_id = NULL, updated_at = NOW()
+             WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+            [pid, bot.dte],
+          )
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+               VALUES ($1, $2, $3, $4)`,
+              [
+                'PT_TIER_ADVANCE',
+                `${pid}: cancel stale limit ($${existingLimitPrice?.toFixed(4)}) — sliding PT advanced to ${currentTierLabel} ($${currentTierTarget.toFixed(4)})`,
+                JSON.stringify({
+                  position_id: pid,
+                  prior_limit: existingLimitPrice,
+                  new_tier: currentTierLabel,
+                  new_target: currentTierTarget,
+                  order_id_canceled: userPending.order_id,
+                }),
+                bot.dte,
+              ],
+            )
+          } catch { /* audit log best-effort */ }
+          console.log(
+            `[scanner] ${bot.name.toUpperCase()} ${pid}: PT tier advance — canceled limit $${existingLimitPrice?.toFixed(4)}, ` +
+            `new tier=${currentTierLabel} target=$${currentTierTarget.toFixed(4)}. Fresh PT evaluator will reprice this cycle.`,
+          )
+          // Fall through to the normal PT evaluator (will place a new limit
+          // at currentTierTarget if costToCloseLast now triggers it, otherwise
+          // the position keeps monitoring without any pending close).
+          // Fall-through is achieved by NOT returning here and NOT entering
+          // the re-poll branch — we skip the rest of the outer `else` block.
+        } else {
+          // Slippage guard: if the limit has been sitting long enough AND the
+          // market dipped below our trigger during that window, the limit is
+          // stuck — reprice aggressively near the mid. We still respect the
+          // current tier target as a minimum so we never fill below the
+          // guaranteed return.
+          const SLIPPAGE_GUARD_MIN_AGE_MS = 10 * 60 * 1000  // 10 minutes
+          const ageMs = placedAtMs != null ? Date.now() - placedAtMs : 0
+          // Slippage guard needs an MTM read. Fetch it once here — if it
+          // fails we skip the guard and fall through to the normal re-poll.
+          let mtmForGuard: IcMtmResult | null = null
+          try {
+            mtmForGuard = await getIcMarkToMarket(
+              ticker, expiration,
+              num(pos.put_short_strike), num(pos.put_long_strike),
+              num(pos.call_short_strike), num(pos.call_long_strike),
+              entryCredit,
+            )
+          } catch { /* swallow — guard is best-effort */ }
+
+          // Update rolling min_cost_seen on the pending JSON each cycle.
+          // This is the signal "market was in our favor at some point".
+          let currentMin = storedMinCost
+          const newCost = mtmForGuard?.cost_to_close_last
+          if (newCost != null && Number.isFinite(newCost)) {
+            currentMin = currentMin == null ? newCost : Math.min(currentMin, newCost)
+          }
+
+          const slippageGuardFired = (
+            existingLimitPrice != null &&
+            currentMin != null &&
+            ageMs >= SLIPPAGE_GUARD_MIN_AGE_MS &&
+            currentMin <= existingLimitPrice &&
+            mtmForGuard != null &&
+            Number.isFinite(mtmForGuard.cost_to_close_mid) &&
+            mtmForGuard.cost_to_close_mid > existingLimitPrice
+          )
+
+          if (slippageGuardFired) {
+            const aggressivePrice = Math.round(
+              Math.max(currentTierTarget, mtmForGuard!.cost_to_close_mid) * 10000,
+            ) / 10000
+            const cancelAccts = await getLoadedSandboxAccountsAsync()
+            const cancelAcct = posAccountType === 'production'
+              ? cancelAccts.find(a => a.name === posPerson && a.type === 'production')
+              : cancelAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? cancelAccts.find(a => a.name === 'User')
+            try {
+              if (cancelAcct) await cancelSandboxOrder(userPending.order_id, cancelAcct.apiKey, cancelAcct.baseUrl)
+              else await cancelSandboxOrder(userPending.order_id)
+            } catch { /* non-fatal */ }
+            await query(
+              `UPDATE ${botTable(bot.name, 'positions')}
+               SET sandbox_close_order_id = NULL, updated_at = NOW()
+               WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+              [pid, bot.dte],
+            )
+            try {
+              await query(
+                `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+                 VALUES ($1, $2, $3, $4)`,
+                [
+                  'PT_SLIPPAGE_REPRICE',
+                  `${pid}: cancel stale limit ($${existingLimitPrice.toFixed(4)}) after ${Math.round(ageMs / 60000)}m — min_cost_seen=$${(currentMin ?? 0).toFixed(4)} touched trigger but didn't fill. Will reprice near mid ($${aggressivePrice.toFixed(4)}).`,
+                  JSON.stringify({
+                    position_id: pid,
+                    prior_limit: existingLimitPrice,
+                    min_cost_seen: currentMin,
+                    mid: mtmForGuard!.cost_to_close_mid,
+                    age_ms: ageMs,
+                    new_aggressive_limit: aggressivePrice,
+                    order_id_canceled: userPending.order_id,
+                  }),
+                  bot.dte,
+                ],
+              )
+            } catch { /* best-effort */ }
+            // Place a fresh limit DEBIT at aggressivePrice immediately.
+            // Use closePosition with orderType='debit' — same path the initial
+            // PT trigger uses.
+            try {
+              await closePosition(
+                bot, pid, ticker, expiration,
+                num(pos.put_short_strike), num(pos.put_long_strike),
+                num(pos.call_short_strike), num(pos.call_long_strike),
+                contracts, entryCredit, collateral,
+                `${pendingInfo._pending_reason ?? 'profit_target'}_slippage_reprice`,
+                aggressivePrice, 'debit', aggressivePrice,
+              )
+              return { status: `pt_slippage_reprice@${aggressivePrice.toFixed(4)}`, unrealizedPnl: 0 }
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err)
+              console.error(`[scanner] ${bot.name.toUpperCase()} ${pid}: slippage-guard reprice failed: ${msg}`)
+              return { status: `pt_slippage_reprice_failed`, unrealizedPnl: 0 }
+            }
+          }
+
+          // Persist the updated min_cost_seen for next cycle's guard check.
+          if (currentMin !== storedMinCost) {
+            const updated = { ...pendingInfo, _min_cost_seen: currentMin }
+            try {
+              await query(
+                `UPDATE ${botTable(bot.name, 'positions')}
+                 SET sandbox_close_order_id = $1, updated_at = NOW()
+                 WHERE position_id = $2 AND status = 'open' AND dte_mode = $3`,
+                [JSON.stringify(updated), pid, bot.dte],
+              )
+            } catch { /* non-fatal */ }
+          }
+        }
+
+      if (!tierAdvance) {
         // Normal re-poll during market hours
         console.log(`[scanner] ${bot.name.toUpperCase()} ${pid}: Pending close — re-polling order ${userPending.order_id} for fill price (${pendingKey})...`)
         try {
@@ -774,6 +961,7 @@ async function monitorSinglePosition(
           return { status: `monitoring:pending_close_repoll_error`, unrealizedPnl: 0 }
         }
       }
+      }   // closes the outer `else` that the Commit B tier/slippage logic lives in
     }
   }
 
@@ -1032,7 +1220,21 @@ async function closePosition(
       `[scanner] ${bot.name.toUpperCase()} ${positionId}: Close order ${userClose.order_id} placed but no fill price. ` +
       `DEFERRING paper close — will re-poll next cycle.`,
     )
-    const pendingInfo = { ...sandboxCloseInfo, _pending_reason: reason }
+    // Enrich the pending JSON with metadata needed by the sliding-PT re-eval
+    // in monitorSinglePosition's pending-close branch:
+    //   _limit_price     : the DEBIT LIMIT we placed, for tier-advance comparison
+    //   _placed_at_ms    : wall clock of placement, for slippage-guard age check
+    //   _tier            : tier name at placement (MORNING/MIDDAY/AFTERNOON) for audit
+    //   _min_cost_seen   : rolling min of costToCloseLast during the pending window,
+    //                      used to detect "market touched our trigger but limit didn't fill"
+    const pendingInfo: Record<string, any> = {
+      ...sandboxCloseInfo,
+      _pending_reason: reason,
+      _limit_price: limitPrice ?? null,
+      _placed_at_ms: Date.now(),
+      _tier: (reason.startsWith('profit_target_') ? reason.slice('profit_target_'.length) : null),
+      _min_cost_seen: estimatedPrice || null,
+    }
     await query(
       `UPDATE ${botTable(bot.name, 'positions')}
        SET sandbox_close_order_id = $1, updated_at = NOW()
