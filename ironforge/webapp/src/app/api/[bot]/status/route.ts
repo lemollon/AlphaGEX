@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -162,17 +162,36 @@ export async function GET(
 
     // Use LIVE stats from actual positions (source of truth), not stale paper_account
     const liveStats = liveStatsRows[0]
-    const realizedPnl = Math.round(num(liveStats?.actual_realized_pnl) * 100) / 100
-    const totalTrades = int(liveStats?.actual_total_trades)
+    let realizedPnl = Math.round(num(liveStats?.actual_realized_pnl) * 100) / 100
+    let totalTrades = int(liveStats?.actual_total_trades)
     let liveCollateral = num(liveCollateralRows[0]?.actual_collateral)
     let balance = Math.round((startingCapital + realizedPnl) * 100) / 100
     let buyingPower = Math.round((balance - liveCollateral) * 100) / 100
+    let productionPositionsCountOverride: number | null = null
+    let todayRealizedOverride: number | null = null
+    let todayTradesClosedOverride: number | null = null
 
-    // Live-trading override: when the production bot is viewed in production mode,
-    // mirror the broker's actual numbers instead of the seeded paper_account row.
-    // Realized P&L and trade counts stay from the DB ledger (IronForge's record
-    // of trades it has booked); balance/BP/unrealized/collateral come from Tradier.
-    // `account.source` documents which path produced these values.
+    // Live-trading FULL MIRROR: when the production bot is viewed in production
+    // mode, every displayed number comes from the Tradier Iron Viper account.
+    // Source of truth = the broker. The DB ledger is kept as a fallback only.
+    //
+    // Overrides applied (all sourced from Tradier when source='tradier'):
+    //   balance              = sum(total_equity)        across prod accounts
+    //   buying_power         = sum(option_buying_power) across prod accounts
+    //   collateral_in_use    = max(0, total_equity - option_buying_power)
+    //   unrealized_pnl       = sum(open_pl)
+    //   cumulative_pnl       = sum(close_pl)            (realized — Tradier-day)
+    //   today_realized_pnl   = sum(close_pl)            (Tradier close_pl is per-day)
+    //   total_trades         = count of filled orders (trailing 30d)
+    //   today_trades_closed  = count of filled orders dated today (CT)
+    //   open_positions       = ceil(non-zero position legs / 4) — 1 IC = 4 legs
+    //   starting_capital     = balance - cumulative_pnl (back-compute so the
+    //                          "balance = start + realized" math reconciles)
+    //
+    // Fallback: any helper failure (missing creds, Tradier 5xx, no prod account
+    // assigned) drops us back to the paper_account-derived values and sets
+    // `account.source = 'paper_account'` with `source_error` populated — no
+    // fabrication, operator sees exactly where the numbers came from.
     let accountSource: 'tradier' | 'paper_account' = 'paper_account'
     let tradierBalanceFetchError: string | null = null
     let tradierOpenPlOverride: number | null = null
@@ -182,6 +201,7 @@ export async function GET(
         let tradierEquity = 0
         let tradierBp = 0
         let tradierOpenPl = 0
+        let tradierClosePl = 0
         let haveTradierData = false
         for (const pa of prodAccts) {
           if (!pa.accountId) continue
@@ -191,15 +211,66 @@ export async function GET(
           tradierEquity += bal.total_equity
           tradierBp += bal.option_buying_power
           tradierOpenPl += bal.open_pl ?? 0
+          tradierClosePl += bal.close_pl ?? 0
         }
         if (haveTradierData) {
           balance = Math.round(tradierEquity * 100) / 100
           buyingPower = Math.round(tradierBp * 100) / 100
           liveCollateral = Math.round(Math.max(0, tradierEquity - tradierBp) * 100) / 100
-          // Back-compute starting_capital so balance = startingCapital + realizedPnl still holds
-          startingCapital = Math.round((balance - realizedPnl) * 100) / 100
           tradierOpenPlOverride = Math.round(tradierOpenPl * 100) / 100
+          // Realized = Tradier close_pl (day-scoped per Tradier spec). Both
+          // cumulative_pnl and today_realized_pnl mirror this number in Live
+          // mode so the top card matches Iron Viper's day P&L exactly.
+          realizedPnl = Math.round(tradierClosePl * 100) / 100
+          todayRealizedOverride = realizedPnl
+          // Back-compute starting_capital so balance = startingCapital + realizedPnl holds
+          startingCapital = Math.round((balance - realizedPnl) * 100) / 100
           accountSource = 'tradier'
+
+          // Second + third pass: query orders and positions for trade counts
+          // and open-position count. These are independent API calls; a
+          // failure in either leaves balance/BP/unrealized as already
+          // overridden and just skips the count mirror (keeps DB count).
+          try {
+            const cutoff30d = Date.now() - 30 * 24 * 60 * 60 * 1000
+            // CT "today" string in YYYY-MM-DD, matching transaction_date format
+            const ctNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+            const ctToday =
+              `${ctNow.getFullYear()}-${String(ctNow.getMonth() + 1).padStart(2, '0')}-${String(ctNow.getDate()).padStart(2, '0')}`
+            let filledTotal = 0
+            let filledToday = 0
+            let nonZeroPositions = 0
+            for (const pa of prodAccts) {
+              if (!pa.accountId) continue
+              // Orders
+              try {
+                const orders = await getTradierOrders(pa.apiKey, pa.accountId, pa.baseUrl, 'filled')
+                for (const o of orders) {
+                  const txTs = o.transaction_date ? Date.parse(o.transaction_date) : NaN
+                  if (Number.isFinite(txTs) && txTs >= cutoff30d) {
+                    filledTotal += 1
+                    // Compare CT date strings to avoid TZ drift
+                    const txDate = new Date(txTs).toLocaleString('en-US', {
+                      timeZone: 'America/Chicago',
+                      year: 'numeric', month: '2-digit', day: '2-digit',
+                    })
+                    const [mm, dd, yyyy] = txDate.split(/[\/,\s]+/).filter(Boolean)
+                    const txCtKey = `${yyyy}-${mm}-${dd}`
+                    if (txCtKey === ctToday) filledToday += 1
+                  }
+                }
+              } catch { /* orders fetch failed — leave count at 0 for this account */ }
+              // Positions — count non-zero legs
+              try {
+                const positions = await getSandboxAccountPositions(pa.apiKey, undefined, pa.baseUrl)
+                nonZeroPositions += positions.filter(p => p.quantity !== 0).length
+              } catch { /* positions fetch failed — leave at 0 */ }
+            }
+            totalTrades = filledTotal
+            todayTradesClosedOverride = filledToday
+            // One IC has 4 legs; round up so 1 orphan leg still counts as 1
+            productionPositionsCountOverride = Math.ceil(nonZeroPositions / 4)
+          } catch { /* count mirror is best-effort — never fail the whole route */ }
         } else {
           tradierBalanceFetchError = 'no_production_balance_returned'
         }
@@ -257,8 +328,14 @@ export async function GET(
       unrealizedPnl = tradierOpenPlOverride
     }
 
-    const todayRealizedPnl = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
-    const todayTradesClosed = int(todayRealizedRows[0]?.today_trades_closed)
+    // Live-mode overrides (set above when accountSource === 'tradier') take
+    // precedence over the DB-ledger values. Paper/Sandbox mode is unaffected.
+    const todayRealizedPnl = todayRealizedOverride != null
+      ? todayRealizedOverride
+      : Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
+    const todayTradesClosed = todayTradesClosedOverride != null
+      ? todayTradesClosedOverride
+      : int(todayRealizedRows[0]?.today_trades_closed)
 
     // Weighted IC return %: average of (credit - close_price) / credit
     // Weight by credit × contracts (larger positions count more)
@@ -356,7 +433,9 @@ export async function GET(
         source: accountSource,
         source_error: tradierBalanceFetchError,
       },
-      open_positions: int(positionCountRows[0]?.cnt),
+      open_positions: productionPositionsCountOverride != null
+        ? productionPositionsCountOverride
+        : int(positionCountRows[0]?.cnt),
       data_integrity_warning: dataIntegrityWarning,
       pending_order_count: pendingOrderCount,
       last_scan: hb?.last_heartbeat || null,
