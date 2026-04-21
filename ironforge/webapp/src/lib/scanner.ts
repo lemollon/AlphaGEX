@@ -2627,7 +2627,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
               contracts, total_credit, collateral_required,
-              person, account_type
+              person, account_type, sandbox_close_order_id
        FROM ${posTable}
        WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production'`,
       [bot.dte],
@@ -2678,42 +2678,99 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         const collateral = num(pos.collateral_required)
         const pid = pos.position_id
 
+        // Commit H: same three-tier P&L recovery as the monitorSinglePosition
+        // broker-gone path (Commit F). Before Commit H this path hard-coded
+        // realized_pnl=0 which caused today's SPARK trade to be recorded as
+        // $0 in the ledger even though Tradier credited ~$84. Now:
+        //   1. Parse sandbox_close_order_id JSON for the close order_id.
+        //   2. Fetch order details from Tradier → use avg_fill_price if
+        //      status=filled.
+        //   3. Fall back to the pending JSON's _limit_price (broker legs
+        //      are gone → the limit executed near its set price).
+        //   4. Last resort: entry credit / 0 P&L + CRITICAL log so the
+        //      ledger gap is visible immediately.
+        let pendingInfo: Record<string, any> = {}
+        try {
+          if (pos.sandbox_close_order_id) pendingInfo = JSON.parse(pos.sandbox_close_order_id)
+        } catch { /* malformed JSON — treat as no pending */ }
+        const pendingKey = `${person}:production`
+        const userPending = pendingInfo[pendingKey] as { order_id?: number } | undefined
+        const orderId = typeof userPending?.order_id === 'number' ? userPending.order_id : null
+        const limitPriceHint = typeof pendingInfo._limit_price === 'number' ? pendingInfo._limit_price : null
+
+        let recoveredPrice: number | null = null
+        let recoverySource: 'tradier_fill' | 'pending_limit' | 'entry_credit_fallback' = 'entry_credit_fallback'
+        let tradierOrderStatus: string | null = null
+        if (orderId != null) {
+          try {
+            const prodAcct = prodAccounts.find((a) => a.name === person)
+            if (prodAcct) {
+              const accountId = await getAccountIdForKey(prodAcct.apiKey, prodAcct.baseUrl)
+              if (accountId) {
+                const details = await getTradierOrderDetails(prodAcct.apiKey, accountId, orderId, prodAcct.baseUrl)
+                if (details) {
+                  tradierOrderStatus = details.status
+                  const isFilled = details.status === 'filled' || details.status === 'partially_filled'
+                  const fillCandidate = details.avg_fill_price ?? details.last_fill_price
+                  if (isFilled && fillCandidate != null && fillCandidate > 0) {
+                    recoveredPrice = fillCandidate
+                    recoverySource = 'tradier_fill'
+                  }
+                }
+              }
+            }
+          } catch { /* Tradier order fetch is best-effort — fall through */ }
+        }
+        if (recoveredPrice == null && limitPriceHint != null && limitPriceHint > 0) {
+          recoveredPrice = limitPriceHint
+          recoverySource = 'pending_limit'
+        }
+
+        const effectiveClosePrice = recoveredPrice ?? entryCredit
+        const realizedPnl = recoveredPrice != null
+          ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
+          : 0
+
         console.warn(
           `[scanner] PRODUCTION BROKER RECONCILE: ${pid} — broker (${person}) has NO legs. ` +
-          `Closing DB position at entry credit (0 P&L).`,
+          `Recovery=${recoverySource} close_price=$${effectiveClosePrice.toFixed(4)} realized_pnl=$${realizedPnl.toFixed(2)} ` +
+          `(order_status=${tradierOrderStatus ?? 'unknown'})`,
         )
 
-        // Close the DB position at entry credit (conservative: 0 P&L)
-        // We don't know the actual close price since the broker already closed it.
         const rowsAffected = await dbExecute(
           `UPDATE ${posTable}
            SET status = 'closed', close_time = NOW(),
-               close_price = $1, realized_pnl = 0,
+               close_price = $1, realized_pnl = $2,
                close_reason = 'broker_position_gone',
                updated_at = NOW()
-           WHERE position_id = $2 AND status = 'open' AND dte_mode = $3`,
-          [entryCredit, pid, bot.dte],
+           WHERE position_id = $3 AND status = 'open' AND dte_mode = $4`,
+          [effectiveClosePrice, realizedPnl, pid, bot.dte],
         )
 
         if (rowsAffected > 0) {
-          // Release collateral from production paper_account
+          // Reconcile paper_account — add recovered P&L to balance +
+          // cumulative_pnl (previously this block credited 0, which is
+          // why the ledger drifted from Tradier).
           await query(
             `UPDATE ${acctTable}
-             SET total_trades = total_trades + 1,
-                 collateral_in_use = GREATEST(0, collateral_in_use - $1),
-                 buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+             SET current_balance = current_balance + $1,
+                 cumulative_pnl = cumulative_pnl + $1,
+                 total_trades = total_trades + 1,
+                 collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                 buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
                  updated_at = NOW()
-             WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
-            [collateral, person, bot.dte],
+             WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
+            [realizedPnl, collateral, person, bot.dte],
           )
 
-          // Log the reconciliation
+          // Durable audit log
+          const logLevel = recoverySource === 'entry_credit_fallback' ? 'CRITICAL' : 'BROKER_RECONCILE_RECOVERED'
           await query(
             `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
              VALUES ($1, $2, $3, $4, $5)`,
             [
-              'BROKER_RECONCILE',
-              `PRODUCTION POSITION CLOSED (broker gone): ${pid} — ${person} ${contracts}x IC closed at entry credit (0 P&L)`,
+              logLevel,
+              `PRODUCTION POSITION CLOSED (broker gone): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource} close=$${effectiveClosePrice.toFixed(4)} pnl=$${realizedPnl.toFixed(2)}`,
               JSON.stringify({
                 position_id: pid,
                 person,
@@ -2723,6 +2780,12 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
                 reason: 'broker_position_gone',
                 broker_put_leg: occPs,
                 broker_call_leg: occCs,
+                recovery_source: recoverySource,
+                tradier_order_status: tradierOrderStatus,
+                order_id: orderId,
+                close_price: effectiveClosePrice,
+                realized_pnl: realizedPnl,
+                limit_price_hint: limitPriceHint,
               }),
               bot.dte,
               person,
@@ -2731,7 +2794,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
 
           console.log(
             `[scanner] PRODUCTION BROKER RECONCILE COMPLETE: ${pid} closed (${person}, ` +
-            `${contracts}x @ $${entryCredit.toFixed(4)}, collateral $${collateral.toFixed(0)} released)`,
+            `${contracts}x @ $${effectiveClosePrice.toFixed(4)}, pnl $${realizedPnl.toFixed(2)}, via ${recoverySource})`,
           )
         }
       }

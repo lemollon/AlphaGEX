@@ -1,9 +1,12 @@
 /**
  * One-shot backfill for ledger rows that the scanner's legacy broker-gone
- * path wrote with realized_pnl=0. Those rows come from
- * close_reason='deferred_broker_gone' (or any close where the pending
- * JSON's `_limit_price` tells us the position really closed near that
- * limit price but the re-poll bailed before it got a fill back).
+ * paths wrote with realized_pnl=0. There are TWO such paths:
+ *   1. `monitorSinglePosition` → close_reason='deferred_broker_gone'
+ *      (fixed at the source in Commit F)
+ *   2. `reconcileProductionBrokerPositions` → close_reason='broker_position_gone'
+ *      (fixed at the source in Commit H)
+ * This backfill matches BOTH so the ledger can be reconciled for any
+ * historical rows written before the source fixes landed.
  *
  * Dashboard's Live top card already shows the correct P&L because
  * Commit C mirrors Tradier. This endpoint reconciles the DB ledger to
@@ -77,7 +80,7 @@ async function gatherCandidates(bot: string, dte: string): Promise<Candidate[]> 
      FROM ${botTable(bot, 'positions')}
      WHERE status = 'closed'
        AND realized_pnl = 0
-       AND close_reason = 'deferred_broker_gone'
+       AND close_reason IN ('deferred_broker_gone', 'broker_position_gone')
        AND dte_mode = $1
        AND sandbox_close_order_id IS NOT NULL
      ORDER BY close_time DESC`,
@@ -216,7 +219,7 @@ async function applyOne(bot: string, dte: string, c: Candidate, o: RecoveryOutco
      WHERE position_id = $4
        AND status = 'closed'
        AND realized_pnl = 0
-       AND close_reason = 'deferred_broker_gone'`,
+       AND close_reason IN ('deferred_broker_gone', 'broker_position_gone')`,
     [o.recovered_price, o.new_realized_pnl, `broker_gone_backfill_${o.recovery_source}`, c.position_id],
   )
   if (rowsAffected === 0) return
@@ -289,7 +292,7 @@ export async function GET(
         bot,
         candidates: 0,
         dry_run: true,
-        note: 'No realized_pnl=0 deferred_broker_gone rows to fix.',
+        note: 'No realized_pnl=0 broker-gone rows to fix.',
       })
     }
 

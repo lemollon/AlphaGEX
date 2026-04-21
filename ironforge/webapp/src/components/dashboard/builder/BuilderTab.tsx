@@ -110,8 +110,12 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
     fetcher,
     { refreshInterval: SNAPSHOT_REFRESH_MS },
   )
+  // minutes=390 → full RTH session (8:30am-3:00pm CT). Backend forces
+  // session_filter='open' so pre/post market bars never appear in the
+  // response. When the market is closed, the last 390 bars are the full
+  // previous live session — the chart never jumps to after-hours noise.
   const { data: candlesData } = useSWR<CandlesResponse>(
-    `/api/${bot}/builder/candles?symbol=SPY&minutes=120`,
+    `/api/${bot}/builder/candles?symbol=SPY&minutes=390`,
     fetcher,
     { refreshInterval: CANDLES_REFRESH_MS },
   )

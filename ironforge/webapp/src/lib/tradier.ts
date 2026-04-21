@@ -1612,10 +1612,19 @@ export function getTradierBaseUrl(): string {
 /**
  * Fetch Tradier timesales (minute bars) for a symbol.
  * Returns the last `minutes` candles for intraday comparison.
+ *
+ * `session` controls which session Tradier returns:
+ *   - 'open' → regular trading hours only (8:30am-3:00pm CT for SPY).
+ *             This is the default because the IC Chart must mirror market
+ *             hours — outside RTH we want the chart to freeze at the last
+ *             live candle, not show after-hours noise.
+ *   - 'all'  → includes pre/post market bars. Only use when a caller
+ *             explicitly asks for extended hours.
  */
 export async function getTimesales(
   symbol: string,
   minutes: number = 10,
+  session: 'open' | 'all' = 'open',
 ): Promise<Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>> {
   await ensureQuoteApiKey()
   if (!_tradierApiKey) return []
@@ -1623,7 +1632,7 @@ export async function getTimesales(
   const data = await tradierGet('/markets/timesales', {
     symbol,
     interval: '1min',
-    session_filter: 'all',
+    session_filter: session,
   })
   if (!data) return []
 
