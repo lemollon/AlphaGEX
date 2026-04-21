@@ -1673,6 +1673,66 @@ export async function getBatchOptionQuotes(
   return results
 }
 
+/**
+ * LegQuote + greeks, used by the Builder tab's leg breakdown.
+ * Greeks come from Tradier's `/markets/quotes?greeks=true` — same endpoint
+ * as getBatchOptionQuotes, one extra query param. Separate helper so
+ * existing callers that only need price data aren't forced to pay the
+ * tiny extra payload cost (and don't get potentially-null greeks fields
+ * in their LegQuote typing).
+ */
+export interface LegQuoteWithGreeks extends LegQuote {
+  delta: number | null
+  gamma: number | null
+  theta: number | null
+  vega: number | null
+  mid_iv: number | null
+}
+
+export async function getBatchOptionQuotesWithGreeks(
+  occSymbols: string[],
+): Promise<Record<string, LegQuoteWithGreeks>> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey || occSymbols.length === 0) return {}
+
+  const data = await tradierGet('/markets/quotes', {
+    symbols: occSymbols.join(','),
+    greeks: 'true',
+  })
+  if (!data) return {}
+
+  const results: Record<string, LegQuoteWithGreeks> = {}
+  let quotes = data.quotes?.quote
+  if (!quotes) return results
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+
+  for (const q of quotes) {
+    if (!q?.symbol || q.bid == null) continue
+    const bid = parseFloat(q.bid || '0')
+    const ask = parseFloat(q.ask || '0')
+    const g = q.greeks || {}
+    results[q.symbol] = {
+      symbol: q.symbol,
+      bid,
+      ask,
+      mid: Math.round(((bid + ask) / 2) * 10000) / 10000,
+      last: parseFloat(q.last || '0'),
+      delta: numOrNull(g.delta),
+      gamma: numOrNull(g.gamma),
+      theta: numOrNull(g.theta),
+      vega: numOrNull(g.vega),
+      mid_iv: numOrNull(g.mid_iv),
+    }
+  }
+  return results
+}
+
 /* ------------------------------------------------------------------ */
 /*  Sandbox account positions (for per-account P&L)                    */
 /* ------------------------------------------------------------------ */
