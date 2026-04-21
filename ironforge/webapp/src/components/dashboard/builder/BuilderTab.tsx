@@ -17,8 +17,7 @@
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import MetricsBar from './MetricsBar'
-import PayoffDiagram from './PayoffDiagram'
-import CandleChart, { type Candle } from './CandleChart'
+import CandleWithPayoff, { type Candle } from './CandleWithPayoff'
 import LegBreakdown, { type BuilderLeg } from './LegBreakdown'
 
 const SNAPSHOT_REFRESH_MS = 30_000
@@ -193,37 +192,32 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       {/* Metrics */}
       <MetricsBar metrics={snap.metrics ?? null} legs={snap.legs ?? []} />
 
-      {/* Side-by-side: price chart + payoff diagram */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-[10px] uppercase tracking-wider text-forge-muted">Price (SPY, 1m)</h3>
-            <span className="text-[10px] text-forge-muted font-mono">
-              {candlesData?.candles?.length ?? 0} bars
-            </span>
-          </div>
-          <CandleChart
-            candles={candlesData?.candles}
-            spotPrice={snap.spot_price}
-            strikes={strikes}
-            height={320}
-          />
+      {/* Unified chart — candles (left) + sideways payoff (right) sharing the
+          same price Y-axis, strike lines spanning both regions, BE ticks on
+          the right edge, spot badge at the boundary, "Now: +$X (+X.X%)"
+          floating P&L badge in the payoff region. Matches SpreadWorks. */}
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between">
+          <h3 className="text-[10px] uppercase tracking-wider text-forge-muted">
+            SPY · Strikes · Payoff
+          </h3>
+          <span className="text-[10px] text-forge-muted font-mono">
+            {candlesData?.candles?.length ?? 0} bars
+            {snap.metrics?.breakeven_low != null && snap.metrics?.breakeven_high != null && (
+              <>  ·  BE ${snap.metrics.breakeven_low.toFixed(2)} — ${snap.metrics.breakeven_high.toFixed(2)}</>
+            )}
+          </span>
         </div>
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-[10px] uppercase tracking-wider text-forge-muted">Payoff at Expiration</h3>
-            <span className="text-[10px] text-forge-muted font-mono">
-              BE ${snap.metrics?.breakeven_low?.toFixed(2) ?? '—'} — ${snap.metrics?.breakeven_high?.toFixed(2) ?? '—'}
-            </span>
-          </div>
-          <PayoffDiagram
-            pnlCurve={snap.payoff?.pnl_curve}
-            spotPrice={snap.spot_price}
-            breakevens={breakevens}
-            strikes={strikes}
-            height={320}
-          />
-        </div>
+        <CandleWithPayoff
+          candles={candlesData?.candles}
+          spotPrice={snap.spot_price}
+          strikes={strikes}
+          pnlCurve={snap.payoff?.pnl_curve}
+          breakevens={breakevens}
+          currentPnl={snap.mtm?.unrealized_pnl ?? null}
+          currentPnlPct={snap.mtm?.unrealized_pnl_pct ?? null}
+          height={440}
+        />
       </div>
 
       {/* Legs */}
