@@ -28,6 +28,10 @@ export interface BuilderLeg {
 interface LegBreakdownProps {
   legs: BuilderLeg[] | null | undefined
   expiration?: string | null
+  /** When false (closed position), the legs carry no live Tradier data —
+   * bid/ask/mid/last/greeks will be null. We show an "at entry" hint in
+   * the header so the operator knows not to expect fresh quotes. */
+  isOpen?: boolean
 }
 
 function fmtMoney(v: number | null | undefined): string {
@@ -56,24 +60,25 @@ function isLong(role: BuilderLeg['role']): boolean {
   return role === 'long_put' || role === 'long_call'
 }
 
-export default function LegBreakdown({ legs, expiration }: LegBreakdownProps) {
-  const [open, setOpen] = useState(true)
+export default function LegBreakdown({ legs, expiration, isOpen = true }: LegBreakdownProps) {
+  const [openSection, setOpenSection] = useState(true)
 
   if (!legs || legs.length === 0) return null
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-hidden">
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpenSection(!openSection)}
         className="w-full text-left px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-forge-muted hover:text-gray-200 flex items-center justify-between border-b border-forge-border/50"
       >
         <span>
-          <span className="mr-2">{open ? '▾' : '▸'}</span>
+          <span className="mr-2">{openSection ? '▾' : '▸'}</span>
           Legs ({legs.length})
           {expiration ? <span className="ml-2 text-gray-500 normal-case font-normal">exp {expiration}</span> : null}
+          {!isOpen ? <span className="ml-2 text-amber-400/80 normal-case font-normal">(position closed — quotes/greeks not live)</span> : null}
         </span>
       </button>
-      {open && (
+      {openSection && (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>

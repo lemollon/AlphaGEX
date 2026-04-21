@@ -1,19 +1,27 @@
 /**
  * Builder snapshot endpoint — the single data source for the `/spark`
- * Builder tab. Returns the currently open IC position plus everything
- * the four ported SpreadWorks components need to render:
+ * IC Chart tab. Returns the LATEST IC position (open or closed) plus
+ * everything the ported SpreadWorks components need to render:
  *
- *   - position         : current strikes, expiration, contracts, entry credit
- *   - legs             : per-leg Tradier quote + greeks (for LegBreakdown)
+ *   - position         : strikes, expiration, contracts, entry credit,
+ *                        plus status + close metadata when closed
+ *   - legs             : per-leg Tradier quote + greeks for OPEN positions;
+ *                        for closed positions, the legs are gone at the
+ *                        broker so we return strikes + entry credits only
  *   - payoff           : expiration P&L curve + breakevens + max profit/loss
- *                        (for PayoffDiagram / PayoffPanel)
- *   - metrics          : aggregate credit/max/pop/net-greeks (for MetricsBar)
- *   - mtm              : live mark-to-market (unrealized P&L)
- *   - spot_price       : current SPY quote (also for CandleChart's price marker)
+ *                        (pure math from strikes + entry credit — works for
+ *                        both open and closed positions)
+ *   - metrics          : aggregate credit/max/pop/net-greeks for MetricsBar
+ *   - mtm              : live mark-to-market (unrealized P&L) — only when
+ *                        the position is OPEN. For closed positions we
+ *                        report realized_pnl via `closed` object instead.
+ *   - closed           : close_price, close_time, close_reason, realized_pnl
+ *                        (null when position is open)
+ *   - spot_price       : current SPY quote (always, so candles stay current)
  *
- * When no open position exists for the requested bot + scope, returns
- * `{ position: null }` so the UI can render a placeholder ("Builder
- * renders when SPARK is in a position").
+ * When the bot has never traded in this scope, returns `{ position: null }`
+ * so the UI can render a placeholder ("IC Chart renders when SPARK has
+ * traded").
  *
  * Filters:
  *   account_type = 'production' | 'sandbox' (default: 'sandbox')
@@ -64,22 +72,27 @@ export async function GET(
     : ''
 
   try {
-    // Most recent open position for this bot + scope. Builder focuses on
-    // one position at a time — if there are multiple opens (INFERNO), we
-    // show the most recent and let the existing Positions tab handle the
-    // fleet view.
+    // LATEST position for this bot + scope — open OR closed OR expired.
+    // Operator-requested change (Commit G): the IC Chart should always
+    // render, not just when a position is currently open. We prioritize
+    // open positions first (ORDER BY status, then open_time DESC) so an
+    // active trade wins over an older closed one. Falls through to the
+    // most recent closed/expired if no open position exists.
     const rows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
               contracts, spread_width, total_credit,
               underlying_at_entry, vix_at_entry,
-              open_time,
+              open_time, close_time, close_price, close_reason,
+              realized_pnl, status,
               COALESCE(account_type, 'sandbox') AS account_type,
               person
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${accountTypeFilter}
-       ORDER BY open_time DESC
+       WHERE 1=1 ${dteFilter} ${accountTypeFilter}
+       ORDER BY
+         CASE WHEN status = 'open' THEN 0 ELSE 1 END,
+         open_time DESC
        LIMIT 1`,
     )
     if (rows.length === 0) {
@@ -87,6 +100,7 @@ export async function GET(
     }
 
     const r = rows[0]
+    const isOpen = r.status === 'open'
     const ticker = r.ticker || 'SPY'
     const expirationRaw = r.expiration
     const expiration = expirationRaw?.toISOString?.()?.slice(0, 10)
@@ -98,7 +112,6 @@ export async function GET(
     const contracts = int(r.contracts)
     const entryCredit = num(r.total_credit)
 
-    // Build OCC symbols for the 4 legs (same helper the scanner uses)
     const occ = {
       long_put: buildOccSymbol(ticker, expiration, pl, 'P'),
       short_put: buildOccSymbol(ticker, expiration, ps, 'P'),
@@ -106,41 +119,51 @@ export async function GET(
       long_call: buildOccSymbol(ticker, expiration, cl, 'C'),
     }
 
-    // Parallel fetch everything so one slow call doesn't stack with the others.
-    // All three are best-effort — if Tradier is down we still return the
-    // position row and a payoff curve (payoff is pure math, needs no network).
+    // Live Tradier fetches. For CLOSED positions the legs are gone at the
+    // broker, so quote/MTM calls would return zeros or 404 and pollute the
+    // display — skip them entirely in that case. We still fetch the
+    // underlying (spot) quote because candles + spot remain relevant
+    // context regardless of whether the position is open.
     const [quotesMap, mtm, underlyingQuote] = await Promise.all([
-      getBatchOptionQuotesWithGreeks(Object.values(occ)).catch(() => ({})),
-      getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit).catch(() => null),
+      isOpen
+        ? getBatchOptionQuotesWithGreeks(Object.values(occ)).catch(() => ({}))
+        : Promise.resolve({}),
+      isOpen
+        ? getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit).catch(() => null)
+        : Promise.resolve(null),
       getQuote(ticker).catch(() => null),
-    ]) as [Record<string, LegQuoteWithGreeks>, Awaited<ReturnType<typeof getIcMarkToMarket>>, Awaited<ReturnType<typeof getQuote>>]
+    ]) as [
+      Record<string, LegQuoteWithGreeks>,
+      Awaited<ReturnType<typeof getIcMarkToMarket>>,
+      Awaited<ReturnType<typeof getQuote>>,
+    ]
 
     const spotPrice = underlyingQuote?.last ?? mtm?.spot_price ?? num(r.underlying_at_entry)
 
-    // Assemble legs array. The role determines sign for greeks aggregation
-    // in the metrics bar: long = +1, short = −1.
     const legs: LegOut[] = [
       { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
       { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
       { role: 'short_call', strike: cs, type: 'C', occ_symbol: occ.short_call, ...emptyQuote() },
       { role: 'long_call', strike: cl, type: 'C', occ_symbol: occ.long_call, ...emptyQuote() },
     ]
-    for (const leg of legs) {
-      const q = quotesMap[leg.occ_symbol]
-      if (q) {
-        leg.bid = q.bid
-        leg.ask = q.ask
-        leg.mid = q.mid
-        leg.last = q.last
-        leg.delta = q.delta
-        leg.gamma = q.gamma
-        leg.theta = q.theta
-        leg.vega = q.vega
-        leg.mid_iv = q.mid_iv
+    if (isOpen) {
+      for (const leg of legs) {
+        const q = quotesMap[leg.occ_symbol]
+        if (q) {
+          leg.bid = q.bid
+          leg.ask = q.ask
+          leg.mid = q.mid
+          leg.last = q.last
+          leg.delta = q.delta
+          leg.gamma = q.gamma
+          leg.theta = q.theta
+          leg.vega = q.vega
+          leg.mid_iv = q.mid_iv
+        }
       }
     }
 
-    // Payoff math is pure — never fails.
+    // Payoff math is pure — works identically for open or closed positions.
     const payoff = computeIcPayoff(
       { putLong: pl, putShort: ps, callShort: cs, callLong: cl },
       entryCredit,
@@ -148,8 +171,6 @@ export async function GET(
       spotPrice,
     )
 
-    // Net Greeks from the 4 legs × sign (long = +, short = −) × contracts.
-    // Some legs may lack greeks (quote without greeks payload) — null-guard.
     const sign = (role: LegOut['role']) =>
       role === 'long_put' || role === 'long_call' ? 1 : -1
     const sumGreek = (pick: (l: LegOut) => number | null): number | null => {
@@ -168,11 +189,10 @@ export async function GET(
     const netTheta = sumGreek((l) => l.theta)
     const netVega = sumGreek((l) => l.vega)
 
-    // MTM-derived unrealized P&L. Prefer cost_to_close_last (matches Tradier
-    // portfolio), fall back to mid if last is missing or stale.
+    // MTM-derived unrealized P&L — only meaningful when the position is open.
     let unrealizedPnl: number | null = null
     let unrealizedPct: number | null = null
-    if (mtm) {
+    if (isOpen && mtm) {
       const costBasis = mtm.cost_to_close_last ?? mtm.cost_to_close_mid
       if (costBasis != null && Number.isFinite(costBasis)) {
         unrealizedPnl = Math.round((entryCredit - costBasis) * 100 * contracts * 100) / 100
@@ -181,6 +201,20 @@ export async function GET(
         }
       }
     }
+
+    // Closed-position metadata — null when open.
+    const closed = !isOpen
+      ? {
+          status: r.status as string,
+          close_price: r.close_price != null ? num(r.close_price) : null,
+          close_time: r.close_time ? new Date(r.close_time).toISOString() : null,
+          close_reason: r.close_reason || null,
+          realized_pnl: r.realized_pnl != null ? num(r.realized_pnl) : null,
+          realized_pnl_pct: (r.realized_pnl != null && entryCredit > 0)
+            ? Math.round((num(r.realized_pnl) / (entryCredit * 100 * contracts)) * 10000) / 100
+            : null,
+        }
+      : null
 
     return NextResponse.json({
       tradier_connected: isConfigured(),
@@ -200,6 +234,8 @@ export async function GET(
         open_time: r.open_time || null,
         account_type: r.account_type,
         person: r.person || null,
+        status: r.status as string,
+        is_open: isOpen,
       },
       spot_price: spotPrice,
       legs,
@@ -217,7 +253,7 @@ export async function GET(
         net_theta: netTheta,
         net_vega: netVega,
       },
-      mtm: mtm
+      mtm: isOpen && mtm
         ? {
             cost_to_close_last: mtm.cost_to_close_last,
             cost_to_close_mid: mtm.cost_to_close_mid,
@@ -226,6 +262,7 @@ export async function GET(
             unrealized_pnl_pct: unrealizedPct,
           }
         : null,
+      closed,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

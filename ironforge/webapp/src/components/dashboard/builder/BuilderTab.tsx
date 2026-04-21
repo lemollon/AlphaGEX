@@ -49,6 +49,8 @@ interface SnapshotResponse {
     open_time: string | null
     account_type: string
     person: string | null
+    status: string
+    is_open: boolean
   } | null
   spot_price?: number | null
   legs?: BuilderLeg[]
@@ -78,6 +80,14 @@ interface SnapshotResponse {
     cost_to_close_mid: number | null
     unrealized_pnl: number | null
     unrealized_pnl_pct: number | null
+  } | null
+  closed?: {
+    status: string
+    close_price: number | null
+    close_time: string | null
+    close_reason: string | null
+    realized_pnl: number | null
+    realized_pnl_pct: number | null
   } | null
 }
 
@@ -125,16 +135,18 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
   if (!snap.position) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-        <p className="text-gray-200 text-sm font-semibold mb-1">No open IC for this scope</p>
+        <p className="text-gray-200 text-sm font-semibold mb-1">No IC history in this scope</p>
         <p className="text-forge-muted text-xs">
-          IC Chart renders when {bot.toUpperCase()} has an open Iron Condor in the <span className="font-mono">{accountType}</span> scope.
-          Open a position (or switch the Paper/Live toggle above) to see the payoff diagram, candle chart with strike walls, leg breakdown, and metrics.
+          IC Chart renders as soon as {bot.toUpperCase()} takes its first Iron Condor in the <span className="font-mono">{accountType}</span> scope.
+          Switch the Paper/Live toggle above if you want to see a different scope.
         </p>
       </div>
     )
   }
 
   const p = snap.position
+  const isOpen = p.is_open
+  const closedMeta = snap.closed ?? null
 
   // Map IronForge snake_case strike keys to SpreadWorks-style long*/short*
   // keys used by the ported components (priceScale, CandleChart, PayoffPanel).
@@ -146,7 +158,9 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
   }
 
   // Reshape the snapshot payoff into SpreadWorks' `calcResult` shape that
-  // PayoffPanel expects via ChartArea.
+  // PayoffPanel expects via ChartArea. When the position is closed, pass
+  // the close price + realized P&L through too so the "Now" badge on the
+  // payoff panel becomes a "Closed: +$X" badge anchored at close_price's Y.
   const calcResult = snap.payoff
     ? {
         pnl_curve: snap.payoff.pnl_curve,
@@ -154,18 +168,27 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
         max_loss: snap.payoff.max_loss,
         lower_breakeven: snap.payoff.breakeven_low,
         upper_breakeven: snap.payoff.breakeven_high,
+        closed_price: !isOpen && closedMeta ? closedMeta.close_price : null,
+        closed_realized_pnl: !isOpen && closedMeta ? closedMeta.realized_pnl : null,
+        closed_realized_pct: !isOpen && closedMeta ? closedMeta.realized_pnl_pct : null,
+        is_open: isOpen,
       }
     : null
+
+  const statusBadge = isOpen
+    ? <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase tracking-wider">Open</span>
+    : <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-500/20 text-gray-300 border border-gray-500/30 uppercase tracking-wider">{(closedMeta?.status ?? 'Closed')}</span>
 
   return (
     <div className="space-y-4">
       {/* Position header */}
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
-          <div>
+          <div className="flex items-center gap-2">
             <span className="text-forge-muted uppercase tracking-wider mr-1">IC</span>
             <span className="font-mono text-gray-200">{p.ticker}</span>
-            <span className="text-gray-500 font-mono ml-2">exp {p.expiration}</span>
+            <span className="text-gray-500 font-mono">exp {p.expiration}</span>
+            {statusBadge}
           </div>
           <div className="font-mono text-gray-200">
             <span className="text-emerald-400">{p.put_long_strike}P</span>
@@ -184,7 +207,8 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
             <span className="text-forge-muted uppercase tracking-wider mr-1">Credit</span>
             <span className="font-mono text-white">{fmtMoney2(p.entry_credit)}</span>
           </div>
-          {snap.mtm && (
+          {/* P&L: unrealized when open, realized when closed */}
+          {isOpen && snap.mtm ? (
             <div>
               <span className="text-forge-muted uppercase tracking-wider mr-1">Unrealized</span>
               <span className={`font-mono ${(snap.mtm.unrealized_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
@@ -198,7 +222,41 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
                 )}
               </span>
             </div>
-          )}
+          ) : !isOpen && closedMeta ? (
+            <>
+              <div>
+                <span className="text-forge-muted uppercase tracking-wider mr-1">Realized</span>
+                <span className={`font-mono ${(closedMeta.realized_pnl ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {closedMeta.realized_pnl != null
+                    ? `${closedMeta.realized_pnl >= 0 ? '+' : ''}$${closedMeta.realized_pnl.toFixed(2)}`
+                    : '—'}
+                  {closedMeta.realized_pnl_pct != null && (
+                    <span className="text-xs text-forge-muted ml-1">
+                      ({closedMeta.realized_pnl_pct.toFixed(1)}% of net credit)
+                    </span>
+                  )}
+                </span>
+              </div>
+              {closedMeta.close_reason && (
+                <div>
+                  <span className="text-forge-muted uppercase tracking-wider mr-1">Reason</span>
+                  <span className="font-mono text-gray-300">{closedMeta.close_reason}</span>
+                </div>
+              )}
+              {closedMeta.close_time && (
+                <div>
+                  <span className="text-forge-muted uppercase tracking-wider mr-1">Closed</span>
+                  <span className="font-mono text-gray-300">
+                    {new Date(closedMeta.close_time).toLocaleString('en-US', {
+                      month: 'short', day: 'numeric',
+                      hour: 'numeric', minute: '2-digit',
+                      timeZone: 'America/Chicago',
+                    })} CT
+                  </span>
+                </div>
+              )}
+            </>
+          ) : null}
           <div>
             <span className="text-forge-muted uppercase tracking-wider mr-1">Spot</span>
             <span className="font-mono text-white">{fmtMoney2(snap.spot_price)}</span>
@@ -223,7 +281,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       </div>
 
       {/* Legs */}
-      <LegBreakdown legs={snap.legs} expiration={p.expiration} />
+      <LegBreakdown legs={snap.legs} expiration={p.expiration} isOpen={isOpen} />
     </div>
   )
 }
