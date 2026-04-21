@@ -15,6 +15,7 @@ import PdtCard from './PdtCard'
 import PdtTabContent from './PdtTabContent'
 import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
+import BuilderTab from './dashboard/builder/BuilderTab'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -56,7 +57,7 @@ function TabLoading() {
   )
 }
 
-const ALL_TABS = ['Equity Curve', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+const ALL_TABS = ['Equity Curve', 'Builder', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
 type Tab = (typeof ALL_TABS)[number]
 
 /** Only SPARK has sandbox/production accounts. FLAME and INFERNO are paper-only. */
@@ -492,6 +493,14 @@ export default function BotDashboard({
               liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
               period={equityPeriod}
               onPeriodChange={onPeriodChange}
+            />
+          </ComponentErrorBoundary>
+        )}
+        {tab === 'Builder' && (
+          <ComponentErrorBoundary fallback="Builder tab error">
+            <BuilderTab
+              bot={bot}
+              accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
             />
           </ComponentErrorBoundary>
         )}

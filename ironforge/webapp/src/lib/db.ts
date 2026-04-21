@@ -592,8 +592,11 @@ async function ensureTables(): Promise<void> {
 
     // Seed a production row in spark_config so Live config edits have somewhere
     // to land without falling back to the sandbox row. Idempotent: only inserts
-    // if no production row exists for 1DTE. Copies any already-seeded sandbox
-    // values so Live starts aligned with Paper and diverges on explicit edits.
+    // if no production row exists for 1DTE. Clones structural fields from the
+    // sandbox row (strategy params, entry windows) so the schema is consistent,
+    // but OVERRIDES the risk knobs for the live-money scope:
+    //   buying_power_usage_pct = 0.15   (per operator: 15% of live Tradier OBP)
+    //   max_contracts         = 0      (unlimited — bp_pct is the real cap)
     try {
       await client.query(
         `INSERT INTO spark_config (dte_mode, account_type, sd_multiplier, spread_width, min_credit,
@@ -602,8 +605,8 @@ async function ensureTables(): Promise<void> {
                                     min_win_probability, entry_start, entry_end, eod_cutoff_et,
                                     pdt_max_day_trades, starting_capital)
          SELECT dte_mode, 'production', sd_multiplier, spread_width, min_credit,
-                profit_target_pct, stop_loss_pct, vix_skip, max_contracts,
-                max_trades_per_day, buying_power_usage_pct, risk_per_trade_pct,
+                profit_target_pct, stop_loss_pct, vix_skip, 0 AS max_contracts,
+                max_trades_per_day, 0.15 AS buying_power_usage_pct, risk_per_trade_pct,
                 min_win_probability, entry_start, entry_end, eod_cutoff_et,
                 pdt_max_day_trades, starting_capital
          FROM spark_config
@@ -614,6 +617,30 @@ async function ensureTables(): Promise<void> {
            )`,
       )
     } catch { /* table or constraint may not be ready yet */ }
+
+    // Normalize pre-existing production rows to the live-risk knobs. This is
+    // a one-time correction for deploys where the production row was seeded
+    // before the Commit-A sizing parity change landed (it would have inherited
+    // the sandbox bp_pct=0.85, producing the double-dip bug). Safe to re-run:
+    // operator edits via PUT /api/spark/config?account_type=production can
+    // re-override afterward. Only touches rows that STILL have the buggy 0.85
+    // value, so a legitimate operator setting (e.g. 0.20) is preserved.
+    try {
+      await client.query(
+        `UPDATE spark_config
+           SET buying_power_usage_pct = 0.15, updated_at = NOW()
+         WHERE account_type = 'production'
+           AND dte_mode = '1DTE'
+           AND buying_power_usage_pct > 0.25`,
+      )
+      await client.query(
+        `UPDATE spark_config
+           SET max_contracts = 0, updated_at = NOW()
+         WHERE account_type = 'production'
+           AND dte_mode = '1DTE'
+           AND max_contracts = 2`,
+      )
+    } catch { /* table or column may not be ready yet */ }
 
     // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
     try {
