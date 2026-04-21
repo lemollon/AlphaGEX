@@ -40,6 +40,7 @@ import {
   emergencyCloseSandboxPositions,
   closeOrphanSandboxPositions,
   getOrderFillPrice,
+  getTradierOrderDetails,
   getAccountIdForKey,
   buildOccSymbol,
   getAccountsForBot,
@@ -907,47 +908,132 @@ async function monitorSinglePosition(
                 } catch { /* assume legs exist if check fails — don't close on API error */ }
 
                 if (!brokerLegsExist) {
-                  // Broker position is gone — close DB at entry credit (0 P&L)
-                  console.warn(
-                    `[scanner] ${bot.name.toUpperCase()} ${pid}: Re-poll returned no fill AND broker position is gone — ` +
-                    `closing DB position at entry credit (0 P&L)`,
-                  )
+                  // Broker legs are gone. Previously this path assumed 0 P&L
+                  // — that was wrong when the close was a LIMIT DEBIT that
+                  // filled at a known price (the ledger then missed the real
+                  // profit, e.g. 4/21 SPARK: $84 realized at the broker but
+                  // recorded as $0 in DB). Recover the actual close price
+                  // through a three-tier fallback BEFORE writing the row:
+                  //
+                  //   1. Fetch the order's final state from Tradier and use
+                  //      avg_fill_price (most accurate).
+                  //   2. If Tradier returns no usable fill, fall back to the
+                  //      pending JSON's _limit_price — the broker legs are
+                  //      gone, so the limit almost certainly executed near
+                  //      its set price. This is dramatically closer to truth
+                  //      than 0.
+                  //   3. Last-resort only: close at entry credit with 0 P&L
+                  //      AND write a CRITICAL audit row so the operator
+                  //      sees the ledger gap immediately.
                   const closeReason = pendingInfo._pending_reason || 'deferred_broker_gone'
+                  const limitPriceHint = typeof pendingInfo._limit_price === 'number'
+                    ? pendingInfo._limit_price
+                    : null
+
+                  let recoveredPrice: number | null = null
+                  let recoverySource: 'tradier_fill' | 'pending_limit' | 'entry_credit_fallback' = 'entry_credit_fallback'
+                  let tradierOrderStatus: string | null = null
+                  try {
+                    const pollAcctId = await getAccountIdForKey(pollAcct.apiKey, pollAcct.baseUrl)
+                    if (pollAcctId) {
+                      const details = await getTradierOrderDetails(pollAcct.apiKey, pollAcctId, userPending.order_id, pollAcct.baseUrl)
+                      if (details) {
+                        tradierOrderStatus = details.status
+                        const isFilled = details.status === 'filled' || details.status === 'partially_filled'
+                        const fillCandidate = details.avg_fill_price ?? details.last_fill_price
+                        if (isFilled && fillCandidate != null && fillCandidate > 0) {
+                          recoveredPrice = fillCandidate
+                          recoverySource = 'tradier_fill'
+                        }
+                      }
+                    }
+                  } catch { /* Tradier order fetch is best-effort — fall through to limit_price */ }
+
+                  if (recoveredPrice == null && limitPriceHint != null && limitPriceHint > 0) {
+                    recoveredPrice = limitPriceHint
+                    recoverySource = 'pending_limit'
+                  }
+
+                  const effectiveClosePrice = recoveredPrice ?? entryCredit
+                  const realizedPnl = recoveredPrice != null
+                    ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
+                    : 0
+
+                  console.warn(
+                    `[scanner] ${bot.name.toUpperCase()} ${pid}: broker-gone recovery via ${recoverySource} → ` +
+                    `close_price=$${effectiveClosePrice.toFixed(4)}, realized_pnl=$${realizedPnl.toFixed(2)} ` +
+                    `(order_status=${tradierOrderStatus ?? 'unknown'})`,
+                  )
+
                   const rowsAffected = await dbExecute(
                     `UPDATE ${botTable(bot.name, 'positions')}
                      SET status = 'closed', close_time = NOW(),
-                         close_price = $1, realized_pnl = 0,
-                         close_reason = $2, sandbox_close_order_id = $3,
+                         close_price = $1, realized_pnl = $2,
+                         close_reason = $3, sandbox_close_order_id = $4,
                          updated_at = NOW()
-                     WHERE position_id = $4 AND status = 'open' AND dte_mode = $5`,
-                    [entryCredit, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
+                     WHERE position_id = $5 AND status = 'open' AND dte_mode = $6`,
+                    [effectiveClosePrice, realizedPnl, closeReason, JSON.stringify(pendingInfo), pid, bot.dte],
                   )
                   if (rowsAffected > 0) {
                     if (posAccountType === 'production') {
                       await query(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
-                         SET total_trades = total_trades + 1,
-                             collateral_in_use = GREATEST(0, collateral_in_use - $1),
-                             buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+                         SET current_balance = current_balance + $1,
+                             cumulative_pnl = cumulative_pnl + $1,
+                             total_trades = total_trades + 1,
+                             collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                             buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
                              updated_at = NOW()
-                         WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
-                        [collateral, posPerson, bot.dte],
+                         WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
+                        [realizedPnl, collateral, posPerson, bot.dte],
                       )
                     } else {
                       await query(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
-                         SET total_trades = total_trades + 1,
-                             collateral_in_use = GREATEST(0, collateral_in_use - $1),
-                             buying_power = current_balance - GREATEST(0, collateral_in_use - $1),
+                         SET current_balance = current_balance + $1,
+                             cumulative_pnl = cumulative_pnl + $1,
+                             total_trades = total_trades + 1,
+                             collateral_in_use = GREATEST(0, collateral_in_use - $2),
+                             buying_power = current_balance + $1 - GREATEST(0, collateral_in_use - $2),
                              updated_at = NOW()
-                         WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $2`,
-                        [collateral, bot.dte],
+                         WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $3`,
+                        [realizedPnl, collateral, bot.dte],
                       )
                     }
-                    console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED BROKER-GONE CLOSE: ${pid} closed at entry credit $${entryCredit.toFixed(4)} (0 P&L)`)
+                    // Durable audit row — the old version only wrote a
+                    // console.log so operators had no way to inspect past
+                    // broker-gone events after the fact.
+                    try {
+                      const logLevel = recoverySource === 'entry_credit_fallback' ? 'CRITICAL' : 'BROKER_GONE_RECOVERED'
+                      await query(
+                        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+                         VALUES ($1, $2, $3, $4)`,
+                        [
+                          logLevel,
+                          `BROKER-GONE CLOSE: ${pid} — recovery=${recoverySource} close_price=$${effectiveClosePrice.toFixed(4)} realized_pnl=$${realizedPnl.toFixed(2)}`,
+                          JSON.stringify({
+                            event: 'broker_gone_close',
+                            position_id: pid,
+                            recovery_source: recoverySource,
+                            tradier_order_status: tradierOrderStatus,
+                            order_id: userPending.order_id,
+                            entry_credit: entryCredit,
+                            close_price: effectiveClosePrice,
+                            realized_pnl: realizedPnl,
+                            contracts,
+                            limit_price_hint: limitPriceHint,
+                          }),
+                          bot.dte,
+                        ],
+                      )
+                    } catch { /* log-table insert is best-effort */ }
+                    console.log(
+                      `[scanner] ${bot.name.toUpperCase()} DEFERRED BROKER-GONE CLOSE: ${pid} ` +
+                      `closed at $${effectiveClosePrice.toFixed(4)} (pnl=$${realizedPnl.toFixed(2)}, via ${recoverySource})`,
+                    )
                   }
                   _mtmFailureCounts.delete(pid)
-                  return { status: `closed:deferred_broker_gone`, unrealizedPnl: 0 }
+                  return { status: `closed:broker_gone_${recoverySource}@${effectiveClosePrice.toFixed(4)}`, unrealizedPnl: 0 }
                 }
 
                 console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: Re-poll returned no fill — will retry next cycle`)
