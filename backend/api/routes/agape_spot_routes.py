@@ -29,7 +29,7 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Callable, Optional, Dict, List, Tuple
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -106,16 +106,31 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
 _ROUTE_CACHE: Dict[str, Tuple[float, Any]] = {}
 _ROUTE_CACHE_LOCK = threading.Lock()
 
+# Response header that reports whether the handler served a cached value.
+# Used by monitoring and the cache-hit test; safe to expose (no PII).
+_CACHE_HEADER = "X-AgapeSpot-Cache"
 
-def _cached(key: str, ttl: float, producer: Callable[[], Any]) -> Any:
+
+def _cached_with_status(
+    key: str,
+    ttl: float,
+    producer: Callable[[], Any],
+) -> Tuple[bool, Any]:
+    """Return (is_hit, value). `is_hit=True` means the value came from cache."""
     now = time.time()
     with _ROUTE_CACHE_LOCK:
         hit = _ROUTE_CACHE.get(key)
         if hit and now - hit[0] < ttl:
-            return hit[1]
+            return True, hit[1]
     value = producer()
     with _ROUTE_CACHE_LOCK:
         _ROUTE_CACHE[key] = (time.time(), value)
+    return False, value
+
+
+def _cached(key: str, ttl: float, producer: Callable[[], Any]) -> Any:
+    """Back-compat wrapper — discards the hit-status flag."""
+    _is_hit, value = _cached_with_status(key, ttl, producer)
     return value
 
 
@@ -173,10 +188,12 @@ async def list_tickers():
 
 
 @router.get("/summary")
-async def get_summary():
+async def get_summary(response: Response):
     """Overview of ALL tickers: per-ticker P&L, positions, win rate, current price.
 
     This is the primary multi-ticker dashboard endpoint.
+    Emits X-AgapeSpot-Cache: HIT|MISS so we can verify the 5s response cache
+    is firing in production.
     """
     trader = _get_trader()
     if not trader:
@@ -294,7 +311,9 @@ async def get_summary():
         }
 
     try:
-        return _cached("summary", 5.0, _compute)
+        is_hit, result = _cached_with_status("summary", 5.0, _compute)
+        response.headers[_CACHE_HEADER] = "HIT" if is_hit else "MISS"
+        return result
     except Exception as e:
         logger.error(f"AGAPE-SPOT summary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -793,6 +812,7 @@ def _equity_curve_empty(now: datetime, starting_capital: float, days: int, ticke
 
 @router.get("/equity-curve/intraday")
 async def get_equity_curve_intraday(
+    response: Response,
     ticker: Optional[str] = Query(
         default=None,
         description="Ticker for intraday equity (e.g. ETH-USD). Omit for combined.",
@@ -808,6 +828,10 @@ async def get_equity_curve_intraday(
     starting_equity, high_of_day, low_of_day -- same format as FORTRESS/SAMSON.
 
     AGAPE-SPOT trades 24/7 so "day start" is midnight CT.
+
+    Emits X-AgapeSpot-Cache: HIT|MISS|BYPASS. Only the combined (ALL) path is
+    cached; per-ticker responses set BYPASS since they are cheap enough to
+    recompute every call.
     """
     ticker = _validate_ticker(ticker)
 
@@ -817,7 +841,11 @@ async def get_equity_curve_intraday(
 
     # Combined intraday: aggregate all tickers
     if ticker is None:
-        return await _get_combined_intraday_equity(date)
+        is_hit, payload = await _get_combined_intraday_equity(date)
+        response.headers[_CACHE_HEADER] = "HIT" if is_hit else "MISS"
+        return payload
+
+    response.headers[_CACHE_HEADER] = "BYPASS"
 
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
@@ -1009,8 +1037,14 @@ async def get_equity_curve_intraday(
             conn.close()
 
 
-async def _get_combined_intraday_equity(date: Optional[str] = None):
-    """Aggregate intraday equity across ALL tickers for the combined view."""
+async def _get_combined_intraday_equity(
+    date: Optional[str] = None,
+) -> Tuple[bool, Dict]:
+    """Aggregate intraday equity across ALL tickers for the combined view.
+
+    Returns ``(is_hit, payload)``. ``is_hit`` is True when the payload was
+    served from the 5s response cache (no DB work done this call).
+    """
     # 5s response cache: the combined path loops over _VALID_TICKERS with a
     # live price fetch per ticker, and the frontend refreshes this every 15s
     # across every AGAPE-SPOT tab. The executor cache already collapses the
@@ -1020,7 +1054,7 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
     with _ROUTE_CACHE_LOCK:
         hit = _ROUTE_CACHE.get(cache_key)
         if hit and cache_now - hit[0] < 5.0:
-            return hit[1]
+            return True, hit[1]
 
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
@@ -1032,7 +1066,7 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
     )
 
     if not get_connection:
-        return _intraday_fallback(today, now, current_time, total_starting, "ALL")
+        return False, _intraday_fallback(today, now, current_time, total_starting, "ALL")
 
     conn = None
     try:
@@ -1179,12 +1213,12 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
         }
         with _ROUTE_CACHE_LOCK:
             _ROUTE_CACHE[cache_key] = (time.time(), result)
-        return result
+        return False, result
     except Exception as e:
         logger.error(f"AGAPE-SPOT combined intraday equity error: {e}")
         import traceback
         traceback.print_exc()
-        return _intraday_fallback(today, now, current_time, total_starting, "ALL", str(e))
+        return False, _intraday_fallback(today, now, current_time, total_starting, "ALL", str(e))
     finally:
         if conn:
             conn.close()
