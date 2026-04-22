@@ -12,6 +12,16 @@ interface PerfData {
   worst_trade: number
   profit_factor?: number | null
   current_streak?: string | null
+  // SPARK-only: counterfactual aggregates if we'd held to 2:59 PM CT
+  // every day instead of exiting via PT tier. `matched_trades` is the
+  // count of trades where both actual AND hypothetical P&L exist
+  // (rows older than Tradier's 40-day option window won't have hypo data).
+  hypothetical_eod?: {
+    hypo_total: number
+    actual_pnl_compared: number
+    delta: number
+    matched_trades: number
+  } | null
 }
 
 export default function PerformanceCard({
@@ -74,6 +84,41 @@ export default function PerformanceCard({
           </p>
         </div>
       </div>
+
+      {/* SPARK-only counterfactual block: how would the bot have done if it
+          had held every trade until 2:59 PM CT instead of exiting early via
+          PT tier? Positive Δ = early exits beat the late-day hold (PT
+          discipline paid off). Negative Δ = we left money on the table. */}
+      {data.hypothetical_eod && data.hypothetical_eod.matched_trades > 0 && (
+        <div className="grid grid-cols-3 gap-4 text-sm border-t border-forge-border mt-3 pt-3">
+          <div>
+            <p className="text-xs text-forge-muted">Hypothetical Total (held to 2:59 PM)</p>
+            <p className={`font-medium ${data.hypothetical_eod.hypo_total >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {data.hypothetical_eod.hypo_total >= 0 ? '+' : ''}${data.hypothetical_eod.hypo_total.toFixed(2)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-forge-muted">Actual (matched trades)</p>
+            <p className={`font-medium ${data.hypothetical_eod.actual_pnl_compared >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {data.hypothetical_eod.actual_pnl_compared >= 0 ? '+' : ''}${data.hypothetical_eod.actual_pnl_compared.toFixed(2)}
+            </p>
+          </div>
+          <div>
+            <p
+              className="text-xs text-forge-muted"
+              title="Actual − Hypothetical. Positive = PT exits beat the late-day hold."
+            >
+              Δ (Actual − Hypo)
+            </p>
+            <p className={`font-medium ${data.hypothetical_eod.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+              {data.hypothetical_eod.delta >= 0 ? '+' : ''}${data.hypothetical_eod.delta.toFixed(2)}
+            </p>
+            <p className="text-[10px] text-forge-muted mt-0.5">
+              {data.hypothetical_eod.matched_trades} trade{data.hypothetical_eod.matched_trades === 1 ? '' : 's'} compared
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

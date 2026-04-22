@@ -394,6 +394,23 @@ async function ensureTables(): Promise<void> {
       } catch { /* table may not exist yet */ }
     }
 
+    // SPARK-only: hypothetical "what if we had held to 2:59 PM" P&L tracking.
+    // Three columns on spark_positions so historical analysis can compare the
+    // bot's actual PT-tier exit vs the late-day-hold counterfactual. NULL is
+    // expected for any trade older than Tradier's ~40-day option timesales
+    // window. Added to SPARK only because FLAME (2DTE) and INFERNO (0DTE) have
+    // different exit models — the comparison is only meaningful for the
+    // same-day-exit 1DTE bot.
+    for (const col of [
+      'hypothetical_eod_pnl NUMERIC(12,2)',
+      'hypothetical_eod_spot NUMERIC(10,4)',
+      'hypothetical_eod_computed_at TIMESTAMPTZ',
+    ]) {
+      try {
+        await client.query(`ALTER TABLE spark_positions ADD COLUMN IF NOT EXISTS ${col}`)
+      } catch { /* column already exists or table doesn't exist yet */ }
+    }
+
     // Add missing columns to ironforge_accounts (needed for production trading)
     // capital_pct controls what % of account equity is used for trading
     // pdt_enabled controls per-account PDT enforcement
