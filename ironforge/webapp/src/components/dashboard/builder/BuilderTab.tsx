@@ -353,6 +353,8 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
           maxProfit={snap.payoff?.max_profit ?? snap.metrics?.max_profit ?? null}
           maxLoss={snap.payoff?.max_loss ?? snap.metrics?.max_loss ?? null}
           spotPrice={snap.spot_price}
+          netCredit={p.entry_credit}
+          contracts={p.contracts}
           pnlMode={pnlMode}
         />
       )}
