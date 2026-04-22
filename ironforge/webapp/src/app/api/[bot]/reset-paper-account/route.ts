@@ -160,7 +160,7 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
   if (!SUPPORTED_BOTS.has(bot)) {
     return NextResponse.json(
-      { error: `reset-paper-account is only enabled for: ${[...SUPPORTED_BOTS].join(', ')}` },
+      { error: `reset-paper-account is only enabled for: ${Array.from(SUPPORTED_BOTS).join(', ')}` },
       { status: 403 },
     )
   }
@@ -195,7 +195,7 @@ export async function POST(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
   if (!SUPPORTED_BOTS.has(bot)) {
     return NextResponse.json(
-      { error: `reset-paper-account is only enabled for: ${[...SUPPORTED_BOTS].join(', ')}` },
+      { error: `reset-paper-account is only enabled for: ${Array.from(SUPPORTED_BOTS).join(', ')}` },
       { status: 403 },
     )
   }
