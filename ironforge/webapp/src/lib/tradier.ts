@@ -1640,10 +1640,23 @@ export async function getTimesales(
   await ensureQuoteApiKey()
   if (!_tradierApiKey) return []
 
+  // Explicit `start` spans the last 3 calendar days (covers weekends).
+  // Without this, Tradier's default timesales window is "today only", which
+  // means the chart goes blank between market close and the next open.
+  // Combined with session_filter='open' + slice(-N), this gives us the last
+  // N RTH bars across whatever sessions are available — so overnight we
+  // keep showing the previous session's candles until the next open's
+  // bars start streaming in.
+  const start = new Date(Date.now() - 3 * 24 * 3600 * 1000)
+    .toISOString()
+    .replace('T', ' ')
+    .slice(0, 16)
+
   const data = await tradierGet('/markets/timesales', {
     symbol,
     interval,
     session_filter: session,
+    start,
   })
   if (!data) return []
 
