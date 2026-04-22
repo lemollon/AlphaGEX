@@ -18,10 +18,12 @@
  *   snapshot: 30s  (quotes + greeks + MTM)
  *   candles:  60s  (intraday bars)
  */
+import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import MetricsBar from './MetricsBar'
 import ChartArea from './ChartArea'
+import PayoffTable from './PayoffTable'
 import LegBreakdown, { type BuilderLeg } from './LegBreakdown'
 import type { Candle } from '@/lib/price-scale'
 
@@ -93,7 +95,9 @@ interface SnapshotResponse {
 
 interface CandlesResponse {
   symbol: string
-  minutes: number
+  interval?: string
+  bars?: number
+  minutes?: number
   candles: Candle[]
   tradier_connected: boolean
   error?: string
@@ -110,11 +114,23 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
     fetcher,
     { refreshInterval: SNAPSHOT_REFRESH_MS },
   )
+  // interval=5min × bars=80 → ~1 full RTH day of price action. Matches
+  // SpreadWorks' density (they use 15min × 80 bars for multi-day context;
+  // we use 5min because SPARK is 1DTE so intraday is the relevant window).
+  // Backend forces session_filter='open' so pre/post market bars never
+  // appear. When the market is closed the chart freezes at the last live
+  // session's bars — no after-hours noise on the right edge.
   const { data: candlesData } = useSWR<CandlesResponse>(
-    `/api/${bot}/builder/candles?symbol=SPY&minutes=120`,
+    `/api/${bot}/builder/candles?symbol=SPY&interval=5min&bars=80`,
     fetcher,
     { refreshInterval: CANDLES_REFRESH_MS },
   )
+
+  // View + pnl mode toggles (SpreadWorks parity). viewMode controls whether
+  // the main area renders the candle+payoff chart ("graph") or the numeric
+  // table ("table"). pnlMode only affects the table representation.
+  const [viewMode, setViewMode] = useState<'graph' | 'table'>('graph')
+  const [pnlMode, setPnlMode] = useState<'dollar' | 'percent'>('dollar')
 
   if (snapErr) {
     return (
@@ -267,18 +283,79 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       {/* Metrics */}
       <MetricsBar metrics={snap.metrics ?? null} legs={snap.legs ?? []} />
 
-      {/* Unified chart: CandleChart + PayoffPanel in a flex container with a
-          shared price Y-axis. Matches SpreadWorks' ChartArea.jsx exactly. */}
-      <div className="flex flex-col" style={{ height: 500 }}>
-        <ChartArea
-          candles={candlesData?.candles}
-          spotPrice={snap.spot_price}
-          strikes={spreadworksStrikes}
-          calcResult={calcResult}
-          height={500}
-          rangePct={2.2}
-        />
+      {/* View toggle strip (SpreadWorks parity).
+          Graph / Table switches the main visualization area.
+          P&L $ / P&L % only affects the Table view's unit. */}
+      <div className="flex items-center gap-2 text-[11px] font-mono">
+        <div className="inline-flex rounded-md border border-forge-border overflow-hidden">
+          <button
+            onClick={() => setViewMode('graph')}
+            className={`px-3 py-1.5 transition-colors ${
+              viewMode === 'graph'
+                ? 'bg-blue-500/20 text-blue-300 font-semibold'
+                : 'text-forge-muted hover:text-gray-200'
+            }`}
+          >
+            Graph
+          </button>
+          <button
+            onClick={() => setViewMode('table')}
+            className={`px-3 py-1.5 border-l border-forge-border transition-colors ${
+              viewMode === 'table'
+                ? 'bg-blue-500/20 text-blue-300 font-semibold'
+                : 'text-forge-muted hover:text-gray-200'
+            }`}
+          >
+            Table
+          </button>
+        </div>
+        <div className={`inline-flex rounded-md border border-forge-border overflow-hidden ${viewMode === 'graph' ? 'opacity-40' : ''}`}>
+          <button
+            onClick={() => setPnlMode('dollar')}
+            disabled={viewMode === 'graph'}
+            className={`px-3 py-1.5 transition-colors ${
+              pnlMode === 'dollar'
+                ? 'bg-blue-500/20 text-blue-300 font-semibold'
+                : 'text-forge-muted hover:text-gray-200'
+            } disabled:cursor-not-allowed`}
+          >
+            P&L $
+          </button>
+          <button
+            onClick={() => setPnlMode('percent')}
+            disabled={viewMode === 'graph'}
+            className={`px-3 py-1.5 border-l border-forge-border transition-colors ${
+              pnlMode === 'percent'
+                ? 'bg-blue-500/20 text-blue-300 font-semibold'
+                : 'text-forge-muted hover:text-gray-200'
+            } disabled:cursor-not-allowed`}
+          >
+            P&L %
+          </button>
+        </div>
       </div>
+
+      {/* Visualization area: Graph (candles + payoff) or Table (numeric P&L). */}
+      {viewMode === 'graph' ? (
+        <div className="flex flex-col" style={{ height: 500 }}>
+          <ChartArea
+            candles={candlesData?.candles}
+            spotPrice={snap.spot_price}
+            strikes={spreadworksStrikes}
+            calcResult={calcResult}
+            height={500}
+            rangePct={2.2}
+          />
+        </div>
+      ) : (
+        <PayoffTable
+          pnlCurve={snap.payoff?.pnl_curve}
+          maxProfit={snap.payoff?.max_profit ?? snap.metrics?.max_profit ?? null}
+          maxLoss={snap.payoff?.max_loss ?? snap.metrics?.max_loss ?? null}
+          spotPrice={snap.spot_price}
+          pnlMode={pnlMode}
+        />
+      )}
 
       {/* Legs */}
       <LegBreakdown legs={snap.legs} expiration={p.expiration} isOpen={isOpen} />
