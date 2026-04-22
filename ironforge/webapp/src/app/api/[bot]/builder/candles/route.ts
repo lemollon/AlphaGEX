@@ -1,19 +1,23 @@
 /**
  * Intraday OHLCV bars for the Builder tab's CandleChart.
  *
- * Defaults to SPY 1-min bars for the last full RTH session (390 minutes =
- * 8:30 AM - 3:00 PM CT). Tradier's `session_filter='open'` filters out
- * pre/post market bars, so when the market is closed the chart naturally
- * shows the last live session's 390 candles instead of after-hours noise
- * tacked onto the end.
+ * Defaults to SPY 5-min bars × 80 bars = ~1 full RTH day. This matches
+ * SpreadWorks' density (their default is 15-min × 80 bars = 3 RTH days);
+ * we use 5-min because SPARK is 1DTE so the operator cares about intraday
+ * price action, not multi-day context.
  *
- * Reuses the existing `getTimesales` helper in tradier.ts. Broken out from
- * the snapshot route so this can be polled independently (every 60s for
- * chart refresh while the snapshot refreshes every 30s for quotes/greeks/MTM).
+ * Tradier's `session_filter='open'` filters out pre/post market bars, so
+ * when the market is closed the chart naturally shows the last live
+ * session's bars instead of after-hours noise tacked onto the end.
+ *
+ * Broken out from the snapshot route so this can be polled independently
+ * (every 60s for chart refresh while the snapshot refreshes every 30s for
+ * quotes/greeks/MTM).
  *
  * Query params:
- *   symbol  (default: SPY)
- *   minutes (default: 390 = one full RTH session, max: 390)
+ *   symbol   (default: SPY)
+ *   interval (default: 5min, one of 1min|5min|15min)
+ *   bars     (default: 80, max: 390)
  *
  * Response:
  *   { candles: [{time, open, high, low, close, volume}, ...] }
@@ -24,6 +28,13 @@ import { getTimesales, isConfigured } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
+type IntervalStr = '1min' | '5min' | '15min'
+
+function parseInterval(raw: string | null): IntervalStr {
+  if (raw === '1min' || raw === '5min' || raw === '15min') return raw
+  return '5min'
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { bot: string } },
@@ -32,10 +43,17 @@ export async function GET(
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const symbol = req.nextUrl.searchParams.get('symbol') || 'SPY'
-  const minutesParam = parseInt(req.nextUrl.searchParams.get('minutes') || '390', 10)
-  const minutes = Number.isFinite(minutesParam)
-    ? Math.max(10, Math.min(390, minutesParam))
-    : 390
+  const interval = parseInterval(req.nextUrl.searchParams.get('interval'))
+
+  // Accept both `bars` (new) and `minutes` (legacy) params; `bars` wins.
+  // `bars` is the count of candles we want back from the tail.
+  const barsRaw = req.nextUrl.searchParams.get('bars')
+    ?? req.nextUrl.searchParams.get('minutes')
+    ?? '80'
+  const barsParam = parseInt(barsRaw, 10)
+  const bars = Number.isFinite(barsParam)
+    ? Math.max(10, Math.min(390, barsParam))
+    : 80
 
   if (!isConfigured()) {
     return NextResponse.json({ candles: [], tradier_connected: false })
@@ -46,10 +64,11 @@ export async function GET(
     // live candle of the most recent session, which is what the operator
     // asked for ("outside of market hours it should stick to results of
     // last live day").
-    const candles = await getTimesales(symbol, minutes, 'open')
+    const candles = await getTimesales(symbol, bars, 'open', interval)
     return NextResponse.json({
       symbol,
-      minutes,
+      interval,
+      bars,
       candles,
       tradier_connected: true,
     })
@@ -58,6 +77,6 @@ export async function GET(
     // Tradier transient failures shouldn't 500 the chart; return empty so
     // the UI shows "no data yet" instead of an error state.
     console.warn(`[builder/candles] ${bot} ${symbol}: ${msg}`)
-    return NextResponse.json({ symbol, minutes, candles: [], tradier_connected: true, error: msg })
+    return NextResponse.json({ symbol, interval, bars, candles: [], tradier_connected: true, error: msg })
   }
 }

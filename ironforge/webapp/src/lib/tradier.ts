@@ -1613,6 +1613,10 @@ export function getTradierBaseUrl(): string {
  * Fetch Tradier timesales (minute bars) for a symbol.
  * Returns the last `minutes` candles for intraday comparison.
  *
+ * `interval` controls bar resolution: '1min' (default), '5min', or '15min'.
+ *   Tradier supports all three; pick the one that matches the time window
+ *   you want to visualize.
+ *
  * `session` controls which session Tradier returns:
  *   - 'open' → regular trading hours only (8:30am-3:00pm CT for SPY).
  *             This is the default because the IC Chart must mirror market
@@ -1620,18 +1624,25 @@ export function getTradierBaseUrl(): string {
  *             live candle, not show after-hours noise.
  *   - 'all'  → includes pre/post market bars. Only use when a caller
  *             explicitly asks for extended hours.
+ *
+ * Timestamp handling: Tradier's `time` field is a naive ET string which
+ * `new Date()` interprets inconsistently across browser timezones. We
+ * prefer the `timestamp` field (epoch seconds) to produce an unambiguous
+ * UTC ISO string — every consumer can then format to its local TZ with
+ * `toLocaleTimeString({ timeZone: ... })` and get the right answer.
  */
 export async function getTimesales(
   symbol: string,
   minutes: number = 10,
   session: 'open' | 'all' = 'open',
+  interval: '1min' | '5min' | '15min' = '1min',
 ): Promise<Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>> {
   await ensureQuoteApiKey()
   if (!_tradierApiKey) return []
 
   const data = await tradierGet('/markets/timesales', {
     symbol,
-    interval: '1min',
+    interval,
     session_filter: session,
   })
   if (!data) return []
@@ -1641,14 +1652,26 @@ export async function getTimesales(
   if (!Array.isArray(series)) series = [series]
 
   // Return last N candles
-  return series.slice(-minutes).map((d: any) => ({
-    time: d.time || d.timestamp,
-    open: parseFloat(d.open || '0'),
-    high: parseFloat(d.high || '0'),
-    low: parseFloat(d.low || '0'),
-    close: parseFloat(d.close || '0'),
-    volume: parseInt(d.volume || '0', 10),
-  }))
+  return series.slice(-minutes).map((d: any) => {
+    // Prefer epoch timestamp → unambiguous UTC. Fall back to naive string
+    // only if timestamp is missing (defensive — Tradier always returns it).
+    const epochSec = typeof d.timestamp === 'number'
+      ? d.timestamp
+      : /^\d+$/.test(String(d.timestamp))
+        ? parseInt(String(d.timestamp), 10)
+        : null
+    const timeIso = epochSec != null
+      ? new Date(epochSec * 1000).toISOString()
+      : (d.time || '')
+    return {
+      time: timeIso,
+      open: parseFloat(d.open || '0'),
+      high: parseFloat(d.high || '0'),
+      low: parseFloat(d.low || '0'),
+      close: parseFloat(d.close || '0'),
+      volume: parseInt(d.volume || '0', 10),
+    }
+  })
 }
 
 export async function getBatchOptionQuotes(
