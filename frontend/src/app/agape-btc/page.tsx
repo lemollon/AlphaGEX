@@ -83,10 +83,10 @@ export default function AgapeBtcPage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEBTCStatus()
   const { data: perfData } = useAGAPEBTCPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEBTCPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPEBTCSnapshot()
-  const { data: scansData } = useAGAPEBTCScanActivity(30)
-  const { data: closedData } = useAGAPEBTCClosedTrades(50)
-  const { data: mappingData } = useAGAPEBTCGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPEBTCSnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEBTCScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEBTCClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEBTCGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data

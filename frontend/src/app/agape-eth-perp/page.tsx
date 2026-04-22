@@ -83,10 +83,10 @@ export default function AgapeEthPerpPage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEEthPerpStatus()
   const { data: perfData } = useAGAPEEthPerpPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEEthPerpPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPEEthPerpSnapshot()
-  const { data: scansData } = useAGAPEEthPerpScanActivity(30)
-  const { data: closedData } = useAGAPEEthPerpClosedTrades(50)
-  const { data: mappingData } = useAGAPEEthPerpGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPEEthPerpSnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEEthPerpScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEEthPerpClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEEthPerpGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data
