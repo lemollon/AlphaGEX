@@ -105,7 +105,12 @@ export default function MetricsBar({ metrics, legs }: MetricsBarProps) {
     <div className="space-y-1">
       <div className="flex gap-1 flex-wrap">
         <MetricCell label={creditLabel} value={fmtMoney0(netCredit)} valueClass={`${creditClass} text-base`} />
-        <MetricCell label="Max Profit" value={fmtMoney0(m.max_profit)} valueClass="text-emerald-400 text-base" />
+        {/* "Max Profit @ Exp" — the trailing @ Exp is deliberate: SPARK is
+             a same-day exit bot, so the $ number here is only reachable by
+             holding overnight to next-day expiration, which SPARK doesn't
+             do. The PayoffTable's "Same-Day Exits" section shows the real
+             intraday exit targets (Morning/Midday/PM PT tiers). */}
+        <MetricCell label="Max Profit @ Exp" value={fmtMoney0(m.max_profit)} valueClass="text-emerald-400 text-base" />
         <MetricCell label="Max Loss" value={fmtMoney0(m.max_loss)} valueClass="text-red-400 text-base" />
         <MetricCell label="POP (heuristic)" value={fmtPct(m.pop_heuristic)} valueClass="text-amber-400 text-base" />
         <MetricCell label="Breakevens" value={beStr} valueClass="text-white" />

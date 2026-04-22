@@ -26,8 +26,8 @@ import { useMemo } from 'react'
 import { priceToY } from '@/lib/price-scale'
 import {
   pnlCurveToPoints,
-  buildSmoothPath,
-  buildFillPath,
+  buildLinearPath,
+  buildLinearFillPath,
   splitProfitLoss,
   type PnlPoint,
   type PayoffSvgPoint,
@@ -102,10 +102,15 @@ export default function PayoffPanel({
     const points = pnlCurveToPoints(pnlCurve, pToY, maxAbsPnl, VIEW_WIDTH, ZERO_X)
     if (points.length < 2) return null
 
+    // Straight-line path matches the IC's piecewise-linear expiration
+    // payoff exactly — the 4 kinks at each strike stay razor-sharp as a
+    // true trapezoid instead of being rounded into an organic curve by
+    // the Catmull-Rom smoother that SpreadWorks (and our earlier port)
+    // used for cosmetic appeal.
     const { profitPoints, lossPoints } = splitProfitLoss(points)
-    const mainPath = buildSmoothPath(points)
-    const profitFill = profitPoints.length >= 2 ? buildFillPath(profitPoints, ZERO_X) : ''
-    const lossFill = lossPoints.length >= 2 ? buildFillPath(lossPoints, ZERO_X) : ''
+    const mainPath = buildLinearPath(points)
+    const profitFill = profitPoints.length >= 2 ? buildLinearFillPath(profitPoints, ZERO_X) : ''
+    const lossFill = lossPoints.length >= 2 ? buildLinearFillPath(lossPoints, ZERO_X) : ''
 
     return { mainPath, profitFill, lossFill, points }
   }, [pnlCurve, minPrice, maxPrice, height, maxProfit, maxLoss])

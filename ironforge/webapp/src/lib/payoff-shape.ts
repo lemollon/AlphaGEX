@@ -88,6 +88,32 @@ export function buildFillPath(points: PayoffSvgPoint[], zeroX = 220): string {
   return `${curvePart} L${zeroX},${last.y.toFixed(1)} L${zeroX},${first.y.toFixed(1)} Z`
 }
 
+/**
+ * Straight-line (polyline) path from points. Use this for mathematically
+ * exact expiration P&L curves — an Iron Condor at expiration is piecewise
+ * linear with 4 hard kinks (one per strike), and the smoothed Catmull-Rom
+ * path visually distorts those kinks into rounded curves.
+ *
+ * No tension, no Bézier handles — just `M` + `L` per vertex.
+ */
+export function buildLinearPath(points: PayoffSvgPoint[]): string {
+  if (points.length < 2) return ''
+  let d = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`
+  for (let i = 1; i < points.length; i++) {
+    d += ` L${points[i].x.toFixed(1)},${points[i].y.toFixed(1)}`
+  }
+  return d
+}
+
+/** Closed fill path (straight-line) back to the zero-line. */
+export function buildLinearFillPath(points: PayoffSvgPoint[], zeroX = 220): string {
+  if (points.length < 2) return ''
+  const first = points[0]
+  const last = points[points.length - 1]
+  const poly = buildLinearPath(points)
+  return `${poly} L${zeroX},${last.y.toFixed(1)} L${zeroX},${first.y.toFixed(1)} Z`
+}
+
 /** Split into profit/loss point arrays for separate fills. */
 export function splitProfitLoss(points: PayoffSvgPoint[]): {
   profitPoints: PayoffSvgPoint[]
