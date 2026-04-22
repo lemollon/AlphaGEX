@@ -24,9 +24,11 @@ Standard bot endpoints:
 """
 
 import logging
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Any, Callable, Optional, Dict, List, Tuple
 from fastapi import APIRouter, HTTPException, Query
 from zoneinfo import ZoneInfo
 
@@ -90,6 +92,31 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
     if dt is None:
         dt = datetime.now(CENTRAL_TZ)
     return dt.strftime("%Y-%m-%d %H:%M:%S CT")
+
+
+# ---------------------------------------------------------------------------
+# Short-lived route response cache
+# ---------------------------------------------------------------------------
+# Collapses 10-15s dashboard refresh storms: /summary and /equity-curve/intraday
+# each fan out 6 ticker-level price fetches + heavy DB aggregations per call.
+# A 5s TTL matches what the frontend already shows and is well under any trade
+# cycle, so dashboards lag at most 5s after a trade closes — acceptable for
+# display-only data.
+
+_ROUTE_CACHE: Dict[str, Tuple[float, Any]] = {}
+_ROUTE_CACHE_LOCK = threading.Lock()
+
+
+def _cached(key: str, ttl: float, producer: Callable[[], Any]) -> Any:
+    now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        hit = _ROUTE_CACHE.get(key)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+    value = producer()
+    with _ROUTE_CACHE_LOCK:
+        _ROUTE_CACHE[key] = (time.time(), value)
+    return value
 
 
 _VALID_TICKERS = set(SPOT_TICKERS.keys()) if SPOT_TICKERS else {"ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
@@ -160,7 +187,7 @@ async def get_summary():
             "message": "AGAPE-SPOT module not available",
         }
 
-    try:
+    def _compute():
         tickers = trader.config.tickers
         per_ticker: Dict[str, Dict] = {}
         totals = {
@@ -265,6 +292,9 @@ async def get_summary():
             "active_tickers": list(tickers),
             "fetched_at": _format_ct(),
         }
+
+    try:
+        return _cached("summary", 5.0, _compute)
     except Exception as e:
         logger.error(f"AGAPE-SPOT summary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -981,6 +1011,17 @@ async def get_equity_curve_intraday(
 
 async def _get_combined_intraday_equity(date: Optional[str] = None):
     """Aggregate intraday equity across ALL tickers for the combined view."""
+    # 5s response cache: the combined path loops over _VALID_TICKERS with a
+    # live price fetch per ticker, and the frontend refreshes this every 15s
+    # across every AGAPE-SPOT tab. The executor cache already collapses the
+    # price fetches; this caches the DB aggregation on top of that.
+    cache_key = f"intraday:ALL:{date or 'today'}"
+    cache_now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        hit = _ROUTE_CACHE.get(cache_key)
+        if hit and cache_now - hit[0] < 5.0:
+            return hit[1]
+
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
     current_time = now.strftime("%H:%M:%S")
@@ -1119,7 +1160,7 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
         low_of_day = min(all_equities) if all_equities else total_starting
         day_pnl = today_realized + total_unrealized
 
-        return {
+        result = {
             "success": True,
             "date": today,
             "ticker": "ALL",
@@ -1136,6 +1177,9 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
             "today_closed_count": today_closed_count,
             "open_positions_count": total_open_count,
         }
+        with _ROUTE_CACHE_LOCK:
+            _ROUTE_CACHE[cache_key] = (time.time(), result)
+        return result
     except Exception as e:
         logger.error(f"AGAPE-SPOT combined intraday equity error: {e}")
         import traceback
