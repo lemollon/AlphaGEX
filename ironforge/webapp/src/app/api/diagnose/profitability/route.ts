@@ -126,7 +126,6 @@ export async function GET(req: NextRequest) {
              ROUND(EXTRACT(EPOCH FROM (close_time - open_time))/3600.0, 1) AS hours_held,
              expiration, status, close_reason,
              ROUND(underlying_at_entry::numeric,2) AS spot_in,
-             ROUND(spot_at_close::numeric,2)       AS spot_out,
              ROUND(vix_at_entry::numeric,2)        AS vix_in,
              put_long_strike, put_short_strike, call_short_strike, call_long_strike,
              contracts,

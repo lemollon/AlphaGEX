@@ -83,10 +83,10 @@ export default function AgapeShibPerpPage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEShibPerpStatus()
   const { data: perfData } = useAGAPEShibPerpPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEShibPerpPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPEShibPerpSnapshot()
-  const { data: scansData } = useAGAPEShibPerpScanActivity(30)
-  const { data: closedData } = useAGAPEShibPerpClosedTrades(50)
-  const { data: mappingData } = useAGAPEShibPerpGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPEShibPerpSnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEShibPerpScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEShibPerpClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEShibPerpGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data

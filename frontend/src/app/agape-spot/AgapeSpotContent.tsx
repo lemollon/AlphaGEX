@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import useSWR from 'swr'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -152,11 +152,14 @@ function useAgapeSpotEquityCurve(ticker?: string, days: number = 30) {
   return useSWR(`/api/agape-spot/equity-curve?${qs}`, fetcher, { refreshInterval: 30_000 })
 }
 
-function useAgapeSpotIntradayEquity(ticker?: string) {
+function useAgapeSpotIntradayEquity(ticker?: string, enabled: boolean = true) {
   const params = new URLSearchParams()
   if (ticker && ticker !== 'ALL') params.set('ticker', ticker)
   const qs = params.toString()
-  return useSWR(`/api/agape-spot/equity-curve/intraday${qs ? `?${qs}` : ''}`, fetcher, { refreshInterval: 15_000 })
+  const key = enabled
+    ? `/api/agape-spot/equity-curve/intraday${qs ? `?${qs}` : ''}`
+    : null
+  return useSWR(key, fetcher, { refreshInterval: 15_000 })
 }
 
 function useAgapeSpotClosedTrades(ticker?: string, limit: number = 50) {
@@ -173,12 +176,51 @@ function useAgapeSpotScanActivity(ticker?: string, limit: number = 30) {
   return useSWR(`/api/agape-spot/scan-activity?${params.toString()}`, fetcher, { refreshInterval: 15_000 })
 }
 
-function useAgapeSpotMLStatus() {
-  return useSWR('/api/agape-spot/ml/status', fetcher, { refreshInterval: 30_000 })
+function useAgapeSpotMLStatus(enabled: boolean = true) {
+  return useSWR(
+    enabled ? '/api/agape-spot/ml/status' : null,
+    fetcher,
+    { refreshInterval: 30_000 }
+  )
 }
 
-function useAgapeSpotAlpha() {
-  return useSWR('/api/agape-spot/alpha', fetcher, { refreshInterval: 30_000 })
+function useAgapeSpotAlpha(enabled: boolean = true) {
+  return useSWR(
+    enabled ? '/api/agape-spot/alpha' : null,
+    fetcher,
+    { refreshInterval: 30_000 }
+  )
+}
+
+// Defers an effect until the ref'd element scrolls into view. Used to gate
+// below-the-fold panels (Alpha Intelligence, ML Shadow, per-coin sparklines)
+// so that landing on /agape-spot only fires the requests the user can actually
+// see. Once the element enters view we disconnect and stay latched true.
+function useInView<T extends Element>(
+  ref: React.RefObject<T | null>,
+  rootMargin: string = '200px',
+): boolean {
+  const [inView, setInView] = useState(false)
+  useEffect(() => {
+    if (inView) return
+    const el = ref.current
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true)
+          obs.disconnect()
+        }
+      },
+      { rootMargin },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [ref, rootMargin, inView])
+  return inView
 }
 
 // ==============================================================================
@@ -1306,7 +1348,12 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
 // ==============================================================================
 
 function MLShadowPanel({ ticker }: { ticker: string }) {
-  const { data: mlData, error: mlError, mutate: refreshML } = useAgapeSpotMLStatus()
+  // Defer the /ml/status fetch until the panel scrolls into view. It is a
+  // heavy endpoint (shadow comparison aggregation) that lives below several
+  // other sections in the single-coin overview.
+  const anchorRef = useRef<HTMLDivElement | null>(null)
+  const inView = useInView(anchorRef)
+  const { data: mlData, error: mlError, mutate: refreshML } = useAgapeSpotMLStatus(inView)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [trainingResult, setTrainingResult] = useState<any>(null)
 
@@ -1353,17 +1400,18 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
   // Show informational state if ML module not available yet
   if (mlError || mlData?.data_unavailable) {
     return (
-      <div className="text-sm text-gray-500">
+      <div ref={anchorRef} className="text-sm text-gray-500">
         ML shadow advisor module loading... Shadow predictions will appear once the backend ML module is available.
       </div>
     )
   }
 
-  // Loading state
+  // Loading state (also rendered pre-inView while the fetch is still gated off)
   if (!mlData) {
     return (
-      <div className="flex items-center gap-2 text-sm text-gray-500">
-        <RefreshCw className="w-4 h-4 animate-spin" /> Loading ML status...
+      <div ref={anchorRef} className="flex items-center gap-2 text-sm text-gray-500">
+        <RefreshCw className="w-4 h-4 animate-spin" />
+        {inView ? 'Loading ML status...' : 'ML shadow advisor'}
       </div>
     )
   }
@@ -1911,11 +1959,17 @@ function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> 
 // ==============================================================================
 
 function AlphaIntelligencePanel() {
-  const { data } = useAgapeSpotAlpha()
+  // Defer the /alpha fetch until the panel actually scrolls into view. On
+  // initial load of /agape-spot this is below the fold, so holding it off
+  // removes one of the heaviest endpoints from the first-paint waterfall.
+  const anchorRef = useRef<HTMLDivElement | null>(null)
+  const inView = useInView(anchorRef)
+  const { data } = useAgapeSpotAlpha(inView)
   const alpha = data?.data
   const [expandedTicker, setExpandedTicker] = useState<string | null>(null)
 
-  if (!alpha) return null
+  if (!alpha) return <div ref={anchorRef} className="h-1" aria-hidden />
+
 
   const systems = alpha.systems || {}
   const combined = alpha.combined || {}
@@ -2326,8 +2380,13 @@ function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking
 // ==============================================================================
 
 function CoinCard({ ticker, data }: { ticker: string; data: TickerSummary | undefined }) {
-  // Each CoinCard is its own component so the hook call is valid (not in a loop)
-  const { data: intradayData } = useAgapeSpotIntradayEquity(ticker)
+  // Each CoinCard is its own component so the hook call is valid (not in a loop).
+  // Defer the sparkline fetch until the card is (near) visible — with 6 cards
+  // this cuts 6 parallel requests on initial mount down to however many are
+  // actually on screen.
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  const inView = useInView(cardRef)
+  const { data: intradayData } = useAgapeSpotIntradayEquity(ticker, inView)
   // Response shape: { data_points: [{ time, equity, ... }], day_pnl, ... }
   const sparkPoints = intradayData?.data_points || []
   const dayPnl = intradayData?.day_pnl ?? null
@@ -2337,7 +2396,7 @@ function CoinCard({ ticker, data }: { ticker: string; data: TickerSummary | unde
   const returnPct = data?.return_pct ?? 0
 
   return (
-    <div className={`rounded-xl border p-4 min-w-0 overflow-hidden ${meta.bgCard} ${meta.borderCard} transition-colors`}>
+    <div ref={cardRef} className={`rounded-xl border p-4 min-w-0 overflow-hidden ${meta.bgCard} ${meta.borderCard} transition-colors`}>
       <div className="flex items-center justify-between mb-3 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`font-bold text-lg ${meta.textActive} shrink-0`}>{meta.symbol}</span>
