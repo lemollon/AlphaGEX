@@ -28,6 +28,8 @@ Per-ticker overrides (optional, overrides dedicated for a specific coin):
 
 import logging
 import os
+import threading
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Optional, Dict, Tuple
@@ -71,6 +73,11 @@ class AgapeSpotExecutor:
     Falls back to the default COINBASE_API_KEY / COINBASE_API_SECRET.
     """
 
+    # Short-lived cache for get_current_price() to collapse dashboard refresh
+    # storms (e.g., /summary + /equity-curve/intraday both fan out 6 tickers).
+    # 5s is well inside the scan cycle, so trading decisions see fresh prices.
+    _PRICE_CACHE_TTL = 5.0
+
     def __init__(self, config: AgapeSpotConfig, db=None):
         self.config = config
         self.db = db
@@ -85,6 +92,12 @@ class AgapeSpotExecutor:
         # Per-ticker override clients (COINBASE_{SYMBOL}_API_KEY)
         # Only used if a specific coin needs a different key than the two main accounts.
         self._ticker_clients: Dict[str, object] = {}
+
+        # get_current_price() TTL cache. Writes are thread-safe because the
+        # FastAPI request thread and the trader cycle thread both call this.
+        self._price_cache: Dict[str, float] = {}
+        self._price_cache_ts: Dict[str, float] = {}
+        self._price_cache_lock = threading.Lock()
 
         # Coinbase product limits fetched at init (real minimums from API)
         # {ticker: {"base_min_size": float, "quote_min_size": float, "base_increment": float}}
@@ -1956,41 +1969,64 @@ class AgapeSpotExecutor:
     # =========================================================================
 
     def get_current_price(self, ticker: str) -> Optional[float]:
-        """Get current spot price for any supported ticker from Coinbase."""
+        """Get current spot price for any supported ticker from Coinbase.
+
+        Results are cached for `_PRICE_CACHE_TTL` seconds per ticker. Misses
+        (None) are not cached so transient failures get retried on the next
+        call.
+        """
+        now = time.time()
+        with self._price_cache_lock:
+            cached = self._price_cache.get(ticker)
+            cached_ts = self._price_cache_ts.get(ticker, 0.0)
+            if cached is not None and (now - cached_ts) < self._PRICE_CACHE_TTL:
+                return cached
+
+        price: Optional[float] = None
+
         client = self._get_client(ticker)
         if client:
             try:
                 product = client.get_product(ticker)
                 if product:
-                    price = self._resp(product, "price")
-                    if price:
-                        return float(price)
+                    raw = self._resp(product, "price")
+                    if raw:
+                        price = float(raw)
             except Exception as e:
                 logger.debug(f"AGAPE-SPOT Executor: Coinbase quote failed for {ticker}: {e}")
 
         # Fallback: Public Coinbase API (no auth required, works for all coins)
-        try:
-            import urllib.request
-            import json as _json
-            url = f"https://api.coinbase.com/v2/prices/{ticker}/spot"
-            req = urllib.request.Request(url, headers={"User-Agent": "AlphaGEX/1.0"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = _json.loads(resp.read())
-                price = float(data["data"]["amount"])
-                if price > 0:
-                    return price
-        except Exception as e:
-            logger.debug(f"AGAPE-SPOT Executor: Public Coinbase API failed for {ticker}: {e}")
+        if price is None:
+            try:
+                import urllib.request
+                import json as _json
+                url = f"https://api.coinbase.com/v2/prices/{ticker}/spot"
+                req = urllib.request.Request(url, headers={"User-Agent": "AlphaGEX/1.0"})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = _json.loads(resp.read())
+                    amount = float(data["data"]["amount"])
+                    if amount > 0:
+                        price = amount
+            except Exception as e:
+                logger.debug(f"AGAPE-SPOT Executor: Public Coinbase API failed for {ticker}: {e}")
 
         # Last resort: crypto data provider (Deribit - only supports ETH/BTC)
-        try:
-            from data.crypto_data_provider import get_crypto_data_provider
-            provider = get_crypto_data_provider()
-            symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
-            snapshot = provider.get_snapshot(symbol)
-            return snapshot.spot_price if snapshot else None
-        except Exception:
-            return None
+        if price is None:
+            try:
+                from data.crypto_data_provider import get_crypto_data_provider
+                provider = get_crypto_data_provider()
+                symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
+                snapshot = provider.get_snapshot(symbol)
+                price = snapshot.spot_price if snapshot else None
+            except Exception:
+                price = None
+
+        if price is not None:
+            with self._price_cache_lock:
+                self._price_cache[ticker] = price
+                self._price_cache_ts[ticker] = now
+
+        return price
 
     def get_account_balance(self, ticker: str = None) -> Optional[Dict]:
         """Get account balances for USD, USDC, and all supported crypto currencies.

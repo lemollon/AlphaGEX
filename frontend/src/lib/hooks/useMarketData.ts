@@ -1327,6 +1327,10 @@ export const swrConfig: SWRConfiguration = {
   keepPreviousData: true,
 }
 
+// Option shape for hooks that support tab-gated lazy loading.
+// When `enabled: false`, SWR is called with a null key and no fetch fires.
+export type LazySWRConfiguration = SWRConfiguration & { enabled?: boolean }
+
 // =============================================================================
 // DASHBOARD HOOKS
 // =============================================================================
@@ -2177,11 +2181,12 @@ export function useAGAPEPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-closed-trades-${limit}`,
+    enabled === false ? null : `agape-closed-trades-${limit}`,
     () => fetchers.agapeClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2209,28 +2214,31 @@ export function useAGAPEPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-scan-activity-${limit}`,
+    enabled === false ? null : `agape-scan-activity-${limit}`,
     () => fetchers.agapeScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPESnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-snapshot', fetchers.agapeSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPESnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-snapshot',
+    fetchers.agapeSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-gex-mapping', fetchers.agapeGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-gex-mapping',
+    fetchers.agapeGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2253,11 +2261,12 @@ export function useAGAPEBTCPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEBTCClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEBTCClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-btc-closed-trades-${limit}`,
+    enabled === false ? null : `agape-btc-closed-trades-${limit}`,
     () => fetchers.agapeBtcClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2285,28 +2294,31 @@ export function useAGAPEBTCPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEBTCScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEBTCScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-btc-scan-activity-${limit}`,
+    enabled === false ? null : `agape-btc-scan-activity-${limit}`,
     () => fetchers.agapeBtcScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEBTCSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-btc-snapshot', fetchers.agapeBtcSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEBTCSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-snapshot',
+    fetchers.agapeBtcSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEBTCGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-btc-gex-mapping', fetchers.agapeBtcGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEBTCGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-gex-mapping',
+    fetchers.agapeBtcGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2329,11 +2341,12 @@ export function useAGAPEXRPPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEXRPClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEXRPClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-xrp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-xrp-closed-trades-${limit}`,
     () => fetchers.agapeXrpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2361,28 +2374,31 @@ export function useAGAPEXRPPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEXRPScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEXRPScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-xrp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-xrp-scan-activity-${limit}`,
     () => fetchers.agapeXrpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEXRPSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-xrp-snapshot', fetchers.agapeXrpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEXRPSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-snapshot',
+    fetchers.agapeXrpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEXRPGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-xrp-gex-mapping', fetchers.agapeXrpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEXRPGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-gex-mapping',
+    fetchers.agapeXrpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2405,11 +2421,12 @@ export function useAGAPEEthPerpPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEEthPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEEthPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-eth-perp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-eth-perp-closed-trades-${limit}`,
     () => fetchers.agapeEthPerpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2437,28 +2454,31 @@ export function useAGAPEEthPerpPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEEthPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEEthPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-eth-perp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-eth-perp-scan-activity-${limit}`,
     () => fetchers.agapeEthPerpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEEthPerpSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-eth-perp-snapshot', fetchers.agapeEthPerpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEEthPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-eth-perp-snapshot',
+    fetchers.agapeEthPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEEthPerpGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-eth-perp-gex-mapping', fetchers.agapeEthPerpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEEthPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-eth-perp-gex-mapping',
+    fetchers.agapeEthPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2481,11 +2501,12 @@ export function useAGAPEBtcPerpPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEBtcPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEBtcPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-btc-perp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-btc-perp-closed-trades-${limit}`,
     () => fetchers.agapeBtcPerpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2513,28 +2534,31 @@ export function useAGAPEBtcPerpPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEBtcPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEBtcPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-btc-perp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-btc-perp-scan-activity-${limit}`,
     () => fetchers.agapeBtcPerpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEBtcPerpSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-btc-perp-snapshot', fetchers.agapeBtcPerpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEBtcPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-perp-snapshot',
+    fetchers.agapeBtcPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEBtcPerpGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-btc-perp-gex-mapping', fetchers.agapeBtcPerpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEBtcPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-perp-gex-mapping',
+    fetchers.agapeBtcPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2557,11 +2581,12 @@ export function useAGAPEXrpPerpPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEXrpPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEXrpPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-xrp-perp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-xrp-perp-closed-trades-${limit}`,
     () => fetchers.agapeXrpPerpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2589,28 +2614,31 @@ export function useAGAPEXrpPerpPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEXrpPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEXrpPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-xrp-perp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-xrp-perp-scan-activity-${limit}`,
     () => fetchers.agapeXrpPerpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEXrpPerpSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-xrp-perp-snapshot', fetchers.agapeXrpPerpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEXrpPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-perp-snapshot',
+    fetchers.agapeXrpPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEXrpPerpGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-xrp-perp-gex-mapping', fetchers.agapeXrpPerpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEXrpPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-perp-gex-mapping',
+    fetchers.agapeXrpPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2633,11 +2661,12 @@ export function useAGAPEDogePerpPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEDogePerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEDogePerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-doge-perp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-doge-perp-closed-trades-${limit}`,
     () => fetchers.agapeDogePerpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2665,28 +2694,31 @@ export function useAGAPEDogePerpPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEDogePerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEDogePerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-doge-perp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-doge-perp-scan-activity-${limit}`,
     () => fetchers.agapeDogePerpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEDogePerpSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-doge-perp-snapshot', fetchers.agapeDogePerpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEDogePerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-doge-perp-snapshot',
+    fetchers.agapeDogePerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEDogePerpGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-doge-perp-gex-mapping', fetchers.agapeDogePerpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEDogePerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-doge-perp-gex-mapping',
+    fetchers.agapeDogePerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================
@@ -2709,11 +2741,12 @@ export function useAGAPEShibPerpPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEShibPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useAGAPEShibPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-shib-perp-closed-trades-${limit}`,
+    enabled === false ? null : `agape-shib-perp-closed-trades-${limit}`,
     () => fetchers.agapeShibPerpClosedTrades(limit),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
   )
 }
 
@@ -2741,28 +2774,31 @@ export function useAGAPEShibPerpPerformance(options?: SWRConfiguration) {
   })
 }
 
-export function useAGAPEShibPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+export function useAGAPEShibPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
   return useSWR(
-    `agape-shib-perp-scan-activity-${limit}`,
+    enabled === false ? null : `agape-shib-perp-scan-activity-${limit}`,
     () => fetchers.agapeShibPerpScanActivity(limit),
-    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
   )
 }
 
-export function useAGAPEShibPerpSnapshot(options?: SWRConfiguration) {
-  return useSWR('agape-shib-perp-snapshot', fetchers.agapeShibPerpSnapshot, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
+export function useAGAPEShibPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-perp-snapshot',
+    fetchers.agapeShibPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
 }
 
-export function useAGAPEShibPerpGexMapping(options?: SWRConfiguration) {
-  return useSWR('agape-shib-perp-gex-mapping', fetchers.agapeShibPerpGexMapping, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
+export function useAGAPEShibPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-perp-gex-mapping',
+    fetchers.agapeShibPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
 }
 
 // =============================================================================

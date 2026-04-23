@@ -24,10 +24,12 @@ Standard bot endpoints:
 """
 
 import logging
+import threading
+import time
 from collections import defaultdict
 from datetime import datetime
-from typing import Optional, Dict, List
-from fastapi import APIRouter, HTTPException, Query
+from typing import Any, Callable, Optional, Dict, List, Tuple
+from fastapi import APIRouter, HTTPException, Query, Response
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,46 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S CT")
 
 
+# ---------------------------------------------------------------------------
+# Short-lived route response cache
+# ---------------------------------------------------------------------------
+# Collapses 10-15s dashboard refresh storms: /summary and /equity-curve/intraday
+# each fan out 6 ticker-level price fetches + heavy DB aggregations per call.
+# A 5s TTL matches what the frontend already shows and is well under any trade
+# cycle, so dashboards lag at most 5s after a trade closes — acceptable for
+# display-only data.
+
+_ROUTE_CACHE: Dict[str, Tuple[float, Any]] = {}
+_ROUTE_CACHE_LOCK = threading.Lock()
+
+# Response header that reports whether the handler served a cached value.
+# Used by monitoring and the cache-hit test; safe to expose (no PII).
+_CACHE_HEADER = "X-AgapeSpot-Cache"
+
+
+def _cached_with_status(
+    key: str,
+    ttl: float,
+    producer: Callable[[], Any],
+) -> Tuple[bool, Any]:
+    """Return (is_hit, value). `is_hit=True` means the value came from cache."""
+    now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        hit = _ROUTE_CACHE.get(key)
+        if hit and now - hit[0] < ttl:
+            return True, hit[1]
+    value = producer()
+    with _ROUTE_CACHE_LOCK:
+        _ROUTE_CACHE[key] = (time.time(), value)
+    return False, value
+
+
+def _cached(key: str, ttl: float, producer: Callable[[], Any]) -> Any:
+    """Back-compat wrapper — discards the hit-status flag."""
+    _is_hit, value = _cached_with_status(key, ttl, producer)
+    return value
+
+
 _VALID_TICKERS = set(SPOT_TICKERS.keys()) if SPOT_TICKERS else {"ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
 
 
@@ -146,10 +188,12 @@ async def list_tickers():
 
 
 @router.get("/summary")
-async def get_summary():
+async def get_summary(response: Response):
     """Overview of ALL tickers: per-ticker P&L, positions, win rate, current price.
 
     This is the primary multi-ticker dashboard endpoint.
+    Emits X-AgapeSpot-Cache: HIT|MISS so we can verify the 5s response cache
+    is firing in production.
     """
     trader = _get_trader()
     if not trader:
@@ -160,7 +204,7 @@ async def get_summary():
             "message": "AGAPE-SPOT module not available",
         }
 
-    try:
+    def _compute():
         tickers = trader.config.tickers
         per_ticker: Dict[str, Dict] = {}
         totals = {
@@ -265,6 +309,11 @@ async def get_summary():
             "active_tickers": list(tickers),
             "fetched_at": _format_ct(),
         }
+
+    try:
+        is_hit, result = _cached_with_status("summary", 5.0, _compute)
+        response.headers[_CACHE_HEADER] = "HIT" if is_hit else "MISS"
+        return result
     except Exception as e:
         logger.error(f"AGAPE-SPOT summary error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -763,6 +812,7 @@ def _equity_curve_empty(now: datetime, starting_capital: float, days: int, ticke
 
 @router.get("/equity-curve/intraday")
 async def get_equity_curve_intraday(
+    response: Response,
     ticker: Optional[str] = Query(
         default=None,
         description="Ticker for intraday equity (e.g. ETH-USD). Omit for combined.",
@@ -778,6 +828,10 @@ async def get_equity_curve_intraday(
     starting_equity, high_of_day, low_of_day -- same format as FORTRESS/SAMSON.
 
     AGAPE-SPOT trades 24/7 so "day start" is midnight CT.
+
+    Emits X-AgapeSpot-Cache: HIT|MISS|BYPASS. Only the combined (ALL) path is
+    cached; per-ticker responses set BYPASS since they are cheap enough to
+    recompute every call.
     """
     ticker = _validate_ticker(ticker)
 
@@ -787,7 +841,11 @@ async def get_equity_curve_intraday(
 
     # Combined intraday: aggregate all tickers
     if ticker is None:
-        return await _get_combined_intraday_equity(date)
+        is_hit, payload = await _get_combined_intraday_equity(date)
+        response.headers[_CACHE_HEADER] = "HIT" if is_hit else "MISS"
+        return payload
+
+    response.headers[_CACHE_HEADER] = "BYPASS"
 
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
@@ -979,8 +1037,25 @@ async def get_equity_curve_intraday(
             conn.close()
 
 
-async def _get_combined_intraday_equity(date: Optional[str] = None):
-    """Aggregate intraday equity across ALL tickers for the combined view."""
+async def _get_combined_intraday_equity(
+    date: Optional[str] = None,
+) -> Tuple[bool, Dict]:
+    """Aggregate intraday equity across ALL tickers for the combined view.
+
+    Returns ``(is_hit, payload)``. ``is_hit`` is True when the payload was
+    served from the 5s response cache (no DB work done this call).
+    """
+    # 5s response cache: the combined path loops over _VALID_TICKERS with a
+    # live price fetch per ticker, and the frontend refreshes this every 15s
+    # across every AGAPE-SPOT tab. The executor cache already collapses the
+    # price fetches; this caches the DB aggregation on top of that.
+    cache_key = f"intraday:ALL:{date or 'today'}"
+    cache_now = time.time()
+    with _ROUTE_CACHE_LOCK:
+        hit = _ROUTE_CACHE.get(cache_key)
+        if hit and cache_now - hit[0] < 5.0:
+            return True, hit[1]
+
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
     current_time = now.strftime("%H:%M:%S")
@@ -991,7 +1066,7 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
     )
 
     if not get_connection:
-        return _intraday_fallback(today, now, current_time, total_starting, "ALL")
+        return False, _intraday_fallback(today, now, current_time, total_starting, "ALL")
 
     conn = None
     try:
@@ -1119,7 +1194,7 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
         low_of_day = min(all_equities) if all_equities else total_starting
         day_pnl = today_realized + total_unrealized
 
-        return {
+        result = {
             "success": True,
             "date": today,
             "ticker": "ALL",
@@ -1136,11 +1211,14 @@ async def _get_combined_intraday_equity(date: Optional[str] = None):
             "today_closed_count": today_closed_count,
             "open_positions_count": total_open_count,
         }
+        with _ROUTE_CACHE_LOCK:
+            _ROUTE_CACHE[cache_key] = (time.time(), result)
+        return False, result
     except Exception as e:
         logger.error(f"AGAPE-SPOT combined intraday equity error: {e}")
         import traceback
         traceback.print_exc()
-        return _intraday_fallback(today, now, current_time, total_starting, "ALL", str(e))
+        return False, _intraday_fallback(today, now, current_time, total_starting, "ALL", str(e))
     finally:
         if conn:
             conn.close()

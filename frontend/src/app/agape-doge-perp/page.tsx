@@ -83,10 +83,10 @@ export default function AgapeDogePerpPage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEDogePerpStatus()
   const { data: perfData } = useAGAPEDogePerpPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEDogePerpPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPEDogePerpSnapshot()
-  const { data: scansData } = useAGAPEDogePerpScanActivity(30)
-  const { data: closedData } = useAGAPEDogePerpClosedTrades(50)
-  const { data: mappingData } = useAGAPEDogePerpGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPEDogePerpSnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEDogePerpScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEDogePerpClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEDogePerpGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data

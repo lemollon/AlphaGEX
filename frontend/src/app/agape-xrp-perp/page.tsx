@@ -83,10 +83,10 @@ export default function AgapeXrpPerpPage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEXrpPerpStatus()
   const { data: perfData } = useAGAPEXrpPerpPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEXrpPerpPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPEXrpPerpSnapshot()
-  const { data: scansData } = useAGAPEXrpPerpScanActivity(30)
-  const { data: closedData } = useAGAPEXrpPerpClosedTrades(50)
-  const { data: mappingData } = useAGAPEXrpPerpGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPEXrpPerpSnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEXrpPerpScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEXrpPerpClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEXrpPerpGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data

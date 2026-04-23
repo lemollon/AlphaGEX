@@ -82,10 +82,10 @@ export default function AgapePage() {
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEStatus()
   const { data: perfData } = useAGAPEPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAGAPESnapshot()
-  const { data: scansData } = useAGAPEScanActivity(30)
-  const { data: closedData } = useAGAPEClosedTrades(50)
-  const { data: mappingData } = useAGAPEGexMapping()
+  const { data: snapshotData, isLoading: snapLoading } = useAGAPESnapshot({ enabled: activeTab === 'snapshot' })
+  const { data: scansData } = useAGAPEScanActivity(30, { enabled: activeTab === 'activity' })
+  const { data: closedData } = useAGAPEClosedTrades(50, { enabled: activeTab === 'history' })
+  const { data: mappingData } = useAGAPEGexMapping({ enabled: activeTab === 'config' })
 
   const status = statusData?.data
   const perf = perfData?.data
