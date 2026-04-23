@@ -7,6 +7,7 @@ import { getCTNow, getCTMinutes } from '@/lib/pt-tiers'
 import StatusCard from './StatusCard'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
+import LatestBriefCard from './LatestBriefCard'
 import PositionTable from './PositionTable'
 import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
@@ -484,17 +485,21 @@ export default function BotDashboard({
       <div>
         {tab === 'Equity Curve' && (
           <ComponentErrorBoundary fallback="Equity chart error">
-            <EquityChart
-              data={equity?.curve || []}
-              intradayData={intraday?.snapshots}
-              startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-              color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
-              title={`${bot.toUpperCase()} Equity Curve`}
-              liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
-              period={equityPeriod}
-              onPeriodChange={onPeriodChange}
-              bot={bot}
-            />
+            <div className="space-y-4">
+              <EquityChart
+                data={equity?.curve || []}
+                intradayData={intraday?.snapshots}
+                startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
+                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
+                title={`${bot.toUpperCase()} Equity Curve`}
+                liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
+                period={equityPeriod}
+                onPeriodChange={onPeriodChange}
+                bot={bot}
+              />
+              {/* Q1: SPARK-only market-risk brief card below the curve */}
+              {bot === 'spark' && <LatestBriefCard />}
+            </div>
           </ComponentErrorBoundary>
         )}
         {tab === 'IC Chart' && (
