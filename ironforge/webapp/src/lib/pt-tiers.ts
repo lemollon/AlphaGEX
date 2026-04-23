@@ -1,11 +1,15 @@
 /**
  * Sliding Profit Target tiers — must match the scanner schedule exactly.
  *
- * Schedule (Central Time):
- *   8:30 AM – 10:29 AM  → 30%  (MORNING)
- *   10:30 AM – 12:59 PM → 20%  (MIDDAY)
- *   1:00 PM – 2:44 PM   → 15%  (AFTERNOON)
+ * Schedule (Central Time) — FLAME/SPARK:
+ *   8:30 AM – 10:29 AM  → 50%  (MORNING)   — exit when cost-to-close ≤ 50% of credit → keep 50%
+ *   10:30 AM – 12:59 PM → 30%  (MIDDAY)    — exit when cost-to-close ≤ 30% of credit → keep 70%
+ *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON) — exit when cost-to-close ≤ 20% of credit → keep 80%
  *   2:45 PM+             → handled by EOD cutoff
+ *
+ * Commit O (Apr 2026): tiers loosened from 30/20/15 to 50/30/20 — fire
+ * earlier, take less profit per trade, but more often. Paper + Live both.
+ * INFERNO (0DTE) uses its own reversed 20/30/50 schedule in scanner.ts.
  */
 
 export interface PTTier {
@@ -17,7 +21,7 @@ export interface PTTier {
 }
 
 const MORNING: PTTier = {
-  pct: 0.30,
+  pct: 0.50,
   label: 'Morning',
   color: 'text-emerald-400',
   bgColor: 'bg-emerald-500/20',
@@ -25,7 +29,7 @@ const MORNING: PTTier = {
 }
 
 const MIDDAY: PTTier = {
-  pct: 0.20,
+  pct: 0.30,
   label: 'Midday',
   color: 'text-yellow-400',
   bgColor: 'bg-yellow-500/20',
@@ -33,7 +37,7 @@ const MIDDAY: PTTier = {
 }
 
 const AFTERNOON: PTTier = {
-  pct: 0.15,
+  pct: 0.20,
   label: 'Afternoon',
   color: 'text-orange-400',
   bgColor: 'bg-orange-500/20',
@@ -97,12 +101,16 @@ export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabe
 /** Format a close_reason string for display. Pass bot to get correct PT% for INFERNO. */
 export function formatCloseReason(reason: string, bot?: string): { text: string; color: string } {
   const isInferno = bot === 'inferno'
+  // FLAME/SPARK: 50/30/20 (Commit O, Apr 2026 — loosened from 30/20/15).
+  // INFERNO: 50/30/10 kept unchanged (its displayed label was already
+  // pre-existing; actual scanner behavior is 20/30/50 reversed — a display
+  // inconsistency that predates this change, not fixed here per scope).
   if (reason === 'profit_target_morning')
-    return { text: `Profit Target (Morning ${isInferno ? '50' : '30'}%)`, color: 'text-emerald-400' }
+    return { text: `Profit Target (Morning 50%)`, color: 'text-emerald-400' }
   if (reason === 'profit_target_midday')
-    return { text: `Profit Target (Midday ${isInferno ? '30' : '20'}%)`, color: 'text-yellow-400' }
+    return { text: `Profit Target (Midday 30%)`, color: 'text-yellow-400' }
   if (reason === 'profit_target_afternoon')
-    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '15'}%)`, color: 'text-orange-400' }
+    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '20'}%)`, color: 'text-orange-400' }
   if (reason === 'profit_target')
     return { text: 'Profit Target', color: 'text-emerald-400' }
   if (reason === 'stop_loss')
