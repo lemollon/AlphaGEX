@@ -325,6 +325,29 @@ CREATE TABLE IF NOT EXISTS production_equity_snapshots (
   note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+-- Commit Q1: market-risk briefs for SPARK (informational only; does NOT
+-- affect trading behavior). One row per brief (morning / hourly intraday /
+-- end-of-day debrief). summary is plain-English beginner-friendly prose
+-- from Claude; risk_score is 0-10; factors_json/raw_inputs_json are
+-- structured for later analysis. SPARK-only — the comparison is only
+-- meaningful for the 1DTE same-day-exit bot.
+CREATE TABLE IF NOT EXISTS spark_market_briefs (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  brief_date DATE NOT NULL,
+  brief_time TIMESTAMPTZ DEFAULT NOW(),
+  brief_type TEXT NOT NULL,
+  risk_score INT,
+  summary TEXT,
+  factors_json JSONB,
+  raw_inputs_json JSONB,
+  spy_price NUMERIC(10,4),
+  vix NUMERIC(8,3),
+  vix3m NUMERIC(8,3),
+  term_structure NUMERIC(8,4),
+  model TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_spark_market_briefs_date ON spark_market_briefs(brief_date DESC, brief_time DESC);
 `
 
 /**
