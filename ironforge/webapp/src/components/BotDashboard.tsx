@@ -8,6 +8,7 @@ import StatusCard from './StatusCard'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
 import LatestBriefCard from './LatestBriefCard'
+import MarketPulseTab from './MarketPulseTab'
 import PositionTable from './PositionTable'
 import TradeHistory from './TradeHistory'
 import LogsTable from './LogsTable'
@@ -58,7 +59,7 @@ function TabLoading() {
   )
 }
 
-const ALL_TABS = ['Equity Curve', 'IC Chart', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile'] as const
+const ALL_TABS = ['Equity Curve', 'IC Chart', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile', 'Market Pulse'] as const
 type Tab = (typeof ALL_TABS)[number]
 
 /** Only SPARK has sandbox/production accounts. FLAME and INFERNO are paper-only. */
@@ -66,6 +67,9 @@ const ACCOUNT_BOTS = new Set(['spark'])
 
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
+
+/** Tabs that only appear on SPARK (1DTE-specific features) */
+const SPARK_ONLY_TABS = new Set<Tab>(['Market Pulse'])
 
 /**
  * Bots gated by PDT. Empty for now: SPARK trades on a > $25K production
@@ -466,7 +470,11 @@ export default function BotDashboard({
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">
-        {ALL_TABS.filter(t => (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts) && (t !== 'PDT' || PDT_BOTS.has(bot))).map((t) => (
+        {ALL_TABS.filter(t =>
+          (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts)
+          && (t !== 'PDT' || PDT_BOTS.has(bot))
+          && (!SPARK_ONLY_TABS.has(t) || bot === 'spark')
+        ).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -581,6 +589,11 @@ export default function BotDashboard({
               : <ComponentErrorBoundary fallback="Reconcile error">
                   <ReconcileTab data={reconData} apiUrl={withPerson(`/api/${bot}/reconcile`)} />
                 </ComponentErrorBoundary>
+        )}
+        {tab === 'Market Pulse' && bot === 'spark' && (
+          <ComponentErrorBoundary fallback="Market Pulse error">
+            <MarketPulseTab />
+          </ComponentErrorBoundary>
         )}
       </div>
     </div>

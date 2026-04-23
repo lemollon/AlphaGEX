@@ -348,6 +348,18 @@ CREATE TABLE IF NOT EXISTS spark_market_briefs (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_spark_market_briefs_date ON spark_market_briefs(brief_date DESC, brief_time DESC);
+-- Commit S1: VIX snapshot table for risk-signal ROC computation.
+-- Shared across bots (only SPARK reads it for now via Market Pulse tab).
+-- Scanner writes one row per scan cycle (1-minute cadence → ~390 rows per
+-- RTH session, small footprint).
+CREATE TABLE IF NOT EXISTS vix_snapshots (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  ts TIMESTAMPTZ DEFAULT NOW(),
+  vix NUMERIC(8,3),
+  vvix NUMERIC(8,3),
+  spy_price NUMERIC(10,4)
+);
+CREATE INDEX IF NOT EXISTS idx_vix_snapshots_ts ON vix_snapshots(ts DESC);
 `
 
 /**
