@@ -41,6 +41,7 @@ import {
   closeOrphanSandboxPositions,
   getOrderFillPrice,
   getTradierOrderDetails,
+  getTradierOrders,
   getAccountIdForKey,
   buildOccSymbol,
   getAccountsForBot,
@@ -2718,6 +2719,93 @@ async function reconcileCollateral(bot: BotDef): Promise<void> {
 /*  but the DB still shows them as open. Closes the DB records.         */
 /* ------------------------------------------------------------------ */
 
+/**
+ * R2: Recover real close price + P&L from Tradier's order history.
+ *
+ * Used when a production position is detected as "broker gone" but we have
+ * no sandbox_close_order_id to look up a specific close order (e.g., the
+ * trigger path closed legs without writing a tracked order_id first, which
+ * is exactly what happened on today's SPARK live trade at 8:56 AM CT).
+ *
+ * Strategy: list all of today's filled orders on this account, keep the
+ * buy_to_close / sell_to_close option fills, sum them as a net debit, and
+ * divide by contracts × 100 to get the effective per-contract close price.
+ *
+ * Correctness relies on SPARK's "max 1 trade per day" rule — all close
+ * fills on a given production account on a given trading day belong to
+ * the same IC. If that rule ever changes, this helper needs to match by
+ * OCC symbol (requires lifting option_symbol into getTradierOrderDetails).
+ *
+ * Returns null when no close fills are found (caller falls through to the
+ * next recovery tier — normally pending_limit, then entry_credit_fallback).
+ */
+async function recoverClosePnlFromOrderHistory(args: {
+  apiKey: string
+  baseUrl: string
+  personName: string
+  entryCredit: number
+  contracts: number
+  /** Close time on the DB row — used only for logging context. */
+  closeTimeHintIso?: string | null
+}): Promise<{ close_price: number; realized_pnl: number; debit_total: number; matched_orders: number; source: 'tradier_order_history' } | null> {
+  const { apiKey, baseUrl, personName, entryCredit, contracts, closeTimeHintIso } = args
+  const accountId = await getAccountIdForKey(apiKey, baseUrl)
+  if (!accountId) return null
+
+  const orders = await getTradierOrders(apiKey, accountId, baseUrl, 'filled')
+  if (!orders || orders.length === 0) return null
+
+  // Today's trading day (CT). Tradier returns transaction_date in UTC ISO.
+  const ctTodayString = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+    .toISOString().slice(0, 10)
+
+  // Keep close-side option fills from today only.
+  const closeFills = orders.filter((o) => {
+    if (o.class !== 'option' && o.class !== 'multileg') return false
+    if (o.status !== 'filled' && o.status !== 'partially_filled') return false
+    const side = (o.side ?? '').toLowerCase()
+    if (side !== 'buy_to_close' && side !== 'sell_to_close') return false
+    if (!o.transaction_date) return false
+    const txCt = new Date(new Date(o.transaction_date).toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+      .toISOString().slice(0, 10)
+    return txCt === ctTodayString
+  })
+
+  if (closeFills.length === 0) {
+    console.warn(
+      `[scanner] R2 recoverClosePnlFromOrderHistory: no today's close fills at ${personName} ` +
+      `(checked ${orders.length} orders). closeTimeHint=${closeTimeHintIso ?? 'n/a'}`,
+    )
+    return null
+  }
+
+  // Sum net debit across all close fills.
+  // buy_to_close  → paid     = debit outflow (positive debit)
+  // sell_to_close → received = credit inflow (negative debit / offsetting)
+  // Each fill is at per-share price; quantity is #contracts; × 100 to dollars.
+  let debitTotal = 0
+  for (const o of closeFills) {
+    const qty = o.exec_quantity ?? o.quantity ?? 0
+    const px = o.avg_fill_price ?? o.last_fill_price ?? 0
+    if (!qty || !px) continue
+    const dollarValue = px * qty * 100
+    debitTotal += (o.side === 'buy_to_close') ? dollarValue : -dollarValue
+  }
+
+  // Per-contract close price so it plugs into the same math as fill-price recovery.
+  // (entryCredit - close_price) × 100 × contracts == realized_pnl in dollars.
+  const closePrice = Math.max(0, debitTotal / (contracts * 100))
+  const realized = Math.round((entryCredit - closePrice) * 100 * contracts * 100) / 100
+
+  return {
+    close_price: Math.round(closePrice * 10000) / 10000,
+    realized_pnl: realized,
+    debit_total: Math.round(debitTotal * 100) / 100,
+    matched_orders: closeFills.length,
+    source: 'tradier_order_history',
+  }
+}
+
 async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
   try {
     const posTable = botTable(bot.name, 'positions')
@@ -2801,7 +2889,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         const limitPriceHint = typeof pendingInfo._limit_price === 'number' ? pendingInfo._limit_price : null
 
         let recoveredPrice: number | null = null
-        let recoverySource: 'tradier_fill' | 'pending_limit' | 'entry_credit_fallback' = 'entry_credit_fallback'
+        let recoverySource: 'tradier_fill' | 'pending_limit' | 'tradier_order_history' | 'entry_credit_fallback' = 'entry_credit_fallback'
         let tradierOrderStatus: string | null = null
         if (orderId != null) {
           try {
@@ -2826,6 +2914,39 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         if (recoveredPrice == null && limitPriceHint != null && limitPriceHint > 0) {
           recoveredPrice = limitPriceHint
           recoverySource = 'pending_limit'
+        }
+
+        // R2 tier 4: reconstruct close P&L from Tradier's order history when
+        // neither a tracked close order_id nor a pending limit price exists.
+        // Covers today's 8:56 AM SPARK case where the trigger path closed
+        // the legs as 4 separate single-leg markets without ever writing a
+        // sandbox_close_order_id — so tiers 1-3 all returned null.
+        if (recoveredPrice == null) {
+          try {
+            const prodAcct = prodAccounts.find((a) => a.name === person)
+            if (prodAcct) {
+              const hist = await recoverClosePnlFromOrderHistory({
+                apiKey: prodAcct.apiKey,
+                baseUrl: prodAcct.baseUrl,
+                personName: person,
+                entryCredit,
+                contracts,
+                closeTimeHintIso: null,
+              })
+              if (hist != null) {
+                recoveredPrice = hist.close_price
+                recoverySource = 'tradier_order_history'
+                console.log(
+                  `[scanner] R2 TIER-4 RECOVERY ${pid}: debit_total=$${hist.debit_total.toFixed(2)} ` +
+                  `over ${hist.matched_orders} close orders → close_price=$${hist.close_price.toFixed(4)}, ` +
+                  `realized=$${hist.realized_pnl.toFixed(2)}`,
+                )
+              }
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[scanner] R2 TIER-4 recovery failed ${pid}: ${msg}`)
+          }
         }
 
         const effectiveClosePrice = recoveredPrice ?? entryCredit
