@@ -493,6 +493,7 @@ export default function BotDashboard({
               liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
               period={equityPeriod}
               onPeriodChange={onPeriodChange}
+              bot={bot}
             />
           </ComponentErrorBoundary>
         )}
