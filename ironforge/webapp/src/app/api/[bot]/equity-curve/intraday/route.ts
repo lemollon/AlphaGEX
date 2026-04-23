@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getLoadedSandboxAccountsAsync, getAccountIdForKey, getTradierBalanceDetail } from '@/lib/tradier'
 import { isMarketOpen } from '@/lib/pt-tiers'
 
 export const dynamic = 'force-dynamic'
@@ -48,17 +48,58 @@ export async function GET(
       ),
     ])
 
-    const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
+    let startingCapital = num(capitalRows[0]?.starting_capital) || 10000
 
-    const snapshots = snapshotRows.map((r) => ({
-      timestamp: r.snapshot_time || null,
-      balance: num(r.balance),
-      realized_pnl: num(r.realized_pnl),
-      unrealized_pnl: num(r.unrealized_pnl),
-      equity: num(r.balance) + num(r.unrealized_pnl),
-      open_positions: int(r.open_positions),
-      note: r.note,
-    }))
+    // FLAME intraday rebase: scanner writes snapshot.balance against the
+    // paper_account $10K basis, but the /flame top card shows the live
+    // Tradier User sandbox balance. Rebase the curve so the Y-axis matches
+    // the top card — otherwise the chart says "Balance: $9,800" while the
+    // Balance card says "$68,447". Same P&L shape, Tradier basis.
+    //
+    // today_starting_basis = Tradier total_equity − Tradier close_pl − Tradier open_pl
+    //   (= Tradier balance at start of today)
+    // rebased_balance      = snapshot.balance + (today_starting_basis − paper_starting_capital)
+    // rebased_equity       = rebased_balance + snapshot.unrealized_pnl
+    //
+    // On Tradier failure: keep scanner's paper-basis balance (same as before).
+    let rebaseOffset = 0
+    let rebaseSource: 'tradier' | 'paper_account' = 'paper_account'
+    if (bot === 'flame') {
+      try {
+        const accts = await getLoadedSandboxAccountsAsync()
+        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
+        if (userAcct) {
+          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
+          if (accountId) {
+            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
+            if (bal && bal.total_equity != null) {
+              const tradierEquity = bal.total_equity
+              const tradierClosePl = bal.close_pl ?? 0
+              const tradierOpenPl = bal.open_pl ?? 0
+              const todayStartingBasis = Math.round((tradierEquity - tradierClosePl - tradierOpenPl) * 100) / 100
+              rebaseOffset = Math.round((todayStartingBasis - startingCapital) * 100) / 100
+              startingCapital = todayStartingBasis
+              rebaseSource = 'tradier'
+            }
+          }
+        }
+      } catch { /* fall back to paper basis */ }
+    }
+
+    const snapshots = snapshotRows.map((r) => {
+      const rawBalance = num(r.balance)
+      const rebasedBalance = Math.round((rawBalance + rebaseOffset) * 100) / 100
+      const unrealized = num(r.unrealized_pnl)
+      return {
+        timestamp: r.snapshot_time || null,
+        balance: rebasedBalance,
+        realized_pnl: num(r.realized_pnl),
+        unrealized_pnl: unrealized,
+        equity: Math.round((rebasedBalance + unrealized) * 100) / 100,
+        open_positions: int(r.open_positions),
+        note: r.note,
+      }
+    })
 
     // Compute live unrealized P&L from open positions via Tradier
     let liveUnrealizedPnl = 0
@@ -140,6 +181,9 @@ export async function GET(
       snapshots,
       live_unrealized_pnl: liveUnrealizedPnl,
       open_position_count: openPositions.length,
+      // FLAME-only: tells the operator whether the curve is rebased to
+      // Tradier or still on the $10K paper basis (fallback).
+      rebase_source: rebaseSource,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
