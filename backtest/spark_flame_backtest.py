@@ -57,6 +57,32 @@ BOT_CONFIGS = {
         "max_contracts": 10,
         "account_size": 10000.0,
     },
+    "inferno_05": {
+        "dte": 0,
+        "symbol": "SPY",
+        "sd_multiplier": 1.0,
+        "spread_width": 5,
+        "min_credit": 0.05,
+        "profit_target_pct": 50.0,
+        "stop_loss_pct": 200.0,
+        "vix_skip": 32.0,
+        "buying_power_pct": 85.0,
+        "max_contracts": 10,
+        "account_size": 10000.0,
+    },
+    "inferno_15": {
+        "dte": 0,
+        "symbol": "SPY",
+        "sd_multiplier": 1.0,
+        "spread_width": 5,
+        "min_credit": 0.15,
+        "profit_target_pct": 50.0,
+        "stop_loss_pct": 200.0,
+        "vix_skip": 32.0,
+        "buying_power_pct": 85.0,
+        "max_contracts": 10,
+        "account_size": 10000.0,
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -405,9 +431,11 @@ def run_backtest(
 
         exp_date = exp_options["expiration"].iloc[0]
 
-        # Strike selection: 1.2 SD move from SPY Open (simulates 9:35am entry)
+        # Strike selection: SD move from SPY Open (simulates 9:35am entry)
         iv_approx = vix_val / 100.0
-        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_target / 252.0)
+        # For 0DTE, use 1 trading day for expected move calc (position is open ~6 hours)
+        dte_for_calc = max(dte_target, 1)
+        sd = spy_open * cfg["sd_multiplier"] * iv_approx * sqrt(dte_for_calc / 252.0)
 
         short_put_strike = round(spy_open - sd)
         short_call_strike = round(spy_open + sd)
@@ -421,13 +449,25 @@ def run_backtest(
         lc_ask = get_price(exp_options, long_call_strike, "call", "ask")
 
         if any(p is None for p in [sp_bid, sc_bid, lp_ask, lc_ask]):
-            skipped["MISSING_QUOTES"] += 1
-            continue
-
-        net_credit = (sp_bid + sc_bid) - (lp_ask + lc_ask)
-        if net_credit < cfg["min_credit"]:
-            skipped["CREDIT_TOO_LOW"] += 1
-            continue
+            if dte_target == 0:
+                # 0DTE: EOD option prices are often zero (expired worthless)
+                # Estimate credit from the expected move and spread width
+                # Typical 0DTE IC credit is 15-30% of spread width
+                estimated_credit_pct = 0.20  # 20% of spread width is conservative
+                net_credit = cfg["spread_width"] * estimated_credit_pct
+                if net_credit < cfg["min_credit"]:
+                    skipped["CREDIT_TOO_LOW"] += 1
+                    continue
+                credit_source = "ESTIMATED"
+            else:
+                skipped["MISSING_QUOTES"] += 1
+                continue
+        else:
+            net_credit = (sp_bid + sc_bid) - (lp_ask + lc_ask)
+            if net_credit < cfg["min_credit"]:
+                skipped["CREDIT_TOO_LOW"] += 1
+                continue
+            credit_source = "MARKET"
 
         # Position sizing
         available_bp = account_balance * (cfg["buying_power_pct"] / 100.0)
@@ -452,6 +492,7 @@ def run_backtest(
             "long_put": long_put_strike,
             "long_call": long_call_strike,
             "net_credit": round(net_credit, 4),
+            "credit_source": credit_source,
             "contracts": contracts,
             "collateral": round(collateral_per_contract * contracts, 2),
             "max_profit": round(net_credit * 100 * contracts, 2),
@@ -1020,8 +1061,9 @@ def main():
         description="SPARK/FLAME SPY Iron Condor Backtester"
     )
     parser.add_argument(
-        "--bot", required=True, choices=["spark", "flame", "both"],
-        help="Which bot to backtest",
+        "--bot", required=True,
+        choices=["spark", "flame", "inferno_05", "inferno_15", "inferno", "both", "all"],
+        help="Which bot to backtest (inferno = both inferno variants)",
     )
     parser.add_argument("--start", default="2019-06-01", help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", default="2025-11-30", help="End date (YYYY-MM-DD)")
@@ -1036,7 +1078,14 @@ def main():
     )
     args = parser.parse_args()
 
-    bots = ["spark", "flame"] if args.bot == "both" else [args.bot]
+    if args.bot == "both":
+        bots = ["spark", "flame"]
+    elif args.bot == "inferno":
+        bots = ["inferno_05", "inferno_15"]
+    elif args.bot == "all":
+        bots = ["spark", "flame", "inferno_05", "inferno_15"]
+    else:
+        bots = [args.bot]
 
     if args.sweep:
         all_sweep_results = {}
@@ -1044,7 +1093,7 @@ def main():
             all_sweep_results[bot] = run_parameter_sweep(
                 bot, args.start, args.end, args.export, args.parquet
             )
-        if len(bots) == 2:
+        if "spark" in all_sweep_results and "flame" in all_sweep_results:
             print_consolidated_scorecard(
                 all_sweep_results["spark"], all_sweep_results["flame"]
             )
