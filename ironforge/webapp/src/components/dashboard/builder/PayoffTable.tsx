@@ -8,11 +8,11 @@
  * on day T — it does NOT hold to next-day expiration — so the theoretical
  * max profit is unreachable. The table makes that distinction explicit:
  *
- *   SAME-DAY EXITS  (what the bot actually targets)
+ *   SAME-DAY EXITS  (what the bot actually targets — FLAME/SPARK 50/30/20)
  *     - Now (Live)        → current MTM, interpolated from pnl_curve at spot
- *     - Morning PT 30%    → credit × 0.70 × 100 × contracts
- *     - Midday PT 20%     → credit × 0.80 × 100 × contracts
- *     - PM PT 15%         → credit × 0.85 × 100 × contracts
+ *     - Morning PT 50%    → credit × 0.50 × 100 × contracts (keep 50% of credit)
+ *     - Midday PT 30%     → credit × 0.70 × 100 × contracts (keep 70% of credit)
+ *     - PM PT 20%         → credit × 0.80 × 100 × contracts (keep 80% of credit)
  *     - EOD Force 2:50 PM → "varies" (backstop, P&L unknowable until close)
  *
  *   THEORETICAL CEILING  (not reached by SPARK)

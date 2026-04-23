@@ -85,11 +85,11 @@ export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabe
 
   if (mins < 630) {
     // Morning → Midday at 10:30 AM (630 min = 37800 sec)
-    return { seconds: 37800 - totalSecs, nextLabel: '20% Midday' }
+    return { seconds: 37800 - totalSecs, nextLabel: '30% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
-    return { seconds: 46800 - totalSecs, nextLabel: '15% Afternoon' }
+    return { seconds: 46800 - totalSecs, nextLabel: '20% Afternoon' }
   }
   if (mins < 885) {
     // Afternoon → EOD at 2:45 PM (885 min = 53100 sec)
