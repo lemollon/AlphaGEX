@@ -43,6 +43,7 @@ import {
   getTradierOrderDetails,
   getTradierOrders,
   getAccountIdForKey,
+  getRawQuotes,
   buildOccSymbol,
   getAccountsForBot,
   getAccountsForBotAsync,
@@ -4013,6 +4014,36 @@ async function runAllScans(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Sandbox health check failed (non-fatal): ${msg}`)
   })
+
+  // Commit S1: snapshot VIX + VVIX + SPY each cycle for the Market Pulse
+  // tab's intraday ROC computation. Shared table, fires ONCE per cycle
+  // (not per-bot). Market-hours-only so off-hours snapshots don't pollute
+  // the rate-of-change math. Best-effort — a failure here must not block
+  // the scan.
+  if (isMarketOpen(ct)) {
+    try {
+      const vixQuotes = await getRawQuotes(['VIX', 'VVIX', 'SPY'])
+      const parseLast = (sym: string): number | null => {
+        const q = vixQuotes[sym]
+        if (!q) return null
+        const raw = (q as { last?: unknown }).last
+        const n = typeof raw === 'number' ? raw : (typeof raw === 'string' ? parseFloat(raw) : NaN)
+        return Number.isFinite(n) ? n : null
+      }
+      const vix = parseLast('VIX')
+      const vvix = parseLast('VVIX')
+      const spy = parseLast('SPY')
+      if (vix != null || vvix != null || spy != null) {
+        await dbExecute(
+          `INSERT INTO vix_snapshots (vix, vvix, spy_price) VALUES ($1, $2, $3)`,
+          [vix, vvix, spy],
+        )
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] VIX snapshot failed (non-fatal): ${msg}`)
+    }
+  }
 
   // Run all bots in parallel
   await Promise.allSettled(
