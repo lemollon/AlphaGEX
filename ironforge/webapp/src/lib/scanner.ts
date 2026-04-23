@@ -106,8 +106,8 @@ interface BotConfig {
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
+  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15 },
 }
 
@@ -417,8 +417,8 @@ function isAfterEodCutoff(ct: Date): boolean {
  * Returns [profitTargetFraction, tierLabel] based on current CT time.
  * PT slides DOWN as the day progresses.
  *
- * FLAME/SPARK (base=0.30): MORNING 30% → MIDDAY 20% → AFTERNOON 15%
- * INFERNO    (0DTE):      MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ * FLAME/SPARK (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 20%
+ * INFERNO    (0DTE):       MORNING 20% → MIDDAY 30% → AFTERNOON 50%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
  */
@@ -431,10 +431,10 @@ function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [num
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
     if (isInferno) return [0.30, 'MIDDAY']
-    return [Math.max(0.10, basePt - 0.10), 'MIDDAY']
+    return [Math.max(0.10, basePt - 0.20), 'MIDDAY']
   } else {
     if (isInferno) return [0.50, 'AFTERNOON']
-    return [Math.max(0.10, basePt - 0.15), 'AFTERNOON']
+    return [Math.max(0.10, basePt - 0.30), 'AFTERNOON']
   }
 }
 

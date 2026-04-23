@@ -137,33 +137,40 @@ export default function PayoffTable({
       color: nowPnl >= 0 ? 'text-emerald-400' : 'text-red-400',
       barColor: nowPnl >= 0 ? 'bg-emerald-500/40' : 'bg-red-500/40',
     },
+    // Commit O (Apr 2026): tiers loosened from 30/20/15 to 50/30/20 for
+    // FLAME/SPARK. The bot fires earlier, takes less profit per trade,
+    // but more often. INFERNO's own 20/30/50 reversed schedule isn't
+    // reflected here — this table is currently SPARK-centric (displayed
+    // via BuilderTab, which historically only the 1DTE bot used for
+    // real exits). If INFERNO's IC Chart Table ever matters, we'll make
+    // PayoffTable bot-aware in a follow-up.
     {
       kind: 'morning',
-      label: 'Morning PT (30%)',
+      label: 'Morning PT (50%)',
       sublabel: 'before 10:30 AM CT',
-      pnl: pnlAtTier(0.30),
-      pctOfMax: 70,
-      barPct: 70,
+      pnl: pnlAtTier(0.50),
+      pctOfMax: 50,
+      barPct: 50,
       color: 'text-emerald-400',
       barColor: 'bg-emerald-500/40',
     },
     {
       kind: 'midday',
-      label: 'Midday PT (20%)',
+      label: 'Midday PT (30%)',
       sublabel: '10:30 AM – 1:00 PM CT',
-      pnl: pnlAtTier(0.20),
-      pctOfMax: 80,
-      barPct: 80,
+      pnl: pnlAtTier(0.30),
+      pctOfMax: 70,
+      barPct: 70,
       color: 'text-yellow-400',
       barColor: 'bg-yellow-500/40',
     },
     {
       kind: 'afternoon',
-      label: 'PM PT (15%)',
+      label: 'PM PT (20%)',
       sublabel: '1:00 PM – 2:45 PM CT',
-      pnl: pnlAtTier(0.15),
-      pctOfMax: 85,
-      barPct: 85,
+      pnl: pnlAtTier(0.20),
+      pctOfMax: 80,
+      barPct: 80,
       color: 'text-orange-400',
       barColor: 'bg-orange-500/40',
     },
