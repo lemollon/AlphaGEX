@@ -1064,6 +1064,31 @@ async function monitorSinglePosition(
   // EOD cutoff or stale holdover → force close
   if (isAfterEodCutoff(ct) || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
+    // Commit R1: DB-level close-trigger log BEFORE we place any orders.
+    // Wrapped in try/catch so a log failure can never block the close.
+    try {
+      await dbExecute(
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          'CLOSE_TRIGGER',
+          `${reason.toUpperCase()}_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
+          `entry_credit=${entryCredit.toFixed(4)} contracts=${contracts} ` +
+          `is_stale=${isStaleHoldover} is_eod=${isAfterEodCutoff(ct)}`,
+          JSON.stringify({
+            trigger: reason,
+            position_id: pid,
+            entry_credit: entryCredit,
+            contracts,
+            is_stale_holdover: isStaleHoldover,
+            is_after_eod: isAfterEodCutoff(ct),
+            open_date: openDate,
+          }),
+          bot.dte,
+          pos.person ?? null,
+        ],
+      )
+    } catch { /* log failure must not block close */ }
     try {
       await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
@@ -1101,6 +1126,32 @@ async function monitorSinglePosition(
         `[scanner] ${bot.name.toUpperCase()} ${pid}: ${failCount} consecutive MTM failures — ` +
         `force-closing at entry credit $${entryCredit.toFixed(4)}`,
       )
+      // Commit R1: DB-level trigger log. The pre-existing console.error above
+      // only hits stdout, not spark_logs — which is exactly why today's 8:56 AM
+      // close had no traceable trigger log. This INSERT makes the next such
+      // event visible in /api/spark/logs.
+      try {
+        await dbExecute(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            'CLOSE_TRIGGER',
+            `DATA_FEED_FAILURE_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
+            `fail_count=${failCount}/${MAX_CONSECUTIVE_MTM_FAILURES} ` +
+            `entry_credit=${entryCredit.toFixed(4)} contracts=${contracts}`,
+            JSON.stringify({
+              trigger: 'data_feed_failure',
+              position_id: pid,
+              consecutive_mtm_failures: failCount,
+              threshold: MAX_CONSECUTIVE_MTM_FAILURES,
+              entry_credit: entryCredit,
+              contracts,
+            }),
+            bot.dte,
+            pos.person ?? null,
+          ],
+        )
+      } catch { /* log failure must not block close */ }
       await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
@@ -1130,6 +1181,33 @@ async function monitorSinglePosition(
   // (e.g., trigger at 20% based on last trades, but market fill at only 14%).
   // If the limit doesn't fill immediately, the deferred-close mechanism retries next cycle.
   if (costToCloseLast <= profitTargetPrice) {
+    // Commit R1: DB-level trigger log so we can definitively confirm PT
+    // fired (or didn't) on the next premature-close investigation.
+    try {
+      await dbExecute(
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          'CLOSE_TRIGGER',
+          `PT_FIRED pos=${pid} tier=${ptTier} ct_time=${ct.toISOString()} ` +
+          `cost_to_close_last=${costToCloseLast.toFixed(4)} threshold=${profitTargetPrice.toFixed(4)} ` +
+          `entry_credit=${entryCredit.toFixed(4)} pt_pct=${ptFraction} contracts=${contracts}`,
+          JSON.stringify({
+            trigger: 'profit_target',
+            tier: ptTier,
+            position_id: pid,
+            cost_to_close_last: costToCloseLast,
+            cost_to_close_mid: costToCloseMid,
+            threshold: profitTargetPrice,
+            pt_fraction: ptFraction,
+            entry_credit: entryCredit,
+            contracts,
+          }),
+          bot.dte,
+          pos.person ?? null,
+        ],
+      )
+    } catch { /* log failure must not block close */ }
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
@@ -1140,6 +1218,30 @@ async function monitorSinglePosition(
 
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses
   if (costToClose >= stopLossPrice) {
+    // Commit R1: DB-level trigger log.
+    try {
+      await dbExecute(
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          'CLOSE_TRIGGER',
+          `STOP_LOSS_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
+          `cost_to_close=${costToClose.toFixed(4)} threshold=${stopLossPrice.toFixed(4)} ` +
+          `entry_credit=${entryCredit.toFixed(4)} sl_mult=${botCfg.sl_mult} contracts=${contracts}`,
+          JSON.stringify({
+            trigger: 'stop_loss',
+            position_id: pid,
+            cost_to_close: costToClose,
+            threshold: stopLossPrice,
+            sl_mult: botCfg.sl_mult,
+            entry_credit: entryCredit,
+            contracts,
+          }),
+          bot.dte,
+          pos.person ?? null,
+        ],
+      )
+    } catch { /* log failure must not block close */ }
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
