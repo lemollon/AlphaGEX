@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -277,6 +277,55 @@ export async function GET(
       } catch (err: unknown) {
         tradierBalanceFetchError = err instanceof Error ? err.message : String(err)
         console.warn(`[status] ${bot}: production balance fetch failed (${tradierBalanceFetchError}) — falling back to paper_account`)
+      }
+    }
+
+    // FLAME sandbox mirror: balance/BP/P&L come from the Tradier User sandbox
+    // account, not the DB paper_account. The scanner re-seeds paper_account
+    // with DEFAULT_CONFIG.starting_capital each cycle, so paper_account alone
+    // would never reflect the real Tradier balance. This mirrors the SPARK
+    // Live-mode override pattern but scoped to User sandbox.
+    //
+    // On any Tradier failure we keep the paper_account-derived values already
+    // computed above and set source_error — no fabrication.
+    if (bot === 'flame') {
+      try {
+        const accts = await getLoadedSandboxAccountsAsync()
+        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
+        if (userAcct) {
+          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
+          if (accountId) {
+            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
+            if (bal && bal.total_equity != null) {
+              balance = Math.round(bal.total_equity * 100) / 100
+              if (bal.option_buying_power != null) {
+                buyingPower = Math.round(bal.option_buying_power * 100) / 100
+                liveCollateral = Math.round(Math.max(0, bal.total_equity - bal.option_buying_power) * 100) / 100
+              }
+              if (bal.open_pl != null) {
+                tradierOpenPlOverride = Math.round(bal.open_pl * 100) / 100
+              }
+              // Realized = Tradier close_pl (day-scoped). Mirror it to both
+              // cumulative_pnl and today_realized so the dashboard matches
+              // what the Tradier web UI shows.
+              const tradierClosePl = bal.close_pl != null ? Math.round(bal.close_pl * 100) / 100 : 0
+              realizedPnl = tradierClosePl
+              todayRealizedOverride = tradierClosePl
+              // Back-compute starting_capital so balance = starting + realized holds
+              startingCapital = Math.round((balance - realizedPnl) * 100) / 100
+              accountSource = 'tradier'
+            } else {
+              tradierBalanceFetchError = 'no_user_sandbox_balance_returned'
+            }
+          } else {
+            tradierBalanceFetchError = 'no_account_id_for_user_sandbox_key'
+          }
+        } else {
+          tradierBalanceFetchError = 'no_user_sandbox_account_loaded'
+        }
+      } catch (err: unknown) {
+        tradierBalanceFetchError = err instanceof Error ? err.message : String(err)
+        console.warn(`[status] flame: User sandbox balance fetch failed (${tradierBalanceFetchError}) — falling back to paper_account`)
       }
     }
 
