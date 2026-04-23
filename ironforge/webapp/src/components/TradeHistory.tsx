@@ -17,6 +17,11 @@ interface Trade {
   close_time: string
   // Tradier sandbox order IDs (FLAME only)
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
+  // SPARK-only: counterfactual P&L if held to 2:59 PM CT instead of exiting
+  // via PT tier. `undefined` on FLAME/INFERNO; `null` on SPARK trades that
+  // haven't been computed yet (e.g. older than Tradier's 40-day window).
+  hypothetical_eod_pnl?: number | null
+  hypothetical_eod_computed_at?: string | null
 }
 
 function formatCT(ts: string | null): string {
@@ -40,6 +45,11 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
     )
   }
 
+  // SPARK-only "Hypo @ 2:59" column. We surface it whenever we have at
+  // least one trade where the field is defined (i.e. bot === 'spark') so
+  // FLAME and INFERNO get exactly the original 7-column table.
+  const showHypo = bot === 'spark' && trades.some((t) => t.hypothetical_eod_pnl !== undefined)
+
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
       <table className="w-full text-sm">
@@ -51,6 +61,16 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             <th className="text-right p-3">Credit</th>
             <th className="text-right p-3">Close $</th>
             <th className="text-right p-3">P&L</th>
+            {showHypo && (
+              <th className="text-right p-3" title="Counterfactual: P&L if SPARK had held to 2:59 PM CT instead of exiting via PT tier">
+                Hypo @ 2:59
+              </th>
+            )}
+            {showHypo && (
+              <th className="text-right p-3" title="Actual P&L − Hypothetical. Positive = early exit beat the late-day hold; negative = left money on the table">
+                Δ vs Hypo
+              </th>
+            )}
             <th className="text-left p-3">Reason</th>
           </tr>
         </thead>
@@ -59,6 +79,19 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             const positive = trade.realized_pnl >= 0
             const hasSandbox = trade.sandbox_order_ids && Object.keys(trade.sandbox_order_ids).length > 0
             const reason = formatCloseReason(trade.close_reason, bot)
+            const hypo = trade.hypothetical_eod_pnl
+            const hypoAvailable = hypo != null && Number.isFinite(hypo)
+            const delta = hypoAvailable ? trade.realized_pnl - hypo! : null
+            // Color: green if early exit beat hypothetical (delta > 0),
+            // amber if within ±$5 (≈ noise), red if hypothetical beat
+            // actual (we left money on the table by exiting early).
+            const deltaColor = delta == null
+              ? 'text-forge-muted'
+              : Math.abs(delta) < 5
+                ? 'text-amber-400'
+                : delta > 0
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{formatCT(trade.close_time)}</td>
@@ -89,6 +122,16 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
                 <td className={`p-3 text-right font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>
+                {showHypo && (
+                  <td className={`p-3 text-right font-mono ${hypoAvailable ? (hypo! >= 0 ? 'text-emerald-300' : 'text-red-300') : 'text-forge-muted'}`}>
+                    {hypoAvailable ? `${hypo! >= 0 ? '+' : ''}$${hypo!.toFixed(2)}` : '—'}
+                  </td>
+                )}
+                {showHypo && (
+                  <td className={`p-3 text-right font-mono ${deltaColor}`}>
+                    {delta == null ? '—' : `${delta >= 0 ? '+' : ''}$${delta.toFixed(2)}`}
+                  </td>
+                )}
                 <td className="p-3">
                   <span className={`text-xs font-medium ${reason.color}`}>
                     {reason.text}
