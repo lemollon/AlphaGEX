@@ -71,19 +71,19 @@ export default function PTTimeline() {
           className="absolute text-emerald-400"
           style={{ left: pct(MARKET_OPEN), width: widthPct(MARKET_OPEN, MIDDAY_START), textAlign: 'center', display: 'inline-block' }}
         >
-          Morning 30%
+          Morning 50%
         </span>
         <span
           className="absolute text-yellow-400"
           style={{ left: pct(MIDDAY_START), width: widthPct(MIDDAY_START, AFTERNOON_START), textAlign: 'center', display: 'inline-block' }}
         >
-          Midday 20%
+          Midday 30%
         </span>
         <span
           className="absolute text-orange-400"
           style={{ left: pct(AFTERNOON_START), width: widthPct(AFTERNOON_START, EOD_START), textAlign: 'center', display: 'inline-block' }}
         >
-          PM 15%
+          PM 20%
         </span>
         <span
           className="absolute text-red-400"
