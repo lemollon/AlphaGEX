@@ -20,6 +20,12 @@ interface CurvePoint {
   pnl: number
   cumulative_pnl: number
   equity: number
+  // SPARK-only counterfactual fields (Commit M). Populated by the
+  // /api/spark/equity-curve route when the position has a computed
+  // hypothetical_eod_pnl. Hidden on FLAME/INFERNO.
+  hypothetical_pnl?: number | null
+  cumulative_hypothetical_pnl?: number | null
+  hypothetical_equity?: number | null
 }
 
 interface IntradayPoint {
@@ -47,6 +53,7 @@ export default function EquityChart({
   period,
   onPeriodChange,
   liveUnrealizedPnl,
+  bot,
 }: {
   data: CurvePoint[]
   intradayData?: IntradayPoint[]
@@ -56,8 +63,14 @@ export default function EquityChart({
   period?: Period
   onPeriodChange?: (p: Period) => void
   liveUnrealizedPnl?: number
+  /** Commit M: when bot === 'spark' AND any curve point carries
+   * hypothetical_equity, render a toggleable second line showing the
+   * "if-we-held-to-2:59-PM" cumulative. Other bots ignore this entirely. */
+  bot?: string
 }) {
   const [activePeriod, setActivePeriod] = useState<Period>(period || 'intraday')
+  const [showHypo, setShowHypo] = useState(true)
+  const hasHypo = bot === 'spark' && data.some((d) => d.hypothetical_equity != null)
 
   const handlePeriod = (p: Period) => {
     setActivePeriod(p)
@@ -200,23 +213,61 @@ export default function EquityChart({
     )
   }
 
-  const chartData = [
-    { timestamp: data[0].timestamp, equity: startingCapital, pnl: 0, cumulative_pnl: 0 },
-    ...data,
-  ]
+  // Seed point at startingCapital so the line begins at the baseline rather
+  // than jumping to the first trade's equity. For SPARK we also seed the
+  // hypothetical line at the same baseline so both start visually aligned.
+  const seedPoint: CurvePoint & { hypothetical_equity?: number | null } = {
+    timestamp: data[0].timestamp,
+    equity: startingCapital,
+    pnl: 0,
+    cumulative_pnl: 0,
+  }
+  if (hasHypo) seedPoint.hypothetical_equity = startingCapital
+  const chartData = [seedPoint, ...data]
 
-  const lastEquity = data[data.length - 1].equity
+  const lastPoint = data[data.length - 1]
+  const lastEquity = lastPoint.equity
   const fillColor =
     lastEquity >= startingCapital ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'
+
+  // Hypo color: distinct from the actual equity line so the two are easy
+  // to tell apart at a glance. Purple/violet works well against blue/red/amber.
+  const hypoColor = '#a78bfa'
+  const hypoFill = 'rgba(167, 139, 250, 0.10)'
+  const lastHypoCum = lastPoint.cumulative_hypothetical_pnl ?? null
+  const lastHypoEquity = lastPoint.hypothetical_equity ?? null
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           {title && <h3 className="text-sm font-medium text-gray-400">{title}</h3>}
-          <PnlBadge value={data[data.length - 1].cumulative_pnl} label="Cumulative" />
+          <PnlBadge value={lastPoint.cumulative_pnl} label="Cumulative" />
+          {hasHypo && lastHypoCum != null && (
+            <span
+              className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
+              title="Hypothetical cumulative P&L if SPARK had held every trade to 2:59 PM CT"
+            >
+              Hypo: {lastHypoCum >= 0 ? '+' : ''}${lastHypoCum.toFixed(2)}
+            </span>
+          )}
         </div>
-        <PeriodSelector periods={periods} active={activePeriod} onChange={handlePeriod} />
+        <div className="flex items-center gap-2">
+          {hasHypo && (
+            <button
+              onClick={() => setShowHypo((v) => !v)}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors border ${
+                showHypo
+                  ? 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                  : 'bg-transparent text-gray-500 border-forge-border hover:text-gray-300'
+              }`}
+              title={showHypo ? 'Hide hypothetical 2:59 PM line' : 'Show hypothetical 2:59 PM line'}
+            >
+              Hypo @ 2:59
+            </button>
+          )}
+          <PeriodSelector periods={periods} active={activePeriod} onChange={handlePeriod} />
+        </div>
       </div>
       <ResponsiveContainer width="100%" height={320}>
         <ComposedChart data={chartData}>
@@ -239,7 +290,14 @@ export default function EquityChart({
               borderRadius: 8,
             }}
             labelStyle={{ color: '#a8a29e' }}
-            formatter={(value: number) => [`$${(typeof value === 'number' ? value : 0).toFixed(2)}`, 'Equity']}
+            formatter={(value: number, name: string) => {
+              const v = typeof value === 'number' ? value : 0
+              const label =
+                name === 'equity' ? 'Actual Equity'
+                : name === 'hypothetical_equity' ? 'Hypo @ 2:59'
+                : name
+              return [`$${v.toFixed(2)}`, label]
+            }}
             labelFormatter={(label) =>
               label
                 ? new Date(label).toLocaleDateString('en-US', {
@@ -264,10 +322,26 @@ export default function EquityChart({
             }}
           />
           <Area type="monotone" dataKey="equity" stroke={color} strokeWidth={2} fill={fillColor} />
+          {hasHypo && showHypo && (
+            <Area
+              type="monotone"
+              dataKey="hypothetical_equity"
+              stroke={hypoColor}
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+              fill={hypoFill}
+              isAnimationActive={false}
+            />
+          )}
         </ComposedChart>
       </ResponsiveContainer>
-      <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2">
+      <div className="flex gap-4 mt-2 text-xs text-forge-muted px-2 items-center">
         <span>{data.length} trades</span>
+        {hasHypo && lastHypoEquity != null && (
+          <span className="text-violet-300/80">
+            Hypo line = "held to 2:59 PM CT every day"; flat through trades older than Tradier's 40-day window.
+          </span>
+        )}
       </div>
     </div>
   )
