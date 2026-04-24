@@ -37,7 +37,7 @@ import {
   isConfigured,
   type LegQuoteWithGreeks,
 } from '@/lib/tradier'
-import { computeIcPayoff } from '@/lib/ic-payoff'
+import { computeIcPayoff, computePutSpreadPayoff } from '@/lib/ic-payoff'
 
 export const dynamic = 'force-dynamic'
 
@@ -80,8 +80,8 @@ export async function GET(
     // most recent closed/expired if no open position exists.
     const rows = await dbQuery(
       `SELECT position_id, ticker, expiration,
-              put_short_strike, put_long_strike,
-              call_short_strike, call_long_strike,
+              put_short_strike, put_long_strike, put_credit,
+              call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit,
               underlying_at_entry, vix_at_entry,
               open_time, close_time, close_price, close_reason,
@@ -111,6 +111,21 @@ export async function GET(
     const cl = num(r.call_long_strike)
     const contracts = int(r.contracts)
     const entryCredit = num(r.total_credit)
+    // FLAME is moving from IC to Put Credit Spread. For the put-spread
+    // view we use just the put-side credit (stored separately in
+    // flame_positions.put_credit). For SPARK/INFERNO (IC) we keep the
+    // full entry credit.
+    const putCredit = num(r.put_credit) || 0
+    const isPutCreditSpread = bot === 'flame'
+    // "Effective" entry credit + spread width: what the payoff, MTM,
+    // metrics, and realized-% calcs use. Derived once here and reused
+    // throughout the route so all numbers reconcile.
+    const effectiveEntryCredit = isPutCreditSpread
+      ? (putCredit > 0 ? putCredit : entryCredit)
+      : entryCredit
+    const effectiveSpreadWidth = isPutCreditSpread
+      ? (ps - pl)
+      : (num(r.spread_width) || Math.min(ps - pl, cl - cs))
 
     const occ = {
       long_put: buildOccSymbol(ticker, expiration, pl, 'P'),
@@ -140,12 +155,17 @@ export async function GET(
 
     const spotPrice = underlyingQuote?.last ?? mtm?.spot_price ?? num(r.underlying_at_entry)
 
-    const legs: LegOut[] = [
-      { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
-      { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
-      { role: 'short_call', strike: cs, type: 'C', occ_symbol: occ.short_call, ...emptyQuote() },
-      { role: 'long_call', strike: cl, type: 'C', occ_symbol: occ.long_call, ...emptyQuote() },
-    ]
+    const legs: LegOut[] = isPutCreditSpread
+      ? [
+          { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
+          { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
+        ]
+      : [
+          { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
+          { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
+          { role: 'short_call', strike: cs, type: 'C', occ_symbol: occ.short_call, ...emptyQuote() },
+          { role: 'long_call', strike: cl, type: 'C', occ_symbol: occ.long_call, ...emptyQuote() },
+        ]
     if (isOpen) {
       for (const leg of legs) {
         const q = quotesMap[leg.occ_symbol]
@@ -164,12 +184,21 @@ export async function GET(
     }
 
     // Payoff math is pure — works identically for open or closed positions.
-    const payoff = computeIcPayoff(
-      { putLong: pl, putShort: ps, callShort: cs, callLong: cl },
-      entryCredit,
-      contracts,
-      spotPrice,
-    )
+    // FLAME uses the 2-leg put-credit-spread payoff (credit = put-side only);
+    // SPARK/INFERNO keep the 4-leg IC payoff (credit = total credit).
+    const payoff = isPutCreditSpread
+      ? computePutSpreadPayoff(
+          { putLong: pl, putShort: ps },
+          effectiveEntryCredit,
+          contracts,
+          spotPrice,
+        )
+      : computeIcPayoff(
+          { putLong: pl, putShort: ps, callShort: cs, callLong: cl },
+          effectiveEntryCredit,
+          contracts,
+          spotPrice,
+        )
 
     const sign = (role: LegOut['role']) =>
       role === 'long_put' || role === 'long_call' ? 1 : -1
@@ -190,14 +219,37 @@ export async function GET(
     const netVega = sumGreek((l) => l.vega)
 
     // MTM-derived unrealized P&L — only meaningful when the position is open.
+    // For FLAME (put-credit-spread view), derive put-spread cost-to-close
+    // from the 2 put leg quotes already fetched. Buy back short put (pay
+    // ask), sell long put (receive bid): cost = short_put.ask − long_put.bid.
+    // If either leg quote is missing, fall back to mid. Used in place of
+    // the full IC MTM so the unrealized P&L matches the put-spread payoff.
+    let putSpreadMtm: { last: number | null; mid: number | null; bidAsk: number | null } | null = null
+    if (isPutCreditSpread && isOpen) {
+      const psQ = quotesMap[occ.short_put]
+      const plQ = quotesMap[occ.long_put]
+      if (psQ && plQ) {
+        const bidAsk = (psQ.ask != null && plQ.bid != null) ? psQ.ask - plQ.bid : null
+        const mid = (psQ.mid != null && plQ.mid != null) ? psQ.mid - plQ.mid : null
+        const last = (psQ.last != null && plQ.last != null && psQ.last > 0 && plQ.last > 0)
+          ? psQ.last - plQ.last : null
+        putSpreadMtm = { last, mid, bidAsk }
+      }
+    }
+
     let unrealizedPnl: number | null = null
     let unrealizedPct: number | null = null
-    if (isOpen && mtm) {
-      const costBasis = mtm.cost_to_close_last ?? mtm.cost_to_close_mid
+    if (isOpen) {
+      // Choose cost-basis source per strategy. For FLAME use the put-spread
+      // MTM derived above; for IC bots keep the existing getIcMarkToMarket
+      // output.
+      const costBasis = isPutCreditSpread
+        ? (putSpreadMtm?.last ?? putSpreadMtm?.mid ?? putSpreadMtm?.bidAsk)
+        : (mtm?.cost_to_close_last ?? mtm?.cost_to_close_mid)
       if (costBasis != null && Number.isFinite(costBasis)) {
-        unrealizedPnl = Math.round((entryCredit - costBasis) * 100 * contracts * 100) / 100
-        if (entryCredit > 0) {
-          unrealizedPct = Math.round(((entryCredit - costBasis) / entryCredit) * 10000) / 100
+        unrealizedPnl = Math.round((effectiveEntryCredit - costBasis) * 100 * contracts * 100) / 100
+        if (effectiveEntryCredit > 0) {
+          unrealizedPct = Math.round(((effectiveEntryCredit - costBasis) / effectiveEntryCredit) * 10000) / 100
         }
       }
     }
@@ -210,25 +262,28 @@ export async function GET(
           close_time: r.close_time ? new Date(r.close_time).toISOString() : null,
           close_reason: r.close_reason || null,
           realized_pnl: r.realized_pnl != null ? num(r.realized_pnl) : null,
-          realized_pnl_pct: (r.realized_pnl != null && entryCredit > 0)
-            ? Math.round((num(r.realized_pnl) / (entryCredit * 100 * contracts)) * 10000) / 100
+          realized_pnl_pct: (r.realized_pnl != null && effectiveEntryCredit > 0)
+            ? Math.round((num(r.realized_pnl) / (effectiveEntryCredit * 100 * contracts)) * 10000) / 100
             : null,
         }
       : null
 
+    // For the put-credit-spread view (FLAME), call strikes are null'd
+    // so the chart/legs UI naturally renders only the 2 put legs.
     return NextResponse.json({
       tradier_connected: isConfigured(),
+      strategy_type: isPutCreditSpread ? 'put_credit_spread' : 'iron_condor',
       position: {
         position_id: r.position_id,
         ticker,
         expiration,
         put_long_strike: pl,
         put_short_strike: ps,
-        call_short_strike: cs,
-        call_long_strike: cl,
+        call_short_strike: isPutCreditSpread ? null : cs,
+        call_long_strike: isPutCreditSpread ? null : cl,
         contracts,
-        entry_credit: entryCredit,
-        spread_width: num(r.spread_width) || Math.min(ps - pl, cl - cs),
+        entry_credit: effectiveEntryCredit,
+        spread_width: effectiveSpreadWidth,
         underlying_at_entry: num(r.underlying_at_entry),
         vix_at_entry: num(r.vix_at_entry),
         open_time: r.open_time || null,
@@ -241,7 +296,7 @@ export async function GET(
       legs,
       payoff,
       metrics: {
-        net_credit: Math.round(entryCredit * 100 * contracts * 100) / 100,
+        net_credit: Math.round(effectiveEntryCredit * 100 * contracts * 100) / 100,
         max_profit: payoff.max_profit,
         max_loss: payoff.max_loss,
         breakeven_low: payoff.breakeven_low,

@@ -37,14 +37,16 @@ interface BuilderTabProps {
 
 interface SnapshotResponse {
   tradier_connected?: boolean
+  strategy_type?: 'iron_condor' | 'put_credit_spread'
   position: {
     position_id: string
     ticker: string
     expiration: string
     put_long_strike: number
     put_short_strike: number
-    call_short_strike: number
-    call_long_strike: number
+    // Null for the put-credit-spread view (FLAME); present for IC.
+    call_short_strike: number | null
+    call_long_strike: number | null
     contracts: number
     entry_credit: number
     spread_width: number
@@ -148,14 +150,20 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
     )
   }
 
+  const isPutCreditSpread = snap.strategy_type === 'put_credit_spread'
+  const strategyAbbr = isPutCreditSpread ? 'PCS' : 'IC'
+  const emptyMsgTitle = isPutCreditSpread
+    ? 'No put credit spread history in this scope'
+    : 'No IC history in this scope'
+  const emptyMsgBody = isPutCreditSpread
+    ? <>Chart renders as soon as {bot.toUpperCase()} takes its first put credit spread in the <span className="font-mono">{accountType}</span> scope.</>
+    : <>IC Chart renders as soon as {bot.toUpperCase()} takes its first Iron Condor in the <span className="font-mono">{accountType}</span> scope. Switch the Paper/Live toggle above if you want to see a different scope.</>
+
   if (!snap.position) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-        <p className="text-gray-200 text-sm font-semibold mb-1">No IC history in this scope</p>
-        <p className="text-forge-muted text-xs">
-          IC Chart renders as soon as {bot.toUpperCase()} takes its first Iron Condor in the <span className="font-mono">{accountType}</span> scope.
-          Switch the Paper/Live toggle above if you want to see a different scope.
-        </p>
+        <p className="text-gray-200 text-sm font-semibold mb-1">{emptyMsgTitle}</p>
+        <p className="text-forge-muted text-xs">{emptyMsgBody}</p>
       </div>
     )
   }
@@ -201,7 +209,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
           <div className="flex items-center gap-2">
-            <span className="text-forge-muted uppercase tracking-wider mr-1">IC</span>
+            <span className="text-forge-muted uppercase tracking-wider mr-1">{strategyAbbr}</span>
             <span className="font-mono text-gray-200">{p.ticker}</span>
             <span className="text-gray-500 font-mono">exp {p.expiration}</span>
             {statusBadge}
@@ -210,10 +218,14 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
             <span className="text-emerald-400">{p.put_long_strike}P</span>
             <span className="text-forge-muted">/</span>
             <span className="text-red-400">{p.put_short_strike}P</span>
-            <span className="text-forge-muted"> — </span>
-            <span className="text-red-400">{p.call_short_strike}C</span>
-            <span className="text-forge-muted">/</span>
-            <span className="text-emerald-400">{p.call_long_strike}C</span>
+            {!isPutCreditSpread && p.call_short_strike != null && p.call_long_strike != null && (
+              <>
+                <span className="text-forge-muted"> — </span>
+                <span className="text-red-400">{p.call_short_strike}C</span>
+                <span className="text-forge-muted">/</span>
+                <span className="text-emerald-400">{p.call_long_strike}C</span>
+              </>
+            )}
           </div>
           <div>
             <span className="text-forge-muted uppercase tracking-wider mr-1">Contracts</span>

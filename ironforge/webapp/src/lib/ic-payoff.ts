@@ -81,6 +81,103 @@ export function icPayoffAtPrice(
 }
 
 /**
+ * Bull Put Credit Spread — 2-leg version of the above, used by FLAME
+ * after its Iron Condor → Put Credit Spread migration. The call wings
+ * are omitted entirely, so:
+ *
+ *   P&L(spot) = credit + max(0, pl − spot) − max(0, ps − spot)
+ *
+ * Piecewise linear with kinks at pl and ps:
+ *   spot ≤ pl         → flat at max_loss  = (credit − width) × 100 × contracts
+ *   pl < spot < ps    → linear ramp
+ *   spot ≥ ps         → flat at max_profit = credit × 100 × contracts
+ *
+ * No upper breakeven — the P&L stays flat at max_profit for any spot
+ * above the short put. breakeven_high is set to +Infinity in the result
+ * (the UI surfaces it as "—" when infinite) and profit_zone.high is
+ * clamped to the chart's upper range.
+ *
+ * Returns the same IcPayoffResult shape so callers can render it with
+ * the existing CandleChart / PayoffPanel components unchanged.
+ */
+export interface PutSpreadStrikes {
+  putLong: number
+  putShort: number
+}
+
+export function putSpreadPayoffAtPrice(
+  spot: number,
+  strikes: PutSpreadStrikes,
+  entryCredit: number,
+): number {
+  const { putLong, putShort } = strikes
+  const longPut = Math.max(0, putLong - spot)
+  const shortPut = Math.max(0, putShort - spot)
+  return entryCredit + longPut - shortPut
+}
+
+export function computePutSpreadPayoff(
+  strikes: PutSpreadStrikes,
+  entryCredit: number,
+  contracts: number,
+  spot: number,
+  priceRange?: { low: number; high: number },
+): IcPayoffResult {
+  const { putLong, putShort } = strikes
+  const contractMultiplier = 100 * Math.max(1, contracts)
+
+  const width = putShort - putLong
+  const padding = Math.max(width * 2, 4)
+
+  // Price range: enough headroom on both sides so the flat plateaus are visible.
+  const rawLow = Math.min(spot, putLong) - padding
+  const rawHigh = Math.max(spot, putShort) + padding
+  const low = priceRange?.low ?? Math.max(0.01, rawLow)
+  const high = priceRange?.high ?? rawHigh
+
+  const kinks = Array.from(new Set([low, putLong, putShort, spot, high]))
+    .filter((p) => p >= low && p <= high && Number.isFinite(p))
+    .sort((a, b) => a - b)
+
+  const pnl_curve = kinks.map((price) => ({
+    price: Math.round(price * 100) / 100,
+    pnl: Math.round(putSpreadPayoffAtPrice(price, strikes, entryCredit) * contractMultiplier * 100) / 100,
+  }))
+
+  const maxProfit = entryCredit * contractMultiplier
+  const maxLoss = (entryCredit - width) * contractMultiplier  // negative
+
+  const breakevenLow = putShort - entryCredit
+  // Upper breakeven doesn't exist — P&L is flat positive above putShort.
+  // Use +Infinity so consumers can recognize "no upper breakeven" and
+  // render appropriately ("—" or "∞").
+  const breakevenHigh = Infinity
+
+  // Distance-based PoP heuristic: how far below putShort does the spot
+  // sit (or how much of the "profit half" of the position is the spot in)?
+  // Rough approximation — matches the IC heuristic in spirit.
+  const totalWidth = Math.max(width * 3, 1)   // pl .. 2×width above ps
+  const profitZoneWidth = Math.max(high - putShort, 0)
+  const pop_heuristic = totalWidth > 0
+    ? Math.max(0, Math.min(1, profitZoneWidth / totalWidth))
+    : 0
+
+  return {
+    pnl_curve,
+    max_profit: Math.round(maxProfit * 100) / 100,
+    max_loss_put_side: Math.round(maxLoss * 100) / 100,
+    max_loss_call_side: 0, // no call side
+    max_loss: Math.round(maxLoss * 100) / 100,
+    breakeven_low: Math.round(breakevenLow * 100) / 100,
+    breakeven_high: breakevenHigh,
+    // profit_zone.high = Infinity conceptually; clamp to chart high so
+    // UI can draw the green zone without divide-by-zero on widths.
+    profit_zone: { low: putShort, high: high },
+    pop_heuristic: Math.round(pop_heuristic * 10000) / 10000,
+  }
+}
+
+/**
  * Build the full P&L curve for an Iron Condor. Returns dollar P&L values
  * already scaled by 100 × contracts so the UI can plot them directly.
  *
