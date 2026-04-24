@@ -18,7 +18,6 @@ import PdtTabContent from './PdtTabContent'
 import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
-import FlamePutSpreadTab from './dashboard/FlamePutSpreadTab'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -528,18 +527,12 @@ export default function BotDashboard({
           </ComponentErrorBoundary>
         )}
         {tab === 'IC Chart' && (
-          bot === 'flame' ? (
-            <ComponentErrorBoundary fallback="Spread Chart tab error">
-              <FlamePutSpreadTab />
-            </ComponentErrorBoundary>
-          ) : (
-            <ComponentErrorBoundary fallback="IC Chart tab error">
-              <BuilderTab
-                bot={bot}
-                accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
-              />
-            </ComponentErrorBoundary>
-          )
+          <ComponentErrorBoundary fallback={bot === 'flame' ? 'Spread Chart tab error' : 'IC Chart tab error'}>
+            <BuilderTab
+              bot={bot}
+              accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
+            />
+          </ComponentErrorBoundary>
         )}
         {tab === 'Production' && hasAccounts && (
           <ComponentErrorBoundary fallback="Production tab error">
