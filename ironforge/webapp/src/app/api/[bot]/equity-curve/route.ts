@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
+import {
+  getIcMarkToMarket,
+  isConfigured,
+  calculateIcUnrealizedPnl,
+  getLoadedSandboxAccountsAsync,
+  getAccountIdForKey,
+  getTradierBalanceDetail,
+} from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -61,7 +68,8 @@ export async function GET(
       ),
     ])
 
-    const startingCapital = num(capitalRows[0]?.starting_capital) || 10000
+    let startingCapital = num(capitalRows[0]?.starting_capital) || 10000
+    let rebaseSource: 'tradier' | 'paper_account' = 'paper_account'
 
     let curve = curveRows.map((row) => {
       const cumPnl = num(row.cumulative_pnl)
@@ -144,6 +152,46 @@ export async function GET(
       liveUnrealizedPnl = mtmResults.reduce((a, b) => a + b, 0)
     }
 
+    // FLAME historical rebase: same idea as the intraday endpoint — scanner
+    // re-seeds paper_account.starting_capital to \$10K every cycle, but the
+    // /flame top card shows the live Tradier User sandbox balance. Rebase
+    // so the LAST point of the curve ends at Tradier. Same P&L shape/deltas,
+    // Tradier basis on the Y-axis.
+    //
+    //   lastCumPnl   = cumulative realized at the most recent closed trade
+    //   rebaseStart  = tradier.total_equity − lastCumPnl − liveUnrealized
+    //   curve.equity = rebaseStart + cumulative_pnl   → ends at Tradier balance
+    //
+    // On Tradier failure: keep paper-basis starting_capital.
+    if (bot === 'flame') {
+      try {
+        const accts = await getLoadedSandboxAccountsAsync()
+        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
+        if (userAcct) {
+          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
+          if (accountId) {
+            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
+            if (bal?.total_equity != null) {
+              const lastCumPnl = curve.length > 0 ? curve[curve.length - 1].cumulative_pnl : 0
+              const rebaseStart = Math.round((bal.total_equity - lastCumPnl - liveUnrealizedPnl) * 100) / 100
+              const offset = rebaseStart - startingCapital
+              if (offset !== 0) {
+                curve = curve.map((pt) => ({
+                  ...pt,
+                  equity: Math.round((pt.equity + offset) * 100) / 100,
+                  ...(pt.hypothetical_equity != null
+                    ? { hypothetical_equity: Math.round((pt.hypothetical_equity + offset) * 100) / 100 }
+                    : {}),
+                }))
+              }
+              startingCapital = rebaseStart
+              rebaseSource = 'tradier'
+            }
+          }
+        }
+      } catch { /* fall back to paper basis */ }
+    }
+
     if (openPositions.length > 0) {
       const last = curve.length > 0 ? curve[curve.length - 1] : null
       const lastCumPnl = last ? last.cumulative_pnl : 0
@@ -179,6 +227,7 @@ export async function GET(
       period,
       open_position_count: openPositions.length,
       live_unrealized_pnl: liveUnrealizedPnl,
+      rebase_source: rebaseSource,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
