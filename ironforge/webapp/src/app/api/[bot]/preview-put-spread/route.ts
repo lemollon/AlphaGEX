@@ -21,7 +21,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { validateBot } from '@/lib/db'
 import {
   getQuote,
-  getIcEntryCredit,
+  getBatchOptionQuotes,
+  buildOccSymbol,
   getOptionExpirations,
   getLoadedSandboxAccountsAsync,
   getAccountIdForKey,
@@ -147,16 +148,33 @@ export async function GET(
     const putShort = Math.floor(spot - SD_MULT * em)
     const putLong = putShort - SPREAD_WIDTH
 
-    // 6. Put credit — reuse getIcEntryCredit and extract just the put side.
-    //    Pass dummy far-OTM calls so the helper doesn't error out; we only
-    //    read putCredit from the response. Call credits are discarded.
-    const credits = await getIcEntryCredit(
-      'SPY', expiration,
-      putShort, putLong,
-      Math.ceil(spot + 50),   // dummy call short (never queried for real use)
-      Math.ceil(spot + 55),   // dummy call long
-    )
-    const putCredit = credits?.putCredit ?? 0
+    // 6. Put credit — fetch just the 2 put legs (not IC's 4 legs).
+    //    Conservative paper fill: sell put_short at bid, buy put_long at ask.
+    //    Mid-price fallback if bid/ask gives a non-positive credit (wide quotes,
+    //    premarket, etc.).
+    const occPs = buildOccSymbol('SPY', expiration, putShort, 'P')
+    const occPl = buildOccSymbol('SPY', expiration, putLong, 'P')
+    const legQuotes = await getBatchOptionQuotes([occPs, occPl])
+    const psQ = legQuotes[occPs]
+    const plQ = legQuotes[occPl]
+
+    let putCredit = 0
+    let creditSource: 'TRADIER_BIDASK' | 'TRADIER_MID' | 'unavailable' = 'unavailable'
+    if (psQ && plQ) {
+      const bidAsk = psQ.bid - plQ.ask
+      if (bidAsk > 0) {
+        putCredit = bidAsk
+        creditSource = 'TRADIER_BIDASK'
+      } else {
+        const psMid = (psQ.bid + psQ.ask) / 2
+        const plMid = (plQ.bid + plQ.ask) / 2
+        const mid = psMid - plMid
+        if (mid > 0) {
+          putCredit = mid
+          creditSource = 'TRADIER_MID'
+        }
+      }
+    }
 
     // 7. Sizing at 10% of account
     const maxLossPerContract = Math.round((SPREAD_WIDTH - putCredit) * 100 * 100) / 100
@@ -225,7 +243,11 @@ export async function GET(
       },
       credit: {
         per_contract: Math.round(putCredit * 10000) / 10000,
-        source: credits?.source ?? 'unavailable',
+        source: creditSource,
+        raw_legs: {
+          put_short: psQ ? { bid: psQ.bid, ask: psQ.ask } : null,
+          put_long: plQ ? { bid: plQ.bid, ask: plQ.ask } : null,
+        },
       },
       sizing: {
         risk_pct: RISK_PCT,

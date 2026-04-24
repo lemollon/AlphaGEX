@@ -68,6 +68,17 @@ const ACCOUNT_BOTS = new Set(['spark'])
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
 
+/**
+ * Tabs hidden per-bot. FLAME is migrating from Iron Condor to Put Credit
+ * Spread (chat-approved 4/24), and the existing IC Chart visualization
+ * renders a 4-leg payoff which would mis-describe the new strategy once
+ * the scanner flips. Hide it on FLAME until a proper put-spread chart
+ * ships in a follow-up PR.
+ */
+const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {
+  flame: new Set<Tab>(['IC Chart']),
+}
+
 /** Tabs that only appear on SPARK (1DTE-specific features) */
 const SPARK_ONLY_TABS = new Set<Tab>(['Market Pulse'])
 
@@ -329,7 +340,7 @@ export default function BotDashboard({
             {bot.toUpperCase()}
           </h1>
           <span className="text-forge-muted">
-            {bot === 'flame' ? '2DTE' : bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor
+            {bot === 'flame' ? '2DTE Put Credit Spread' : `${bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor`}
           </span>
         </div>
         {hasAccounts ? (
@@ -474,6 +485,7 @@ export default function BotDashboard({
           (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts)
           && (t !== 'PDT' || PDT_BOTS.has(bot))
           && (!SPARK_ONLY_TABS.has(t) || bot === 'spark')
+          && !(HIDDEN_TABS_BY_BOT[bot]?.has(t) ?? false)
         ).map((t) => (
           <button
             key={t}

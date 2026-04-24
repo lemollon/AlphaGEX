@@ -453,7 +453,8 @@ export async function GET(
 
     const dteNum = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
     const tradeMode = bot === PRODUCTION_BOT ? 'Live' : 'Paper'
-    const strategy = `${dteNum}DTE ${tradeMode} Iron Condor`
+    const strategyName = bot === 'flame' ? 'Put Credit Spread' : 'Iron Condor'
+    const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
 
     return NextResponse.json({
       bot_name: bot.toUpperCase(),
