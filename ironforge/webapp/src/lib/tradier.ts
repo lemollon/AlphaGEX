@@ -2785,6 +2785,162 @@ export async function getTradierOrderDetails(
   }
 }
 
+/* ==================================================================== */
+/*  Put Credit Spread helpers (2-leg — FLAME)                            */
+/* ==================================================================== */
+
+/**
+ * Result of a put credit spread MTM query — mirrors IcMtmResult but only
+ * needs the two put legs. Cost to close = buy back short put (at ask)
+ * minus sell long put (at bid).
+ */
+export interface PutSpreadMtmResult {
+  cost_to_close: number
+  cost_to_close_mid: number
+  /** Cost using last trade prices (matches Tradier portfolio valuation). */
+  cost_to_close_last: number
+  put_short_ask: number
+  put_long_bid: number
+  spot_price: number | null
+  validation_issues?: string[]
+  quote_age_seconds?: number
+  api_source?: string
+  last_prices?: { ps: number; pl: number }
+}
+
+/**
+ * Entry credit for a 2-leg bull put credit spread.
+ * Conservative paper fill: sell short put at bid, buy long put at ask.
+ * Mid-price fallback when bid/ask produces a non-positive credit.
+ */
+export async function getPutSpreadEntryCredit(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+): Promise<{ putCredit: number; source: string } | null> {
+  const [psQ, plQ] = await Promise.all([
+    getOptionQuote(buildOccSymbol(ticker, expiration, putShort, 'P')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, putLong, 'P')),
+  ])
+  if (!psQ || !plQ) return null
+
+  let credit = psQ.bid - plQ.ask
+  let source: 'TRADIER_BIDASK' | 'TRADIER_MID' = 'TRADIER_BIDASK'
+  if (credit <= 0) {
+    const psMid = (psQ.bid + psQ.ask) / 2
+    const plMid = (plQ.bid + plQ.ask) / 2
+    credit = Math.max(0, psMid - plMid)
+    source = 'TRADIER_MID'
+  }
+
+  return {
+    putCredit: Math.round(credit * 10000) / 10000,
+    source,
+  }
+}
+
+/**
+ * Mark-to-market for a 2-leg bull put credit spread.
+ * Cost to close = buy back short put (at ask) − sell long put (at bid).
+ * Computes three variants (worst-case bid/ask, mid, last-trade) and
+ * caps at the spread width (the theoretical max cost of a put spread).
+ */
+export async function getPutSpreadMarkToMarket(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  entryCredit?: number,
+): Promise<PutSpreadMtmResult | null> {
+  const occPs = buildOccSymbol(ticker, expiration, putShort, 'P')
+  const occPl = buildOccSymbol(ticker, expiration, putLong, 'P')
+
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return null
+
+  const allSymbols = [occPs, occPl, ticker].join(',')
+  const data = await tradierGet('/markets/quotes', { symbols: allSymbols })
+  if (!data) return null
+
+  let quotes = data.quotes?.quote
+  if (!quotes) return null
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  const bySymbol: Record<string, any> = {}
+  for (const q of quotes) {
+    if (q?.symbol) bySymbol[q.symbol] = q
+  }
+
+  const psRaw = bySymbol[occPs]
+  const plRaw = bySymbol[occPl]
+  const spotRaw = bySymbol[ticker]
+
+  if (!psRaw || !plRaw) return null
+  if (psRaw.bid == null || plRaw.bid == null) return null
+
+  if (data.quotes?.unmatched_symbols) {
+    const unmatched = data.quotes.unmatched_symbols
+    const unmatchedStr = typeof unmatched === 'string' ? unmatched : JSON.stringify(unmatched)
+    if ([occPs, occPl].some((s) => unmatchedStr.includes(s))) return null
+  }
+
+  const parse = (v: any) => parseFloat(v || '0')
+  const psQ = { bid: parse(psRaw.bid), ask: parse(psRaw.ask), last: parse(psRaw.last), mid: 0 }
+  const plQ = { bid: parse(plRaw.bid), ask: parse(plRaw.ask), last: parse(plRaw.last), mid: 0 }
+  psQ.mid = Math.round(((psQ.bid + psQ.ask) / 2) * 10000) / 10000
+  plQ.mid = Math.round(((plQ.bid + plQ.ask) / 2) * 10000) / 10000
+
+  const spreadWidth = Math.round((putShort - putLong) * 100) / 100
+
+  // Bid/ask worst-case: buy back short at ask, sell long at bid
+  const rawCost = psQ.ask - plQ.bid
+  const cost = Math.min(Math.max(0, rawCost), spreadWidth)
+
+  // Mid price
+  const rawCostMid = psQ.mid - plQ.mid
+  const costMid = Math.min(Math.max(0, rawCostMid), spreadWidth)
+
+  // Last trade prices, falling back to mid when no last trade
+  const psLast = psQ.last > 0 ? psQ.last : psQ.mid
+  const plLast = plQ.last > 0 ? plQ.last : plQ.mid
+  const rawCostLast = psLast - plLast
+  const costLast = Math.min(Math.max(0, rawCostLast), spreadWidth)
+
+  // Validation — flag wide spreads
+  const validationIssues: string[] = []
+  const psSpread = psQ.ask - psQ.bid
+  const plSpread = plQ.ask - plQ.bid
+  if (psSpread > 0.20) validationIssues.push(`PS wide (${psSpread.toFixed(2)})`)
+  if (plSpread > 0.20) validationIssues.push(`PL wide (${plSpread.toFixed(2)})`)
+  if (entryCredit != null && rawCost > spreadWidth * 1.05) {
+    validationIssues.push(`cost > width (${rawCost.toFixed(2)} > ${spreadWidth})`)
+  }
+
+  const spotPrice = spotRaw?.last != null ? parse(spotRaw.last) : null
+
+  // Quote age — max across both legs
+  const now = Date.now()
+  const ages: number[] = []
+  for (const raw of [psRaw, plRaw]) {
+    const ts = parseInt(raw.trade_date ?? raw.bid_date ?? '0')
+    if (ts > 0) ages.push((now - ts) / 1000)
+  }
+  const quoteAgeSeconds = ages.length > 0 ? Math.round(Math.max(...ages)) : undefined
+
+  return {
+    cost_to_close: cost,
+    cost_to_close_mid: costMid,
+    cost_to_close_last: costLast,
+    put_short_ask: psQ.ask,
+    put_long_bid: plQ.bid,
+    spot_price: spotPrice,
+    validation_issues: validationIssues.length ? validationIssues : undefined,
+    quote_age_seconds: quoteAgeSeconds,
+    last_prices: { ps: psLast, pl: plLast },
+  }
+}
+
 export const _testing = {
   getOrderFillPrice,
   // Circuit breaker internals

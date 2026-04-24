@@ -28,6 +28,9 @@ import {
   getQuote,
   getOptionExpirations,
   getIcEntryCredit,
+  getPutSpreadEntryCredit,
+  getPutSpreadMarkToMarket,
+  getTradierBalanceDetail,
   getIcMarkToMarket,
   isConfigured,
   isConfiguredAsync,
@@ -1111,12 +1114,48 @@ async function monitorSinglePosition(
   // Get MTM
   if (!isConfigured()) return { status: 'monitoring:no_tradier', unrealizedPnl: 0 }
 
-  const mtm = await getIcMarkToMarket(
-    ticker, expiration,
-    num(pos.put_short_strike), num(pos.put_long_strike),
-    num(pos.call_short_strike), num(pos.call_long_strike),
-    entryCredit,
-  )
+  // FLAME put-credit-spread detection: positions opened by tryOpenFlamePutSpread
+  // have call_short_strike = 0. For those we use the 2-leg put-spread MTM
+  // helper; IC positions (SPARK/INFERNO + any legacy FLAME ICs) use the
+  // existing 4-leg helper. The unified IcMtmResult-shaped object lets the
+  // rest of this function treat both cases identically.
+  const isPutSpread = num(pos.call_short_strike) === 0
+  const mtm = isPutSpread
+    ? await (async () => {
+        const psMtm = await getPutSpreadMarkToMarket(
+          ticker, expiration,
+          num(pos.put_short_strike), num(pos.put_long_strike),
+          entryCredit,
+        )
+        if (!psMtm) return null
+        // Shim the 2-leg result into the 4-leg IcMtmResult shape that
+        // downstream code expects. cost_to_close_last mirrors put-spread
+        // cost, and the call-side fields are zeroed out since no call legs exist.
+        return {
+          cost_to_close: psMtm.cost_to_close,
+          cost_to_close_mid: psMtm.cost_to_close_mid,
+          cost_to_close_last: psMtm.cost_to_close_last,
+          put_short_ask: psMtm.put_short_ask,
+          put_long_bid: psMtm.put_long_bid,
+          call_short_ask: 0,
+          call_long_bid: 0,
+          spot_price: psMtm.spot_price,
+          validation_issues: psMtm.validation_issues,
+          quote_age_seconds: psMtm.quote_age_seconds,
+          last_prices: {
+            ps: psMtm.last_prices?.ps ?? 0,
+            pl: psMtm.last_prices?.pl ?? 0,
+            cs: 0,
+            cl: 0,
+          },
+        } as Awaited<ReturnType<typeof getIcMarkToMarket>>
+      })()
+    : await getIcMarkToMarket(
+        ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        entryCredit,
+      )
 
   // MTM failure tracking (Fix 3)
   if (!mtm) {
@@ -1292,11 +1331,18 @@ async function closePosition(
     if (posMetaRow[0]?.account_type) posAccountType = posMetaRow[0].account_type
   } catch { /* default */ }
 
-  // Determine estimated close price if not provided
+  // Determine estimated close price if not provided.
+  // Put credit spread detection: callShort === 0 (FLAME after Apr 2026 migration).
+  // For those, use the 2-leg put-spread MTM; for ICs keep the existing 4-leg call.
   let estimatedPrice = closePrice ?? 0
   if (closePrice === undefined && isConfigured()) {
-    const mtm = await getIcMarkToMarket(ticker, expiration, putShort, putLong, callShort, callLong)
-    estimatedPrice = mtm?.cost_to_close ?? 0
+    if (callShort === 0) {
+      const psMtm = await getPutSpreadMarkToMarket(ticker, expiration, putShort, putLong)
+      estimatedPrice = psMtm?.cost_to_close ?? 0
+    } else {
+      const mtm = await getIcMarkToMarket(ticker, expiration, putShort, putLong, callShort, callLong)
+      estimatedPrice = mtm?.cost_to_close ?? 0
+    }
   }
 
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
@@ -1637,11 +1683,267 @@ async function closePosition(
 }
 
 /* ------------------------------------------------------------------ */
+/*  FLAME — Bull Put Credit Spread entry                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * FLAME's 2DTE Put Credit Spread open flow (tasty-adapted).
+ *
+ * Rules (matches /api/flame/preview-put-spread):
+ *   - VIX > 18 gate (IV rank proxy)
+ *   - Short put at 1.0 SD OTM (16-delta proxy), $5 wing
+ *   - Min credit $1.50 (30% of $5 width)
+ *   - Size 10% of Tradier User sandbox balance at risk
+ *   - 50% profit target, 200% stop loss (applied later in monitorSinglePosition)
+ *   - 1 trade/day max
+ *
+ * Paper-only execution: uses live Tradier quotes for realistic fill pricing
+ * but does NOT place sandbox orders. This is a deliberate simplification —
+ * the IC pathway's sandbox order placement (placeIcOrderAllAccounts) was
+ * 4-leg specific, and replicating a 2-leg vertical version here would
+ * be ~400 lines of scope creep. We capture fill accuracy via the bid/ask
+ * credit and MTM every scan.
+ *
+ * Position shape in DB: call_short_strike = call_long_strike = 0,
+ * call_credit = 0. monitorSinglePosition and closePosition detect this
+ * shape and route to put-spread MTM/close instead of IC.
+ */
+async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Promise<string> {
+  const SD_MULT = 1.0
+  const WIDTH = 5
+  const MIN_CREDIT = 1.50
+  const VIX_GATE = 18
+  const RISK_PCT = 0.10
+  const MIN_DTE = 2
+
+  // --- Gates ---
+  if (vix <= VIX_GATE) return `skip:vix_too_low(${vix.toFixed(1)}≤${VIX_GATE})`
+
+  // Already traded today?
+  const todayTrades = await query(
+    `SELECT COUNT(*) as cnt
+     FROM ${botTable(bot.name, 'positions')}
+     WHERE (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+       AND dte_mode = $1`,
+    [bot.dte],
+  )
+  if (int(todayTrades[0]?.cnt) >= 1) return 'skip:already_traded_today'
+
+  // Open position already?
+  const openRows = await query(
+    `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+     WHERE status = 'open' AND dte_mode = $1`,
+    [bot.dte],
+  )
+  if (int(openRows[0]?.cnt) >= 1) return 'skip:already_open'
+
+  // --- Account balance from live Tradier User sandbox ---
+  // Same source the /flame dashboard mirrors from — keeps sizing
+  // consistent with what the user sees.
+  let accountBalance: number | null = null
+  try {
+    const accts = await getLoadedSandboxAccountsAsync()
+    const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
+    if (userAcct) {
+      const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
+      if (accountId) {
+        const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
+        if (bal?.total_equity != null) accountBalance = bal.total_equity
+      }
+    }
+  } catch { /* fall through */ }
+  if (accountBalance == null || accountBalance <= 0) {
+    return 'skip:no_tradier_balance'
+  }
+
+  // --- Strikes (put-only, 1.0 SD OTM) ---
+  const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
+  const minEM = spot * 0.005
+  const em = Math.max(expectedMove, minEM)
+  const putShort = Math.floor(spot - SD_MULT * em)
+  const putLong = putShort - WIDTH
+
+  // --- Target expiration (2 business days out) ---
+  const ctNow = getCentralTime()
+  const target = new Date(ctNow)
+  let counted = 0
+  while (counted < MIN_DTE) {
+    target.setDate(target.getDate() + 1)
+    const dow = target.getDay()
+    if (dow !== 0 && dow !== 6) counted++
+  }
+  const expiration = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`
+
+  // --- Credit from Tradier ---
+  if (!isConfigured()) return 'skip:tradier_not_configured'
+  const creditRes = await getPutSpreadEntryCredit('SPY', expiration, putShort, putLong)
+  if (!creditRes) return 'skip:no_put_quotes'
+  const putCredit = creditRes.putCredit
+  if (putCredit < MIN_CREDIT) {
+    // Log the skip so operators can see near-misses
+    try {
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'signals')} (
+          spot_price, vix, expected_move, call_wall, put_wall, gex_regime,
+          put_short, put_long, call_short, call_long, total_credit,
+          confidence, was_executed, skip_reason, reasoning, wings_adjusted,
+          dte_mode, person, account_type
+        ) VALUES ($1, $2, $3, 0, 0, 'UNKNOWN', $4, $5, 0, 0, $6, 0.5, false, $7, $8, false, $9, 'User', 'sandbox')`,
+        [spot, vix, expectedMove, putShort, putLong, putCredit,
+         'credit_below_min', `Put credit $${putCredit.toFixed(2)} < $${MIN_CREDIT} minimum`, bot.dte],
+      )
+    } catch { /* log best-effort */ }
+    return `skip:credit_below_min($${putCredit.toFixed(2)}<$${MIN_CREDIT})`
+  }
+
+  // --- Sizing (10% account risk) ---
+  const maxLossPerContract = Math.round((WIDTH - putCredit) * 100 * 100) / 100
+  if (maxLossPerContract <= 0) return 'skip:invalid_max_loss'
+  const contracts = Math.floor((accountBalance * RISK_PCT) / maxLossPerContract)
+  if (contracts < 1) return `skip:contracts<1(bal=$${accountBalance.toFixed(0)})`
+
+  const collateral = maxLossPerContract * contracts
+  const maxProfit = Math.round(putCredit * 100 * contracts * 100) / 100
+
+  // --- Record position (paper-only) ---
+  const positionId = `FLAME-${target.getFullYear()}${String(target.getMonth() + 1).padStart(2, '0')}${String(target.getDate()).padStart(2, '0')}-PCS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  // Ensure a paper_account row exists; create with Tradier balance if missing.
+  // Scanner re-seeds paper_account.starting_capital elsewhere; we just need
+  // an is_active=TRUE row to UPDATE collateral/BP on.
+  const acctRows = await query(
+    `SELECT id FROM ${botTable(bot.name, 'paper_account')}
+     WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+     ORDER BY id DESC LIMIT 1`,
+    [bot.dte],
+  )
+  const acctId = acctRows[0]?.id ?? null
+  if (acctId == null) {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'paper_account')}
+         (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
+          buying_power, total_trades, high_water_mark, max_drawdown,
+          is_active, dte_mode, account_type, created_at, updated_at)
+       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+      [accountBalance, bot.dte],
+    )
+  }
+
+  await query(
+    `INSERT INTO ${botTable(bot.name, 'positions')} (
+      position_id, ticker, expiration,
+      put_short_strike, put_long_strike, put_credit,
+      call_short_strike, call_long_strike, call_credit,
+      contracts, spread_width, total_credit, max_loss, max_profit,
+      collateral_required,
+      underlying_at_entry, vix_at_entry, expected_move,
+      call_wall, put_wall, gex_regime,
+      flip_point, net_gex,
+      oracle_confidence, oracle_win_probability, oracle_advice,
+      oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
+      wings_adjusted, original_put_width, original_call_width,
+      put_order_id, call_order_id,
+      status, open_time, open_date, dte_mode, person, account_type
+    ) VALUES (
+      $1, 'SPY', $2, $3, $4, $5, 0, 0, 0, $6, $7, $5, $8, $9, $10,
+      $11, $12, $13, 0, 0, 'UNKNOWN', 0, 0,
+      0.5, 0.5, 'PUT_CREDIT_SPREAD', 'Tasty-style 2DTE bull put spread',
+      '[]', false, false, $7, $7, 'PAPER', 'PAPER',
+      'open', NOW(), ${CT_TODAY}, $14, 'User', 'sandbox'
+    )`,
+    [
+      positionId, expiration,
+      putShort, putLong, putCredit,
+      contracts, WIDTH, collateral, maxProfit, collateral,
+      spot, vix, expectedMove,
+      bot.dte,
+    ],
+  )
+
+  // Deduct collateral from paper account
+  if (acctId != null) {
+    await query(
+      `UPDATE ${botTable(bot.name, 'paper_account')}
+       SET collateral_in_use = collateral_in_use + $1,
+           buying_power = buying_power - $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [collateral, acctId],
+    )
+  }
+
+  // Log the signal + trade open
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'signals')} (
+        spot_price, vix, expected_move, call_wall, put_wall, gex_regime,
+        put_short, put_long, call_short, call_long, total_credit,
+        confidence, was_executed, skip_reason, reasoning, wings_adjusted,
+        dte_mode, person, account_type
+      ) VALUES ($1, $2, $3, 0, 0, 'UNKNOWN', $4, $5, 0, 0, $6, 0.5, true, NULL,
+        'Tasty-style put credit spread entry', false, $7, 'User', 'sandbox')`,
+      [spot, vix, expectedMove, putShort, putLong, putCredit, bot.dte],
+    )
+  } catch { /* log best-effort */ }
+
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+       VALUES ('TRADE_OPEN', $1, $2, $3, 'User')`,
+      [
+        `OPEN PCS: ${positionId} ${putLong}/${putShort}P x${contracts} @ $${putCredit.toFixed(4)} ` +
+        `(risk=$${collateral.toFixed(0)}, 10% of $${accountBalance.toFixed(0)})`,
+        JSON.stringify({
+          position_id: positionId,
+          strategy: 'put_credit_spread',
+          put_short: putShort,
+          put_long: putLong,
+          contracts,
+          credit: putCredit,
+          collateral,
+          account_balance: accountBalance,
+          vix,
+          spot,
+          source: 'flame_pcs_scanner',
+        }),
+        bot.dte,
+      ],
+    )
+  } catch { /* log best-effort */ }
+
+  // PDT log
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'pdt_log')}
+         (position_id, trade_date, opened_at, entry_credit, contracts, dte_mode, person, account_type)
+       VALUES ($1, ${CT_TODAY}, NOW(), $2, $3, $4, 'User', 'sandbox')
+       ON CONFLICT DO NOTHING`,
+      [positionId, putCredit, contracts, bot.dte],
+    )
+  } catch { /* pdt_log is audit-only */ }
+
+  console.log(
+    `[scanner] FLAME OPENED PCS ${positionId}: ${putLong}/${putShort}P x${contracts} @ $${putCredit.toFixed(4)} ` +
+    `collateral=$${collateral.toFixed(0)} (10% of $${accountBalance.toFixed(0)}) VIX=${vix.toFixed(2)}`,
+  )
+
+  return `traded:${positionId}(put_credit_spread)`
+}
+
+/* ------------------------------------------------------------------ */
 /*  Open new trade (mirrors force-trade route exactly)                 */
 /*  Fix 10: Live buying power from open positions                      */
 /* ------------------------------------------------------------------ */
 
 async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<string> {
+  // FLAME is now a bull put credit spread bot. Completely separate entry
+  // flow — 2-leg strikes, VIX > 18 gate, 10%-risk sizing, no sandbox order
+  // placement. Delegates to tryOpenFlamePutSpread so this function keeps
+  // handling only the IC bots (SPARK/INFERNO) with zero behavior change.
+  if (bot.name === 'flame') {
+    return tryOpenFlamePutSpread(bot, spot, vix)
+  }
+
   const botCfg = cfg(bot)
 
   // VIX filter
