@@ -4075,6 +4075,18 @@ async function runAllScans(): Promise<void> {
     console.error(`[scanner] EOD safety net sweep failed: ${msg}`)
   }
 
+  // Commit N1: SPARK SMS notifications — sweep recently-opened/closed
+  // positions and fire Twilio texts for any not yet notified. Runs every
+  // cycle (idempotent via spark_sms_notifications_sent uniqueness).
+  // Never throws — notification failures must not block trading.
+  try {
+    const { sweepPendingSparkNotifications } = await import('./notifications')
+    await sweepPendingSparkNotifications()
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] SMS notifications sweep failed (non-fatal): ${msg}`)
+  }
+
   // SPARK-only daily hypothetical 2:59 PM P&L compute. Runs once at/after
   // 3:05 PM CT on weekdays — by then the 2:59 PM bar is finalized and any
   // closed-today SPARK trades can have their counterfactual P&L computed

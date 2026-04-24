@@ -360,6 +360,31 @@ CREATE TABLE IF NOT EXISTS vix_snapshots (
   spy_price NUMERIC(10,4)
 );
 CREATE INDEX IF NOT EXISTS idx_vix_snapshots_ts ON vix_snapshots(ts DESC);
+-- Commit N1: SMS subscribers for SPARK trade notifications.
+-- Informational only — does NOT affect trading. Subscribers get a text
+-- on every SPARK trade open (strikes/credit/size) and close (reason/
+-- realized P&L). Managed via /api/spark/notify/subscribe endpoints.
+CREATE TABLE IF NOT EXISTS spark_sms_subscribers (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  phone_number TEXT NOT NULL UNIQUE,
+  enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_open BOOLEAN NOT NULL DEFAULT TRUE,
+  notify_close BOOLEAN NOT NULL DEFAULT TRUE,
+  label TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- Commit N1: per-(position, event) idempotency key so a position's open
+-- and close each fire exactly one SMS regardless of how many scanner
+-- cycles see them. Decouples the notifier from the 3+ different scanner
+-- code paths that open/close positions.
+CREATE TABLE IF NOT EXISTS spark_sms_notifications_sent (
+  position_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  subscriber_count INT,
+  PRIMARY KEY (position_id, event_type)
+);
 `
 
 /**
