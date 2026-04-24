@@ -18,6 +18,7 @@ import PdtTabContent from './PdtTabContent'
 import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
+import FlamePutSpreadTab from './dashboard/FlamePutSpreadTab'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -69,14 +70,18 @@ const ACCOUNT_BOTS = new Set(['spark'])
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
 
 /**
- * Tabs hidden per-bot. FLAME is migrating from Iron Condor to Put Credit
- * Spread (chat-approved 4/24), and the existing IC Chart visualization
- * renders a 4-leg payoff which would mis-describe the new strategy once
- * the scanner flips. Hide it on FLAME until a proper put-spread chart
- * ships in a follow-up PR.
+ * Tabs hidden per-bot. Currently empty — FLAME replaces the IC Chart
+ * body with FlamePutSpreadTab below rather than hiding the tab.
  */
-const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {
-  flame: new Set<Tab>(['IC Chart']),
+const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {}
+
+/**
+ * Per-bot display labels for ALL_TABS internal keys. FLAME renames
+ * "IC Chart" → "Spread Chart" since it renders a 2-leg put credit
+ * spread, not a 4-leg Iron Condor. SPARK/INFERNO keep the default.
+ */
+const TAB_LABEL_OVERRIDES: Record<string, Partial<Record<Tab, string>>> = {
+  flame: { 'IC Chart': 'Spread Chart' },
 }
 
 /** Tabs that only appear on SPARK (1DTE-specific features) */
@@ -496,7 +501,7 @@ export default function BotDashboard({
                 : 'border-transparent text-gray-500 hover:text-gray-300'
             }`}
           >
-            {t}
+            {TAB_LABEL_OVERRIDES[bot]?.[t] ?? t}
           </button>
         ))}
       </div>
@@ -523,12 +528,18 @@ export default function BotDashboard({
           </ComponentErrorBoundary>
         )}
         {tab === 'IC Chart' && (
-          <ComponentErrorBoundary fallback="IC Chart tab error">
-            <BuilderTab
-              bot={bot}
-              accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
-            />
-          </ComponentErrorBoundary>
+          bot === 'flame' ? (
+            <ComponentErrorBoundary fallback="Spread Chart tab error">
+              <FlamePutSpreadTab />
+            </ComponentErrorBoundary>
+          ) : (
+            <ComponentErrorBoundary fallback="IC Chart tab error">
+              <BuilderTab
+                bot={bot}
+                accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
+              />
+            </ComponentErrorBoundary>
+          )
         )}
         {tab === 'Production' && hasAccounts && (
           <ComponentErrorBoundary fallback="Production tab error">
