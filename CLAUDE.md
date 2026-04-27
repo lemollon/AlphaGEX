@@ -310,6 +310,16 @@ Domain-specific rules are loaded automatically based on context:
 - `backtest-analyzer.md` - Run and analyze backtests with proper output capture
 - `cross-bot-fixer.md` - Apply the same fix across all 20+ bots systematically
 
+## External SDK References (read-only, sibling clones)
+
+These are upstream broker/exchange SDKs cloned alongside AlphaGEX. Read them when debugging bots that depend on them — method signatures, parameter names, and response shapes live here, not in the AlphaGEX repo.
+
+- **Tastytrade SDK**: `/home/user/tastytrade/` — used by VALOR (HERACLES) MES futures via the `tastytrade` package. Key modules: `account.py`, `order.py`, `market_data.py`, `streamer.py` (DXLinkStreamer).
+- **Coinbase Advanced Trade SDK**: `/home/user/coinbase-advanced-py/` — used by AGAPE-SPOT and 5 perp bots via `coinbase-advanced-py`. Key modules: `rest/`, `websocket/`, `jwt_generator.py`.
+- **Polygon Python client**: `/home/user/polygon-client-python/` — reference only (AlphaGEX uses raw HTTP in `data/polygon_data_fetcher.py`, not this SDK). Note: upstream package directory is `massive/` (rest + websocket), not `polygon/`.
+
+Tradier and TradingVolatility have no quality public SDK — `data/tradier_data_fetcher.py` is the source of truth for those.
+
 ---
 
-*Last Updated: April 8, 2026*
+*Last Updated: April 27, 2026*
