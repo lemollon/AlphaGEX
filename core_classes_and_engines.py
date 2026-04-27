@@ -1181,6 +1181,38 @@ class TradingVolatilityAPI:
             "https://stocks.tradingvolatility.net/api"
         )
 
+        # v2 API: Bearer token (Stripe sub_xxx style identifier from TV billing).
+        # The v1 query-param auth is deprecated as of TV's January 2026 migration.
+        # We accept TRADING_VOLATILITY_API_TOKEN as the canonical name; we do NOT fall
+        # back to TRADING_VOLATILITY_API_KEY/TV_USERNAME because those typically hold
+        # the legacy username (e.g. "I-RWFNBLR2S1DP"), which v2 will reject with 401/403.
+        self.v2_token = os.getenv("TRADING_VOLATILITY_API_TOKEN") or ""
+
+        # Local-dev fallback via secrets.toml
+        if not self.v2_token:
+            try:
+                import toml
+                secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
+                if os.path.exists(secrets_path):
+                    secrets = toml.load(secrets_path)
+                    self.v2_token = (
+                        secrets.get("trading_volatility_api_token") or
+                        secrets.get("TRADING_VOLATILITY_API_TOKEN") or
+                        ""
+                    )
+            except Exception:
+                pass
+
+        # v2 base URL (separate env so the v1 endpoint can stay during transition)
+        self.v2_base_url = (
+            os.getenv("TRADING_VOLATILITY_V2_BASE_URL") or
+            "https://stocks.tradingvolatility.net/api/v2"
+        )
+
+        if not self.v2_token:
+            print("⚠️ TRADING_VOLATILITY_API_TOKEN not set. v2 API calls will return 'no_token' errors.")
+            print("   Set this env var to your TV Bearer token (sub_xxx from billing page).")
+
         self.last_response = None  # Store last API response for profile data
 
         # Initialize shared minute reset time if not set
@@ -1411,600 +1443,690 @@ class TradingVolatilityAPI:
             print(f"  ⚠️ Could not parse strike data: {e}")
             return 0, 0
 
-    def get_net_gamma(self, symbol: str) -> Dict:
-        """Fetch net gamma exposure data from Trading Volatility API with intelligent rate limiting"""
+    # ==========================================================================
+    # v2 API LAYER (added Apr 2026 — migration from v1 query-param auth)
+    #
+    # v2 uses Bearer auth and a nested response schema. Internal `_v2_*` methods
+    # are the raw transport layer; public methods (get_net_gamma, get_gex_levels,
+    # etc.) are translation wrappers that consume these and re-shape responses
+    # into the v1 dict shapes that 15+ existing call sites expect.
+    # ==========================================================================
+
+    def _v2_request(self, path: str, params: dict = None, cache: bool = True) -> Dict:
+        """
+        Make a request to the Trading Volatility v2 API.
+
+        Args:
+            path: Path component starting with '/' (e.g. '/tickers/SPY/market-structure').
+            params: Optional query parameters.
+            cache: Whether to use the shared response cache (default True). Cache TTL
+                follows _get_cache_duration() and is shared with v1 caching.
+
+        Returns:
+            On success: parsed JSON response (dict).
+            On failure: dict with 'error' key. Never raises — callers can branch on
+            'error' presence cleanly.
+
+        Failure modes signaled via 'error' key:
+            - 'no_token' — TRADING_VOLATILITY_API_TOKEN env var unset
+            - 'rate_limit_timeout' — local rate limiter could not acquire slot
+            - 'rate_limit (status_code)' — TV server returned rate-limit response
+            - 'unauthorized' — 401 (bad/expired Bearer token)
+            - 'forbidden: ...' — 403 (subscription does not cover resource)
+            - 'not_found: ...' — 404
+            - 'http_NNN: ...' — other non-200 status
+            - 'request_exception: ...' — network failure
+            - 'invalid_json: ...' — server returned non-JSON
+            - 'empty_response' — server returned 200 with no body
+        """
         import requests
 
+        if not self.v2_token:
+            return {'error': 'no_token'}
+
+        path_norm = path if path.startswith('/') else '/' + path
+
+        # Cache key — keep stable ordering of params so cache hits work
+        params_norm = dict(sorted((params or {}).items()))
+        cache_key = f"v2:{path_norm}:{params_norm}"
+
+        if cache:
+            cached = self._get_cached_response(cache_key)
+            if cached is not None:
+                return cached
+
+        # Use the shared rate limiter (same instance as v1) — TV's per-account
+        # quotas apply across both API versions, so sharing is correct.
+        if RATE_LIMITER_AVAILABLE:
+            if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                return {'error': 'rate_limit_timeout'}
+        else:
+            self._wait_for_rate_limit()
+
+        url = f"{self.v2_base_url.rstrip('/')}{path_norm}"
+
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility API key not found!")
-                print("Set TRADING_VOLATILITY_API_KEY or TV_USERNAME environment variable")
-                return {'error': 'API key not configured'}
+            response = requests.get(
+                url,
+                params=params_norm or None,
+                headers={
+                    'Authorization': f'Bearer {self.v2_token}',
+                    'Accept': 'application/json',
+                },
+                timeout=120,
+            )
+        except requests.exceptions.RequestException as e:
+            return {'error': f'request_exception: {e!r}'}
 
-            # Check cache first
-            cache_key = self._get_cache_key('gex/latest', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                # Use cached response
-                cache_duration = self._get_cache_duration()
-                print(f"✅ Using cached GEX data for {symbol} (cache TTL: {cache_duration/60:.0f} min)")
-                self.last_response = cached_data
-                json_response = cached_data
-            else:
-                # Use intelligent rate limiter if available
-                if RATE_LIMITER_AVAILABLE:
-                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                        print("❌ Rate limit timeout - circuit breaker active")
-                        return {'error': 'rate_limit'}
-                else:
-                    # Fallback to old rate limiting
-                    self._wait_for_rate_limit()
+        # Server-side rate-limit detection
+        if response.status_code == 429:
+            self._handle_rate_limit_error()
+            return {'error': 'rate_limit (429)'}
 
-                # Call Trading Volatility API
-                response = requests.get(
-                    self.endpoint + '/gex/latest',
-                    params={
-                        'ticker': symbol,
-                        'username': self.api_key,
-                        'format': 'json'
-                    },
-                    headers={'Accept': 'application/json'},
-                    timeout=120  # Increased to 120 seconds for multi-symbol scanner with slow API responses
-                )
+        if response.status_code == 401:
+            return {'error': 'unauthorized: invalid bearer token'}
 
-                if response.status_code != 200:
-                    print(f"❌ Trading Volatility API returned status {response.status_code}")
-                    print(f"Response text (first 100 chars): {response.text[:100]}")
+        if response.status_code == 403:
+            try:
+                err = response.json()
+                msg = err.get('error', {}).get('message', response.text[:200])
+            except Exception:
+                msg = response.text[:200]
+            return {'error': f'forbidden: {msg}'}
 
-                    # ONLY treat as rate limit if response explicitly says so
-                    # Don't blindly assume 403 = rate limit (could be auth/subscription issue)
-                    if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
-                        print(f"⚠️ Rate limit detected in response - activating circuit breaker")
-                        self._handle_rate_limit_error()
-                        return {'error': 'rate_limit'}
+        if response.status_code == 404:
+            return {'error': f'not_found: {path_norm}'}
 
-                    # NO MOCK DATA - Return error if API fails
-                    return {'error': f'API returned {response.status_code}'}
+        if response.status_code == 304:
+            # Conditional GET match. We don't currently send If-None-Match, so this
+            # shouldn't happen, but if it does and we have a cached value, return it.
+            cached = self._get_cached_response(cache_key)
+            return cached if cached is not None else {'error': 'http_304_no_cache'}
 
-                # Check for rate limit error in response text (redundant check but safe)
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
-                    self._handle_rate_limit_error()
-                    return {'error': 'API rate limit exceeded'}
+        if response.status_code != 200:
+            text_lower = response.text.lower()
+            if 'rate' in text_lower or 'limit exceeded' in text_lower:
+                self._handle_rate_limit_error()
+                return {'error': f'rate_limit ({response.status_code})'}
+            return {'error': f'http_{response.status_code}: {response.text[:200]}'}
 
-                # Check if response has content before parsing JSON
-                if not response.text or len(response.text.strip()) == 0:
-                    print(f"❌ Trading Volatility API returned empty response")
-                    print(f"URL: {response.url}")
-                    return {'error': 'Empty response from API'}
+        if not response.text or not response.text.strip():
+            return {'error': 'empty_response'}
 
-                # Try to parse JSON with better error handling
-                try:
-                    json_response = response.json()
-                except ValueError as json_err:
-                    # Check if error message contains rate limit info
-                    if "API limit exceeded" in response.text:
-                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                        self._handle_rate_limit_error()
-                        return {'error': 'API rate limit exceeded'}
-                    else:
-                        print(f"❌ Invalid JSON from Trading Volatility API")
-                        print(f"Response text (first 200 chars): {response.text[:200]}")
-                        return {'error': f'Invalid JSON: {str(json_err)}'}
+        try:
+            data = response.json()
+        except ValueError as e:
+            return {'error': f'invalid_json: {e!r}'}
 
-                # Success! Reset error counter
-                self._reset_rate_limit_errors()
+        self._reset_rate_limit_errors()
 
-                # Cache the response
-                self._cache_response(cache_key, json_response)
+        if cache:
+            self._cache_response(cache_key, data)
 
-                # Store the full response for get_gex_profile to use
-                self.last_response = json_response
+        return data
 
-            # Parse nested response - data is under the ticker symbol
-            ticker_data = json_response.get(symbol, {})
+    # ---- Raw v2 endpoint methods (1:1 with documented routes) ----
 
-            if not ticker_data:
-                print(f"❌ No data found for {symbol} in API response")
+    def _v2_ticker_state(self, symbol: str, include: str = None) -> Dict:
+        """GET /tickers/{ticker} — canonical compact ticker state snapshot."""
+        params = {'include': include} if include else None
+        return self._v2_request(f"/tickers/{symbol}", params)
+
+    def _v2_market_structure(self, symbol: str, include: str = None) -> Dict:
+        """GET /tickers/{ticker}/market-structure — assembled interpretation layer."""
+        params = {'include': include} if include else None
+        return self._v2_request(f"/tickers/{symbol}/market-structure", params)
+
+    def _v2_explain(self, symbol: str, view: str = None) -> Dict:
+        """GET /tickers/{ticker}/explain — deterministic plain-English summary + tags."""
+        params = {'view': view} if view else None
+        return self._v2_request(f"/tickers/{symbol}/explain", params)
+
+    def _v2_levels(self, symbol: str) -> Dict:
+        """GET /tickers/{ticker}/levels — gamma flip + GEX_0..GEX_4 + ±1σ levels."""
+        return self._v2_request(f"/tickers/{symbol}/levels")
+
+    def _v2_gamma_curve(self, symbol: str, exp: str = "combined", realtime: bool = False) -> Dict:
+        """GET /tickers/{ticker}/curves/gamma — strike-level net gamma curve.
+
+        exp: 'combined' | 'nearest' | 'first_weekly' | 'first_monthly' | 'YYYY-MM-DD'
+        realtime: True forces a fresh pull (only valid during trading hours).
+        """
+        params = {'exp': exp}
+        if realtime:
+            params['realtime'] = 'true'
+        # Realtime/dated pulls bypass cache so the user gets fresh data
+        use_cache = not realtime and exp in ('combined', 'nearest', 'first_weekly', 'first_monthly')
+        return self._v2_request(f"/tickers/{symbol}/curves/gamma", params, cache=use_cache)
+
+    def _v2_gamma_expirations(self, symbol: str) -> Dict:
+        """GET /tickers/{ticker}/curves/gamma/expirations — multi-bucket gamma decomposition."""
+        return self._v2_request(f"/tickers/{symbol}/curves/gamma/expirations")
+
+    def _v2_gex_by_strike(self, symbol: str, exp: str = "combined") -> Dict:
+        """GET /tickers/{ticker}/curves/gex_by_strike — net GEX with call/put contributions."""
+        return self._v2_request(f"/tickers/{symbol}/curves/gex_by_strike", {'exp': exp})
+
+    def _v2_series(self, symbol: str, metrics, window: str = "180d") -> Dict:
+        """GET /tickers/{ticker}/series — historical metric time series.
+
+        metrics: list of metric keys (see TV spec metric_catalog) OR comma-separated string.
+        window: '30d' | '180d' | '1y' | '2y' etc.
+        """
+        if isinstance(metrics, (list, tuple)):
+            metrics_str = ','.join(metrics)
+        else:
+            metrics_str = str(metrics)
+        return self._v2_request(
+            f"/tickers/{symbol}/series",
+            {'metrics': metrics_str, 'window': window},
+        )
+
+    def _v2_options_volume(self, symbol: str, exp: str) -> Dict:
+        """GET /tickers/{ticker}/options/volume — strike-by-strike volume for one expiry."""
+        return self._v2_request(f"/tickers/{symbol}/options/volume", {'exp': exp})
+
+    def _v2_trade_setup(self, symbol: str) -> Dict:
+        """GET /agent/trade-setup/{ticker} — compact trader-facing recommendation payload."""
+        return self._v2_request(f"/agent/trade-setup/{symbol}")
+
+    def _v2_top_setups(self, filters: dict = None) -> Dict:
+        """GET /top-setups — cross-ticker ranking by opportunity_score.
+
+        filters: optional dict with keys per spec (limit, min_score, regime, trade_bias,
+                 trend_state, momentum_state, realized_vol_state, recommended_direction,
+                 price_min, price_max, iv_rank_min, iv_rank_max, ivAtMaxDelta_min,
+                 ivAtMaxDelta_max, ttl).
+        """
+        return self._v2_request("/top-setups", filters)
+
+    def get_net_gamma(self, symbol: str) -> Dict:
+        """Fetch net gamma exposure data via TV v2 API.
+
+        Returns a dict with v1-compatible keys so existing call sites need
+        no changes:
+            symbol, spot_price, net_gex, flip_point, call_wall, put_wall,
+            put_call_ratio, implied_volatility, collection_date, raw_data
+
+        Also includes v2-only enrichment fields that older callers ignore:
+            speculative_interest_score, call_regime, expected_move_pct_1d,
+            expected_move_pct_1w, pct_gamma_expiring, structure_regime,
+            signal, bias, headline, tags, drivers, api_version
+
+        Internally calls /tickers/{symbol}/market-structure (primary) and
+        /tickers/{symbol}/curves/gex_by_strike (walls). v1 also made up
+        to 2 calls when walls weren't in the snapshot, so rate-limit
+        pressure is unchanged.
+
+        IV note: /market-structure does not surface ATM IV. We return 0.0
+        here for compatibility with v1 callers that already tolerated 0
+        IV from fallback paths. Callers that need real IV should use
+        get_skew_data() or read 'put_call_25d_iv_premium_pct' from
+        raw_data.supporting_factors.
+        """
+        if not self.v2_token:
+            return {'error': 'API key not configured (TRADING_VOLATILITY_API_TOKEN unset)'}
+
+        try:
+            ms = self._v2_market_structure(symbol)
+            if 'error' in ms:
+                err = ms['error']
+                # Surface rate-limit failures with the legacy error string so
+                # callers that branch on 'rate_limit' continue to work.
+                if 'rate_limit' in err:
+                    return {'error': 'rate_limit'}
+                return {'error': f'market_structure: {err}'}
+
+            # v2 envelopes payload under 'data'; tolerate flat too.
+            ms_data = ms.get('data', ms)
+            ms_meta = ms.get('meta', {}) or {}
+
+            if not isinstance(ms_data, dict) or not ms_data:
                 return {'error': 'No ticker data in response'}
 
-            # Log what fields we received for debugging
-            received_fields = list(ticker_data.keys())
-            print(f"📋 Received GEX data for {symbol} with fields: {received_fields}")
+            key_levels = ms_data.get('key_levels', {}) or {}
+            sf = ms_data.get('supporting_factors', {}) or {}
+            drivers = ms_data.get('drivers', {}) or {}
 
-            # Validate minimum required fields
-            required_fields = ['price', 'skew_adjusted_gex']
-            missing_fields = [f for f in required_fields if f not in ticker_data]
-            if missing_fields:
-                print(f"❌ Incomplete data from API: missing {missing_fields}")
-                return {
-                    'error': f'Incomplete data from API: missing {missing_fields}',
-                    'received_fields': received_fields,
-                    'required_fields': required_fields
-                }
+            spot_price = float(key_levels.get('spot') or sf.get('spot') or 0)
+            flip_point = float(key_levels.get('gamma_flip') or sf.get('gamma_flip') or 0)
+            net_gex = float(sf.get('gamma_notional_per_1pct_move_usd') or 0)
+            pcr_oi = float(sf.get('pcr_oi') or 0)
+            spec_score = float(sf.get('speculative_interest_score') or 0)
+            call_regime = sf.get('call_regime') or ''
+            em_1d_pct = float(sf.get('expected_move_pct_1d') or 0)
+            em_1w_pct = float(sf.get('expected_move_pct_1w') or 0)
+            pct_gamma_expiring = float(sf.get('pct_gamma_expiring_nearest_expiry') or 0)
 
-            # Extract aggregate metrics from Trading Volatility API
-            call_wall = 0
-            put_wall = 0
+            # ATM IV is not in /market-structure. v1 callers tolerated 0
+            # from fallback paths; we preserve that behavior here.
+            atm_iv = 0.0
 
-            # Try to extract wall data from gamma_array if available
-            gamma_array = ticker_data.get('gamma_array', [])
-            if gamma_array and len(gamma_array) > 0:
-                max_call_gamma = 0
-                max_put_gamma = 0
+            # Walls + per-side totals — single extra call to /curves/gex_by_strike.
+            # Matches v1 2-call pattern when walls were missing from snapshot.
+            call_wall = None
+            put_wall = None
+            total_call_gex = 0.0
+            total_put_gex = 0.0
+            try:
+                strikes_resp = self._v2_gex_by_strike(symbol, exp='combined')
+                if 'error' not in strikes_resp:
+                    strikes_data = strikes_resp.get('data', strikes_resp)
+                    points = strikes_data.get('points', []) or []
+                    max_call_gex = 0.0
+                    max_put_gex = 0.0
+                    for p in points:
+                        if not isinstance(p, dict):
+                            continue
+                        s = float(p.get('strike', 0) or 0)
+                        c_raw = float(p.get('call', 0) or 0)
+                        pu_raw = float(p.get('put', 0) or 0)
+                        c = abs(c_raw)
+                        pu = abs(pu_raw)
+                        total_call_gex += c_raw
+                        total_put_gex += pu_raw
+                        if c > max_call_gex:
+                            max_call_gex = c
+                            call_wall = s
+                        if pu > max_put_gex:
+                            max_put_gex = pu
+                            put_wall = s
+                    if call_wall and put_wall:
+                        print(f"✅ {symbol} walls (v2): Call ${call_wall:.2f}, Put ${put_wall:.2f}")
+            except Exception as wall_err:
+                print(f"⚠️ {symbol} wall fetch failed: {wall_err}")
 
-                for strike_obj in gamma_array:
-                    if not strike_obj or 'strike' not in strike_obj:
-                        continue
+            collection_date = ms_meta.get('asof') or ms_data.get('asof') or ''
 
-                    strike = float(strike_obj['strike'])
-                    call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
-                    put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
-
-                    # Track max gamma for walls
-                    if call_gamma > max_call_gamma:
-                        max_call_gamma = call_gamma
-                        call_wall = strike
-
-                    if put_gamma > max_put_gamma:
-                        max_put_gamma = put_gamma
-                        put_wall = strike
-
-                if call_wall > 0 and put_wall > 0:
-                    print(f"✅ Extracted walls from gamma_array: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+            # Derived fields callers use:
+            #  - distance_to_flip_pct: from sf.distance_to_flip_pct (v2 spec) OR derived
+            #    from data.derived.dist_to_gex_flip_pct on the raw /tickers/X response.
+            #    /market-structure exposes it under supporting_factors per spec.
+            #  - gex_regime: classical "spot vs flip" regime classifier.
+            #    POSITIVE when spot > flip, NEGATIVE when spot < flip, NEUTRAL otherwise.
+            #    Many callers (SOLOMON, FAITH, scheduler, AI routes) read this with
+            #    a 'NEUTRAL' or 'UNKNOWN' default. v1 didn't populate it explicitly
+            #    either, but populating it from v2 here removes dependence on default.
+            distance_to_flip_pct = float(
+                sf.get('distance_to_flip_pct')
+                or ms_data.get('derived', {}).get('dist_to_gex_flip_pct')
+                or 0
+            )
+            if spot_price > 0 and flip_point > 0:
+                if spot_price > flip_point:
+                    gex_regime = 'POSITIVE'
+                elif spot_price < flip_point:
+                    gex_regime = 'NEGATIVE'
+                else:
+                    gex_regime = 'NEUTRAL'
+            else:
+                gex_regime = 'UNKNOWN'
 
             result = {
+                # ---- v1-compatible keys (do not rename; many callers read these) ----
                 'symbol': symbol,
-                'spot_price': float(ticker_data.get('price', 0)),
-                'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
-                'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': float(call_wall) if call_wall else None,
-                'put_wall': float(put_wall) if put_wall else None,
-                'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
-                'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
-                'collection_date': ticker_data.get('collection_date', ''),
-                'raw_data': ticker_data
+                'spot_price': spot_price,
+                'net_gex': net_gex,
+                'flip_point': flip_point,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'put_call_ratio': pcr_oi,
+                'implied_volatility': atm_iv,
+                'collection_date': collection_date,
+                'raw_data': ms_data,
+                # ---- Fields many callers read with a default (now populated explicitly) ----
+                'gex_regime': gex_regime,                  # POSITIVE / NEGATIVE / NEUTRAL / UNKNOWN
+                'distance_to_flip_pct': distance_to_flip_pct,
+                'total_call_gex': total_call_gex,
+                'total_put_gex': total_put_gex,
+                'call_gex': total_call_gex,                # alias used by some callers
+                'put_gex': total_put_gex,
+                # ---- v2-only enrichment (back-compat: callers ignore unknown keys) ----
+                'speculative_interest_score': spec_score,
+                'call_regime': call_regime,
+                'expected_move_pct_1d': em_1d_pct,
+                'expected_move_pct_1w': em_1w_pct,
+                'pct_gamma_expiring': pct_gamma_expiring,
+                'structure_regime': ms_data.get('structure_regime', ''),
+                'signal': ms_data.get('signal', ''),
+                'bias': ms_data.get('bias', ''),
+                'headline': ms_data.get('headline', ''),
+                'tags': ms_data.get('tags', []) or [],
+                'drivers': drivers,
+                'api_version': 'v2',
             }
 
-            # If walls are 0/None, try to get them from the gammaOI profile endpoint
-            if not result.get('call_wall') or not result.get('put_wall'):
-                try:
-                    profile = self.get_gex_profile(symbol)
-                    if profile and 'error' not in profile:
-                        if profile.get('call_wall') and not result.get('call_wall'):
-                            result['call_wall'] = float(profile['call_wall'])
-                        if profile.get('put_wall') and not result.get('put_wall'):
-                            result['put_wall'] = float(profile['put_wall'])
-                        if result.get('call_wall') and result.get('put_wall'):
-                            print(f"✅ Got walls from gammaOI profile: Call ${result['call_wall']:.2f}, Put ${result['put_wall']:.2f}")
-                except Exception as profile_err:
-                    print(f"⚠️ Could not get walls from profile: {profile_err}")
-
+            # Retained for backward compat with callers that read last_response
+            # (e.g. older paths in get_gex_profile / scan helpers).
+            self.last_response = ms_data
             return result
 
         except Exception as e:
             import traceback
-            error_msg = f"Error fetching data from Trading Volatility API: {e}"
+            error_msg = f"Error fetching data from Trading Volatility API (v2): {e}"
             print(f"❌ {error_msg}")
             traceback.print_exc()
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str, expiration: str = None) -> Dict:
-        """
-        Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with intelligent rate limiting
+        """Detailed strike-level GEX profile via TV v2 API.
 
         Args:
             symbol: Ticker symbol (e.g., 'SPY')
             expiration: Optional expiration filter:
-                - '1' = nearest expiration (0DTE)
-                - '2' = nearest monthly expiration
-                - 'YYYY-MM-DD' = specific date
-                - None = all expirations combined (default)
+                - None or '1' or 'nearest' → nearest expiration (mapped to 'nearest')
+                - '2' or 'first_monthly' → first monthly (mapped to 'first_monthly')
+                - 'first_weekly' → first weekly
+                - 'YYYY-MM-DD' → specific date
+                - 'combined' → all expirations combined
+
+        Returns v1-compatible dict shape:
+            symbol, spot_price, flip_point, call_wall, put_wall,
+            strikes (list of {strike, call_gamma, put_gamma, total_gamma,
+                              call_oi, put_oi, put_call_ratio}),
+            _debug (cache + raw-strike diagnostics),
+            aggregate_from_gammaOI (when v2 supplies aggregate fields)
+
+        Empty dict {} on error. {'error': 'rate_limit', 'message': ...} on rate limit.
+
+        v2 caveat: /curves/gex_by_strike does not return per-strike open interest;
+        call_oi/put_oi/put_call_ratio fields are present (for v1 caller compat) but
+        always 0. Callers that need OI must call /tickers/{symbol}/options/volume.
         """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        # Map v1 expiration codes to v2 exp parameter values
+        exp_map = {
+            '1': 'nearest',
+            '2': 'first_monthly',
+            'nearest': 'nearest',
+            'first_monthly': 'first_monthly',
+            'first_weekly': 'first_weekly',
+            'combined': 'combined',
+            None: 'combined',
+        }
+        exp_v2 = exp_map.get(expiration, expiration)  # passthrough for YYYY-MM-DD
 
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility username not found in secrets!")
-                return {}
-
-            # Check cache first - include expiration in cache key
-            cache_suffix = f'_exp_{expiration}' if expiration else ''
-            cache_key = self._get_cache_key(f'gex/gammaOI{cache_suffix}', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            used_cache = False
-            if cached_data:
-                cache_duration = self._get_cache_duration()
-                exp_label = f" (exp={expiration})" if expiration else ""
-                print(f"✅ Using cached gammaOI data for {symbol}{exp_label} (cache TTL: {cache_duration/60:.0f} min)")
-                json_response = cached_data
-                used_cache = True
-            else:
-                # Use intelligent rate limiter if available
-                if RATE_LIMITER_AVAILABLE:
-                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                        print("❌ Rate limit timeout - circuit breaker active")
-                        return {}
-                else:
-                    # Fallback to old rate limiting
-                    self._wait_for_rate_limit()
-
-                # Build request parameters
-                params = {
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                }
-
-                # Add expiration filter if specified
-                if expiration:
-                    params['exp'] = expiration
-                    print(f"🔍 Requesting gammaOI for {symbol} with exp={expiration}")
-
-                # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
-                response = requests.get(
-                    self.endpoint + '/gex/gammaOI',
-                    params=params,
-                    headers={'Accept': 'application/json'},
-                    timeout=120
-                )
-
-                if response.status_code != 200:
-                    print(f"❌ gammaOI endpoint returned status {response.status_code}")
+            resp = self._v2_gex_by_strike(symbol, exp=exp_v2)
+            if 'error' in resp:
+                err = resp['error']
+                if 'rate_limit' in err:
+                    return {'error': 'rate_limit', 'message': err}
+                if 'no_token' in err:
                     return {}
-
-                # Bug #6 Fix: Return proper error dict instead of empty dict on rate limit
-                # Check for rate limit error in response text
-                # DON'T activate circuit breaker - gammaOI has stricter limits (2/min)
-                # Blocking all endpoints because of gammaOI would break gex/latest (20/min)
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ gammaOI rate limited (2/min during trading hours)")
-                    return {'error': 'rate_limit', 'message': 'gammaOI API rate limited (2/min)'}
-
-                # Check if response has content before parsing JSON
-                if not response.text or len(response.text.strip()) == 0:
-                    print(f"❌ gammaOI endpoint returned empty response")
-                    return {'error': 'empty_response', 'message': 'gammaOI returned empty response'}
-
-                # Try to parse JSON with better error handling
-                try:
-                    json_response = response.json()
-                except ValueError as json_err:
-                    # Check if error message contains rate limit info
-                    # DON'T activate circuit breaker - gammaOI has stricter limits
-                    if "API limit exceeded" in response.text:
-                        print(f"⚠️ gammaOI rate limited")
-                        return {'error': 'rate_limit', 'message': 'gammaOI API rate limited'}
-                    else:
-                        print(f"❌ Invalid JSON from gammaOI endpoint")
-                        print(f"Response text (first 200 chars): {response.text[:200]}")
-                        return {'error': 'invalid_json', 'message': 'Invalid JSON from gammaOI'}
-
-                # Success! Reset error counter
-                self._reset_rate_limit_errors()
-
-                # Cache the response
-                self._cache_response(cache_key, json_response)
-
-            ticker_data = json_response.get(symbol, {})
-
-            if not ticker_data:
-                print(f"❌ No data found for {symbol} in gammaOI response")
+                # All other errors → empty dict to match v1
+                print(f"⚠️ get_gex_profile v2 error for {symbol}: {err}")
                 return {}
 
-            # Check if gammaOI includes aggregate fields (to avoid separate /gex/latest call)
-            has_aggregate_data = all(field in ticker_data for field in ['implied_volatility', 'gex_flip_price', 'skew_adjusted_gex'])
-
-            # Extract gamma_array (strike-level data)
-            gamma_array = ticker_data.get('gamma_array', [])
-
-            if not gamma_array or len(gamma_array) == 0:
-                print(f"⚠️ No gamma_array found in response")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Debug: Log sample strike to see available fields
-            if len(gamma_array) > 0:
-                sample_strike = gamma_array[0]
-                print(f"\n{'='*60}")
-                print(f"DEBUG: RAW API RESPONSE - First Strike from gammaOI")
-                print(f"{'='*60}")
-                print(f"Available fields: {list(sample_strike.keys())}")
-                print(f"\nFull first strike data:")
-                for key, value in sample_strike.items():
-                    print(f"  {key}: {value}")
-                print(f"{'='*60}\n")
+            points = data.get('points', []) or []
+            if not points:
+                print(f"⚠️ /curves/gex_by_strike for {symbol} returned no points")
+                return {}
 
-            # Parse strike-level data
+            spot_price = float(data.get('price', 0) or 0)
+            totals = data.get('totals', {}) or {}
+            flip_from_totals = float(totals.get('gex_flip_price', 0) or 0)
+
+            # Build full unfiltered strikes_data and find walls in unfiltered range first.
             strikes_data = []
-            max_call_gamma = 0
-            max_put_gamma = 0
-            call_wall = 0
-            put_wall = 0
+            max_call_gamma_all = 0.0
+            max_put_gamma_all = 0.0
+            call_wall_all = 0.0
+            put_wall_all = 0.0
 
-            debug_first_strike = True
-            for strike_obj in gamma_array:
-                # Skip empty objects
-                if not strike_obj or 'strike' not in strike_obj:
+            for p in points:
+                if not isinstance(p, dict) or 'strike' not in p:
                     continue
-
-                strike = float(strike_obj['strike'])
-
-                # Get raw values from API - these may be strings like "9446.0"
-                call_gamma_raw_value = strike_obj.get('call_gamma', 0)
-                put_gamma_raw_value = strike_obj.get('put_gamma', 0)
-
-                # Convert to float - handle both string and numeric values
                 try:
-                    call_gamma_raw = float(call_gamma_raw_value) if call_gamma_raw_value else 0.0
-                except (ValueError, TypeError):
-                    call_gamma_raw = 0.0
-
+                    strike = float(p['strike'])
+                except (TypeError, ValueError):
+                    continue
+                # v2 'call' / 'put' may be signed (call usually +, put usually -)
                 try:
-                    put_gamma_raw = float(put_gamma_raw_value) if put_gamma_raw_value else 0.0
-                except (ValueError, TypeError):
-                    put_gamma_raw = 0.0
+                    call_raw = float(p.get('call', 0) or 0)
+                except (TypeError, ValueError):
+                    call_raw = 0.0
+                try:
+                    put_raw = float(p.get('put', 0) or 0)
+                except (TypeError, ValueError):
+                    put_raw = 0.0
 
-                # Use absolute values for display (both bars positive in chart)
-                call_gamma = abs(call_gamma_raw)
-                put_gamma = abs(put_gamma_raw)
-
-                # Calculate total/net gamma (preserves sign - negative for puts)
-                total_gamma = call_gamma_raw + put_gamma_raw
-
-                # Debug first strike to see what's happening
-                if debug_first_strike:
-                    print(f"\n{'='*60}")
-                    print(f"DEBUG: GAMMA PROCESSING - First Strike")
-                    print(f"{'='*60}")
-                    print(f"Raw call_gamma value: {call_gamma_raw_value!r} (type: {type(call_gamma_raw_value).__name__})")
-                    print(f"Raw put_gamma value: {put_gamma_raw_value!r} (type: {type(put_gamma_raw_value).__name__})")
-                    print(f"Parsed call_gamma_raw: {call_gamma_raw}")
-                    print(f"Parsed put_gamma_raw: {put_gamma_raw}")
-                    print(f"Absolute call_gamma: {call_gamma}")
-                    print(f"Absolute put_gamma: {put_gamma}")
-                    print(f"Calculated total_gamma: {total_gamma}")
-                    print(f"{'='*60}\n")
-                    debug_first_strike = False
-
-                # Extract open interest data
-                call_oi = float(strike_obj.get('call_open_interest', 0))
-                put_oi = float(strike_obj.get('put_open_interest', 0))
-
-                # Calculate put/call ratio
-                put_call_ratio = put_oi / call_oi if call_oi > 0 else 0
+                call_gamma = abs(call_raw)
+                put_gamma = abs(put_raw)
+                # v2 also gives 'net' directly; prefer it over reconstructing
+                try:
+                    total_gamma = float(p.get('net', call_raw + put_raw))
+                except (TypeError, ValueError):
+                    total_gamma = call_raw + put_raw
 
                 strikes_data.append({
                     'strike': strike,
                     'call_gamma': call_gamma,
                     'put_gamma': put_gamma,
                     'total_gamma': total_gamma,
-                    'call_oi': call_oi,
-                    'put_oi': put_oi,
-                    'put_call_ratio': put_call_ratio
+                    'call_oi': 0.0,    # v2 gex_by_strike does not include OI; see method docstring
+                    'put_oi': 0.0,
+                    'put_call_ratio': 0.0,
                 })
 
-                # Track max gamma for walls
-                if call_gamma > max_call_gamma:
-                    max_call_gamma = call_gamma
-                    call_wall = strike
+                if call_gamma > max_call_gamma_all:
+                    max_call_gamma_all = call_gamma
+                    call_wall_all = strike
+                if put_gamma > max_put_gamma_all:
+                    max_put_gamma_all = put_gamma
+                    put_wall_all = strike
 
-                if put_gamma > max_put_gamma:
-                    max_put_gamma = put_gamma
-                    put_wall = strike
-
-            # Get spot price and flip point
-            spot_price = float(ticker_data.get('price', 0))
-
-            # Get implied volatility - try gammaOI first, then fall back to last_response
+            # Determine IV for the ±7-day std filter window (v1 used 0.20 default).
+            # If a previous /market-structure call cached IV-adjacent data, use it;
+            # otherwise default to 20% so the filter window math is conservative.
             try:
                 from config import ImpliedVolatilityConfig
                 implied_vol = ImpliedVolatilityConfig.DEFAULT_IV
             except ImportError:
-                implied_vol = 0.20  # Fallback to 20% IV
-            if 'implied_volatility' in ticker_data:
-                # gammaOI includes aggregate data - use it directly!
-                implied_vol = float(ticker_data.get('implied_volatility', 0.20))
-            elif self.last_response:
-                # Fall back to /gex/latest response if gammaOI doesn't include it
-                last_ticker_data = self.last_response.get(symbol, {})
-                implied_vol = float(last_ticker_data.get('implied_volatility', 0.20))
+                implied_vol = 0.20
+            try:
+                if isinstance(self.last_response, dict):
+                    sf = self.last_response.get('supporting_factors', {}) or {}
+                    pcr_iv_pct = sf.get('put_call_25d_iv_premium_pct')
+                    if pcr_iv_pct is not None:
+                        # Not actually IV — kept as a flag that we have ms data.
+                        # Real IV must come from get_skew_data(); use default for the filter.
+                        pass
+            except Exception:
+                pass
 
-            # 7-day expected move: spot * IV * sqrt(7/252)
             import math
-            seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252)
-            min_strike = spot_price - seven_day_std
-            max_strike = spot_price + seven_day_std
+            seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252) if spot_price > 0 else 0
+            if seven_day_std > 0:
+                min_strike = spot_price - seven_day_std
+                max_strike = spot_price + seven_day_std
+                strikes_data_filtered = [
+                    s for s in strikes_data if min_strike <= s['strike'] <= max_strike
+                ]
+            else:
+                strikes_data_filtered = strikes_data
+                min_strike, max_strike = 0, 0
 
-            # Filter strikes to +/- 7 day std range
-            strikes_data_filtered = [s for s in strikes_data if min_strike <= s['strike'] <= max_strike]
+            # Recompute walls within filtered range
+            max_call_filt = 0.0
+            max_put_filt = 0.0
+            call_wall_filt = call_wall_all
+            put_wall_filt = put_wall_all
+            for s in strikes_data_filtered:
+                if s['call_gamma'] > max_call_filt:
+                    max_call_filt = s['call_gamma']
+                    call_wall_filt = s['strike']
+                if s['put_gamma'] > max_put_filt:
+                    max_put_filt = s['put_gamma']
+                    put_wall_filt = s['strike']
 
-            # Recalculate call_wall and put_wall using ONLY filtered strikes
-            # This ensures walls are within the visible chart range
-            max_call_gamma_filtered = 0
-            max_put_gamma_filtered = 0
-            call_wall_filtered = call_wall  # Keep original as fallback
-            put_wall_filtered = put_wall    # Keep original as fallback
-
-            for strike_data in strikes_data_filtered:
-                call_g = strike_data['call_gamma']
-                put_g = strike_data['put_gamma']
-
-                if call_g > max_call_gamma_filtered:
-                    max_call_gamma_filtered = call_g
-                    call_wall_filtered = strike_data['strike']
-
-                if put_g > max_put_gamma_filtered:
-                    max_put_gamma_filtered = put_g
-                    put_wall_filtered = strike_data['strike']
-
-            print(f"\n{'='*60}")
-            print(f"GEX WALLS DEBUG - {symbol}")
-            print(f"{'='*60}")
-            print(f"Spot Price: ${spot_price:.2f}")
-            print(f"Strike Range: ${min_strike:.2f} to ${max_strike:.2f} (+/- 7 day STD)")
-            print(f"Original Call Wall: ${call_wall:.2f} (from ALL strikes)")
-            print(f"Filtered Call Wall: ${call_wall_filtered:.2f} (from visible strikes)")
-            print(f"Original Put Wall: ${put_wall:.2f} (from ALL strikes)")
-            print(f"Filtered Put Wall: ${put_wall_filtered:.2f} (from visible strikes)")
-            print(f"Total strikes: {len(strikes_data)} -> Filtered: {len(strikes_data_filtered)}")
-            print(f"{'='*60}\n")
-
-            # Calculate flip point from gamma_array (where net gamma crosses zero)
-            # Only consider flip points within the filtered range
-            flip_point = 0
-
-            # Filter gamma_array to visible range first for performance
-            gamma_array_filtered = [
-                g for g in gamma_array
-                if 'strike' in g and min_strike <= float(g['strike']) <= max_strike
-            ]
-
-            for i in range(len(gamma_array_filtered) - 1):
-                if 'net_gamma_$_at_strike' in gamma_array_filtered[i] and 'net_gamma_$_at_strike' in gamma_array_filtered[i + 1]:
-                    strike_current = float(gamma_array_filtered[i]['strike'])
-                    strike_next = float(gamma_array_filtered[i + 1]['strike'])
-                    net_gamma_current = float(gamma_array_filtered[i].get('net_gamma_$_at_strike', 0))
-                    net_gamma_next = float(gamma_array_filtered[i + 1].get('net_gamma_$_at_strike', 0))
-
-                    # Check for sign change (zero crossing)
-                    if net_gamma_current * net_gamma_next < 0:
-                        # Linear interpolation
-                        flip_point = strike_current + (strike_next - strike_current) * (
-                            -net_gamma_current / (net_gamma_next - net_gamma_current)
+            # Flip point: prefer v2 totals.gex_flip_price; otherwise compute zero-crossing.
+            flip_point = flip_from_totals
+            if not flip_point:
+                # Sign-change interpolation on the filtered series
+                arr = strikes_data_filtered if strikes_data_filtered else strikes_data
+                for i in range(len(arr) - 1):
+                    s_curr = arr[i]['strike']
+                    s_next = arr[i + 1]['strike']
+                    n_curr = arr[i]['total_gamma']
+                    n_next = arr[i + 1]['total_gamma']
+                    if n_curr * n_next < 0:
+                        flip_point = s_curr + (s_next - s_curr) * (
+                            -n_curr / (n_next - n_curr)
                         )
                         break
+            if not flip_point:
+                flip_point = spot_price
 
-            # Get first strike from raw API response for debugging
-            first_raw_strike = gamma_array[0] if gamma_array else {}
+            first_raw = points[0] if points else {}
 
             profile = {
-                'strikes': strikes_data_filtered,  # Use filtered strikes
-                'spot_price': spot_price,
-                'flip_point': flip_point if flip_point else spot_price,
-                'call_wall': call_wall_filtered,  # Use filtered wall
-                'put_wall': put_wall_filtered,    # Use filtered wall
                 'symbol': symbol,
+                'spot_price': spot_price,
+                'flip_point': flip_point,
+                'call_wall': call_wall_filt,
+                'put_wall': put_wall_filt,
+                'strikes': strikes_data_filtered,
                 '_debug': {
-                    'used_cache': used_cache,
+                    'used_cache': False,    # v2 cache hits are transparent inside _v2_request
                     'total_strikes_before_filter': len(strikes_data),
                     'total_strikes_after_filter': len(strikes_data_filtered),
+                    'filter_min_strike': min_strike,
+                    'filter_max_strike': max_strike,
+                    'wall_unfiltered_call': call_wall_all,
+                    'wall_unfiltered_put': put_wall_all,
                     'raw_api_first_strike': {
-                        'strike': first_raw_strike.get('strike'),
-                        'call_gamma': first_raw_strike.get('call_gamma'),
-                        'put_gamma': first_raw_strike.get('put_gamma'),
-                        'call_gamma_type': type(first_raw_strike.get('call_gamma')).__name__,
-                        'put_gamma_type': type(first_raw_strike.get('put_gamma')).__name__
+                        'strike': first_raw.get('strike'),
+                        'call_gamma': first_raw.get('call', 0),
+                        'put_gamma': first_raw.get('put', 0),
+                        'call_gamma_type': type(first_raw.get('call')).__name__,
+                        'put_gamma_type': type(first_raw.get('put')).__name__,
                     },
-                    'processed_first_strike': strikes_data[0] if strikes_data else {}
-                }
+                    'processed_first_strike': strikes_data[0] if strikes_data else {},
+                    'api_version': 'v2',
+                },
             }
 
-            # If gammaOI includes aggregate data, add it to profile to avoid separate /gex/latest call
-            if has_aggregate_data:
+            # Aggregate fields from v2 totals (mirror v1's `aggregate_from_gammaOI`).
+            if totals:
                 profile['aggregate_from_gammaOI'] = {
-                    'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
-                    'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
-                    'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
-                    'collection_date': ticker_data.get('collection_date', '')
+                    'net_gex': float(totals.get('gex_value_per_1pct', 0) or 0),
+                    'implied_volatility': 0.0,   # not surfaced in gex_by_strike; see method docstring
+                    'put_call_ratio': float(totals.get('put_call_oi', 0) or 0),
+                    'collection_date': data.get('asof', '') or '',
                 }
 
             return profile
 
         except Exception as e:
             import traceback
-            error_msg = f"Error getting GEX profile from gammaOI: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"❌ Error getting GEX profile (v2): {e}")
             traceback.print_exc()
             return {}
 
     def get_historical_gamma(self, symbol: str, days_back: int = 5) -> List[Dict]:
-        """Fetch historical gamma data from Trading Volatility API with rate limiting"""
-        import requests
-        from datetime import datetime, timedelta
+        """Fetch historical gamma data via TV v2 /series endpoint.
+
+        Returns a list of per-day dicts with keys callers expect (see
+        backtest/backtest_options_strategies.py:184 for date-field detection):
+            date              — YYYY-MM-DD timestamp string
+            collection_date   — same as date (alias for v1 caller compat)
+            gex_flip          — gamma flip price level
+            net_gex           — gex_usd_per_1_pct_move
+            pcr_oi            — put/call open interest ratio
+            iv_rank           — IV rank 0-100
+
+        Empty list [] on error (matches v1).
+        """
+        if not self.v2_token:
+            return []
 
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility username not found in secrets!")
+            window = f"{max(days_back, 1)}d"
+            metrics = ['price', 'gex_flip', 'gex_usd_per_1_pct_move', 'pcr_oi', 'iv_rank', 'atm_iv']
+
+            resp = self._v2_series(symbol, metrics, window=window)
+            if 'error' in resp:
+                print(f"history endpoint error for {symbol}: {resp['error']}")
                 return []
 
-            # Check cache first (cache key includes symbol + days_back) - USING SHARED CACHE
-            cache_key = f"history_{symbol}_{days_back}"
-            if cache_key in TradingVolatilityAPI._shared_response_cache:
-                cached_data, cached_time = TradingVolatilityAPI._shared_response_cache[cache_key]
-                if time.time() - cached_time < TradingVolatilityAPI._shared_cache_duration:
-                    print(f"✓ Using cached historical data for {symbol} (age: {time.time() - cached_time:.0f}s)")
-                    return cached_data
-
-            # RATE LIMITING: Use intelligent rate limiter
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return []
-            else:
-                self._wait_for_rate_limit()
-
-            # Calculate date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days_back)
-
-            # Call Trading Volatility /gex/history endpoint
-            response = requests.get(
-                self.endpoint + '/gex/history',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json',
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
-                # Silently handle errors - don't display to user
-                # The history endpoint is optional and errors shouldn't break the UI
-                print(f"History endpoint returned status {response.status_code} for {symbol}")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict):
                 return []
 
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                # Silently handle empty response
-                print(f"History endpoint returned empty response for {symbol}")
-                return []
+            # /series may return either:
+            # (a) data.points = [{t: '...', metric_a: x, metric_b: y, ...}, ...]
+            # (b) data.series = {'metric_a': [...], 'metric_b': [...], 't': [...]}
+            # Handle both.
+            points = data.get('points') or []
+            series_dict = data.get('series') or {}
 
-            # Check for rate limit error BEFORE parsing JSON
-            if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
-                # Silently handle rate limit - don't spam UI
-                print(f"History endpoint rate limit hit for {symbol}")
-                self._handle_rate_limit_error()
-                return []
+            result = []
 
-            # Try to parse JSON with better error handling
-            try:
-                json_response = response.json()
-            except ValueError as json_err:
-                # Check if error is due to rate limiting
-                if "API limit exceeded" in response.text:
-                    # Silently handle rate limit
-                    print(f"History endpoint rate limit (JSON parse) for {symbol}")
-                    self._handle_rate_limit_error()
-                else:
-                    # Silently handle invalid JSON
-                    print(f"Invalid JSON from history endpoint: {str(json_err)}")
-                return []
+            if points and isinstance(points, list):
+                for pt in points:
+                    if not isinstance(pt, dict):
+                        continue
+                    ts = pt.get('t') or pt.get('timestamp') or pt.get('date') or ''
+                    # Truncate to YYYY-MM-DD if it's a longer ISO string
+                    if isinstance(ts, str) and len(ts) >= 10:
+                        date_str = ts[:10]
+                    else:
+                        date_str = str(ts)
+                    result.append({
+                        'date': date_str,
+                        'collection_date': date_str,
+                        'price': float(pt.get('price', 0) or 0),
+                        'gex_flip': float(pt.get('gex_flip', 0) or 0),
+                        'net_gex': float(pt.get('gex_usd_per_1_pct_move', 0) or 0),
+                        'pcr_oi': float(pt.get('pcr_oi', 0) or 0),
+                        'put_call_ratio_open_interest': float(pt.get('pcr_oi', 0) or 0),
+                        'iv_rank': float(pt.get('iv_rank', 0) or 0),
+                        'atm_iv': float(pt.get('atm_iv', 0) or 0),
+                        'implied_volatility': float(pt.get('atm_iv', 0) or 0),
+                    })
+            elif series_dict and isinstance(series_dict, dict):
+                # Series-of-arrays form. Use 't' array as the timestamp axis.
+                t_arr = series_dict.get('t') or series_dict.get('timestamps') or []
+                length = len(t_arr) if t_arr else 0
+                if length:
+                    for i in range(length):
+                        ts = t_arr[i] if i < len(t_arr) else ''
+                        if isinstance(ts, str) and len(ts) >= 10:
+                            date_str = ts[:10]
+                        else:
+                            date_str = str(ts)
 
-            history_data = json_response.get(symbol, [])
-            result = history_data if isinstance(history_data, list) else []
+                        def _safe(name, default=0.0):
+                            arr = series_dict.get(name, [])
+                            try:
+                                return float(arr[i]) if i < len(arr) and arr[i] is not None else default
+                            except (TypeError, ValueError):
+                                return default
 
-            # Cache the successful result (USING SHARED CACHE)
-            TradingVolatilityAPI._shared_response_cache[cache_key] = (result, time.time())
-            self._reset_rate_limit_errors()  # Success, reset error counter
+                        result.append({
+                            'date': date_str,
+                            'collection_date': date_str,
+                            'price': _safe('price'),
+                            'gex_flip': _safe('gex_flip'),
+                            'net_gex': _safe('gex_usd_per_1_pct_move'),
+                            'pcr_oi': _safe('pcr_oi'),
+                            'put_call_ratio_open_interest': _safe('pcr_oi'),
+                            'iv_rank': _safe('iv_rank'),
+                            'atm_iv': _safe('atm_iv'),
+                            'implied_volatility': _safe('atm_iv'),
+                        })
 
             return result
 
         except Exception as e:
-            print(f"Error fetching historical gamma: {e}")
+            print(f"Error fetching historical gamma (v2): {e}")
             return []
 
     def get_yesterday_data(self, symbol: str) -> Dict:
@@ -2091,77 +2213,75 @@ class TradingVolatilityAPI:
         return changes
 
     def get_skew_data(self, symbol: str) -> Dict:
-        """Fetch latest skew data from Trading Volatility API with aggressive rate limiting"""
-        import requests
+        """Fetch latest skew data via TV v2 API.
+
+        Returns v1-compatible flat dict with these keys (callers read these):
+            put_call_ratio  — from supporting_factors.pcr_oi
+            skew            — approximate put/call IV ratio (≈ 1 + premium_pct/100);
+                              v1 callers compare to 1.1/0.9 thresholds for PUT_HEAVY/
+                              CALL_HEAVY classification
+            iv_rank         — from /series metric (latest point), 0-100 scale, default 50
+            symbol
+
+        Plus v2-only enrichment:
+            put_call_25d_iv_premium_pct — exact value (percent units per TV spec)
+            pcr_volume                  — put/call volume ratio
+            api_version='v2'
+
+        Empty dict {} on error (matches v1).
+        """
+        if not self.v2_token:
+            return {}
 
         try:
-            if not self.api_key:
+            ms = self._v2_market_structure(symbol)
+            if 'error' in ms:
                 return {}
 
-            # Check cache first (2-minute cache)
-            cache_key = self._get_cache_key('skew/latest', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data.get(symbol, {})
+            ms_data = ms.get('data', ms)
+            sf = ms_data.get('supporting_factors', {}) or {}
 
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
+            premium_pct = float(sf.get('put_call_25d_iv_premium_pct', 0) or 0)
 
-            response = requests.get(
-                self.endpoint + '/skew/latest',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
+            result = {
+                'symbol': symbol,
+                'put_call_ratio': float(sf.get('pcr_oi', 0) or 0),
+                # v1's 'skew' was a ratio (put_iv / call_iv) ~0.9-1.1.
+                # v2's put_call_25d_iv_premium_pct is the spread in percent points.
+                # Approximate the legacy ratio so existing 1.1/0.9 thresholds in
+                # backend/api/routes/ai_intelligence_routes.py:567 still work
+                # directionally: positive premium → ratio > 1, negative → ratio < 1.
+                'skew': 1.0 + premium_pct / 100.0,
+                # v2 enrichment (callers can use exact values directly)
+                'put_call_25d_iv_premium_pct': premium_pct,
+                'pcr_volume': float(sf.get('pcr_volume', 0) or 0),
+                'api_version': 'v2',
+            }
 
-            if response.status_code != 200:
-                return {}
-
-            # Check for rate limit error in response text
-            if "API limit exceeded" in response.text:
-                print(f"⚠️ API Rate Limit Hit - Using cached data for next few minutes")
-                self._handle_rate_limit_error()
-                # Return empty dict, let caller handle gracefully
-                return {}
-
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                print(f"⚠️ Skew endpoint returned empty response - skipping for now")
-                return {}
-
-            # Try to parse JSON with better error handling
+            # IV rank from /series (extra call; cached so back-to-back calls reuse).
+            iv_rank_default = 50.0
             try:
-                json_response = response.json()
-            except ValueError as json_err:
-                # Check if error message contains rate limit info
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                    self._handle_rate_limit_error()
+                series = self._v2_series(symbol, ['iv_rank'], window='5d')
+                if 'error' not in series:
+                    series_data = series.get('data', series)
+                    points = series_data.get('points', []) or []
+                    if points:
+                        last_pt = points[-1]
+                        if isinstance(last_pt, dict):
+                            result['iv_rank'] = float(last_pt.get('iv_rank', iv_rank_default) or iv_rank_default)
+                        else:
+                            result['iv_rank'] = iv_rank_default
+                    else:
+                        result['iv_rank'] = iv_rank_default
                 else:
-                    print(f"⚠️ Invalid JSON from skew endpoint - skipping")
-                return {}
+                    result['iv_rank'] = iv_rank_default
+            except Exception:
+                result['iv_rank'] = iv_rank_default
 
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response for 2 minutes
-            self._cache_response(cache_key, json_response)
-
-            skew_data = json_response.get(symbol, {})
-
-            return skew_data
+            return result
 
         except Exception as e:
-            print(f"❌ Error fetching skew data: {e}")
+            print(f"❌ Error fetching skew data (v2): {e}")
             return {}
 
     def get_historical_skew(self, symbol: str, days_back: int = 30) -> List[Dict]:
@@ -2234,205 +2354,264 @@ class TradingVolatilityAPI:
             return []
 
     def get_gex_levels(self, symbol: str) -> Dict:
+        """Fetch GEX levels via TV v2 API.
+
+        Returns the same flat dict shape as v1 so existing callers continue to work:
+            symbol, gex_flip, gex_0..gex_4, std_1day_pos/neg, std_7day_pos/neg
+
+        Empty dict {} on error (matches v1 behavior — many callers branch on
+        empty-dict-returned).
+
+        Falls back to /market-structure.key_levels for sigma bands when v2
+        /levels response doesn't include them.
         """
-        Fetch GEX levels (GEX_0, GEX_1, GEX_2, GEX_3) and STD levels from Trading Volatility API
-        These levels represent key gamma support/resistance zones where dealers hedge heavily
-        """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        def safe_float(value, default=0.0):
+            try:
+                if value in (None, '', 'null'):
+                    return default
+                return float(value)
+            except (ValueError, TypeError):
+                return default
 
         try:
-            if not self.api_key:
+            resp = self._v2_levels(symbol)
+            if 'error' in resp:
+                print(f"⚠️ get_gex_levels v2 error for {symbol}: {resp['error']}")
                 return {}
 
-            # Check cache first (5-minute cache like other endpoints)
-            cache_key = self._get_cache_key('gex/levels', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data
-
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
-
-            response = requests.get(
-                self.endpoint + '/gex/levels',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
-                print(f"⚠️ GEX Levels endpoint returned status {response.status_code}")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Check for rate limit error
-            if "API limit exceeded" in response.text:
-                print(f"⚠️ API Rate Limit Hit")
-                self._handle_rate_limit_error()
-                return {}
-
-            if not response.text or len(response.text.strip()) == 0:
-                return {}
-
-            try:
-                json_response = response.json()
-            except ValueError:
-                if "API limit exceeded" in response.text:
-                    self._handle_rate_limit_error()
-                return {}
-
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response
-            self._cache_response(cache_key, json_response)
-
-            # Debug: Log the raw response structure
-            print(f"DEBUG GEX Levels API Response for {symbol}: {json_response}")
-
-            # Parse the response - API may return data directly or nested under symbol
-            # Try direct access first, then nested
-            ticker_data = json_response if isinstance(json_response, dict) and 'GEX_0' in json_response else json_response.get(symbol, {})
-
-            if not ticker_data:
-                print(f"⚠️ No GEX Levels data found for {symbol}. API Response: {json_response}")
-                return {}
-
-            # Extract levels with better error handling
-            def safe_float(value, default=0):
-                """Safely convert to float"""
-                try:
-                    return float(value) if value not in [None, '', 'null'] else default
-                except (ValueError, TypeError):
-                    return default
+            sigma = data.get('sigma_levels') or data.get('sigma') or {}
+            if not isinstance(sigma, dict):
+                sigma = {}
 
             levels = {
-                'gex_flip': safe_float(ticker_data.get('gex_flip') or ticker_data.get('Gex Flip')),
-                'gex_0': safe_float(ticker_data.get('GEX_0') or ticker_data.get('gex_0')),
-                'gex_1': safe_float(ticker_data.get('GEX_1') or ticker_data.get('gex_1')),
-                'gex_2': safe_float(ticker_data.get('GEX_2') or ticker_data.get('gex_2')),
-                'gex_3': safe_float(ticker_data.get('GEX_3') or ticker_data.get('gex_3')),
-                'gex_4': safe_float(ticker_data.get('GEX_4') or ticker_data.get('gex_4')),
-                'std_1day_pos': safe_float(ticker_data.get('+1STD (1-day)') or ticker_data.get('price_plus_1_day_std')),
-                'std_1day_neg': safe_float(ticker_data.get('-1STD (1-day)') or ticker_data.get('price_minus_1_day_std')),
-                'std_7day_pos': safe_float(ticker_data.get('+1STD (7-day)') or ticker_data.get('price_plus_7_day_std')),
-                'std_7day_neg': safe_float(ticker_data.get('-1STD (7-day)') or ticker_data.get('price_minus_7_day_std')),
-                'symbol': symbol
+                'symbol': symbol,
+                'gex_flip': safe_float(
+                    data.get('gex_flip') or data.get('Gex Flip') or data.get('gamma_flip')
+                ),
+                'gex_0': safe_float(data.get('GEX_0') or data.get('gex_0')),
+                'gex_1': safe_float(data.get('GEX_1') or data.get('gex_1')),
+                'gex_2': safe_float(data.get('GEX_2') or data.get('gex_2')),
+                'gex_3': safe_float(data.get('GEX_3') or data.get('gex_3')),
+                'gex_4': safe_float(data.get('GEX_4') or data.get('gex_4')),
+                'std_1day_pos': safe_float(
+                    data.get('+1STD (1-day)') or data.get('price_plus_1_day_std')
+                    or sigma.get('plus_1sigma_1d')
+                ),
+                'std_1day_neg': safe_float(
+                    data.get('-1STD (1-day)') or data.get('price_minus_1_day_std')
+                    or sigma.get('minus_1sigma_1d')
+                ),
+                'std_7day_pos': safe_float(
+                    data.get('+1STD (7-day)') or data.get('price_plus_7_day_std')
+                    or sigma.get('plus_1sigma_1w')
+                ),
+                'std_7day_neg': safe_float(
+                    data.get('-1STD (7-day)') or data.get('price_minus_7_day_std')
+                    or sigma.get('minus_1sigma_1w')
+                ),
             }
 
-            print(f"DEBUG Parsed GEX Levels: {levels}")
+            # If sigma bands or flip weren't in /levels, fall back to /market-structure.key_levels.
+            # /market-structure has documented `key_levels.{gamma_flip, plus/minus_1sigma_1d/1w/1m, spot}`.
+            need_fallback = (
+                not levels['std_1day_pos'] or not levels['std_7day_pos']
+                or not levels['gex_flip']
+            )
+            if need_fallback:
+                try:
+                    ms = self._v2_market_structure(symbol)
+                    if 'error' not in ms:
+                        ms_data = ms.get('data', ms)
+                        kl = ms_data.get('key_levels', {}) or {}
+                        if not levels['gex_flip']:
+                            levels['gex_flip'] = safe_float(kl.get('gamma_flip'))
+                        if not levels['std_1day_pos']:
+                            levels['std_1day_pos'] = safe_float(kl.get('plus_1sigma_1d'))
+                        if not levels['std_1day_neg']:
+                            levels['std_1day_neg'] = safe_float(kl.get('minus_1sigma_1d'))
+                        if not levels['std_7day_pos']:
+                            levels['std_7day_pos'] = safe_float(kl.get('plus_1sigma_1w'))
+                        if not levels['std_7day_neg']:
+                            levels['std_7day_neg'] = safe_float(kl.get('minus_1sigma_1w'))
+                except Exception:
+                    pass  # fallback is best-effort
+
             return levels
 
         except Exception as e:
-            print(f"❌ Error fetching GEX levels: {e}")
+            print(f"❌ Error fetching GEX levels (v2): {e}")
             import traceback
             traceback.print_exc()
             return {}
 
     def get_gamma_by_expiration(self, symbol: str, expiration: str = '1') -> Dict:
-        """
-        Fetch gamma data for a specific expiration date
+        """Fetch gamma data for a specific expiration via TV v2 /curves/gamma.
 
         Args:
             symbol: Ticker symbol (e.g., 'SPY')
             expiration: Expiration identifier:
-                - '0' = combined (all expirations)
-                - '1' = nearest expiration
-                - '2' = nearest monthly expiration
-                - '2024-10-30' = specific date (YYYY-MM-DD format)
+                - '0' or 'combined' → all expirations combined
+                - '1' or 'nearest' → nearest expiration
+                - '2' or 'first_monthly' → first monthly expiration
+                - 'first_weekly' → first weekly
+                - 'YYYY-MM-DD' → specific date
 
-        Returns:
-            Dict with gamma_array showing strike-level gamma for that expiration
+        Returns v1-compatible dict shape:
+            symbol, expiration, expiry_date, price, collection_date,
+            gamma_array (list of {strike, gamma}), total_gamma
+        Empty dict {} on error.
         """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        # Map v1 codes to v2 exp values
+        exp_map = {
+            '0': 'combined',
+            '1': 'nearest',
+            '2': 'first_monthly',
+            'combined': 'combined',
+            'nearest': 'nearest',
+            'first_monthly': 'first_monthly',
+            'first_weekly': 'first_weekly',
+        }
+        exp_v2 = exp_map.get(expiration, expiration)  # passthrough for YYYY-MM-DD
 
         try:
-            if not self.api_key:
+            resp = self._v2_gamma_curve(symbol, exp=exp_v2)
+            if 'error' in resp:
+                print(f"gamma_by_expiration v2 error for {symbol} (exp={exp_v2}): {resp['error']}")
                 return {}
 
-            # Check cache first (5-minute cache)
-            cache_key = self._get_cache_key(f'gex/gamma_exp_{expiration}', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data
-
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
-
-            response = requests.get(
-                self.endpoint + '/gex/gamma',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'exp': expiration,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Check for rate limit error
-            if "API limit exceeded" in response.text:
-                self._handle_rate_limit_error()
-                return {}
+            points = data.get('points', []) or []
 
-            if not response.text or len(response.text.strip()) == 0:
-                return {}
+            # v2 points have {strike, gamma}; preserve as v1 gamma_array shape
+            gamma_array = []
+            total_gamma = 0.0
+            for p in points:
+                if not isinstance(p, dict) or 'strike' not in p:
+                    continue
+                try:
+                    strike = float(p['strike'])
+                    gamma_val = float(p.get('gamma', 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                gamma_array.append({'strike': strike, 'gamma': gamma_val})
+                total_gamma += abs(gamma_val)
 
-            try:
-                json_response = response.json()
-            except ValueError:
-                if "API limit exceeded" in response.text:
-                    self._handle_rate_limit_error()
-                return {}
-
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response
-            self._cache_response(cache_key, json_response)
-
-            ticker_data = json_response.get(symbol, {})
-
-            if not ticker_data:
-                return {}
-
-            # Calculate total gamma for this expiration
-            gamma_array = ticker_data.get('gamma_array', [])
-            total_gamma = sum(abs(float(strike.get('gamma', 0))) for strike in gamma_array if strike)
-
-            result = {
+            return {
                 'symbol': symbol,
                 'expiration': expiration,
-                'expiry_date': ticker_data.get('expiry', 'unknown'),
-                'price': float(ticker_data.get('price', 0)),
-                'collection_date': ticker_data.get('collection_date', ''),
+                'expiry_date': data.get('expiry', 'unknown') or 'unknown',
+                'price': float(data.get('price', 0) or 0),
+                'collection_date': data.get('asof', '') or '',
                 'gamma_array': gamma_array,
-                'total_gamma': total_gamma
+                'total_gamma': total_gamma,
+                'api_version': 'v2',
             }
 
-            return result
-
         except Exception as e:
-            print(f"Error fetching gamma by expiration: {e}")
+            print(f"Error fetching gamma by expiration (v2): {e}")
             import traceback
             traceback.print_exc()
+            return {}
+
+    # ==========================================================================
+    # NEW v2 PUBLIC METHODS — expose richer v2 data that has no v1 equivalent.
+    # These do NOT have backward-compat shape constraints; they return whatever
+    # the v2 API natively returns (lightly normalized).
+    # ==========================================================================
+
+    def get_market_structure(self, symbol: str) -> Dict:
+        """Full /tickers/{symbol}/market-structure response.
+
+        Returns the assembled v2 interpretation layer:
+            headline, signal, bias, structure_regime, expected_behavior,
+            tags[], confidence, drivers{flip_context, gamma_tone, sentiment,
+            skew_tone}, key_levels{spot, gamma_flip, plus/minus_1sigma_*},
+            supporting_factors{call_regime, distance_to_flip_pct,
+            expected_move_pct_1d/1w, gamma_flip, gamma_notional_per_1pct_move_usd,
+            pcr_oi, pcr_volume, pct_gamma_expiring_nearest_expiry,
+            put_call_25d_iv_premium_pct, speculative_interest_score, spot}
+
+        Returns {} on error; populated dict on success.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_market_structure(symbol)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching market structure (v2): {e}")
+            return {}
+
+    def get_trade_setup(self, symbol: str) -> Dict:
+        """Compact trader-facing trade setup payload from /agent/trade-setup/{symbol}.
+
+        Returns dict with v2 trade_recommendation enums:
+            trade_bias, opportunity_score, opportunity_tier, trade_type,
+            direction, structures[], entry_trigger, stop_description,
+            target_description, risk{...}, caution_flags[], agent_summary
+
+        Returns {} on error.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_trade_setup(symbol)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching trade setup (v2): {e}")
+            return {}
+
+    def get_top_setups(self, filters: dict = None) -> Dict:
+        """Cross-ticker ranking of opportunities from /top-setups.
+
+        Args:
+            filters: optional dict with keys per spec (limit, min_score, regime,
+                     trade_bias, trend_state, momentum_state, realized_vol_state,
+                     recommended_direction, price_min/max, iv_rank_min/max,
+                     ivAtMaxDelta_min/max, ttl).
+
+        Returns dict with v2 envelope: {data: {items[]}, meta: {...}}.
+        Returns {} on error.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_top_setups(filters)
+            if 'error' in resp:
+                return {}
+            return resp
+        except Exception as e:
+            print(f"Error fetching top setups (v2): {e}")
+            return {}
+
+    def get_explain(self, symbol: str, view: str = None) -> Dict:
+        """Deterministic plain-English regime explanation from /tickers/{symbol}/explain."""
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_explain(symbol, view=view)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching explain (v2): {e}")
             return {}
 
     def get_current_week_gamma_intelligence(self, symbol: str, current_vix: float = 0) -> Dict:
