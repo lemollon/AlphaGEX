@@ -59,11 +59,13 @@ class TickerResult:
     net_gex: float = 0.0
     implied_volatility: float = 0.0
     has_levels_data: bool = False
-    nearest_wall: Optional[float] = None
-    iv_source: str = "unknown"           # 'tv_api' or 'hv_proxy'
+    nearest_wall: Optional[float] = None     # legacy: closest wall from /levels (gex_0)
+    call_wall: Optional[float] = None        # from /curves/gex_by_strike (above spot)
+    put_wall: Optional[float] = None         # from /curves/gex_by_strike (below spot)
+    iv_source: str = "unknown"               # 'tv_api' or 'hv_proxy'
     iv_source_reason: str = ""
     failures: list = None
-    raw_iv_present: bool = False         # was 'implied_volatility' key present in TV raw_data?
+    iv_from_series_present: bool = False     # was atm_iv populated in /series?
 
     def __post_init__(self):
         if self.failures is None:
@@ -75,8 +77,13 @@ class TickerResult:
 
 
 def _ensure_table(conn) -> None:
-    """Create goliath_iv_source_decisions if not present. Idempotent."""
-    with conn.cursor() as c:
+    """Create goliath_iv_source_decisions if not present. Idempotent.
+
+    Uses the canonical AlphaGEX cursor pattern (no `with conn.cursor() as c`,
+    since PostgreSQLCursor does not implement the context-manager protocol).
+    """
+    c = conn.cursor()
+    try:
         c.execute("""
             CREATE TABLE IF NOT EXISTS goliath_iv_source_decisions (
                 id SERIAL PRIMARY KEY,
@@ -84,7 +91,7 @@ def _ensure_table(conn) -> None:
                 iv_source VARCHAR(20) NOT NULL,
                 reason TEXT NOT NULL,
                 iv_value_at_decision DECIMAL(10, 6),
-                raw_iv_field_present BOOLEAN NOT NULL,
+                iv_from_series_present BOOLEAN NOT NULL,
                 decided_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
         """)
@@ -92,7 +99,12 @@ def _ensure_table(conn) -> None:
             CREATE INDEX IF NOT EXISTS idx_goliath_iv_source_decisions_ticker
             ON goliath_iv_source_decisions(ticker, decided_at DESC)
         """)
-    conn.commit()
+        conn.commit()
+    finally:
+        try:
+            c.close()
+        except Exception:
+            pass
 
 
 def _persist_decision(result: TickerResult) -> bool:
@@ -109,13 +121,15 @@ def _persist_decision(result: TickerResult) -> bool:
         return False
 
     try:
-        with get_connection() as conn:
+        conn = get_connection()
+        try:
             _ensure_table(conn)
-            with conn.cursor() as c:
+            c = conn.cursor()
+            try:
                 c.execute(
                     """
                     INSERT INTO goliath_iv_source_decisions
-                        (ticker, iv_source, reason, iv_value_at_decision, raw_iv_field_present)
+                        (ticker, iv_source, reason, iv_value_at_decision, iv_from_series_present)
                     VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
@@ -123,14 +137,58 @@ def _persist_decision(result: TickerResult) -> bool:
                         result.iv_source,
                         result.iv_source_reason,
                         float(result.implied_volatility),
-                        bool(result.raw_iv_present),
+                        bool(result.iv_from_series_present),
                     ),
                 )
-            conn.commit()
+                conn.commit()
+            finally:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
         return True
     except Exception as e:
         print(f"  [DB] persist failed for {result.ticker}: {e}")
         return False
+
+
+def _fetch_iv_from_v2_series(client, ticker: str) -> Optional[float]:
+    """Try to fetch the latest ATM IV via TV v2 /series endpoint.
+
+    Returns the IV as a decimal (0.28 means 28%), or None if not retrievable.
+    Per TV v2 spec field_semantics, atm_iv is documented to remain as a decimal
+    (not percent), so we don't divide by 100.
+    """
+    try:
+        # _v2_series is on the migrated TradingVolatilityAPI; defensive hasattr check
+        # so this script still degrades gracefully if run against an older client.
+        if not hasattr(client, "_v2_series"):
+            return None
+        resp = client._v2_series(ticker, ["atm_iv"], window="5d")
+        if not isinstance(resp, dict) or "error" in resp:
+            return None
+        data = resp.get("data", resp)
+        # Two possible shapes: data.points = [{t, atm_iv}] or data.series = {atm_iv: [...]}
+        points = data.get("points")
+        if isinstance(points, list) and points:
+            for pt in reversed(points):
+                if isinstance(pt, dict) and pt.get("atm_iv") is not None:
+                    return float(pt["atm_iv"])
+        series = data.get("series")
+        if isinstance(series, dict):
+            arr = series.get("atm_iv") or []
+            if arr:
+                last = arr[-1]
+                if last is not None:
+                    return float(last)
+        return None
+    except Exception:
+        return None
 
 
 def _check_one_ticker(client, ticker: str) -> TickerResult:
@@ -153,44 +211,55 @@ def _check_one_ticker(client, ticker: str) -> TickerResult:
         result.failures.append(f"get_net_gamma error: {snap['error']}")
         return result
 
-    # Distinguish "field present" from "field missing" by inspecting raw_data.
-    raw = snap.get("raw_data") or {}
-    result.raw_iv_present = "implied_volatility" in raw
-
+    # Pull v1-shaped fields; on the v2-migrated client these come from
+    # /market-structure (spot, flip, net_gex) plus /curves/gex_by_strike (walls).
     result.spot_price = float(snap.get("spot_price") or 0)
     result.net_gex = float(snap.get("net_gex") or 0)
     result.flip_point = float(snap.get("flip_point") or 0)
-    result.implied_volatility = float(snap.get("implied_volatility") or 0)
+
+    cw = snap.get("call_wall")
+    pw = snap.get("put_wall")
+    result.call_wall = float(cw) if cw is not None else None
+    result.put_wall = float(pw) if pw is not None else None
 
     # Required-field checks: a value can be present but zero (e.g., flip_point=0
-    # means TV did not provide gex_flip_price). Require sensible non-zero spot
-    # and non-zero flip; net_gex may legitimately be near zero in neutral regimes.
+    # means TV did not surface gamma_flip). Require sensible non-zero spot/flip.
     if result.spot_price <= 0:
         result.failures.append(f"spot_price={result.spot_price} (expected > 0)")
     if result.flip_point <= 0:
         result.failures.append(f"flip_point={result.flip_point} (expected > 0)")
 
-    # IV plausibility — drives Decision 1 IV-source choice.
-    if not result.raw_iv_present:
+    # IV — get_net_gamma() v2 deliberately returns 0 because /market-structure
+    # doesn't surface ATM IV. Probe /series for atm_iv to make the Decision 1
+    # IV-source determination on real data.
+    iv_from_series = _fetch_iv_from_v2_series(client, ticker)
+    result.iv_from_series_present = iv_from_series is not None
+    if iv_from_series is not None:
+        result.implied_volatility = float(iv_from_series)
+    else:
+        result.implied_volatility = 0.0
+
+    if not result.iv_from_series_present:
         result.iv_source = "hv_proxy"
-        result.iv_source_reason = "TV /gex/latest did not return implied_volatility key"
+        result.iv_source_reason = "TV /series did not return atm_iv (Option C fallback)"
     elif result.implied_volatility < IV_MIN:
         result.iv_source = "hv_proxy"
         result.iv_source_reason = (
-            f"TV implied_volatility={result.implied_volatility:.4f} below plausibility floor {IV_MIN}"
+            f"TV atm_iv={result.implied_volatility:.4f} below plausibility floor {IV_MIN}"
         )
     elif result.implied_volatility > IV_MAX:
         result.iv_source = "hv_proxy"
         result.iv_source_reason = (
-            f"TV implied_volatility={result.implied_volatility:.4f} above plausibility ceiling {IV_MAX}"
+            f"TV atm_iv={result.implied_volatility:.4f} above plausibility ceiling {IV_MAX}"
         )
     else:
         result.iv_source = "tv_api"
         result.iv_source_reason = (
-            f"TV implied_volatility={result.implied_volatility:.4f} within [{IV_MIN}, {IV_MAX}]"
+            f"TV atm_iv={result.implied_volatility:.4f} within [{IV_MIN}, {IV_MAX}]"
         )
 
-    # 2. GEX levels — used for wall identification in strike mapping.
+    # 2. GEX levels — used for wall identification in strike mapping (legacy
+    # nearest_wall display field; the authoritative walls are from get_net_gamma).
     try:
         levels = client.get_gex_levels(ticker)
     except Exception as e:
@@ -198,38 +267,35 @@ def _check_one_ticker(client, ticker: str) -> TickerResult:
         return result
 
     if not isinstance(levels, dict) or not levels:
-        result.failures.append("get_gex_levels returned empty (no wall data available)")
-        return result
-
-    result.has_levels_data = True
-
-    # GEX_0 is TV's primary key gamma level; treat as the candidate wall.
-    gex_0 = float(levels.get("gex_0") or 0)
-    gex_flip = float(levels.get("gex_flip") or 0)
-    if gex_0 > 0:
-        result.nearest_wall = gex_0
-    elif gex_flip > 0:
-        # Fall back to flip level as a wall proxy if GEX_0 is missing.
-        result.nearest_wall = gex_flip
+        # Not fatal anymore — call_wall/put_wall from get_net_gamma cover the
+        # actual wall need. Just note that /levels returned nothing.
+        result.has_levels_data = False
     else:
-        result.failures.append("levels response had neither gex_0 nor gex_flip")
+        result.has_levels_data = True
+        gex_0 = float(levels.get("gex_0") or 0)
+        gex_flip = float(levels.get("gex_flip") or 0)
+        if gex_0 > 0:
+            result.nearest_wall = gex_0
+        elif gex_flip > 0:
+            result.nearest_wall = gex_flip
 
     return result
 
 
 def _print_summary_table(results: list) -> None:
     print()
-    print("=" * 110)
+    print("=" * 120)
     print("GOLIATH TV COVERAGE SUMMARY")
-    print("=" * 110)
+    print("=" * 120)
     header = (
         f"{'Ticker':<7} {'Spot':>10} {'Flip':>10} {'NetGEX':>14} "
-        f"{'IV':>8} {'Wall':>10} {'IVSource':>10} {'Status':>8}"
+        f"{'IV':>8} {'CallWall':>10} {'PutWall':>10} {'IVSource':>10} {'Status':>7}"
     )
     print(header)
-    print("-" * 110)
+    print("-" * 120)
     for r in results:
-        wall_str = f"${r.nearest_wall:.2f}" if r.nearest_wall else "—"
+        cw = f"${r.call_wall:.2f}" if r.call_wall else "—"
+        pw = f"${r.put_wall:.2f}" if r.put_wall else "—"
         status = "PASS" if r.passed else "FAIL"
         print(
             f"{r.ticker:<7} "
@@ -237,11 +303,12 @@ def _print_summary_table(results: list) -> None:
             f"${r.flip_point:>9.2f} "
             f"{r.net_gex:>13.2e} "
             f"{r.implied_volatility:>7.4f} "
-            f"{wall_str:>10} "
+            f"{cw:>10} "
+            f"{pw:>10} "
             f"{r.iv_source:>10} "
-            f"{status:>8}"
+            f"{status:>7}"
         )
-    print("-" * 110)
+    print("-" * 120)
 
 
 def _print_failure_detail(results: list) -> None:
@@ -266,12 +333,22 @@ def main() -> int:
         print(f"FATAL: cannot import TradingVolatilityAPI: {e}")
         return 1
 
-    api_key_set = any(
+    # Post-v2-migration the canonical env var is TRADING_VOLATILITY_API_TOKEN
+    # (Bearer token, e.g. sub_xxx). Legacy names retained for the unlikely
+    # case someone is still on a pre-migrated client.
+    token_set = any(
         os.getenv(name)
-        for name in ("TRADING_VOLATILITY_API_KEY", "TRADINGVOL_API_KEY", "TV_USERNAME", "tv_username")
+        for name in (
+            "TRADING_VOLATILITY_API_TOKEN",
+            "TRADING_VOLATILITY_API_KEY",
+            "TRADINGVOL_API_KEY",
+            "TV_USERNAME",
+            "tv_username",
+        )
     )
-    if not api_key_set:
-        print("FATAL: no TV API key in env. Set TRADING_VOLATILITY_API_KEY.")
+    if not token_set:
+        print("FATAL: no TV API credential in env.")
+        print("  Set TRADING_VOLATILITY_API_TOKEN (Bearer token from TV billing page).")
         return 1
 
     client = TradingVolatilityAPI()
