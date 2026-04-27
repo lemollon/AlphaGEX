@@ -1994,93 +1994,102 @@ class TradingVolatilityAPI:
             return {}
 
     def get_historical_gamma(self, symbol: str, days_back: int = 5) -> List[Dict]:
-        """Fetch historical gamma data from Trading Volatility API with rate limiting"""
-        import requests
-        from datetime import datetime, timedelta
+        """Fetch historical gamma data via TV v2 /series endpoint.
+
+        Returns a list of per-day dicts with keys callers expect (see
+        backtest/backtest_options_strategies.py:184 for date-field detection):
+            date              — YYYY-MM-DD timestamp string
+            collection_date   — same as date (alias for v1 caller compat)
+            gex_flip          — gamma flip price level
+            net_gex           — gex_usd_per_1_pct_move
+            pcr_oi            — put/call open interest ratio
+            iv_rank           — IV rank 0-100
+
+        Empty list [] on error (matches v1).
+        """
+        if not self.v2_token:
+            return []
 
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility username not found in secrets!")
+            window = f"{max(days_back, 1)}d"
+            metrics = ['price', 'gex_flip', 'gex_usd_per_1_pct_move', 'pcr_oi', 'iv_rank', 'atm_iv']
+
+            resp = self._v2_series(symbol, metrics, window=window)
+            if 'error' in resp:
+                print(f"history endpoint error for {symbol}: {resp['error']}")
                 return []
 
-            # Check cache first (cache key includes symbol + days_back) - USING SHARED CACHE
-            cache_key = f"history_{symbol}_{days_back}"
-            if cache_key in TradingVolatilityAPI._shared_response_cache:
-                cached_data, cached_time = TradingVolatilityAPI._shared_response_cache[cache_key]
-                if time.time() - cached_time < TradingVolatilityAPI._shared_cache_duration:
-                    print(f"✓ Using cached historical data for {symbol} (age: {time.time() - cached_time:.0f}s)")
-                    return cached_data
-
-            # RATE LIMITING: Use intelligent rate limiter
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return []
-            else:
-                self._wait_for_rate_limit()
-
-            # Calculate date range
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=days_back)
-
-            # Call Trading Volatility /gex/history endpoint
-            response = requests.get(
-                self.endpoint + '/gex/history',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json',
-                    'start': start_date.strftime('%Y-%m-%d'),
-                    'end': end_date.strftime('%Y-%m-%d')
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
-                # Silently handle errors - don't display to user
-                # The history endpoint is optional and errors shouldn't break the UI
-                print(f"History endpoint returned status {response.status_code} for {symbol}")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict):
                 return []
 
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                # Silently handle empty response
-                print(f"History endpoint returned empty response for {symbol}")
-                return []
+            # /series may return either:
+            # (a) data.points = [{t: '...', metric_a: x, metric_b: y, ...}, ...]
+            # (b) data.series = {'metric_a': [...], 'metric_b': [...], 't': [...]}
+            # Handle both.
+            points = data.get('points') or []
+            series_dict = data.get('series') or {}
 
-            # Check for rate limit error BEFORE parsing JSON
-            if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
-                # Silently handle rate limit - don't spam UI
-                print(f"History endpoint rate limit hit for {symbol}")
-                self._handle_rate_limit_error()
-                return []
+            result = []
 
-            # Try to parse JSON with better error handling
-            try:
-                json_response = response.json()
-            except ValueError as json_err:
-                # Check if error is due to rate limiting
-                if "API limit exceeded" in response.text:
-                    # Silently handle rate limit
-                    print(f"History endpoint rate limit (JSON parse) for {symbol}")
-                    self._handle_rate_limit_error()
-                else:
-                    # Silently handle invalid JSON
-                    print(f"Invalid JSON from history endpoint: {str(json_err)}")
-                return []
+            if points and isinstance(points, list):
+                for pt in points:
+                    if not isinstance(pt, dict):
+                        continue
+                    ts = pt.get('t') or pt.get('timestamp') or pt.get('date') or ''
+                    # Truncate to YYYY-MM-DD if it's a longer ISO string
+                    if isinstance(ts, str) and len(ts) >= 10:
+                        date_str = ts[:10]
+                    else:
+                        date_str = str(ts)
+                    result.append({
+                        'date': date_str,
+                        'collection_date': date_str,
+                        'price': float(pt.get('price', 0) or 0),
+                        'gex_flip': float(pt.get('gex_flip', 0) or 0),
+                        'net_gex': float(pt.get('gex_usd_per_1_pct_move', 0) or 0),
+                        'pcr_oi': float(pt.get('pcr_oi', 0) or 0),
+                        'put_call_ratio_open_interest': float(pt.get('pcr_oi', 0) or 0),
+                        'iv_rank': float(pt.get('iv_rank', 0) or 0),
+                        'atm_iv': float(pt.get('atm_iv', 0) or 0),
+                        'implied_volatility': float(pt.get('atm_iv', 0) or 0),
+                    })
+            elif series_dict and isinstance(series_dict, dict):
+                # Series-of-arrays form. Use 't' array as the timestamp axis.
+                t_arr = series_dict.get('t') or series_dict.get('timestamps') or []
+                length = len(t_arr) if t_arr else 0
+                if length:
+                    for i in range(length):
+                        ts = t_arr[i] if i < len(t_arr) else ''
+                        if isinstance(ts, str) and len(ts) >= 10:
+                            date_str = ts[:10]
+                        else:
+                            date_str = str(ts)
 
-            history_data = json_response.get(symbol, [])
-            result = history_data if isinstance(history_data, list) else []
+                        def _safe(name, default=0.0):
+                            arr = series_dict.get(name, [])
+                            try:
+                                return float(arr[i]) if i < len(arr) and arr[i] is not None else default
+                            except (TypeError, ValueError):
+                                return default
 
-            # Cache the successful result (USING SHARED CACHE)
-            TradingVolatilityAPI._shared_response_cache[cache_key] = (result, time.time())
-            self._reset_rate_limit_errors()  # Success, reset error counter
+                        result.append({
+                            'date': date_str,
+                            'collection_date': date_str,
+                            'price': _safe('price'),
+                            'gex_flip': _safe('gex_flip'),
+                            'net_gex': _safe('gex_usd_per_1_pct_move'),
+                            'pcr_oi': _safe('pcr_oi'),
+                            'put_call_ratio_open_interest': _safe('pcr_oi'),
+                            'iv_rank': _safe('iv_rank'),
+                            'atm_iv': _safe('atm_iv'),
+                            'implied_volatility': _safe('atm_iv'),
+                        })
 
             return result
 
         except Exception as e:
-            print(f"Error fetching historical gamma: {e}")
+            print(f"Error fetching historical gamma (v2): {e}")
             return []
 
     def get_yesterday_data(self, symbol: str) -> Dict:
@@ -2167,77 +2176,75 @@ class TradingVolatilityAPI:
         return changes
 
     def get_skew_data(self, symbol: str) -> Dict:
-        """Fetch latest skew data from Trading Volatility API with aggressive rate limiting"""
-        import requests
+        """Fetch latest skew data via TV v2 API.
+
+        Returns v1-compatible flat dict with these keys (callers read these):
+            put_call_ratio  — from supporting_factors.pcr_oi
+            skew            — approximate put/call IV ratio (≈ 1 + premium_pct/100);
+                              v1 callers compare to 1.1/0.9 thresholds for PUT_HEAVY/
+                              CALL_HEAVY classification
+            iv_rank         — from /series metric (latest point), 0-100 scale, default 50
+            symbol
+
+        Plus v2-only enrichment:
+            put_call_25d_iv_premium_pct — exact value (percent units per TV spec)
+            pcr_volume                  — put/call volume ratio
+            api_version='v2'
+
+        Empty dict {} on error (matches v1).
+        """
+        if not self.v2_token:
+            return {}
 
         try:
-            if not self.api_key:
+            ms = self._v2_market_structure(symbol)
+            if 'error' in ms:
                 return {}
 
-            # Check cache first (2-minute cache)
-            cache_key = self._get_cache_key('skew/latest', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data.get(symbol, {})
+            ms_data = ms.get('data', ms)
+            sf = ms_data.get('supporting_factors', {}) or {}
 
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
+            premium_pct = float(sf.get('put_call_25d_iv_premium_pct', 0) or 0)
 
-            response = requests.get(
-                self.endpoint + '/skew/latest',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
+            result = {
+                'symbol': symbol,
+                'put_call_ratio': float(sf.get('pcr_oi', 0) or 0),
+                # v1's 'skew' was a ratio (put_iv / call_iv) ~0.9-1.1.
+                # v2's put_call_25d_iv_premium_pct is the spread in percent points.
+                # Approximate the legacy ratio so existing 1.1/0.9 thresholds in
+                # backend/api/routes/ai_intelligence_routes.py:567 still work
+                # directionally: positive premium → ratio > 1, negative → ratio < 1.
+                'skew': 1.0 + premium_pct / 100.0,
+                # v2 enrichment (callers can use exact values directly)
+                'put_call_25d_iv_premium_pct': premium_pct,
+                'pcr_volume': float(sf.get('pcr_volume', 0) or 0),
+                'api_version': 'v2',
+            }
 
-            if response.status_code != 200:
-                return {}
-
-            # Check for rate limit error in response text
-            if "API limit exceeded" in response.text:
-                print(f"⚠️ API Rate Limit Hit - Using cached data for next few minutes")
-                self._handle_rate_limit_error()
-                # Return empty dict, let caller handle gracefully
-                return {}
-
-            # Check if response has content before parsing JSON
-            if not response.text or len(response.text.strip()) == 0:
-                print(f"⚠️ Skew endpoint returned empty response - skipping for now")
-                return {}
-
-            # Try to parse JSON with better error handling
+            # IV rank from /series (extra call; cached so back-to-back calls reuse).
+            iv_rank_default = 50.0
             try:
-                json_response = response.json()
-            except ValueError as json_err:
-                # Check if error message contains rate limit info
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                    self._handle_rate_limit_error()
+                series = self._v2_series(symbol, ['iv_rank'], window='5d')
+                if 'error' not in series:
+                    series_data = series.get('data', series)
+                    points = series_data.get('points', []) or []
+                    if points:
+                        last_pt = points[-1]
+                        if isinstance(last_pt, dict):
+                            result['iv_rank'] = float(last_pt.get('iv_rank', iv_rank_default) or iv_rank_default)
+                        else:
+                            result['iv_rank'] = iv_rank_default
+                    else:
+                        result['iv_rank'] = iv_rank_default
                 else:
-                    print(f"⚠️ Invalid JSON from skew endpoint - skipping")
-                return {}
+                    result['iv_rank'] = iv_rank_default
+            except Exception:
+                result['iv_rank'] = iv_rank_default
 
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response for 2 minutes
-            self._cache_response(cache_key, json_response)
-
-            skew_data = json_response.get(symbol, {})
-
-            return skew_data
+            return result
 
         except Exception as e:
-            print(f"❌ Error fetching skew data: {e}")
+            print(f"❌ Error fetching skew data (v2): {e}")
             return {}
 
     def get_historical_skew(self, symbol: str, days_back: int = 30) -> List[Dict]:
