@@ -719,11 +719,13 @@ async function monitorSinglePosition(
           // Fall-through is achieved by NOT returning here and NOT entering
           // the re-poll branch — we skip the rest of the outer `else` block.
         } else {
-          // Slippage guard: if the limit has been sitting long enough AND the
-          // market dipped below our trigger during that window, the limit is
-          // stuck — reprice aggressively near the mid. We still respect the
-          // current tier target as a minimum so we never fill below the
-          // guaranteed return.
+          // Stale-order refresh: if the limit has been sitting long enough AND
+          // the market dipped below our trigger during that window, the order
+          // may have lost matching-engine priority. Cancel and re-place at the
+          // SAME tier target to refresh Tradier's queue position. We never
+          // lift the limit above the tier target — 50/30/20 is a hard floor,
+          // and the only sanctioned floor relaxation is the time-based
+          // tier-advance branch above (50%→30%→20% at 10:30 / 1:00 CT).
           const SLIPPAGE_GUARD_MIN_AGE_MS = 10 * 60 * 1000  // 10 minutes
           const ageMs = placedAtMs != null ? Date.now() - placedAtMs : 0
           // Slippage guard needs an MTM read. Fetch it once here — if it
@@ -757,9 +759,10 @@ async function monitorSinglePosition(
           )
 
           if (slippageGuardFired) {
-            const aggressivePrice = Math.round(
-              Math.max(currentTierTarget, mtmForGuard!.cost_to_close_mid) * 10000,
-            ) / 10000
+            // Refresh at the tier floor, NEVER above it. The PT floor is
+            // sacred — better fills (cost < floor) come naturally from limit
+            // semantics; we just need to keep the order live at the floor.
+            const refreshPrice = Math.round(currentTierTarget * 10000) / 10000
             const cancelAccts = await getLoadedSandboxAccountsAsync()
             const cancelAcct = posAccountType === 'production'
               ? cancelAccts.find(a => a.name === posPerson && a.type === 'production')
@@ -779,38 +782,39 @@ async function monitorSinglePosition(
                 `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
                  VALUES ($1, $2, $3, $4)`,
                 [
-                  'PT_SLIPPAGE_REPRICE',
-                  `${pid}: cancel stale limit ($${existingLimitPrice.toFixed(4)}) after ${Math.round(ageMs / 60000)}m — min_cost_seen=$${(currentMin ?? 0).toFixed(4)} touched trigger but didn't fill. Will reprice near mid ($${aggressivePrice.toFixed(4)}).`,
+                  'PT_FLOOR_REFRESH',
+                  `${pid}: cancel stale limit ($${existingLimitPrice.toFixed(4)}) after ${Math.round(ageMs / 60000)}m — min_cost_seen=$${(currentMin ?? 0).toFixed(4)} touched trigger but didn't fill. Refreshing at tier floor ($${refreshPrice.toFixed(4)}) to reset Tradier queue priority.`,
                   JSON.stringify({
                     position_id: pid,
                     prior_limit: existingLimitPrice,
                     min_cost_seen: currentMin,
                     mid: mtmForGuard!.cost_to_close_mid,
                     age_ms: ageMs,
-                    new_aggressive_limit: aggressivePrice,
+                    refresh_at_floor: refreshPrice,
                     order_id_canceled: userPending.order_id,
                   }),
                   bot.dte,
                 ],
               )
             } catch { /* best-effort */ }
-            // Place a fresh limit DEBIT at aggressivePrice immediately.
-            // Use closePosition with orderType='debit' — same path the initial
-            // PT trigger uses.
+            // Place a fresh DEBIT limit at the tier floor. Same price as the
+            // canceled order — cancel + replace just resets Tradier queue
+            // priority. The floor is the cap; fills at floor-or-better are
+            // accepted, fills above floor are not.
             try {
               await closePosition(
                 bot, pid, ticker, expiration,
                 num(pos.put_short_strike), num(pos.put_long_strike),
                 num(pos.call_short_strike), num(pos.call_long_strike),
                 contracts, entryCredit, collateral,
-                `${pendingInfo._pending_reason ?? 'profit_target'}_slippage_reprice`,
-                aggressivePrice, 'debit', aggressivePrice,
+                `${pendingInfo._pending_reason ?? 'profit_target'}_floor_refresh`,
+                refreshPrice, 'debit', refreshPrice,
               )
-              return { status: `pt_slippage_reprice@${aggressivePrice.toFixed(4)}`, unrealizedPnl: 0 }
+              return { status: `pt_floor_refresh@${refreshPrice.toFixed(4)}`, unrealizedPnl: 0 }
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err)
-              console.error(`[scanner] ${bot.name.toUpperCase()} ${pid}: slippage-guard reprice failed: ${msg}`)
-              return { status: `pt_slippage_reprice_failed`, unrealizedPnl: 0 }
+              console.error(`[scanner] ${bot.name.toUpperCase()} ${pid}: floor-refresh reprice failed: ${msg}`)
+              return { status: `pt_floor_refresh_failed`, unrealizedPnl: 0 }
             }
           }
 
