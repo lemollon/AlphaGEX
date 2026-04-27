@@ -1181,6 +1181,38 @@ class TradingVolatilityAPI:
             "https://stocks.tradingvolatility.net/api"
         )
 
+        # v2 API: Bearer token (Stripe sub_xxx style identifier from TV billing).
+        # The v1 query-param auth is deprecated as of TV's January 2026 migration.
+        # We accept TRADING_VOLATILITY_API_TOKEN as the canonical name; we do NOT fall
+        # back to TRADING_VOLATILITY_API_KEY/TV_USERNAME because those typically hold
+        # the legacy username (e.g. "I-RWFNBLR2S1DP"), which v2 will reject with 401/403.
+        self.v2_token = os.getenv("TRADING_VOLATILITY_API_TOKEN") or ""
+
+        # Local-dev fallback via secrets.toml
+        if not self.v2_token:
+            try:
+                import toml
+                secrets_path = os.path.join(os.path.dirname(__file__), 'secrets.toml')
+                if os.path.exists(secrets_path):
+                    secrets = toml.load(secrets_path)
+                    self.v2_token = (
+                        secrets.get("trading_volatility_api_token") or
+                        secrets.get("TRADING_VOLATILITY_API_TOKEN") or
+                        ""
+                    )
+            except Exception:
+                pass
+
+        # v2 base URL (separate env so the v1 endpoint can stay during transition)
+        self.v2_base_url = (
+            os.getenv("TRADING_VOLATILITY_V2_BASE_URL") or
+            "https://stocks.tradingvolatility.net/api/v2"
+        )
+
+        if not self.v2_token:
+            print("⚠️ TRADING_VOLATILITY_API_TOKEN not set. v2 API calls will return 'no_token' errors.")
+            print("   Set this env var to your TV Bearer token (sub_xxx from billing page).")
+
         self.last_response = None  # Store last API response for profile data
 
         # Initialize shared minute reset time if not set
@@ -1410,6 +1442,203 @@ class TradingVolatilityAPI:
         except Exception as e:
             print(f"  ⚠️ Could not parse strike data: {e}")
             return 0, 0
+
+    # ==========================================================================
+    # v2 API LAYER (added Apr 2026 — migration from v1 query-param auth)
+    #
+    # v2 uses Bearer auth and a nested response schema. Internal `_v2_*` methods
+    # are the raw transport layer; public methods (get_net_gamma, get_gex_levels,
+    # etc.) are translation wrappers that consume these and re-shape responses
+    # into the v1 dict shapes that 15+ existing call sites expect.
+    # ==========================================================================
+
+    def _v2_request(self, path: str, params: dict = None, cache: bool = True) -> Dict:
+        """
+        Make a request to the Trading Volatility v2 API.
+
+        Args:
+            path: Path component starting with '/' (e.g. '/tickers/SPY/market-structure').
+            params: Optional query parameters.
+            cache: Whether to use the shared response cache (default True). Cache TTL
+                follows _get_cache_duration() and is shared with v1 caching.
+
+        Returns:
+            On success: parsed JSON response (dict).
+            On failure: dict with 'error' key. Never raises — callers can branch on
+            'error' presence cleanly.
+
+        Failure modes signaled via 'error' key:
+            - 'no_token' — TRADING_VOLATILITY_API_TOKEN env var unset
+            - 'rate_limit_timeout' — local rate limiter could not acquire slot
+            - 'rate_limit (status_code)' — TV server returned rate-limit response
+            - 'unauthorized' — 401 (bad/expired Bearer token)
+            - 'forbidden: ...' — 403 (subscription does not cover resource)
+            - 'not_found: ...' — 404
+            - 'http_NNN: ...' — other non-200 status
+            - 'request_exception: ...' — network failure
+            - 'invalid_json: ...' — server returned non-JSON
+            - 'empty_response' — server returned 200 with no body
+        """
+        import requests
+
+        if not self.v2_token:
+            return {'error': 'no_token'}
+
+        path_norm = path if path.startswith('/') else '/' + path
+
+        # Cache key — keep stable ordering of params so cache hits work
+        params_norm = dict(sorted((params or {}).items()))
+        cache_key = f"v2:{path_norm}:{params_norm}"
+
+        if cache:
+            cached = self._get_cached_response(cache_key)
+            if cached is not None:
+                return cached
+
+        # Use the shared rate limiter (same instance as v1) — TV's per-account
+        # quotas apply across both API versions, so sharing is correct.
+        if RATE_LIMITER_AVAILABLE:
+            if not trading_volatility_limiter.wait_if_needed(timeout=60):
+                return {'error': 'rate_limit_timeout'}
+        else:
+            self._wait_for_rate_limit()
+
+        url = f"{self.v2_base_url.rstrip('/')}{path_norm}"
+
+        try:
+            response = requests.get(
+                url,
+                params=params_norm or None,
+                headers={
+                    'Authorization': f'Bearer {self.v2_token}',
+                    'Accept': 'application/json',
+                },
+                timeout=120,
+            )
+        except requests.exceptions.RequestException as e:
+            return {'error': f'request_exception: {e!r}'}
+
+        # Server-side rate-limit detection
+        if response.status_code == 429:
+            self._handle_rate_limit_error()
+            return {'error': 'rate_limit (429)'}
+
+        if response.status_code == 401:
+            return {'error': 'unauthorized: invalid bearer token'}
+
+        if response.status_code == 403:
+            try:
+                err = response.json()
+                msg = err.get('error', {}).get('message', response.text[:200])
+            except Exception:
+                msg = response.text[:200]
+            return {'error': f'forbidden: {msg}'}
+
+        if response.status_code == 404:
+            return {'error': f'not_found: {path_norm}'}
+
+        if response.status_code == 304:
+            # Conditional GET match. We don't currently send If-None-Match, so this
+            # shouldn't happen, but if it does and we have a cached value, return it.
+            cached = self._get_cached_response(cache_key)
+            return cached if cached is not None else {'error': 'http_304_no_cache'}
+
+        if response.status_code != 200:
+            text_lower = response.text.lower()
+            if 'rate' in text_lower or 'limit exceeded' in text_lower:
+                self._handle_rate_limit_error()
+                return {'error': f'rate_limit ({response.status_code})'}
+            return {'error': f'http_{response.status_code}: {response.text[:200]}'}
+
+        if not response.text or not response.text.strip():
+            return {'error': 'empty_response'}
+
+        try:
+            data = response.json()
+        except ValueError as e:
+            return {'error': f'invalid_json: {e!r}'}
+
+        self._reset_rate_limit_errors()
+
+        if cache:
+            self._cache_response(cache_key, data)
+
+        return data
+
+    # ---- Raw v2 endpoint methods (1:1 with documented routes) ----
+
+    def _v2_ticker_state(self, symbol: str, include: str = None) -> Dict:
+        """GET /tickers/{ticker} — canonical compact ticker state snapshot."""
+        params = {'include': include} if include else None
+        return self._v2_request(f"/tickers/{symbol}", params)
+
+    def _v2_market_structure(self, symbol: str, include: str = None) -> Dict:
+        """GET /tickers/{ticker}/market-structure — assembled interpretation layer."""
+        params = {'include': include} if include else None
+        return self._v2_request(f"/tickers/{symbol}/market-structure", params)
+
+    def _v2_explain(self, symbol: str, view: str = None) -> Dict:
+        """GET /tickers/{ticker}/explain — deterministic plain-English summary + tags."""
+        params = {'view': view} if view else None
+        return self._v2_request(f"/tickers/{symbol}/explain", params)
+
+    def _v2_levels(self, symbol: str) -> Dict:
+        """GET /tickers/{ticker}/levels — gamma flip + GEX_0..GEX_4 + ±1σ levels."""
+        return self._v2_request(f"/tickers/{symbol}/levels")
+
+    def _v2_gamma_curve(self, symbol: str, exp: str = "combined", realtime: bool = False) -> Dict:
+        """GET /tickers/{ticker}/curves/gamma — strike-level net gamma curve.
+
+        exp: 'combined' | 'nearest' | 'first_weekly' | 'first_monthly' | 'YYYY-MM-DD'
+        realtime: True forces a fresh pull (only valid during trading hours).
+        """
+        params = {'exp': exp}
+        if realtime:
+            params['realtime'] = 'true'
+        # Realtime/dated pulls bypass cache so the user gets fresh data
+        use_cache = not realtime and exp in ('combined', 'nearest', 'first_weekly', 'first_monthly')
+        return self._v2_request(f"/tickers/{symbol}/curves/gamma", params, cache=use_cache)
+
+    def _v2_gamma_expirations(self, symbol: str) -> Dict:
+        """GET /tickers/{ticker}/curves/gamma/expirations — multi-bucket gamma decomposition."""
+        return self._v2_request(f"/tickers/{symbol}/curves/gamma/expirations")
+
+    def _v2_gex_by_strike(self, symbol: str, exp: str = "combined") -> Dict:
+        """GET /tickers/{ticker}/curves/gex_by_strike — net GEX with call/put contributions."""
+        return self._v2_request(f"/tickers/{symbol}/curves/gex_by_strike", {'exp': exp})
+
+    def _v2_series(self, symbol: str, metrics, window: str = "180d") -> Dict:
+        """GET /tickers/{ticker}/series — historical metric time series.
+
+        metrics: list of metric keys (see TV spec metric_catalog) OR comma-separated string.
+        window: '30d' | '180d' | '1y' | '2y' etc.
+        """
+        if isinstance(metrics, (list, tuple)):
+            metrics_str = ','.join(metrics)
+        else:
+            metrics_str = str(metrics)
+        return self._v2_request(
+            f"/tickers/{symbol}/series",
+            {'metrics': metrics_str, 'window': window},
+        )
+
+    def _v2_options_volume(self, symbol: str, exp: str) -> Dict:
+        """GET /tickers/{ticker}/options/volume — strike-by-strike volume for one expiry."""
+        return self._v2_request(f"/tickers/{symbol}/options/volume", {'exp': exp})
+
+    def _v2_trade_setup(self, symbol: str) -> Dict:
+        """GET /agent/trade-setup/{ticker} — compact trader-facing recommendation payload."""
+        return self._v2_request(f"/agent/trade-setup/{symbol}")
+
+    def _v2_top_setups(self, filters: dict = None) -> Dict:
+        """GET /top-setups — cross-ticker ranking by opportunity_score.
+
+        filters: optional dict with keys per spec (limit, min_score, regime, trade_bias,
+                 trend_state, momentum_state, realized_vol_state, recommended_direction,
+                 price_min, price_max, iv_rank_min, iv_rank_max, ivAtMaxDelta_min,
+                 ivAtMaxDelta_max, ttl).
+        """
+        return self._v2_request("/top-setups", filters)
 
     def get_net_gamma(self, symbol: str) -> Dict:
         """Fetch net gamma exposure data from Trading Volatility API with intelligent rate limiting"""
