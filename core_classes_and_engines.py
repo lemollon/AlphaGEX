@@ -1702,10 +1702,12 @@ class TradingVolatilityAPI:
             # from fallback paths; we preserve that behavior here.
             atm_iv = 0.0
 
-            # Walls — single extra call to /curves/gex_by_strike.
+            # Walls + per-side totals — single extra call to /curves/gex_by_strike.
             # Matches v1 2-call pattern when walls were missing from snapshot.
             call_wall = None
             put_wall = None
+            total_call_gex = 0.0
+            total_put_gex = 0.0
             try:
                 strikes_resp = self._v2_gex_by_strike(symbol, exp='combined')
                 if 'error' not in strikes_resp:
@@ -1717,8 +1719,12 @@ class TradingVolatilityAPI:
                         if not isinstance(p, dict):
                             continue
                         s = float(p.get('strike', 0) or 0)
-                        c = abs(float(p.get('call', 0) or 0))
-                        pu = abs(float(p.get('put', 0) or 0))
+                        c_raw = float(p.get('call', 0) or 0)
+                        pu_raw = float(p.get('put', 0) or 0)
+                        c = abs(c_raw)
+                        pu = abs(pu_raw)
+                        total_call_gex += c_raw
+                        total_put_gex += pu_raw
                         if c > max_call_gex:
                             max_call_gex = c
                             call_wall = s
@@ -1732,6 +1738,30 @@ class TradingVolatilityAPI:
 
             collection_date = ms_meta.get('asof') or ms_data.get('asof') or ''
 
+            # Derived fields callers use:
+            #  - distance_to_flip_pct: from sf.distance_to_flip_pct (v2 spec) OR derived
+            #    from data.derived.dist_to_gex_flip_pct on the raw /tickers/X response.
+            #    /market-structure exposes it under supporting_factors per spec.
+            #  - gex_regime: classical "spot vs flip" regime classifier.
+            #    POSITIVE when spot > flip, NEGATIVE when spot < flip, NEUTRAL otherwise.
+            #    Many callers (SOLOMON, FAITH, scheduler, AI routes) read this with
+            #    a 'NEUTRAL' or 'UNKNOWN' default. v1 didn't populate it explicitly
+            #    either, but populating it from v2 here removes dependence on default.
+            distance_to_flip_pct = float(
+                sf.get('distance_to_flip_pct')
+                or ms_data.get('derived', {}).get('dist_to_gex_flip_pct')
+                or 0
+            )
+            if spot_price > 0 and flip_point > 0:
+                if spot_price > flip_point:
+                    gex_regime = 'POSITIVE'
+                elif spot_price < flip_point:
+                    gex_regime = 'NEGATIVE'
+                else:
+                    gex_regime = 'NEUTRAL'
+            else:
+                gex_regime = 'UNKNOWN'
+
             result = {
                 # ---- v1-compatible keys (do not rename; many callers read these) ----
                 'symbol': symbol,
@@ -1744,6 +1774,13 @@ class TradingVolatilityAPI:
                 'implied_volatility': atm_iv,
                 'collection_date': collection_date,
                 'raw_data': ms_data,
+                # ---- Fields many callers read with a default (now populated explicitly) ----
+                'gex_regime': gex_regime,                  # POSITIVE / NEGATIVE / NEUTRAL / UNKNOWN
+                'distance_to_flip_pct': distance_to_flip_pct,
+                'total_call_gex': total_call_gex,
+                'total_put_gex': total_put_gex,
+                'call_gex': total_call_gex,                # alias used by some callers
+                'put_gex': total_put_gex,
                 # ---- v2-only enrichment (back-compat: callers ignore unknown keys) ----
                 'speculative_interest_score': spec_score,
                 'call_regime': call_regime,
