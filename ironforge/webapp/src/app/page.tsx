@@ -37,13 +37,13 @@ const sharedConfig = {
   spreadWidth: '$5.00',
   sdMultiplier: '1.2x',
   profitTarget: '30%',
-  stopLoss: '100%',
+  stopLoss: '200%',
   maxContracts: 10,
   maxTradesPerDay: 1,
   vixSkipThreshold: 32,
   minCredit: '$0.05',
   buyingPowerUsage: '85%',
-  pdtLimit: '3 / 5 rolling days',
+  pdtLimit: '4 / 5 rolling days',
   eodCutoff: '2:50 PM CT',
   entryWindow: '8:30 AM – 2:00 PM CT',
   scanFrequency: 'Every 1 min',
@@ -57,7 +57,7 @@ const configRows: Array<{ label: string; value: string; hint?: string }> = [
   { label: 'Spread Width', value: sharedConfig.spreadWidth, hint: 'Per leg' },
   { label: 'Strike SD', value: sharedConfig.sdMultiplier, hint: 'Expected move multiplier' },
   { label: 'Profit Target', value: '50/30/20%', hint: 'Sliding (time-based)' },
-  { label: 'Stop Loss', value: sharedConfig.stopLoss, hint: 'Of entry credit' },
+  { label: 'Stop Loss', value: sharedConfig.stopLoss, hint: 'Cost ≥ 2x entry credit' },
   { label: 'Max Contracts', value: String(sharedConfig.maxContracts), hint: 'Per trade' },
   { label: 'Max Trades/Day', value: String(sharedConfig.maxTradesPerDay) },
   { label: 'VIX Skip', value: `> ${sharedConfig.vixSkipThreshold}`, hint: 'No entry' },
@@ -80,27 +80,27 @@ const bots = [
     name: 'SPARK',
     href: '/spark',
     dte: '1DTE',
-    desc: 'Shorter-duration Iron Condors with 1 day to expiration. Faster theta decay, quicker resolution.',
+    desc: 'Shorter-duration Iron Condors with 1 day to expiration. Trades on Tradier sandbox and production (Iron Viper) accounts.',
     border: 'border-blue-500/30 hover:border-blue-400/60',
     heading: 'text-blue-400',
     btn: 'border-blue-500/60 text-blue-400 hover:bg-blue-500/10',
     glow: 'shadow-blue-500/5',
     badge: 'bg-blue-500/15 text-blue-400',
-    mode: 'PAPER ONLY' as const,
-    modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
+    mode: 'ACCOUNT TRADING' as const,
+    modeCls: 'bg-green-500/15 text-green-400 border-green-500/30',
   },
   {
     name: 'FLAME',
     href: '/flame',
     dte: '2DTE',
-    desc: 'Longer-duration Iron Condors with 2 days to expiration. Trades on sandbox and production accounts.',
+    desc: 'Tasty-style Bull Put Credit Spreads at 1.0 SD OTM with $5 wings. VIX > 18 gate, 10% account risk per trade.',
     border: 'border-amber-500/30 hover:border-amber-400/60',
     heading: 'text-amber-400',
     btn: 'border-amber-500/60 text-amber-400 hover:bg-amber-500/10',
     glow: 'shadow-amber-500/5',
     badge: 'bg-amber-500/15 text-amber-400',
-    mode: 'ACCOUNT TRADING' as const,
-    modeCls: 'bg-green-500/15 text-green-400 border-green-500/30',
+    mode: 'PAPER ONLY' as const,
+    modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
   },
   {
     name: 'INFERNO',
@@ -119,7 +119,7 @@ const bots = [
     name: 'Compare',
     href: '/compare',
     dte: 'Head to Head',
-    desc: 'Side-by-side comparison of FLAME and SPARK. Equity curves, win rates, P&L, and all metrics.',
+    desc: 'Side-by-side comparison of FLAME, SPARK & INFERNO. Equity curves, win rates, P&L, and all metrics.',
     border: 'border-stone-600/30 hover:border-stone-500/60',
     heading: 'text-white',
     btn: 'border-stone-500/60 text-gray-300 hover:bg-stone-700/30',
@@ -133,10 +133,11 @@ const bots = [
 /* ── Exit Logic ─────────────────────────────────────────────────────── */
 
 const exitRules = [
-  { trigger: 'PT (Morning)', condition: '30%  8:30–10:29 AM CT', color: 'text-emerald-400' },
-  { trigger: 'PT (Midday)', condition: '20%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
-  { trigger: 'PT (Afternoon)', condition: '15%  1:00–2:44 PM CT', color: 'text-orange-400' },
-  { trigger: 'Stop Loss', condition: '100%  Cost ≥ 200% of credit', color: 'text-red-400' },
+  { trigger: 'PT (Morning)', condition: '50%  8:30–10:29 AM CT', color: 'text-emerald-400' },
+  { trigger: 'PT (Midday)', condition: '30%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
+  { trigger: 'PT (Afternoon)', condition: '20%  1:00–2:50 PM CT', color: 'text-orange-400' },
+  { trigger: 'PT (INFERNO)', condition: '20% → 30% → 50% (reversed slide)', color: 'text-red-400' },
+  { trigger: 'Stop Loss', condition: '200%  Cost ≥ 2x entry credit', color: 'text-red-400' },
   { trigger: 'EOD Cutoff', condition: '2:50 PM CT', color: 'text-amber-400' },
   { trigger: 'Stale/Expired', condition: 'Position from prior day', color: 'text-amber-400' },
   { trigger: 'Data Failure', condition: '10 MTM failures', color: 'text-red-400' },
@@ -222,7 +223,7 @@ export default function Home() {
           <span className="text-amber-400">Strategy</span> Configuration
         </h2>
         <p className="text-xs text-forge-muted mb-5">
-          Shared parameters for FLAME, SPARK &amp; INFERNO &mdash; DTE and aggressiveness differ
+          Shared base parameters for SPARK &amp; INFERNO Iron Condors. FLAME runs its own Bull Put Credit Spread strategy (1.0 SD, $1.50 min credit, 10% account risk).
         </p>
 
         <div className="grid md:grid-cols-2 gap-5">
@@ -330,11 +331,11 @@ export default function Home() {
               Internal paper tracking only. No sandbox accounts, no broker orders.
             </p>
             <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-blue-500/20 bg-blue-500/5">
-                <img src="/icon-spark.svg" alt="" className="h-5 w-5" />
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+                <img src="/icon-flame.svg" alt="" className="h-5 w-5" />
                 <div>
-                  <span className="text-sm font-medium text-blue-400">SPARK</span>
-                  <span className="text-xs text-gray-500 ml-2">1DTE</span>
+                  <span className="text-sm font-medium text-amber-400">FLAME</span>
+                  <span className="text-xs text-gray-500 ml-2">2DTE &middot; Bull Put Credit Spread</span>
                 </div>
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-gray-500/15 text-gray-400 border border-gray-600/30">PAPER ONLY</span>
               </div>
@@ -342,32 +343,30 @@ export default function Home() {
                 <img src="/inferno-icon.svg" alt="" className="h-5 w-5" />
                 <div>
                   <span className="text-sm font-medium text-red-400">INFERNO</span>
-                  <span className="text-xs text-gray-500 ml-2">0DTE</span>
+                  <span className="text-xs text-gray-500 ml-2">0DTE &middot; Iron Condor</span>
                 </div>
                 <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-gray-500/15 text-gray-400 border border-gray-600/30">PAPER ONLY</span>
               </div>
             </div>
           </div>
 
-          {/* Right: FLAME — Account Trading */}
-          <div className="rounded-xl border border-amber-500/20 bg-forge-card/60 p-5">
-            <h3 className="text-sm font-semibold text-amber-400/80 uppercase tracking-wider mb-4">
-              FLAME — Account Trading
+          {/* Right: SPARK — Account Trading */}
+          <div className="rounded-xl border border-blue-500/20 bg-forge-card/60 p-5">
+            <h3 className="text-sm font-semibold text-blue-400/80 uppercase tracking-wider mb-4">
+              SPARK — Account Trading
             </h3>
             <p className="text-xs text-gray-500 mb-4">
-              Places real orders on Tradier sandbox and production accounts.
+              Sole production bot. Places real orders on Tradier sandbox and production accounts.
             </p>
 
             {/* Sandbox accounts */}
             <div className="mb-3">
-              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Sandbox Accounts</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Sandbox Account</span>
               <div className="mt-1 space-y-1.5">
-                {['Iron Viper', 'Blacksmith', 'Matt'].map((name) => (
-                  <div key={name} className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-700/50 bg-forge-bg/50">
-                    <span className="text-xs text-gray-300 font-medium">{name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">SANDBOX</span>
-                  </div>
-                ))}
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg border border-gray-700/50 bg-forge-bg/50">
+                  <span className="text-xs text-gray-300 font-medium">User</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30">SANDBOX</span>
+                </div>
               </div>
             </div>
 
@@ -405,15 +404,20 @@ export default function Home() {
             </thead>
             <tbody className="divide-y divide-forge-border/50">
               {[
+                { param: 'Strategy', flame: 'Bull Put Spread', spark: 'Iron Condor', inferno: 'Iron Condor', diff: true },
+                { param: 'Mode', flame: 'Paper Only', spark: 'Sandbox + Production', inferno: 'Paper Only', diff: true },
                 { param: 'Days to Expiration', flame: '2 DTE', spark: '1 DTE', inferno: '0 DTE', diff: true },
+                { param: 'Legs', flame: '2 (puts only)', spark: '4', inferno: '4', diff: true },
                 { param: 'Spread Width', flame: '$5.00', spark: '$5.00', inferno: '$5.00', diff: false },
-                { param: 'SD Multiplier', flame: '1.2x', spark: '1.2x', inferno: '1.0x', diff: true },
-                { param: 'Profit Target', flame: '50/30/20%', spark: '50/30/20%', inferno: '50%', diff: true },
-                { param: 'Stop Loss', flame: '100%', spark: '100%', inferno: '200%', diff: true },
-                { param: 'Max Contracts', flame: '10', spark: '10', inferno: '10', diff: false },
+                { param: 'SD Multiplier', flame: '1.0x', spark: '1.2x', inferno: '1.0x', diff: true },
+                { param: 'Min Credit', flame: '$1.50', spark: '$0.05', inferno: '$0.15', diff: true },
+                { param: 'VIX Gate', flame: '> 18', spark: '< 32', inferno: '< 32', diff: true },
+                { param: 'Profit Target', flame: '50/30/20%', spark: '50/30/20%', inferno: '20/30/50%', diff: true },
+                { param: 'Stop Loss', flame: '200%', spark: '200%', inferno: '200%', diff: false },
+                { param: 'Position Sizing', flame: '10% account risk', spark: 'Kelly (BP-aware)', inferno: 'Half-Kelly', diff: true },
                 { param: 'Max Trades/Day', flame: '1', spark: '1', inferno: 'Unlimited', diff: true },
                 { param: 'Max Positions', flame: '1', spark: '1', inferno: '3', diff: true },
-                { param: 'PDT Enforcement', flame: 'Yes (3/5)', spark: 'Yes (3/5)', inferno: 'No', diff: true },
+                { param: 'PDT Enforcement', flame: 'N/A (paper)', spark: 'Exempt (>$25K)', inferno: 'No', diff: true },
                 { param: 'Entry Window', flame: '8:30–2:00', spark: '8:30–2:00', inferno: '8:30–2:30', diff: true },
                 { param: 'Theta Decay', flame: 'Slower', spark: 'Faster', inferno: 'Fastest', diff: true },
                 { param: 'Premium', flame: 'Higher', spark: 'Lower', inferno: 'Lowest', diff: true },
