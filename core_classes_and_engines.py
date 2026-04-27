@@ -1772,330 +1772,224 @@ class TradingVolatilityAPI:
             return {'error': str(e)}
 
     def get_gex_profile(self, symbol: str, expiration: str = None) -> Dict:
-        """
-        Get detailed GEX profile using Trading Volatility /gex/gammaOI endpoint with intelligent rate limiting
+        """Detailed strike-level GEX profile via TV v2 API.
 
         Args:
             symbol: Ticker symbol (e.g., 'SPY')
             expiration: Optional expiration filter:
-                - '1' = nearest expiration (0DTE)
-                - '2' = nearest monthly expiration
-                - 'YYYY-MM-DD' = specific date
-                - None = all expirations combined (default)
+                - None or '1' or 'nearest' → nearest expiration (mapped to 'nearest')
+                - '2' or 'first_monthly' → first monthly (mapped to 'first_monthly')
+                - 'first_weekly' → first weekly
+                - 'YYYY-MM-DD' → specific date
+                - 'combined' → all expirations combined
+
+        Returns v1-compatible dict shape:
+            symbol, spot_price, flip_point, call_wall, put_wall,
+            strikes (list of {strike, call_gamma, put_gamma, total_gamma,
+                              call_oi, put_oi, put_call_ratio}),
+            _debug (cache + raw-strike diagnostics),
+            aggregate_from_gammaOI (when v2 supplies aggregate fields)
+
+        Empty dict {} on error. {'error': 'rate_limit', 'message': ...} on rate limit.
+
+        v2 caveat: /curves/gex_by_strike does not return per-strike open interest;
+        call_oi/put_oi/put_call_ratio fields are present (for v1 caller compat) but
+        always 0. Callers that need OI must call /tickers/{symbol}/options/volume.
         """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        # Map v1 expiration codes to v2 exp parameter values
+        exp_map = {
+            '1': 'nearest',
+            '2': 'first_monthly',
+            'nearest': 'nearest',
+            'first_monthly': 'first_monthly',
+            'first_weekly': 'first_weekly',
+            'combined': 'combined',
+            None: 'combined',
+        }
+        exp_v2 = exp_map.get(expiration, expiration)  # passthrough for YYYY-MM-DD
 
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility username not found in secrets!")
-                return {}
-
-            # Check cache first - include expiration in cache key
-            cache_suffix = f'_exp_{expiration}' if expiration else ''
-            cache_key = self._get_cache_key(f'gex/gammaOI{cache_suffix}', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            used_cache = False
-            if cached_data:
-                cache_duration = self._get_cache_duration()
-                exp_label = f" (exp={expiration})" if expiration else ""
-                print(f"✅ Using cached gammaOI data for {symbol}{exp_label} (cache TTL: {cache_duration/60:.0f} min)")
-                json_response = cached_data
-                used_cache = True
-            else:
-                # Use intelligent rate limiter if available
-                if RATE_LIMITER_AVAILABLE:
-                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                        print("❌ Rate limit timeout - circuit breaker active")
-                        return {}
-                else:
-                    # Fallback to old rate limiting
-                    self._wait_for_rate_limit()
-
-                # Build request parameters
-                params = {
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                }
-
-                # Add expiration filter if specified
-                if expiration:
-                    params['exp'] = expiration
-                    print(f"🔍 Requesting gammaOI for {symbol} with exp={expiration}")
-
-                # Call Trading Volatility /gex/gammaOI endpoint for strike-level data
-                response = requests.get(
-                    self.endpoint + '/gex/gammaOI',
-                    params=params,
-                    headers={'Accept': 'application/json'},
-                    timeout=120
-                )
-
-                if response.status_code != 200:
-                    print(f"❌ gammaOI endpoint returned status {response.status_code}")
+            resp = self._v2_gex_by_strike(symbol, exp=exp_v2)
+            if 'error' in resp:
+                err = resp['error']
+                if 'rate_limit' in err:
+                    return {'error': 'rate_limit', 'message': err}
+                if 'no_token' in err:
                     return {}
-
-                # Bug #6 Fix: Return proper error dict instead of empty dict on rate limit
-                # Check for rate limit error in response text
-                # DON'T activate circuit breaker - gammaOI has stricter limits (2/min)
-                # Blocking all endpoints because of gammaOI would break gex/latest (20/min)
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ gammaOI rate limited (2/min during trading hours)")
-                    return {'error': 'rate_limit', 'message': 'gammaOI API rate limited (2/min)'}
-
-                # Check if response has content before parsing JSON
-                if not response.text or len(response.text.strip()) == 0:
-                    print(f"❌ gammaOI endpoint returned empty response")
-                    return {'error': 'empty_response', 'message': 'gammaOI returned empty response'}
-
-                # Try to parse JSON with better error handling
-                try:
-                    json_response = response.json()
-                except ValueError as json_err:
-                    # Check if error message contains rate limit info
-                    # DON'T activate circuit breaker - gammaOI has stricter limits
-                    if "API limit exceeded" in response.text:
-                        print(f"⚠️ gammaOI rate limited")
-                        return {'error': 'rate_limit', 'message': 'gammaOI API rate limited'}
-                    else:
-                        print(f"❌ Invalid JSON from gammaOI endpoint")
-                        print(f"Response text (first 200 chars): {response.text[:200]}")
-                        return {'error': 'invalid_json', 'message': 'Invalid JSON from gammaOI'}
-
-                # Success! Reset error counter
-                self._reset_rate_limit_errors()
-
-                # Cache the response
-                self._cache_response(cache_key, json_response)
-
-            ticker_data = json_response.get(symbol, {})
-
-            if not ticker_data:
-                print(f"❌ No data found for {symbol} in gammaOI response")
+                # All other errors → empty dict to match v1
+                print(f"⚠️ get_gex_profile v2 error for {symbol}: {err}")
                 return {}
 
-            # Check if gammaOI includes aggregate fields (to avoid separate /gex/latest call)
-            has_aggregate_data = all(field in ticker_data for field in ['implied_volatility', 'gex_flip_price', 'skew_adjusted_gex'])
-
-            # Extract gamma_array (strike-level data)
-            gamma_array = ticker_data.get('gamma_array', [])
-
-            if not gamma_array or len(gamma_array) == 0:
-                print(f"⚠️ No gamma_array found in response")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Debug: Log sample strike to see available fields
-            if len(gamma_array) > 0:
-                sample_strike = gamma_array[0]
-                print(f"\n{'='*60}")
-                print(f"DEBUG: RAW API RESPONSE - First Strike from gammaOI")
-                print(f"{'='*60}")
-                print(f"Available fields: {list(sample_strike.keys())}")
-                print(f"\nFull first strike data:")
-                for key, value in sample_strike.items():
-                    print(f"  {key}: {value}")
-                print(f"{'='*60}\n")
+            points = data.get('points', []) or []
+            if not points:
+                print(f"⚠️ /curves/gex_by_strike for {symbol} returned no points")
+                return {}
 
-            # Parse strike-level data
+            spot_price = float(data.get('price', 0) or 0)
+            totals = data.get('totals', {}) or {}
+            flip_from_totals = float(totals.get('gex_flip_price', 0) or 0)
+
+            # Build full unfiltered strikes_data and find walls in unfiltered range first.
             strikes_data = []
-            max_call_gamma = 0
-            max_put_gamma = 0
-            call_wall = 0
-            put_wall = 0
+            max_call_gamma_all = 0.0
+            max_put_gamma_all = 0.0
+            call_wall_all = 0.0
+            put_wall_all = 0.0
 
-            debug_first_strike = True
-            for strike_obj in gamma_array:
-                # Skip empty objects
-                if not strike_obj or 'strike' not in strike_obj:
+            for p in points:
+                if not isinstance(p, dict) or 'strike' not in p:
                     continue
-
-                strike = float(strike_obj['strike'])
-
-                # Get raw values from API - these may be strings like "9446.0"
-                call_gamma_raw_value = strike_obj.get('call_gamma', 0)
-                put_gamma_raw_value = strike_obj.get('put_gamma', 0)
-
-                # Convert to float - handle both string and numeric values
                 try:
-                    call_gamma_raw = float(call_gamma_raw_value) if call_gamma_raw_value else 0.0
-                except (ValueError, TypeError):
-                    call_gamma_raw = 0.0
-
+                    strike = float(p['strike'])
+                except (TypeError, ValueError):
+                    continue
+                # v2 'call' / 'put' may be signed (call usually +, put usually -)
                 try:
-                    put_gamma_raw = float(put_gamma_raw_value) if put_gamma_raw_value else 0.0
-                except (ValueError, TypeError):
-                    put_gamma_raw = 0.0
+                    call_raw = float(p.get('call', 0) or 0)
+                except (TypeError, ValueError):
+                    call_raw = 0.0
+                try:
+                    put_raw = float(p.get('put', 0) or 0)
+                except (TypeError, ValueError):
+                    put_raw = 0.0
 
-                # Use absolute values for display (both bars positive in chart)
-                call_gamma = abs(call_gamma_raw)
-                put_gamma = abs(put_gamma_raw)
-
-                # Calculate total/net gamma (preserves sign - negative for puts)
-                total_gamma = call_gamma_raw + put_gamma_raw
-
-                # Debug first strike to see what's happening
-                if debug_first_strike:
-                    print(f"\n{'='*60}")
-                    print(f"DEBUG: GAMMA PROCESSING - First Strike")
-                    print(f"{'='*60}")
-                    print(f"Raw call_gamma value: {call_gamma_raw_value!r} (type: {type(call_gamma_raw_value).__name__})")
-                    print(f"Raw put_gamma value: {put_gamma_raw_value!r} (type: {type(put_gamma_raw_value).__name__})")
-                    print(f"Parsed call_gamma_raw: {call_gamma_raw}")
-                    print(f"Parsed put_gamma_raw: {put_gamma_raw}")
-                    print(f"Absolute call_gamma: {call_gamma}")
-                    print(f"Absolute put_gamma: {put_gamma}")
-                    print(f"Calculated total_gamma: {total_gamma}")
-                    print(f"{'='*60}\n")
-                    debug_first_strike = False
-
-                # Extract open interest data
-                call_oi = float(strike_obj.get('call_open_interest', 0))
-                put_oi = float(strike_obj.get('put_open_interest', 0))
-
-                # Calculate put/call ratio
-                put_call_ratio = put_oi / call_oi if call_oi > 0 else 0
+                call_gamma = abs(call_raw)
+                put_gamma = abs(put_raw)
+                # v2 also gives 'net' directly; prefer it over reconstructing
+                try:
+                    total_gamma = float(p.get('net', call_raw + put_raw))
+                except (TypeError, ValueError):
+                    total_gamma = call_raw + put_raw
 
                 strikes_data.append({
                     'strike': strike,
                     'call_gamma': call_gamma,
                     'put_gamma': put_gamma,
                     'total_gamma': total_gamma,
-                    'call_oi': call_oi,
-                    'put_oi': put_oi,
-                    'put_call_ratio': put_call_ratio
+                    'call_oi': 0.0,    # v2 gex_by_strike does not include OI; see method docstring
+                    'put_oi': 0.0,
+                    'put_call_ratio': 0.0,
                 })
 
-                # Track max gamma for walls
-                if call_gamma > max_call_gamma:
-                    max_call_gamma = call_gamma
-                    call_wall = strike
+                if call_gamma > max_call_gamma_all:
+                    max_call_gamma_all = call_gamma
+                    call_wall_all = strike
+                if put_gamma > max_put_gamma_all:
+                    max_put_gamma_all = put_gamma
+                    put_wall_all = strike
 
-                if put_gamma > max_put_gamma:
-                    max_put_gamma = put_gamma
-                    put_wall = strike
-
-            # Get spot price and flip point
-            spot_price = float(ticker_data.get('price', 0))
-
-            # Get implied volatility - try gammaOI first, then fall back to last_response
+            # Determine IV for the ±7-day std filter window (v1 used 0.20 default).
+            # If a previous /market-structure call cached IV-adjacent data, use it;
+            # otherwise default to 20% so the filter window math is conservative.
             try:
                 from config import ImpliedVolatilityConfig
                 implied_vol = ImpliedVolatilityConfig.DEFAULT_IV
             except ImportError:
-                implied_vol = 0.20  # Fallback to 20% IV
-            if 'implied_volatility' in ticker_data:
-                # gammaOI includes aggregate data - use it directly!
-                implied_vol = float(ticker_data.get('implied_volatility', 0.20))
-            elif self.last_response:
-                # Fall back to /gex/latest response if gammaOI doesn't include it
-                last_ticker_data = self.last_response.get(symbol, {})
-                implied_vol = float(last_ticker_data.get('implied_volatility', 0.20))
+                implied_vol = 0.20
+            try:
+                if isinstance(self.last_response, dict):
+                    sf = self.last_response.get('supporting_factors', {}) or {}
+                    pcr_iv_pct = sf.get('put_call_25d_iv_premium_pct')
+                    if pcr_iv_pct is not None:
+                        # Not actually IV — kept as a flag that we have ms data.
+                        # Real IV must come from get_skew_data(); use default for the filter.
+                        pass
+            except Exception:
+                pass
 
-            # 7-day expected move: spot * IV * sqrt(7/252)
             import math
-            seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252)
-            min_strike = spot_price - seven_day_std
-            max_strike = spot_price + seven_day_std
+            seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252) if spot_price > 0 else 0
+            if seven_day_std > 0:
+                min_strike = spot_price - seven_day_std
+                max_strike = spot_price + seven_day_std
+                strikes_data_filtered = [
+                    s for s in strikes_data if min_strike <= s['strike'] <= max_strike
+                ]
+            else:
+                strikes_data_filtered = strikes_data
+                min_strike, max_strike = 0, 0
 
-            # Filter strikes to +/- 7 day std range
-            strikes_data_filtered = [s for s in strikes_data if min_strike <= s['strike'] <= max_strike]
+            # Recompute walls within filtered range
+            max_call_filt = 0.0
+            max_put_filt = 0.0
+            call_wall_filt = call_wall_all
+            put_wall_filt = put_wall_all
+            for s in strikes_data_filtered:
+                if s['call_gamma'] > max_call_filt:
+                    max_call_filt = s['call_gamma']
+                    call_wall_filt = s['strike']
+                if s['put_gamma'] > max_put_filt:
+                    max_put_filt = s['put_gamma']
+                    put_wall_filt = s['strike']
 
-            # Recalculate call_wall and put_wall using ONLY filtered strikes
-            # This ensures walls are within the visible chart range
-            max_call_gamma_filtered = 0
-            max_put_gamma_filtered = 0
-            call_wall_filtered = call_wall  # Keep original as fallback
-            put_wall_filtered = put_wall    # Keep original as fallback
-
-            for strike_data in strikes_data_filtered:
-                call_g = strike_data['call_gamma']
-                put_g = strike_data['put_gamma']
-
-                if call_g > max_call_gamma_filtered:
-                    max_call_gamma_filtered = call_g
-                    call_wall_filtered = strike_data['strike']
-
-                if put_g > max_put_gamma_filtered:
-                    max_put_gamma_filtered = put_g
-                    put_wall_filtered = strike_data['strike']
-
-            print(f"\n{'='*60}")
-            print(f"GEX WALLS DEBUG - {symbol}")
-            print(f"{'='*60}")
-            print(f"Spot Price: ${spot_price:.2f}")
-            print(f"Strike Range: ${min_strike:.2f} to ${max_strike:.2f} (+/- 7 day STD)")
-            print(f"Original Call Wall: ${call_wall:.2f} (from ALL strikes)")
-            print(f"Filtered Call Wall: ${call_wall_filtered:.2f} (from visible strikes)")
-            print(f"Original Put Wall: ${put_wall:.2f} (from ALL strikes)")
-            print(f"Filtered Put Wall: ${put_wall_filtered:.2f} (from visible strikes)")
-            print(f"Total strikes: {len(strikes_data)} -> Filtered: {len(strikes_data_filtered)}")
-            print(f"{'='*60}\n")
-
-            # Calculate flip point from gamma_array (where net gamma crosses zero)
-            # Only consider flip points within the filtered range
-            flip_point = 0
-
-            # Filter gamma_array to visible range first for performance
-            gamma_array_filtered = [
-                g for g in gamma_array
-                if 'strike' in g and min_strike <= float(g['strike']) <= max_strike
-            ]
-
-            for i in range(len(gamma_array_filtered) - 1):
-                if 'net_gamma_$_at_strike' in gamma_array_filtered[i] and 'net_gamma_$_at_strike' in gamma_array_filtered[i + 1]:
-                    strike_current = float(gamma_array_filtered[i]['strike'])
-                    strike_next = float(gamma_array_filtered[i + 1]['strike'])
-                    net_gamma_current = float(gamma_array_filtered[i].get('net_gamma_$_at_strike', 0))
-                    net_gamma_next = float(gamma_array_filtered[i + 1].get('net_gamma_$_at_strike', 0))
-
-                    # Check for sign change (zero crossing)
-                    if net_gamma_current * net_gamma_next < 0:
-                        # Linear interpolation
-                        flip_point = strike_current + (strike_next - strike_current) * (
-                            -net_gamma_current / (net_gamma_next - net_gamma_current)
+            # Flip point: prefer v2 totals.gex_flip_price; otherwise compute zero-crossing.
+            flip_point = flip_from_totals
+            if not flip_point:
+                # Sign-change interpolation on the filtered series
+                arr = strikes_data_filtered if strikes_data_filtered else strikes_data
+                for i in range(len(arr) - 1):
+                    s_curr = arr[i]['strike']
+                    s_next = arr[i + 1]['strike']
+                    n_curr = arr[i]['total_gamma']
+                    n_next = arr[i + 1]['total_gamma']
+                    if n_curr * n_next < 0:
+                        flip_point = s_curr + (s_next - s_curr) * (
+                            -n_curr / (n_next - n_curr)
                         )
                         break
+            if not flip_point:
+                flip_point = spot_price
 
-            # Get first strike from raw API response for debugging
-            first_raw_strike = gamma_array[0] if gamma_array else {}
+            first_raw = points[0] if points else {}
 
             profile = {
-                'strikes': strikes_data_filtered,  # Use filtered strikes
-                'spot_price': spot_price,
-                'flip_point': flip_point if flip_point else spot_price,
-                'call_wall': call_wall_filtered,  # Use filtered wall
-                'put_wall': put_wall_filtered,    # Use filtered wall
                 'symbol': symbol,
+                'spot_price': spot_price,
+                'flip_point': flip_point,
+                'call_wall': call_wall_filt,
+                'put_wall': put_wall_filt,
+                'strikes': strikes_data_filtered,
                 '_debug': {
-                    'used_cache': used_cache,
+                    'used_cache': False,    # v2 cache hits are transparent inside _v2_request
                     'total_strikes_before_filter': len(strikes_data),
                     'total_strikes_after_filter': len(strikes_data_filtered),
+                    'filter_min_strike': min_strike,
+                    'filter_max_strike': max_strike,
+                    'wall_unfiltered_call': call_wall_all,
+                    'wall_unfiltered_put': put_wall_all,
                     'raw_api_first_strike': {
-                        'strike': first_raw_strike.get('strike'),
-                        'call_gamma': first_raw_strike.get('call_gamma'),
-                        'put_gamma': first_raw_strike.get('put_gamma'),
-                        'call_gamma_type': type(first_raw_strike.get('call_gamma')).__name__,
-                        'put_gamma_type': type(first_raw_strike.get('put_gamma')).__name__
+                        'strike': first_raw.get('strike'),
+                        'call_gamma': first_raw.get('call', 0),
+                        'put_gamma': first_raw.get('put', 0),
+                        'call_gamma_type': type(first_raw.get('call')).__name__,
+                        'put_gamma_type': type(first_raw.get('put')).__name__,
                     },
-                    'processed_first_strike': strikes_data[0] if strikes_data else {}
-                }
+                    'processed_first_strike': strikes_data[0] if strikes_data else {},
+                    'api_version': 'v2',
+                },
             }
 
-            # If gammaOI includes aggregate data, add it to profile to avoid separate /gex/latest call
-            if has_aggregate_data:
+            # Aggregate fields from v2 totals (mirror v1's `aggregate_from_gammaOI`).
+            if totals:
                 profile['aggregate_from_gammaOI'] = {
-                    'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
-                    'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
-                    'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
-                    'collection_date': ticker_data.get('collection_date', '')
+                    'net_gex': float(totals.get('gex_value_per_1pct', 0) or 0),
+                    'implied_volatility': 0.0,   # not surfaced in gex_by_strike; see method docstring
+                    'put_call_ratio': float(totals.get('put_call_oi', 0) or 0),
+                    'collection_date': data.get('asof', '') or '',
                 }
 
             return profile
 
         except Exception as e:
             import traceback
-            error_msg = f"Error getting GEX profile from gammaOI: {str(e)}"
-            print(f"❌ {error_msg}")
+            print(f"❌ Error getting GEX profile (v2): {e}")
             traceback.print_exc()
             return {}
 
