@@ -2415,101 +2415,166 @@ class TradingVolatilityAPI:
             return {}
 
     def get_gamma_by_expiration(self, symbol: str, expiration: str = '1') -> Dict:
-        """
-        Fetch gamma data for a specific expiration date
+        """Fetch gamma data for a specific expiration via TV v2 /curves/gamma.
 
         Args:
             symbol: Ticker symbol (e.g., 'SPY')
             expiration: Expiration identifier:
-                - '0' = combined (all expirations)
-                - '1' = nearest expiration
-                - '2' = nearest monthly expiration
-                - '2024-10-30' = specific date (YYYY-MM-DD format)
+                - '0' or 'combined' → all expirations combined
+                - '1' or 'nearest' → nearest expiration
+                - '2' or 'first_monthly' → first monthly expiration
+                - 'first_weekly' → first weekly
+                - 'YYYY-MM-DD' → specific date
 
-        Returns:
-            Dict with gamma_array showing strike-level gamma for that expiration
+        Returns v1-compatible dict shape:
+            symbol, expiration, expiry_date, price, collection_date,
+            gamma_array (list of {strike, gamma}), total_gamma
+        Empty dict {} on error.
         """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        # Map v1 codes to v2 exp values
+        exp_map = {
+            '0': 'combined',
+            '1': 'nearest',
+            '2': 'first_monthly',
+            'combined': 'combined',
+            'nearest': 'nearest',
+            'first_monthly': 'first_monthly',
+            'first_weekly': 'first_weekly',
+        }
+        exp_v2 = exp_map.get(expiration, expiration)  # passthrough for YYYY-MM-DD
 
         try:
-            if not self.api_key:
+            resp = self._v2_gamma_curve(symbol, exp=exp_v2)
+            if 'error' in resp:
+                print(f"gamma_by_expiration v2 error for {symbol} (exp={exp_v2}): {resp['error']}")
                 return {}
 
-            # Check cache first (5-minute cache)
-            cache_key = self._get_cache_key(f'gex/gamma_exp_{expiration}', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data
-
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
-
-            response = requests.get(
-                self.endpoint + '/gex/gamma',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'exp': expiration,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Check for rate limit error
-            if "API limit exceeded" in response.text:
-                self._handle_rate_limit_error()
-                return {}
+            points = data.get('points', []) or []
 
-            if not response.text or len(response.text.strip()) == 0:
-                return {}
+            # v2 points have {strike, gamma}; preserve as v1 gamma_array shape
+            gamma_array = []
+            total_gamma = 0.0
+            for p in points:
+                if not isinstance(p, dict) or 'strike' not in p:
+                    continue
+                try:
+                    strike = float(p['strike'])
+                    gamma_val = float(p.get('gamma', 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                gamma_array.append({'strike': strike, 'gamma': gamma_val})
+                total_gamma += abs(gamma_val)
 
-            try:
-                json_response = response.json()
-            except ValueError:
-                if "API limit exceeded" in response.text:
-                    self._handle_rate_limit_error()
-                return {}
-
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response
-            self._cache_response(cache_key, json_response)
-
-            ticker_data = json_response.get(symbol, {})
-
-            if not ticker_data:
-                return {}
-
-            # Calculate total gamma for this expiration
-            gamma_array = ticker_data.get('gamma_array', [])
-            total_gamma = sum(abs(float(strike.get('gamma', 0))) for strike in gamma_array if strike)
-
-            result = {
+            return {
                 'symbol': symbol,
                 'expiration': expiration,
-                'expiry_date': ticker_data.get('expiry', 'unknown'),
-                'price': float(ticker_data.get('price', 0)),
-                'collection_date': ticker_data.get('collection_date', ''),
+                'expiry_date': data.get('expiry', 'unknown') or 'unknown',
+                'price': float(data.get('price', 0) or 0),
+                'collection_date': data.get('asof', '') or '',
                 'gamma_array': gamma_array,
-                'total_gamma': total_gamma
+                'total_gamma': total_gamma,
+                'api_version': 'v2',
             }
 
-            return result
-
         except Exception as e:
-            print(f"Error fetching gamma by expiration: {e}")
+            print(f"Error fetching gamma by expiration (v2): {e}")
             import traceback
             traceback.print_exc()
+            return {}
+
+    # ==========================================================================
+    # NEW v2 PUBLIC METHODS — expose richer v2 data that has no v1 equivalent.
+    # These do NOT have backward-compat shape constraints; they return whatever
+    # the v2 API natively returns (lightly normalized).
+    # ==========================================================================
+
+    def get_market_structure(self, symbol: str) -> Dict:
+        """Full /tickers/{symbol}/market-structure response.
+
+        Returns the assembled v2 interpretation layer:
+            headline, signal, bias, structure_regime, expected_behavior,
+            tags[], confidence, drivers{flip_context, gamma_tone, sentiment,
+            skew_tone}, key_levels{spot, gamma_flip, plus/minus_1sigma_*},
+            supporting_factors{call_regime, distance_to_flip_pct,
+            expected_move_pct_1d/1w, gamma_flip, gamma_notional_per_1pct_move_usd,
+            pcr_oi, pcr_volume, pct_gamma_expiring_nearest_expiry,
+            put_call_25d_iv_premium_pct, speculative_interest_score, spot}
+
+        Returns {} on error; populated dict on success.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_market_structure(symbol)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching market structure (v2): {e}")
+            return {}
+
+    def get_trade_setup(self, symbol: str) -> Dict:
+        """Compact trader-facing trade setup payload from /agent/trade-setup/{symbol}.
+
+        Returns dict with v2 trade_recommendation enums:
+            trade_bias, opportunity_score, opportunity_tier, trade_type,
+            direction, structures[], entry_trigger, stop_description,
+            target_description, risk{...}, caution_flags[], agent_summary
+
+        Returns {} on error.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_trade_setup(symbol)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching trade setup (v2): {e}")
+            return {}
+
+    def get_top_setups(self, filters: dict = None) -> Dict:
+        """Cross-ticker ranking of opportunities from /top-setups.
+
+        Args:
+            filters: optional dict with keys per spec (limit, min_score, regime,
+                     trade_bias, trend_state, momentum_state, realized_vol_state,
+                     recommended_direction, price_min/max, iv_rank_min/max,
+                     ivAtMaxDelta_min/max, ttl).
+
+        Returns dict with v2 envelope: {data: {items[]}, meta: {...}}.
+        Returns {} on error.
+        """
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_top_setups(filters)
+            if 'error' in resp:
+                return {}
+            return resp
+        except Exception as e:
+            print(f"Error fetching top setups (v2): {e}")
+            return {}
+
+    def get_explain(self, symbol: str, view: str = None) -> Dict:
+        """Deterministic plain-English regime explanation from /tickers/{symbol}/explain."""
+        if not self.v2_token:
+            return {}
+        try:
+            resp = self._v2_explain(symbol, view=view)
+            if 'error' in resp:
+                return {}
+            return resp.get('data', resp) or {}
+        except Exception as e:
+            print(f"Error fetching explain (v2): {e}")
             return {}
 
     def get_current_week_gamma_intelligence(self, symbol: str, current_vix: float = 0) -> Dict:
