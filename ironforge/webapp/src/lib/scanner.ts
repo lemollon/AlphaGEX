@@ -423,6 +423,7 @@ function isAfterEodCutoff(ct: Date): boolean {
  * PT slides DOWN as the day progresses.
  *
  * FLAME/SPARK (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 20%
+ *   Tier boundaries: MORNING < 12:00 CT, MIDDAY 12:00-1:00 CT, AFTERNOON 1:00+
  * INFERNO    (0DTE):       MORNING 20% → MIDDAY 30% → AFTERNOON 50%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
@@ -431,7 +432,7 @@ function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [num
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
   const isInferno = botName === 'inferno'
 
-  if (timeMinutes < 630) { // before 10:30 AM CT
+  if (timeMinutes < 720) { // before 12:00 PM CT
     if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
@@ -725,7 +726,7 @@ async function monitorSinglePosition(
           // SAME tier target to refresh Tradier's queue position. We never
           // lift the limit above the tier target — 50/30/20 is a hard floor,
           // and the only sanctioned floor relaxation is the time-based
-          // tier-advance branch above (50%→30%→20% at 10:30 / 1:00 CT).
+          // tier-advance branch above (50%→30%→20% at 12:00 / 1:00 CT).
           const SLIPPAGE_GUARD_MIN_AGE_MS = 10 * 60 * 1000  // 10 minutes
           const ageMs = placedAtMs != null ? Date.now() - placedAtMs : 0
           // Slippage guard needs an MTM read. Fetch it once here — if it

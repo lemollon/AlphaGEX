@@ -6,16 +6,16 @@ import { getCTNow, getCTMinutes, isMarketOpen } from '@/lib/pt-tiers'
 /**
  * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
  *
- * Zones (CT):
- *   Morning  30%  8:30 – 10:30   (120 min)
- *   Midday   20%  10:30 – 1:00   (150 min)
- *   Afternoon 15%  1:00 – 2:45   (105 min)
- *   EOD           2:45 – 3:00    (15 min)
+ * Zones (CT) — must match getCurrentPTTier in pt-tiers.ts:
+ *   Morning   50%  8:30 – 12:00  (210 min)
+ *   Midday    30%  12:00 – 1:00  (60 min)
+ *   Afternoon 20%  1:00 – 2:45   (105 min)
+ *   EOD            2:45 – 3:00   (15 min)
  *   Total = 390 min
  */
 
 const MARKET_OPEN = 510   // 8:30 AM
-const MIDDAY_START = 630  // 10:30 AM
+const MIDDAY_START = 720  // 12:00 PM
 const AFTERNOON_START = 780 // 1:00 PM
 const EOD_START = 885     // 2:45 PM
 const MARKET_CLOSE = 900  // 3:00 PM
@@ -128,7 +128,7 @@ export default function PTTimeline() {
       {/* Time labels below bar */}
       <div className="relative h-4 text-[9px] text-forge-muted mt-0.5 font-mono">
         <span className="absolute" style={{ left: '0%' }}>8:30</span>
-        <span className="absolute -translate-x-1/2" style={{ left: pct(MIDDAY_START) }}>10:30</span>
+        <span className="absolute -translate-x-1/2" style={{ left: pct(MIDDAY_START) }}>12:00</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(AFTERNOON_START) }}>1:00</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(EOD_START) }}>2:45</span>
         <span className="absolute right-0">3:00</span>
