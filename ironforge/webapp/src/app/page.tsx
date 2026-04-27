@@ -133,8 +133,8 @@ const bots = [
 /* ── Exit Logic ─────────────────────────────────────────────────────── */
 
 const exitRules = [
-  { trigger: 'PT (Morning)', condition: '50%  8:30–10:29 AM CT', color: 'text-emerald-400' },
-  { trigger: 'PT (Midday)', condition: '30%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
+  { trigger: 'PT (Morning)', condition: '50%  8:30 AM–11:59 AM CT', color: 'text-emerald-400' },
+  { trigger: 'PT (Midday)', condition: '30%  12:00 PM–12:59 PM CT', color: 'text-yellow-400' },
   { trigger: 'PT (Afternoon)', condition: '20%  1:00–2:50 PM CT', color: 'text-orange-400' },
   { trigger: 'PT (INFERNO)', condition: '20% → 30% → 50% (reversed slide)', color: 'text-red-400' },
   { trigger: 'Stop Loss', condition: '200%  Cost ≥ 2x entry credit', color: 'text-red-400' },

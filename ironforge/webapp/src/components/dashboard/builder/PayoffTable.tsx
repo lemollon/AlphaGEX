@@ -21,7 +21,7 @@
  * The row for the currently-active PT tier (based on CT clock) gets
  * a subtle green/yellow/orange badge so the operator can see which
  * tier the bot is aiming for right now without checking a separate
- * widget. Highlight transitions at 10:30 AM CT and 1:00 PM CT.
+ * widget. Highlight transitions at 12:00 PM CT and 1:00 PM CT.
  *
  * `Now (Live)` updates every snapshot poll (30s) — everything else is
  * static for the life of the position (credit is fixed at entry).
@@ -147,7 +147,7 @@ export default function PayoffTable({
     {
       kind: 'morning',
       label: 'Morning PT (50%)',
-      sublabel: 'before 10:30 AM CT',
+      sublabel: 'before 12:00 PM CT',
       pnl: pnlAtTier(0.50),
       pctOfMax: 50,
       barPct: 50,
@@ -157,7 +157,7 @@ export default function PayoffTable({
     {
       kind: 'midday',
       label: 'Midday PT (30%)',
-      sublabel: '10:30 AM – 1:00 PM CT',
+      sublabel: '12:00 PM – 1:00 PM CT',
       pnl: pnlAtTier(0.30),
       pctOfMax: 70,
       barPct: 70,

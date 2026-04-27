@@ -2,13 +2,15 @@
  * Sliding Profit Target tiers — must match the scanner schedule exactly.
  *
  * Schedule (Central Time) — FLAME/SPARK:
- *   8:30 AM – 10:29 AM  → 50%  (MORNING)   — exit when cost-to-close ≤ 50% of credit → keep 50%
- *   10:30 AM – 12:59 PM → 30%  (MIDDAY)    — exit when cost-to-close ≤ 30% of credit → keep 70%
+ *   8:30 AM – 11:59 AM  → 50%  (MORNING)   — exit when cost-to-close ≤ 50% of credit → keep 50%
+ *   12:00 PM – 12:59 PM → 30%  (MIDDAY)    — exit when cost-to-close ≤ 30% of credit → keep 70%
  *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON) — exit when cost-to-close ≤ 20% of credit → keep 80%
  *   2:45 PM+             → handled by EOD cutoff
  *
  * Commit O (Apr 2026): tiers loosened from 30/20/15 to 50/30/20 — fire
  * earlier, take less profit per trade, but more often. Paper + Live both.
+ * Apr 27 2026: MORNING extended to 12:00 PM CT (was 10:30 AM) so the 50%
+ * floor holds longer and we don't slide to 30% as quickly.
  * INFERNO (0DTE) uses its own reversed 20/30/50 schedule in scanner.ts.
  */
 
@@ -68,7 +70,7 @@ export function isMarketOpen(ctDate?: Date): boolean {
 /** Get the active PT tier based on current CT time. */
 export function getCurrentPTTier(ctDate?: Date): PTTier {
   const mins = getCTMinutes(ctDate)
-  if (mins < 630) return MORNING      // before 10:30 AM
+  if (mins < 720) return MORNING      // before 12:00 PM
   if (mins < 780) return MIDDAY       // before 1:00 PM
   return AFTERNOON
 }
@@ -83,9 +85,9 @@ export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabe
   const secs = d.getSeconds()
   const totalSecs = mins * 60 + secs
 
-  if (mins < 630) {
-    // Morning → Midday at 10:30 AM (630 min = 37800 sec)
-    return { seconds: 37800 - totalSecs, nextLabel: '30% Midday' }
+  if (mins < 720) {
+    // Morning → Midday at 12:00 PM (720 min = 43200 sec)
+    return { seconds: 43200 - totalSecs, nextLabel: '30% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
