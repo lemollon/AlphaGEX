@@ -1641,179 +1641,132 @@ class TradingVolatilityAPI:
         return self._v2_request("/top-setups", filters)
 
     def get_net_gamma(self, symbol: str) -> Dict:
-        """Fetch net gamma exposure data from Trading Volatility API with intelligent rate limiting"""
-        import requests
+        """Fetch net gamma exposure data via TV v2 API.
+
+        Returns a dict with v1-compatible keys so existing call sites need
+        no changes:
+            symbol, spot_price, net_gex, flip_point, call_wall, put_wall,
+            put_call_ratio, implied_volatility, collection_date, raw_data
+
+        Also includes v2-only enrichment fields that older callers ignore:
+            speculative_interest_score, call_regime, expected_move_pct_1d,
+            expected_move_pct_1w, pct_gamma_expiring, structure_regime,
+            signal, bias, headline, tags, drivers, api_version
+
+        Internally calls /tickers/{symbol}/market-structure (primary) and
+        /tickers/{symbol}/curves/gex_by_strike (walls). v1 also made up
+        to 2 calls when walls weren't in the snapshot, so rate-limit
+        pressure is unchanged.
+
+        IV note: /market-structure does not surface ATM IV. We return 0.0
+        here for compatibility with v1 callers that already tolerated 0
+        IV from fallback paths. Callers that need real IV should use
+        get_skew_data() or read 'put_call_25d_iv_premium_pct' from
+        raw_data.supporting_factors.
+        """
+        if not self.v2_token:
+            return {'error': 'API key not configured (TRADING_VOLATILITY_API_TOKEN unset)'}
 
         try:
-            if not self.api_key:
-                print("❌ Trading Volatility API key not found!")
-                print("Set TRADING_VOLATILITY_API_KEY or TV_USERNAME environment variable")
-                return {'error': 'API key not configured'}
+            ms = self._v2_market_structure(symbol)
+            if 'error' in ms:
+                err = ms['error']
+                # Surface rate-limit failures with the legacy error string so
+                # callers that branch on 'rate_limit' continue to work.
+                if 'rate_limit' in err:
+                    return {'error': 'rate_limit'}
+                return {'error': f'market_structure: {err}'}
 
-            # Check cache first
-            cache_key = self._get_cache_key('gex/latest', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                # Use cached response
-                cache_duration = self._get_cache_duration()
-                print(f"✅ Using cached GEX data for {symbol} (cache TTL: {cache_duration/60:.0f} min)")
-                self.last_response = cached_data
-                json_response = cached_data
-            else:
-                # Use intelligent rate limiter if available
-                if RATE_LIMITER_AVAILABLE:
-                    if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                        print("❌ Rate limit timeout - circuit breaker active")
-                        return {'error': 'rate_limit'}
-                else:
-                    # Fallback to old rate limiting
-                    self._wait_for_rate_limit()
+            # v2 envelopes payload under 'data'; tolerate flat too.
+            ms_data = ms.get('data', ms)
+            ms_meta = ms.get('meta', {}) or {}
 
-                # Call Trading Volatility API
-                response = requests.get(
-                    self.endpoint + '/gex/latest',
-                    params={
-                        'ticker': symbol,
-                        'username': self.api_key,
-                        'format': 'json'
-                    },
-                    headers={'Accept': 'application/json'},
-                    timeout=120  # Increased to 120 seconds for multi-symbol scanner with slow API responses
-                )
-
-                if response.status_code != 200:
-                    print(f"❌ Trading Volatility API returned status {response.status_code}")
-                    print(f"Response text (first 100 chars): {response.text[:100]}")
-
-                    # ONLY treat as rate limit if response explicitly says so
-                    # Don't blindly assume 403 = rate limit (could be auth/subscription issue)
-                    if "API limit exceeded" in response.text or "rate limit" in response.text.lower():
-                        print(f"⚠️ Rate limit detected in response - activating circuit breaker")
-                        self._handle_rate_limit_error()
-                        return {'error': 'rate_limit'}
-
-                    # NO MOCK DATA - Return error if API fails
-                    return {'error': f'API returned {response.status_code}'}
-
-                # Check for rate limit error in response text (redundant check but safe)
-                if "API limit exceeded" in response.text:
-                    print(f"⚠️ API Rate Limit Hit - Circuit breaker activating")
-                    self._handle_rate_limit_error()
-                    return {'error': 'API rate limit exceeded'}
-
-                # Check if response has content before parsing JSON
-                if not response.text or len(response.text.strip()) == 0:
-                    print(f"❌ Trading Volatility API returned empty response")
-                    print(f"URL: {response.url}")
-                    return {'error': 'Empty response from API'}
-
-                # Try to parse JSON with better error handling
-                try:
-                    json_response = response.json()
-                except ValueError as json_err:
-                    # Check if error message contains rate limit info
-                    if "API limit exceeded" in response.text:
-                        print(f"⚠️ API Rate Limit - Backing off for 30+ seconds")
-                        self._handle_rate_limit_error()
-                        return {'error': 'API rate limit exceeded'}
-                    else:
-                        print(f"❌ Invalid JSON from Trading Volatility API")
-                        print(f"Response text (first 200 chars): {response.text[:200]}")
-                        return {'error': f'Invalid JSON: {str(json_err)}'}
-
-                # Success! Reset error counter
-                self._reset_rate_limit_errors()
-
-                # Cache the response
-                self._cache_response(cache_key, json_response)
-
-                # Store the full response for get_gex_profile to use
-                self.last_response = json_response
-
-            # Parse nested response - data is under the ticker symbol
-            ticker_data = json_response.get(symbol, {})
-
-            if not ticker_data:
-                print(f"❌ No data found for {symbol} in API response")
+            if not isinstance(ms_data, dict) or not ms_data:
                 return {'error': 'No ticker data in response'}
 
-            # Log what fields we received for debugging
-            received_fields = list(ticker_data.keys())
-            print(f"📋 Received GEX data for {symbol} with fields: {received_fields}")
+            key_levels = ms_data.get('key_levels', {}) or {}
+            sf = ms_data.get('supporting_factors', {}) or {}
+            drivers = ms_data.get('drivers', {}) or {}
 
-            # Validate minimum required fields
-            required_fields = ['price', 'skew_adjusted_gex']
-            missing_fields = [f for f in required_fields if f not in ticker_data]
-            if missing_fields:
-                print(f"❌ Incomplete data from API: missing {missing_fields}")
-                return {
-                    'error': f'Incomplete data from API: missing {missing_fields}',
-                    'received_fields': received_fields,
-                    'required_fields': required_fields
-                }
+            spot_price = float(key_levels.get('spot') or sf.get('spot') or 0)
+            flip_point = float(key_levels.get('gamma_flip') or sf.get('gamma_flip') or 0)
+            net_gex = float(sf.get('gamma_notional_per_1pct_move_usd') or 0)
+            pcr_oi = float(sf.get('pcr_oi') or 0)
+            spec_score = float(sf.get('speculative_interest_score') or 0)
+            call_regime = sf.get('call_regime') or ''
+            em_1d_pct = float(sf.get('expected_move_pct_1d') or 0)
+            em_1w_pct = float(sf.get('expected_move_pct_1w') or 0)
+            pct_gamma_expiring = float(sf.get('pct_gamma_expiring_nearest_expiry') or 0)
 
-            # Extract aggregate metrics from Trading Volatility API
-            call_wall = 0
-            put_wall = 0
+            # ATM IV is not in /market-structure. v1 callers tolerated 0
+            # from fallback paths; we preserve that behavior here.
+            atm_iv = 0.0
 
-            # Try to extract wall data from gamma_array if available
-            gamma_array = ticker_data.get('gamma_array', [])
-            if gamma_array and len(gamma_array) > 0:
-                max_call_gamma = 0
-                max_put_gamma = 0
+            # Walls — single extra call to /curves/gex_by_strike.
+            # Matches v1 2-call pattern when walls were missing from snapshot.
+            call_wall = None
+            put_wall = None
+            try:
+                strikes_resp = self._v2_gex_by_strike(symbol, exp='combined')
+                if 'error' not in strikes_resp:
+                    strikes_data = strikes_resp.get('data', strikes_resp)
+                    points = strikes_data.get('points', []) or []
+                    max_call_gex = 0.0
+                    max_put_gex = 0.0
+                    for p in points:
+                        if not isinstance(p, dict):
+                            continue
+                        s = float(p.get('strike', 0) or 0)
+                        c = abs(float(p.get('call', 0) or 0))
+                        pu = abs(float(p.get('put', 0) or 0))
+                        if c > max_call_gex:
+                            max_call_gex = c
+                            call_wall = s
+                        if pu > max_put_gex:
+                            max_put_gex = pu
+                            put_wall = s
+                    if call_wall and put_wall:
+                        print(f"✅ {symbol} walls (v2): Call ${call_wall:.2f}, Put ${put_wall:.2f}")
+            except Exception as wall_err:
+                print(f"⚠️ {symbol} wall fetch failed: {wall_err}")
 
-                for strike_obj in gamma_array:
-                    if not strike_obj or 'strike' not in strike_obj:
-                        continue
-
-                    strike = float(strike_obj['strike'])
-                    call_gamma = abs(float(strike_obj.get('call_gamma', 0)))
-                    put_gamma = abs(float(strike_obj.get('put_gamma', 0)))
-
-                    # Track max gamma for walls
-                    if call_gamma > max_call_gamma:
-                        max_call_gamma = call_gamma
-                        call_wall = strike
-
-                    if put_gamma > max_put_gamma:
-                        max_put_gamma = put_gamma
-                        put_wall = strike
-
-                if call_wall > 0 and put_wall > 0:
-                    print(f"✅ Extracted walls from gamma_array: Call Wall ${call_wall:.2f}, Put Wall ${put_wall:.2f}")
+            collection_date = ms_meta.get('asof') or ms_data.get('asof') or ''
 
             result = {
+                # ---- v1-compatible keys (do not rename; many callers read these) ----
                 'symbol': symbol,
-                'spot_price': float(ticker_data.get('price', 0)),
-                'net_gex': float(ticker_data.get('skew_adjusted_gex', 0)),
-                'flip_point': float(ticker_data.get('gex_flip_price', 0)),
-                'call_wall': float(call_wall) if call_wall else None,
-                'put_wall': float(put_wall) if put_wall else None,
-                'put_call_ratio': float(ticker_data.get('put_call_ratio_open_interest', 0)),
-                'implied_volatility': float(ticker_data.get('implied_volatility', 0)),
-                'collection_date': ticker_data.get('collection_date', ''),
-                'raw_data': ticker_data
+                'spot_price': spot_price,
+                'net_gex': net_gex,
+                'flip_point': flip_point,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'put_call_ratio': pcr_oi,
+                'implied_volatility': atm_iv,
+                'collection_date': collection_date,
+                'raw_data': ms_data,
+                # ---- v2-only enrichment (back-compat: callers ignore unknown keys) ----
+                'speculative_interest_score': spec_score,
+                'call_regime': call_regime,
+                'expected_move_pct_1d': em_1d_pct,
+                'expected_move_pct_1w': em_1w_pct,
+                'pct_gamma_expiring': pct_gamma_expiring,
+                'structure_regime': ms_data.get('structure_regime', ''),
+                'signal': ms_data.get('signal', ''),
+                'bias': ms_data.get('bias', ''),
+                'headline': ms_data.get('headline', ''),
+                'tags': ms_data.get('tags', []) or [],
+                'drivers': drivers,
+                'api_version': 'v2',
             }
 
-            # If walls are 0/None, try to get them from the gammaOI profile endpoint
-            if not result.get('call_wall') or not result.get('put_wall'):
-                try:
-                    profile = self.get_gex_profile(symbol)
-                    if profile and 'error' not in profile:
-                        if profile.get('call_wall') and not result.get('call_wall'):
-                            result['call_wall'] = float(profile['call_wall'])
-                        if profile.get('put_wall') and not result.get('put_wall'):
-                            result['put_wall'] = float(profile['put_wall'])
-                        if result.get('call_wall') and result.get('put_wall'):
-                            print(f"✅ Got walls from gammaOI profile: Call ${result['call_wall']:.2f}, Put ${result['put_wall']:.2f}")
-                except Exception as profile_err:
-                    print(f"⚠️ Could not get walls from profile: {profile_err}")
-
+            # Retained for backward compat with callers that read last_response
+            # (e.g. older paths in get_gex_profile / scan helpers).
+            self.last_response = ms_data
             return result
 
         except Exception as e:
             import traceback
-            error_msg = f"Error fetching data from Trading Volatility API: {e}"
+            error_msg = f"Error fetching data from Trading Volatility API (v2): {e}"
             print(f"❌ {error_msg}")
             traceback.print_exc()
             return {'error': str(e)}
