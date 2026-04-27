@@ -2416,105 +2416,99 @@ class TradingVolatilityAPI:
             return []
 
     def get_gex_levels(self, symbol: str) -> Dict:
+        """Fetch GEX levels via TV v2 API.
+
+        Returns the same flat dict shape as v1 so existing callers continue to work:
+            symbol, gex_flip, gex_0..gex_4, std_1day_pos/neg, std_7day_pos/neg
+
+        Empty dict {} on error (matches v1 behavior — many callers branch on
+        empty-dict-returned).
+
+        Falls back to /market-structure.key_levels for sigma bands when v2
+        /levels response doesn't include them.
         """
-        Fetch GEX levels (GEX_0, GEX_1, GEX_2, GEX_3) and STD levels from Trading Volatility API
-        These levels represent key gamma support/resistance zones where dealers hedge heavily
-        """
-        import requests
+        if not self.v2_token:
+            return {}
+
+        def safe_float(value, default=0.0):
+            try:
+                if value in (None, '', 'null'):
+                    return default
+                return float(value)
+            except (ValueError, TypeError):
+                return default
 
         try:
-            if not self.api_key:
+            resp = self._v2_levels(symbol)
+            if 'error' in resp:
+                print(f"⚠️ get_gex_levels v2 error for {symbol}: {resp['error']}")
                 return {}
 
-            # Check cache first (5-minute cache like other endpoints)
-            cache_key = self._get_cache_key('gex/levels', symbol)
-            cached_data = self._get_cached_response(cache_key)
-            if cached_data:
-                return cached_data
-
-            # Use intelligent rate limiter if available
-            if RATE_LIMITER_AVAILABLE:
-                if not trading_volatility_limiter.wait_if_needed(timeout=60):
-                    print("❌ Rate limit timeout - circuit breaker active")
-                    return {}
-            else:
-                self._wait_for_rate_limit()
-
-            response = requests.get(
-                self.endpoint + '/gex/levels',
-                params={
-                    'ticker': symbol,
-                    'username': self.api_key,
-                    'format': 'json'
-                },
-                headers={'Accept': 'application/json'},
-                timeout=120
-            )
-
-            if response.status_code != 200:
-                print(f"⚠️ GEX Levels endpoint returned status {response.status_code}")
+            data = resp.get('data', resp)
+            if not isinstance(data, dict) or not data:
                 return {}
 
-            # Check for rate limit error
-            if "API limit exceeded" in response.text:
-                print(f"⚠️ API Rate Limit Hit")
-                self._handle_rate_limit_error()
-                return {}
-
-            if not response.text or len(response.text.strip()) == 0:
-                return {}
-
-            try:
-                json_response = response.json()
-            except ValueError:
-                if "API limit exceeded" in response.text:
-                    self._handle_rate_limit_error()
-                return {}
-
-            # Success! Reset error counter
-            self._reset_rate_limit_errors()
-
-            # Cache the response
-            self._cache_response(cache_key, json_response)
-
-            # Debug: Log the raw response structure
-            print(f"DEBUG GEX Levels API Response for {symbol}: {json_response}")
-
-            # Parse the response - API may return data directly or nested under symbol
-            # Try direct access first, then nested
-            ticker_data = json_response if isinstance(json_response, dict) and 'GEX_0' in json_response else json_response.get(symbol, {})
-
-            if not ticker_data:
-                print(f"⚠️ No GEX Levels data found for {symbol}. API Response: {json_response}")
-                return {}
-
-            # Extract levels with better error handling
-            def safe_float(value, default=0):
-                """Safely convert to float"""
-                try:
-                    return float(value) if value not in [None, '', 'null'] else default
-                except (ValueError, TypeError):
-                    return default
+            sigma = data.get('sigma_levels') or data.get('sigma') or {}
+            if not isinstance(sigma, dict):
+                sigma = {}
 
             levels = {
-                'gex_flip': safe_float(ticker_data.get('gex_flip') or ticker_data.get('Gex Flip')),
-                'gex_0': safe_float(ticker_data.get('GEX_0') or ticker_data.get('gex_0')),
-                'gex_1': safe_float(ticker_data.get('GEX_1') or ticker_data.get('gex_1')),
-                'gex_2': safe_float(ticker_data.get('GEX_2') or ticker_data.get('gex_2')),
-                'gex_3': safe_float(ticker_data.get('GEX_3') or ticker_data.get('gex_3')),
-                'gex_4': safe_float(ticker_data.get('GEX_4') or ticker_data.get('gex_4')),
-                'std_1day_pos': safe_float(ticker_data.get('+1STD (1-day)') or ticker_data.get('price_plus_1_day_std')),
-                'std_1day_neg': safe_float(ticker_data.get('-1STD (1-day)') or ticker_data.get('price_minus_1_day_std')),
-                'std_7day_pos': safe_float(ticker_data.get('+1STD (7-day)') or ticker_data.get('price_plus_7_day_std')),
-                'std_7day_neg': safe_float(ticker_data.get('-1STD (7-day)') or ticker_data.get('price_minus_7_day_std')),
-                'symbol': symbol
+                'symbol': symbol,
+                'gex_flip': safe_float(
+                    data.get('gex_flip') or data.get('Gex Flip') or data.get('gamma_flip')
+                ),
+                'gex_0': safe_float(data.get('GEX_0') or data.get('gex_0')),
+                'gex_1': safe_float(data.get('GEX_1') or data.get('gex_1')),
+                'gex_2': safe_float(data.get('GEX_2') or data.get('gex_2')),
+                'gex_3': safe_float(data.get('GEX_3') or data.get('gex_3')),
+                'gex_4': safe_float(data.get('GEX_4') or data.get('gex_4')),
+                'std_1day_pos': safe_float(
+                    data.get('+1STD (1-day)') or data.get('price_plus_1_day_std')
+                    or sigma.get('plus_1sigma_1d')
+                ),
+                'std_1day_neg': safe_float(
+                    data.get('-1STD (1-day)') or data.get('price_minus_1_day_std')
+                    or sigma.get('minus_1sigma_1d')
+                ),
+                'std_7day_pos': safe_float(
+                    data.get('+1STD (7-day)') or data.get('price_plus_7_day_std')
+                    or sigma.get('plus_1sigma_1w')
+                ),
+                'std_7day_neg': safe_float(
+                    data.get('-1STD (7-day)') or data.get('price_minus_7_day_std')
+                    or sigma.get('minus_1sigma_1w')
+                ),
             }
 
-            print(f"DEBUG Parsed GEX Levels: {levels}")
+            # If sigma bands or flip weren't in /levels, fall back to /market-structure.key_levels.
+            # /market-structure has documented `key_levels.{gamma_flip, plus/minus_1sigma_1d/1w/1m, spot}`.
+            need_fallback = (
+                not levels['std_1day_pos'] or not levels['std_7day_pos']
+                or not levels['gex_flip']
+            )
+            if need_fallback:
+                try:
+                    ms = self._v2_market_structure(symbol)
+                    if 'error' not in ms:
+                        ms_data = ms.get('data', ms)
+                        kl = ms_data.get('key_levels', {}) or {}
+                        if not levels['gex_flip']:
+                            levels['gex_flip'] = safe_float(kl.get('gamma_flip'))
+                        if not levels['std_1day_pos']:
+                            levels['std_1day_pos'] = safe_float(kl.get('plus_1sigma_1d'))
+                        if not levels['std_1day_neg']:
+                            levels['std_1day_neg'] = safe_float(kl.get('minus_1sigma_1d'))
+                        if not levels['std_7day_pos']:
+                            levels['std_7day_pos'] = safe_float(kl.get('plus_1sigma_1w'))
+                        if not levels['std_7day_neg']:
+                            levels['std_7day_neg'] = safe_float(kl.get('minus_1sigma_1w'))
+                except Exception:
+                    pass  # fallback is best-effort
+
             return levels
 
         except Exception as e:
-            print(f"❌ Error fetching GEX levels: {e}")
+            print(f"❌ Error fetching GEX levels (v2): {e}")
             import traceback
             traceback.print_exc()
             return {}
