@@ -272,6 +272,19 @@ Auto-deploys from `main` branch. Env var: `NEXT_PUBLIC_API_URL`.
 4. **Test changes** - Run relevant tests before committing
 5. **Use Central Time** - All market times are in America/Chicago timezone
 
+### Branch Merge Policy (added April 2026)
+Once a feature branch is verified working, **merge to `main` proactively without waiting for per-merge approval.** Render auto-deploys `main`, so the merge IS the deploy. Don't sit on a working branch waiting for a green-light when the user has already authorized the work.
+
+**Still pause before (always ask):**
+- Force pushes (`git push --force` to any shared branch)
+- Branch deletion or `git reset --hard` on shared branches
+- Schema migrations on production tables — show the migration plan first
+- Changes to credentials, API keys, or billing-relevant env vars
+- Any modification under `ironforge/` (intentionally separate per project scope)
+- Anything that disables a kill switch, paper-only lock, or risk control
+
+The "do not wait" default applies to feature merges that have passed verification. It does not extend to destructive or production-altering operations — those still require explicit per-action confirmation.
+
 ### Critical Files (Handle with Care)
 - `backend/main.py` - Application entry point (~2.7K lines)
 - `backend/api/bot_names.py` - Greek→Biblical name mapping (master registry)
