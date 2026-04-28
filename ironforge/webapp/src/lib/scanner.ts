@@ -1690,9 +1690,7 @@ async function closePosition(
  * FLAME's 2DTE Put Credit Spread open flow (tasty-adapted).
  *
  * Rules (matches /api/flame/preview-put-spread):
- *   - VIX > 18 gate (IV rank proxy)
  *   - Short put at 1.0 SD OTM (16-delta proxy), $5 wing
- *   - Min credit $1.50 (30% of $5 width)
  *   - Size 10% of Tradier User sandbox balance at risk
  *   - 50% profit target, 200% stop loss (applied later in monitorSinglePosition)
  *   - 1 trade/day max
@@ -1711,14 +1709,10 @@ async function closePosition(
 async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Promise<string> {
   const SD_MULT = 1.0
   const WIDTH = 5
-  const MIN_CREDIT = 1.50
-  const VIX_GATE = 18
   const RISK_PCT = 0.10
   const MIN_DTE = 2
 
   // --- Gates ---
-  if (vix <= VIX_GATE) return `skip:vix_too_low(${vix.toFixed(1)}≤${VIX_GATE})`
-
   // Already traded today?
   const todayTrades = await query(
     `SELECT COUNT(*) as cnt
@@ -1779,22 +1773,6 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   const creditRes = await getPutSpreadEntryCredit('SPY', expiration, putShort, putLong)
   if (!creditRes) return 'skip:no_put_quotes'
   const putCredit = creditRes.putCredit
-  if (putCredit < MIN_CREDIT) {
-    // Log the skip so operators can see near-misses
-    try {
-      await query(
-        `INSERT INTO ${botTable(bot.name, 'signals')} (
-          spot_price, vix, expected_move, call_wall, put_wall, gex_regime,
-          put_short, put_long, call_short, call_long, total_credit,
-          confidence, was_executed, skip_reason, reasoning, wings_adjusted,
-          dte_mode, person, account_type
-        ) VALUES ($1, $2, $3, 0, 0, 'UNKNOWN', $4, $5, 0, 0, $6, 0.5, false, $7, $8, false, $9, 'User', 'sandbox')`,
-        [spot, vix, expectedMove, putShort, putLong, putCredit,
-         'credit_below_min', `Put credit $${putCredit.toFixed(2)} < $${MIN_CREDIT} minimum`, bot.dte],
-      )
-    } catch { /* log best-effort */ }
-    return `skip:credit_below_min($${putCredit.toFixed(2)}<$${MIN_CREDIT})`
-  }
 
   // --- Sizing (10% account risk) ---
   const maxLossPerContract = Math.round((WIDTH - putCredit) * 100 * 100) / 100
