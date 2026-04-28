@@ -203,11 +203,11 @@ function PositionCard({
     pnl == null ? 'text-gray-400' : pnl >= 0 ? 'text-emerald-400' : 'text-red-400'
 
   // Client-side PT tier (ticks every 1s for live updates when tier changes)
-  const [ptTier, setPtTier] = useState<PTTier>(getCurrentPTTier)
+  const [ptTier, setPtTier] = useState<PTTier>(() => getCurrentPTTier(undefined, bot))
   useEffect(() => {
-    const timer = setInterval(() => setPtTier(getCurrentPTTier(getCTNow())), 1000)
+    const timer = setInterval(() => setPtTier(getCurrentPTTier(getCTNow(), bot)), 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [bot])
 
   // Use API PT data if available, fall back to client-side calculation
   const ptPct = pos.profit_target_pct ?? ptTier.pct

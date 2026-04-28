@@ -1,11 +1,16 @@
 /**
  * Sliding Profit Target tiers — must match the scanner schedule exactly.
  *
- * Schedule (Central Time) — FLAME/SPARK:
- *   8:30 AM – 10:29 AM  → 50%  (MORNING)   — exit when cost-to-close ≤ 50% of credit → keep 50%
- *   10:30 AM – 12:59 PM → 30%  (MIDDAY)    — exit when cost-to-close ≤ 30% of credit → keep 70%
- *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON) — exit when cost-to-close ≤ 20% of credit → keep 80%
- *   2:45 PM+             → handled by EOD cutoff
+ * Schedule (Central Time):
+ *   FLAME (2DTE):
+ *     8:30 AM – 10:29 AM  → 50%  (MORNING)
+ *     10:30 AM – 12:59 PM → 30%  (MIDDAY)
+ *     1:00 PM – 2:44 PM   → 20%  (AFTERNOON)
+ *   SPARK (1DTE):
+ *     8:30 AM – 11:59 AM  → 50%  (MORNING)   ← extended to 12:00 PM CT
+ *     12:00 PM – 12:59 PM → 30%  (MIDDAY)
+ *     1:00 PM – 2:44 PM   → 20%  (AFTERNOON)
+ *   2:45 PM+              → handled by EOD cutoff (all bots)
  *
  * Commit O (Apr 2026): tiers loosened from 30/20/15 to 50/30/20 — fire
  * earlier, take less profit per trade, but more often. Paper + Live both.
@@ -65,10 +70,20 @@ export function isMarketOpen(ctDate?: Date): boolean {
   return mins >= 510 && mins < 900 // 8:30 AM – 3:00 PM
 }
 
+/**
+ * Morning→Midday transition in minutes-since-midnight CT.
+ * SPARK extended to 12:00 PM (720); all others at 10:30 AM (630).
+ * Must match scanner.ts getSlidingProfitTarget.
+ */
+export function getMorningEndMinutes(botName?: string): number {
+  return botName === 'spark' ? 720 : 630
+}
+
 /** Get the active PT tier based on current CT time. */
-export function getCurrentPTTier(ctDate?: Date): PTTier {
+export function getCurrentPTTier(ctDate?: Date, botName?: string): PTTier {
   const mins = getCTMinutes(ctDate)
-  if (mins < 630) return MORNING      // before 10:30 AM
+  const morningEnd = getMorningEndMinutes(botName)
+  if (mins < morningEnd) return MORNING
   if (mins < 780) return MIDDAY       // before 1:00 PM
   return AFTERNOON
 }
@@ -77,15 +92,19 @@ export function getCurrentPTTier(ctDate?: Date): PTTier {
  * Seconds until the next PT tier change.
  * Returns null if market is past 2:45 PM or closed.
  */
-export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabel: string } | null {
+export function secondsUntilNextTier(
+  ctDate?: Date,
+  botName?: string,
+): { seconds: number; nextLabel: string } | null {
   const d = ctDate ?? getCTNow()
   const mins = getCTMinutes(d)
   const secs = d.getSeconds()
   const totalSecs = mins * 60 + secs
+  const morningEnd = getMorningEndMinutes(botName)
 
-  if (mins < 630) {
-    // Morning → Midday at 10:30 AM (630 min = 37800 sec)
-    return { seconds: 37800 - totalSecs, nextLabel: '30% Midday' }
+  if (mins < morningEnd) {
+    // Morning → Midday (SPARK 12:00 PM = 43200 sec, others 10:30 AM = 37800 sec)
+    return { seconds: morningEnd * 60 - totalSecs, nextLabel: '30% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
