@@ -422,16 +422,28 @@ function isAfterEodCutoff(ct: Date): boolean {
  * Returns [profitTargetFraction, tierLabel] based on current CT time.
  * PT slides DOWN as the day progresses.
  *
- * FLAME/SPARK (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 20%
- * INFERNO    (0DTE):       MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ * Tier semantics: ptFraction is the FLOOR (minimum profit). The PT trigger at
+ * the call site places a debit limit at entryCredit * (1 - ptFraction), so any
+ * fill ≤ that price (i.e., ≥ ptFraction profit) is accepted. The tier value is
+ * the *guaranteed minimum* return, not an exact target — better fills are kept.
+ *
+ * SPARK   (1DTE, base=0.50): MORNING 50% (until 12:00 PM CT) → MIDDAY 30% → AFTERNOON 20%
+ *   Extended MORNING window keeps the close limit aggressive (50% of credit)
+ *   for longer to avoid stuck unfilled limits when the tier slides down.
+ * FLAME   (base=0.50):       MORNING 50% (until 10:30 AM CT) → MIDDAY 30% → AFTERNOON 20%
+ * INFERNO (0DTE):            MORNING 20% → MIDDAY 30% → AFTERNOON 50%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
   const isInferno = botName === 'inferno'
+  const isSpark = botName === 'spark'
 
-  if (timeMinutes < 630) { // before 10:30 AM CT
+  // SPARK: MORNING extends to 12:00 PM CT (720 min). All others use 10:30 AM CT (630 min).
+  const morningEnd = isSpark ? 720 : 630
+
+  if (timeMinutes < morningEnd) {
     if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
