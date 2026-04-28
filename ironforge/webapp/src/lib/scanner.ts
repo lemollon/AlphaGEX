@@ -422,16 +422,28 @@ function isAfterEodCutoff(ct: Date): boolean {
  * Returns [profitTargetFraction, tierLabel] based on current CT time.
  * PT slides DOWN as the day progresses.
  *
- * FLAME/SPARK (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 20%
- * INFERNO    (0DTE):       MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ * Tier semantics: ptFraction is the FLOOR (minimum profit). The PT trigger at
+ * the call site places a debit limit at entryCredit * (1 - ptFraction), so any
+ * fill ≤ that price (i.e., ≥ ptFraction profit) is accepted. The tier value is
+ * the *guaranteed minimum* return, not an exact target — better fills are kept.
+ *
+ * SPARK   (1DTE, base=0.50): MORNING 50% (until 12:00 PM CT) → MIDDAY 30% → AFTERNOON 20%
+ *   Extended MORNING window keeps the close limit aggressive (50% of credit)
+ *   for longer to avoid stuck unfilled limits when the tier slides down.
+ * FLAME   (base=0.50):       MORNING 50% (until 10:30 AM CT) → MIDDAY 30% → AFTERNOON 20%
+ * INFERNO (0DTE):            MORNING 20% → MIDDAY 30% → AFTERNOON 50%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
   const isInferno = botName === 'inferno'
+  const isSpark = botName === 'spark'
 
-  if (timeMinutes < 630) { // before 10:30 AM CT
+  // SPARK: MORNING extends to 12:00 PM CT (720 min). All others use 10:30 AM CT (630 min).
+  const morningEnd = isSpark ? 720 : 630
+
+  if (timeMinutes < morningEnd) {
     if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
@@ -757,8 +769,16 @@ async function monitorSinglePosition(
           )
 
           if (slippageGuardFired) {
+            // Relax the limit upward toward current mid to make the fill more
+            // attainable, but HARD-CAP at currentTierTarget (the tier floor)
+            // so we never fill below the tier's minimum profit. Also ensure
+            // we don't tighten below the existing limit (only loosen).
+            const relaxTarget = Math.max(
+              existingLimitPrice ?? 0,
+              mtmForGuard!.cost_to_close_mid,
+            )
             const aggressivePrice = Math.round(
-              Math.max(currentTierTarget, mtmForGuard!.cost_to_close_mid) * 10000,
+              Math.min(currentTierTarget, relaxTarget) * 10000,
             ) / 10000
             const cancelAccts = await getLoadedSandboxAccountsAsync()
             const cancelAcct = posAccountType === 'production'
@@ -1216,11 +1236,14 @@ async function monitorSinglePosition(
     console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: wide bid/ask spreads: ${mtm.validation_issues.join(', ')}`)
   }
 
-  // Profit target uses LAST TRADE prices for the TRIGGER check — best estimate of
-  // actual market. But the Tradier close order uses a DEBIT LIMIT at profitTargetPrice
-  // to guarantee the minimum return. This prevents slippage from eroding profits
-  // (e.g., trigger at 20% based on last trades, but market fill at only 14%).
-  // If the limit doesn't fill immediately, the deferred-close mechanism retries next cycle.
+  // Profit target: the tier's profitTargetPrice is the FLOOR (worst acceptable
+  // fill = minimum profit guaranteed). Trigger fires when costToCloseLast is at
+  // or below that floor (≥ tier % profit). The close order is placed as a debit
+  // limit at costToCloseLast — the favorable current market — so any fill at
+  // that price or below captures profit ABOVE the floor when the market gives
+  // it. If the tighter limit doesn't fill, the slippage guard below relaxes the
+  // limit upward toward mid, but is HARD-CAPPED at profitTargetPrice so we
+  // never fill below the tier's minimum profit. Applies to all tiers (50/30/20).
   if (costToCloseLast <= profitTargetPrice) {
     // Commit R1: DB-level trigger log so we can definitively confirm PT
     // fired (or didn't) on the next premature-close investigation.
@@ -1249,11 +1272,18 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
+    // Initial limit = costToCloseLast (favorable current market). A buy limit
+    // at this price fills only at this price or LOWER (= more profit). The
+    // slippage guard will relax toward profitTargetPrice if no fill, never above.
+    const initialLimitPrice = Math.min(
+      profitTargetPrice,
+      Math.max(0, Math.round(costToCloseLast * 10000) / 10000),
+    )
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast,
-      'debit', profitTargetPrice)
+      'debit', initialLimitPrice)
     return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
   }
 
