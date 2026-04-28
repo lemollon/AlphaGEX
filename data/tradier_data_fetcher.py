@@ -422,6 +422,96 @@ class TradierDataFetcher:
         logger.info(f"Fetched {len(contracts)} contracts for {symbol} exp {expiration}")
         return chain
 
+    def get_atm_iv(
+        self,
+        symbol: str,
+        min_dte: int = 5,
+        max_dte: int = 60,
+    ) -> Optional[float]:
+        """Compute ATM implied volatility from a Tradier options chain.
+
+        Picks the first expiration whose DTE falls in [min_dte, max_dte]
+        (default 5-60 days, which avoids 0DTE noise and far-LEAP illiquidity),
+        identifies the ATM call and ATM put, and returns the average of
+        their mid-IV. Each leg uses Tradier's `greeks.mid_iv` field.
+
+        Args:
+            symbol: underlying ticker (e.g. 'SPY', 'MSTR')
+            min_dte: skip expirations sooner than this (default 5)
+            max_dte: skip expirations farther than this (default 60)
+
+        Returns:
+            ATM IV as a decimal (0.28 means 28% annualized), or None if not
+            retrievable. None is returned when:
+              - No expirations in the [min_dte, max_dte] window
+              - Chain returned no contracts
+              - All contracts had IV=0 (Tradier's "no Greek" default)
+              - Underlying price unavailable
+
+        Why average call+put: ATM call and ATM put IV should be equal by
+        put-call parity, but real-market quote noise makes them differ by
+        a few vol points. Averaging reduces that noise. If only one side
+        has IV available, that single side is returned.
+        """
+        try:
+            expirations = self.get_option_expirations(symbol)
+            if not expirations:
+                logger.warning(f"get_atm_iv: no expirations for {symbol}")
+                return None
+
+            from datetime import datetime as _dt, date as _date
+            today = _date.today()
+
+            target_exp = None
+            for exp_str in expirations:
+                try:
+                    exp_d = _dt.strptime(exp_str, "%Y-%m-%d").date()
+                    dte = (exp_d - today).days
+                    if min_dte <= dte <= max_dte:
+                        target_exp = exp_str
+                        break
+                except (ValueError, TypeError):
+                    continue
+
+            if not target_exp:
+                logger.warning(
+                    f"get_atm_iv: no expiration for {symbol} in DTE window "
+                    f"[{min_dte}, {max_dte}]"
+                )
+                return None
+
+            chain = self.get_option_chain(symbol, target_exp, greeks=True)
+            if not chain or not chain.chains.get(target_exp):
+                return None
+
+            spot = float(chain.underlying_price or 0)
+            if spot <= 0:
+                return None
+
+            contracts = chain.chains[target_exp]
+            calls = [c for c in contracts if c.option_type == "call" and c.implied_volatility > 0]
+            puts = [c for c in contracts if c.option_type == "put" and c.implied_volatility > 0]
+
+            if not calls and not puts:
+                return None
+
+            ivs = []
+            if calls:
+                atm_call = min(calls, key=lambda c: abs(c.strike - spot))
+                ivs.append(atm_call.implied_volatility)
+            if puts:
+                atm_put = min(puts, key=lambda c: abs(c.strike - spot))
+                ivs.append(atm_put.implied_volatility)
+
+            if not ivs:
+                return None
+
+            return sum(ivs) / len(ivs)
+
+        except Exception as e:
+            logger.warning(f"get_atm_iv failed for {symbol}: {e}")
+            return None
+
     def get_multiple_chains(
         self,
         symbol: str,
