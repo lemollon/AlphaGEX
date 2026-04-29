@@ -3255,6 +3255,65 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           }
         }
 
+        // SAFETY GATE — added 2026-04-29 after recurring SPARK early-close bug.
+        // Path B's `tradier_order_history` recovery sums ALL of today's close
+        // fills on the production Tradier account and attributes them to this
+        // position. The Tradier sandbox is shared across persons (Logan/User/
+        // Matt), so cross-account fills get mis-attributed. On 4/28/26 this
+        // closed SPARK-20260428-06B2CE-prod-logan at a fabricated $0.89 (a
+        // -$224 loss) while the broker still held the actual 4/29 IC legs —
+        // an orphan-cleanup probe 666ms earlier saw `matched_preserved: 4`.
+        // Same code path also fired on 4/21 and 4/23 with `entry_credit_fallback`.
+        //
+        // Refuse to auto-close without spark-owned proof of close:
+        //   • `tradier_fill` requires a non-null orderId (matched against the
+        //     close order spark itself placed, stored in sandbox_close_order_id).
+        //   • `pending_limit` is allowed because it implies spark placed the
+        //     close order with that limit price.
+        //   • `tradier_order_history` and `entry_credit_fallback` are rejected.
+        //     Position stays OPEN; a BROKER_RECONCILE_BLOCKED log row is written
+        //     so an operator can investigate manually.
+        const isSafeRecovery =
+          (recoverySource === 'tradier_fill' && orderId != null) ||
+          recoverySource === 'pending_limit'
+        if (!isSafeRecovery) {
+          const proposedPrice = recoveredPrice ?? entryCredit
+          console.warn(
+            `[scanner] BROKER_RECONCILE_BLOCKED: ${pid} — refusing to auto-close. ` +
+            `recovery=${recoverySource} order_id=${orderId ?? 'null'} ` +
+            `would-have-set close=$${proposedPrice.toFixed(4)}. Manual review required.`,
+          )
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                'BROKER_RECONCILE_BLOCKED',
+                `BROKER RECONCILE BLOCKED (unsafe recovery): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource}. Position kept OPEN.`,
+                JSON.stringify({
+                  position_id: pid,
+                  person,
+                  entry_credit: entryCredit,
+                  contracts,
+                  collateral,
+                  reason: 'broker_reconcile_blocked',
+                  blocked_recovery_source: recoverySource,
+                  tradier_order_status: tradierOrderStatus,
+                  order_id: orderId,
+                  proposed_close_price: proposedPrice,
+                  limit_price_hint: limitPriceHint,
+                  broker_put_leg: occPs,
+                  broker_call_leg: occCs,
+                  note: 'Disabled 2026-04-29: only `tradier_fill` with spark-owned order_id, or `pending_limit`, may auto-close via this path.',
+                }),
+                bot.dte,
+                person,
+              ],
+            )
+          } catch { /* log insert is best-effort */ }
+          continue
+        }
+
         const effectiveClosePrice = recoveredPrice ?? entryCredit
         const realizedPnl = recoveredPrice != null
           ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
