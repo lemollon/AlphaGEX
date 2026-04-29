@@ -3255,14 +3255,86 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           }
         }
 
+        // SAFETY GATE — added 2026-04-29 after recurring SPARK early-close bug.
+        // Path B's `tradier_order_history` recovery sums ALL of today's close
+        // fills on the production Tradier account and attributes them to this
+        // position. The Tradier sandbox is shared across persons (Logan/User/
+        // Matt), so cross-account fills get mis-attributed. On 4/28/26 this
+        // closed SPARK-20260428-06B2CE-prod-logan at a fabricated $0.89 (a
+        // -$224 loss) while the broker still held the actual 4/29 IC legs —
+        // an orphan-cleanup probe 666ms earlier saw `matched_preserved: 4`.
+        // Same code path also fired on 4/21 and 4/23 with `entry_credit_fallback`.
+        //
+        // Refuse to auto-close without spark-owned proof of close:
+        //   • `tradier_fill` requires a non-null orderId (matched against the
+        //     close order spark itself placed, stored in sandbox_close_order_id).
+        //   • `pending_limit` is allowed because it implies spark placed the
+        //     close order with that limit price.
+        //   • `tradier_order_history` and `entry_credit_fallback` are rejected.
+        //     Position stays OPEN; a BROKER_RECONCILE_BLOCKED log row is written
+        //     so an operator can investigate manually.
+        const isSafeRecovery =
+          (recoverySource === 'tradier_fill' && orderId != null) ||
+          recoverySource === 'pending_limit'
+        if (!isSafeRecovery) {
+          const proposedPrice = recoveredPrice ?? entryCredit
+          console.warn(
+            `[scanner] BROKER_RECONCILE_BLOCKED: ${pid} — refusing to auto-close. ` +
+            `recovery=${recoverySource} order_id=${orderId ?? 'null'} ` +
+            `would-have-set close=$${proposedPrice.toFixed(4)}. Manual review required.`,
+          )
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                'BROKER_RECONCILE_BLOCKED',
+                `BROKER RECONCILE BLOCKED (unsafe recovery): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource}. Position kept OPEN.`,
+                JSON.stringify({
+                  position_id: pid,
+                  person,
+                  entry_credit: entryCredit,
+                  contracts,
+                  collateral,
+                  reason: 'broker_reconcile_blocked',
+                  blocked_recovery_source: recoverySource,
+                  tradier_order_status: tradierOrderStatus,
+                  order_id: orderId,
+                  proposed_close_price: proposedPrice,
+                  limit_price_hint: limitPriceHint,
+                  broker_put_leg: occPs,
+                  broker_call_leg: occCs,
+                  note: 'Disabled 2026-04-29: only `tradier_fill` with spark-owned order_id, or `pending_limit`, may auto-close via this path.',
+                }),
+                bot.dte,
+                person,
+              ],
+            )
+          } catch { /* log insert is best-effort */ }
+          continue
+        }
+
         const effectiveClosePrice = recoveredPrice ?? entryCredit
         const realizedPnl = recoveredPrice != null
           ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
           : 0
 
+        // Preserve the original PT/SL/EOD tier label when spark itself placed
+        // the close order — sandbox_close_order_id JSON includes _pending_reason
+        // (e.g. 'profit_target_MIDDAY'). Path A already does this; Path B used
+        // to hardcode 'broker_position_gone' even when the close was actually
+        // a TP fill, leading to mislabeled trade history (e.g. 4/27 SPARK
+        // closed via tradier_fill of a profit_target_MIDDAY order but recorded
+        // as broker_position_gone). Falls back to 'broker_position_gone' when
+        // there's no pending close (the genuine no-spark-order case).
+        const pendingReason = typeof pendingInfo._pending_reason === 'string' && pendingInfo._pending_reason
+          ? pendingInfo._pending_reason
+          : null
+        const closeReason = pendingReason ?? 'broker_position_gone'
+
         console.warn(
           `[scanner] PRODUCTION BROKER RECONCILE: ${pid} — broker (${person}) has NO legs. ` +
-          `Recovery=${recoverySource} close_price=$${effectiveClosePrice.toFixed(4)} realized_pnl=$${realizedPnl.toFixed(2)} ` +
+          `Recovery=${recoverySource} close_reason=${closeReason} close_price=$${effectiveClosePrice.toFixed(4)} realized_pnl=$${realizedPnl.toFixed(2)} ` +
           `(order_status=${tradierOrderStatus ?? 'unknown'})`,
         )
 
@@ -3270,10 +3342,10 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           `UPDATE ${posTable}
            SET status = 'closed', close_time = NOW(),
                close_price = $1, realized_pnl = $2,
-               close_reason = 'broker_position_gone',
+               close_reason = $3,
                updated_at = NOW()
-           WHERE position_id = $3 AND status = 'open' AND dte_mode = $4`,
-          [effectiveClosePrice, realizedPnl, pid, bot.dte],
+           WHERE position_id = $4 AND status = 'open' AND dte_mode = $5`,
+          [effectiveClosePrice, realizedPnl, closeReason, pid, bot.dte],
         )
 
         if (rowsAffected > 0) {
@@ -3292,6 +3364,26 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
             [realizedPnl, collateral, person, bot.dte],
           )
 
+          // Daily perf — Path B previously skipped this so production trades
+          // closed via broker reconcile never showed up in {bot}_daily_perf
+          // (Logan/production has 0 rows there). Mirrors Path A's pattern
+          // (line ~909). Note: the existing ON CONFLICT key is (trade_date,
+          // person) so production and sandbox can still collide on the same
+          // person; that's a separate schema fix.
+          try {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
+               VALUES (${CT_TODAY}, 0, 1, $1, $2)
+               ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+                 positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
+                 realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
+              [realizedPnl, person],
+            )
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[scanner] Path B daily_perf upsert failed (non-fatal) for ${pid}: ${msg}`)
+          }
+
           // Durable audit log
           const logLevel = recoverySource === 'entry_credit_fallback' ? 'CRITICAL' : 'BROKER_RECONCILE_RECOVERED'
           await query(
@@ -3299,14 +3391,15 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
              VALUES ($1, $2, $3, $4, $5)`,
             [
               logLevel,
-              `PRODUCTION POSITION CLOSED (broker gone): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource} close=$${effectiveClosePrice.toFixed(4)} pnl=$${realizedPnl.toFixed(2)}`,
+              `PRODUCTION POSITION CLOSED (broker gone): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource} reason=${closeReason} close=$${effectiveClosePrice.toFixed(4)} pnl=$${realizedPnl.toFixed(2)}`,
               JSON.stringify({
                 position_id: pid,
                 person,
                 entry_credit: entryCredit,
                 contracts,
                 collateral,
-                reason: 'broker_position_gone',
+                reason: closeReason,
+                pending_reason_preserved: pendingReason,
                 broker_put_leg: occPs,
                 broker_call_leg: occCs,
                 recovery_source: recoverySource,
@@ -3323,7 +3416,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
 
           console.log(
             `[scanner] PRODUCTION BROKER RECONCILE COMPLETE: ${pid} closed (${person}, ` +
-            `${contracts}x @ $${effectiveClosePrice.toFixed(4)}, pnl $${realizedPnl.toFixed(2)}, via ${recoverySource})`,
+            `${contracts}x @ $${effectiveClosePrice.toFixed(4)}, pnl $${realizedPnl.toFixed(2)}, reason=${closeReason}, via ${recoverySource})`,
           )
         }
       }
