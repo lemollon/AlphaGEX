@@ -480,7 +480,7 @@ export default function BotDashboard({
 
       {/* PT Timeline */}
       <ComponentErrorBoundary fallback="PT timeline error">
-        <PTTimeline />
+        <PTTimeline bot={bot} />
       </ComponentErrorBoundary>
 
       {/* Tabs */}

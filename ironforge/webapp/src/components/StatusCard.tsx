@@ -238,15 +238,15 @@ export default function StatusCard({
       setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0))
       const ctNow = getCTNow()
       setPtState({
-        tier: getCurrentPTTier(ctNow),
-        next: secondsUntilNextTier(ctNow),
+        tier: getCurrentPTTier(ctNow, bot),
+        next: secondsUntilNextTier(ctNow, bot),
         open: isMarketOpen(ctNow),
       })
     }
     tick() // immediate first tick to initialize
     const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [bot])
 
   /* ---- Scanner health ---- */
   const ageMin = scanAgeMinutes(data.last_scan)
