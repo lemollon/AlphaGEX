@@ -51,27 +51,55 @@ Pull 90 days of history from TV `/gex/historical` and yfinance. Produce a calibr
 
 ### Module Contracts — `[v2 CHANGE]` Required for Decomposition
 
-Each metric module exposes one public function with a stable signature so the orchestrator can call them uniformly:
+Each metric module exposes one public function with a stable signature so the orchestrator can call them uniformly. **Updated post-Step-3 [GOLIATH-DELTA] (yellow, accepted by Leron):** all four signatures take a keyword-only `client` arg for dependency injection. Production code passes `client=None` and lets `calibrate()` lazily construct `TradingVolatilityAPI()`. Tests inject a mock. Modules that don't use the TV client (tracking_error, vol_drag, vol_window) accept the kwarg for symmetry and ignore it.
 
 ```python
 # trading/goliath/calibration/wall_concentration.py
-def calibrate(gex_history: dict[str, pd.DataFrame], config: GoliathConfig) -> WallConcentrationResult:
-    """Returns per-underlying wall concentration distribution + spec validation."""
+def calibrate(
+    gex_history: dict[str, pd.DataFrame],
+    config: GoliathConfig,
+    *,
+    client: "TradingVolatilityAPI | None" = None,
+) -> WallConcentrationResult:
+    """Returns per-underlying wall concentration sanity check + spec validation.
+
+    NOTE: Originally specified as 90-day distribution. Downgraded to
+    current-state cross-section sanity check after [GOLIATH-BLOCKED]
+    finding that TV's v2 API does not expose historical strike-level
+    data. v0.3 upgrade path tracked in goliath-v0.3-todos.md.
+    """
 
 # trading/goliath/calibration/tracking_error.py
-def calibrate(price_history: dict[str, pd.DataFrame], config: GoliathConfig) -> TrackingErrorResult:
+def calibrate(
+    price_history: dict[str, pd.DataFrame],
+    config: GoliathConfig,
+    *,
+    client: "TradingVolatilityAPI | None" = None,  # unused, accepted for symmetry
+) -> TrackingErrorResult:
     """Returns per-pair observed/spec TE ratio + spec validation."""
 
 # trading/goliath/calibration/vol_drag.py
-def calibrate(price_history: dict[str, pd.DataFrame], config: GoliathConfig) -> VolDragResult:
+def calibrate(
+    price_history: dict[str, pd.DataFrame],
+    config: GoliathConfig,
+    *,
+    client: "TradingVolatilityAPI | None" = None,  # unused, accepted for symmetry
+) -> VolDragResult:
     """Returns per-pair observed/theoretical drag ratio + spec validation."""
 
 # trading/goliath/calibration/vol_window.py
-def calibrate(price_history: dict[str, pd.DataFrame], config: GoliathConfig) -> VolWindowResult:
+def calibrate(
+    price_history: dict[str, pd.DataFrame],
+    config: GoliathConfig,
+    *,
+    client: "TradingVolatilityAPI | None" = None,  # unused, accepted for symmetry
+) -> VolWindowResult:
     """Returns per-underlying optimal vol window + spec validation."""
 ```
 
 Result types are dataclasses defined in each module. The orchestrator is dumb — it fetches once, passes data to each metric, and assembles results into the markdown report.
+
+`[v2 CHANGE]` Wall concentration result fields differ from the other three: it emits `CALIB-SANITY-OK` / `CALIB-FINDING` / `CALIB-BLOCK` (no `CALIB-OK` / `CALIB-ADJUST`) and has no percentile fields or `recommended_value`. See module docstring for rationale.
 
 ### Calibration Metrics to Compute
 
