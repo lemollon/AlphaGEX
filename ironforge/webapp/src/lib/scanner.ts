@@ -1074,7 +1074,7 @@ async function monitorSinglePosition(
                     // console.log so operators had no way to inspect past
                     // broker-gone events after the fact.
                     try {
-                      const logLevel = recoverySource === 'entry_credit_fallback' ? 'CRITICAL' : 'BROKER_GONE_RECOVERED'
+                      const logLevel = 'BROKER_GONE_RECOVERED'
                       await query(
                         `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
                          VALUES ($1, $2, $3, $4)`,
