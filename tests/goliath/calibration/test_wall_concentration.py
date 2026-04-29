@@ -1,22 +1,25 @@
 """Tests for trading.goliath.calibration.wall_concentration.
 
-Synthetic-input math validation. Does NOT exercise the live TV API — that's
-covered by data_fetch tests (Step 7) and the live calibration run (Step 9).
+Synthetic-input math validation. Does NOT exercise the live TV API.
+Uses dependency injection (the keyword-only ``client`` arg per the v2
+recovery doc Module Contracts) to inject a MagicMock TV client.
 
-Uses dependency injection (the optional ``client`` kwarg on calibrate()) to
-inject a MagicMock TV client, avoiding any need to import core_classes_and_engines.
+Phase 1.5 v2 revision: tests reflect the sanity-check tag scheme
+(CALIB-SANITY-OK / CALIB-FINDING / CALIB-BLOCK), not the original
+percentile-based CALIB-OK / CALIB-ADJUST scheme. The metric was
+downgraded because TV's v2 API does not expose historical strike-level
+data; full distribution validation is deferred to v0.3 once the
+strike-snapshot collector accumulates time-series.
 """
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import unittest
 from unittest.mock import MagicMock
 
 import pandas as pd
 
-# Repo root on sys.path so `trading.goliath.*` imports work when running
-# `pytest tests/goliath/calibration/` from repo root or as a module.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -35,15 +38,34 @@ def _make_config(threshold: float = 2.0) -> GoliathConfig:
 
 
 def _profile(spot: float, strikes: list) -> dict:
-    """Return a dict shaped like TradingVolatilityAPI.get_gex_profile output."""
+    """Dict shaped like TradingVolatilityAPI.get_gex_profile output."""
     return {"spot_price": spot, "strikes": strikes}
+
+
+def _mock_client_with_ratios(ratios):
+    """Build a MagicMock client whose get_gex_profile returns profiles
+    designed so _compute_concentration yields exactly the given ratios."""
+    profiles = []
+    for r in ratios:
+        profiles.append(
+            _profile(
+                100.0,
+                [
+                    {"strike": 95, "total_gamma": 100 * r},
+                    {"strike": 100, "total_gamma": 100},
+                    {"strike": 105, "total_gamma": 100},
+                ],
+            )
+        )
+    client = MagicMock()
+    client.get_gex_profile.side_effect = profiles
+    return client
 
 
 class TestComputeConcentration(unittest.TestCase):
     """Math kernel: wall concentration ratio for a single snapshot."""
 
     def test_clean_wall_below_spot(self):
-        # Spot 100; strikes 90/95/100/105/110; wall at 95 with 10x typical gamma.
         strikes = [
             {"strike": 90, "total_gamma": 100},
             {"strike": 95, "total_gamma": 1000},
@@ -52,7 +74,6 @@ class TestComputeConcentration(unittest.TestCase):
             {"strike": 110, "total_gamma": 100},
         ]
         ratio = wc._compute_concentration(_profile(100, strikes), band_pct=0.10)
-        # Median in ±10% band = 100; max below spot = 1000 → ratio = 10.0
         self.assertAlmostEqual(ratio, 10.0, places=2)
 
     def test_uniform_gamma_yields_unity(self):
@@ -61,8 +82,6 @@ class TestComputeConcentration(unittest.TestCase):
         self.assertAlmostEqual(ratio, 1.0, places=2)
 
     def test_negative_gamma_uses_absolute_value(self):
-        # Below-spot strikes are typically put-dominated → negative total_gamma.
-        # Concentration must use abs() so put walls register as walls.
         strikes = [
             {"strike": 95, "total_gamma": -1000},
             {"strike": 100, "total_gamma": 100},
@@ -88,71 +107,55 @@ class TestComputeConcentration(unittest.TestCase):
         self.assertIsNone(wc._compute_concentration(_profile(100, strikes), band_pct=0.20))
 
 
-class TestPercentile(unittest.TestCase):
-    """Sanity check the percentile helper used for n=5 universe stats."""
-
-    def test_n5_percentiles(self):
-        s = [1.0, 2.0, 3.0, 4.0, 5.0]
-        self.assertAlmostEqual(wc._percentile(s, 0.25), 2.0)
-        self.assertAlmostEqual(wc._percentile(s, 0.50), 3.0)
-        self.assertAlmostEqual(wc._percentile(s, 0.90), 5.0)
-
-    def test_empty_returns_zero(self):
-        self.assertEqual(wc._percentile([], 0.50), 0.0)
-
-
-def _mock_client_with_ratios(ratios):
-    """Build a MagicMock client whose get_gex_profile() returns profiles
-    designed so _compute_concentration() yields exactly the ratios in order."""
-    profiles = []
-    for r in ratios:
-        # Wall at strike 95 (below spot 100); baseline gamma 100 in band.
-        profiles.append(
-            _profile(
-                100.0,
-                [
-                    {"strike": 95, "total_gamma": 100 * r},
-                    {"strike": 100, "total_gamma": 100},
-                    {"strike": 105, "total_gamma": 100},
-                ],
-            )
-        )
-    client = MagicMock()
-    client.get_gex_profile.side_effect = profiles
-    return client
-
-
 class TestCalibrate(unittest.TestCase):
     """Universe-level orchestration with injected mock TV client."""
 
-    def test_universe_in_corridor_keeps_spec(self):
+    def test_tight_cluster_yields_sanity_ok(self):
+        # Ratios all in [1.5, 2.5] -- median 2.0, no outliers, plausible range
         config = _make_config(threshold=2.0)
         gex_history = {u: pd.DataFrame() for u in ("MSTR", "TSLA", "NVDA", "COIN", "AMD")}
-        # Ratios spanning [1.6, 2.9] — spec 2.0 is comfortably in [P25, P90]
-        client = _mock_client_with_ratios([1.6, 1.8, 2.0, 2.5, 2.9])
+        client = _mock_client_with_ratios([1.6, 1.8, 2.0, 2.2, 2.5])
 
         result = wc.calibrate(gex_history, config, client=client)
 
-        self.assertEqual(result.tag, "CALIB-OK")
-        self.assertIsNone(result.recommended_value)
-        self.assertEqual(len(result.per_underlying), 5)
-        self.assertTrue(result.universe_p25 <= 2.0 <= result.universe_p90)
+        self.assertEqual(result.tag, "CALIB-SANITY-OK")
+        self.assertEqual(result.universe_count, 5)
+        self.assertAlmostEqual(result.universe_median, 2.0, places=1)
+        self.assertEqual(len(result.outliers), 0)
+        # Verify percentile fields are NOT present in result
+        self.assertFalse(hasattr(result, "universe_p25"))
+        self.assertFalse(hasattr(result, "universe_p90"))
+        self.assertFalse(hasattr(result, "recommended_value"))
 
-    def test_universe_below_spec_recommends_median(self):
-        config = _make_config(threshold=2.0)
+    def test_outlier_yields_finding(self):
+        # 4 ratios near 2x, one wild outlier at 12x -- median 2.0, outlier > 3x median
+        config = _make_config()
         gex_history = {u: pd.DataFrame() for u in ("A", "B", "C", "D", "E")}
-        # All ratios well below 2.0 — spec falls outside [P25, P90].
-        client = _mock_client_with_ratios([0.5, 0.6, 0.7, 0.8, 0.9])
+        client = _mock_client_with_ratios([1.5, 1.8, 2.0, 2.2, 12.0])
 
         result = wc.calibrate(gex_history, config, client=client)
 
-        self.assertEqual(result.tag, "CALIB-ADJUST")
-        self.assertIsNotNone(result.recommended_value)
-        self.assertAlmostEqual(result.recommended_value, 0.7, places=1)
+        self.assertEqual(result.tag, "CALIB-FINDING")
+        self.assertEqual(len(result.outliers), 1)
+        # Outlier is the 12x ratio
+        self.assertAlmostEqual(result.outliers[0][1], 12.0, places=1)
+        self.assertIn("outlier", result.notes.lower())
 
-    def test_empty_history_blocks(self):
+    def test_universe_median_outside_plausible_range_yields_finding(self):
+        # All ratios extremely small -- median 0.1 is below plausible (0.5, 10.0)
+        config = _make_config()
+        gex_history = {u: pd.DataFrame() for u in ("A", "B", "C", "D", "E")}
+        client = _mock_client_with_ratios([0.05, 0.08, 0.1, 0.12, 0.15])
+
+        result = wc.calibrate(gex_history, config, client=client)
+
+        self.assertEqual(result.tag, "CALIB-FINDING")
+        self.assertIn("plausible", result.notes.lower())
+
+    def test_no_underlyings_blocks(self):
         result = wc.calibrate({}, _make_config(), client=MagicMock())
         self.assertEqual(result.tag, "CALIB-BLOCK")
+        self.assertEqual(result.universe_count, 0)
         self.assertEqual(len(result.per_underlying), 0)
 
     def test_all_fetches_fail_blocks(self):
@@ -164,9 +167,17 @@ class TestCalibrate(unittest.TestCase):
         result = wc.calibrate(gex_history, config, client=client)
 
         self.assertEqual(result.tag, "CALIB-BLOCK")
+        self.assertEqual(result.universe_count, 0)
         # Per-underlying entries exist but are all None
         self.assertEqual(len(result.per_underlying), 3)
         self.assertTrue(all(v is None for v in result.per_underlying.values()))
+
+    def test_keyword_only_client_arg(self):
+        """Confirm client must be passed as keyword argument per v2 contract."""
+        import inspect
+        sig = inspect.signature(wc.calibrate)
+        client_param = sig.parameters["client"]
+        self.assertEqual(client_param.kind, inspect.Parameter.KEYWORD_ONLY)
 
 
 if __name__ == "__main__":

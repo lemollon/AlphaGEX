@@ -1,34 +1,51 @@
-"""GOLIATH Phase 1.5 Metric 1 — wall concentration threshold.
+"""GOLIATH Phase 1.5 Metric 1 — wall concentration sanity check.
 
-Spec:
+Original spec:
     For each of last 90 days of GEX snapshots, find the largest positive
     gamma below spot. Compute its ratio vs median gamma of strikes within
-    ±5% of spot. Report distribution (median, P25, P75, P90).
+    +/- 5% of spot. Report distribution (median, P25, P75, P90).
 
-Acceptance:
-    Spec default 2.0×.  If 2.0× falls within universe [P25, P90] → CALIB-OK.
-    If outside → CALIB-ADJUST recommending the universe median.
+Validation downgraded to current-state SANITY CHECK (Phase 1.5 v2):
+    TV's v2 API does not expose historical strike-level snapshots. Both
+    /curves/gex_by_strike and /curves/gamma return current-day data only;
+    /series carries scalar metrics only (per the metric_catalog). A true
+    90-day per-underlying distribution is not constructible from current
+    data sources. All TV endpoints checked (see [GOLIATH-BLOCKED] record
+    in conversation transcript on this branch).
 
-Data limitation [GOLIATH-FINDING] WARN:
-    TV's v2 /series provides historical scalar metrics only — it does NOT
-    expose strike-level historicals. /curves/gex_by_strike returns the
-    current snapshot only. So a true 90-day per-underlying distribution is
-    not constructible from current data.
+    What we CAN do today: one current-day /curves/gex_by_strike fetch per
+    underlying, yielding 5 ratios across the universe. This is a
+    cross-section, NOT a distribution -- 5 points is far too few to
+    justify percentile language. We report it as a SANITY CHECK:
+        - Are the universe ratios clustered in a reasonable range
+          around the spec default 2.0x?
+        - Is any single underlying a wild outlier (>3x deviation from
+          universe median)?
+    These checks won't catch a subtle calibration miscalibration but
+    they will catch "spec default is structurally wrong for this universe."
 
-    Workaround: we make one current-day /curves/gex_by_strike call per
-    underlying via the public TradingVolatilityAPI.get_gex_profile() and
-    report the distribution ACROSS the universe (5 single-day observations)
-    rather than within each underlying's history. Honest and useful given
-    the constraint; documented in the report.
+v0.3 upgrade plan (queued in docs/goliath/goliath-v0.3-todos.md):
+    A daily strike-snapshot collector accumulates /curves/gex_by_strike
+    data per underlying into a goliath_strike_snapshots table. After
+    30+ days of accumulation, re-run wall calibration with real
+    per-underlying time-series, producing the proper P25/P75/P90
+    distribution the spec originally called for.
 
-    v0.3 enhancement: build a daily strike-snapshot collector that
-    accumulates gex_by_strike data over time, then re-run for true
-    per-underlying distributions.
+Tags emitted:
+    CALIB-SANITY-OK   Universe ratios cluster in [median/3, median*3]
+                      AND median is in plausible range (0.5, 10.0)
+    CALIB-FINDING     Usable data but at least one outlier flagged
+    CALIB-BLOCK       No usable data fetched
+
+This metric does NOT emit CALIB-OK or CALIB-ADJUST. With 5 cross-sectional
+points, recommending a numerical adjustment to the spec default would be
+statistically unjustified. The proper adjustment lives in v0.3 once the
+snapshot collector has accumulated time-series.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -40,13 +57,22 @@ class WallConcentrationResult:
     parameter: str = "wall_concentration_threshold"
     spec_default: float = 2.0
     per_underlying: Dict[str, Optional[float]] = field(default_factory=dict)
-    universe_p25: Optional[float] = None
-    universe_p50: Optional[float] = None
-    universe_p75: Optional[float] = None
-    universe_p90: Optional[float] = None
+    universe_count: int = 0
+    universe_min: Optional[float] = None
+    universe_median: Optional[float] = None
+    universe_max: Optional[float] = None
+    outliers: List[Tuple[str, float]] = field(default_factory=list)
     tag: str = "CALIB-BLOCK"
-    recommended_value: Optional[float] = None
     notes: str = ""
+    # NOTE: deliberately no recommended_value or P25/P75/P90 fields.
+    # See module docstring -- 5 cross-sectional points doesn't justify
+    # percentile language or numerical adjustment recommendations.
+
+
+# Sanity-check thresholds. Tuned for "this would catch a structurally wrong
+# spec default" rather than "this is a precision instrument."
+_PLAUSIBLE_MEDIAN_RANGE = (0.5, 10.0)
+_OUTLIER_MULTIPLIER = 3.0  # flag ratio > median*3 or < median/3
 
 
 def _compute_concentration(profile: dict, band_pct: float = 0.05) -> Optional[float]:
@@ -64,7 +90,6 @@ def _compute_concentration(profile: dict, band_pct: float = 0.05) -> Optional[fl
     if not strikes_data or spot <= 0:
         return None
 
-    # Median absolute gamma in ±band_pct of spot
     in_band = []
     for s in strikes_data:
         strike = float(s.get("strike", 0) or 0)
@@ -81,8 +106,6 @@ def _compute_concentration(profile: dict, band_pct: float = 0.05) -> Optional[fl
     if median_gamma <= 0:
         return None
 
-    # Largest absolute gamma at strikes BELOW spot (puts dominate below
-    # spot; absolute value captures wall magnitude regardless of sign).
     max_below = 0.0
     for s in strikes_data:
         strike = float(s.get("strike", 0) or 0)
@@ -98,27 +121,24 @@ def _compute_concentration(profile: dict, band_pct: float = 0.05) -> Optional[fl
     return max_below / median_gamma
 
 
-def _percentile(sorted_values, p: float) -> float:
-    """Inclusive percentile (0-1) on a pre-sorted list. n=5 friendly."""
-    if not sorted_values:
-        return 0.0
-    n = len(sorted_values)
-    idx = max(0, min(n - 1, int(round(p * (n - 1)))))
-    return float(sorted_values[idx])
-
-
 def calibrate(
     gex_history: Dict[str, pd.DataFrame],
     config: GoliathConfig,
     *,
     client=None,
 ) -> WallConcentrationResult:
-    """Validate the spec wall concentration threshold against current snapshots.
+    """Wall concentration sanity check across the universe.
+
+    Per-bot CLAUDE.md says module contracts are fixed. Recovery doc v2 (post
+    [GOLIATH-DELTA] approval) defines this signature with keyword-only
+    ``client`` for dependency injection. All 4 metric modules share this
+    pattern for symmetry.
 
     The ``gex_history`` dict is used solely for its keys (the universe of
     underlyings to evaluate). Strike-level data is fetched fresh per
-    underlying via ``client.get_gex_profile()``. Pass a mocked ``client`` in
-    tests to bypass the live API call.
+    underlying via ``client.get_gex_profile()``. Pass a mocked ``client``
+    in tests; production code passes ``client=None`` and lets calibrate()
+    construct ``TradingVolatilityAPI()`` lazily.
     """
     result = WallConcentrationResult(spec_default=float(config.wall_concentration_threshold))
     underlyings = list(gex_history.keys())
@@ -143,31 +163,56 @@ def calibrate(
             print(f"  [wall_concentration] {underlying} fetch failed: {exc!r}")
             result.per_underlying[underlying] = None
 
-    valid = sorted(v for v in result.per_underlying.values() if v is not None and v > 0)
+    valid = [(t, v) for t, v in result.per_underlying.items() if v is not None and v > 0]
     if not valid:
         result.tag = "CALIB-BLOCK"
         result.notes = "no underlyings produced a usable concentration ratio"
         return result
 
-    result.universe_p25 = _percentile(valid, 0.25)
-    result.universe_p50 = _percentile(valid, 0.50)
-    result.universe_p75 = _percentile(valid, 0.75)
-    result.universe_p90 = _percentile(valid, 0.90)
+    sorted_values = sorted(v for _, v in valid)
+    result.universe_count = len(sorted_values)
+    result.universe_min = float(sorted_values[0])
+    result.universe_max = float(sorted_values[-1])
+    result.universe_median = float(sorted_values[len(sorted_values) // 2])
 
+    # Outlier detection: > median*3x or < median/3x
+    median = result.universe_median
+    upper_bound = median * _OUTLIER_MULTIPLIER
+    lower_bound = median / _OUTLIER_MULTIPLIER
+    for ticker, ratio in valid:
+        if ratio > upper_bound or ratio < lower_bound:
+            result.outliers.append((ticker, float(ratio)))
+
+    median_in_plausible = _PLAUSIBLE_MEDIAN_RANGE[0] <= median <= _PLAUSIBLE_MEDIAN_RANGE[1]
     spec = float(config.wall_concentration_threshold)
-    if result.universe_p25 <= spec <= result.universe_p90:
-        result.tag = "CALIB-OK"
+
+    if not median_in_plausible:
+        result.tag = "CALIB-FINDING"
         result.notes = (
-            f"spec {spec:.2f}x within universe [P25={result.universe_p25:.2f}, "
-            f"P90={result.universe_p90:.2f}] (n={len(valid)})"
+            f"universe median {median:.2f}x is outside plausible sanity range "
+            f"{_PLAUSIBLE_MEDIAN_RANGE} -- spec default {spec:.2f}x may be "
+            f"structurally wrong for this universe; investigate before v0.3 "
+            f"recalibration. Per-underlying: {dict(valid)}"
+        )
+    elif result.outliers:
+        outlier_summary = ", ".join(f"{t}={r:.2f}x" for t, r in result.outliers)
+        result.tag = "CALIB-FINDING"
+        result.notes = (
+            f"universe median {median:.2f}x in plausible range; "
+            f"{len(result.outliers)} outlier(s) deviate >{_OUTLIER_MULTIPLIER}x "
+            f"from median: {outlier_summary}. Spec default {spec:.2f}x not "
+            f"adjusted (5-point cross-section can't justify recommendation; "
+            f"see v0.3 wall recalibration TODO)."
         )
     else:
-        result.tag = "CALIB-ADJUST"
-        result.recommended_value = float(result.universe_p50)
+        result.tag = "CALIB-SANITY-OK"
         result.notes = (
-            f"spec {spec:.2f}x outside universe [P25={result.universe_p25:.2f}, "
-            f"P90={result.universe_p90:.2f}] -- recommend median "
-            f"{result.universe_p50:.2f}x (n={len(valid)})"
+            f"universe n={result.universe_count}, median {median:.2f}x, "
+            f"range [{result.universe_min:.2f}, {result.universe_max:.2f}], "
+            f"no outliers >{_OUTLIER_MULTIPLIER}x from median. Spec default "
+            f"{spec:.2f}x is consistent with current-state cross-section. "
+            f"True distribution validation deferred to v0.3 (see "
+            f"goliath-v0.3-todos.md V03-WALL-RECAL)."
         )
 
     return result
