@@ -9,6 +9,7 @@ aiohttp>=3.12.14
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.11.0
+pyarrow>=14.0.0  # Parquet I/O for GOLIATH calibration cache (.goliath_cache/) and backtest/data/*.parquet
 
 # Visualization
 plotly>=5.17.0
