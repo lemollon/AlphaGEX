@@ -979,6 +979,51 @@ async function monitorSinglePosition(
                     recoverySource = 'pending_limit'
                   }
 
+                  // SAFETY GATE — added 2026-04-29 alongside Path B's gate.
+                  // entry_credit_fallback closes the DB row at $0 P&L when
+                  // Tradier won't tell us the fill price. Two scenarios fire
+                  // this path:
+                  //   a) Close order really filled → real P&L unknown,
+                  //      writing $0 silently underestimates wins.
+                  //   b) Position expired worthless → real P&L = max profit,
+                  //      writing $0 misses the entire credit.
+                  // Historic example: SPARK-20260421-84BA76-prod-logan
+                  // recorded $0 P&L when Tradier showed +$84 day_pnl.
+                  // Rather than silently losing money on the ledger, leave
+                  // the position OPEN and emit a BROKER_GONE_BLOCKED log.
+                  // Operator can reconcile via /api/{bot}/fix-zero-pnl-trades
+                  // or /api/spark/recover-today-trade once Tradier settles.
+                  if (recoverySource === 'entry_credit_fallback') {
+                    console.warn(
+                      `[scanner] BROKER_GONE_BLOCKED: ${pid} — refusing entry_credit_fallback close. ` +
+                      `Tradier order ${userPending.order_id} status=${tradierOrderStatus ?? 'unknown'}. ` +
+                      `Position kept OPEN; reconcile via fix-zero-pnl-trades or recover-today-trade.`,
+                    )
+                    try {
+                      await query(
+                        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+                         VALUES ($1, $2, $3, $4)`,
+                        [
+                          'BROKER_GONE_BLOCKED',
+                          `BROKER GONE BLOCKED (entry_credit_fallback refused): ${pid} — Tradier order ${userPending.order_id} status=${tradierOrderStatus ?? 'unknown'}. Position kept OPEN.`,
+                          JSON.stringify({
+                            event: 'broker_gone_blocked',
+                            position_id: pid,
+                            blocked_recovery_source: 'entry_credit_fallback',
+                            order_id: userPending.order_id,
+                            tradier_order_status: tradierOrderStatus,
+                            limit_price_hint: limitPriceHint,
+                            entry_credit: entryCredit,
+                            contracts,
+                            note: 'Disabled 2026-04-29: closing at entry credit / $0 P&L silently misrepresents real outcome. Use fix-zero-pnl-trades / recover-today-trade to reconcile manually.',
+                          }),
+                          bot.dte,
+                        ],
+                      )
+                    } catch { /* best-effort */ }
+                    return { status: `monitoring:broker_gone_blocked_no_fill_data`, unrealizedPnl: 0 }
+                  }
+
                   const effectiveClosePrice = recoveredPrice ?? entryCredit
                   const realizedPnl = recoveredPrice != null
                     ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
