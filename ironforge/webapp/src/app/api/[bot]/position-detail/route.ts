@@ -45,7 +45,7 @@ export async function GET(
       return NextResponse.json({ positions: [], tradier_connected: isConfigured() })
     }
 
-    const ptTier = getCurrentPTTier(getCTNow())
+    const ptTier = getCurrentPTTier(getCTNow(), bot)
     const sandboxAccounts = getLoadedSandboxAccounts()
 
     const positions = await Promise.all(

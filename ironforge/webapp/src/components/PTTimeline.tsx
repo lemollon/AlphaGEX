@@ -1,24 +1,24 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCTNow, getCTMinutes, isMarketOpen } from '@/lib/pt-tiers'
+import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/pt-tiers'
 
 /**
  * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
  *
- * Zones (CT):
- *   Morning  30%  8:30 – 10:30   (120 min)
- *   Midday   20%  10:30 – 1:00   (150 min)
- *   Afternoon 15%  1:00 – 2:45   (105 min)
- *   EOD           2:45 – 3:00    (15 min)
- *   Total = 390 min
+ * Zones (CT) — FLAME / INFERNO:
+ *   Morning  50%  8:30 – 10:30
+ *   Midday   30%  10:30 – 1:00
+ *   PM       20%  1:00 – 2:45
+ *   EOD            2:45 – 3:00
+ *
+ * SPARK extends MORNING to 12:00 PM (mirrors scanner.ts).
  */
 
-const MARKET_OPEN = 510   // 8:30 AM
-const MIDDAY_START = 630  // 10:30 AM
+const MARKET_OPEN = 510     // 8:30 AM
 const AFTERNOON_START = 780 // 1:00 PM
-const EOD_START = 885     // 2:45 PM
-const MARKET_CLOSE = 900  // 3:00 PM
+const EOD_START = 885       // 2:45 PM
+const MARKET_CLOSE = 900    // 3:00 PM
 const TOTAL = MARKET_CLOSE - MARKET_OPEN // 390 min
 
 function pct(minutes: number): string {
@@ -29,7 +29,10 @@ function widthPct(startMin: number, endMin: number): string {
   return `${((endMin - startMin) / TOTAL) * 100}%`
 }
 
-export default function PTTimeline() {
+export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' }) {
+  const MIDDAY_START = morningEndMinutes(bot) // SPARK: 720 (12:00 PM); else 630 (10:30 AM)
+  const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
+
   // Initialize with null to avoid hydration mismatch (server has no CT clock)
   const [ctMins, setCtMins] = useState<number | null>(null)
   const [open, setOpen] = useState<boolean | null>(null)
@@ -128,7 +131,7 @@ export default function PTTimeline() {
       {/* Time labels below bar */}
       <div className="relative h-4 text-[9px] text-forge-muted mt-0.5 font-mono">
         <span className="absolute" style={{ left: '0%' }}>8:30</span>
-        <span className="absolute -translate-x-1/2" style={{ left: pct(MIDDAY_START) }}>10:30</span>
+        <span className="absolute -translate-x-1/2" style={{ left: pct(MIDDAY_START) }}>{middayLabelTime}</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(AFTERNOON_START) }}>1:00</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(EOD_START) }}>2:45</span>
         <span className="absolute right-0">3:00</span>
