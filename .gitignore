@@ -42,8 +42,7 @@ node_modules/
 *.pem
 *.key
 
-# MCP config (contains database credentials)
-.mcp.json
+# MCP config: committed with ${ENV_VAR} expansion only — never hardcode secrets
 
 # Claude AI assistant - ignore settings but track rules and agents
 .claude/*
