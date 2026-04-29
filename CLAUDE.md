@@ -280,8 +280,9 @@ Once a feature branch is verified working, **merge to `main` proactively without
 - Branch deletion or `git reset --hard` on shared branches
 - Schema migrations on production tables — show the migration plan first
 - Changes to credentials, API keys, or billing-relevant env vars
-- Any modification under `ironforge/` (intentionally separate per project scope)
 - Anything that disables a kill switch, paper-only lock, or risk control
+
+**`ironforge/` is in scope for the auto-merge default** (updated 2026-04-29 per user instruction "always merge you dont need my permission"). Treat verified ironforge fixes the same as any other feature branch — merge to `main` without asking.
 
 The "do not wait" default applies to feature merges that have passed verification. It does not extend to destructive or production-altering operations — those still require explicit per-action confirmation.
 
