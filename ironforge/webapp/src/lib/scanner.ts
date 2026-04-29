@@ -422,16 +422,19 @@ function isAfterEodCutoff(ct: Date): boolean {
  * Returns [profitTargetFraction, tierLabel] based on current CT time.
  * PT slides DOWN as the day progresses.
  *
- * FLAME/SPARK (base=0.50): MORNING 50% → MIDDAY 30% → AFTERNOON 20%
- * INFERNO    (0DTE):       MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ * FLAME      (base=0.50): MORNING 50% (8:30–10:30) → MIDDAY 30% (10:30–1:00) → AFTERNOON 20% (1:00+)
+ * SPARK      (base=0.50): MORNING 50% (8:30–12:00) → MIDDAY 30% (12:00–1:00) → AFTERNOON 20% (1:00+)
+ * INFERNO    (0DTE):      MORNING 20% (8:30–10:30) → MIDDAY 30% (10:30–1:00) → AFTERNOON 50% (1:00+)
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
   const isInferno = botName === 'inferno'
+  const isSpark = botName === 'spark'
+  const morningEnd = isSpark ? 720 : 630 // SPARK: 12:00 PM CT, others: 10:30 AM CT
 
-  if (timeMinutes < 630) { // before 10:30 AM CT
+  if (timeMinutes < morningEnd) {
     if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT

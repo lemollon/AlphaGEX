@@ -1,10 +1,16 @@
 /**
  * Sliding Profit Target tiers — must match the scanner schedule exactly.
  *
- * Schedule (Central Time) — FLAME/SPARK:
- *   8:30 AM – 10:29 AM  → 50%  (MORNING)   — exit when cost-to-close ≤ 50% of credit → keep 50%
- *   10:30 AM – 12:59 PM → 30%  (MIDDAY)    — exit when cost-to-close ≤ 30% of credit → keep 70%
- *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON) — exit when cost-to-close ≤ 20% of credit → keep 80%
+ * Schedule (Central Time) — FLAME:
+ *   8:30 AM – 10:29 AM  → 50%  (MORNING)
+ *   10:30 AM – 12:59 PM → 30%  (MIDDAY)
+ *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON)
+ *
+ * Schedule (Central Time) — SPARK (Apr 2026: morning extended to 12pm):
+ *   8:30 AM – 11:59 AM  → 50%  (MORNING)
+ *   12:00 PM – 12:59 PM → 30%  (MIDDAY)
+ *   1:00 PM – 2:44 PM   → 20%  (AFTERNOON)
+ *
  *   2:45 PM+             → handled by EOD cutoff
  *
  * Commit O (Apr 2026): tiers loosened from 30/20/15 to 50/30/20 — fire
@@ -65,10 +71,15 @@ export function isMarketOpen(ctDate?: Date): boolean {
   return mins >= 510 && mins < 900 // 8:30 AM – 3:00 PM
 }
 
-/** Get the active PT tier based on current CT time. */
-export function getCurrentPTTier(ctDate?: Date): PTTier {
+/** Morning tier end in minutes-since-midnight CT. SPARK extends to 12:00 PM; others 10:30 AM. */
+function morningEndMinutes(bot?: string): number {
+  return bot === 'spark' ? 720 : 630
+}
+
+/** Get the active PT tier based on current CT time. Pass bot for SPARK's extended morning. */
+export function getCurrentPTTier(ctDate?: Date, bot?: string): PTTier {
   const mins = getCTMinutes(ctDate)
-  if (mins < 630) return MORNING      // before 10:30 AM
+  if (mins < morningEndMinutes(bot)) return MORNING
   if (mins < 780) return MIDDAY       // before 1:00 PM
   return AFTERNOON
 }
@@ -76,16 +87,18 @@ export function getCurrentPTTier(ctDate?: Date): PTTier {
 /**
  * Seconds until the next PT tier change.
  * Returns null if market is past 2:45 PM or closed.
+ * Pass bot for SPARK's extended morning (Morning → Midday at 12:00 PM instead of 10:30 AM).
  */
-export function secondsUntilNextTier(ctDate?: Date): { seconds: number; nextLabel: string } | null {
+export function secondsUntilNextTier(ctDate?: Date, bot?: string): { seconds: number; nextLabel: string } | null {
   const d = ctDate ?? getCTNow()
   const mins = getCTMinutes(d)
   const secs = d.getSeconds()
   const totalSecs = mins * 60 + secs
+  const morningEnd = morningEndMinutes(bot)
 
-  if (mins < 630) {
-    // Morning → Midday at 10:30 AM (630 min = 37800 sec)
-    return { seconds: 37800 - totalSecs, nextLabel: '30% Midday' }
+  if (mins < morningEnd) {
+    // Morning → Midday: SPARK at 12:00 PM (43200 sec), others at 10:30 AM (37800 sec)
+    return { seconds: morningEnd * 60 - totalSecs, nextLabel: '30% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
