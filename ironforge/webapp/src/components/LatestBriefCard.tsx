@@ -67,12 +67,13 @@ function briefTypeLabel(t: string): string {
 
 /** Strip markdown emphasis so older briefs stored with `**bold**` render as
  * plain text. New briefs are stripped server-side, but historical rows in
- * spark_market_briefs may still contain raw markdown. */
+ * spark_market_briefs may still contain raw markdown — including unbalanced
+ * patterns like `**Title*` that paired-only regex misses, so we scrub all
+ * asterisks unconditionally. */
 function stripMarkdown(s: string | null | undefined): string {
   if (!s) return ''
   return s
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/\*+/g, '')
     .replace(/__([^_]+)__/g, '$1')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/^\s*-{3,}\s*$/gm, '')
