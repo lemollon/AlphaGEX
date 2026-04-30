@@ -403,41 +403,57 @@ async function syncPaperAccountCapital(): Promise<void> {
 const _mtmFailureCounts: Map<string, number> = new Map()
 
 /* ------------------------------------------------------------------ */
-/*  Trailing PT lock-in tracker                                        */
+/*  Trailing PT lock-in (persistent)                                   */
 /* ------------------------------------------------------------------ */
 
 /**
- * In-memory tracker for the trailing-lockin rule. Once a PT trigger has fired
- * for a position, we record the lowest cost-to-close-last seen since. If the
- * cost subsequently retraces by the per-bot configured threshold
- * (`trailing_retrace_dollars`), `monitorSinglePosition` fires a marketable
- * close to escape the position before EOD. This catches the "had a chance,
- * walked away" pattern observed 4/29/2026 where PT fired at $0.74 but never
- * filled and the position drifted back to $0.86 by EOD.
+ * Trailing-lockin state lives on the position row itself
+ * (`{bot}_positions.trailing_min_cost`, `.trailing_pt_fired_at_ms`) so it
+ * survives alphagex-api restarts. Both columns are NULL until the first PT
+ * fire for a position. After that, every monitor tick may lower
+ * `trailing_min_cost`. If the current cost-to-close-last climbs above
+ * `trailing_min_cost + trailing_retrace_dollars`, the trailing pre-check
+ * cancels any pending order and fires a marketable close.
  *
- * Lifecycle:
- *   - Seeded the first time PT fires for a pid.
- *   - Updated each tick with the latest costToCloseLast.
- *   - Cleared on close (PT, EOD, SL, deferred fill, broker-gone, etc.).
- *
- * Restart-loses-state is acceptable for 1DTE/2DTE positions — at worst we
- * lose the trailing memory for currently-open positions until they next
- * fire PT (which typically happens within the same scan cycle).
+ * 4/29/2026 motivating case: PT fired at cost-to-close-last $0.74 but
+ * never filled; market drifted back to $0.86 over the next 36 minutes
+ * and EOD closed at the worse price. With trailing_retrace_dollars=$0.05
+ * this rule fires around $0.79, locking in ~$0.07/contract more than EOD.
  */
-const _trailingPtState: Map<string, { minCost: number; ptFiredAtMs: number }> = new Map()
 
-function _trailingMaybeSeed(pid: string, costToCloseLast: number): void {
-  if (!_trailingPtState.has(pid)) {
-    _trailingPtState.set(pid, { minCost: costToCloseLast, ptFiredAtMs: Date.now() })
-  } else {
-    const s = _trailingPtState.get(pid)!
-    if (costToCloseLast < s.minCost) s.minCost = costToCloseLast
+/** Seed (or refresh) the trailing PT state on first-PT-fire. Idempotent —
+ *  COALESCE keeps the original `pt_fired_at_ms` and only lowers the min. */
+async function trailingDbSeed(
+  bot: BotDef, pid: string, costToCloseLast: number,
+): Promise<void> {
+  try {
+    await query(
+      `UPDATE ${botTable(bot.name, 'positions')}
+       SET trailing_min_cost = COALESCE(LEAST(trailing_min_cost, $1), $1),
+           trailing_pt_fired_at_ms = COALESCE(trailing_pt_fired_at_ms, $2),
+           updated_at = NOW()
+       WHERE position_id = $3 AND status = 'open' AND dte_mode = $4`,
+      [costToCloseLast, Date.now(), pid, bot.dte],
+    )
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: trailing seed failed: ${msg}`)
   }
 }
 
-function _trailingUpdateMin(pid: string, costToCloseLast: number): void {
-  const s = _trailingPtState.get(pid)
-  if (s != null && costToCloseLast < s.minCost) s.minCost = costToCloseLast
+/** Persist a new lower min if costToCloseLast dropped below the stored min. */
+async function trailingDbUpdateMin(
+  bot: BotDef, pid: string, costToCloseLast: number,
+): Promise<void> {
+  try {
+    await query(
+      `UPDATE ${botTable(bot.name, 'positions')}
+       SET trailing_min_cost = $1, updated_at = NOW()
+       WHERE position_id = $2 AND status = 'open' AND dte_mode = $3
+         AND (trailing_min_cost IS NULL OR trailing_min_cost > $1)`,
+      [costToCloseLast, pid, bot.dte],
+    )
+  } catch { /* best-effort — next cycle will retry */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -635,6 +651,7 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
             contracts, total_credit, max_loss,
             collateral_required, open_time,
             sandbox_close_order_id,
+            trailing_min_cost, trailing_pt_fired_at_ms,
             COALESCE(account_type, 'sandbox') as account_type,
             person
      FROM ${botTable(bot.name, 'positions')}
@@ -676,19 +693,23 @@ async function monitorSinglePosition(
   const pid = pos.position_id
 
   // --- Trailing PT lock-in pre-check ---
-  // Only runs for positions that have already had PT fire ≥1 time
-  // (state present in _trailingPtState) AND the bot's retrace threshold > 0.
-  // Eagerly fetches MTM to update the trailing min and check the retrace
-  // threshold. If triggered, cancels any pending limit order and fires a
-  // marketable close to escape the tier before EOD.
+  // Only runs for positions whose row carries a `trailing_min_cost`
+  // (i.e., PT has fired ≥1 time previously) AND the bot's retrace
+  // threshold > 0. State is read directly from the position row so it
+  // survives alphagex-api restarts. Eagerly fetches MTM to update the
+  // trailing min in DB and check the retrace threshold. If triggered,
+  // cancels any pending limit order and fires a marketable close to
+  // escape the tier before EOD.
   //
   // 4/29/2026 motivating case: PT fired at cost-to-close-last $0.74 but
   // never filled; market drifted back to $0.86 over the next 36 minutes
   // and EOD closed at the worse price. With trailing_retrace_dollars=$0.05,
   // this rule would have triggered around $0.79, locking in ~$0.07/contract
   // more than the EOD result.
+  const trailingMinCostRow = pos.trailing_min_cost != null ? num(pos.trailing_min_cost) : null
+  const trailingPtFiredAtMsRow = pos.trailing_pt_fired_at_ms != null ? num(pos.trailing_pt_fired_at_ms) : null
   if (
-    _trailingPtState.has(pid) &&
+    trailingMinCostRow != null &&
     botCfg.trailing_retrace_dollars > 0 &&
     isConfigured() &&
     num(pos.call_short_strike) !== 0  // skip put-credit-only positions; trailing only applies to ICs today
@@ -703,9 +724,12 @@ async function monitorSinglePosition(
       if (mtmTrail != null && Number.isFinite(mtmTrail.cost_to_close_last)) {
         const cclLast = mtmTrail.cost_to_close_last
         const ccl = mtmTrail.cost_to_close
-        _trailingUpdateMin(pid, cclLast)
-        const s = _trailingPtState.get(pid)!
-        if (cclLast > s.minCost + botCfg.trailing_retrace_dollars) {
+        // Persist a new lower min if observed.
+        if (cclLast < trailingMinCostRow) {
+          await trailingDbUpdateMin(bot, pid, cclLast)
+        }
+        const effectiveMin = Math.min(trailingMinCostRow, cclLast)
+        if (cclLast > effectiveMin + botCfg.trailing_retrace_dollars) {
           // Retrace threshold exceeded — escape the tier with a marketable
           // close. Cancel any pending limit order first; if the cancel fails
           // (likely because the order just filled), skip the marketable
@@ -755,8 +779,8 @@ async function monitorSinglePosition(
                 [
                   'CLOSE_TRIGGER',
                   `TRAILING_LOCKIN_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
-                  `cost_to_close_last=${cclLast.toFixed(4)} min_seen=${s.minCost.toFixed(4)} ` +
-                  `retrace=$${(cclLast - s.minCost).toFixed(4)} threshold=$${botCfg.trailing_retrace_dollars.toFixed(4)} ` +
+                  `cost_to_close_last=${cclLast.toFixed(4)} min_seen=${effectiveMin.toFixed(4)} ` +
+                  `retrace=$${(cclLast - effectiveMin).toFixed(4)} threshold=$${botCfg.trailing_retrace_dollars.toFixed(4)} ` +
                   `marketable_limit=${marketablePrice.toFixed(4)} entry_credit=${entryCredit.toFixed(4)} ` +
                   `contracts=${contracts}`,
                   JSON.stringify({
@@ -765,11 +789,11 @@ async function monitorSinglePosition(
                     cost_to_close_last: cclLast,
                     cost_to_close_mid: mtmTrail.cost_to_close_mid,
                     cost_to_close: ccl,
-                    min_cost_seen: s.minCost,
-                    retrace_dollars: cclLast - s.minCost,
+                    min_cost_seen: effectiveMin,
+                    retrace_dollars: cclLast - effectiveMin,
                     retrace_threshold: botCfg.trailing_retrace_dollars,
                     marketable_limit: marketablePrice,
-                    pt_first_fired_at_ms: s.ptFiredAtMs,
+                    pt_first_fired_at_ms: trailingPtFiredAtMsRow,
                     entry_credit: entryCredit,
                     contracts,
                   }),
@@ -784,7 +808,6 @@ async function monitorSinglePosition(
               contracts, entryCredit, collateral, 'trailing_lockin', cclLast,
               'debit', marketablePrice)
             _mtmFailureCounts.delete(pid)
-            _trailingPtState.delete(pid)
             return { status: `closed:trailing_lockin@${cclLast.toFixed(4)}`, unrealizedPnl: 0 }
           }
         }
@@ -1125,7 +1148,6 @@ async function monitorSinglePosition(
                   console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
                 _mtmFailureCounts.delete(pid)
-                _trailingPtState.delete(pid)
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
               } else {
                 // Re-poll returned no fill — check if broker position even exists anymore.
@@ -1311,7 +1333,6 @@ async function monitorSinglePosition(
                     )
                   }
                   _mtmFailureCounts.delete(pid)
-                  _trailingPtState.delete(pid)
                   return { status: `closed:broker_gone_${recoverySource}@${effectiveClosePrice.toFixed(4)}`, unrealizedPnl: 0 }
                 }
 
@@ -1384,7 +1405,6 @@ async function monitorSinglePosition(
         contracts, entryCredit, collateral, reason, entryCredit)
     }
     _mtmFailureCounts.delete(pid) // Clear on close
-    _trailingPtState.delete(pid)
     return { status: `closed:${reason}`, unrealizedPnl: 0 }
   }
 
@@ -1475,7 +1495,6 @@ async function monitorSinglePosition(
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, 'data_feed_failure', entryCredit)
       _mtmFailureCounts.delete(pid)
-      _trailingPtState.delete(pid)
       return { status: `closed:data_feed_failure(${failCount})`, unrealizedPnl: 0 }
     }
 
@@ -1530,10 +1549,11 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
-    // Seed/refresh the trailing-lockin tracker. Once PT has fired we want the
-    // pre-check at the top of monitorSinglePosition to catch retracements on
-    // future cycles even if this close order doesn't fill immediately.
-    _trailingMaybeSeed(pid, costToCloseLast)
+    // Seed/refresh the trailing-lockin state on the position row. Persistent
+    // across alphagex-api restarts. The pre-check at the top of
+    // monitorSinglePosition reads these columns next cycle and catches
+    // retracements even if this close order doesn't fill immediately.
+    await trailingDbSeed(bot, pid, costToCloseLast)
     // Initial limit = costToCloseLast (favorable current market). A buy limit
     // at this price fills only at this price or LOWER (= more profit). The
     // slippage guard will relax toward profitTargetPrice if no fill, never above.
@@ -1579,7 +1599,6 @@ async function monitorSinglePosition(
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
-    _trailingPtState.delete(pid)
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
@@ -4772,9 +4791,8 @@ export const _testing = {
   MAX_SCAN_DURATION_MS,
   _botConfig,
   _mtmFailureCounts,
-  _trailingPtState,
-  _trailingMaybeSeed,
-  _trailingUpdateMin,
+  trailingDbSeed,
+  trailingDbUpdateMin,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },
