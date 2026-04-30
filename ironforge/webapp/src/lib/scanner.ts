@@ -24,6 +24,7 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
+import { notifyNewActivityForBot } from './notify'
 import {
   getQuote,
   getOptionExpirations,
@@ -4764,6 +4765,20 @@ async function runAllScans(): Promise<void> {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Hypo-EOD compute failed (non-fatal): ${msg}`)
+  }
+
+  // Discord activity notifications (best-effort). Polls each bot's positions
+  // table for newly-opened / newly-closed rows since the last scan cycle and
+  // posts an embed for each. Skipped silently when DISCORD_WEBHOOK_{BOT}
+  // env var is unset for that bot. NEVER blocks the scanner — failures are
+  // logged but swallowed inside the helper.
+  for (const bot of BOTS) {
+    try {
+      await notifyNewActivityForBot(bot.name, bot.dte)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] Discord notify failed for ${bot.name}: ${msg}`)
+    }
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
