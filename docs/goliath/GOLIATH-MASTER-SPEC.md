@@ -1,0 +1,159 @@
+# GOLIATH — Master Spec (Recovered)
+
+**Source:** Recovered from chat session `https://claude.ai/chat/e0e6fb84-8a04-4f3f-b671-31fc7c649f88` ("Understanding the wheel of options strategy") via conversation_search on 2026-04-29.
+**Author of original spec:** Leron + Claude collaborative session, pre-Phase-0 of GOLIATH.
+**Status of this document:** Spec content recovered verbatim. Phase 1.5 status updated to current state. Open questions clearly marked.
+
+---
+
+## Label legend
+
+- **[RECOVERED]** — Verbatim from the source chat session above.
+- **[CONFIRMED-CURRENT]** — Verified against current code/repo state by Claude Code in audits during 2026-04-28/29.
+- **[OPEN]** — Real ambiguity that Leron should resolve before relying on this doc.
+- **[STANDARD]** — Universal trading bot best practice that applies regardless of GOLIATH-specific design.
+
+---
+
+## 1. Strategy
+
+### 1.1 What GOLIATH is
+
+**[RECOVERED]** GOLIATH sells defined-risk put credit spreads on leveraged single-name ETFs, simultaneously buys OTM calls on the same LETF funded by the spread credit, never owns the underlying shares, and uses GEX data on the *underlying* (not the LETF) to inform strike placement.
+
+### 1.2 Why this exists
+
+**[RECOVERED]** The standard Wheel strategy breaks on leveraged ETFs because of decay mechanics. Owning shares plus selling covered calls produces negative expected value because volatility drag destroys principal faster than premium income compensates. GOLIATH is an asymmetric alternative — bounded downside per trade (defined by the put spread width), uncapped upside (from the long call), no share ownership, no decay drag.
+
+### 1.3 What GOLIATH does NOT do
+
+**[RECOVERED]**
+
+- Does not own LETF shares (no covered calls phase)
+- Does not run iron condors on LETFs (slippage too high on 4-leg structures)
+- Does not roll positions (closing positions when wrong is mandatory)
+- Does not trade index LETFs like TQQQ/SOXL (different strategy class entirely)
+- Does not connect to IronForge in any way (stays in AlphaGEX research lab)
+
+### 1.4 Universe
+
+**[RECOVERED]** Five LETFs, all 2×:
+
+| LETF | Underlying | Notes |
+|------|------------|-------|
+| MSTU | MSTR | BTC catalyst, primary validation target |
+| TSLL | TSLA | Largest single-stock LETF, deepest options chain |
+| NVDL | NVDA | AI catalyst, high IV around earnings |
+| CONL | COIN | Crypto exchange exposure, lower volume |
+| AMDL | AMD | AI/semi diversifier |
+
+GEX data comes from the *underlying*, not the LETF, because dealer hedging happens in the larger options chain.
+
+### 1.5 Trade structure — three legs
+
+**[RECOVERED]** Every GOLIATH trade is exactly this structure. No exceptions.
+
+| Leg | Action | Instrument | Strike rule |
+|-----|--------|------------|-------------|
+| 1 | SELL | Short put on the LETF | ~25-30 delta, 7 DTE — collects premium |
+| 2 | BUY | Long put on the LETF | 1 strike below short put, 7 DTE — caps downside |
+| 3 | BUY | Long call on the LETF | 15-25% OTM, 7 DTE — funded by spread credit, uncapped upside |
+
+**[RECOVERED]**
+
+- Net cost: typically -$6 to +$5 (small debit or small credit)
+- Capital required: ~$37-50 per contract
+- Max loss: defined (put spread width minus net credit)
+- Max upside: uncapped
+
+### 1.6 Architecture
+
+**[RECOVERED]** GOLIATH is a shared engine plus per-LETF instances. One codebase, five configured instances. Each instance has its own state, P&L tracking, and kill switch. Failures are isolated — GOLIATH-MSTU blowing up cannot affect GOLIATH-NVDL. Each instance runs under its own `bot_guard` tag (`GOLIATH-MSTU`, `GOLIATH-TSLL`, etc.).
+
+### 1.7 Cadence
+
+**[RECOVERED]** Weekly cadence:
+
+- **Enter:** Monday 10:30–11:30 AM ET
+- **DTE:** 7 (Friday expiry same week)
+- Avoids Monday open volatility
+- Captures full theta decay window
+- Small weekend gap risk by design
+
+### 1.8 Calibrated parameters from Phase 1.5
+
+**[CONFIRMED-CURRENT]** Phase 1.5 (now in progress) calibrates four spec parameters that drive strike mapping. Default values pending Phase 1.5 Step 9 results:
+
+| Parameter | Spec default | Used in |
+|-----------|--------------|---------|
+| Wall concentration threshold | `2.0× median` | Gate G03 + strike mapping |
+| Tracking error fudge factor | `0.1` | Strike confidence on LETF mapping |
+| Vol drag coefficient | theoretical formula | LETF return prediction |
+| Realized vol window | `30 days` | Vol estimation |
+
+---
+
+## 2. The 10 Pre-Entry Gates
+
+**[RECOVERED]** All 10 must pass before any trade executes. Failure logging is data — persist gate failure reasons to PostgreSQL even when no trade happens.
+
+| Gate | Check | Notes |
+|------|-------|-------|
+| G01 | SPY GEX not in extreme negative regime | Global market regime check |
+| G02 | Underlying GEX not in extreme negative regime | Per-LETF regime check |
+| G03 | Underlying has identifiable positive gamma wall below spot | If no wall, no trade |
+| G04 | Underlying earnings not within 7 days | Different volatility regime |
+| G05 | LETF IV Rank ≥ 60 | Premium must be elevated to fund the call |
+| G06 | All 3 LETF strikes have OI ≥ 200 | Liquidity check on each leg |
+| G07 | Bid-ask spread on each leg ≤ 20% of mid | Slippage protection |
+| G08 | Net cost on entry ≤ 30% of long call cost | Spread must subsidize the call |
+| G09 | Underlying not in active downtrend (above 50-day MA) | Trend filter |
+| G10 | Total open GOLIATH positions ≤ 3 across all instances | Platform concentration cap |
+
+**[RECOVERED]** Gate logging requirements:
+
+- `goliath_gate_failures` table persists every failed evaluation
+- `gates_passed_before_failure` lists exactly the gates that passed before the first fail
+- `attempted_structure` is populated when applicable (gates G06+ have a structure to fail against)
+- `letf_ticker` and `underlying_ticker` populated correctly
+- Cold-start IV-rank case logs `INSUFFICIENT_HISTORY` and skips trade
+- Earnings yfinance failure → fail closed (no trade), do not assume safe
+
+---
+
+## 3. Strike Mapping Algorithm
+
+**[RECOVERED]** This is the most technically tricky part. Naive linear leverage mapping is wrong because:
+
+1. **2x leverage is daily, not terminal.** Over 7 DTE, the relationship breaks down due to volatility drag and path dependence.
+2. **Volatility drag accumulates.** `drag ≈ -0.5 × L × (L-1) × σ² × t` where σ is annualized vol and t is time in years.
+3. **Strike step sizes don't match.** TSLA strikes are $2.50 increments; TSLL strikes are $0.50 increments. Rounding matters.
+4. **"Wall" needs a quantitative definition.** A wall is gamma concentration meaningfully larger than surrounding strikes — defined as ≥ 2× median gamma of strikes within ±5% of spot.
+
+**[RECOVERED]** Algorithm steps:
+
+- **Step 1: Find the wall.** From underlying gamma levels, identify largest positive gamma below spot where gamma ≥ 2× the median gamma of strikes within ±5% of spot. If no qualifying wall exists, fail Gate G03 and return None.
+- **Step 2: Map underlying target to LETF target.** Translate the underlying wall price to an equivalent LETF price using vol-drag-adjusted formula (the four Phase 1.5 calibrated parameters drive this math).
+- **Subsequent steps:** detailed math is in source chat; implementation belongs to Phase 2.
+
+### 3.1 Strike mapping required tests
+
+**[RECOVERED]** Minimum 13 tests covering:
+
+1. Happy path with clean wall, sufficient OI, valid economics
+2. No wall meeting concentration threshold → returns None
+3. Wall exists but no LETF strikes in target range → returns None
+4. Strikes exist but OI too low → returns None
+5. Strikes exist but bid-ask too wide → returns None
+6. Net cost exceeds 30% of call → returns None
+7. Volatility drag computed correctly for known inputs
+8. Tracking error band sensible for realistic volatilities (test multiple sigma values)
+9. Short put strike selection respects "below central target" rule
+10. Long call strike selection respects "above central target" rule
+11. Long put is correctly 1 strike below short put
+12. Edge case: short put is lowest available strike → returns None
+13. Real-world data test using actual TSLA/TSLL chains pulled from your data sources
+
+---
+
+<!-- COMMIT 1 ENDS HERE — sections 4-13 appended in subsequent commits -->
