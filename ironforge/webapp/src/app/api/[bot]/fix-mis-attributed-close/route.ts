@@ -40,7 +40,7 @@
  * the leg-match unambiguous.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, validateBot } from '@/lib/db'
+import { dbQuery, botTable, num, int, validateBot, withTransaction } from '@/lib/db'
 import {
   getLoadedSandboxAccountsAsync,
   getAccountIdForKey,
@@ -342,6 +342,53 @@ export async function GET(
 
     const recovery = leg_matched_recover(ordersOrErr, cand)
 
+    // Count what would move in each affected table so the operator can see
+    // the full reconciliation surface before authorizing the POST.
+    let snapshotPreviewCount = 0
+    let dailyPerfPreviewCount = 0
+    if (recovery && cand.close_time_iso) {
+      try {
+        if (cand.account_type === 'production') {
+          const r = await dbQuery(
+            `SELECT COUNT(*)::int AS n
+               FROM ${botTable('spark', 'equity_snapshots')}
+              WHERE snapshot_time >= $1
+                AND person = $2
+                AND COALESCE(account_type, 'sandbox') = 'production'
+                AND dte_mode = $3`,
+            [cand.close_time_iso, cand.person, cand.dte_mode],
+          )
+          snapshotPreviewCount = int(r[0]?.n)
+        } else {
+          const r = await dbQuery(
+            `SELECT COUNT(*)::int AS n
+               FROM ${botTable('spark', 'equity_snapshots')}
+              WHERE snapshot_time >= $1
+                AND COALESCE(account_type, 'sandbox') = 'sandbox'
+                AND dte_mode = $2`,
+            [cand.close_time_iso, cand.dte_mode],
+          )
+          snapshotPreviewCount = int(r[0]?.n)
+        }
+      } catch { /* preview only; ignore */ }
+    }
+    if (recovery && cand.close_date_ct) {
+      try {
+        const r = await dbQuery(
+          `SELECT COUNT(*)::int AS n
+             FROM ${botTable('spark', 'daily_perf')}
+            WHERE trade_date = $1::date
+              AND COALESCE(person, '') = COALESCE($2, '')`,
+          [cand.close_date_ct, cand.person],
+        )
+        dailyPerfPreviewCount = int(r[0]?.n)
+      } catch { /* preview only; ignore */ }
+    }
+
+    const delta = recovery
+      ? Math.round((recovery.realized_pnl - cand.realized_pnl) * 100) / 100
+      : 0
+
     return NextResponse.json({
       bot: 'spark',
       position_id: positionId,
@@ -356,8 +403,14 @@ export async function GET(
             close_price_after: recovery.close_price,
             realized_pnl_before: cand.realized_pnl,
             realized_pnl_after: recovery.realized_pnl,
-            realized_pnl_delta: Math.round((recovery.realized_pnl - cand.realized_pnl) * 100) / 100,
+            realized_pnl_delta: delta,
             close_reason_after: 'broker_gone_backfill_legmatched',
+            tables_affected: {
+              spark_positions: 1,
+              spark_paper_account: delta === 0 ? 0 : 1,
+              spark_daily_perf: delta === 0 ? 0 : dailyPerfPreviewCount,
+              spark_equity_snapshots: delta === 0 ? 0 : snapshotPreviewCount,
+            },
           }
         : null,
       instructions: recovery
@@ -415,83 +468,190 @@ export async function POST(
 
     const delta = Math.round((recovery.realized_pnl - cand.realized_pnl) * 100) / 100
 
-    // Idempotency: only update if the state we observed is still the state in
-    // the DB. If a concurrent writer already corrected the row, we bail.
-    const rowsAffected = await dbExecute(
-      `UPDATE spark_positions
-       SET close_price = $1,
-           realized_pnl = $2,
-           close_reason = 'broker_gone_backfill_legmatched',
-           updated_at = NOW()
-       WHERE position_id = $3
-         AND status = 'closed'
-         AND realized_pnl = $4
-         AND close_reason = $5`,
-      [recovery.close_price, recovery.realized_pnl, positionId, cand.realized_pnl, cand.close_reason],
-    )
-    if (rowsAffected === 0) {
-      return NextResponse.json({
-        applied: false,
-        reason: 'UPDATE matched 0 rows — state changed between load and apply',
-        current: cand,
-      })
+    // Reconcile every table that ate the bad realized_pnl. All four UPDATEs
+    // run in a single transaction so partial application is impossible:
+    //
+    //   1. spark_positions          — the row itself (close_price, pnl, reason)
+    //   2. spark_paper_account      — current_balance, cumulative_pnl, buying_power
+    //   3. spark_daily_perf         — the per-day realized_pnl bucket for the
+    //                                 position's CT close date
+    //   4. spark_equity_snapshots   — every snapshot from the bad close onwards
+    //                                 (balance + realized_pnl mirror paper_account
+    //                                 at write-time, so they all carry the bad delta)
+    //
+    // The position UPDATE has the strongest idempotency guard (matches both the
+    // observed realized_pnl AND the observed close_reason). If it returns 0 rows
+    // we throw to roll back — the row was already corrected by a concurrent
+    // run.
+    type ApplyResult = {
+      position_rows: number
+      paper_account_rows: number
+      daily_perf_rows: number
+      equity_snapshot_rows: number
     }
 
-    if (delta !== 0) {
-      if (cand.account_type === 'production') {
-        await dbExecute(
-          `UPDATE spark_paper_account
-           SET current_balance = current_balance + $1,
-               cumulative_pnl  = cumulative_pnl + $1,
-               buying_power    = buying_power + $1,
-               updated_at = NOW()
-           WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
-          [delta, cand.person ?? 'User', cand.dte_mode],
-        )
-      } else {
-        await dbExecute(
-          `UPDATE spark_paper_account
-           SET current_balance = current_balance + $1,
-               cumulative_pnl  = cumulative_pnl + $1,
-               buying_power    = buying_power + $1,
-               updated_at = NOW()
-           WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $2`,
-          [delta, cand.dte_mode],
-        )
-      }
-    }
-
+    let counts: ApplyResult
     try {
-      await dbExecute(
-        `INSERT INTO ${botTable('spark', 'logs')} (level, message, details, dte_mode, person)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          'BROKER_RECONCILE_LEGMATCHED',
-          `LEG-MATCHED RECOVERY: ${positionId} realized_pnl $${cand.realized_pnl.toFixed(2)} → $${recovery.realized_pnl.toFixed(2)} ` +
-            `(close_price $${cand.close_price.toFixed(4)} → $${recovery.close_price.toFixed(4)}, delta $${delta.toFixed(2)}, ` +
-            `${recovery.matched_orders.length} matched orders)`,
-          JSON.stringify({
-            event: 'broker_reconcile_legmatched',
-            position_id: positionId,
-            account_type: cand.account_type,
-            person: cand.person,
-            entry_credit: cand.total_credit,
-            contracts: cand.contracts,
-            close_price_before: cand.close_price,
-            close_price_after: recovery.close_price,
-            realized_pnl_before: cand.realized_pnl,
-            realized_pnl_after: recovery.realized_pnl,
-            realized_pnl_delta: delta,
-            previous_close_reason: cand.close_reason,
-            debit_total: recovery.debit_total,
-            occ_symbols: recovery.occ_symbols,
-            matched_orders: recovery.matched_orders,
-          }),
-          cand.dte_mode,
-          cand.person,
-        ],
+      counts = await withTransaction(async (client) => {
+        const positionRes = await client.query(
+          `UPDATE spark_positions
+              SET close_price = $1,
+                  realized_pnl = $2,
+                  close_reason = 'broker_gone_backfill_legmatched',
+                  updated_at = NOW()
+            WHERE position_id = $3
+              AND status = 'closed'
+              AND realized_pnl = $4
+              AND close_reason = $5`,
+          [recovery.close_price, recovery.realized_pnl, positionId, cand.realized_pnl, cand.close_reason],
+        )
+        const positionRows = positionRes.rowCount ?? 0
+        if (positionRows === 0) {
+          // Roll back everything — state changed under us, signal the caller
+          // via a thrown sentinel that the catch translates into a 200 no-op.
+          throw new Error('NO_OP:position_state_changed')
+        }
+
+        let paperAccountRows = 0
+        let dailyPerfRows = 0
+        let equitySnapshotRows = 0
+
+        if (delta !== 0) {
+          // 2. paper_account ledger
+          if (cand.account_type === 'production') {
+            const paRes = await client.query(
+              `UPDATE spark_paper_account
+                  SET current_balance = current_balance + $1,
+                      cumulative_pnl  = cumulative_pnl + $1,
+                      buying_power    = buying_power + $1,
+                      updated_at = NOW()
+                WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
+              [delta, cand.person ?? 'User', cand.dte_mode],
+            )
+            paperAccountRows = paRes.rowCount ?? 0
+          } else {
+            const paRes = await client.query(
+              `UPDATE spark_paper_account
+                  SET current_balance = current_balance + $1,
+                      cumulative_pnl  = cumulative_pnl + $1,
+                      buying_power    = buying_power + $1,
+                      updated_at = NOW()
+                WHERE COALESCE(account_type, 'sandbox') = 'sandbox' AND dte_mode = $2`,
+              [delta, cand.dte_mode],
+            )
+            paperAccountRows = paRes.rowCount ?? 0
+          }
+
+          // 3. daily_perf for the CT close date.
+          //    Path B writes (CT_TODAY at close, person) and the table's
+          //    ON CONFLICT key is (trade_date, COALESCE(person, '')). Match
+          //    that exactly so we update the row Path B wrote.
+          if (cand.close_date_ct) {
+            const dpRes = await client.query(
+              `UPDATE ${botTable('spark', 'daily_perf')}
+                  SET realized_pnl = realized_pnl + $1
+                WHERE trade_date = $2::date
+                  AND COALESCE(person, '') = COALESCE($3, '')`,
+              [delta, cand.close_date_ct, cand.person],
+            )
+            dailyPerfRows = dpRes.rowCount ?? 0
+          }
+
+          // 4. equity_snapshots from the bad close onwards.
+          //    Both balance and realized_pnl mirror paper_account at write
+          //    time — they all carry the bad delta forward until the next
+          //    snapshot AFTER this fix runs. Filter strictly to the same
+          //    person+account_type+dte_mode that paper_account row 2 updated.
+          if (cand.close_time_iso) {
+            if (cand.account_type === 'production') {
+              const esRes = await client.query(
+                `UPDATE ${botTable('spark', 'equity_snapshots')}
+                    SET balance = balance + $1,
+                        realized_pnl = realized_pnl + $1
+                  WHERE snapshot_time >= $2
+                    AND person = $3
+                    AND COALESCE(account_type, 'sandbox') = 'production'
+                    AND dte_mode = $4`,
+                [delta, cand.close_time_iso, cand.person, cand.dte_mode],
+              )
+              equitySnapshotRows = esRes.rowCount ?? 0
+            } else {
+              const esRes = await client.query(
+                `UPDATE ${botTable('spark', 'equity_snapshots')}
+                    SET balance = balance + $1,
+                        realized_pnl = realized_pnl + $1
+                  WHERE snapshot_time >= $2
+                    AND COALESCE(account_type, 'sandbox') = 'sandbox'
+                    AND dte_mode = $3`,
+                [delta, cand.close_time_iso, cand.dte_mode],
+              )
+              equitySnapshotRows = esRes.rowCount ?? 0
+            }
+          }
+        }
+
+        // 5. Audit row. Inside the transaction so it commits with the writes.
+        await client.query(
+          `INSERT INTO ${botTable('spark', 'logs')} (level, message, details, dte_mode, person)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            'BROKER_RECONCILE_LEGMATCHED',
+            `LEG-MATCHED RECOVERY: ${positionId} realized_pnl $${cand.realized_pnl.toFixed(2)} → $${recovery.realized_pnl.toFixed(2)} ` +
+              `(close_price $${cand.close_price.toFixed(4)} → $${recovery.close_price.toFixed(4)}, delta $${delta.toFixed(2)}, ` +
+              `${recovery.matched_orders.length} matched orders, ` +
+              `paper_account=${paperAccountRows} daily_perf=${dailyPerfRows} snapshots=${equitySnapshotRows})`,
+            JSON.stringify({
+              event: 'broker_reconcile_legmatched',
+              position_id: positionId,
+              account_type: cand.account_type,
+              person: cand.person,
+              entry_credit: cand.total_credit,
+              contracts: cand.contracts,
+              close_price_before: cand.close_price,
+              close_price_after: recovery.close_price,
+              realized_pnl_before: cand.realized_pnl,
+              realized_pnl_after: recovery.realized_pnl,
+              realized_pnl_delta: delta,
+              previous_close_reason: cand.close_reason,
+              close_date_ct: cand.close_date_ct,
+              close_time_iso: cand.close_time_iso,
+              debit_total: recovery.debit_total,
+              occ_symbols: recovery.occ_symbols,
+              matched_orders: recovery.matched_orders,
+              applied_counts: {
+                position_rows: positionRows,
+                paper_account_rows: paperAccountRows,
+                daily_perf_rows: dailyPerfRows,
+                equity_snapshot_rows: equitySnapshotRows,
+              },
+            }),
+            cand.dte_mode,
+            cand.person,
+          ],
+        )
+
+        return {
+          position_rows: positionRows,
+          paper_account_rows: paperAccountRows,
+          daily_perf_rows: dailyPerfRows,
+          equity_snapshot_rows: equitySnapshotRows,
+        }
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.startsWith('NO_OP:')) {
+        return NextResponse.json({
+          applied: false,
+          reason: 'UPDATE matched 0 rows — state changed between load and apply',
+          current: cand,
+        })
+      }
+      // Any other error: transaction was rolled back. Surface as 500.
+      return NextResponse.json(
+        { error: `transaction rolled back: ${msg}`, current: cand },
+        { status: 500 },
       )
-    } catch { /* audit log best-effort */ }
+    }
 
     const after = await loadCandidate(positionId)
     return NextResponse.json({
@@ -502,7 +662,8 @@ export async function POST(
       after,
       recovery,
       delta,
-      note: 'Refresh /spark Trade History + Equity Curve to see the corrected P&L.',
+      applied_counts: counts,
+      note: 'Refresh /spark Trade History + Performance + Equity Curve + Daily Perf to see the corrected P&L.',
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
