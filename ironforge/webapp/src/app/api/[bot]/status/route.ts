@@ -305,13 +305,21 @@ export async function GET(
               if (bal.open_pl != null) {
                 tradierOpenPlOverride = Math.round(bal.open_pl * 100) / 100
               }
-              // Realized = Tradier close_pl (day-scoped). Mirror it to both
-              // cumulative_pnl and today_realized so the dashboard matches
-              // what the Tradier web UI shows.
-              const tradierClosePl = bal.close_pl != null ? Math.round(bal.close_pl * 100) / 100 : 0
-              realizedPnl = tradierClosePl
-              todayRealizedOverride = tradierClosePl
-              // Back-compute starting_capital so balance = starting + realized holds
+              // FLAME is PAPER ONLY — no orders are placed against the User
+              // sandbox, so Tradier's close_pl on that account reflects non-
+              // FLAME activity (manual trades, other operators, settled stale
+              // positions). Mirroring it here makes "Realized Today" diverge
+              // from FLAME's actual paper P&L: the equity chart and close-
+              // reason breakdown both read flame_positions.realized_pnl and
+              // showed +$432 from the day's PT trade while the top card said
+              // -$386 from the shared sandbox's day P&L.
+              //
+              // Keep balance/BP/unrealized mirrored to Tradier (the operator
+              // wants to see the live dollar balance on the User account),
+              // but leave realizedPnl/todayRealizedPnl on the flame_positions
+              // values already computed above. Back-compute starting_capital
+              // off that same realized number so the card math stays
+              // consistent (balance = starting_capital + realizedPnl).
               startingCapital = Math.round((balance - realizedPnl) * 100) / 100
               accountSource = 'tradier'
             } else {
