@@ -79,9 +79,13 @@ type FlameStats = {
   totalLosses: number
   winRate: number
   totalPnl: number
+  todayPnl: number
+  weekPnl: number
+  todayTrades: number
   last10Wins: number
   last10Total: number
   last10WinRate: number
+  last10Trail: string
   streakKind: 'W' | 'L' | 'F' | null
   streakLen: number
   bestWin: number
@@ -90,14 +94,17 @@ type FlameStats = {
 
 const EMPTY_STATS: FlameStats = {
   totalClosed: 0, totalWins: 0, totalLosses: 0, winRate: 0, totalPnl: 0,
-  last10Wins: 0, last10Total: 0, last10WinRate: 0,
+  todayPnl: 0, weekPnl: 0, todayTrades: 0,
+  last10Wins: 0, last10Total: 0, last10WinRate: 0, last10Trail: '—',
   streakKind: null, streakLen: 0, bestWin: 0, worstLoss: 0,
 }
 
 async function getFlameStats(): Promise<FlameStats> {
   try {
     const rows = await query(
-      `SELECT realized_pnl
+      `SELECT realized_pnl,
+              (close_time AT TIME ZONE 'America/Chicago')::date AS close_date_ct,
+              close_time
        FROM ${botTable('flame', 'positions')}
        WHERE status IN ('closed','expired')
          AND realized_pnl IS NOT NULL
@@ -105,7 +112,20 @@ async function getFlameStats(): Promise<FlameStats> {
        ORDER BY close_time DESC`,
       [],
     )
-    if (!rows.length) return { ...EMPTY_STATS }
+    let todayTradesOpen = 0
+    try {
+      const t = await query(
+        `SELECT COUNT(*) AS cnt
+         FROM ${botTable('flame', 'positions')}
+         WHERE (open_time AT TIME ZONE 'America/Chicago')::date
+               = (NOW() AT TIME ZONE 'America/Chicago')::date
+           AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
+        [],
+      )
+      todayTradesOpen = Number(t[0]?.cnt || 0)
+    } catch { /* best-effort */ }
+
+    if (!rows.length) return { ...EMPTY_STATS, todayTrades: todayTradesOpen }
 
     const pnls: number[] = rows.map((r: any) => Number(r.realized_pnl) || 0)
     const totalPnl = pnls.reduce((a, b) => a + b, 0)
@@ -116,10 +136,27 @@ async function getFlameStats(): Promise<FlameStats> {
     const bestWin = pnls.length ? Math.max(...pnls) : 0
     const worstLoss = pnls.length ? Math.min(...pnls) : 0
 
-    const last10 = pnls.slice(0, 10)
-    const last10Wins = last10.filter((p) => p > 0).length
-    const last10Total = last10.length
+    // Today / week P&L from CT close dates
+    const todayCt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+    const weekAgoMs = Date.now() - 7 * 24 * 60 * 60 * 1000
+    let todayPnl = 0
+    let weekPnl = 0
+    for (const r of rows) {
+      const pnl = Number(r.realized_pnl) || 0
+      const ds = r.close_date_ct ? String(r.close_date_ct).slice(0, 10) : ''
+      if (ds === todayCt) todayPnl += pnl
+      const ts = r.close_time ? new Date(r.close_time).getTime() : 0
+      if (ts >= weekAgoMs) weekPnl += pnl
+    }
+
+    // Last 10 — pnls is newest-first; reverse for left-to-right chronological trail
+    const last10Newest = pnls.slice(0, 10)
+    const last10Wins = last10Newest.filter((p) => p > 0).length
+    const last10Total = last10Newest.length
     const last10WinRate = last10Total ? (last10Wins / last10Total) * 100 : 0
+    const last10Trail = last10Newest.length
+      ? last10Newest.slice().reverse().map((p) => p > 0 ? '🟩' : p < 0 ? '🟥' : '⬜').join('')
+      : '—'
 
     let streakKind: 'W' | 'L' | 'F' | null = null
     let streakLen = 0
@@ -135,7 +172,8 @@ async function getFlameStats(): Promise<FlameStats> {
 
     return {
       totalClosed, totalWins, totalLosses, winRate, totalPnl,
-      last10Wins, last10Total, last10WinRate,
+      todayPnl, weekPnl, todayTrades: todayTradesOpen,
+      last10Wins, last10Total, last10WinRate, last10Trail,
       streakKind, streakLen, bestWin, worstLoss,
     }
   } catch (err: unknown) {
@@ -146,14 +184,17 @@ async function getFlameStats(): Promise<FlameStats> {
 
 function buildStatsEmbed(stats: FlameStats, includeBanner = true): DiscordEmbed {
   const pnlEmoji = stats.totalPnl > 0 ? '📈' : stats.totalPnl < 0 ? '📉' : '➖'
+  const dayEmoji = stats.todayPnl > 0 ? '🟢' : stats.todayPnl < 0 ? '🔴' : '⚪'
+  const weekEmoji = stats.weekPnl > 0 ? '📊' : stats.weekPnl < 0 ? '📊' : '📊'
   const winRateBar = progressBar(stats.winRate, 14)
 
   const lines: string[] = []
   if (includeBanner) {
-    lines.push(`${pnlEmoji} **All-Time P&L:** ${fmtUsd(stats.totalPnl, true)}`)
+    lines.push(`${pnlEmoji} **All-Time P&L:** ${fmtUsd(stats.totalPnl, true)}  ·  ${dayEmoji} **Today:** ${fmtUsd(stats.todayPnl, true)}  ·  ${weekEmoji} **7d:** ${fmtUsd(stats.weekPnl, true)}`)
     lines.push('')
   }
   lines.push(`\`${winRateBar}\` ${stats.winRate.toFixed(1)}% · ${stats.totalWins}W / ${stats.totalLosses}L`)
+  lines.push(`**Last 10 (oldest → newest):** ${stats.last10Trail}`)
 
   const desc = lines.join('\n')
 
@@ -265,8 +306,11 @@ export async function postFlameOpen(args: {
     `⏰ **EOD Safety** — auto-close all positions by 2:50 PM CT on expiry day`,
   ].join('\n')
 
+  const stats = await getFlameStats()
+  const tradeOfDay = stats.todayTrades > 0 ? `Trade #${stats.todayTrades} today` : `1st trade of the day`
+
   const tradeEmbed: DiscordEmbed = {
-    author: { name: '🔥 FLAME LIT — Position Opened' },
+    author: { name: `🔥 FLAME LIT — Position Opened · ${tradeOfDay}` },
     title: `SPY ${putShort}P / ${putLong}P · ${contracts}× · exp ${expiration}`,
     color: COLOR_OPEN,
     description: desc,
@@ -278,11 +322,10 @@ export async function postFlameOpen(args: {
       { name: '📊 SPY / VIX', value: `$${spot.toFixed(2)} / ${vix.toFixed(2)}`, inline: true },
       { name: '🏦 Account', value: fmtUsd(accountBalance), inline: true },
     ],
-    footer: { text: `IronForge · FLAME · ${positionId}` },
+    footer: { text: `IronForge · FLAME · ${positionId} · ${ctNow()}` },
     timestamp: nowIso(),
   }
 
-  const stats = await getFlameStats()
   const statsEmbed = buildStatsEmbed(stats, true)
   statsEmbed.author = { name: '📊 FLAME · Performance Snapshot' }
 
@@ -358,6 +401,26 @@ export async function postFlameClose(args: {
   const bar = progressBar(pctOfMax, 14)
   const cls = classifyClose(reason, realizedPnl)
 
+  // Hold duration — query open_time, fail soft if missing
+  let holdLabel = '—'
+  try {
+    const r = await query(
+      `SELECT open_time FROM ${botTable('flame', 'positions')}
+       WHERE position_id = $1 LIMIT 1`,
+      [positionId],
+    )
+    const openMs = r[0]?.open_time ? new Date(r[0].open_time).getTime() : 0
+    if (openMs > 0) {
+      const heldMin = Math.max(0, Math.round((Date.now() - openMs) / 60000))
+      if (heldMin < 60) holdLabel = `${heldMin}m`
+      else {
+        const h = Math.floor(heldMin / 60)
+        const m = heldMin % 60
+        holdLabel = m === 0 ? `${h}h` : `${h}h ${m}m`
+      }
+    }
+  } catch { /* ignore */ }
+
   const desc = [
     `**${cls.flair}**`,
     ``,
@@ -375,10 +438,10 @@ export async function postFlameClose(args: {
     fields: [
       { name: '💰 Realized P&L', value: `**${fmtUsd(realizedPnl, true)}**`, inline: true },
       { name: '🎯 Trigger', value: `\`${reason}\``, inline: true },
-      { name: '📅 Expiration', value: expiration, inline: true },
+      { name: '⏳ Held', value: holdLabel, inline: true },
       { name: '🟢 Entry Credit', value: `${fmtUsd(entryCredit)}/spread`, inline: true },
       { name: '🔚 Close Price', value: `${fmtUsd(closePrice)}/spread`, inline: true },
-      { name: '🧮 P&L Math', value: `(entry − close) × ${contracts} × 100`, inline: true },
+      { name: '📅 Expiration', value: expiration, inline: true },
     ],
     footer: { text: `IronForge · FLAME · ${positionId} · ${cls.footerNote}` },
     timestamp: nowIso(),
