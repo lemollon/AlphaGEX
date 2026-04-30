@@ -245,7 +245,16 @@ def _config_table_ddl(bot: str) -> str:
         min_win_probability NUMERIC(5, 4) DEFAULT 0.42,
         entry_start TEXT DEFAULT '08:30',
         entry_end TEXT DEFAULT '14:00',
-        eod_cutoff_et TEXT DEFAULT '15:45',
+        -- eod_cutoff_et: force-close cutoff in EASTERN time. Scanner parses
+        -- this as ET and converts to CT internally. Default '15:50' ET
+        -- (= 14:50 CT) preserves the historical hardcoded behavior. Lower
+        -- this (e.g., '14:50' = 13:50 CT) for an earlier cushion before
+        -- expiration. NULL/missing values fall back to 14:50 CT in code.
+        eod_cutoff_et TEXT DEFAULT '15:50',
+        -- trailing_retrace_dollars: once PT has fired for a position, fire
+        -- a marketable close if cost-to-close climbs this many $ above the
+        -- lowest seen since. 0 disables the rule. Default 0.05 = 5¢.
+        trailing_retrace_dollars NUMERIC(5, 4) DEFAULT 0.05,
         pdt_max_day_trades INT DEFAULT 4,
         starting_capital NUMERIC(12, 2) DEFAULT 10000.0,
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -350,6 +359,16 @@ def setup_all_tables():
                 ADD COLUMN IF NOT EXISTS spot_at_close NUMERIC(10, 2)
             """)
         logger.info("  audit column migrations OK")
+
+        # 4/29/2026 close-execution fixes: trailing PT lock-in retracement
+        # threshold (added to {bot}_config). Existing rows get NULL, scanner
+        # falls back to BotConfig default 0.05 ($0.05 retracement).
+        for bot in ['flame', 'spark', 'inferno']:
+            cursor.execute(f"""
+                ALTER TABLE {bot}_config
+                ADD COLUMN IF NOT EXISTS trailing_retrace_dollars NUMERIC(5, 4)
+            """)
+        logger.info("  trailing_retrace_dollars migration OK")
 
     logger.info("All tables created successfully.")
 
