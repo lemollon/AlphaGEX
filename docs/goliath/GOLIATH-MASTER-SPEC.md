@@ -156,4 +156,68 @@ GEX data comes from the *underlying*, not the LETF, because dealer hedging happe
 
 ---
 
-<!-- COMMIT 1 ENDS HERE — sections 4-13 appended in subsequent commits -->
+## 4. Position Management — 8 Exit Triggers
+
+**[RECOVERED]** Profit targets and stops, all mechanical:
+
+| # | Trigger | Action |
+|---|---------|--------|
+| 1 | Long call 3× of cost | Close call leg, hold put spread to expiry |
+| 2 | Long call 5× of cost | Close entire position |
+| 3 | Put spread at 50% of max profit | Close put spread, hold call |
+| 4 | Total loss > 80% of defined max | Close everything |
+| 5 | Short strike breached + 3 DTE | Close everything |
+| 6 | Material news mid-trade | Close everything (manual flag for v0.2; not auto-detected) |
+| 7 | Thursday 3:00 PM ET | Mandatory close, regardless of P&L |
+| 8 | Underlying GEX flip occurred mid-trade | Re-evaluate; close if regime now adverse |
+
+**[RECOVERED]**
+
+- Mandatory close has hard cutoff — cannot be overridden
+- **No rolling allowed in v0.2.** If a trade doesn't work, close it. Rolling is how every short-vol strategy dies.
+- Position state machine: `OPEN → MANAGING → CLOSING → CLOSED`
+- Each exit reason logged distinctly for post-hoc analysis
+
+---
+
+## 5. Position Sizing — Two-Level Caps
+
+**[RECOVERED]** Account assumed at $5,000 starting capital.
+
+| Cap | Value | Notes |
+|-----|-------|-------|
+| Per-trade risk | 1.5% = $75 | Max defined loss per single trade |
+| Per-instance allocation (MSTU/TSLL/NVDL) | $200 each | Higher-IV LETFs |
+| Per-instance allocation (CONL/AMDL) | $150 each | Lower-volume LETFs |
+| Platform total cap | $750 (15%) | Sum across all 5 instances |
+| Max concurrent positions | 3 | Across the entire platform |
+| Hard cap per trade | 2 contracts | Even if math allows more |
+
+**[RECOVERED]** Sizing algorithm: `min(by_per_trade_risk, by_instance_remaining, by_platform_remaining, 2_hard_cap)`. Returns 0 contracts if no allocation room → skip trade.
+
+---
+
+## 6. Kill Switches
+
+**[RECOVERED]** Per-instance triggers (kills only that instance):
+
+- **I-K1:** Instance drawdown > 30% of allocation
+- **I-K2:** 5 consecutive losses on the instance
+- **I-K3:** 20 trades without an upside hit (≥ +$50)
+
+**[RECOVERED]** Platform-level triggers (kills everything):
+
+- **P-K1:** Platform drawdown > 15% of GOLIATH allocation
+- **P-K2:** Single-trade loss > 1.5× defined max
+- **P-K3:** VIX > 35 sustained 3+ days
+- **P-K4:** Trading Volatility API down > 24 hours
+
+**[RECOVERED]** Required behaviors:
+
+- Kill state persisted across process restarts
+- Manual override requires explicit Leron action — no automatic recovery
+- All kill events logged with reason and snapshot data
+
+---
+
+<!-- COMMIT 2 ENDS HERE — sections 7-13 appended in subsequent commits -->
