@@ -63,14 +63,14 @@ export default function EquityChart({
   period?: Period
   onPeriodChange?: (p: Period) => void
   liveUnrealizedPnl?: number
-  /** Commit M: when bot === 'spark' AND any curve point carries
-   * hypothetical_equity, render a toggleable second line showing the
-   * "if-we-held-to-2:59-PM" cumulative. Other bots ignore this entirely. */
+  /** When any curve point carries hypothetical_equity, render a
+   * toggleable second line showing the "if-we-held-to-2:59-PM"
+   * cumulative. Available for all three bots. */
   bot?: string
 }) {
   const [activePeriod, setActivePeriod] = useState<Period>(period || 'intraday')
   const [showHypo, setShowHypo] = useState(true)
-  const hasHypo = bot === 'spark' && data.some((d) => d.hypothetical_equity != null)
+  const hasHypo = data.some((d) => d.hypothetical_equity != null)
 
   const handlePeriod = (p: Period) => {
     setActivePeriod(p)

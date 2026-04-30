@@ -1,19 +1,13 @@
 'use client'
 
 /**
- * LatestBriefCard — small card rendered below the Equity Curve on /spark
- * showing the most recent market-risk brief. SPARK-only; the card is
- * rendered conditionally from BotDashboard only when bot === 'spark'.
+ * LatestBriefCard — small card rendered below the Equity Curve showing the
+ * most recent market-risk brief. Bot-aware so each bot dashboard reads its
+ * own {bot}_market_briefs table.
  *
  * Controls:
- *   - "Regenerate" button → POST /api/spark/briefs/generate?type=intraday
- *     (costs ~$0.03 on Claude; wrap in confirm to avoid accidental spam)
- *   - "Dry-run" button → GET equivalent, shows the inputs-to-be-sent
- *     without paying for a Claude call
- *
- * In Q3 this card gets glossary tooltips + a full Briefs tab. For Q1 it
- * just displays the latest brief's summary, risk score, timestamp, and
- * factors list.
+ *   - "Regenerate" button → POST /api/{bot}/briefs/generate?type=intraday
+ *     (costs ~$0.03 on Claude; wrapped in a confirm to avoid spam)
  */
 import { useState } from 'react'
 import useSWR from 'swr'
@@ -67,9 +61,9 @@ function briefTypeLabel(t: string): string {
 
 /** Strip markdown emphasis so older briefs stored with `**bold**` render as
  * plain text. New briefs are stripped server-side, but historical rows in
- * spark_market_briefs may still contain raw markdown — including unbalanced
- * patterns like `**Title*` that paired-only regex misses, so we scrub all
- * asterisks unconditionally. */
+ * the {bot}_market_briefs tables may still contain raw markdown — including
+ * unbalanced patterns like `**Title*` that paired-only regex misses, so we
+ * scrub all asterisks unconditionally. */
 function stripMarkdown(s: string | null | undefined): string {
   if (!s) return ''
   return s
@@ -81,9 +75,9 @@ function stripMarkdown(s: string | null | undefined): string {
     .trim()
 }
 
-export default function LatestBriefCard() {
+export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inferno' }) {
   const { data, error, isLoading, mutate } = useSWR<{ brief: Brief | null }>(
-    '/api/spark/briefs/latest',
+    `/api/${bot}/briefs/latest`,
     fetcher,
     { refreshInterval: BRIEF_REFRESH_MS },
   )
@@ -95,7 +89,7 @@ export default function LatestBriefCard() {
     setGenerating(true)
     setGenError(null)
     try {
-      const resp = await fetch('/api/spark/briefs/generate?type=intraday', { method: 'POST' })
+      const resp = await fetch(`/api/${bot}/briefs/generate?type=intraday`, { method: 'POST' })
       const json = await resp.json()
       if (!resp.ok) {
         setGenError(json.error || `HTTP ${resp.status}`)
@@ -133,7 +127,7 @@ export default function LatestBriefCard() {
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-hidden">
       <div className="px-4 py-3 border-b border-forge-border/50 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          <h3 className="text-sm font-medium text-gray-300">SPARK Market-Risk Brief</h3>
+          <h3 className="text-sm font-medium text-gray-300">{bot.toUpperCase()} Market-Risk Brief</h3>
           {brief && (
             <>
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono border ${riskScoreColor(brief.risk_score)}`}>
@@ -153,7 +147,7 @@ export default function LatestBriefCard() {
             onClick={handleGenerate}
             disabled={generating}
             className="text-[11px] font-medium px-2.5 py-1 rounded-md border border-blue-500/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title="POST /api/spark/briefs/generate?type=intraday (calls Claude, ~$0.03)"
+            title={`POST /api/${bot}/briefs/generate?type=intraday (calls Claude, ~$0.03)`}
           >
             {generating ? 'Generating…' : 'Regenerate'}
           </button>

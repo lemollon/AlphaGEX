@@ -83,8 +83,9 @@ const TAB_LABEL_OVERRIDES: Record<string, Partial<Record<Tab, string>>> = {
   flame: { 'IC Chart': 'Spread Chart' },
 }
 
-/** Tabs that only appear on SPARK (1DTE-specific features) */
-const SPARK_ONLY_TABS = new Set<Tab>(['Market Pulse'])
+/** Reserved for future per-bot tab gating. Empty for now — Market Pulse
+ *  was originally SPARK-only and is now available for all three bots. */
+const SPARK_ONLY_TABS = new Set<Tab>()
 
 /**
  * Bots gated by PDT. Empty for now: SPARK trades on a > $25K production
@@ -521,8 +522,8 @@ export default function BotDashboard({
                 onPeriodChange={onPeriodChange}
                 bot={bot}
               />
-              {/* Q1: SPARK-only market-risk brief card below the curve */}
-              {bot === 'spark' && <LatestBriefCard />}
+              {/* Market-Risk Brief card below the curve, for all three bots */}
+              <LatestBriefCard bot={bot} />
             </div>
           </ComponentErrorBoundary>
         )}
@@ -606,9 +607,9 @@ export default function BotDashboard({
                   <ReconcileTab data={reconData} apiUrl={withPerson(`/api/${bot}/reconcile`)} />
                 </ComponentErrorBoundary>
         )}
-        {tab === 'Market Pulse' && bot === 'spark' && (
+        {tab === 'Market Pulse' && (
           <ComponentErrorBoundary fallback="Market Pulse error">
-            <MarketPulseTab />
+            <MarketPulseTab bot={bot} />
           </ComponentErrorBoundary>
         )}
       </div>

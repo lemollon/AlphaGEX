@@ -450,21 +450,53 @@ async function ensureTables(): Promise<void> {
       } catch { /* column already exists or table doesn't exist yet */ }
     }
 
-    // SPARK-only: hypothetical "what if we had held to 2:59 PM" P&L tracking.
-    // Three columns on spark_positions so historical analysis can compare the
-    // bot's actual PT-tier exit vs the late-day-hold counterfactual. NULL is
-    // expected for any trade older than Tradier's ~40-day option timesales
-    // window. Added to SPARK only because FLAME (2DTE) and INFERNO (0DTE) have
-    // different exit models — the comparison is only meaningful for the
-    // same-day-exit 1DTE bot.
-    for (const col of [
-      'hypothetical_eod_pnl NUMERIC(12,2)',
-      'hypothetical_eod_spot NUMERIC(10,4)',
-      'hypothetical_eod_computed_at TIMESTAMPTZ',
-    ]) {
+    // Hypothetical "what if we had held to 2:59 PM" P&L tracking. Three
+    // columns on each bot's positions table so historical analysis can
+    // compare the bot's actual PT-tier exit vs the late-day-hold
+    // counterfactual. NULL is expected for any trade older than Tradier's
+    // ~40-day option timesales window. Originally SPARK-only; extended to
+    // FLAME and INFERNO so the same Hypo column / dual equity line ships
+    // for all three bots.
+    for (const bot of ['flame', 'spark', 'inferno']) {
+      for (const col of [
+        'hypothetical_eod_pnl NUMERIC(12,2)',
+        'hypothetical_eod_spot NUMERIC(10,4)',
+        'hypothetical_eod_computed_at TIMESTAMPTZ',
+      ]) {
+        try {
+          await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
+        } catch { /* column already exists or table doesn't exist yet */ }
+      }
+    }
+
+    // Per-bot market_briefs tables. Originally `spark_market_briefs`;
+    // FLAME and INFERNO get their own tables so each bot's Market-Risk
+    // Brief card has somewhere to land. Schema mirrors spark_market_briefs.
+    for (const bot of ['flame', 'inferno']) {
       try {
-        await client.query(`ALTER TABLE spark_positions ADD COLUMN IF NOT EXISTS ${col}`)
-      } catch { /* column already exists or table doesn't exist yet */ }
+        await client.query(`
+          CREATE TABLE IF NOT EXISTS ${bot}_market_briefs (
+            id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            brief_date DATE NOT NULL,
+            brief_time TIMESTAMPTZ DEFAULT NOW(),
+            brief_type TEXT NOT NULL,
+            risk_score INT,
+            summary TEXT,
+            factors_json JSONB,
+            raw_inputs_json JSONB,
+            spy_price NUMERIC(10,4),
+            vix NUMERIC(8,3),
+            vix3m NUMERIC(8,3),
+            term_structure NUMERIC(8,4),
+            model TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+          )
+        `)
+        await client.query(
+          `CREATE INDEX IF NOT EXISTS idx_${bot}_market_briefs_date
+           ON ${bot}_market_briefs(brief_date DESC, brief_time DESC)`,
+        )
+      } catch { /* table already exists or some other transient — caller logs */ }
     }
 
     // Add missing columns to ironforge_accounts (needed for production trading)

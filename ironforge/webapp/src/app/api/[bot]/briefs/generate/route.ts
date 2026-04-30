@@ -1,19 +1,15 @@
 /**
- * Manual brief trigger (Q1). SPARK-only.
+ * Manual brief trigger.
  *
- *   GET  /api/spark/briefs/generate?type=morning|intraday|eod_debrief
+ *   GET  /api/{bot}/briefs/generate?type=morning|intraday|eod_debrief
  *     Dry-run preview: gathers inputs, builds the prompt, returns what
  *     would be sent to Claude (and the pending parse format). Does NOT
- *     call the API and does NOT store anything. Free — useful for
- *     verifying input gathering + prompt rendering.
+ *     call the API and does NOT store anything.
  *
- *   POST /api/spark/briefs/generate?type=morning|intraday|eod_debrief
+ *   POST /api/{bot}/briefs/generate?type=morning|intraday|eod_debrief
  *     Real run: calls Claude with the gathered inputs, parses the
- *     response, stores into spark_market_briefs, returns the brief.
+ *     response, stores into {bot}_market_briefs, returns the brief.
  *     Costs ~$0.02-0.05 per call depending on prompt size.
- *
- * Scheduler integration (Q2, not yet) will call generateBrief()
- * directly from scanner.ts — this route is for manual ops use.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { validateBot } from '@/lib/db'
@@ -32,15 +28,13 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') {
-    return NextResponse.json({ error: 'SPARK-only — briefs are 1DTE-specific.' }, { status: 400 })
-  }
   const briefType = parseBriefType(req.nextUrl.searchParams.get('type')) ?? 'intraday'
 
   try {
-    const inputs = await gatherInputs(briefType)
+    const inputs = await gatherInputs(bot, briefType)
     return NextResponse.json({
       dry_run: true,
+      bot,
       brief_type: briefType,
       inputs,
       note: 'POST to this same URL to actually call Claude and store the brief.',
@@ -57,19 +51,17 @@ export async function POST(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') {
-    return NextResponse.json({ error: 'SPARK-only.' }, { status: 400 })
-  }
   const briefType = parseBriefType(req.nextUrl.searchParams.get('type')) ?? 'intraday'
 
   try {
-    const result = await generateBrief(briefType)
+    const result = await generateBrief(bot, briefType)
     return NextResponse.json({
       id: result.id,
+      bot,
       brief_type: briefType,
       model: result.model,
       brief: result.brief,
-      note: 'Stored in spark_market_briefs. View via GET /api/spark/briefs or /api/spark/briefs/latest.',
+      note: `Stored in ${bot}_market_briefs. View via GET /api/${bot}/briefs or /api/${bot}/briefs/latest.`,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

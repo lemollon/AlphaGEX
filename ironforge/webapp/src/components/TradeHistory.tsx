@@ -17,9 +17,9 @@ interface Trade {
   close_time: string
   // Tradier sandbox order IDs (FLAME only)
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
-  // SPARK-only: counterfactual P&L if held to 2:59 PM CT instead of exiting
-  // via PT tier. `undefined` on FLAME/INFERNO; `null` on SPARK trades that
-  // haven't been computed yet (e.g. older than Tradier's 40-day window).
+  // Counterfactual P&L if held to 2:59 PM CT instead of exiting via PT
+  // tier. `null` for trades that haven't been computed yet (e.g. older
+  // than Tradier's 40-day window).
   hypothetical_eod_pnl?: number | null
   hypothetical_eod_computed_at?: string | null
 }
@@ -45,10 +45,11 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
     )
   }
 
-  // SPARK-only "Hypo @ 2:59" column. We surface it whenever we have at
-  // least one trade where the field is defined (i.e. bot === 'spark') so
-  // FLAME and INFERNO get exactly the original 7-column table.
-  const showHypo = bot === 'spark' && trades.some((t) => t.hypothetical_eod_pnl !== undefined)
+  // "Hypo @ 2:59" column. Available for all three bots — surface it
+  // whenever the API returned the field for at least one trade. The
+  // hypothetical_eod_pnl backfill only covers Tradier's ~40-day window;
+  // older rows stay null and render as em-dash.
+  const showHypo = trades.some((t) => t.hypothetical_eod_pnl !== undefined)
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
@@ -62,7 +63,7 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             <th className="text-right p-3">Close $</th>
             <th className="text-right p-3">P&L</th>
             {showHypo && (
-              <th className="text-right p-3" title="Counterfactual: P&L if SPARK had held to 2:59 PM CT instead of exiting via PT tier">
+              <th className="text-right p-3" title="Counterfactual: P&L if the bot had held to 2:59 PM CT instead of exiting via PT tier">
                 Hypo @ 2:59
               </th>
             )}
