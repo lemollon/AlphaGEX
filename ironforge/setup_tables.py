@@ -385,6 +385,25 @@ def setup_all_tables():
             """)
         logger.info("  trailing PT state migration OK")
 
+        # Hypothetical 2:59 PM EOD P&L tracking on every bot's positions table.
+        # Lets the dashboard compare actual PT-tier exits against the late-day
+        # hold counterfactual. NULL for trades outside Tradier's ~40-day option
+        # timesales window.
+        for bot in ['flame', 'spark', 'inferno']:
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS hypothetical_eod_pnl NUMERIC(12, 2)
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS hypothetical_eod_spot NUMERIC(10, 4)
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS hypothetical_eod_computed_at TIMESTAMPTZ
+            """)
+        logger.info("  hypothetical_eod_pnl migration OK")
+
     logger.info("All tables created successfully.")
 
 

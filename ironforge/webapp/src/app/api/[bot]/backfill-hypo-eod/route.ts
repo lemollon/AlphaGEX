@@ -1,6 +1,7 @@
 /**
- * Backfill the SPARK-only `hypothetical_eod_pnl` column for closed trades
- * within Tradier's option timesales window (~40 days).
+ * Backfill the `hypothetical_eod_pnl` column for closed trades within
+ * Tradier's option timesales window (~40 days). Supported on all three bots
+ * (FLAME, SPARK, INFERNO).
  *
  * Why a separate endpoint:
  *   The scanner's daily auto-run only covers positions closed TODAY. For
@@ -13,24 +14,19 @@
  *   retrying them. The `reason: 'leg_quotes_missing_at_2_59'` field in
  *   the response tells the operator which trades were too old.
  *
- * GET  /api/spark/backfill-hypo-eod
+ * GET  /api/{bot}/backfill-hypo-eod
  *   Dry-run: lists candidates and which ones look recoverable. Safe.
  *
- * POST /api/spark/backfill-hypo-eod?confirm=true
+ * POST /api/{bot}/backfill-hypo-eod?confirm=true
  *   Applies. Updates the row + writes a HYPO_EOD_BACKFILL audit log.
  *   Skips rows that already have a non-null hypothetical_eod_pnl OR a
  *   non-null hypothetical_eod_computed_at (to avoid retrying old data).
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, num, int, validateBot } from '@/lib/db'
+import { dbQuery, dbExecute, num, int, validateBot, botTable, dteMode } from '@/lib/db'
 import { computeHypoEodFor, ctDateString } from '@/lib/hypo-eod'
 
 export const dynamic = 'force-dynamic'
-
-const SPARK_ONLY_ERR = NextResponse.json(
-  { error: 'This endpoint is SPARK-only — the hypothetical 2:59 PM exit comparison is only meaningful for the 1DTE same-day bot.' },
-  { status: 400 },
-)
 
 interface CandidateRow {
   position_id: string
@@ -46,13 +42,13 @@ interface CandidateRow {
   close_date: string  // CT calendar date
 }
 
-async function gatherCandidates(): Promise<CandidateRow[]> {
+async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
   const rows = await dbQuery(
     `SELECT position_id, ticker, expiration,
             put_short_strike, put_long_strike,
             call_short_strike, call_long_strike,
             contracts, total_credit, close_time
-     FROM spark_positions
+     FROM ${botTable(bot, 'positions')}
      WHERE status IN ('closed', 'expired')
        AND realized_pnl IS NOT NULL
        AND hypothetical_eod_pnl IS NULL
@@ -87,10 +83,9 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') return SPARK_ONLY_ERR
 
   try {
-    const candidates = await gatherCandidates()
+    const candidates = await gatherCandidates(bot)
     return NextResponse.json({
       bot,
       dry_run: true,
@@ -102,7 +97,7 @@ export async function GET(
         credit: c.total_credit,
       })),
       instructions: candidates.length > 0
-        ? `POST /api/spark/backfill-hypo-eod?confirm=true to compute & store.`
+        ? `POST /api/${bot}/backfill-hypo-eod?confirm=true to compute & store.`
         : 'Nothing to backfill (or all candidates are outside Tradier 40-day window).',
     })
   } catch (err: unknown) {
@@ -117,7 +112,6 @@ export async function POST(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') return SPARK_ONLY_ERR
 
   if (req.nextUrl.searchParams.get('confirm') !== 'true') {
     return NextResponse.json(
@@ -127,7 +121,7 @@ export async function POST(
   }
 
   try {
-    const candidates = await gatherCandidates()
+    const candidates = await gatherCandidates(bot)
     let computed = 0
     let skipped = 0
     const failures: Array<{ position_id: string; reason?: string }> = []
@@ -150,7 +144,7 @@ export async function POST(
       // hypothetical_eod_pnl stays NULL when Tradier didn't have leg quotes
       // (most likely cause: trade too old or option chain rolled off).
       await dbExecute(
-        `UPDATE spark_positions
+        `UPDATE ${botTable(bot, 'positions')}
          SET hypothetical_eod_pnl = $1,
              hypothetical_eod_spot = $2,
              hypothetical_eod_computed_at = NOW()
@@ -165,13 +159,13 @@ export async function POST(
     // Best-effort audit log
     try {
       await dbExecute(
-        `INSERT INTO spark_logs (level, message, details, dte_mode)
+        `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
          VALUES ($1, $2, $3, $4)`,
         [
           'HYPO_EOD_BACKFILL',
           `Backfilled ${computed}/${candidates.length} hypothetical 2:59 PM P&L rows`,
           JSON.stringify({ candidates: candidates.length, computed, skipped, failures: failures.slice(0, 10) }),
-          '1dte',
+          (dteMode(bot) || '').toLowerCase(),
         ],
       )
     } catch { /* logs table may be missing fields on cold start */ }
@@ -182,7 +176,7 @@ export async function POST(
       computed,
       skipped,
       failures,
-      note: 'Refresh /spark Trade History to see Hypo P&L column populated.',
+      note: `Refresh /${bot} Trade History to see Hypo P&L column populated.`,
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

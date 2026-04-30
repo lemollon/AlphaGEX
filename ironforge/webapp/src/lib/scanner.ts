@@ -3747,19 +3747,20 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
 /* ------------------------------------------------------------------ */
 
 /* ------------------------------------------------------------------ */
-/*  SPARK hypothetical 2:59 PM P&L (Commit L)                          */
+/*  Hypothetical 2:59 PM P&L daily compute (FLAME/SPARK/INFERNO)      */
 /* ------------------------------------------------------------------ */
 
 const _lastHypoEodDate: { [bot: string]: string } = {}
 
 /**
- * For every SPARK position closed today that doesn't yet have a hypothetical
- * 2:59 PM P&L computed, fetch the option leg quotes at 2:59 PM CT from
- * Tradier timesales and store the counterfactual P&L. Runs once per day
- * after 3:05 PM CT (the 2:59 bar is finalized + all PT/EOD exits have
- * happened, so we know the full set of "closed today" trades).
+ * For every position closed today across FLAME / SPARK / INFERNO that
+ * doesn't yet have a hypothetical 2:59 PM P&L computed, fetch the option
+ * leg quotes at 2:59 PM CT from Tradier timesales and store the
+ * counterfactual P&L. Runs once per day per bot after 3:05 PM CT (the
+ * 2:59 bar is finalized + all PT/EOD exits have happened, so we know
+ * the full set of "closed today" trades).
  */
-async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
+async function dailyHypoEodCompute(ct: Date): Promise<void> {
   // Run at/after 3:05 PM CT on weekdays only. Before 3:05 the 2:59 bar may
   // not be available yet from Tradier; weekends have no new trades.
   const dow = ct.getDay()
@@ -3768,62 +3769,65 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
   if (minsCt < 905) return // 905 = 3:05 PM
 
   const todayStr = ct.toISOString().slice(0, 10)
-  if (_lastHypoEodDate[PRODUCTION_BOT] === todayStr) return
 
-  try {
-    const rows = await query(
-      `SELECT position_id, ticker, expiration,
-              put_short_strike, put_long_strike,
-              call_short_strike, call_long_strike,
-              contracts, total_credit, close_time
-       FROM spark_positions
-       WHERE status IN ('closed', 'expired')
-         AND realized_pnl IS NOT NULL
-         AND hypothetical_eod_pnl IS NULL
-         AND hypothetical_eod_computed_at IS NULL
-         AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date`,
-    )
-    if (rows.length === 0) {
-      _lastHypoEodDate[PRODUCTION_BOT] = todayStr
-      return
-    }
+  for (const botName of ['flame', 'spark', 'inferno'] as const) {
+    if (_lastHypoEodDate[botName] === todayStr) continue
 
-    const { computeHypoEodFor, ctDateString } = await import('./hypo-eod')
-    let computed = 0
-    let skipped = 0
-    for (const r of rows) {
-      const closeTime = r.close_time instanceof Date ? r.close_time : new Date(r.close_time)
-      const expIso = r.expiration instanceof Date
-        ? r.expiration.toISOString().slice(0, 10)
-        : String(r.expiration).slice(0, 10)
-      const result = await computeHypoEodFor({
-        position_id: r.position_id,
-        ticker: r.ticker || 'SPY',
-        expiration: expIso,
-        put_short_strike: num(r.put_short_strike),
-        put_long_strike: num(r.put_long_strike),
-        call_short_strike: num(r.call_short_strike),
-        call_long_strike: num(r.call_long_strike),
-        contracts: int(r.contracts),
-        total_credit: num(r.total_credit),
-        close_date: ctDateString(closeTime),
-      })
-      await dbExecute(
-        `UPDATE spark_positions
-         SET hypothetical_eod_pnl = $1,
-             hypothetical_eod_spot = $2,
-             hypothetical_eod_computed_at = NOW()
-         WHERE position_id = $3`,
-        [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, r.position_id],
+    try {
+      const rows = await query(
+        `SELECT position_id, ticker, expiration,
+                put_short_strike, put_long_strike,
+                call_short_strike, call_long_strike,
+                contracts, total_credit, close_time
+         FROM ${botName}_positions
+         WHERE status IN ('closed', 'expired')
+           AND realized_pnl IS NOT NULL
+           AND hypothetical_eod_pnl IS NULL
+           AND hypothetical_eod_computed_at IS NULL
+           AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date`,
       )
-      if (result.computed) computed++; else skipped++
-    }
+      if (rows.length === 0) {
+        _lastHypoEodDate[botName] = todayStr
+        continue
+      }
 
-    _lastHypoEodDate[PRODUCTION_BOT] = todayStr
-    console.log(`[scanner] SPARK hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data) of ${rows.length} candidates`)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] SPARK hypo-EOD daily compute error: ${msg}`)
+      const { computeHypoEodFor, ctDateString } = await import('./hypo-eod')
+      let computed = 0
+      let skipped = 0
+      for (const r of rows) {
+        const closeTime = r.close_time instanceof Date ? r.close_time : new Date(r.close_time)
+        const expIso = r.expiration instanceof Date
+          ? r.expiration.toISOString().slice(0, 10)
+          : String(r.expiration).slice(0, 10)
+        const result = await computeHypoEodFor({
+          position_id: r.position_id,
+          ticker: r.ticker || 'SPY',
+          expiration: expIso,
+          put_short_strike: num(r.put_short_strike),
+          put_long_strike: num(r.put_long_strike),
+          call_short_strike: num(r.call_short_strike),
+          call_long_strike: num(r.call_long_strike),
+          contracts: int(r.contracts),
+          total_credit: num(r.total_credit),
+          close_date: ctDateString(closeTime),
+        })
+        await dbExecute(
+          `UPDATE ${botName}_positions
+           SET hypothetical_eod_pnl = $1,
+               hypothetical_eod_spot = $2,
+               hypothetical_eod_computed_at = NOW()
+           WHERE position_id = $3`,
+          [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, r.position_id],
+        )
+        if (result.computed) computed++; else skipped++
+      }
+
+      _lastHypoEodDate[botName] = todayStr
+      console.log(`[scanner] ${botName.toUpperCase()} hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data) of ${rows.length} candidates`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] ${botName.toUpperCase()} hypo-EOD daily compute error: ${msg}`)
+    }
   }
 }
 
@@ -4793,7 +4797,7 @@ async function runAllScans(): Promise<void> {
   // closed-today SPARK trades can have their counterfactual P&L computed
   // and stored. Idempotent — won't re-run for the same date.
   try {
-    await dailyHypoEodComputeForSpark(ct)
+    await dailyHypoEodCompute(ct)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Hypo-EOD compute failed (non-fatal): ${msg}`)

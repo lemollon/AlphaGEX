@@ -20,9 +20,9 @@ interface CurvePoint {
   pnl: number
   cumulative_pnl: number
   equity: number
-  // SPARK-only counterfactual fields (Commit M). Populated by the
-  // /api/spark/equity-curve route when the position has a computed
-  // hypothetical_eod_pnl. Hidden on FLAME/INFERNO.
+  // Counterfactual fields populated by the /api/{bot}/equity-curve route
+  // when the position has a computed hypothetical_eod_pnl. Available on
+  // FLAME / SPARK / INFERNO.
   hypothetical_pnl?: number | null
   cumulative_hypothetical_pnl?: number | null
   hypothetical_equity?: number | null
@@ -63,14 +63,14 @@ export default function EquityChart({
   period?: Period
   onPeriodChange?: (p: Period) => void
   liveUnrealizedPnl?: number
-  /** Commit M: when bot === 'spark' AND any curve point carries
-   * hypothetical_equity, render a toggleable second line showing the
-   * "if-we-held-to-2:59-PM" cumulative. Other bots ignore this entirely. */
+  /** When any curve point carries hypothetical_equity, render a toggleable
+   * second line showing the "if-we-held-to-2:59-PM" cumulative on the
+   * historical view. Available for FLAME / SPARK / INFERNO. */
   bot?: string
 }) {
   const [activePeriod, setActivePeriod] = useState<Period>(period || 'intraday')
   const [showHypo, setShowHypo] = useState(true)
-  const hasHypo = bot === 'spark' && data.some((d) => d.hypothetical_equity != null)
+  const hasHypo = data.some((d) => d.hypothetical_equity != null)
 
   const handlePeriod = (p: Period) => {
     setActivePeriod(p)
@@ -214,8 +214,9 @@ export default function EquityChart({
   }
 
   // Seed point at startingCapital so the line begins at the baseline rather
-  // than jumping to the first trade's equity. For SPARK we also seed the
-  // hypothetical line at the same baseline so both start visually aligned.
+  // than jumping to the first trade's equity. When the bot has hypothetical
+  // data we also seed the hypothetical line at the same baseline so both
+  // start visually aligned.
   const seedPoint: CurvePoint & { hypothetical_equity?: number | null } = {
     timestamp: data[0].timestamp,
     equity: startingCapital,
@@ -246,7 +247,7 @@ export default function EquityChart({
           {hasHypo && lastHypoCum != null && (
             <span
               className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
-              title="Hypothetical cumulative P&L if SPARK had held every trade to 2:59 PM CT"
+              title="Hypothetical cumulative P&L if every trade had been held to 2:59 PM CT"
             >
               Hypo: {lastHypoCum >= 0 ? '+' : ''}${lastHypoCum.toFixed(2)}
             </span>

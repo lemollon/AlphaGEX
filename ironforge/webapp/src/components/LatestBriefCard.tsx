@@ -1,9 +1,11 @@
 'use client'
 
 /**
- * LatestBriefCard — small card rendered below the Equity Curve on /spark
- * showing the most recent market-risk brief. SPARK-only; the card is
- * rendered conditionally from BotDashboard only when bot === 'spark'.
+ * LatestBriefCard — small card rendered below the Equity Curve on every
+ * bot dashboard (FLAME / SPARK / INFERNO) showing the most recent
+ * market-risk brief. The brief itself is market-wide (SPY price, VIX,
+ * VIX3M, term structure), so all three bots share the same source data
+ * via the `/api/spark/briefs/*` endpoints.
  *
  * Controls:
  *   - "Regenerate" button → POST /api/spark/briefs/generate?type=intraday
@@ -81,7 +83,7 @@ function stripMarkdown(s: string | null | undefined): string {
     .trim()
 }
 
-export default function LatestBriefCard() {
+export default function LatestBriefCard({ bot }: { bot?: 'flame' | 'spark' | 'inferno' }) {
   const { data, error, isLoading, mutate } = useSWR<{ brief: Brief | null }>(
     '/api/spark/briefs/latest',
     fetcher,
@@ -133,7 +135,7 @@ export default function LatestBriefCard() {
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-hidden">
       <div className="px-4 py-3 border-b border-forge-border/50 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
-          <h3 className="text-sm font-medium text-gray-300">SPARK Market-Risk Brief</h3>
+          <h3 className="text-sm font-medium text-gray-300">{(bot ?? 'spark').toUpperCase()} Market-Risk Brief</h3>
           {brief && (
             <>
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-mono border ${riskScoreColor(brief.risk_score)}`}>

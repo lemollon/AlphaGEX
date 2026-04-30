@@ -12,10 +12,11 @@ interface PerfData {
   worst_trade: number
   profit_factor?: number | null
   current_streak?: string | null
-  // SPARK-only: counterfactual aggregates if we'd held to 2:59 PM CT
-  // every day instead of exiting via PT tier. `matched_trades` is the
-  // count of trades where both actual AND hypothetical P&L exist
-  // (rows older than Tradier's 40-day option window won't have hypo data).
+  // Counterfactual aggregates if we'd held to 2:59 PM CT every day instead
+  // of exiting via PT tier. `matched_trades` is the count of trades where
+  // both actual AND hypothetical P&L exist (rows older than Tradier's
+  // 40-day option window won't have hypo data). Available on FLAME / SPARK
+  // / INFERNO.
   hypothetical_eod?: {
     hypo_total: number
     actual_pnl_compared: number
