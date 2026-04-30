@@ -125,7 +125,17 @@ export default function StatusCard({
     collateral_in_use: rawAccount.collateral_in_use ?? 0,
     starting_capital: rawAccount.starting_capital,
   }
-  const startingCapital = config?.starting_capital ?? (account.balance - account.cumulative_pnl)
+  // Source of truth for starting capital: the API back-computes it from
+  // (balance - realized_pnl) for live/Tradier mode and reads paper_account for
+  // paper mode. Falling back to `config?.starting_capital` first was wrong —
+  // the bot config table still has the $10,000 paper default even after the
+  // production account's real starting capital grew, so % of acct on the
+  // Realized and Today Total tiles divided by $10K instead of the actual
+  // starting capital. Total P&L's % was already correct because it uses the
+  // server-computed `account.return_pct`.
+  const startingCapital = account.starting_capital
+    ?? config?.starting_capital
+    ?? (account.balance - account.cumulative_pnl)
   const realizedPositive = account.cumulative_pnl >= 0
   // Realized as % of starting capital
   const realizedPct = startingCapital > 0
