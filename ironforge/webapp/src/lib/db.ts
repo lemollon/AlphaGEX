@@ -876,3 +876,34 @@ export async function dbExecute(sql: string, params?: any[]): Promise<number> {
     client.release()
   }
 }
+
+/**
+ * Run multiple statements inside a single PostgreSQL transaction.
+ *
+ * The callback receives a connected client; use `client.query(sql, params)` for
+ * each statement. Throwing from the callback (or any awaited statement) rolls
+ * back the entire transaction. Returning resolves and COMMITs atomically.
+ *
+ * Used for multi-row financial reconciliation where partial application would
+ * leave the ledger inconsistent (e.g. fix-mis-attributed-close updates four
+ * tables that all encode the same realized_pnl value and must move together).
+ */
+export async function withTransaction<T>(
+  fn: (client: import('pg').PoolClient) => Promise<T>,
+): Promise<T> {
+  await ensureTables()
+  const client = await getPool().connect()
+  try {
+    await client.query('BEGIN')
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK')
+    } catch { /* ignore secondary rollback errors */ }
+    throw err
+  } finally {
+    client.release()
+  }
+}
