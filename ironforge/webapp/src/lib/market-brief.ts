@@ -158,15 +158,17 @@ async function gatherMarketState(): Promise<MarketState> {
 }
 
 async function gatherPositionState(spotPrice: number | null): Promise<PositionState> {
+  // Production positions only — paper/sandbox contract counts don't represent
+  // real-money risk and were polluting the brief (e.g. brief warned about a
+  // 143-contract sandbox position when production held far less).
   const rows = await dbQuery(
     `SELECT position_id, ticker, expiration,
             put_long_strike, put_short_strike,
             call_short_strike, call_long_strike,
             contracts, total_credit, open_time, person, account_type
      FROM spark_positions
-     WHERE status = 'open' AND dte_mode = '1DTE'
-     ORDER BY open_time DESC NULLS LAST
-     LIMIT 1`,
+     WHERE status = 'open' AND dte_mode = '1DTE' AND account_type = 'production'
+     ORDER BY open_time DESC NULLS LAST`,
   )
   if (rows.length === 0) {
     return {
@@ -182,6 +184,15 @@ async function gatherPositionState(spotPrice: number | null): Promise<PositionSt
   const exp = r.expiration instanceof Date
     ? r.expiration.toISOString().slice(0, 10)
     : String(r.expiration).slice(0, 10)
+  // Aggregate contracts across all open production ICs (multiple persons /
+  // accounts can hold simultaneous production positions).
+  const totalContracts = rows.reduce((sum, row) => sum + (Number(row.contracts) || 0), 0)
+  // Credit-weighted average so the prompt sees a representative per-contract credit.
+  const totalCreditDollars = rows.reduce(
+    (sum, row) => sum + (num(row.total_credit) * (Number(row.contracts) || 0)),
+    0,
+  )
+  const avgCredit = totalContracts > 0 ? totalCreditDollars / totalContracts : num(r.total_credit)
   const pctToShortPut = (spotPrice && r.put_short_strike)
     ? Math.round(((spotPrice - num(r.put_short_strike)) / spotPrice) * 10000) / 100
     : null
@@ -196,11 +207,11 @@ async function gatherPositionState(spotPrice: number | null): Promise<PositionSt
     put_short: num(r.put_short_strike),
     call_short: num(r.call_short_strike),
     call_long: num(r.call_long_strike),
-    contracts: Number(r.contracts) || 0,
-    entry_credit: num(r.total_credit),
+    contracts: totalContracts,
+    entry_credit: avgCredit,
     open_time: r.open_time ? new Date(r.open_time).toISOString() : null,
     person: r.person ?? null,
-    account_type: r.account_type ?? 'sandbox',
+    account_type: 'production',
     pct_to_short_put: pctToShortPut,
     pct_to_short_call: pctToShortCall,
   }
@@ -212,6 +223,7 @@ async function gatherRecentTrades(): Promise<RecentTrade[]> {
      FROM spark_positions
      WHERE status IN ('closed', 'expired')
        AND dte_mode = '1DTE'
+       AND account_type = 'production'
        AND close_time >= NOW() - INTERVAL '7 days'
        AND realized_pnl IS NOT NULL
      ORDER BY close_time DESC
@@ -246,20 +258,28 @@ const SYSTEM_PROMPT = `You are a risk advisor for a beginner options trader runn
 
 Your audience is NEW to options. Assume they know what an Iron Condor is but may not know technical terms like VVIX, term structure, contango/backwardation, GEX. Whenever you use such a term, briefly define it inline in plain English.
 
+ACCOUNT SCOPE: The "OPEN IRON CONDOR" and "RECENT SPARK TRADES" sections describe the LIVE PRODUCTION (real-money) account only. Do NOT speculate about, mention, or include contract counts from paper, sandbox, or any other account. If the prompt says no open production IC, do not invent one.
+
+OUTPUT FORMATTING — STRICT:
+- Plain text only. NO markdown formatting at all.
+- Do NOT use **bold**, *italics*, _underscores_, backticks, or "---" separators.
+- Do NOT wrap titles or numbers in asterisks. Write "Term Structure Contango" not "**Term Structure Contango**".
+- Use em dashes ( — ) or plain hyphens for separators between title and detail.
+
 For each risk factor you identify:
   1. State the factor as a short title in plain English
   2. Briefly define any technical term inline (e.g. "VVIX — the vol of vol")
   3. Explain WHY it matters specifically for an Iron Condor
-  4. Tie it to the user's open position (strikes, distance to break-evens) when one exists
+  4. Tie it to the user's open production position (strikes, distance to break-evens) when one exists
 
 Your response MUST follow this exact format:
 
 RISK_SCORE: <integer 0-10>
 
 FACTORS:
-1. <short title> - <plain English detail tying it to the open IC>
-2. <short title> - <plain English detail>
-3. <short title> - <plain English detail>
+1. <short title> — <plain English detail tying it to the open production IC>
+2. <short title> — <plain English detail>
+3. <short title> — <plain English detail>
 
 SUMMARY:
 <2-4 sentence plain-English narrative>
@@ -267,7 +287,7 @@ SUMMARY:
 WATCH_NEXT_HOUR:
 <one sentence of what to watch for next hour>
 
-Keep it under 600 words total. Educate while informing.`
+Keep it under 600 words total. Educate while informing. Plain text only.`
 
 function formatInputsForPrompt(i: BriefInputs): string {
   const m = i.market_state
@@ -351,6 +371,19 @@ async function callClaude(messages: ClaudeAPIMessage[]): Promise<{ text: string;
 
 // ── Response parsing ───────────────────────────────────────────────────
 
+/** Strip markdown emphasis so it doesn't render as raw `**foo**` in the UI. */
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '$1')   // **bold**
+    .replace(/\*([^*\n]+)\*/g, '$1')      // *italic*
+    .replace(/__([^_]+)__/g, '$1')         // __bold__
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '$1') // _italic_
+    .replace(/`([^`]+)`/g, '$1')           // `code`
+    .replace(/^\s*-{3,}\s*$/gm, '')        // --- separator lines
+    .replace(/\s+-{3,}\s*$/g, '')          // trailing " ---" on a line
+    .trim()
+}
+
 export function parseResponse(raw: string): ParsedBrief {
   const scoreMatch = raw.match(/RISK_SCORE:\s*(\d+)/i)
   const risk = scoreMatch ? Math.max(0, Math.min(10, parseInt(scoreMatch[1], 10))) : null
@@ -363,19 +396,21 @@ export function parseResponse(raw: string): ParsedBrief {
       // expected: "1. Title - detail" or "- Title: detail"
       const m = ln.match(/^(?:\d+[\.\)]|-|\*)\s*([^-:]{1,80})[-:]\s*(.+)$/)
       if (m) {
-        factors.push({ title: m[1].trim(), detail: m[2].trim() })
+        factors.push({ title: stripMarkdown(m[1]), detail: stripMarkdown(m[2]) })
       } else if (factors.length > 0) {
         // continuation line — append to previous detail
-        factors[factors.length - 1].detail += ' ' + ln
+        factors[factors.length - 1].detail = stripMarkdown(
+          factors[factors.length - 1].detail + ' ' + ln,
+        )
       }
     }
   }
 
   const summaryMatch = raw.match(/SUMMARY:\s*([\s\S]*?)(?:WATCH_NEXT_HOUR:|$)/i)
-  const summary = (summaryMatch ? summaryMatch[1] : raw).trim()
+  const summary = stripMarkdown((summaryMatch ? summaryMatch[1] : raw))
 
   const watchMatch = raw.match(/WATCH_NEXT_HOUR:\s*([\s\S]*?)$/i)
-  const watch = watchMatch ? watchMatch[1].trim() : null
+  const watch = watchMatch ? stripMarkdown(watchMatch[1]) : null
 
   return {
     risk_score: risk,

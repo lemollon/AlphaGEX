@@ -65,6 +65,21 @@ function briefTypeLabel(t: string): string {
   return t
 }
 
+/** Strip markdown emphasis so older briefs stored with `**bold**` render as
+ * plain text. New briefs are stripped server-side, but historical rows in
+ * spark_market_briefs may still contain raw markdown. */
+function stripMarkdown(s: string | null | undefined): string {
+  if (!s) return ''
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s*-{3,}\s*$/gm, '')
+    .replace(/\s+-{3,}\s*$/g, '')
+    .trim()
+}
+
 export default function LatestBriefCard() {
   const { data, error, isLoading, mutate } = useSWR<{ brief: Brief | null }>(
     '/api/spark/briefs/latest',
@@ -162,7 +177,7 @@ export default function LatestBriefCard() {
           {/* Summary */}
           <div>
             <p className="text-[10px] uppercase tracking-wider text-forge-muted mb-1">Summary</p>
-            <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-line">{brief.summary}</p>
+            <p className="text-sm text-gray-200 leading-relaxed whitespace-pre-line">{stripMarkdown(brief.summary)}</p>
           </div>
 
           {/* Factors */}
@@ -172,9 +187,9 @@ export default function LatestBriefCard() {
               <ol className="space-y-2">
                 {factors.map((f, i) => (
                   <li key={i} className="text-xs text-gray-300">
-                    <span className="font-semibold text-gray-200">{i + 1}. {f.title}</span>
+                    <span className="font-semibold text-gray-200">{i + 1}. {stripMarkdown(f.title)}</span>
                     {' — '}
-                    <span className="text-gray-400">{f.detail}</span>
+                    <span className="text-gray-400">{stripMarkdown(f.detail)}</span>
                   </li>
                 ))}
               </ol>
@@ -185,7 +200,7 @@ export default function LatestBriefCard() {
           {watchNextHour && (
             <div className="rounded-md bg-amber-500/5 border border-amber-500/30 px-3 py-2">
               <p className="text-[10px] uppercase tracking-wider text-amber-400/80 mb-0.5">Watch Next Hour</p>
-              <p className="text-xs text-amber-200">{watchNextHour}</p>
+              <p className="text-xs text-amber-200">{stripMarkdown(watchNextHour)}</p>
             </div>
           )}
 
