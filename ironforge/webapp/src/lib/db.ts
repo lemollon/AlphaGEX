@@ -429,6 +429,27 @@ async function ensureTables(): Promise<void> {
       } catch { /* table may not exist yet */ }
     }
 
+    // Trailing PT lock-in retracement state (4/29/2026 close-execution fix).
+    // Once profit target fires for a position, scanner.ts records the lowest
+    // observed cost-to-close on {bot}_positions; if it later climbs back above
+    // that minimum + trailing_retrace_dollars, a marketable close is sent.
+    // setup_tables.py adds these for Python jobs, but the webapp is the only
+    // deployed backend, so the migration must also run here. Without these
+    // columns the scanner throws `column "trailing_min_cost" does not exist`
+    // every cycle and the equity snapshot writer never runs.
+    for (const bot of ['flame', 'spark', 'inferno']) {
+      for (const col of ['trailing_min_cost NUMERIC(8, 4)', 'trailing_pt_fired_at_ms BIGINT']) {
+        try {
+          await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
+        } catch { /* column already exists or table doesn't exist yet */ }
+      }
+      try {
+        await client.query(
+          `ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS trailing_retrace_dollars NUMERIC(5, 4)`,
+        )
+      } catch { /* column already exists or table doesn't exist yet */ }
+    }
+
     // SPARK-only: hypothetical "what if we had held to 2:59 PM" P&L tracking.
     // Three columns on spark_positions so historical analysis can compare the
     // bot's actual PT-tier exit vs the late-day-hold counterfactual. NULL is
