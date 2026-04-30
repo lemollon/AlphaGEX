@@ -371,16 +371,19 @@ async function callClaude(messages: ClaudeAPIMessage[]): Promise<{ text: string;
 
 // ── Response parsing ───────────────────────────────────────────────────
 
-/** Strip markdown emphasis so it doesn't render as raw `**foo**` in the UI. */
+/** Strip markdown emphasis so it doesn't render as raw `**foo**` in the UI.
+ * Scrubs asterisks unconditionally — Claude sometimes returns unbalanced
+ * markers like `**Title*` which a paired-only regex would miss. The brief
+ * body is plain English narrative, so there is no legitimate asterisk to
+ * preserve. */
 function stripMarkdown(s: string): string {
   return s
-    .replace(/\*\*([^*]+)\*\*/g, '$1')   // **bold**
-    .replace(/\*([^*\n]+)\*/g, '$1')      // *italic*
-    .replace(/__([^_]+)__/g, '$1')         // __bold__
-    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '$1') // _italic_
-    .replace(/`([^`]+)`/g, '$1')           // `code`
-    .replace(/^\s*-{3,}\s*$/gm, '')        // --- separator lines
-    .replace(/\s+-{3,}\s*$/g, '')          // trailing " ---" on a line
+    .replace(/\*+/g, '')                          // ALL asterisks (paired or stray)
+    .replace(/__([^_]+)__/g, '$1')                 // __bold__
+    .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '$1')    // _italic_ (preserve snake_case)
+    .replace(/`([^`]+)`/g, '$1')                   // `code`
+    .replace(/^\s*-{3,}\s*$/gm, '')                // --- separator lines
+    .replace(/\s+-{3,}\s*$/g, '')                  // trailing " ---" on a line
     .trim()
 }
 
