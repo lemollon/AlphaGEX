@@ -24,6 +24,7 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
+import { postFlameOpen, postFlameClose } from './discord'
 import {
   getQuote,
   getOptionExpirations,
@@ -1927,6 +1928,22 @@ async function closePosition(
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
 
+  if (bot.name === 'flame') {
+    void postFlameClose({
+      positionId,
+      putShort: putShort,
+      putLong: putLong,
+      contracts,
+      entryCredit,
+      closePrice: effectivePrice,
+      realizedPnl,
+      reason,
+      expiration,
+    }).catch((e: unknown) => {
+      console.warn(`[scanner] FLAME discord close post failed: ${e instanceof Error ? e.message : e}`)
+    })
+  }
+
   // Post-close: if same-day open+close = day trade, update PDT tracking.
   // Production and sandbox PDT are tracked SEPARATELY:
   //   - Sandbox: increments shared ironforge_pdt_config.day_trade_count (used by scanner gate)
@@ -2216,6 +2233,22 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
     `[scanner] FLAME OPENED PCS ${positionId}: ${putLong}/${putShort}P x${contracts} @ $${putCredit.toFixed(4)} ` +
     `collateral=$${collateral.toFixed(0)} (10% of $${accountBalance.toFixed(0)}) VIX=${vix.toFixed(2)}`,
   )
+
+  void postFlameOpen({
+    positionId,
+    putShort,
+    putLong,
+    contracts,
+    credit: putCredit,
+    collateral,
+    maxProfit,
+    expiration,
+    spot,
+    vix,
+    accountBalance,
+  }).catch((e: unknown) => {
+    console.warn(`[scanner] FLAME discord open post failed: ${e instanceof Error ? e.message : e}`)
+  })
 
   return `traded:${positionId}(put_credit_spread)`
 }

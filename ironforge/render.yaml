@@ -37,5 +37,7 @@ services:
         sync: false
       - key: IRONFORGE_API_URL
         sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
       - key: NODE_ENV
         value: production
