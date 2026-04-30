@@ -1,5 +1,7 @@
 /**
- * Hypothetical "exited at 2:59 PM CT" P&L helper for SPARK only.
+ * Hypothetical "exited at 2:59 PM CT" P&L helper. Used by SPARK (1DTE IC),
+ * INFERNO (0DTE IC), and FLAME (2DTE put-credit spread). PCS positions have
+ * call_short_strike = call_long_strike = 0 and use 2-leg math.
  *
  * Why this exists:
  *   SPARK is a 1DTE same-day-exit bot. It opens a position on day T and
@@ -100,35 +102,42 @@ function findBarAt259CT(
 }
 
 /**
- * Compute the 2:59 PM CT hypothetical P&L for a single SPARK position.
- * Returns the result without writing to the DB — the caller persists.
+ * Compute the 2:59 PM CT hypothetical P&L for a single position. Handles both
+ * 4-leg Iron Condors (SPARK / INFERNO) and 2-leg put-credit spreads (FLAME,
+ * which stores call_short_strike = call_long_strike = 0). Returns the result
+ * without writing to the DB — the caller persists.
  */
 export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResult> {
   if (!isConfigured()) {
     return { position_id: pos.position_id, hypothetical_eod_pnl: null, hypothetical_eod_spot: null, computed: false, reason: 'tradier_not_configured' }
   }
 
+  const isPutSpread = pos.call_short_strike === 0 && pos.call_long_strike === 0
   const occPs = buildOccSymbol(pos.ticker, pos.expiration, pos.put_short_strike, 'P')
   const occPl = buildOccSymbol(pos.ticker, pos.expiration, pos.put_long_strike, 'P')
-  const occCs = buildOccSymbol(pos.ticker, pos.expiration, pos.call_short_strike, 'C')
-  const occCl = buildOccSymbol(pos.ticker, pos.expiration, pos.call_long_strike, 'C')
 
   // Pull a generous window so we definitely cover the 14:59 bar even on
   // edge timezone days. session='all' here in case Tradier classifies the
   // late-session bar inconsistently — we filter by CT clock anyway.
-  const [psBars, plBars, csBars, clBars, spyBars] = await Promise.all([
+  const baseFetches: Array<Promise<Array<{ time: string; open: number; high: number; low: number; close: number }>>> = [
     getTimesales(occPs, 390, 'all', '1min').catch(() => []),
     getTimesales(occPl, 390, 'all', '1min').catch(() => []),
-    getTimesales(occCs, 390, 'all', '1min').catch(() => []),
-    getTimesales(occCl, 390, 'all', '1min').catch(() => []),
     getTimesales(pos.ticker, 390, 'all', '1min').catch(() => []),
-  ])
+  ]
+  const callFetches: Array<Promise<Array<{ time: string; open: number; high: number; low: number; close: number }>>> = isPutSpread
+    ? []
+    : [
+        getTimesales(buildOccSymbol(pos.ticker, pos.expiration, pos.call_short_strike, 'C'), 390, 'all', '1min').catch(() => []),
+        getTimesales(buildOccSymbol(pos.ticker, pos.expiration, pos.call_long_strike, 'C'), 390, 'all', '1min').catch(() => []),
+      ]
+  const allBars = await Promise.all([...baseFetches, ...callFetches])
+  const [psBars, plBars, spyBars, csBars, clBars] = allBars
 
   const psPx = findBarAt259CT(psBars, pos.close_date)
   const plPx = findBarAt259CT(plBars, pos.close_date)
-  const csPx = findBarAt259CT(csBars, pos.close_date)
-  const clPx = findBarAt259CT(clBars, pos.close_date)
   const spotPx = findBarAt259CT(spyBars, pos.close_date)
+  const csPx = isPutSpread ? 0 : (csBars ? findBarAt259CT(csBars, pos.close_date) : null)
+  const clPx = isPutSpread ? 0 : (clBars ? findBarAt259CT(clBars, pos.close_date) : null)
 
   if (psPx == null || plPx == null || csPx == null || clPx == null) {
     return {
@@ -141,7 +150,8 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
   }
 
   // Cost to close = buy back the shorts, sell back the longs.
-  // costToClose (per share) = (psPx + csPx) − (plPx + clPx)
+  // 4-leg IC: costToClose (per share) = (psPx + csPx) − (plPx + clPx)
+  // 2-leg PCS: csPx = clPx = 0, so costToClose = psPx − plPx
   // P&L (per share) = entry_credit − costToClose
   const costToClose = (psPx + csPx) - (plPx + clPx)
   const pnlPerShare = pos.total_credit - costToClose

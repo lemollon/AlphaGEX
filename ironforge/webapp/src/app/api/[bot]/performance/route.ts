@@ -76,37 +76,35 @@ export async function GET(
       else { break }
     }
 
-    // SPARK-only: hypothetical 2:59 PM aggregates so the dashboard can
-    // surface "Hypo Total" and "Delta (Actual − Hypo)" alongside the real
-    // totals. NULL hypothetical_eod_pnl rows (e.g. trades older than
-    // Tradier's 40-day window) are excluded from BOTH numerator AND from
-    // the matched actual_pnl_compared sum, so the delta is apples-to-apples
-    // (compares only trades where both sides exist).
+    // Hypothetical 2:59 PM aggregates so the dashboard can surface "Hypo
+    // Total" and "Delta (Actual − Hypo)" alongside the real totals. NULL
+    // hypothetical_eod_pnl rows (e.g. trades older than Tradier's 40-day
+    // window) are excluded from BOTH numerator AND from the matched
+    // actual_pnl_compared sum, so the delta is apples-to-apples (compares
+    // only trades where both sides exist).
     let hypoBlock: { hypo_total: number; actual_pnl_compared: number; delta: number; matched_trades: number } | null = null
-    if (bot === 'spark') {
-      try {
-        const hypoRows = await dbQuery(
-          `SELECT
-             COUNT(*) as matched,
-             COALESCE(SUM(hypothetical_eod_pnl), 0) as hypo_total,
-             COALESCE(SUM(realized_pnl), 0) as actual_total
-           FROM ${botTable(bot, 'positions')}
-           WHERE status IN ('closed', 'expired')
-             AND realized_pnl IS NOT NULL
-             AND hypothetical_eod_pnl IS NOT NULL
-             ${dteFilter} ${personFilter} ${accountTypeFilter}`,
-        )
-        const matched = int(hypoRows[0]?.matched)
-        const hypoTotal = num(hypoRows[0]?.hypo_total)
-        const actualMatched = num(hypoRows[0]?.actual_total)
-        hypoBlock = {
-          hypo_total: Math.round(hypoTotal * 100) / 100,
-          actual_pnl_compared: Math.round(actualMatched * 100) / 100,
-          delta: Math.round((actualMatched - hypoTotal) * 100) / 100,
-          matched_trades: matched,
-        }
-      } catch { /* hypothetical_eod_pnl column may not exist on a brand-new deploy */ }
-    }
+    try {
+      const hypoRows = await dbQuery(
+        `SELECT
+           COUNT(*) as matched,
+           COALESCE(SUM(hypothetical_eod_pnl), 0) as hypo_total,
+           COALESCE(SUM(realized_pnl), 0) as actual_total
+         FROM ${botTable(bot, 'positions')}
+         WHERE status IN ('closed', 'expired')
+           AND realized_pnl IS NOT NULL
+           AND hypothetical_eod_pnl IS NOT NULL
+           ${dteFilter} ${personFilter} ${accountTypeFilter}`,
+      )
+      const matched = int(hypoRows[0]?.matched)
+      const hypoTotal = num(hypoRows[0]?.hypo_total)
+      const actualMatched = num(hypoRows[0]?.actual_total)
+      hypoBlock = {
+        hypo_total: Math.round(hypoTotal * 100) / 100,
+        actual_pnl_compared: Math.round(actualMatched * 100) / 100,
+        delta: Math.round((actualMatched - hypoTotal) * 100) / 100,
+        matched_trades: matched,
+      }
+    } catch { /* hypothetical_eod_pnl column may not exist on a brand-new deploy */ }
 
     return NextResponse.json({
       total_trades: total,

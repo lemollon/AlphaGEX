@@ -30,14 +30,10 @@ export async function GET(
     : ''
 
   try {
-    // SPARK-only: include the counterfactual cumulative P&L so the chart
-    // can render a second line ("if we'd held to 2:59 PM every day").
-    // For other bots the columns don't exist, so we omit them from SELECT
-    // entirely to avoid querying a missing column.
-    const hypoSelect = bot === 'spark'
-      ? `, hypothetical_eod_pnl,
+    // Include the counterfactual cumulative P&L so the chart can render a
+    // second line ("if we'd held to 2:59 PM every day") on every bot.
+    const hypoSelect = `, hypothetical_eod_pnl,
            SUM(COALESCE(hypothetical_eod_pnl, 0)) OVER (ORDER BY close_time) as cumulative_hypothetical_pnl`
-      : ''
 
     const [capitalRows, curveRows, openPositions] = await Promise.all([
       dbQuery(
@@ -87,17 +83,15 @@ export async function GET(
         cumulative_pnl: cumPnl,
         equity: Math.round((startingCapital + cumPnl) * 100) / 100,
       }
-      // SPARK-only: SPARK closed-trade rows carry counterfactual fields so
-      // EquityChart can plot a second line. cumulative_hypothetical_pnl is
-      // a running sum over rows where hypothetical_eod_pnl IS NOT NULL —
-      // unmeasured rows contribute 0 so the line stays flat across gaps,
-      // visually signaling "we don't have data here."
-      if (bot === 'spark') {
-        const cumHypo = num(row.cumulative_hypothetical_pnl)
-        point.hypothetical_pnl = row.hypothetical_eod_pnl == null ? null : num(row.hypothetical_eod_pnl)
-        point.cumulative_hypothetical_pnl = Math.round(cumHypo * 100) / 100
-        point.hypothetical_equity = Math.round((startingCapital + cumHypo) * 100) / 100
-      }
+      // Closed-trade rows carry counterfactual fields so EquityChart can
+      // plot a second line. cumulative_hypothetical_pnl is a running sum
+      // over rows where hypothetical_eod_pnl IS NOT NULL — unmeasured rows
+      // contribute 0 so the line stays flat across gaps, visually signaling
+      // "we don't have data here."
+      const cumHypo = num(row.cumulative_hypothetical_pnl)
+      point.hypothetical_pnl = row.hypothetical_eod_pnl == null ? null : num(row.hypothetical_eod_pnl)
+      point.cumulative_hypothetical_pnl = Math.round(cumHypo * 100) / 100
+      point.hypothetical_equity = Math.round((startingCapital + cumHypo) * 100) / 100
       return point
     })
 
@@ -210,10 +204,10 @@ export async function GET(
         cumulative_pnl: Math.round(liveCumPnl * 100) / 100,
         equity: Math.round((startingCapital + liveCumPnl) * 100) / 100,
       }
-      // SPARK live point carries the previous hypothetical cum forward
+      // The live point carries the previous hypothetical cum forward
       // unchanged — open positions don't have a hypo number until they
       // close, so the line stays flat at its last known value.
-      if (bot === 'spark' && last && last.cumulative_hypothetical_pnl != null) {
+      if (last && last.cumulative_hypothetical_pnl != null) {
         livePoint.cumulative_hypothetical_pnl = last.cumulative_hypothetical_pnl
         livePoint.hypothetical_equity = Math.round((startingCapital + last.cumulative_hypothetical_pnl) * 100) / 100
         livePoint.hypothetical_pnl = null
