@@ -370,6 +370,21 @@ def setup_all_tables():
             """)
         logger.info("  trailing_retrace_dollars migration OK")
 
+        # Per-position trailing PT lock-in state. Persists across alphagex-api
+        # restarts so the trailing rule still fires for positions where PT
+        # already triggered before the restart. Both columns NULL until the
+        # first PT fire for that position.
+        for bot in ['flame', 'spark', 'inferno']:
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS trailing_min_cost NUMERIC(8, 4)
+            """)
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS trailing_pt_fired_at_ms BIGINT
+            """)
+        logger.info("  trailing PT state migration OK")
+
     logger.info("All tables created successfully.")
 
 
