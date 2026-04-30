@@ -107,13 +107,15 @@ interface BotConfig {
   bp_pct: number
   starting_capital: number
   min_credit: number // minimum credit per contract to open a trade
+  eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from `eod_cutoff_et` config column (parsed as ET, converted to CT). Default 1450 = 2:50 PM CT (= 3:50 PM ET).
+  trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15 },
+  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -204,6 +206,24 @@ async function loadConfigOverrides(): Promise<void> {
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
 
+      // eod_cutoff_et stored as "HH:MM" string in EASTERN time. Convert to CT HHMM.
+      // ET is always 1 hour ahead of CT (both observe DST), so subtract 1 from hours.
+      // Out-of-range values fall back to DEFAULT_CONFIG's 1450 CT (= 14:50 ET... wait, see comment below).
+      // Default 1450 CT = 15:50 ET preserves the historical hardcoded behavior pre-fix.
+      const eodEtStr = row.eod_cutoff_et
+      if (eodEtStr && typeof eodEtStr === 'string' && eodEtStr.includes(':')) {
+        const [eh, em] = eodEtStr.split(':').map(Number)
+        if (!isNaN(eh) && !isNaN(em) && eh >= 1 && eh <= 23 && em >= 0 && em < 60) {
+          const ctH = eh - 1  // ET → CT
+          merged.eod_cutoff_hhmm_ct = ctH * 100 + em
+        }
+      }
+      const trailingDb = row.trailing_retrace_dollars
+      if (trailingDb != null) {
+        const t = Number(trailingDb)
+        if (!isNaN(t) && t >= 0) merged.trailing_retrace_dollars = t
+      }
+
       // Override starting_capital from ironforge_accounts (capital_pct × real balance)
       // Only for bots with Tradier accounts (FLAME). Paper-only bots (SPARK, INFERNO)
       // use the starting_capital from their DB config table — not Tradier.
@@ -268,6 +288,18 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
     if (entryEndStr && typeof entryEndStr === 'string' && entryEndStr.includes(':')) {
       const [h, m] = entryEndStr.split(':').map(Number)
       if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
+    }
+    const eodEtStr = row.eod_cutoff_et
+    if (eodEtStr && typeof eodEtStr === 'string' && eodEtStr.includes(':')) {
+      const [eh, em] = eodEtStr.split(':').map(Number)
+      if (!isNaN(eh) && !isNaN(em) && eh >= 1 && eh <= 23 && em >= 0 && em < 60) {
+        merged.eod_cutoff_hhmm_ct = (eh - 1) * 100 + em
+      }
+    }
+    const trailingDb = row.trailing_retrace_dollars
+    if (trailingDb != null) {
+      const t = Number(trailingDb)
+      if (!isNaN(t) && t >= 0) merged.trailing_retrace_dollars = t
     }
     return merged
   } catch (err: unknown) {
@@ -371,6 +403,44 @@ async function syncPaperAccountCapital(): Promise<void> {
 const _mtmFailureCounts: Map<string, number> = new Map()
 
 /* ------------------------------------------------------------------ */
+/*  Trailing PT lock-in tracker                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * In-memory tracker for the trailing-lockin rule. Once a PT trigger has fired
+ * for a position, we record the lowest cost-to-close-last seen since. If the
+ * cost subsequently retraces by the per-bot configured threshold
+ * (`trailing_retrace_dollars`), `monitorSinglePosition` fires a marketable
+ * close to escape the position before EOD. This catches the "had a chance,
+ * walked away" pattern observed 4/29/2026 where PT fired at $0.74 but never
+ * filled and the position drifted back to $0.86 by EOD.
+ *
+ * Lifecycle:
+ *   - Seeded the first time PT fires for a pid.
+ *   - Updated each tick with the latest costToCloseLast.
+ *   - Cleared on close (PT, EOD, SL, deferred fill, broker-gone, etc.).
+ *
+ * Restart-loses-state is acceptable for 1DTE/2DTE positions — at worst we
+ * lose the trailing memory for currently-open positions until they next
+ * fire PT (which typically happens within the same scan cycle).
+ */
+const _trailingPtState: Map<string, { minCost: number; ptFiredAtMs: number }> = new Map()
+
+function _trailingMaybeSeed(pid: string, costToCloseLast: number): void {
+  if (!_trailingPtState.has(pid)) {
+    _trailingPtState.set(pid, { minCost: costToCloseLast, ptFiredAtMs: Date.now() })
+  } else {
+    const s = _trailingPtState.get(pid)!
+    if (costToCloseLast < s.minCost) s.minCost = costToCloseLast
+  }
+}
+
+function _trailingUpdateMin(pid: string, costToCloseLast: number): void {
+  const s = _trailingPtState.get(pid)
+  if (s != null && costToCloseLast < s.minCost) s.minCost = costToCloseLast
+}
+
+/* ------------------------------------------------------------------ */
 /*  Sandbox health state (Fix 8)                                       */
 /* ------------------------------------------------------------------ */
 
@@ -409,9 +479,14 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   return hhmm >= 830 && hhmm <= entryEnd
 }
 
-/** EOD cutoff at 2:50 PM CT (was 2:45, originally 3:45 PM) */
-function isAfterEodCutoff(ct: Date): boolean {
-  return ctHHMM(ct) >= 1450
+/**
+ * EOD force-close cutoff. Configurable per-bot via `{bot}_config.eod_cutoff_et`
+ * (parsed as ET, converted to CT at config-load time and stored on
+ * BotConfig.eod_cutoff_hhmm_ct). Falls back to 1450 CT (= 1550 ET) if config
+ * missing — historical default before the column was wired up.
+ */
+function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
+  return ctHHMM(ct) >= cfg(bot).eod_cutoff_hhmm_ct
 }
 
 /* ------------------------------------------------------------------ */
@@ -600,6 +675,123 @@ async function monitorSinglePosition(
   const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
   const pid = pos.position_id
 
+  // --- Trailing PT lock-in pre-check ---
+  // Only runs for positions that have already had PT fire ≥1 time
+  // (state present in _trailingPtState) AND the bot's retrace threshold > 0.
+  // Eagerly fetches MTM to update the trailing min and check the retrace
+  // threshold. If triggered, cancels any pending limit order and fires a
+  // marketable close to escape the tier before EOD.
+  //
+  // 4/29/2026 motivating case: PT fired at cost-to-close-last $0.74 but
+  // never filled; market drifted back to $0.86 over the next 36 minutes
+  // and EOD closed at the worse price. With trailing_retrace_dollars=$0.05,
+  // this rule would have triggered around $0.79, locking in ~$0.07/contract
+  // more than the EOD result.
+  if (
+    _trailingPtState.has(pid) &&
+    botCfg.trailing_retrace_dollars > 0 &&
+    isConfigured() &&
+    num(pos.call_short_strike) !== 0  // skip put-credit-only positions; trailing only applies to ICs today
+  ) {
+    try {
+      const mtmTrail = await getIcMarkToMarket(
+        ticker, expiration,
+        num(pos.put_short_strike), num(pos.put_long_strike),
+        num(pos.call_short_strike), num(pos.call_long_strike),
+        entryCredit,
+      )
+      if (mtmTrail != null && Number.isFinite(mtmTrail.cost_to_close_last)) {
+        const cclLast = mtmTrail.cost_to_close_last
+        const ccl = mtmTrail.cost_to_close
+        _trailingUpdateMin(pid, cclLast)
+        const s = _trailingPtState.get(pid)!
+        if (cclLast > s.minCost + botCfg.trailing_retrace_dollars) {
+          // Retrace threshold exceeded — escape the tier with a marketable
+          // close. Cancel any pending limit order first; if the cancel fails
+          // (likely because the order just filled), skip the marketable
+          // close and let the next cycle's pending-close re-poll capture
+          // the fill normally.
+          let cancelOk = true
+          if (bot.name === PRODUCTION_BOT && pos.sandbox_close_order_id) {
+            try {
+              const pi = JSON.parse(pos.sandbox_close_order_id)
+              const accountType2 = pos.account_type || 'sandbox'
+              const person2 = pos.person || 'User'
+              const pendingKey2 = accountType2 === 'production'
+                ? `${person2}:production`
+                : 'User:sandbox'
+              const userPending2 = pi[pendingKey2] ?? pi['User:sandbox'] ?? pi['User']
+              if (userPending2?.order_id && !userPending2.fill_price) {
+                const cancelAccts = await getLoadedSandboxAccountsAsync()
+                const cancelAcct = accountType2 === 'production'
+                  ? cancelAccts.find(a => a.name === person2 && a.type === 'production')
+                  : cancelAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? cancelAccts.find(a => a.name === 'User')
+                try {
+                  if (cancelAcct) await cancelSandboxOrder(userPending2.order_id, cancelAcct.apiKey, cancelAcct.baseUrl)
+                  else await cancelSandboxOrder(userPending2.order_id)
+                } catch (cancelErr: unknown) {
+                  cancelOk = false
+                  const msg = cancelErr instanceof Error ? cancelErr.message : String(cancelErr)
+                  console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: trailing-lockin cancel failed (likely already filled): ${msg}`)
+                }
+                if (cancelOk) {
+                  await query(
+                    `UPDATE ${botTable(bot.name, 'positions')}
+                     SET sandbox_close_order_id = NULL, updated_at = NOW()
+                     WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+                    [pid, bot.dte],
+                  )
+                }
+              }
+            } catch { /* JSON parse failed — proceed without cancel */ }
+          }
+
+          if (cancelOk) {
+            const marketablePrice = Math.round((ccl + 0.01) * 10000) / 10000
+            try {
+              await dbExecute(
+                `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [
+                  'CLOSE_TRIGGER',
+                  `TRAILING_LOCKIN_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
+                  `cost_to_close_last=${cclLast.toFixed(4)} min_seen=${s.minCost.toFixed(4)} ` +
+                  `retrace=$${(cclLast - s.minCost).toFixed(4)} threshold=$${botCfg.trailing_retrace_dollars.toFixed(4)} ` +
+                  `marketable_limit=${marketablePrice.toFixed(4)} entry_credit=${entryCredit.toFixed(4)} ` +
+                  `contracts=${contracts}`,
+                  JSON.stringify({
+                    trigger: 'trailing_lockin',
+                    position_id: pid,
+                    cost_to_close_last: cclLast,
+                    cost_to_close_mid: mtmTrail.cost_to_close_mid,
+                    cost_to_close: ccl,
+                    min_cost_seen: s.minCost,
+                    retrace_dollars: cclLast - s.minCost,
+                    retrace_threshold: botCfg.trailing_retrace_dollars,
+                    marketable_limit: marketablePrice,
+                    pt_first_fired_at_ms: s.ptFiredAtMs,
+                    entry_credit: entryCredit,
+                    contracts,
+                  }),
+                  bot.dte,
+                  pos.person ?? null,
+                ],
+              )
+            } catch { /* log failure must not block close */ }
+            await closePosition(bot, pid, ticker, expiration,
+              num(pos.put_short_strike), num(pos.put_long_strike),
+              num(pos.call_short_strike), num(pos.call_long_strike),
+              contracts, entryCredit, collateral, 'trailing_lockin', cclLast,
+              'debit', marketablePrice)
+            _mtmFailureCounts.delete(pid)
+            _trailingPtState.delete(pid)
+            return { status: `closed:trailing_lockin@${cclLast.toFixed(4)}`, unrealizedPnl: 0 }
+          }
+        }
+      }
+    } catch { /* trailing check is best-effort; failures fall through to normal flow */ }
+  }
+
   // --- FLAME pending close re-poll ---
   // If sandbox_close_order_id is set but status is still 'open', a previous close
   // fired on Tradier but the fill price wasn't available. Re-poll for the fill
@@ -631,7 +823,7 @@ async function monitorSinglePosition(
       // If past EOD cutoff, cancel the pending limit order and fall through
       // to the normal EOD market close logic below. A pending limit order
       // should never block the EOD safety close.
-      if (isAfterEodCutoff(ct)) {
+      if (isAfterEodCutoff(ct, bot)) {
         console.log(
           `[scanner] ${bot.name.toUpperCase()} ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
           `canceling limit order and falling through to EOD market close`,
@@ -672,9 +864,22 @@ async function monitorSinglePosition(
           : (typeof pendingInfo._limit_price === 'number' ? pendingInfo._limit_price : null)
         const placedAtMs = typeof pendingInfo._placed_at_ms === 'number' ? pendingInfo._placed_at_ms : null
         const storedMinCost = typeof pendingInfo._min_cost_seen === 'number' ? pendingInfo._min_cost_seen : null
+        const placedTier = typeof pendingInfo._tier === 'string' ? pendingInfo._tier : null
 
         // Compute the current tier target for THIS position (uses bot's
         // siloed pt_pct — production bot config for production positions).
+        //
+        // Tier-advance fires only when the SLIDING TIER NAME has actually
+        // changed since placement (e.g., MORNING → MIDDAY, MIDDAY → AFTERNOON).
+        // The earlier purely-numeric check (`currentTierTarget > existingLimit`)
+        // fired every cycle when the limit was placed below the tier floor —
+        // the common case where the PT evaluator captured extra profit by
+        // bidding at `last` (which is < floor when market is favorable). That
+        // created a 60-second cancel/re-place loop where the fresh PT evaluator
+        // would re-place at the SAME price (`min(floor, last) = last`), blocking
+        // the slippage guard from ever aging long enough to relax the price.
+        // Observed 4/29/2026: 5+ cycles of place-at-$0.74 / cancel / replace-at-$0.74
+        // / cancel within AFTERNOON tier, with no progress.
         let tierAdvance = false
         let currentTierLabel = ''
         let currentTierTarget = 0
@@ -682,8 +887,7 @@ async function monitorSinglePosition(
           const [ptFraction, ptTier] = getSlidingProfitTarget(ct, botCfg.pt_pct, bot.name)
           currentTierLabel = ptTier
           currentTierTarget = Math.round(entryCredit * (1 - ptFraction) * 10000) / 10000
-          const epsilon = 0.001
-          if (existingLimitPrice != null && currentTierTarget > existingLimitPrice + epsilon) {
+          if (placedTier != null && currentTierLabel !== placedTier) {
             tierAdvance = true
           }
         } catch { /* helper failed — leave tierAdvance=false, fall through to re-poll */ }
@@ -736,7 +940,11 @@ async function monitorSinglePosition(
           // stuck — reprice aggressively near the mid. We still respect the
           // current tier target as a minimum so we never fill below the
           // guaranteed return.
-          const SLIPPAGE_GUARD_MIN_AGE_MS = 10 * 60 * 1000  // 10 minutes
+          // Was 10 min — reduced to 3 min after 4/29/2026 incident where the
+          // chase loop never actually escalated (tier-advance reset the clock
+          // every 60s; even after that bug was fixed, 10 min is too long for
+          // 1DTE close decisions where the EOD cushion is finite).
+          const SLIPPAGE_GUARD_MIN_AGE_MS = 3 * 60 * 1000
           const ageMs = placedAtMs != null ? Date.now() - placedAtMs : 0
           // Slippage guard needs an MTM read. Fetch it once here — if it
           // fails we skip the guard and fall through to the normal re-poll.
@@ -917,6 +1125,7 @@ async function monitorSinglePosition(
                   console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
                 _mtmFailureCounts.delete(pid)
+                _trailingPtState.delete(pid)
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
               } else {
                 // Re-poll returned no fill — check if broker position even exists anymore.
@@ -1102,6 +1311,7 @@ async function monitorSinglePosition(
                     )
                   }
                   _mtmFailureCounts.delete(pid)
+                  _trailingPtState.delete(pid)
                   return { status: `closed:broker_gone_${recoverySource}@${effectiveClosePrice.toFixed(4)}`, unrealizedPnl: 0 }
                 }
 
@@ -1131,7 +1341,8 @@ async function monitorSinglePosition(
   const isStaleHoldover = openDate !== null && openDate < todayStr
 
   // EOD cutoff or stale holdover → force close
-  if (isAfterEodCutoff(ct) || isStaleHoldover) {
+  const isEod = isAfterEodCutoff(ct, bot)
+  if (isEod || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
     // Commit R1: DB-level close-trigger log BEFORE we place any orders.
     // Wrapped in try/catch so a log failure can never block the close.
@@ -1143,14 +1354,15 @@ async function monitorSinglePosition(
           'CLOSE_TRIGGER',
           `${reason.toUpperCase()}_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
           `entry_credit=${entryCredit.toFixed(4)} contracts=${contracts} ` +
-          `is_stale=${isStaleHoldover} is_eod=${isAfterEodCutoff(ct)}`,
+          `is_stale=${isStaleHoldover} is_eod=${isEod} eod_cutoff_ct=${botCfg.eod_cutoff_hhmm_ct}`,
           JSON.stringify({
             trigger: reason,
             position_id: pid,
             entry_credit: entryCredit,
             contracts,
             is_stale_holdover: isStaleHoldover,
-            is_after_eod: isAfterEodCutoff(ct),
+            is_after_eod: isEod,
+            eod_cutoff_hhmm_ct: botCfg.eod_cutoff_hhmm_ct,
             open_date: openDate,
           }),
           bot.dte,
@@ -1172,6 +1384,7 @@ async function monitorSinglePosition(
         contracts, entryCredit, collateral, reason, entryCredit)
     }
     _mtmFailureCounts.delete(pid) // Clear on close
+    _trailingPtState.delete(pid)
     return { status: `closed:${reason}`, unrealizedPnl: 0 }
   }
 
@@ -1262,6 +1475,7 @@ async function monitorSinglePosition(
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, 'data_feed_failure', entryCredit)
       _mtmFailureCounts.delete(pid)
+      _trailingPtState.delete(pid)
       return { status: `closed:data_feed_failure(${failCount})`, unrealizedPnl: 0 }
     }
 
@@ -1316,6 +1530,10 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
+    // Seed/refresh the trailing-lockin tracker. Once PT has fired we want the
+    // pre-check at the top of monitorSinglePosition to catch retracements on
+    // future cycles even if this close order doesn't fill immediately.
+    _trailingMaybeSeed(pid, costToCloseLast)
     // Initial limit = costToCloseLast (favorable current market). A buy limit
     // at this price fills only at this price or LOWER (= more profit). The
     // slippage guard will relax toward profitTargetPrice if no fill, never above.
@@ -1361,6 +1579,7 @@ async function monitorSinglePosition(
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
+    _trailingPtState.delete(pid)
     return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
   }
 
@@ -4084,7 +4303,7 @@ async function scanBot(bot: BotDef): Promise<void> {
     // after EOD cutoff, not just when a position was just closed.
     // This catches stranded Tradier positions when the sandbox close fails
     // during the EOD close (e.g., orders rejected near market close).
-    if (bot.name === PRODUCTION_BOT && isAfterEodCutoff(ct)) {
+    if (bot.name === PRODUCTION_BOT && isAfterEodCutoff(ct, bot)) {
       try {
         await postEodSandboxVerify(ct)
       } catch (err: unknown) {
@@ -4553,6 +4772,9 @@ export const _testing = {
   MAX_SCAN_DURATION_MS,
   _botConfig,
   _mtmFailureCounts,
+  _trailingPtState,
+  _trailingMaybeSeed,
+  _trailingUpdateMin,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

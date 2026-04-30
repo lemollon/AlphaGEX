@@ -110,25 +110,25 @@ describe('Market Hours', () => {
   })
 
   describe('isAfterEodCutoff (Fix 6)', () => {
+    // Default eod_cutoff_hhmm_ct = 1450 (= 14:50 CT, the historical hardcoded
+    // value). After the eod_cutoff_et fix the cutoff is per-bot from config.
+    const flame = BOTS[0]
     it('returns true at 14:50 CT and after', () => {
-      expect(isAfterEodCutoff(makeCT(14, 50))).toBe(true)
-      expect(isAfterEodCutoff(makeCT(15, 0))).toBe(true)
-      expect(isAfterEodCutoff(makeCT(15, 45))).toBe(true)
+      expect(isAfterEodCutoff(makeCT(14, 50), flame)).toBe(true)
+      expect(isAfterEodCutoff(makeCT(15, 0), flame)).toBe(true)
+      expect(isAfterEodCutoff(makeCT(15, 45), flame)).toBe(true)
     })
 
     it('returns false before 14:50 CT', () => {
-      expect(isAfterEodCutoff(makeCT(14, 49))).toBe(false)
-      expect(isAfterEodCutoff(makeCT(14, 0))).toBe(false)
-      expect(isAfterEodCutoff(makeCT(8, 30))).toBe(false)
+      expect(isAfterEodCutoff(makeCT(14, 49), flame)).toBe(false)
+      expect(isAfterEodCutoff(makeCT(14, 0), flame)).toBe(false)
+      expect(isAfterEodCutoff(makeCT(8, 30), flame)).toBe(false)
     })
 
-    it('OLD cutoff 15:45 would have been wrong — verify 14:50 is correct', () => {
-      // This is the bug that was fixed: 15:45 was too late
-      expect(isAfterEodCutoff(makeCT(15, 45))).toBe(true)
-      // 14:50 is now the cutoff — positions should close here
-      expect(isAfterEodCutoff(makeCT(14, 50))).toBe(true)
-      // 14:49 should NOT trigger EOD
-      expect(isAfterEodCutoff(makeCT(14, 49))).toBe(false)
+    it('default cutoff stays at 14:50 CT (preserves pre-fix behavior)', () => {
+      expect(isAfterEodCutoff(makeCT(15, 45), flame)).toBe(true)
+      expect(isAfterEodCutoff(makeCT(14, 50), flame)).toBe(true)
+      expect(isAfterEodCutoff(makeCT(14, 49), flame)).toBe(false)
     })
   })
 
@@ -633,7 +633,7 @@ describe('Entry Window vs EOD Cutoff: No Gap', () => {
     // At 14:45: positions force-closed
     const ct1401 = makeCT(14, 1, 1)
     expect(isInEntryWindow(ct1401, BOTS[0])).toBe(false)
-    expect(isAfterEodCutoff(ct1401)).toBe(false)
+    expect(isAfterEodCutoff(ct1401, BOTS[0])).toBe(false)
     expect(isMarketOpen(ct1401)).toBe(true)
     // This is the "monitoring only" window — correct behavior
   })
@@ -641,7 +641,7 @@ describe('Entry Window vs EOD Cutoff: No Gap', () => {
   it('INFERNO: entry ends 14:30, EOD at 14:45 — 15min monitoring window', () => {
     const ct1431 = makeCT(14, 31, 1)
     expect(isInEntryWindow(ct1431, BOTS[2])).toBe(false)
-    expect(isAfterEodCutoff(ct1431)).toBe(false)
+    expect(isAfterEodCutoff(ct1431, BOTS[2])).toBe(false)
     expect(isMarketOpen(ct1431)).toBe(true)
   })
 
@@ -649,8 +649,8 @@ describe('Entry Window vs EOD Cutoff: No Gap', () => {
     const ct1450 = makeCT(14, 50, 1)
     for (const bot of BOTS) {
       expect(isInEntryWindow(ct1450, bot)).toBe(false)
+      expect(isAfterEodCutoff(ct1450, bot)).toBe(true)
     }
-    expect(isAfterEodCutoff(ct1450)).toBe(true)
   })
 })
 
