@@ -69,6 +69,10 @@ class Position:
     current_long_call_mid: float
     current_underlying_spot: float
     current_underlying_gex_regime: str
+    # LETF spot is needed by T5 (short-strike-breach is on the LETF leg);
+    # default 0.0 keeps backward-compat with positions constructed before
+    # the field was added (T1-T4 don't read it).
+    current_letf_spot: float = 0.0
 
     @property
     def current_put_spread_value(self) -> float:
