@@ -77,12 +77,23 @@ class TradeStructure:
     letf_target: LETFTarget
 
 
-def _mid(leg: OptionLeg) -> float:
+def compute_mid(leg: OptionLeg) -> float:
+    """Mid price of an option leg = (bid + ask) / 2.
+
+    Public so gate modules (G07, G08) can reuse the same primitive
+    without duplicating the formula. Returns the raw mid; callers are
+    responsible for handling non-positive results.
+    """
     return (leg.bid + leg.ask) / 2.0
 
 
-def _passes_bid_ask(leg: OptionLeg) -> bool:
-    mid = _mid(leg)
+def passes_bid_ask(leg: OptionLeg) -> bool:
+    """Pass when the leg's bid-ask spread is <= MAX_BID_ASK_RATIO of mid.
+
+    Public so Gate G07 can wrap this directly. Returns False when mid
+    is non-positive (a degenerate leg fails the quality check).
+    """
+    mid = compute_mid(leg)
     if mid <= 0:
         return False
     return (leg.ask - leg.bid) / mid <= MAX_BID_ASK_RATIO
@@ -142,12 +153,12 @@ def build_trade_structure(
 
     # Gate G07: bid-ask spread <= 20% of mid on each leg.
     for leg in (short_put, long_put, long_call):
-        if not _passes_bid_ask(leg):
+        if not passes_bid_ask(leg):
             return None
 
-    short_put_mid = _mid(short_put)
-    long_put_mid = _mid(long_put)
-    long_call_mid = _mid(long_call)
+    short_put_mid = compute_mid(short_put)
+    long_put_mid = compute_mid(long_put)
+    long_call_mid = compute_mid(long_call)
     put_spread_credit = short_put_mid - long_put_mid
     net_cost = long_call_mid - put_spread_credit
 
