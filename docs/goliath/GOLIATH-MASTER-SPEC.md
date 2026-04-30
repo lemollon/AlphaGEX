@@ -220,4 +220,102 @@ GEX data comes from the *underlying*, not the LETF, because dealer hedging happe
 
 ---
 
-<!-- COMMIT 2 ENDS HERE — sections 7-13 appended in subsequent commits -->
+## 7. Order Execution
+
+**[RECOVERED]** Submit as 3-leg combo order at midpoint:
+
+1. Compute initial limit price at midpoint of all three legs
+2. Submit combo order, type `NET_DEBIT`
+3. If not filled in 60 seconds, walk price toward bid/ask by $0.02 increments
+4. Maximum 5 walk attempts (5 minutes total)
+5. If still not filled after 5 minutes, cancel and skip the trade
+6. Log skipped trade with reason `poor_execution`
+
+**[CONFIRMED-2026-04-29]** Broker: **Tradier** (Leron decision; matches AlphaGEX convention). [STANDARD] order safety requirements (idempotent, atomic across legs, fill confirmation before recording position) all apply.
+
+---
+
+## 8. Data Source — Trading Volatility API
+
+**[RECOVERED]** Endpoints needed:
+
+| Endpoint | Purpose | When |
+|----------|---------|------|
+| `/api/gex/latest` | Current GEX snapshot (flip_price, skew_adjusted_gex, gex_per_1pct_chg, IV) | Pre-entry |
+| `/api/gex/levels` | Gamma levels by strike (finds the wall) | Pre-entry, daily refresh |
+| `/api/gex/strikes` | Gamma distribution across strikes | Pre-entry |
+| `/api/gex/history` | Historical GEX | Backtest module (v0.3 scope, not now) |
+
+**[RECOVERED]**
+
+- Cache responses for 1 hour minimum
+- Handle rate limits gracefully with exponential backoff
+- If API down > 24 hours, trigger platform kill switch P-K4
+- Data tier assumption: daily snapshots (design so intraday becomes an upgrade, not a rewrite)
+
+**[CONFIRMED-CURRENT]** Token env var: `TRADING_VOLATILITY_API_TOKEN` (canonical v2 Bearer token, sub_xxx format). Read at `core_classes_and_engines.py:1189`. Currently set on alphagex-backtester service per Leron's 2026-04-29 fix.
+
+---
+
+## 9. Phase Plan
+
+### 9.1 Status
+
+| Phase | Topic | Status |
+|-------|-------|--------|
+| 0 | Investigation | Complete (chat-only artifacts; partial recovery in this doc) |
+| 1 | TV API smoke test | Complete and merged |
+| 1.5 | Parameter calibration | Code complete (Steps 1-8 merged); Step 9 (real-data run) pending Render env propagation |
+| 2 | Strike mapping | Specced — section 3 above |
+| 3 | Entry gates (G01-G10) | Specced — section 2 above |
+| 4 | Position management | Specced — section 4 above |
+| 5 | Sizing + kill switches | Specced — sections 5 and 6 above |
+| 6 | Per-instance runner & orchestration | Specced — Phase 6 details below |
+| 7-8 | Logging, monitoring, runbook | [STANDARD] requirements; per-component build TBD |
+| 9 | Paper trading | 2 weekly cycles minimum; zero successful trades is acceptable IF gate failure logs are diagnostic |
+
+### 9.2 Phase 6 — Per-Instance Runner & Orchestration
+
+**[RECOVERED]** Files to create:
+
+- `bots/goliath/engine.py` — shared engine combining all components
+- `bots/goliath/instance.py` — per-LETF runner
+- `bots/goliath/configs/instances.yaml` — 5 LETF configs (all `paper_only: true`)
+- `bots/goliath/configs/global.yaml` — platform settings
+- `bots/goliath/tests/test_engine.py`
+- `bots/goliath/tests/test_instance.py`
+
+**[RECOVERED]** Required interface:
+
+```python
+class GoliathEngine:
+    """Stateless service - all logic, no state."""
+    def __init__(self, gex_client, structure_builder, entry_gates,
+                 manager, sizer, kill_switch_monitor):
+        ...
+
+    def evaluate_entry(self, instance: GoliathInstance) -> Optional[TradeStructure]:
+        """Returns structure to trade, or None if any gate fails."""
+
+    def manage_open_positions(self, instance: GoliathInstance) -> List[ManagementAction]:
+        """Returns list of actions to take on open positions."""
+
+class GoliathInstance:
+    """Stateful per-LETF wrapper. Holds config + open positions + kill state."""
+```
+
+### 9.3 Phase 9 — Paper trading
+
+**[RECOVERED + STANDARD]**:
+
+- Minimum duration: 2 full weekly cycles (Mon-Fri × 2)
+- Bot runs uninterrupted for the full window (or all interruptions are root-caused and addressed)
+- Every trade decision (enter, hold, exit) has complete audit log
+- Every gate evaluation logged with TRUE/FALSE per trigger
+- **Zero successful trades is acceptable IF the gate failure logs are diagnostic** (i.e., we can see which triggers prevented entries and they're all reasonable)
+- All alerts during the window are reviewed and either resolved or accepted as expected
+- No critical bugs surface
+
+---
+
+<!-- COMMIT 3 ENDS HERE — sections 10-13 appended in commit 4/4 -->
