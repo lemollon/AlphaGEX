@@ -318,4 +318,116 @@ class GoliathInstance:
 
 ---
 
-<!-- COMMIT 3 ENDS HERE — sections 10-13 appended in commit 4/4 -->
+## 10. Production Readiness Components (cross-cutting)
+
+### 10.1 Audit & logging
+
+**[STANDARD]** Every trade event produces an immutable audit record:
+
+- Inputs to strike mapping (spot, walls, IV rank, calibration values, configuration)
+- All 10 gates evaluated (each with TRUE/FALSE + reason)
+- Strike selection output verbatim
+- Position size and rationale
+- All broker interactions (submit, ack, fill, modification, cancel)
+- Slippage per leg
+- All management decisions and which one fired
+- Final P&L per leg and combined
+
+**[CONFIRMED-2026-04-29]** Storage backend: **Postgres only** (Leron decision). New table `goliath_trade_audit` with append-only constraint enforced at app layer. Phase 6 audit logging implementation; can be extended to S3 in v0.3+ if audit-grade backup becomes required.
+
+### 10.2 Monitoring + alerting
+
+**[STANDARD]**:
+
+- Heartbeat every 60s
+- Alerts on: heartbeat missed > 3 min, TV API failures > 3 in 10 min, yfinance failures > 5 in 10 min, token expiry < 7 days, position drift, order rejection, day's drawdown > 1.5% (warn) or > 3% (page)
+- Channels: **[OPEN]** Slack `#goliath-alerts` for warnings + PagerDuty for pages? Confirm.
+
+### 10.3 Runbook
+
+**[STANDARD]** `docs/goliath/RUNBOOK.md` answers:
+
+- How to start GOLIATH from cold
+- How to restart after a crash
+- How to view current open positions
+- How to view yesterday's P&L summary
+- How to trigger soft kill switch
+- How to trigger hard kill switch
+- How to roll the TV API token
+- How to add or remove an underlying from the universe
+- How to respond to each alert type
+- How to rebuild from a known good state
+
+Phase 7-8 deliverable; must exist before Phase 9.
+
+### 10.4 Render service deployment
+
+**[OPEN]** GOLIATH runs on its own Render worker service (e.g., `alphagex-goliath`) added to render.yaml alongside existing alphagex-* services. Currently undefined — will be specced when Phase 6 (orchestration) is built.
+
+---
+
+## 11. Decisions log + remaining open items
+
+### 11.1 Resolved by Leron on 2026-04-29
+
+| # | Question | Decision |
+|---|----------|----------|
+| Q1 | Broker for execution | **Tradier** |
+| Q2 | Audit storage backend | **Postgres only** (extensible to S3 in v0.3+) |
+| Q5 | Material news flag mechanism (Trigger 6) | **CLI command on Render shell** (no DB flag table in v0.2) |
+
+### 11.2 Deferred — not blocking Phases 2-6
+
+These will be answered before Phase 7-8 (monitoring) or Phase 6 (deployment) work begins, but do not block strike mapping, gates, management, sizing, kill switches, or the engine.
+
+| # | Question | Why deferred |
+|---|----------|--------------|
+| Q3 | Alert channels (Slack channel + PagerDuty?) | Phase 7-8 concern; not blocking 2-6 |
+| Q4 | Render service name + envVars in render.yaml | Phase 6 deployment concern; service config TBD when orchestration is built |
+| Q6 | IV-rank cold-start "Option C" fallback details | For Phase 3 build, default to fail-closed on insufficient history; mark as `INSUFFICIENT_HISTORY` and skip trade. Add to v0.3 todos for proper handling. |
+
+---
+
+## 12. Critical path
+
+### 12.1 Now (this week)
+
+1. **Phase 1.5 Step 9** — Render env propagation, then run calibration on real data, commit results to main
+2. **Phase 1.5 Step 10** — full test suite, phase complete report
+3. **Schedule V03-DATA-1 strike snapshot collector** on Render — purely additive, accumulates data for v0.3 wall recalibration
+
+### 12.2 Next (after Phase 1.5 closes)
+
+1. Leron answers the 6 open questions in section 11
+2. Phase 2 build — strike mapping algorithm with the 13 required tests
+3. Phase 3 build — 10 entry gates with ~35 tests
+4. Phase 4 build — 8 exit triggers + state machine
+5. Phase 5 build — sizing + kill switches (7 triggers)
+6. Phase 6 build — engine + instance + configs
+
+### 12.3 Pre-paper
+
+1. Audit logging infrastructure
+2. Monitoring + alerting + kill switch CLI
+3. Runbook
+4. Pre-paper integration test suite (full lifecycle simulation)
+
+### 12.4 Paper → live
+
+1. Phase 9 paper trading — 2 weekly cycles minimum
+2. Leron explicit go-live signoff
+3. Live trading with $5,000 capital per recovered spec
+
+---
+
+## 13. Honest notes on this recovery
+
+**On the recovery process:** This document is a real recovery from a real prior chat session, not invention. Earlier drafts in the current chat session were incomplete because Claude (this assistant) did not search exhaustively before writing. Specifically, the source chat at `https://claude.ai/chat/e0e6fb84-8a04-4f3f-b671-31fc7c649f88` contains the bulk of the spec content above, recovered via `conversation_search` with queries `"GOLIATH bull put credit spread OTM call earnings week strategy"` and similar.
+
+**On what's still unrecovered:** Some details mentioned in the source chat (full strike-mapping math beyond Step 1-2 of the algorithm, "Option C" IV-rank fallback specifics, Phase 7-8 internal structure) are not in the snippets surfaced. These can be recovered via further searches if needed, or developed during the Phase 2/3/4 build sessions.
+
+**On the difference between spec and roadmap:** This document captures the spec's content. The build order, phase decomposition, and operational concerns (Render service config, monitoring channels) need Leron's explicit decisions before this becomes a buildable plan. The 6 open questions in section 11 are the gating items.
+
+---
+
+*End of document. Save as `docs/goliath/GOLIATH-MASTER-SPEC.md` after Leron review of section 11 open questions.*
