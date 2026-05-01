@@ -1555,9 +1555,21 @@ class ValorDatabase:
     # Signals
     # ========================================================================
 
-    def save_signal(self, signal: FuturesSignal, was_executed: bool, skip_reason: str = "") -> bool:
-        """Save a trading signal"""
+    def save_signal(
+        self,
+        signal: FuturesSignal,
+        was_executed: bool,
+        skip_reason: str = "",
+        ticker: Optional[str] = None,
+    ) -> bool:
+        """Save a trading signal.
+
+        ``ticker`` overrides ``signal.ticker`` when both are present; this lets
+        the multi-instrument trader stamp the row with the ticker it was
+        scanning even if the signal object was created without one.
+        """
         try:
+            effective_ticker = ticker or getattr(signal, "ticker", None) or "MES"
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
@@ -1565,8 +1577,8 @@ class ValorDatabase:
                         direction, source, confidence, current_price,
                         gamma_regime, gex_value, flip_point, call_wall, put_wall,
                         vix, atr, win_probability, contracts,
-                        was_executed, skip_reason, reasoning
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        was_executed, skip_reason, reasoning, ticker
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     signal.direction.value,
                     signal.source.value,
@@ -1583,7 +1595,8 @@ class ValorDatabase:
                     signal.contracts,
                     was_executed,
                     skip_reason,
-                    signal.reasoning
+                    signal.reasoning,
+                    effective_ticker,
                 ))
                 conn.commit()
                 return True
@@ -1621,15 +1634,28 @@ class ValorDatabase:
     # Logging
     # ========================================================================
 
-    def log(self, level: str, action: str, message: str, details: Optional[Dict] = None) -> bool:
-        """Log an activity"""
+    def log(
+        self,
+        level: str,
+        action: str,
+        message: str,
+        details: Optional[Dict] = None,
+        ticker: str = "MES",
+    ) -> bool:
+        """Log an activity. Pass ``ticker`` for multi-instrument attribution."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO valor_logs (level, action, message, details)
-                    VALUES (%s, %s, %s, %s)
-                """, (level, action, message, json.dumps(details) if details else None))
+                    INSERT INTO valor_logs (level, action, message, details, ticker)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    level,
+                    action,
+                    message,
+                    json.dumps(details) if details else None,
+                    ticker,
+                ))
                 conn.commit()
                 return True
         except Exception as e:
@@ -2477,12 +2503,15 @@ class ValorDatabase:
         skip_reason: str = "",
         ml_probability: float = None,
         bayesian_probability_at_scan: float = None,
+        ticker: str = "MES",
     ) -> bool:
         """
         Save scan activity for ML training data collection.
 
         This captures EVERY scan with full market context to enable
         supervised learning model training for VALOR.
+
+        ``ticker`` is the futures instrument key (MES, MNQ, RTY, CL, NG, MGC).
         """
         try:
             with db_connection() as conn:
@@ -2512,11 +2541,11 @@ class ValorDatabase:
                         is_overnight_session, session_type, day_of_week, hour_of_day,
                         trade_executed, position_id, entry_price, stop_price,
                         error_message, skip_reason,
-                        ml_probability, bayesian_probability_at_scan
+                        ml_probability, bayesian_probability_at_scan, ticker
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (scan_id) DO NOTHING
                 """, (
@@ -2542,6 +2571,7 @@ class ValorDatabase:
                     skip_reason if skip_reason else None,
                     _to_python(ml_probability) if ml_probability is not None else None,
                     _to_python(bayesian_probability_at_scan) if bayesian_probability_at_scan is not None else None,
+                    ticker,
                 ))
 
                 conn.commit()

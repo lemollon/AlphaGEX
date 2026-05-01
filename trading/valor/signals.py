@@ -1713,50 +1713,77 @@ def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str
     if is_market_hours:
         # =====================================================================
         # MARKET HOURS: Real-time GEX data
-        # For MES (SPY/SPX): Use Tradier GEX calculator first
-        # For all instruments: Fall back to TradingVolatility with proxy ETF
+        #   PRIMARY:  Tradier GEX calculator on the appropriate symbol
+        #             (MES → SPX index, others → proxy ETF). Tradier refreshes
+        #             reliably during market hours; TradingVolatility stopped
+        #             delivering fresh data for non-MES tickers in April 2026,
+        #             which silently dropped flip_point to 0 and starved the
+        #             scanner of signals across MNQ/RTY/CL/MGC/NG.
+        #   FALLBACK: TradingVolatility on the proxy ETF.
         # =====================================================================
 
-        # MES special path: Tradier calculator for SPX (requires production keys)
+        # Symbol to query Tradier with. MES uses SPX (the underlying index has
+        # the cleanest GEX profile); other tickers use their proxy ETF.
         if ticker == "MES":
-            calculator = _get_tradier_gex_calculator()
-            if calculator:
-                try:
-                    gex_result = calculator.calculate_gex("SPX")
-                    if gex_result:
-                        flip_point = gex_result.get('flip_point', 0)
-                        if flip_point > 0:
-                            call_wall = gex_result.get('call_wall', 0) or flip_point * 1.01
-                            put_wall = gex_result.get('put_wall', 0) or flip_point * 0.99
-                            net_gex = gex_result.get('net_gex', 0)
+            tradier_symbol = "SPX"
+        else:
+            tradier_symbol = (
+                ticker_cfg.get('gex_symbol')
+                or ticker_cfg.get('proxy_etf')
+                or symbol
+            )
 
-                            logger.info(
-                                f"[VALOR][MES] Source: Tradier/SPX | flip={flip_point:.2f}, "
-                                f"call={call_wall:.2f}, put={put_wall:.2f}, net_gex={net_gex:.2e} | Status: OK"
-                            )
+        calculator = _get_tradier_gex_calculator()
+        if calculator:
+            try:
+                gex_result = calculator.calculate_gex(tradier_symbol)
+                if gex_result:
+                    raw_flip = float(gex_result.get('flip_point', 0) or 0)
+                    if raw_flip > 0:
+                        raw_call = float(gex_result.get('call_wall', 0) or 0) or raw_flip * 1.01
+                        raw_put = float(gex_result.get('put_wall', 0) or 0) or raw_flip * 0.99
+                        net_gex = float(gex_result.get('net_gex', 0) or 0)
 
-                            gex_data = {
-                                'flip_point': flip_point,
-                                'call_wall': call_wall,
-                                'put_wall': put_wall,
-                                'net_gex': net_gex,
-                                'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                                'data_source': 'tradier_calculator',
-                            }
+                        raw_data = {
+                            'flip_point': raw_flip,
+                            'call_wall': raw_call,
+                            'put_wall': raw_put,
+                            'net_gex': net_gex,
+                            'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                        }
 
-                            # Cache per-ticker
-                            _gex_cache_by_ticker[ticker] = {'data': gex_data, 'cache_time': now}
-                            _persist_gex_cache_to_db(gex_data, now, ticker=ticker)
-                            # Legacy compat
+                        # MES queries SPX directly (no scaling). Other tickers
+                        # query a proxy ETF and need to be scaled into the
+                        # futures price space using gex_scale_factor.
+                        if ticker == "MES":
+                            gex_data = dict(raw_data)
+                            gex_data['data_source'] = 'tradier_calculator'
+                        else:
+                            gex_data = _scale_gex_data(raw_data, scale_factor)
+                            gex_data['data_source'] = f'tradier_calculator_{tradier_symbol}'
+
+                        logger.info(
+                            f"[VALOR][{ticker}] Source: Tradier/{tradier_symbol} | "
+                            f"flip={gex_data['flip_point']:.2f}, "
+                            f"call={gex_data['call_wall']:.2f}, "
+                            f"put={gex_data['put_wall']:.2f}, "
+                            f"net_gex={net_gex:.2e} | Status: OK"
+                        )
+
+                        _gex_cache_by_ticker[ticker] = {'data': gex_data, 'cache_time': now}
+                        _persist_gex_cache_to_db(gex_data, now, ticker=ticker)
+                        if ticker == "MES":
                             _gex_cache.clear()
                             _gex_cache.update(gex_data)
                             _gex_cache_time = now
 
-                            return gex_data
-                except Exception as e:
-                    logger.warning(f"[VALOR][MES] Tradier GEX calculator error: {e}")
+                        return gex_data
+            except Exception as e:
+                logger.warning(
+                    f"[VALOR][{ticker}] Tradier GEX calculator error for {tradier_symbol}: {e}"
+                )
 
-        # All instruments: TradingVolatility with proxy ETF
+        # Fallback: TradingVolatility on the proxy ETF
         raw_data = _fetch_gex_from_trading_volatility(symbol)
         if raw_data:
             # Scale from proxy ETF to futures price space
