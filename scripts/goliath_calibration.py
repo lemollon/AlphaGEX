@@ -128,6 +128,28 @@ def _safe_calibrate(name: str, fn, data, config) -> object:
         )
 
 
+# Expected CSV schema for the per-week output. Header validation on
+# partial-run resume rejects any file that doesn't match this exactly --
+# a malformed header is a strong signal the file is from a different
+# version of the script or got corrupted, and resuming on top of it
+# would silently merge incompatible data.
+_EXPECTED_CSV_HEADER = (
+    "pair",
+    "underlying",
+    "week_ending",
+    "underlying_close",
+    "letf_close",
+    "underlying_return",
+    "letf_return",
+    "observed_drag",
+    "predicted_drag",
+    "drag_residual",
+    "trailing_sigma_annualized",
+    "predicted_te",
+    "observed_te_proxy",
+)
+
+
 def _read_existing_csv_pairs(output_path: str) -> tuple[list[dict], set[str]]:
     """Read existing per-week CSV (if any) and return (rows, pairs_present).
 
@@ -135,21 +157,53 @@ def _read_existing_csv_pairs(output_path: str) -> tuple[list[dict], set[str]]:
     --per-week-csv path, pairs already represented in the file are skipped
     and their rows are preserved verbatim. New pairs are appended.
 
-    Returns ([], set()) when the file doesn't exist or is empty.
+    Header validation: the existing file's header must exactly match
+    _EXPECTED_CSV_HEADER (column names, count, order). Mismatches are
+    treated as a fresh-run signal -- the next write will OVERWRITE the
+    bad file. This prevents merging incompatible row schemas from older
+    or corrupted runs. Per-row validation is out of scope for v0.2;
+    a valid header is a strong-enough signal.
+
+    Returns ([], set()) when:
+      - the file doesn't exist
+      - the file is empty / unreadable
+      - the header is missing or malformed
+      - the header is present but missing required columns / out of order
+
+    Errors are logged so operators see the reason for fresh-run treatment.
     """
     p = Path(output_path)
     if not p.exists():
         return [], set()
+
     try:
         with open(p, newline="") as f:
-            reader = csv.DictReader(f)
-            rows = list(reader)
+            reader = csv.reader(f)
+            try:
+                header = next(reader)
+            except StopIteration:
+                print(f"  [per-week-csv] WARN: {output_path} is empty; "
+                      "treating as fresh run")
+                return [], set()
+
+            if tuple(header) != _EXPECTED_CSV_HEADER:
+                print(
+                    f"  [per-week-csv] ERROR: {output_path} header does not match "
+                    f"expected schema. Got {header!r}. "
+                    f"Expected {list(_EXPECTED_CSV_HEADER)!r}. "
+                    "Treating as fresh run; existing file will be OVERWRITTEN."
+                )
+                return [], set()
+
+            # Header valid: read remaining rows as dicts.
+            dict_rows = [dict(zip(header, row)) for row in reader if row]
     except Exception as exc:  # noqa: BLE001
         print(f"  [per-week-csv] could not read existing {output_path}: {exc!r}; "
-              "treating as empty (full re-run)")
+              "treating as empty (fresh run)")
         return [], set()
-    pairs_present = {r["pair"] for r in rows if r.get("pair")}
-    return rows, pairs_present
+
+    pairs_present = {r["pair"] for r in dict_rows if r.get("pair")}
+    return dict_rows, pairs_present
 
 
 def _emit_per_week_csv(

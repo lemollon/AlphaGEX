@@ -144,18 +144,46 @@ def fetch_gex_history(underlying: str, days: int = LOOKBACK_DAYS) -> pd.DataFram
     return df
 
 
+# Strict patterns that trigger retry. Match against both class.__name__
+# and str(exc); any single hit fires retry. Each substring is a known
+# rate-limit signal across yfinance versions and HTTP layers.
+_RATE_LIMIT_CANDIDATES = (
+    "yfratelimiterror",   # yfinance 2.x exception class name
+    "ratelimiterror",     # generic rate-limit class
+    "429",                # HTTP status code (raw or in message)
+    "too many requests",  # HTTP 429 text
+)
+# Looser patterns that *might* be rate-limit but don't match strictly.
+# We log a WARN when these match without strict-pattern match, giving
+# operational visibility if yfinance renames its error class.
+_RATE_LIMIT_WEAK_HINTS = ("limit", "throttle", "429")
+
+
 def _is_rate_limit_error(exc: Exception) -> bool:
     """True when an exception looks like a yfinance rate-limit response.
 
     yfinance (2.x) raises ``YFRateLimitError`` from ``yfinance.exceptions``,
     but we can't import that lazily without an extra dependency edge. Match
-    by class-name + message to stay version-tolerant.
+    by class-name + message against multiple candidate substrings to stay
+    version-tolerant. Any single substring match fires retry.
+
+    When an exception loosely *looks* like rate-limit (contains "limit",
+    "throttle", or "429" anywhere) but didn't match the strict patterns,
+    a WARN is printed so operators get a signal if yfinance renames its
+    error class without us noticing.
     """
     name = type(exc).__name__.lower()
     msg = str(exc).lower()
-    if "ratelimit" in name:
-        return True
-    return ("too many requests" in msg) or ("rate limited" in msg)
+    matched = any(c in name or c in msg for c in _RATE_LIMIT_CANDIDATES)
+
+    if not matched and any(h in name or h in msg for h in _RATE_LIMIT_WEAK_HINTS):
+        print(
+            f"  [data_fetch] WARN: exception looks rate-limit-shaped but "
+            f"didn't match strict patterns -- {type(exc).__name__}: {exc!r}. "
+            "Treating as non-rate-limit. Update _RATE_LIMIT_CANDIDATES "
+            "if this is a new yfinance error name."
+        )
+    return matched
 
 
 def fetch_price_history(

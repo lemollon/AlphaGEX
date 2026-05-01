@@ -40,14 +40,26 @@ class TestReadExistingCsvPairs(unittest.TestCase):
         self.assertEqual(pairs, set())
 
     def test_reads_existing_pairs(self):
+        """Multi-row, multi-pair extraction. Uses the real header schema
+        so the strict header check (added in tightening commit) passes."""
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "existing.csv")
+            header = goliath_calibration._EXPECTED_CSV_HEADER
+            row_template = ["", ""] + ["0"] * (len(header) - 2)  # filled in below
             with open(path, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=["pair", "underlying", "week_ending", "x"])
-                w.writeheader()
-                w.writerow({"pair": "TSLL", "underlying": "TSLA", "week_ending": "2026-01-09", "x": "1.0"})
-                w.writerow({"pair": "NVDL", "underlying": "NVDA", "week_ending": "2026-01-09", "x": "2.0"})
-                w.writerow({"pair": "TSLL", "underlying": "TSLA", "week_ending": "2026-01-16", "x": "1.5"})
+                w = csv.writer(f)
+                w.writerow(header)
+                # 3 rows: 2 TSLL weeks + 1 NVDL week.
+                for pair, underlying, week in [
+                    ("TSLL", "TSLA", "2026-01-09"),
+                    ("NVDL", "NVDA", "2026-01-09"),
+                    ("TSLL", "TSLA", "2026-01-16"),
+                ]:
+                    row = list(row_template)
+                    row[0] = pair
+                    row[1] = underlying
+                    row[2] = week
+                    w.writerow(row)
             rows, pairs = goliath_calibration._read_existing_csv_pairs(path)
         self.assertEqual(len(rows), 3)
         self.assertEqual(pairs, {"TSLL", "NVDL"})
@@ -62,6 +74,48 @@ class TestReadExistingCsvPairs(unittest.TestCase):
         # could parse; either way no exception.
         self.assertIsInstance(rows, list)
         self.assertIsInstance(pairs, set)
+
+    def test_malformed_header_treated_as_fresh_run(self):
+        """A header that doesn't match _EXPECTED_CSV_HEADER -> empty set."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bad_header.csv")
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                # Wrong column order + extra column.
+                w.writerow(["pair", "week_ending", "underlying", "extra_garbage"])
+                w.writerow(["TSLL", "2026-01-09", "TSLA", "x"])
+                w.writerow(["NVDL", "2026-01-09", "NVDA", "y"])
+            rows, pairs = goliath_calibration._read_existing_csv_pairs(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(pairs, set())
+
+    def test_missing_required_columns_treated_as_fresh_run(self):
+        """Header with valid prefix but missing later columns -> empty set."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "short_header.csv")
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                # Truncated header (missing the last few expected columns).
+                w.writerow(["pair", "underlying", "week_ending"])
+                w.writerow(["TSLL", "TSLA", "2026-01-09"])
+            rows, pairs = goliath_calibration._read_existing_csv_pairs(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(pairs, set())
+
+    def test_valid_header_preserves_rows(self):
+        """Sanity check: when header matches _EXPECTED_CSV_HEADER exactly,
+        rows are read and pairs returned. Guards against false positives
+        in the header check."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "good.csv")
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(goliath_calibration._EXPECTED_CSV_HEADER)
+                w.writerow(["TSLL", "TSLA", "2026-01-09", "100", "10",
+                            "0.01", "0.02", "0", "", "", "", "", "0"])
+            rows, pairs = goliath_calibration._read_existing_csv_pairs(path)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(pairs, {"TSLL"})
 
 
 def _make_price_df(values: list[float]) -> pd.DataFrame:

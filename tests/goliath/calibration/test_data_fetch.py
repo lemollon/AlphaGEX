@@ -326,6 +326,36 @@ class TestYFinanceRateLimitHardening(_TempCacheMixin, unittest.TestCase):
         self.assertEqual(sleeps, [1])
         self.assertFalse(result.empty)
 
+    def test_multi_candidate_matcher(self):
+        """Each strict-pattern candidate independently triggers retry."""
+        cases = [
+            # (exception_to_raise, label)
+            (type("YFRateLimitError", (Exception,), {})("anything"), "YFRateLimitError class name"),
+            (type("RateLimitError", (Exception,), {})("anything"), "RateLimitError class name"),
+            (Exception("HTTP 429: throttled"), "429 in message"),
+            (Exception("Too Many Requests"), "too many requests in message"),
+        ]
+        for exc, label in cases:
+            with self.subTest(case=label):
+                # Stub: raise the exception once, then return a frame.
+                df = pd.DataFrame({"Close": [1.0]}, index=pd.to_datetime(["2026-01-01"]))
+                # Use unique cache_path per subtest to avoid hits across iterations.
+                ticker = f"TEST_{label.replace(' ', '_')[:10]}"
+                yf_mock, history_mock = self._stub_yfinance([exc, df])
+                sleeps: list = []
+                with patch.dict(sys.modules, {"yfinance": yf_mock}):
+                    result = data_fetch.fetch_price_history(
+                        ticker, days=10,
+                        backoff_seconds=[1],
+                        sleeper=sleeps.append,
+                    )
+                self.assertEqual(
+                    history_mock.call_count, 2,
+                    f"{label}: expected retry (attempts=2), got {history_mock.call_count}",
+                )
+                self.assertEqual(sleeps, [1], f"{label}: expected one 1s sleep before retry")
+                self.assertFalse(result.empty, f"{label}: result should be non-empty after retry success")
+
 
 class TestInterTickerDelay(_TempCacheMixin, unittest.TestCase):
     """fetch_all_universe sleeps between tickers to stay under Yahoo's quota."""
