@@ -187,11 +187,20 @@ const fmtTime = (iso: string | null | undefined) => {
 // ============================================================================
 
 type TabId = 'overview' | 'positions' | 'performance' | 'audit' | 'kills' | 'config'
+type RangeId = '7d' | '30d' | '90d' | 'all'
+
+const RANGE_DAYS: Record<RangeId, number> = {
+  '7d': 7,
+  '30d': 30,
+  '90d': 90,
+  'all': 365,
+}
 
 export default function GoliathContent() {
   const sidebarPadding = useSidebarPadding()
   const [tab, setTab] = useState<TabId>('overview')
   const [selectedInstance, setSelectedInstance] = useState<string>('PLATFORM')
+  const [range, setRange] = useState<RangeId>('30d')
 
   const [platform, setPlatform] = useState<PlatformStatus | null>(null)
   const [positions, setPositions] = useState<Position[]>([])
@@ -211,15 +220,16 @@ export default function GoliathContent() {
       ? 'scope=PLATFORM'
       : `scope=INSTANCE&instance=${selectedInstance}`
 
+    const days = RANGE_DAYS[range]
     const [
       pStatus, pos, eq, iEq, perfData, auditData,
       gatesData, killData, calibData,
     ] = await Promise.all([
       fetchApi<PlatformStatus>('/api/goliath/status'),
       fetchApi<{ positions: Position[] }>('/api/goliath/positions'),
-      fetchApi<{ points: EquityPoint[] }>(`/api/goliath/equity-curve?${scopeQS}&days=30`),
+      fetchApi<{ points: EquityPoint[] }>(`/api/goliath/equity-curve?${scopeQS}&days=${days}`),
       fetchApi<{ points: EquityPoint[] }>(`/api/goliath/equity-curve/intraday?${scopeQS}`),
-      fetchApi<PerformanceResponse>('/api/goliath/performance?days=30'),
+      fetchApi<PerformanceResponse>(`/api/goliath/performance?days=${days}`),
       fetchApi<{ events: AuditEvent[] }>('/api/goliath/scan-activity?limit=50'),
       fetchApi<{ failures: GateFailure[] }>('/api/goliath/gate-failures?limit=50'),
       fetchApi<KillState>('/api/goliath/kill-state'),
@@ -237,7 +247,7 @@ export default function GoliathContent() {
     if (calibData) setCalibration(calibData)
     setLoading(false)
     setRefreshing(false)
-  }, [selectedInstance])
+  }, [selectedInstance, range])
 
   useEffect(() => {
     refreshAll()
@@ -249,9 +259,11 @@ export default function GoliathContent() {
     return (
       <div className="min-h-screen bg-[#030712] text-gray-100">
         <Navigation />
-        <div style={{ paddingLeft: sidebarPadding }} className="p-8">
-          <div className="animate-pulse text-gray-400">Loading GOLIATH…</div>
-        </div>
+        <main className={`pt-24 pb-12 min-h-screen ${sidebarPadding}`}>
+          <div className="max-w-7xl mx-auto px-4">
+            <div className="animate-pulse text-gray-400">Loading GOLIATH…</div>
+          </div>
+        </main>
       </div>
     )
   }
@@ -259,7 +271,8 @@ export default function GoliathContent() {
   return (
     <div className="min-h-screen bg-[#030712] text-gray-100">
       <Navigation />
-      <div style={{ paddingLeft: sidebarPadding }} className="p-6 space-y-6">
+      <main className={`pt-24 pb-12 min-h-screen ${sidebarPadding}`}>
+       <div className="max-w-7xl mx-auto px-4 space-y-6">
 
         {/* Header */}
         <div className="flex items-start justify-between">
@@ -424,14 +437,19 @@ export default function GoliathContent() {
             scope={selectedInstance}
             platform={platform}
             perf={perf}
+            range={range}
+            onRangeChange={setRange}
           />
         )}
         {tab === 'positions' && <PositionsTab positions={positions} scope={selectedInstance} />}
-        {tab === 'performance' && <PerformanceTab perf={perf} />}
+        {tab === 'performance' && (
+          <PerformanceTab perf={perf} range={range} onRangeChange={setRange} />
+        )}
         {tab === 'audit' && <AuditTab audit={audit} gates={gates} />}
         {tab === 'kills' && <KillsTab kills={kills} />}
         {tab === 'config' && <ConfigTab calibration={calibration} platform={platform} />}
-      </div>
+       </div>
+      </main>
     </div>
   )
 }
@@ -441,19 +459,25 @@ export default function GoliathContent() {
 // ============================================================================
 
 function OverviewTab({
-  equity, intraday, scope, platform, perf,
+  equity, intraday, scope, platform, perf, range, onRangeChange,
 }: {
   equity: EquityPoint[]
   intraday: EquityPoint[]
   scope: string
   platform: PlatformStatus | null
   perf: PerformanceResponse | null
+  range: RangeId
+  onRangeChange: (r: RangeId) => void
 }) {
   const platformPerf = perf?.platform
   const totalOpen = platform?.instances.reduce((s, i) => s + i.open_position_count, 0) ?? 0
+  const rangeLabel = range.toUpperCase()
 
   return (
     <div className="space-y-6">
+
+      {/* Range selector */}
+      <RangeSelector range={range} onChange={onRangeChange} />
 
       {/* Quick stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -468,7 +492,7 @@ function OverviewTab({
           icon={Target}
         />
         <StatCard
-          label="P&L (30d)"
+          label={`P&L (${rangeLabel})`}
           value={fmtUSD(platformPerf?.total_pnl, 2)}
           icon={platformPerf && platformPerf.total_pnl >= 0 ? TrendingUp : TrendingDown}
           color={
@@ -479,7 +503,7 @@ function OverviewTab({
           }
         />
         <StatCard
-          label="Win Rate (30d)"
+          label={`Win Rate (${rangeLabel})`}
           value={fmtPct(platformPerf?.win_rate)}
           icon={Zap}
         />
@@ -521,8 +545,8 @@ function OverviewTab({
         )}
       </Panel>
 
-      {/* 30-day equity */}
-      <Panel title={`30-Day Equity Curve — ${scope}`} icon={BarChart3}>
+      {/* Historical equity */}
+      <Panel title={`${rangeLabel} Equity Curve — ${scope}`} icon={BarChart3}>
         {equity.length < 2 ? (
           <EmptyHint text="No closed trades yet." />
         ) : (
@@ -644,12 +668,20 @@ function PositionsTab({
 // TAB: PERFORMANCE
 // ============================================================================
 
-function PerformanceTab({ perf }: { perf: PerformanceResponse | null }) {
+function PerformanceTab({
+  perf, range, onRangeChange,
+}: {
+  perf: PerformanceResponse | null
+  range: RangeId
+  onRangeChange: (r: RangeId) => void
+}) {
   if (!perf) return <EmptyHint text="Performance data unavailable." />
+  const rangeLabel = range.toUpperCase()
 
   return (
     <div className="space-y-6">
-      <Panel title="Platform Performance (30d)" icon={TrendingUp}>
+      <RangeSelector range={range} onChange={onRangeChange} />
+      <Panel title={`Platform Performance (${rangeLabel})`} icon={TrendingUp}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Trades" value={String(perf.platform.trades)} icon={Target} />
           <StatCard label="Total P&L" value={fmtUSD(perf.platform.total_pnl)} icon={DollarSign} />
@@ -1019,6 +1051,34 @@ function ConfigRow({ label, value }: { label: string; value: string }) {
     <div>
       <div className="text-xs text-gray-500">{label}</div>
       <div className="font-mono text-gray-100">{value}</div>
+    </div>
+  )
+}
+
+function RangeSelector({
+  range, onChange,
+}: { range: RangeId; onChange: (r: RangeId) => void }) {
+  const options: Array<[RangeId, string]> = [
+    ['7d', '7D'],
+    ['30d', '30D'],
+    ['90d', '90D'],
+    ['all', 'ALL'],
+  ]
+  return (
+    <div className="inline-flex rounded-lg border border-gray-800 bg-gray-900/40 p-0.5">
+      {options.map(([id, label]) => (
+        <button
+          key={id}
+          onClick={() => onChange(id)}
+          className={`px-3 py-1 text-xs font-mono rounded transition-colors ${
+            range === id
+              ? 'bg-purple-700/40 text-purple-200'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 }
