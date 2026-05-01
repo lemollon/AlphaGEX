@@ -33,6 +33,8 @@ services:
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
         sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
+        sync: false
       - key: TV_USERNAME
         sync: false
       - key: POLYGON_API_KEY
@@ -70,6 +72,8 @@ services:
       - key: TV_USERNAME
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
         sync: false
       # Tradier API for trade execution (REQUIRED for FORTRESS/SOLOMON)
       - key: TRADIER_API_KEY
@@ -144,6 +148,8 @@ services:
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
         sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
+        sync: false
       - key: TV_USERNAME
         sync: false
       - key: DATABASE_URL
@@ -193,6 +199,8 @@ services:
       - key: POLYGON_API_KEY
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
         sync: false
       - key: TV_USERNAME
         sync: false
