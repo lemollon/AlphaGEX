@@ -81,6 +81,20 @@ cross-sectional sanity points.
 
 ---
 
+### V03-WALL-AMD-WATCH: Watch AMD's elevated gamma concentration ratio
+
+**Source:** PR #2248 calibration results, §1 wall_concentration (Phase 1.5 follow-through, 2026-05-01).
+
+**Finding:** AMD's gamma concentration ratio is 5.93× universe median during the 90d calibration window — nearly 3× the universe median of 2.14×. Did not breach the >3× outlier threshold and 2.0× spec default holds, but the ratio is unusually high and warrants observation during Phase 9 paper trading.
+
+**Watch criterion:** If AMD wall detection produces > 30% false-positive rate during Phase 9 paper trading (gates passing on walls that don't hold through trade), revisit AMD per-instance `wall_concentration_threshold` override.
+
+**Trigger to act:** Phase 9 paper trading complete + AMD-specific wall reliability statistics surfaced in the weekly report.
+
+**Status:** Watch only. No code change in v0.2.
+
+---
+
 ## Origin: Phase 0 (spec deltas, deferred deliverables)
 
 ### V3-1: True ATM-IV-from-Tradier IV-rank module
