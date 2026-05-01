@@ -229,5 +229,188 @@ class TestFetchAllUniverse(_TempCacheMixin, unittest.TestCase):
             self.assertFalse(df.empty, f"price_history[{ticker}] should not be empty")
 
 
+class _FakeRateLimitError(Exception):
+    """Class-name pattern matches yfinance.exceptions.YFRateLimitError detection."""
+
+    pass
+
+
+# Subclass with the exact class-name yfinance raises so the matcher works.
+class YFRateLimitError(Exception):  # noqa: N818
+    pass
+
+
+class TestYFinanceRateLimitHardening(_TempCacheMixin, unittest.TestCase):
+    """Verifies retry+backoff behavior added per Phase 1.5 step-9 incident."""
+
+    def _stub_yfinance(self, side_effects):
+        """Build a yfinance stub whose Ticker(...).history(...) iterates
+        through `side_effects` (mix of exceptions and DataFrames)."""
+        history_mock = MagicMock(side_effect=side_effects)
+        ticker_mock = MagicMock()
+        ticker_mock.history = history_mock
+        yf_mock = MagicMock()
+        yf_mock.Ticker = MagicMock(return_value=ticker_mock)
+        return yf_mock, history_mock
+
+    def test_retries_on_rate_limit_then_succeeds(self):
+        df = pd.DataFrame({"Close": [10.0, 10.5]}, index=pd.to_datetime(["2026-01-01", "2026-01-02"]))
+        # Two rate-limit errors, then success on the third attempt.
+        side_effects = [YFRateLimitError("Too Many Requests. Rate limited."),
+                        YFRateLimitError("rate limited"),
+                        df]
+        yf_mock, history_mock = self._stub_yfinance(side_effects)
+        sleeps: list = []
+
+        with patch.dict(sys.modules, {"yfinance": yf_mock}):
+            result = data_fetch.fetch_price_history(
+                "MSTR", days=10,
+                backoff_seconds=[1, 2, 3],
+                sleeper=sleeps.append,
+            )
+
+        self.assertEqual(history_mock.call_count, 3)
+        self.assertEqual(sleeps, [1, 2])  # slept after attempts 1 and 2
+        self.assertFalse(result.empty)
+        self.assertEqual(len(result), 2)
+
+    def test_gives_up_after_max_retries(self):
+        side_effects = [YFRateLimitError("Too Many Requests")] * 4
+        yf_mock, history_mock = self._stub_yfinance(side_effects)
+        sleeps: list = []
+
+        with patch.dict(sys.modules, {"yfinance": yf_mock}):
+            result = data_fetch.fetch_price_history(
+                "MSTR", days=10, max_retries=3,
+                backoff_seconds=[1, 2, 3],
+                sleeper=sleeps.append,
+            )
+
+        # 1 initial + 3 retries = 4 attempts; sleeps after attempts 1, 2, 3.
+        self.assertEqual(history_mock.call_count, 4)
+        self.assertEqual(sleeps, [1, 2, 3])
+        self.assertTrue(result.empty)
+
+    def test_non_rate_limit_error_fails_fast(self):
+        side_effects = [ValueError("malformed response")]
+        yf_mock, history_mock = self._stub_yfinance(side_effects)
+        sleeps: list = []
+
+        with patch.dict(sys.modules, {"yfinance": yf_mock}):
+            result = data_fetch.fetch_price_history(
+                "MSTR", days=10, max_retries=3,
+                backoff_seconds=[1, 2, 3],
+                sleeper=sleeps.append,
+            )
+
+        # Single attempt, no sleeps -- ValueError is not rate-limit-shaped.
+        self.assertEqual(history_mock.call_count, 1)
+        self.assertEqual(sleeps, [])
+        self.assertTrue(result.empty)
+
+    def test_rate_limit_matcher_accepts_message_only(self):
+        # Generic Exception with a rate-limit message also retries.
+        side_effects = [Exception("Too Many Requests. Rate limited."),
+                        pd.DataFrame({"Close": [1.0]}, index=pd.to_datetime(["2026-01-01"]))]
+        yf_mock, history_mock = self._stub_yfinance(side_effects)
+        sleeps: list = []
+
+        with patch.dict(sys.modules, {"yfinance": yf_mock}):
+            result = data_fetch.fetch_price_history(
+                "MSTR", days=10,
+                backoff_seconds=[1],
+                sleeper=sleeps.append,
+            )
+
+        self.assertEqual(history_mock.call_count, 2)
+        self.assertEqual(sleeps, [1])
+        self.assertFalse(result.empty)
+
+    def test_multi_candidate_matcher(self):
+        """Each strict-pattern candidate independently triggers retry."""
+        cases = [
+            # (exception_to_raise, label)
+            (type("YFRateLimitError", (Exception,), {})("anything"), "YFRateLimitError class name"),
+            (type("RateLimitError", (Exception,), {})("anything"), "RateLimitError class name"),
+            (Exception("HTTP 429: throttled"), "429 in message"),
+            (Exception("Too Many Requests"), "too many requests in message"),
+        ]
+        for exc, label in cases:
+            with self.subTest(case=label):
+                # Stub: raise the exception once, then return a frame.
+                df = pd.DataFrame({"Close": [1.0]}, index=pd.to_datetime(["2026-01-01"]))
+                # Use unique cache_path per subtest to avoid hits across iterations.
+                ticker = f"TEST_{label.replace(' ', '_')[:10]}"
+                yf_mock, history_mock = self._stub_yfinance([exc, df])
+                sleeps: list = []
+                with patch.dict(sys.modules, {"yfinance": yf_mock}):
+                    result = data_fetch.fetch_price_history(
+                        ticker, days=10,
+                        backoff_seconds=[1],
+                        sleeper=sleeps.append,
+                    )
+                self.assertEqual(
+                    history_mock.call_count, 2,
+                    f"{label}: expected retry (attempts=2), got {history_mock.call_count}",
+                )
+                self.assertEqual(sleeps, [1], f"{label}: expected one 1s sleep before retry")
+                self.assertFalse(result.empty, f"{label}: result should be non-empty after retry success")
+
+
+class TestInterTickerDelay(_TempCacheMixin, unittest.TestCase):
+    """fetch_all_universe sleeps between tickers to stay under Yahoo's quota."""
+
+    def test_sleeps_between_tickers(self):
+        # Stub TradingVolatilityAPI to produce trivial gex.
+        tv_mock = MagicMock()
+        tv_mock.get_historical_gamma = MagicMock(return_value=[])
+        cce_module = MagicMock()
+        cce_module.TradingVolatilityAPI = MagicMock(return_value=tv_mock)
+
+        # Stub yfinance to always succeed with a tiny frame.
+        df = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2026-01-01"]))
+        yf_mock = MagicMock()
+        yf_mock.Ticker = MagicMock(return_value=MagicMock(history=MagicMock(return_value=df)))
+
+        sleeps: list = []
+        with patch.dict(sys.modules, {
+            "core_classes_and_engines": cce_module,
+            "yfinance": yf_mock,
+        }):
+            data_fetch.fetch_all_universe(
+                days=10,
+                pairs={"TSLL": "TSLA", "NVDL": "NVDA"},  # 2 pairs = 4 yf calls
+                inter_ticker_delay_seconds=2.0,
+                sleeper=sleeps.append,
+            )
+
+        # 2 pairs -> 4 yf calls; 3 sleeps between them (none before 1st call).
+        self.assertEqual(sleeps, [2.0, 2.0, 2.0])
+
+    def test_zero_delay_disables_sleep(self):
+        tv_mock = MagicMock()
+        tv_mock.get_historical_gamma = MagicMock(return_value=[])
+        cce_module = MagicMock()
+        cce_module.TradingVolatilityAPI = MagicMock(return_value=tv_mock)
+
+        df = pd.DataFrame({"Close": [10.0]}, index=pd.to_datetime(["2026-01-01"]))
+        yf_mock = MagicMock()
+        yf_mock.Ticker = MagicMock(return_value=MagicMock(history=MagicMock(return_value=df)))
+
+        sleeps: list = []
+        with patch.dict(sys.modules, {
+            "core_classes_and_engines": cce_module,
+            "yfinance": yf_mock,
+        }):
+            data_fetch.fetch_all_universe(
+                days=10,
+                pairs={"TSLL": "TSLA"},
+                inter_ticker_delay_seconds=0.0,
+                sleeper=sleeps.append,
+            )
+
+        self.assertEqual(sleeps, [])
+
+
 if __name__ == "__main__":
     unittest.main()
