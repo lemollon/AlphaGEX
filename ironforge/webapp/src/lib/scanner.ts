@@ -1357,6 +1357,20 @@ async function monitorSinglePosition(
                         [realizedPnl, collateral, bot.dte],
                       )
                     }
+                    // PDT log — broker-gone close path used to skip this, so
+                    // pdt_log rows for these trades stayed NULL on
+                    // closed_at/exit_cost/pnl/close_reason and the day-trade
+                    // counter under-reported. Mirror the normal close path.
+                    try {
+                      await query(
+                        `UPDATE ${botTable(bot.name, 'pdt_log')}
+                         SET closed_at = NOW(), exit_cost = $1, pnl = $2,
+                             close_reason = $3,
+                             is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
+                         WHERE position_id = $4 AND dte_mode = $5`,
+                        [effectiveClosePrice, realizedPnl, closeReason, pid, bot.dte],
+                      )
+                    } catch { /* pdt_log is audit-only */ }
                     // Durable audit row — the old version only wrote a
                     // console.log so operators had no way to inspect past
                     // broker-gone events after the fact.
@@ -3757,6 +3771,20 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
             const msg = err instanceof Error ? err.message : String(err)
             console.warn(`[scanner] Path B daily_perf upsert failed (non-fatal) for ${pid}: ${msg}`)
           }
+
+          // PDT log — same gap as Path A. The production reconcile path
+          // landed pnl/close_reason on positions and daily_perf but left the
+          // pdt_log row with NULLs, so the day-trade counter undercounted.
+          try {
+            await query(
+              `UPDATE ${botTable(bot.name, 'pdt_log')}
+               SET closed_at = NOW(), exit_cost = $1, pnl = $2,
+                   close_reason = $3,
+                   is_day_trade = ((opened_at AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY})
+               WHERE position_id = $4 AND dte_mode = $5`,
+              [effectiveClosePrice, realizedPnl, closeReason, pid, bot.dte],
+            )
+          } catch { /* pdt_log is audit-only */ }
 
           // Durable audit log
           const logLevel = recoverySource === 'entry_credit_fallback' ? 'CRITICAL' : 'BROKER_RECONCILE_RECOVERED'
