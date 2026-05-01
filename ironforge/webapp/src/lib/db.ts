@@ -553,31 +553,54 @@ async function ensureTables(): Promise<void> {
       `)
     } catch { /* constraint may already exist */ }
 
-    // Dedup paper accounts — race condition during concurrent ensureTables() can create duplicates.
-    // Keep only the highest-ID active sandbox account per bot/dte; deactivate the rest.
+    // Dedup paper accounts — concurrent ensureTables() (and the production seed
+    // at the bottom of this block) raced and produced 5 identical rows for
+    // SPARK production/Logan on 2026-04-20. Deactivate everything except the
+    // highest-id row per (bot, dte_mode, account_type, person) tuple, then
+    // enforce a partial unique index so the race can't happen again.
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
       try {
         await client.query(
           `UPDATE ${bot}_paper_account SET is_active = FALSE
-           WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-             AND id < (SELECT MAX(id) FROM ${bot}_paper_account
-                       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox')`,
+           WHERE is_active = TRUE AND dte_mode = $1
+             AND id < (
+               SELECT MAX(id) FROM ${bot}_paper_account peer
+               WHERE peer.is_active = TRUE AND peer.dte_mode = $1
+                 AND COALESCE(peer.account_type, 'sandbox') = COALESCE(${bot}_paper_account.account_type, 'sandbox')
+                 AND COALESCE(peer.person, '') = COALESCE(${bot}_paper_account.person, '')
+             )`,
           [dte],
         )
       } catch { /* table may not exist yet on first run */ }
+      try {
+        await client.query(
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${bot}_paper_account_active_uniq
+           ON ${bot}_paper_account (
+             dte_mode,
+             COALESCE(account_type, 'sandbox'),
+             COALESCE(person, '')
+           ) WHERE is_active = TRUE`,
+        )
+      } catch { /* index may already exist or rows still conflict on legacy data */ }
     }
 
-    // Seed paper accounts if empty — atomic INSERT ... WHERE NOT EXISTS to prevent race condition duplicates
+    // Seed paper accounts if empty — INSERT ... WHERE NOT EXISTS narrows the
+    // race window; the partial unique index above is the actual guarantee.
+    // A concurrent INSERT that loses the race trips the index and is swallowed
+    // here so ensureTables() doesn't abort the whole transaction.
     for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
-      await client.query(
-        `INSERT INTO ${bot}_paper_account
-          (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
-         SELECT 10000, 10000, 0, 10000, 10000, $1
-         WHERE NOT EXISTS (
-           SELECT 1 FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1
-         )`,
-        [dte],
-      )
+      try {
+        await client.query(
+          `INSERT INTO ${bot}_paper_account
+            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
+           SELECT 10000, 10000, 0, 10000, 10000, $1
+           WHERE NOT EXISTS (
+             SELECT 1 FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1
+               AND COALESCE(account_type, 'sandbox') = 'sandbox'
+           )`,
+          [dte],
+        )
+      } catch { /* lost the seed race to a concurrent ensureTables() */ }
     }
     // Seed production paper_account for SPARK on each configured production account.
     // SPARK is the sole real-money production bot; we do NOT re-seed a production
@@ -594,17 +617,23 @@ async function ensureTables(): Promise<void> {
         if (!person) continue
         const pct = parseInt(row.capital_pct) || 15
         const startCap = Math.round(10000 * pct / 100 * 100) / 100
-        await client.query(
-          `INSERT INTO spark_paper_account
-            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
-             is_active, dte_mode, account_type, person)
-           SELECT $1, $1, 0, $1, $1, 0, TRUE, '1DTE', 'production', $2
-           WHERE NOT EXISTS (
-             SELECT 1 FROM spark_paper_account
-             WHERE account_type = 'production' AND person = $2
-           )`,
-          [startCap, person],
-        )
+        // Per-person try/catch so a unique-index race for one person doesn't
+        // skip the rest of the production accounts in the loop.
+        try {
+          await client.query(
+            `INSERT INTO spark_paper_account
+              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+               is_active, dte_mode, account_type, person)
+             SELECT $1, $1, 0, $1, $1, 0, TRUE, '1DTE', 'production', $2
+             WHERE NOT EXISTS (
+               SELECT 1 FROM spark_paper_account
+               WHERE account_type = 'production' AND person = $2 AND is_active = TRUE
+             )`,
+            [startCap, person],
+          )
+        } catch (innerErr) {
+          console.warn(`  SPARK production paper_account seed for ${person} skipped:`, innerErr)
+        }
       }
     } catch (err) {
       console.warn('  SPARK production paper_account seed failed (non-fatal):', err)
