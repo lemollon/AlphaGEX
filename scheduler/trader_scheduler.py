@@ -7704,6 +7704,17 @@ class AutonomousTraderScheduler:
         else:
             logger.info(f"✅ Active bots: {', '.join(active_bots)}")
 
+        # GOLIATH paper-trading jobs (Q4 2026-05-01: co-host on alphagex-trader).
+        # Two jobs: Monday 10:30 ET entry cycle + 15-min management cycle.
+        # All paper-only; no real Tradier execution. Wired with the
+        # Phase-α Tradier snapshot fetcher and paper broker executor.
+        try:
+            from scheduler.goliath_scheduler import add_goliath_jobs
+            if add_goliath_jobs(self.scheduler):
+                active_bots.append("GOLIATH")
+        except Exception as exc:
+            logger.warning(f"GOLIATH scheduler hook failed: {exc!r}")
+
         # Diagnostic: confirm all job registrations completed (before scheduler.start())
         try:
             if get_connection:
