@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -50,6 +51,14 @@ LETF_PAIRS: Dict[str, str] = {
 
 # Spec default lookback for Phase 1.5 calibration.
 LOOKBACK_DAYS = 90
+
+# yfinance rate-limit hardening (added per Phase 1.5 step-9 MSTR rate-limit
+# incident, 2026-05-01). Yahoo's anonymous quota is undocumented but seems
+# to throttle around ~6-10 calls/minute. These delays keep us comfortably
+# under that ceiling and recover gracefully when we hit it anyway.
+YF_MAX_RETRIES = 3
+YF_BACKOFF_SECONDS: List[int] = [5, 15, 45]  # exponential backoff per retry
+YF_INTER_TICKER_DELAY_SECONDS = 2.0
 
 
 # --- Cache helpers ----------------------------------------------------------
@@ -135,15 +144,41 @@ def fetch_gex_history(underlying: str, days: int = LOOKBACK_DAYS) -> pd.DataFram
     return df
 
 
-def fetch_price_history(ticker: str, days: int = LOOKBACK_DAYS) -> pd.DataFrame:
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """True when an exception looks like a yfinance rate-limit response.
+
+    yfinance (2.x) raises ``YFRateLimitError`` from ``yfinance.exceptions``,
+    but we can't import that lazily without an extra dependency edge. Match
+    by class-name + message to stay version-tolerant.
+    """
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    if "ratelimit" in name:
+        return True
+    return ("too many requests" in msg) or ("rate limited" in msg)
+
+
+def fetch_price_history(
+    ticker: str,
+    days: int = LOOKBACK_DAYS,
+    max_retries: int = YF_MAX_RETRIES,
+    backoff_seconds: Optional[List[int]] = None,
+    sleeper=time.sleep,
+) -> pd.DataFrame:
     """Fetch daily auto-adjusted OHLC from yfinance.
 
     Used for both underlyings AND LETFs. The ``days + 30`` buffer covers
     weekends/holidays so a 90-day lookback reliably yields ~90 trading days.
 
+    On yfinance ``YFRateLimitError`` (or rate-limit-shaped error) the call
+    retries up to ``max_retries`` times with exponential backoff
+    (5s/15s/45s by default). Non-rate-limit errors fail fast.
+
+    ``sleeper`` defaults to ``time.sleep`` and is overridable for tests.
+
     Returns a DataFrame indexed by tz-naive datetime with the standard
     yfinance columns (Open, High, Low, Close, Volume). Empty DataFrame on
-    any failure.
+    any failure (after all retries exhausted, or on non-retryable errors).
     """
     cache = _cache_path(ticker, f"price_{days}d")
     cached = _load_cache(cache)
@@ -158,16 +193,37 @@ def fetch_price_history(ticker: str, days: int = LOOKBACK_DAYS) -> pd.DataFrame:
 
     end = date.today()
     start = end - timedelta(days=days + 30)
+    backoffs = backoff_seconds if backoff_seconds is not None else YF_BACKOFF_SECONDS
 
-    try:
-        df = yf.Ticker(ticker).history(
-            start=start.isoformat(),
-            end=end.isoformat(),
-            auto_adjust=True,
-            actions=False,
-        )
-    except Exception as exc:
-        print(f"  [data_fetch] yfinance fetch failed for {ticker}: {exc!r}")
+    df = None
+    last_exc: Optional[Exception] = None
+    for attempt in range(max_retries + 1):
+        try:
+            df = yf.Ticker(ticker).history(
+                start=start.isoformat(),
+                end=end.isoformat(),
+                auto_adjust=True,
+                actions=False,
+            )
+            last_exc = None
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if attempt >= max_retries:
+                break
+            if not _is_rate_limit_error(exc):
+                # Non-rate-limit error: fail fast, don't burn backoff time.
+                break
+            wait = backoffs[min(attempt, len(backoffs) - 1)]
+            print(
+                f"  [data_fetch] yfinance rate limited on {ticker} "
+                f"(attempt {attempt + 1}/{max_retries + 1}); "
+                f"sleeping {wait}s before retry"
+            )
+            sleeper(wait)
+
+    if last_exc is not None:
+        print(f"  [data_fetch] yfinance fetch failed for {ticker}: {last_exc!r}")
         return pd.DataFrame()
 
     if df is None or df.empty:
@@ -184,9 +240,18 @@ def fetch_price_history(ticker: str, days: int = LOOKBACK_DAYS) -> pd.DataFrame:
 def fetch_all_universe(
     days: int = LOOKBACK_DAYS,
     pairs: Optional[Dict[str, str]] = None,
+    inter_ticker_delay_seconds: float = YF_INTER_TICKER_DELAY_SECONDS,
+    sleeper=time.sleep,
 ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, pd.DataFrame]]:
     """Fetch GEX history (TV) for all underlyings + price history (yfinance)
     for all underlyings AND LETFs.
+
+    Adds a small sleep between tickers to stay below Yahoo's anonymous
+    rate limit when fetching the full universe (10 yfinance calls in
+    rapid succession was triggering YFRateLimitError on MSTR specifically).
+    Cache hits skip the sleep (the cache check happens inside fetch_*).
+
+    ``sleeper`` defaults to ``time.sleep`` and is overridable for tests.
 
     Returns
     -------
@@ -206,9 +271,18 @@ def fetch_all_universe(
     gex_history: Dict[str, pd.DataFrame] = {}
     price_history: Dict[str, pd.DataFrame] = {}
 
+    yf_calls = 0
     for letf, underlying in pairs.items():
         gex_history[underlying] = fetch_gex_history(underlying, days=days)
+
+        if yf_calls > 0 and inter_ticker_delay_seconds > 0:
+            sleeper(inter_ticker_delay_seconds)
         price_history[underlying] = fetch_price_history(underlying, days=days)
+        yf_calls += 1
+
+        if inter_ticker_delay_seconds > 0:
+            sleeper(inter_ticker_delay_seconds)
         price_history[letf] = fetch_price_history(letf, days=days)
+        yf_calls += 1
 
     return gex_history, price_history

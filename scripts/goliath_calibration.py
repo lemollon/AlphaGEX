@@ -128,6 +128,30 @@ def _safe_calibrate(name: str, fn, data, config) -> object:
         )
 
 
+def _read_existing_csv_pairs(output_path: str) -> tuple[list[dict], set[str]]:
+    """Read existing per-week CSV (if any) and return (rows, pairs_present).
+
+    Used for partial-run resumption: when the script re-runs with the same
+    --per-week-csv path, pairs already represented in the file are skipped
+    and their rows are preserved verbatim. New pairs are appended.
+
+    Returns ([], set()) when the file doesn't exist or is empty.
+    """
+    p = Path(output_path)
+    if not p.exists():
+        return [], set()
+    try:
+        with open(p, newline="") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [per-week-csv] could not read existing {output_path}: {exc!r}; "
+              "treating as empty (full re-run)")
+        return [], set()
+    pairs_present = {r["pair"] for r in rows if r.get("pair")}
+    return rows, pairs_present
+
+
 def _emit_per_week_csv(
     price_history: dict,
     leverage: float,
@@ -143,15 +167,32 @@ def _emit_per_week_csv(
     Math intentionally mirrors trading.goliath.calibration.tracking_error
     and trading.goliath.calibration.vol_drag so per-week numbers reconcile
     to the per-pair summaries already in the markdown report.
+
+    Partial-run resumption: if ``output_path`` already exists with rows for
+    some pairs, those pairs are skipped and their existing rows are
+    preserved. New pairs are appended. This makes re-runs safe after a
+    yfinance rate-limit incident — no need to refetch tickers we already
+    have.
     """
     import numpy as np  # local import keeps the module-level imports lean
 
-    rows: list[dict] = []
+    existing_rows, pairs_already_present = _read_existing_csv_pairs(output_path)
+    if pairs_already_present:
+        print(
+            f"  [per-week-csv] resuming: {len(pairs_already_present)} pair(s) "
+            f"already in {output_path} ({sorted(pairs_already_present)}); "
+            "skipping their recomputation"
+        )
+
+    rows: list[dict] = list(existing_rows)
+    new_row_count = 0
     t_weekly = 1.0 / 52.0
     fudge = 0.1  # spec default; matches tracking_error.py
     te_geometric = math.sqrt(2.0 / 3.0)
 
     for letf, underlying in LETF_PAIRS.items():
+        if letf in pairs_already_present:
+            continue
         u_df = price_history.get(underlying)
         l_df = price_history.get(letf)
         if u_df is None or u_df.empty or l_df is None or l_df.empty:
@@ -213,18 +254,29 @@ def _emit_per_week_csv(
                 "predicted_te": predicted_te,
                 "observed_te_proxy": abs(observed_drag),
             })
+            new_row_count += 1
 
     if not rows:
         print(f"  [per-week-csv] no rows produced; skipping {output_path}")
         return 0
 
+    # CSV column order: prefer the schema of the *first* row, which may
+    # be from existing rows (resume case) or newly computed rows.
+    fieldnames = list(rows[0].keys())
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-    print(f"  [per-week-csv] wrote {len(rows)} rows to {out}")
+    if new_row_count == len(rows):
+        print(f"  [per-week-csv] wrote {len(rows)} rows to {out}")
+    else:
+        preserved = len(rows) - new_row_count
+        print(
+            f"  [per-week-csv] wrote {len(rows)} rows to {out} "
+            f"({new_row_count} new + {preserved} preserved from existing CSV)"
+        )
     return len(rows)
 
 
