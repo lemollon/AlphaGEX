@@ -459,3 +459,112 @@ def goliath_performance(
         },
         "instances": list(by_instance.values()),
     }
+
+
+# ---- Diagnostics: gate failures / scan activity / logs -------------------
+
+@router.get("/gate-failures")
+def goliath_gate_failures(
+    letf: Optional[str] = Query(None, description="Filter to one LETF ticker"),
+    gate: Optional[str] = Query(None, description="Filter to one gate id (G01..G10)"),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict[str, Any]:
+    """Recent gate failures for diagnostic review (master spec section 9.3)."""
+    where, params = ["1=1"], []
+    if letf:
+        where.append("letf_ticker = %s"); params.append(letf.upper())
+    if gate:
+        where.append("failed_gate = %s"); params.append(gate.upper())
+    sql = (
+        "SELECT id, timestamp, letf_ticker, underlying_ticker, failed_gate, "
+        "failure_outcome, gates_passed_before_failure, attempted_structure, "
+        "failure_reason, context FROM goliath_gate_failures "
+        f"WHERE {' AND '.join(where)} ORDER BY timestamp DESC LIMIT %s"
+    )
+    params.append(limit)
+    rows = _safe_query(sql, tuple(params))
+    failures = []
+    for r in rows:
+        gp = r[6] if isinstance(r[6], (list, dict)) else (json.loads(r[6]) if r[6] else [])
+        struct = r[7] if isinstance(r[7], (list, dict)) else (json.loads(r[7]) if r[7] else None)
+        ctx = r[9] if isinstance(r[9], (list, dict)) else (json.loads(r[9]) if r[9] else {})
+        failures.append({
+            "id": r[0],
+            "timestamp": r[1].isoformat() if r[1] else None,
+            "letf_ticker": r[2], "underlying_ticker": r[3],
+            "failed_gate": r[4], "failure_outcome": r[5],
+            "gates_passed_before_failure": gp,
+            "attempted_structure": struct,
+            "failure_reason": r[8], "context": ctx,
+        })
+    return {"failures": failures, "count": len(failures)}
+
+
+@router.get("/scan-activity")
+def goliath_scan_activity(
+    instance: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict[str, Any]:
+    """Recent entry/management cycle events from the audit log.
+
+    Surfaces ENTRY_EVAL + MANAGEMENT_EVAL rows so the dashboard can render
+    a 'what did the bot just look at?' feed even when no trades fire.
+    """
+    if instance:
+        rows = _safe_query(
+            "SELECT id, timestamp, instance, event_type, position_id, data "
+            "FROM goliath_trade_audit "
+            "WHERE instance = %s AND event_type IN ('ENTRY_EVAL', 'MANAGEMENT_EVAL') "
+            "ORDER BY timestamp DESC LIMIT %s",
+            (instance, limit),
+        )
+    else:
+        rows = _safe_query(
+            "SELECT id, timestamp, instance, event_type, position_id, data "
+            "FROM goliath_trade_audit "
+            "WHERE event_type IN ('ENTRY_EVAL', 'MANAGEMENT_EVAL') "
+            "ORDER BY timestamp DESC LIMIT %s",
+            (limit,),
+        )
+    events = []
+    for r in rows:
+        data = r[5] if isinstance(r[5], dict) else (json.loads(r[5]) if r[5] else {})
+        events.append({
+            "id": r[0],
+            "timestamp": r[1].isoformat() if r[1] else None,
+            "instance": r[2], "event_type": r[3],
+            "position_id": r[4], "data": data,
+        })
+    return {"events": events, "count": len(events)}
+
+
+@router.get("/logs")
+def goliath_logs(
+    event_type: Optional[str] = Query(None,
+        description="ENTRY_EVAL, ENTRY_FILLED, MANAGEMENT_EVAL, EXIT_FILLED"),
+    instance: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Activity log feed across all event types."""
+    where, params = ["1=1"], []
+    if event_type:
+        where.append("event_type = %s"); params.append(event_type.upper())
+    if instance:
+        where.append("instance = %s"); params.append(instance)
+    sql = (
+        "SELECT id, timestamp, instance, event_type, position_id, data "
+        "FROM goliath_trade_audit "
+        f"WHERE {' AND '.join(where)} ORDER BY timestamp DESC LIMIT %s"
+    )
+    params.append(limit)
+    rows = _safe_query(sql, tuple(params))
+    entries = []
+    for r in rows:
+        data = r[5] if isinstance(r[5], dict) else (json.loads(r[5]) if r[5] else {})
+        entries.append({
+            "id": r[0],
+            "timestamp": r[1].isoformat() if r[1] else None,
+            "instance": r[2], "event_type": r[3],
+            "position_id": r[4], "data": data,
+        })
+    return {"entries": entries, "count": len(entries)}
