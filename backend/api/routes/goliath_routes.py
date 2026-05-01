@@ -257,3 +257,205 @@ def goliath_position_detail(position_id: str) -> dict[str, Any]:
             "event_type": a[2], "data": data,
         })
     return {"position": position, "audit_chain": audit_chain}
+
+
+# ---- Equity curves -------------------------------------------------------
+
+@router.get("/equity-curve")
+def goliath_equity_curve(
+    scope: str = Query("PLATFORM", description="PLATFORM or INSTANCE"),
+    instance: Optional[str] = Query(None, description="Required when scope=INSTANCE"),
+    days: int = Query(30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Historical equity curve. Reads from goliath_equity_snapshots.
+
+    Returns one point per snapshot in the window. Empty list when no
+    snapshots exist yet (paper trading just started).
+    """
+    scope = scope.upper()
+    if scope not in ("PLATFORM", "INSTANCE"):
+        raise HTTPException(status_code=400, detail="scope must be PLATFORM or INSTANCE")
+    if scope == "INSTANCE" and not instance:
+        raise HTTPException(status_code=400, detail="instance required when scope=INSTANCE")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    if scope == "PLATFORM":
+        rows = _safe_query(
+            "SELECT snapshot_at, starting_capital, cumulative_realized_pnl, "
+            "unrealized_pnl, open_position_count, equity "
+            "FROM goliath_equity_snapshots "
+            "WHERE scope = 'PLATFORM' AND snapshot_at >= %s "
+            "ORDER BY snapshot_at ASC",
+            (cutoff,),
+        )
+    else:
+        rows = _safe_query(
+            "SELECT snapshot_at, starting_capital, cumulative_realized_pnl, "
+            "unrealized_pnl, open_position_count, equity "
+            "FROM goliath_equity_snapshots "
+            "WHERE scope = 'INSTANCE' AND instance_name = %s "
+            "AND snapshot_at >= %s ORDER BY snapshot_at ASC",
+            (instance, cutoff),
+        )
+
+    points = [
+        {
+            "snapshot_at": r[0].isoformat() if r[0] else None,
+            "starting_capital": float(r[1]) if r[1] is not None else None,
+            "cumulative_realized_pnl": float(r[2]) if r[2] is not None else 0.0,
+            "unrealized_pnl": float(r[3]) if r[3] is not None else 0.0,
+            "open_position_count": r[4] or 0,
+            "equity": float(r[5]) if r[5] is not None else None,
+        }
+        for r in rows
+    ]
+    return {
+        "scope": scope, "instance": instance, "days": days,
+        "points": points, "count": len(points),
+    }
+
+
+@router.get("/equity-curve/intraday")
+def goliath_equity_curve_intraday(
+    scope: str = Query("PLATFORM"),
+    instance: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    """Today's equity snapshots. UTC-day window.
+
+    Per AlphaGEX bot-completeness rule: intraday charts must always have
+    at least 2 points. If only one snapshot exists today, falls back to
+    the most recent snapshot from yesterday so a line can still be drawn.
+    """
+    scope = scope.upper()
+    if scope not in ("PLATFORM", "INSTANCE"):
+        raise HTTPException(status_code=400, detail="scope must be PLATFORM or INSTANCE")
+    if scope == "INSTANCE" and not instance:
+        raise HTTPException(status_code=400, detail="instance required when scope=INSTANCE")
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if scope == "PLATFORM":
+        rows = _safe_query(
+            "SELECT snapshot_at, equity, unrealized_pnl, open_position_count "
+            "FROM goliath_equity_snapshots WHERE scope = 'PLATFORM' "
+            "AND snapshot_at >= %s ORDER BY snapshot_at ASC",
+            (today_start,),
+        )
+        prior_rows = _safe_query(
+            "SELECT snapshot_at, equity, unrealized_pnl, open_position_count "
+            "FROM goliath_equity_snapshots WHERE scope = 'PLATFORM' "
+            "AND snapshot_at < %s ORDER BY snapshot_at DESC LIMIT 1",
+            (today_start,),
+        ) if len(rows) < 2 else []
+    else:
+        rows = _safe_query(
+            "SELECT snapshot_at, equity, unrealized_pnl, open_position_count "
+            "FROM goliath_equity_snapshots WHERE scope = 'INSTANCE' "
+            "AND instance_name = %s AND snapshot_at >= %s "
+            "ORDER BY snapshot_at ASC",
+            (instance, today_start),
+        )
+        prior_rows = _safe_query(
+            "SELECT snapshot_at, equity, unrealized_pnl, open_position_count "
+            "FROM goliath_equity_snapshots WHERE scope = 'INSTANCE' "
+            "AND instance_name = %s AND snapshot_at < %s "
+            "ORDER BY snapshot_at DESC LIMIT 1",
+            (instance, today_start),
+        ) if len(rows) < 2 else []
+
+    combined = list(prior_rows) + list(rows)
+    points = [
+        {
+            "snapshot_at": r[0].isoformat() if r[0] else None,
+            "equity": float(r[1]) if r[1] is not None else None,
+            "unrealized_pnl": float(r[2]) if r[2] is not None else 0.0,
+            "open_position_count": r[3] or 0,
+        }
+        for r in combined
+    ]
+    return {
+        "scope": scope, "instance": instance,
+        "points": points, "count": len(points),
+        "fallback_used": bool(prior_rows),
+    }
+
+
+# ---- Performance ---------------------------------------------------------
+
+@router.get("/performance")
+def goliath_performance(
+    instance: Optional[str] = Query(None, description="Filter to one instance"),
+    days: int = Query(30, ge=1, le=365),
+) -> dict[str, Any]:
+    """Win rate, P&L stats per instance. Computed from closed positions."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    if instance:
+        rows = _safe_query(
+            "SELECT instance_name, realized_pnl, close_trigger_id "
+            "FROM goliath_paper_positions "
+            "WHERE state = 'CLOSED' AND closed_at >= %s "
+            "AND instance_name = %s",
+            (cutoff, instance),
+        )
+    else:
+        rows = _safe_query(
+            "SELECT instance_name, realized_pnl, close_trigger_id "
+            "FROM goliath_paper_positions "
+            "WHERE state = 'CLOSED' AND closed_at >= %s",
+            (cutoff,),
+        )
+
+    by_instance: dict[str, dict[str, Any]] = {}
+    for cfg in _INSTANCES:
+        if instance and cfg["name"] != instance:
+            continue
+        by_instance[cfg["name"]] = {
+            "instance_name": cfg["name"],
+            "trades": 0, "wins": 0, "losses": 0, "scratches": 0,
+            "total_pnl": 0.0, "avg_pnl": 0.0, "best": 0.0, "worst": 0.0,
+            "win_rate": None,
+            "trigger_breakdown": {},
+        }
+
+    for name, pnl, trig in rows:
+        bucket = by_instance.setdefault(name, {
+            "instance_name": name,
+            "trades": 0, "wins": 0, "losses": 0, "scratches": 0,
+            "total_pnl": 0.0, "avg_pnl": 0.0, "best": 0.0, "worst": 0.0,
+            "win_rate": None, "trigger_breakdown": {},
+        })
+        pnl_f = float(pnl) if pnl is not None else 0.0
+        bucket["trades"] += 1
+        bucket["total_pnl"] += pnl_f
+        if pnl_f > 0:
+            bucket["wins"] += 1
+        elif pnl_f < 0:
+            bucket["losses"] += 1
+        else:
+            bucket["scratches"] += 1
+        bucket["best"] = max(bucket["best"], pnl_f)
+        bucket["worst"] = min(bucket["worst"], pnl_f)
+        if trig:
+            bucket["trigger_breakdown"][trig] = bucket["trigger_breakdown"].get(trig, 0) + 1
+
+    for bucket in by_instance.values():
+        if bucket["trades"]:
+            bucket["avg_pnl"] = bucket["total_pnl"] / bucket["trades"]
+            decided = bucket["wins"] + bucket["losses"]
+            bucket["win_rate"] = (bucket["wins"] / decided) if decided else None
+
+    platform_total = sum(b["total_pnl"] for b in by_instance.values())
+    platform_trades = sum(b["trades"] for b in by_instance.values())
+    platform_wins = sum(b["wins"] for b in by_instance.values())
+    platform_losses = sum(b["losses"] for b in by_instance.values())
+    platform_decided = platform_wins + platform_losses
+    return {
+        "days": days,
+        "instance_filter": instance,
+        "platform": {
+            "trades": platform_trades,
+            "total_pnl": platform_total,
+            "win_rate": (platform_wins / platform_decided) if platform_decided else None,
+            "avg_pnl": (platform_total / platform_trades) if platform_trades else 0.0,
+        },
+        "instances": list(by_instance.values()),
+    }
