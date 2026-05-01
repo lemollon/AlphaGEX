@@ -3935,6 +3935,80 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  SPARK hourly market brief auto-generation                          */
+/*  (Q2 hook — was manual via Regenerate button only)                  */
+/* ------------------------------------------------------------------ */
+
+// Per-(date,hour) latch so a brief generates at most once per hour bucket
+// per CT trading day. In-memory cache backed by a DB cross-check on cold
+// start so a webapp restart mid-day doesn't re-fire briefs already stored.
+const _lastBriefHourFired: { [key: string]: boolean } = {}
+
+/**
+ * Generate a fresh SPARK market brief at most once per hour bucket during
+ * the trading window (8:30 AM – 3:30 PM CT, weekdays).
+ *
+ * Brief type by hour bucket:
+ *   - 8 (8:30–8:59 AM CT)             → 'morning'
+ *   - 9..14 (9:00 AM – 2:59 PM CT)    → 'intraday'
+ *   - 15 (3:00–3:30 PM CT)            → 'eod_debrief'
+ *
+ * Each call to generateBrief() costs ~$0.02–0.05 against the Claude API.
+ * At ~7 fires/day this is ~$0.20/day max. Failures (missing CLAUDE_API_KEY,
+ * upstream 5xx, parse error) are logged and swallowed — the scan loop never
+ * breaks on a brief failure.
+ */
+async function maybeGenerateHourlyBriefForSpark(ct: Date): Promise<void> {
+  const dow = ct.getDay()
+  if (dow === 0 || dow === 6) return
+
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+  if (hhmm < 830 || hhmm >= 1530) return
+
+  const todayCt = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
+  const hourBucket = ct.getHours()
+  const cacheKey = `spark:${todayCt}:${hourBucket}`
+  if (_lastBriefHourFired[cacheKey]) return
+
+  // Cross-check the DB so a webapp restart doesn't re-fire a bucket that
+  // already has a brief stored. brief_time is TIMESTAMPTZ; compare in CT.
+  try {
+    const rows = await query(
+      `SELECT 1 FROM spark_market_briefs
+        WHERE brief_date = $1
+          AND EXTRACT(HOUR FROM brief_time AT TIME ZONE 'America/Chicago') = $2
+        LIMIT 1`,
+      [todayCt, hourBucket],
+    )
+    if (rows.length > 0) {
+      _lastBriefHourFired[cacheKey] = true
+      return
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] SPARK brief: DB lookup failed (skip cycle): ${msg}`)
+    return
+  }
+
+  const briefType: 'morning' | 'intraday' | 'eod_debrief' =
+    hhmm >= 1500 ? 'eod_debrief' :
+    hhmm < 900 ? 'morning' :
+    'intraday'
+
+  try {
+    const { generateBrief } = await import('./market-brief')
+    const result = await generateBrief('spark', briefType)
+    _lastBriefHourFired[cacheKey] = true
+    console.log(
+      `[scanner] SPARK brief auto-generated (type=${briefType}, hour=${hourBucket}, id=${result.id}, model=${result.model})`,
+    )
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] SPARK brief auto-gen failed (type=${briefType}, non-fatal): ${msg}`)
+  }
+}
+
 async function dailySandboxCleanup(ct: Date): Promise<void> {
   const todayStr = ct.toISOString().slice(0, 10)
 
@@ -4962,6 +5036,15 @@ async function runAllScans(): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${hypoBot.toUpperCase()} hypo-EOD compute failed (non-fatal): ${msg}`)
     }
+  }
+
+  // SPARK hourly market brief auto-generation. Fires at most once per hour
+  // bucket during 8:30 AM – 3:30 PM CT on weekdays. See helper for details.
+  try {
+    await maybeGenerateHourlyBriefForSpark(ct)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] SPARK brief auto-gen wrapper error (non-fatal): ${msg}`)
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
