@@ -24,6 +24,7 @@ pydantic>=2.7.4,<3.0.0
 pydantic-settings>=2.3.0
 pandas>=2.1.4
 numpy>=1.26.0
+pyarrow>=14.0.0  # Parquet I/O for GOLIATH calibration cache (.goliath_cache/)
 
 # ============================================================================
 # HTTP & External APIs
