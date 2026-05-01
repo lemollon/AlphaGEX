@@ -95,6 +95,25 @@ cross-sectional sanity points.
 
 ---
 
+### V03-DRAG-AUTOCORR: Replace theoretical drag formula with autocorrelation-aware estimator
+
+**Source:** PR #2249 AMDL per-week investigation (Phase 1.5 follow-through, 2026-05-01).
+
+**Finding:** theoretical drag formula `-0.5 * L(L-1) * σ² * t` assumes Brownian motion. Real LETF behavior in trending regimes has positive autocorrelation, causing observed drag to go positive (LETF outperforms naive 2×). AMDL ratio 0.131 reflects this, not AMDL malfunction.
+
+**Strategy implication:** long call strike placement via `map_underlying_to_letf_price` may be biased too-far-OTM during exactly the trending regimes the strategy is designed to harvest.
+
+**Options for v0.3:**
+1. Replace theoretical drag with realized variance + lag-1 autocorrelation estimator
+2. Drop drag from strike placement entirely; use empirical LETF tracking residuals
+3. Make `drag_coefficient` regime-conditional (one value for trending, another for mean-reverting)
+
+**Trigger to act:** Phase 9 paper trading reveals systematic miss on long call strikes during catalyst rallies, OR pre-live trading authorization (whichever first).
+
+**Status:** Deferred. `CALIB-BLOCK` on vol_drag remains until this is addressed.
+
+---
+
 ## Origin: Phase 0 (spec deltas, deferred deliverables)
 
 ### V3-1: True ATM-IV-from-Tradier IV-rank module
