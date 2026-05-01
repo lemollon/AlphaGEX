@@ -40,6 +40,7 @@ interface CandidateRow {
   total_credit: number
   close_time: string
   close_date: string  // CT calendar date
+  vix_at_entry: number | null
 }
 
 async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
@@ -55,7 +56,7 @@ async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
     `SELECT position_id, ticker, expiration,
             put_short_strike, put_long_strike,
             call_short_strike, call_long_strike,
-            contracts, total_credit, close_time
+            contracts, total_credit, close_time, vix_at_entry
      FROM ${botTable(bot, 'positions')}
      WHERE status IN ('closed', 'expired')
        ${dteFilter}
@@ -81,6 +82,7 @@ async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
       total_credit: num(r.total_credit),
       close_time: closeTime.toISOString(),
       close_date: ctDateString(closeTime),
+      vix_at_entry: r.vix_at_entry == null ? null : num(r.vix_at_entry),
     }
   })
 }
@@ -149,6 +151,7 @@ export async function POST(
         contracts: c.contracts,
         total_credit: c.total_credit,
         close_date: c.close_date,
+        vix_at_entry: c.vix_at_entry,
       })
 
       if (result.computed) {

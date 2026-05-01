@@ -3892,7 +3892,7 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
-              contracts, total_credit, close_time
+              contracts, total_credit, close_time, vix_at_entry
        FROM ${positionsTable}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
@@ -3924,6 +3924,7 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
         contracts: int(r.contracts),
         total_credit: num(r.total_credit),
         close_date: ctDateString(closeTime),
+        vix_at_entry: r.vix_at_entry == null ? null : num(r.vix_at_entry),
       })
       if (result.computed) {
         await dbExecute(
