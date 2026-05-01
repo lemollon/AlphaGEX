@@ -4513,13 +4513,68 @@ async function scanBot(bot: BotDef): Promise<void> {
           if (snapPersons.length > 0) snapPerson = snapPersons[0]
         } catch { /* default */ }
         if (acctRows.length > 0) {
-          await query(
-            `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
-             (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')`,
-            [num(acctRows[0]?.current_balance), num(acctRows[0]?.cumulative_pnl),
-             unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
-          )
+          // Anti-pollution guard: paper_account.current_balance has been
+          // observed dropping back to ~starting_capital + cumulative_pnl
+          // on certain cycles (e.g. SPARK Logan/sandbox 4/27 + 4/28
+          // wrote 11 mid-day snapshots at $15,118 = $10K + realized,
+          // while the surrounding cycles correctly showed ~$76K). The
+          // root cause is paper_account being mutated to a stale baseline
+          // by an unidentified path. Until that's pinned down, refuse to
+          // persist a snapshot whose balance is more than 50% below the
+          // most recent valid sandbox snapshot — better to leave a 60s
+          // gap in the chart than to plot a phantom dive.
+          const newBal = num(acctRows[0]?.current_balance)
+          let acceptSnapshot = true
+          try {
+            const lastBalRows = await query(
+              `SELECT balance FROM ${botTable(bot.name, 'equity_snapshots')}
+               WHERE dte_mode = $1
+                 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+                 AND COALESCE(person, '') = $2
+               ORDER BY snapshot_time DESC LIMIT 1`,
+              [bot.dte, snapPerson ?? ''],
+            )
+            const lastBal = num(lastBalRows[0]?.balance)
+            if (lastBal > 0 && newBal > 0 && newBal < lastBal * 0.5) {
+              acceptSnapshot = false
+              console.warn(
+                `[scanner] ${botName} SANDBOX snapshot SKIPPED for ${snapPerson}: balance dropped ` +
+                `from $${lastBal.toFixed(2)} to $${newBal.toFixed(2)} (>50%). ` +
+                `paper_account row likely mis-synced — keeping chart clean.`,
+              )
+              try {
+                await query(
+                  `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+                   VALUES ($1, $2, $3, $4, $5)`,
+                  [
+                    'EQUITY_SNAPSHOT_SKIPPED',
+                    `Suspicious balance drop ${snapPerson}/sandbox: $${lastBal.toFixed(2)} → $${newBal.toFixed(2)}`,
+                    JSON.stringify({
+                      person: snapPerson,
+                      account_type: 'sandbox',
+                      last_balance: lastBal,
+                      proposed_balance: newBal,
+                      proposed_realized_pnl: num(acctRows[0]?.cumulative_pnl),
+                      dte_mode: bot.dte,
+                      reason: 'balance_drop_gt_50pct',
+                    }),
+                    bot.dte,
+                    snapPerson,
+                  ],
+                )
+              } catch { /* audit log is best-effort */ }
+            }
+          } catch { /* on lookup failure, prefer recording the snapshot rather than dropping data silently */ }
+
+          if (acceptSnapshot) {
+            await query(
+              `INSERT INTO ${botTable(bot.name, 'equity_snapshots')}
+               (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, person, account_type)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'sandbox')`,
+              [newBal, num(acctRows[0]?.cumulative_pnl),
+               unrealizedPnl, int(openPosCount[0]?.cnt), `scan:${action}`, bot.dte, snapPerson],
+            )
+          }
         }
 
         // Production snapshots (one per production paper_account)
