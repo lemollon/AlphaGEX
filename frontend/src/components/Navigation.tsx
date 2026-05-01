@@ -78,6 +78,7 @@ const navItems = [
   { href: '/samson', label: `${BOT_DISPLAY_NAMES.SAMSON} (Aggressive SPX IC)`, icon: Zap, category: 'Live Trading' },
   { href: '/valor', label: `${BOT_DISPLAY_NAMES.VALOR} (MES Futures)`, icon: Activity, category: 'Live Trading' },
   { href: '/agape-spot', label: `${BOT_DISPLAY_NAMES.AGAPE_SPOT} (Crypto Spot 24/7)`, icon: Globe, category: 'Live Trading' },
+  { href: '/goliath', label: 'GOLIATH (LETF Earnings Paper)', icon: Shield, category: 'Live Trading' },
   { href: '/futures-crypto', label: 'Futures Crypto (ETH/BTC/XRP)', icon: TrendingUp, category: 'Futures Crypto' },
   { href: '/perpetuals-crypto', label: 'Perpetuals Crypto (ETH/BTC/XRP/DOGE/SHIB)', icon: TrendingUp, category: 'Perpetuals Crypto' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
