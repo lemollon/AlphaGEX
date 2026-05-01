@@ -782,6 +782,52 @@ async function monitorSinglePosition(
         }
         const effectiveMin = Math.min(trailingMinCostRow, cclLast)
         if (cclLast > effectiveMin + botCfg.trailing_retrace_dollars) {
+          // Tier-floor guard (4/30/2026): trailing-lockin must NEVER fill at
+          // a price worse than the active tier floor. Tier floor = the debit
+          // that yields the tier's promised profit (e.g., MORNING 50% tier on
+          // a $0.46 credit → floor $0.23). The marketable order is priced at
+          // cost_to_close+$0.01 (worst-case ask + a penny). If that price
+          // exceeds the tier floor, firing trailing-lockin would lock in
+          // LESS profit than the tier promises (observed 4/30/2026: SPARK
+          // prod-logan PT touched 50% floor at 0.23 but didn't fill;
+          // trailing-lockin fired at 0.30 = 35% profit, undercutting the 50%
+          // tier). Instead, skip the lockin — the slippage guard keeps
+          // re-posting at the floor every 3 min, and either the market comes
+          // back, the tier slides (which lifts the floor and lets the next
+          // trailing fire honor the new floor), or EOD takes us as the final
+          // backstop.
+          const [ptFractionTrail] = getSlidingProfitTarget(ct, botCfg.pt_pct, bot.name)
+          const tierTargetTrail = Math.round(entryCredit * (1 - ptFractionTrail) * 10000) / 10000
+          const prospectiveMarketable = Math.round((ccl + 0.01) * 10000) / 10000
+          if (prospectiveMarketable > tierTargetTrail) {
+            try {
+              await dbExecute(
+                `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [
+                  'TRAILING_LOCKIN_SKIPPED',
+                  `TRAILING_LOCKIN_SKIPPED pos=${pid} marketable=$${prospectiveMarketable.toFixed(4)} > tier_floor=$${tierTargetTrail.toFixed(4)} ` +
+                  `(tier_pct=${(ptFractionTrail * 100).toFixed(0)}%) — holding limit at floor`,
+                  JSON.stringify({
+                    reason: 'marketable_above_tier_floor',
+                    position_id: pid,
+                    cost_to_close_last: cclLast,
+                    cost_to_close_mid: mtmTrail.cost_to_close_mid,
+                    cost_to_close: ccl,
+                    min_cost_seen: effectiveMin,
+                    prospective_marketable: prospectiveMarketable,
+                    tier_target: tierTargetTrail,
+                    tier_pct: ptFractionTrail,
+                    entry_credit: entryCredit,
+                    contracts,
+                  }),
+                  bot.dte,
+                  pos.person ?? null,
+                ],
+              )
+            } catch { /* log best-effort */ }
+            // Fall through without firing — slippage guard / tier slide / EOD will handle
+          } else {
           // Retrace threshold exceeded — escape the tier with a marketable
           // close. Cancel any pending limit order first; if the cancel fails
           // (likely because the order just filled), skip the marketable
@@ -862,6 +908,7 @@ async function monitorSinglePosition(
             _mtmFailureCounts.delete(pid)
             return { status: `closed:trailing_lockin@${cclLast.toFixed(4)}`, unrealizedPnl: 0 }
           }
+          } // end of tier-floor-guard else branch
         }
       }
     } catch { /* trailing check is best-effort; failures fall through to normal flow */ }
