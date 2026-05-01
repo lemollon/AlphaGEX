@@ -218,12 +218,14 @@ export async function GET(
           buyingPower = Math.round(tradierBp * 100) / 100
           liveCollateral = Math.round(Math.max(0, tradierEquity - tradierBp) * 100) / 100
           tradierOpenPlOverride = Math.round(tradierOpenPl * 100) / 100
-          // Realized = Tradier close_pl (day-scoped per Tradier spec). Both
-          // cumulative_pnl and today_realized_pnl mirror this number in Live
-          // mode so the top card matches Iron Viper's day P&L exactly.
-          realizedPnl = Math.round(tradierClosePl * 100) / 100
-          todayRealizedOverride = realizedPnl
-          // Back-compute starting_capital so balance = startingCapital + realizedPnl holds
+          // realizedPnl stays as DB cumulative (computed at line 165 from
+          // sum(realized_pnl) on production-filtered closed positions) so the
+          // top "Realized P&L" card matches the equity curve below it.
+          // today_realized_pnl uses Tradier's per-day close_pl — that's what
+          // the broker's "today" P&L row should show.
+          todayRealizedOverride = Math.round(tradierClosePl * 100) / 100
+          // Back-compute starting_capital so balance = startingCapital + realizedPnl
+          // holds (balance is now Tradier-truth, realizedPnl is DB-cumulative).
           startingCapital = Math.round((balance - realizedPnl) * 100) / 100
           accountSource = 'tradier'
 
