@@ -3859,11 +3859,18 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
 const _lastHypoEodDate: { [bot: string]: string } = {}
 
 /**
- * For every SPARK position closed today that doesn't yet have a hypothetical
- * 2:59 PM P&L computed, fetch the option leg quotes at 2:59 PM CT from
- * Tradier timesales and store the counterfactual P&L. Runs once per day
- * after 3:05 PM CT (the 2:59 bar is finalized + all PT/EOD exits have
- * happened, so we know the full set of "closed today" trades).
+ * For every SPARK position closed within the last week that doesn't yet
+ * have a hypothetical 2:59 PM P&L computed, fetch the option leg quotes
+ * at 2:59 PM CT from Tradier timesales and store the counterfactual P&L.
+ * Runs once per day after 3:05 PM CT (the 2:59 bar is finalized + all
+ * PT/EOD exits have happened, so we know the full set of "closed today"
+ * trades).
+ *
+ * Looks back 7 days (not just today) so a transient Tradier failure on
+ * any single day gets retried automatically the next trading day, instead
+ * of leaving a permanent NULL hole. On `result.computed === false` we now
+ * leave `hypothetical_eod_computed_at` NULL so the row stays eligible
+ * for retry — only successful computes mark the row "done."
  */
 async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
   // Run at/after 3:05 PM CT on weekdays only. Before 3:05 the 2:59 bar may
@@ -3873,7 +3880,9 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
   const minsCt = ct.getHours() * 60 + ct.getMinutes()
   if (minsCt < 905) return // 905 = 3:05 PM
 
-  const todayStr = ct.toISOString().slice(0, 10)
+  // Latch on the CT calendar date, not UTC. UTC drifts a day forward after
+  // ~7 PM CT and would re-fire the cron a second time per CT day.
+  const todayStr = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
   if (_lastHypoEodDate[bot] === todayStr) return
 
   const positionsTable = botTable(bot, 'positions')
@@ -3889,7 +3898,7 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
          AND realized_pnl IS NOT NULL
          AND hypothetical_eod_pnl IS NULL
          AND hypothetical_eod_computed_at IS NULL
-         AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date`,
+         AND close_time >= NOW() - INTERVAL '7 days'`,
     )
     if (rows.length === 0) {
       _lastHypoEodDate[bot] = todayStr
@@ -3916,19 +3925,27 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
         total_credit: num(r.total_credit),
         close_date: ctDateString(closeTime),
       })
-      await dbExecute(
-        `UPDATE ${positionsTable}
-         SET hypothetical_eod_pnl = $1,
-             hypothetical_eod_spot = $2,
-             hypothetical_eod_computed_at = NOW()
-         WHERE position_id = $3`,
-        [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, r.position_id],
-      )
-      if (result.computed) computed++; else skipped++
+      if (result.computed) {
+        await dbExecute(
+          `UPDATE ${positionsTable}
+           SET hypothetical_eod_pnl = $1,
+               hypothetical_eod_spot = $2,
+               hypothetical_eod_computed_at = NOW()
+           WHERE position_id = $3`,
+          [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, r.position_id],
+        )
+        computed++
+      } else {
+        // Tradier returned no data this cycle. Leave both columns NULL so the
+        // next day's run (or the backfill-hypo-eod endpoint) can retry. The
+        // backfill endpoint's `close_time >= NOW() - INTERVAL '40 days'` window
+        // is the eventual cutoff for permanently giving up.
+        skipped++
+      }
     }
 
     _lastHypoEodDate[bot] = todayStr
-    console.log(`[scanner] ${bot.toUpperCase()} hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data) of ${rows.length} candidates`)
+    console.log(`[scanner] ${bot.toUpperCase()} hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data, will retry tomorrow) of ${rows.length} candidates`)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] ${bot.toUpperCase()} hypo-EOD daily compute error: ${msg}`)

@@ -154,3 +154,59 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
     computed: true,
   }
 }
+
+/**
+ * Fetch the underlying ticker's last RTH close price on a given CT calendar
+ * date. Used by recover-phantom-trade to compute correct intrinsic P&L when
+ * Tradier has no broker close-order history for an expired Iron Condor —
+ * "no close fills" is NOT a safe proxy for "expired worthless" if the
+ * underlying actually settled past one of the short strikes.
+ *
+ * Tradier's intraday timesales window is ~3 calendar days. For older
+ * expirations this returns null and the caller must refuse to auto-recover.
+ */
+export async function getSpotCloseOnDate(
+  ticker: string,
+  dateCt: string,
+): Promise<number | null> {
+  // 3 sessions × 390 RTH minutes = 1170 bars. Pass a generous slice so the
+  // target date's bars survive Tradier's "last N" trim across multi-session
+  // windows.
+  const bars = await getTimesales(ticker, 1170, 'open', '1min').catch(() => [])
+  let lastClose: number | null = null
+  let lastTime = 0
+  for (const b of bars) {
+    if (!b.time) continue
+    const d = new Date(b.time)
+    if (Number.isNaN(d.getTime())) continue
+    if (ctDateString(d) !== dateCt) continue
+    const t = d.getTime()
+    if (t > lastTime) {
+      lastTime = t
+      lastClose = b.close
+    }
+  }
+  return lastClose
+}
+
+/**
+ * Per-share intrinsic value of an Iron Condor at expiration given the
+ * underlying close price. Only one wing can be ITM at expiration; both
+ * legs of the breached vertical contribute, capped at the spread width.
+ *
+ *   put_long < put_short < call_short < call_long  (bull put + bear call wings)
+ *
+ * Return value is the "cost to close" per share (always ≥ 0). Trader's
+ * realized P&L per share = entry_credit − intrinsic.
+ */
+export function icIntrinsicAtExpiration(
+  spot: number,
+  putLong: number,
+  putShort: number,
+  callShort: number,
+  callLong: number,
+): number {
+  const putItm = Math.max(0, Math.max(0, putShort - spot) - Math.max(0, putLong - spot))
+  const callItm = Math.max(0, Math.max(0, spot - callShort) - Math.max(0, spot - callLong))
+  return putItm + callItm
+}
