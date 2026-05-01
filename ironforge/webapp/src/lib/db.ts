@@ -508,18 +508,34 @@ async function ensureTables(): Promise<void> {
       } catch { /* column already exists */ }
     }
 
-    // Migrate daily_perf UNIQUE constraint from (trade_date) to (trade_date, COALESCE(person, ''))
-    // Needed so sandbox and production can both have entries on the same date.
+    // daily_perf unique key evolution:
+    //   v1: (trade_date)                                    — `${bot}_daily_perf_trade_date_key`
+    //   v2: (trade_date, COALESCE(person, ''))              — `${bot}_daily_perf_date_person_uniq`
+    //   v3: (trade_date, COALESCE(person, ''),              — `${bot}_daily_perf_date_person_account_uniq`
+    //         COALESCE(account_type, 'sandbox'))
+    // v3 is needed so sandbox and production for the same person on the same
+    // day don't collide onto a single row (the v2 collapse caused
+    // mis-attributed Daily P&L on the dashboard — e.g. SPARK 2026-04-30
+    // sandbox showed $112 instead of $3,289 because the production close
+    // overwrote the sandbox row).
+    //
+    // The v3 CREATE only succeeds if existing data is unique on the new key.
+    // Old rows were backfilled with account_type='sandbox' DEFAULT (see the
+    // ALTER ADD COLUMN above) so v2's (trade_date, person) uniqueness implies
+    // v3's uniqueness — the swap is safe on already-populated tables.
     for (const bot of ['flame', 'spark', 'inferno']) {
       try {
-        // Drop old single-column constraint
+        // Drop the original v1 constraint if it lingers from a very old
+        // deployment.
         await client.query(`ALTER TABLE ${bot}_daily_perf DROP CONSTRAINT IF EXISTS ${bot}_daily_perf_trade_date_key`)
-        // Create composite unique index (safe to run repeatedly)
+        // Create v3 first (idempotent). Only after it exists do we drop v2 —
+        // ON CONFLICT specs in scanner.ts target the v3 expression list.
         await client.query(
-          `CREATE UNIQUE INDEX IF NOT EXISTS ${bot}_daily_perf_date_person_uniq
-           ON ${bot}_daily_perf (trade_date, COALESCE(person, ''))`,
+          `CREATE UNIQUE INDEX IF NOT EXISTS ${bot}_daily_perf_date_person_account_uniq
+           ON ${bot}_daily_perf (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox'))`,
         )
-      } catch { /* constraint may already exist or table may not exist */ }
+        await client.query(`DROP INDEX IF EXISTS ${bot}_daily_perf_date_person_uniq`)
+      } catch { /* index may already exist or table may not exist */ }
     }
 
     // Add UNIQUE constraint on ironforge_pdt_config.bot_name (safe to run repeatedly)
