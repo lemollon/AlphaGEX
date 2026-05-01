@@ -13,6 +13,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -126,6 +128,106 @@ def _safe_calibrate(name: str, fn, data, config) -> object:
         )
 
 
+def _emit_per_week_csv(
+    price_history: dict,
+    leverage: float,
+    vol_window_days: int,
+    output_path: str,
+) -> int:
+    """Per-week per-pair diagnostic CSV. Read-only re-derivation of the
+    weekly inputs that tracking_error / vol_drag aggregate over -- writes
+    the underlying numbers so a reviewer can see whether outliers are
+    chronic (every week) or episodic (1-2 weeks dominating the stat).
+
+    Does NOT mutate any metric module result; pure additional output.
+    Math intentionally mirrors trading.goliath.calibration.tracking_error
+    and trading.goliath.calibration.vol_drag so per-week numbers reconcile
+    to the per-pair summaries already in the markdown report.
+    """
+    import numpy as np  # local import keeps the module-level imports lean
+
+    rows: list[dict] = []
+    t_weekly = 1.0 / 52.0
+    fudge = 0.1  # spec default; matches tracking_error.py
+    te_geometric = math.sqrt(2.0 / 3.0)
+
+    for letf, underlying in LETF_PAIRS.items():
+        u_df = price_history.get(underlying)
+        l_df = price_history.get(letf)
+        if u_df is None or u_df.empty or l_df is None or l_df.empty:
+            continue
+        if "Close" not in u_df.columns or "Close" not in l_df.columns:
+            continue
+
+        common = u_df.index.intersection(l_df.index)
+        if len(common) < vol_window_days + 14:
+            continue
+
+        u = u_df["Close"].loc[common].sort_index()
+        l = l_df["Close"].loc[common].sort_index()
+        u_log = np.log(u / u.shift(1)).dropna()
+
+        u_weekly = u.resample("W-FRI").last().dropna()
+        l_weekly = l.resample("W-FRI").last().dropna()
+        common_w = u_weekly.index.intersection(l_weekly.index)
+        if len(common_w) < 5:
+            continue
+
+        u_returns = u_weekly.loc[common_w].pct_change().dropna()
+        l_returns = l_weekly.loc[common_w].pct_change().dropna()
+        common_r = u_returns.index.intersection(l_returns.index)
+        if len(common_r) < 4:
+            continue
+        u_returns = u_returns.loc[common_r]
+        l_returns = l_returns.loc[common_r]
+
+        for week_end in common_r:
+            u_ret = float(u_returns.loc[week_end])
+            l_ret = float(l_returns.loc[week_end])
+            observed_drag = l_ret - leverage * u_ret
+
+            log_window = u_log.loc[:week_end].tail(vol_window_days)
+            if len(log_window) < vol_window_days:
+                sigma = None
+                predicted_drag = None
+                predicted_te = None
+                drag_residual = None
+            else:
+                sigma = float(log_window.std() * math.sqrt(252))
+                predicted_drag = -0.5 * leverage * (leverage - 1) * sigma ** 2 * t_weekly
+                predicted_te = leverage * sigma * math.sqrt(t_weekly) * te_geometric * fudge
+                drag_residual = observed_drag - predicted_drag
+
+            rows.append({
+                "pair": letf,
+                "underlying": underlying,
+                "week_ending": week_end.strftime("%Y-%m-%d"),
+                "underlying_close": float(u_weekly.loc[week_end]),
+                "letf_close": float(l_weekly.loc[week_end]),
+                "underlying_return": u_ret,
+                "letf_return": l_ret,
+                "observed_drag": observed_drag,
+                "predicted_drag": predicted_drag,
+                "drag_residual": drag_residual,
+                "trailing_sigma_annualized": sigma,
+                "predicted_te": predicted_te,
+                "observed_te_proxy": abs(observed_drag),
+            })
+
+    if not rows:
+        print(f"  [per-week-csv] no rows produced; skipping {output_path}")
+        return 0
+
+    out = Path(output_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  [per-week-csv] wrote {len(rows)} rows to {out}")
+    return len(rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -134,6 +236,15 @@ def main() -> int:
         help="Markdown output path",
     )
     parser.add_argument("--days", type=int, default=LOOKBACK_DAYS)
+    parser.add_argument(
+        "--per-week-csv",
+        default=None,
+        help=(
+            "Optional: write per-week per-pair diagnostic CSV to this path. "
+            "Read-only addition; does not change the markdown report content. "
+            "Use to investigate whether per-pair outliers are chronic or episodic."
+        ),
+    )
     args = parser.parse_args()
 
     config = GoliathConfig(
@@ -191,6 +302,15 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(body)
     print(f"\nReport written: {out_path}  ({len(body.splitlines())} lines)")
+
+    if args.per_week_csv:
+        _emit_per_week_csv(
+            price_history=price_history,
+            leverage=float(config.leverage),
+            vol_window_days=int(config.realized_vol_window_days),
+            output_path=args.per_week_csv,
+        )
+
     return 0  # exit 0 even on partial CALIB-BLOCK per Step 8 contract
 
 
