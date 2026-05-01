@@ -6,6 +6,7 @@ import {
   getProductionAccountsForBot,
   getTradierOrders,
 } from '@/lib/tradier'
+import { getSpotCloseOnDate, icIntrinsicAtExpiration } from '@/lib/hypo-eod'
 
 export const dynamic = 'force-dynamic'
 
@@ -182,15 +183,30 @@ async function buildRecoveryPlan(bot: string, positionId: string) {
   }
 
   // 5. Compute new values
-  const maxProfit = Math.round(entryCredit * 100 * contracts * 100) / 100
   let newClosePrice: number
   let newRealizedPnl: number
-  let recoveryVerdict: 'tradier_order_history' | 'expired_worthless'
+  let recoveryVerdict: 'tradier_order_history' | 'expired_worthless' | 'expired_itm'
+  let spotAtExpiration: number | null = null
+  let intrinsicAtExpiration: number | null = null
   if (matched.length === 0) {
-    // No close fills found → assume expired worthless (max profit kept)
-    newClosePrice = 0
-    newRealizedPnl = maxProfit
-    recoveryVerdict = 'expired_worthless'
+    // No close fills found. Don't blindly stamp max profit — the position
+    // may have settled ITM, in which case "no close fills" just means it
+    // was let to expire. Look at the underlying close on the expiration
+    // date; only call it expired-worthless if the spot finished strictly
+    // between the short strikes. Bug history: SPARK 4/28/2026 trade
+    // recorded +$399 max profit when SPY actually settled past the call
+    // short and the IC ate a ~$20 loss.
+    spotAtExpiration = await getSpotCloseOnDate(ticker, expirationStr).catch(() => null)
+    if (spotAtExpiration == null) {
+      return {
+        error: `cannot recover position ${positionId}: no broker close fills AND Tradier returned no ${ticker} bars for ${expirationStr} (likely outside the ~3-day intraday window). Use /api/${bot}/manual-correct-trade with the broker-statement P&L.` as const,
+        status: 422,
+      }
+    }
+    intrinsicAtExpiration = icIntrinsicAtExpiration(spotAtExpiration, pl, ps, cs, cl)
+    newClosePrice = Math.round(intrinsicAtExpiration * 10000) / 10000
+    newRealizedPnl = Math.round((entryCredit - intrinsicAtExpiration) * 100 * contracts * 100) / 100
+    recoveryVerdict = intrinsicAtExpiration > 0 ? 'expired_itm' : 'expired_worthless'
   } else {
     const closeBasePrice = debitTotal / (contracts * 100)
     newClosePrice = Math.round(Math.max(0, closeBasePrice) * 10000) / 10000
@@ -221,10 +237,15 @@ async function buildRecoveryPlan(bot: string, positionId: string) {
       proposed: {
         close_price: newClosePrice,
         realized_pnl: newRealizedPnl,
-        close_reason: recoveryVerdict === 'expired_worthless'
-          ? 'expired_worthless_recovered'
+        close_reason:
+          recoveryVerdict === 'expired_worthless' ? 'expired_worthless_recovered'
+          : recoveryVerdict === 'expired_itm'      ? 'expired_itm_recovered'
           : 'broker_position_gone_recovered',
         recovery_source: recoveryVerdict,
+        spot_at_expiration: spotAtExpiration,
+        intrinsic_at_expiration: intrinsicAtExpiration != null
+          ? Math.round(intrinsicAtExpiration * 10000) / 10000
+          : null,
       },
       delta: {
         close_price_change: Math.round((newClosePrice - num(pos.close_price)) * 10000) / 10000,
