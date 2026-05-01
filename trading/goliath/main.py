@@ -43,6 +43,7 @@ from trading.goliath.engine import (  # noqa: E402
 from trading.goliath.instance import GoliathInstance, build_all_instances  # noqa: E402
 from trading.goliath.monitoring import alerts as monitoring_alerts  # noqa: E402
 from trading.goliath.monitoring import heartbeat as monitoring_heartbeat  # noqa: E402
+from trading.goliath import equity_snapshots as equity_snapshots_module  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +213,15 @@ class Runner:
                         },
                         position_snapshot={"state": position.state.value},
                     )
+
+        # Equity snapshots for the dashboard equity-curve endpoints.
+        # Best-effort: DB unavailable returns 0; never raises.
+        if not self.dry_run:
+            try:
+                equity_snapshots_module.write_snapshots(self.instances)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("equity snapshot write failed: %r", exc)
+
         return result
 
 

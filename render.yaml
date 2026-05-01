@@ -96,6 +96,9 @@ services:
       # Anthropic API for Claude AI explanations
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Discord webhook for GOLIATH alerts (same webhook as spreadworks/flame)
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
       # Tastytrade API for VALOR futures trading (REQUIRED for MES scalping)
       - key: TASTYTRADE_USERNAME
         sync: false
