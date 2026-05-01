@@ -1190,12 +1190,12 @@ async function monitorSinglePosition(
                     )
                   }
                   await query(
-                    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
-                     VALUES (${CT_TODAY}, 0, 1, $1, $2)
-                     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+                    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person, account_type)
+                     VALUES (${CT_TODAY}, 0, 1, $1, $2, $3)
+                     ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox')) DO UPDATE SET
                        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
                        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-                    [realizedPnl, posPerson],
+                    [realizedPnl, posPerson, posAccountType],
                   )
                   console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
@@ -1971,14 +1971,15 @@ async function closePosition(
     ],
   )
 
-  // Daily perf (keyed by trade_date + person so sandbox/production don't overwrite each other)
+  // Daily perf — keyed by (trade_date, person, account_type) so sandbox and
+  // production for the same person on the same day stay in separate rows.
   await query(
-    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
-     VALUES (${CT_TODAY}, 0, 1, $1, $2)
-     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person, account_type)
+     VALUES (${CT_TODAY}, 0, 1, $1, $2, $3)
+     ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox')) DO UPDATE SET
        positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
        realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
-    [realizedPnl, posPerson],
+    [realizedPnl, posPerson, posAccountType],
   )
 
   console.log(`[scanner] ${bot.name.toUpperCase()} CLOSED ${positionId}: $${realizedPnl.toFixed(2)} [${reason}]${fillNote}`)
@@ -3292,11 +3293,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     [num(updatedAcct[0]?.current_balance), num(updatedAcct[0]?.cumulative_pnl), `auto:${positionId}`, bot.dte, person],
   )
 
-  // Daily perf
+  // Daily perf — open path always increments the SANDBOX row (mirrors the
+  // pdt_log + equity_snapshots inserts above which also hardcode 'sandbox'
+  // for the open side). Composite key with account_type prevents the row
+  // from later being merged with the production close.
   await query(
-    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
-     VALUES (${CT_TODAY}, 1, 0, 0, $1)
-     ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+    `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person, account_type)
+     VALUES (${CT_TODAY}, 1, 0, 0, $1, 'sandbox')
+     ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox')) DO UPDATE SET
        trades_executed = ${botTable(bot.name, 'daily_perf')}.trades_executed + 1`,
     [person],
   )
@@ -3737,17 +3741,14 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
             [realizedPnl, collateral, person, bot.dte],
           )
 
-          // Daily perf — Path B previously skipped this so production trades
-          // closed via broker reconcile never showed up in {bot}_daily_perf
-          // (Logan/production has 0 rows there). Mirrors Path A's pattern
-          // (line ~909). Note: the existing ON CONFLICT key is (trade_date,
-          // person) so production and sandbox can still collide on the same
-          // person; that's a separate schema fix.
+          // Daily perf — production reconcile path. Composite key with
+          // account_type='production' prevents this from merging into the
+          // sandbox row (which Path A's open insert claims).
           try {
             await query(
-              `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person)
-               VALUES (${CT_TODAY}, 0, 1, $1, $2)
-               ON CONFLICT (trade_date, COALESCE(person, '')) DO UPDATE SET
+              `INSERT INTO ${botTable(bot.name, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl, person, account_type)
+               VALUES (${CT_TODAY}, 0, 1, $1, $2, 'production')
+               ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox')) DO UPDATE SET
                  positions_closed = ${botTable(bot.name, 'daily_perf')}.positions_closed + 1,
                  realized_pnl = ${botTable(bot.name, 'daily_perf')}.realized_pnl + $1`,
               [realizedPnl, person],
