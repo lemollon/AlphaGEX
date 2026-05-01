@@ -46,5 +46,10 @@ class GoliathConfig:
     drag_coefficient: float = 1.0
 
     # Window length (in trading days) for realized-vol calculations used by
-    # strike mapping and the drag formula.
-    realized_vol_window_days: int = 30
+    # strike mapping and the drag formula. Updated 30 -> 20 per Phase 1.5
+    # step 9 calibration (PR #2248) approval -- 4 of 5 LETF pairs preferred
+    # 20d in the per-pair window comparison. MSTU's preference for 30d was
+    # statistical noise (residual_sd window-invariant per known math bug
+    # in vol_window.py; tracked separately for v0.3 estimator replacement
+    # under V03-DRAG-AUTOCORR).
+    realized_vol_window_days: int = 20

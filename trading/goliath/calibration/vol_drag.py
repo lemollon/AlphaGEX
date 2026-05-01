@@ -19,7 +19,8 @@ Acceptance criteria (recovery doc, accepted by Leron):
 
 Math:
     sigma = annualized realized vol from N-day window of underlying daily
-            log returns (config.realized_vol_window_days, default 30).
+            log returns (config.realized_vol_window_days, default 20 per
+            Phase 1.5 step 9 calibration; was 30 originally).
             Single sigma per pair (slow-moving over 90d).
     theoretical_drag (constant per pair given single sigma) =
             -0.5 * L * (L-1) * sigma^2 * (1/52)
