@@ -41,6 +41,8 @@ from trading.goliath.engine import (  # noqa: E402
     PlatformContext,
 )
 from trading.goliath.instance import GoliathInstance, build_all_instances  # noqa: E402
+from trading.goliath.monitoring import alerts as monitoring_alerts  # noqa: E402
+from trading.goliath.monitoring import heartbeat as monitoring_heartbeat  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +105,14 @@ class Runner:
         for name, instance in self.instances.items():
             result.instances_evaluated += 1
 
+            # Heartbeat per-instance per-cycle. Best-effort, never raises.
+            if not self.dry_run:
+                monitoring_heartbeat.record_heartbeat(
+                    bot_name=name,
+                    status="KILLED" if instance.is_killed else "OK",
+                    details={"cycle": "entry"},
+                )
+
             if instance.is_killed:
                 result.skips.append(f"{name}: kill_active")
                 logger.info("skip %s -- instance kill active", name)
@@ -113,6 +123,13 @@ class Runner:
             except Exception as exc:  # noqa: BLE001
                 result.skips.append(f"{name}: snapshot_error={exc!r}")
                 logger.warning("skip %s -- snapshot fetch failed: %r", name, exc)
+                # Track TV API failures so the rate-limit alert can fire.
+                # Generic snapshot errors count toward the same window;
+                # caller can refine if/when we split TV vs yfinance signals.
+                if not self.dry_run:
+                    monitoring_alerts.record_tv_api_failure()
+                    if monitoring_alerts.check_tv_api_failure_rate():
+                        monitoring_alerts.alert_tv_api_failures()
                 continue
 
             decision = self.engine.evaluate_entry(instance, snapshot, platform, now=now)
@@ -139,6 +156,20 @@ class Runner:
                 result.entries_filled += 1
                 logger.info("filled %s position=%s contracts=%d",
                             name, position_id, decision.contracts_to_trade)
+                # Discord notification on broker fill. Best-effort.
+                try:
+                    monitoring_alerts.alert_entry_filled(
+                        instance=name,
+                        structure={
+                            "short_put_strike": decision.structure.short_put.strike,
+                            "long_put_strike": decision.structure.long_put.strike,
+                            "long_call_strike": decision.structure.long_call.strike,
+                            "net_cost": decision.structure.net_cost,
+                        },
+                        contracts=decision.contracts_to_trade,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("alert_entry_filled failed for %s: %r", name, exc)
 
         return result
 
@@ -151,6 +182,14 @@ class Runner:
             if instance.open_count == 0:
                 continue
             result.instances_evaluated += 1
+
+            # Heartbeat per-instance per-management-cycle. Best-effort.
+            if not self.dry_run:
+                monitoring_heartbeat.record_heartbeat(
+                    bot_name=name,
+                    status="KILLED" if instance.is_killed else "OK",
+                    details={"cycle": "management", "open_positions": instance.open_count},
+                )
 
             actions = self.engine.manage_open_positions(instance, now=now)
             result.triggers_fired += len(actions)
