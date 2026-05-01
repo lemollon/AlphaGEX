@@ -640,6 +640,57 @@ function getTargetExpiration(minDte: number): string {
   return `${y}-${m}-${d}`
 }
 
+/**
+ * Recover the actual close fill price for a Tradier order with retries.
+ *
+ * Used after a profit-target close limit order has filled at the broker
+ * (legs are gone) but the immediate fill poll didn't catch the price.
+ * Tradier's order status occasionally lags the leg-level fills by a few
+ * seconds, so we retry a small number of times before giving up.
+ *
+ * Acceptance order:
+ *   1. Strict — status='filled' or 'partially_filled' AND positive fill
+ *      price → return immediately.
+ *   2. Broad — any positive avg_fill_price/last_fill_price regardless of
+ *      status. Held back as a fallback in case a later attempt produces
+ *      a strict-status update; only used if all retries fail strict.
+ *      Tradier sandbox occasionally reports status='canceled' for orders
+ *      that partially filled before our cancel — that partial fill is
+ *      still the realized truth for the legs that are now gone, and is
+ *      always closer to reality than the placed limit price.
+ *   3. None — returns price=null with the most recent observed status so
+ *      callers can log it before falling back to limit_price.
+ */
+async function recoverTradierFillWithRetries(
+  apiKey: string,
+  accountId: string,
+  orderId: number,
+  baseUrl: string,
+): Promise<{ price: number | null; status: string | null }> {
+  const ATTEMPTS = 3
+  const DELAY_MS = 1500
+  let lastStatus: string | null = null
+  let lastBroad: { price: number; status: string | null } | null = null
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, DELAY_MS))
+    try {
+      const details = await getTradierOrderDetails(apiKey, accountId, orderId, baseUrl)
+      if (!details) continue
+      lastStatus = details.status
+      const fillCandidate = details.avg_fill_price ?? details.last_fill_price
+      if (fillCandidate == null || fillCandidate <= 0) continue
+      if (details.status === 'filled' || details.status === 'partially_filled') {
+        return { price: fillCandidate, status: details.status }
+      }
+      // Broader acceptance — keep, but let later attempts try for a
+      // strict-status update before we commit to it.
+      lastBroad = { price: fillCandidate, status: details.status }
+    } catch { /* swallow — try the next attempt */ }
+  }
+  if (lastBroad) return lastBroad
+  return { price: null, status: lastStatus }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Position monitoring — PT / SL / EOD close                          */
 /* ------------------------------------------------------------------ */
@@ -1193,15 +1244,19 @@ async function monitorSinglePosition(
                   try {
                     const pollAcctId = await getAccountIdForKey(pollAcct.apiKey, pollAcct.baseUrl)
                     if (pollAcctId) {
-                      const details = await getTradierOrderDetails(pollAcct.apiKey, pollAcctId, userPending.order_id, pollAcct.baseUrl)
-                      if (details) {
-                        tradierOrderStatus = details.status
-                        const isFilled = details.status === 'filled' || details.status === 'partially_filled'
-                        const fillCandidate = details.avg_fill_price ?? details.last_fill_price
-                        if (isFilled && fillCandidate != null && fillCandidate > 0) {
-                          recoveredPrice = fillCandidate
-                          recoverySource = 'tradier_fill'
-                        }
+                      // Retry 3x with 1.5s spacing — Tradier's order status
+                      // occasionally lags leg-level fills, and the prior
+                      // single-shot fetch was the source of the limit-price
+                      // fallback overwriting real fills (e.g. SPARK 4/30 id
+                      // 53 stamped close_price=$0.24=_limit_price even
+                      // though the broker had recorded the actual fill).
+                      const tradierFill = await recoverTradierFillWithRetries(
+                        pollAcct.apiKey, pollAcctId, userPending.order_id, pollAcct.baseUrl,
+                      )
+                      tradierOrderStatus = tradierFill.status
+                      if (tradierFill.price != null && tradierFill.price > 0) {
+                        recoveredPrice = tradierFill.price
+                        recoverySource = 'tradier_fill'
                       }
                     }
                   } catch { /* Tradier order fetch is best-effort — fall through to limit_price */ }
@@ -3518,15 +3573,18 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
             if (prodAcct) {
               const accountId = await getAccountIdForKey(prodAcct.apiKey, prodAcct.baseUrl)
               if (accountId) {
-                const details = await getTradierOrderDetails(prodAcct.apiKey, accountId, orderId, prodAcct.baseUrl)
-                if (details) {
-                  tradierOrderStatus = details.status
-                  const isFilled = details.status === 'filled' || details.status === 'partially_filled'
-                  const fillCandidate = details.avg_fill_price ?? details.last_fill_price
-                  if (isFilled && fillCandidate != null && fillCandidate > 0) {
-                    recoveredPrice = fillCandidate
-                    recoverySource = 'tradier_fill'
-                  }
+                // Retry 3x with 1.5s spacing — same reasoning as
+                // monitorSinglePosition's broker-gone branch: the
+                // single-shot fetch was missing real fills due to
+                // Tradier status reporting lag, dropping us into the
+                // _limit_price fallback when Tradier had the truth.
+                const tradierFill = await recoverTradierFillWithRetries(
+                  prodAcct.apiKey, accountId, orderId, prodAcct.baseUrl,
+                )
+                tradierOrderStatus = tradierFill.status
+                if (tradierFill.price != null && tradierFill.price > 0) {
+                  recoveredPrice = tradierFill.price
+                  recoverySource = 'tradier_fill'
                 }
               }
             }
