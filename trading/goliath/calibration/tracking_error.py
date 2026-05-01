@@ -19,7 +19,8 @@ Math:
       1. Resample to weekly closes (Friday).
       2. Weekly simple returns u_t and l_t.
       3. Compute annualized realized vol sigma from N-day window of
-         daily log returns (config.realized_vol_window_days, default 30).
+         daily log returns (config.realized_vol_window_days, default 20
+         per Phase 1.5 step 9 calibration; was 30 originally).
       4. Per-week predicted LETF return:
             predicted_l_t = leverage * u_t + drag
             drag         = -0.5 * leverage * (leverage-1) * sigma**2 * (1/52)
