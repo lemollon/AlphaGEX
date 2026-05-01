@@ -45,6 +45,7 @@ import {
   getLoadedSandboxAccountsAsync,
   getAccountIdForKey,
   getTradierOrders,
+  getTimesales,
   buildOccSymbol,
   isConfigured,
   type TradierOrder,
@@ -295,6 +296,160 @@ async function fetchOrdersForPosition(p: PositionRow): Promise<TradierOrder[] | 
   return orders ?? []
 }
 
+interface SettlementRecovery {
+  close_price: number
+  realized_pnl: number
+  spy_close: number
+  expiration_date: string
+  bar_used_iso: string | null
+  formula_breakdown: {
+    put_settlement: number
+    call_settlement: number
+  }
+}
+
+/**
+ * Tier-2 recovery for ICs that EXPIRED at the broker (no closing orders).
+ *
+ * Why this is needed: tier-1 (`leg_matched_recover`) requires actual close
+ * orders on Tradier filtered by the position's 4 OCC symbols. If the IC was
+ * held through expiration and let to settle (no manual close), Tradier has
+ * NO close orders to match — settlement is automatic and produces no
+ * order rows. SPARK 1DTE positions held overnight from open day to next-day
+ * expiration are exactly this case.
+ *
+ * Settlement formula (per share, for SPY-style PM-settled equity options):
+ *
+ *   put_debit  = max(0, put_short  − SPY_close) − max(0, put_long  − SPY_close)
+ *   call_debit = max(0, SPY_close − call_short) − max(0, SPY_close − call_long)
+ *   close_price = put_debit + call_debit                   (capped at spread width)
+ *   realized_pnl = (entry_credit − close_price) × 100 × contracts
+ *
+ * SPY_close = the 1-min bar's close at 14:59 CT on the expiration date
+ * (last RTH minute — settlement is based on the regular-hours close).
+ *
+ * Falls back to the latest bar of the day if 14:59 specifically isn't found.
+ * Returns null if Tradier returns no bars for the expiration date (out of
+ * the ~40-day timesales retention window) — the operator then knows to
+ * provide the close manually.
+ */
+async function settlement_at_expiration_recover(
+  p: PositionRow,
+): Promise<SettlementRecovery | { error: string } | null> {
+  if (!p.expiration) return { error: 'position has no expiration date' }
+  if (!isConfigured()) return { error: 'Tradier not configured' }
+
+  // Fetch SPY's 1-min bars on the expiration date. getTimesales by default
+  // returns the last `minutes` candles ending at "now", so request a wide
+  // window (1500 minutes = 25 hours of RTH) and filter to bars whose CT
+  // calendar date matches the expiration date.
+  let series: Array<{ time: string; close: number }>
+  try {
+    series = await getTimesales(p.ticker || 'SPY', 1500, 'open', '1min')
+  } catch (err: unknown) {
+    return { error: `getTimesales failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!series || series.length === 0) {
+    return { error: 'Tradier returned no timesales bars for SPY (likely out of retention window)' }
+  }
+
+  // Filter to bars whose CT calendar date matches the expiration date.
+  const expDate = p.expiration
+  const expBars = series.filter((b) => {
+    if (!b.time) return false
+    try {
+      const ctDate = new Date(new Date(b.time).toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+        .toISOString()
+        .slice(0, 10)
+      return ctDate === expDate
+    } catch {
+      return false
+    }
+  })
+  if (expBars.length === 0) {
+    return { error: `no SPY timesales bars found for expiration date ${expDate} — outside retention window` }
+  }
+
+  // Prefer the 14:59 CT bar (last RTH minute, matches PM-settlement basis).
+  // Fall back to the latest bar of the day if 14:59 isn't present (e.g. holiday early close).
+  let chosen: { time: string; close: number } | null = null
+  for (const b of expBars) {
+    try {
+      const ct = new Date(b.time).toLocaleString('en-US', {
+        timeZone: 'America/Chicago',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      })
+      if (ct === '14:59') { chosen = b; break }
+    } catch { /* continue */ }
+  }
+  if (!chosen) chosen = expBars[expBars.length - 1]
+
+  const spyClose = chosen.close
+  if (!spyClose || !isFinite(spyClose) || spyClose <= 0) {
+    return { error: `bar at ${chosen.time} has unusable close price ${chosen.close}` }
+  }
+
+  // PM-settlement formula for an Iron Condor:
+  //   put_debit  = max(0, put_short  − S) − max(0, put_long  − S)
+  //   call_debit = max(0, S − call_short) − max(0, S − call_long)
+  // Both legs cap at the spread width naturally (long always inside short).
+  const putDebit = Math.max(0, p.put_short_strike - spyClose) - Math.max(0, p.put_long_strike - spyClose)
+  const callDebit = Math.max(0, spyClose - p.call_short_strike) - Math.max(0, spyClose - p.call_long_strike)
+  const closePrice = Math.max(0, putDebit + callDebit) // floor at 0 (defensive)
+
+  const realized = Math.round((p.total_credit - closePrice) * 100 * p.contracts * 100) / 100
+
+  return {
+    close_price: Math.round(closePrice * 10000) / 10000,
+    realized_pnl: realized,
+    spy_close: Math.round(spyClose * 100) / 100,
+    expiration_date: expDate,
+    bar_used_iso: chosen.time,
+    formula_breakdown: {
+      put_settlement: Math.round(putDebit * 10000) / 10000,
+      call_settlement: Math.round(callDebit * 10000) / 10000,
+    },
+  }
+}
+
+/**
+ * Try Tier-1 (leg-matched orders) first. If it returns null AND there were
+ * no close orders for this position's symbols, fall back to Tier-2 (settlement
+ * at expiration). Returns the recovered close + breadcrumb of which tier won.
+ */
+async function recoverWithFallback(
+  orders: TradierOrder[],
+  cand: PositionRow,
+): Promise<{
+  tier: 'leg_matched' | 'settlement_at_expiration'
+  legmatched: ReturnType<typeof leg_matched_recover>
+  settlement: SettlementRecovery | { error: string } | null
+  recovered_close_price: number
+  recovered_realized_pnl: number
+} | null> {
+  const legmatched = leg_matched_recover(orders, cand)
+  if (legmatched) {
+    return {
+      tier: 'leg_matched',
+      legmatched,
+      settlement: null,
+      recovered_close_price: legmatched.close_price,
+      recovered_realized_pnl: legmatched.realized_pnl,
+    }
+  }
+  const settlement = await settlement_at_expiration_recover(cand)
+  if (settlement && !('error' in settlement)) {
+    return {
+      tier: 'settlement_at_expiration',
+      legmatched: null,
+      settlement,
+      recovered_close_price: settlement.close_price,
+      recovered_realized_pnl: settlement.realized_pnl,
+    }
+  }
+  return null
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { bot: string } },
@@ -340,13 +495,13 @@ export async function GET(
       })
     }
 
-    const recovery = leg_matched_recover(ordersOrErr, cand)
+    const recoveryEnvelope = await recoverWithFallback(ordersOrErr, cand)
 
     // Count what would move in each affected table so the operator can see
     // the full reconciliation surface before authorizing the POST.
     let snapshotPreviewCount = 0
     let dailyPerfPreviewCount = 0
-    if (recovery && cand.close_time_iso) {
+    if (recoveryEnvelope && cand.close_time_iso) {
       try {
         if (cand.account_type === 'production') {
           const r = await dbQuery(
@@ -372,7 +527,7 @@ export async function GET(
         }
       } catch { /* preview only; ignore */ }
     }
-    if (recovery && cand.close_date_ct) {
+    if (recoveryEnvelope && cand.close_date_ct) {
       try {
         const r = await dbQuery(
           `SELECT COUNT(*)::int AS n
@@ -385,26 +540,34 @@ export async function GET(
       } catch { /* preview only; ignore */ }
     }
 
-    const delta = recovery
-      ? Math.round((recovery.realized_pnl - cand.realized_pnl) * 100) / 100
+    const delta = recoveryEnvelope
+      ? Math.round((recoveryEnvelope.recovered_realized_pnl - cand.realized_pnl) * 100) / 100
       : 0
+
+    const closeReasonAfter = recoveryEnvelope?.tier === 'settlement_at_expiration'
+      ? 'broker_gone_backfill_settlement'
+      : 'broker_gone_backfill_legmatched'
 
     return NextResponse.json({
       bot: 'spark',
       position_id: positionId,
       dry_run: true,
       eligible: true,
-      can_recover: recovery != null,
+      can_recover: recoveryEnvelope != null,
       current: cand,
-      recovery,
-      would_update: recovery
+      recovery: recoveryEnvelope?.legmatched ?? null,
+      settlement_recovery: recoveryEnvelope?.settlement && !('error' in recoveryEnvelope.settlement)
+        ? recoveryEnvelope.settlement
+        : null,
+      recovery_tier: recoveryEnvelope?.tier ?? null,
+      would_update: recoveryEnvelope
         ? {
             close_price_before: cand.close_price,
-            close_price_after: recovery.close_price,
+            close_price_after: recoveryEnvelope.recovered_close_price,
             realized_pnl_before: cand.realized_pnl,
-            realized_pnl_after: recovery.realized_pnl,
+            realized_pnl_after: recoveryEnvelope.recovered_realized_pnl,
             realized_pnl_delta: delta,
-            close_reason_after: 'broker_gone_backfill_legmatched',
+            close_reason_after: closeReasonAfter,
             tables_affected: {
               spark_positions: 1,
               spark_paper_account: delta === 0 ? 0 : 1,
@@ -413,9 +576,9 @@ export async function GET(
             },
           }
         : null,
-      instructions: recovery
+      instructions: recoveryEnvelope
         ? `POST /api/spark/fix-mis-attributed-close?position_id=${positionId}&confirm=true to apply.`
-        : 'No leg-matched close fills found on the owning Tradier account. The order history may be outside the broker retention window.',
+        : 'No leg-matched close fills AND no SPY timesales bar for the expiration date — the broker retention window has likely been exceeded for both order history and option/equity timesales.',
     })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -457,16 +620,27 @@ export async function POST(
       return NextResponse.json({ applied: false, reason: ordersOrErr.error, current: cand })
     }
 
-    const recovery = leg_matched_recover(ordersOrErr, cand)
-    if (!recovery) {
+    const recoveryEnvelope = await recoverWithFallback(ordersOrErr, cand)
+    if (!recoveryEnvelope) {
       return NextResponse.json({
         applied: false,
-        reason: 'no leg-matched close fills found — broker retention window likely exceeded',
+        reason: 'no leg-matched close fills AND no SPY timesales bar for the expiration date',
         current: cand,
       })
     }
 
-    const delta = Math.round((recovery.realized_pnl - cand.realized_pnl) * 100) / 100
+    const recovery = recoveryEnvelope.legmatched
+    const settlement = recoveryEnvelope.settlement && !('error' in recoveryEnvelope.settlement)
+      ? recoveryEnvelope.settlement
+      : null
+    const recoveredClosePrice = recoveryEnvelope.recovered_close_price
+    const recoveredRealizedPnl = recoveryEnvelope.recovered_realized_pnl
+    const tier = recoveryEnvelope.tier
+    const closeReasonAfter = tier === 'settlement_at_expiration'
+      ? 'broker_gone_backfill_settlement'
+      : 'broker_gone_backfill_legmatched'
+
+    const delta = Math.round((recoveredRealizedPnl - cand.realized_pnl) * 100) / 100
 
     // Reconcile every table that ate the bad realized_pnl. All four UPDATEs
     // run in a single transaction so partial application is impossible:
@@ -497,13 +671,13 @@ export async function POST(
           `UPDATE spark_positions
               SET close_price = $1,
                   realized_pnl = $2,
-                  close_reason = 'broker_gone_backfill_legmatched',
+                  close_reason = $3,
                   updated_at = NOW()
-            WHERE position_id = $3
+            WHERE position_id = $4
               AND status = 'closed'
-              AND realized_pnl = $4
-              AND close_reason = $5`,
-          [recovery.close_price, recovery.realized_pnl, positionId, cand.realized_pnl, cand.close_reason],
+              AND realized_pnl = $5
+              AND close_reason = $6`,
+          [recoveredClosePrice, recoveredRealizedPnl, closeReasonAfter, positionId, cand.realized_pnl, cand.close_reason],
         )
         const positionRows = positionRes.rowCount ?? 0
         if (positionRows === 0) {
@@ -591,33 +765,50 @@ export async function POST(
         }
 
         // 5. Audit row. Inside the transaction so it commits with the writes.
+        const auditLevel = tier === 'settlement_at_expiration'
+          ? 'BROKER_RECONCILE_SETTLEMENT'
+          : 'BROKER_RECONCILE_LEGMATCHED'
+        const tierBreadcrumb = tier === 'settlement_at_expiration' && settlement
+          ? `SETTLEMENT @ ${settlement.expiration_date} (SPY=$${settlement.spy_close.toFixed(2)}, ` +
+            `put_settlement=$${settlement.formula_breakdown.put_settlement.toFixed(4)}, ` +
+            `call_settlement=$${settlement.formula_breakdown.call_settlement.toFixed(4)})`
+          : recovery
+            ? `LEG-MATCHED (${recovery.matched_orders.length} matched orders)`
+            : 'UNKNOWN'
         await client.query(
           `INSERT INTO ${botTable('spark', 'logs')} (level, message, details, dte_mode, person)
            VALUES ($1, $2, $3, $4, $5)`,
           [
-            'BROKER_RECONCILE_LEGMATCHED',
-            `LEG-MATCHED RECOVERY: ${positionId} realized_pnl $${cand.realized_pnl.toFixed(2)} → $${recovery.realized_pnl.toFixed(2)} ` +
-              `(close_price $${cand.close_price.toFixed(4)} → $${recovery.close_price.toFixed(4)}, delta $${delta.toFixed(2)}, ` +
-              `${recovery.matched_orders.length} matched orders, ` +
+            auditLevel,
+            `${auditLevel}: ${positionId} realized_pnl $${cand.realized_pnl.toFixed(2)} → $${recoveredRealizedPnl.toFixed(2)} ` +
+              `(close_price $${cand.close_price.toFixed(4)} → $${recoveredClosePrice.toFixed(4)}, delta $${delta.toFixed(2)}, ` +
+              `${tierBreadcrumb}, ` +
               `paper_account=${paperAccountRows} daily_perf=${dailyPerfRows} snapshots=${equitySnapshotRows})`,
             JSON.stringify({
-              event: 'broker_reconcile_legmatched',
+              event: tier === 'settlement_at_expiration'
+                ? 'broker_reconcile_settlement'
+                : 'broker_reconcile_legmatched',
+              tier,
               position_id: positionId,
               account_type: cand.account_type,
               person: cand.person,
               entry_credit: cand.total_credit,
               contracts: cand.contracts,
               close_price_before: cand.close_price,
-              close_price_after: recovery.close_price,
+              close_price_after: recoveredClosePrice,
               realized_pnl_before: cand.realized_pnl,
-              realized_pnl_after: recovery.realized_pnl,
+              realized_pnl_after: recoveredRealizedPnl,
               realized_pnl_delta: delta,
               previous_close_reason: cand.close_reason,
+              new_close_reason: closeReasonAfter,
               close_date_ct: cand.close_date_ct,
               close_time_iso: cand.close_time_iso,
-              debit_total: recovery.debit_total,
-              occ_symbols: recovery.occ_symbols,
-              matched_orders: recovery.matched_orders,
+              // Tier-1 specific
+              debit_total: recovery?.debit_total ?? null,
+              occ_symbols: recovery?.occ_symbols ?? null,
+              matched_orders: recovery?.matched_orders ?? null,
+              // Tier-2 specific
+              settlement_recovery: settlement,
               applied_counts: {
                 position_rows: positionRows,
                 paper_account_rows: paperAccountRows,
@@ -660,7 +851,9 @@ export async function POST(
       position_id: positionId,
       before: cand,
       after,
+      recovery_tier: tier,
       recovery,
+      settlement_recovery: settlement,
       delta,
       applied_counts: counts,
       note: 'Refresh /spark Trade History + Performance + Equity Curve + Daily Perf to see the corrected P&L.',
