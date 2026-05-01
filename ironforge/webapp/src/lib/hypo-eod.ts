@@ -131,6 +131,32 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
   const spotPx = findBarAt259CT(spyBars, pos.close_date)
 
   if (psPx == null || plPx == null || csPx == null || clPx == null) {
+    // Same-day-expiry fallback: when the close date equals the option
+    // expiration (SPARK 1DTE always closes on expiration day; INFERNO
+    // 0DTE always does too), 2:59 PM CT is ~1 minute before settlement
+    // and remaining time value is effectively zero. Compute the IC's
+    // intrinsic value off the underlying spot and use that as the
+    // hypothetical exit price. The math approximation is accurate to
+    // pennies per contract — far better than leaving the row NULL just
+    // because Tradier's per-leg timesales archive is patchy.
+    if (spotPx != null && pos.close_date === pos.expiration) {
+      const intrinsic = icIntrinsicAtExpiration(
+        spotPx,
+        pos.put_long_strike,
+        pos.put_short_strike,
+        pos.call_short_strike,
+        pos.call_long_strike,
+      )
+      const pnlPerShare = pos.total_credit - intrinsic
+      const pnl = Math.round(pnlPerShare * 100 * Math.max(1, pos.contracts) * 100) / 100
+      return {
+        position_id: pos.position_id,
+        hypothetical_eod_pnl: pnl,
+        hypothetical_eod_spot: Math.round(spotPx * 10000) / 10000,
+        computed: true,
+        reason: 'spot_intrinsic_fallback_same_day_expiry',
+      }
+    }
     return {
       position_id: pos.position_id,
       hypothetical_eod_pnl: null,
