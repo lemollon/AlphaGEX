@@ -42,6 +42,7 @@ interface PositionMeta {
   contracts: number
   total_credit: number       // per-contract dollars (e.g. 0.41)
   close_date: string         // 'YYYY-MM-DD' (CT calendar date of close_time)
+  vix_at_entry?: number | null  // VIX %, used as IV proxy for the BS fallback
 }
 
 export interface HypoEodResult {
@@ -131,14 +132,11 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
   const spotPx = findBarAt259CT(spyBars, pos.close_date)
 
   if (psPx == null || plPx == null || csPx == null || clPx == null) {
-    // Same-day-expiry fallback: when the close date equals the option
-    // expiration (SPARK 1DTE always closes on expiration day; INFERNO
-    // 0DTE always does too), 2:59 PM CT is ~1 minute before settlement
-    // and remaining time value is effectively zero. Compute the IC's
-    // intrinsic value off the underlying spot and use that as the
-    // hypothetical exit price. The math approximation is accurate to
-    // pennies per contract — far better than leaving the row NULL just
-    // because Tradier's per-leg timesales archive is patchy.
+    // Fallback path 1 — same-day-expiry: when close_date == expiration
+    // (INFERNO 0DTE always; SPARK 1DTE only when closed on expiration day),
+    // 2:59 PM CT is ~1 minute before settlement so remaining time value is
+    // effectively zero. Use the IC's intrinsic value off the underlying
+    // spot as the hypothetical exit price.
     if (spotPx != null && pos.close_date === pos.expiration) {
       const intrinsic = icIntrinsicAtExpiration(
         spotPx,
@@ -157,6 +155,42 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
         reason: 'spot_intrinsic_fallback_same_day_expiry',
       }
     }
+
+    // Fallback path 2 — Black-Scholes with VIX as IV proxy: when the close
+    // happens BEFORE expiration (SPARK 1DTE typically closes day T-1 of a
+    // T-expiration trade), per-leg quotes are missing from Tradier's
+    // patchy intraday archive, but we have spot + the position's
+    // vix_at_entry. Price each of the 4 legs with BS and combine into an
+    // IC mid. This is an approximation — VIX is 30-day annualized SPX vol,
+    // not SPY ATM vol on close day — but it gets us within ~$0.05-0.15 per
+    // share on each leg, far better than leaving the row NULL.
+    if (
+      spotPx != null
+      && pos.vix_at_entry != null
+      && pos.vix_at_entry > 0
+      && pos.close_date < pos.expiration
+    ) {
+      const T = yearsBetween259CtAnd3pmCt(pos.close_date, pos.expiration)
+      if (T > 0) {
+        const sigma = pos.vix_at_entry / 100
+        const r = 0.05 // 1Y T-bill ballpark; option price is insensitive to r at small T
+        const psPxBs = blackScholesPut(spotPx, pos.put_short_strike, T, r, sigma)
+        const plPxBs = blackScholesPut(spotPx, pos.put_long_strike,  T, r, sigma)
+        const csPxBs = blackScholesCall(spotPx, pos.call_short_strike, T, r, sigma)
+        const clPxBs = blackScholesCall(spotPx, pos.call_long_strike,  T, r, sigma)
+        const costToCloseBs = (psPxBs + csPxBs) - (plPxBs + clPxBs)
+        const pnlPerShareBs = pos.total_credit - costToCloseBs
+        const pnlBs = Math.round(pnlPerShareBs * 100 * Math.max(1, pos.contracts) * 100) / 100
+        return {
+          position_id: pos.position_id,
+          hypothetical_eod_pnl: pnlBs,
+          hypothetical_eod_spot: Math.round(spotPx * 10000) / 10000,
+          computed: true,
+          reason: 'black_scholes_vix_iv_approximation',
+        }
+      }
+    }
+
     return {
       position_id: pos.position_id,
       hypothetical_eod_pnl: null,
@@ -235,4 +269,58 @@ export function icIntrinsicAtExpiration(
   const putItm = Math.max(0, Math.max(0, putShort - spot) - Math.max(0, putLong - spot))
   const callItm = Math.max(0, Math.max(0, spot - callShort) - Math.max(0, spot - callLong))
   return putItm + callItm
+}
+
+/**
+ * Standard normal CDF via Abramowitz & Stegun 7.1.26 (max abs error 7.5e-8).
+ * Avoids pulling in a stats dependency just for one function.
+ */
+function cumulativeNormal(x: number): number {
+  const a1 =  0.254829592
+  const a2 = -0.284496736
+  const a3 =  1.421413741
+  const a4 = -1.453152027
+  const a5 =  1.061405429
+  const p  =  0.3275911
+  const sign = x < 0 ? -1 : 1
+  const ax = Math.abs(x) / Math.SQRT2
+  const t = 1 / (1 + p * ax)
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax)
+  return 0.5 * (1 + sign * y)
+}
+
+function blackScholesCall(S: number, K: number, T: number, r: number, sigma: number): number {
+  if (T <= 0 || sigma <= 0) return Math.max(0, S - K)
+  const sqrtT = Math.sqrt(T)
+  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * sqrtT)
+  const d2 = d1 - sigma * sqrtT
+  return S * cumulativeNormal(d1) - K * Math.exp(-r * T) * cumulativeNormal(d2)
+}
+
+function blackScholesPut(S: number, K: number, T: number, r: number, sigma: number): number {
+  if (T <= 0 || sigma <= 0) return Math.max(0, K - S)
+  const sqrtT = Math.sqrt(T)
+  const d1 = (Math.log(S / K) + (r + (sigma * sigma) / 2) * T) / (sigma * sqrtT)
+  const d2 = d1 - sigma * sqrtT
+  return K * Math.exp(-r * T) * cumulativeNormal(-d2) - S * cumulativeNormal(-d1)
+}
+
+/**
+ * Years between 2:59 PM CT on `closeDateCt` and 3:00 PM CT on
+ * `expirationDateCt`, using calendar time (weekend nights count). For SPY
+ * ETF options, settlement is at market close = 3:00 PM CT. Returns 0 if
+ * close >= expiration.
+ *
+ * Calendar-time is the right convention for BS pricing because options
+ * decay through weekends too, even though the market doesn't trade.
+ */
+function yearsBetween259CtAnd3pmCt(closeDateCt: string, expirationDateCt: string): number {
+  // Parse YYYY-MM-DD as midnight UTC, then offset by CT clock at 14:59 / 15:00.
+  // Any consistent offset works since we only use the difference.
+  const closeUtc  = Date.parse(`${closeDateCt}T19:59:00Z`)       // 14:59 CT (DST) ≈ 19:59 UTC
+  const expiryUtc = Date.parse(`${expirationDateCt}T20:00:00Z`)  // 15:00 CT (DST) ≈ 20:00 UTC
+  if (!Number.isFinite(closeUtc) || !Number.isFinite(expiryUtc)) return 0
+  const diffMs = expiryUtc - closeUtc
+  if (diffMs <= 0) return 0
+  return diffMs / (365 * 24 * 3600 * 1000)
 }
