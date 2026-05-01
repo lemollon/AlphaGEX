@@ -59,6 +59,7 @@ interface Candidate {
   entry_credit: number
   collateral: number
   close_time: string | null
+  original_close_reason: string
   pending_info: Record<string, unknown>
 }
 
@@ -72,36 +73,57 @@ interface RecoveryOutcome {
   reason?: string
 }
 
+// Close reasons we will NOT touch — these are intentional zero-PnL closes
+// or paths where no real Tradier order was ever placed. Trying to "recover"
+// them would either fabricate P&L or overwrite a legitimate reason.
+const SKIP_CLOSE_REASONS = new Set([
+  'emergency_kill_switch', // operator-initiated panic close
+  'stale_holdover',        // prior-day position swept; no close order
+  'manual',                // human-driven close
+])
+
 async function gatherCandidates(bot: string, dte: string): Promise<Candidate[]> {
+  // Broadened from broker-gone-only to *any* close_reason that left the
+  // ledger at $0 with a Tradier close order on file. Profit-target and
+  // stop-loss rows hit the same fill-recovery problem when Tradier's
+  // order status lagged its leg-level fills (e.g. SPARK ids 40/41/43 in
+  // April 2026 were profit_target_* with realized_pnl=0 and live order
+  // ids in sandbox_close_order_id). Same recovery logic — Tradier order
+  // details → pending limit hint — works for them.
   const rows = await dbQuery(
     `SELECT position_id, contracts, total_credit, collateral_required,
             COALESCE(account_type, 'sandbox') AS account_type,
-            person, close_time, sandbox_close_order_id
+            person, close_time, close_reason, sandbox_close_order_id
      FROM ${botTable(bot, 'positions')}
      WHERE status = 'closed'
        AND realized_pnl = 0
-       AND close_reason IN ('deferred_broker_gone', 'broker_position_gone')
        AND dte_mode = $1
        AND sandbox_close_order_id IS NOT NULL
      ORDER BY close_time DESC`,
     [dte],
   )
-  return rows.map((r) => {
-    let pending: Record<string, unknown> = {}
-    try {
-      if (r.sandbox_close_order_id) pending = JSON.parse(r.sandbox_close_order_id)
-    } catch { /* malformed — leave empty, we'll skip */ }
-    return {
-      position_id: r.position_id,
-      account_type: (r.account_type || 'sandbox') as 'sandbox' | 'production',
-      person: r.person || null,
-      contracts: int(r.contracts),
-      entry_credit: num(r.total_credit),
-      collateral: num(r.collateral_required),
-      close_time: r.close_time ? new Date(r.close_time).toISOString() : null,
-      pending_info: pending,
-    }
-  })
+  return rows
+    .filter((r) => {
+      const reason = String(r.close_reason ?? '')
+      return !SKIP_CLOSE_REASONS.has(reason)
+    })
+    .map((r) => {
+      let pending: Record<string, unknown> = {}
+      try {
+        if (r.sandbox_close_order_id) pending = JSON.parse(r.sandbox_close_order_id)
+      } catch { /* malformed — leave empty, we'll skip */ }
+      return {
+        position_id: r.position_id,
+        account_type: (r.account_type || 'sandbox') as 'sandbox' | 'production',
+        person: r.person || null,
+        contracts: int(r.contracts),
+        entry_credit: num(r.total_credit),
+        collateral: num(r.collateral_required),
+        close_time: r.close_time ? new Date(r.close_time).toISOString() : null,
+        original_close_reason: String(r.close_reason ?? ''),
+        pending_info: pending,
+      }
+    })
 }
 
 /**
@@ -210,6 +232,12 @@ async function applyOne(bot: string, dte: string, c: Candidate, o: RecoveryOutco
 
   // UPDATE the closed position row with the recovered close price + P&L.
   // Guard on realized_pnl=0 so we never double-apply on a re-run.
+  // Preserve the original close_reason and append a `_backfill_<source>`
+  // suffix so trade-history queries still see the underlying tier
+  // (profit_target_MIDDAY_backfill_tradier_fill, stop_loss_backfill_pending_limit, …).
+  const newCloseReason = c.original_close_reason
+    ? `${c.original_close_reason}_backfill_${o.recovery_source}`
+    : `broker_gone_backfill_${o.recovery_source}`
   const rowsAffected = await dbExecute(
     `UPDATE ${botTable(bot, 'positions')}
      SET close_price = $1,
@@ -218,9 +246,8 @@ async function applyOne(bot: string, dte: string, c: Candidate, o: RecoveryOutco
          updated_at = NOW()
      WHERE position_id = $4
        AND status = 'closed'
-       AND realized_pnl = 0
-       AND close_reason IN ('deferred_broker_gone', 'broker_position_gone')`,
-    [o.recovered_price, o.new_realized_pnl, `broker_gone_backfill_${o.recovery_source}`, c.position_id],
+       AND realized_pnl = 0`,
+    [o.recovered_price, o.new_realized_pnl, newCloseReason, c.position_id],
   )
   if (rowsAffected === 0) return
 
