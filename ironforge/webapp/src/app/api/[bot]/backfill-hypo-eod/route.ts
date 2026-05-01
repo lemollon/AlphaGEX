@@ -3,23 +3,24 @@
  * Tradier's option timesales window (~40 days).
  *
  * Why a separate endpoint:
- *   The scanner's daily auto-run only covers positions closed TODAY. For
- *   anything older that needs the column populated (e.g. a fresh deploy,
- *   schema added retroactively, or a one-shot historical analysis), this
- *   endpoint walks the table and computes what's recoverable.
+ *   The scanner's daily auto-run looks back 7 days. For anything older
+ *   that needs the column populated (e.g. a fresh deploy, schema added
+ *   retroactively, a one-shot historical analysis, or a stretch where the
+ *   scanner was down), this endpoint walks the table and computes what's
+ *   recoverable.
  *
- *   Rows older than the Tradier window stay NULL forever — we mark
- *   `hypothetical_eod_computed_at = NOW()` so the cron doesn't keep
- *   retrying them. The `reason: 'leg_quotes_missing_at_2_59'` field in
- *   the response tells the operator which trades were too old.
+ *   Retry semantics: any closed/expired row in the last 40 days with NULL
+ *   `hypothetical_eod_pnl` is fair game — we ignore `computed_at` so the
+ *   old "stamped on failure" rows aren't permanently locked out. Only
+ *   successful computes write `computed_at = NOW()`. Rows past 40 days
+ *   simply fall out of the window (Tradier no longer has the bars).
  *
  * GET  /api/{bot}/backfill-hypo-eod
  *   Dry-run: lists candidates and which ones look recoverable. Safe.
  *
  * POST /api/{bot}/backfill-hypo-eod?confirm=true
- *   Applies. Updates the row + writes a HYPO_EOD_BACKFILL audit log.
- *   Skips rows that already have a non-null hypothetical_eod_pnl OR a
- *   non-null hypothetical_eod_computed_at (to avoid retrying old data).
+ *   Applies. Writes a HYPO_EOD_BACKFILL audit log. Failures (Tradier had
+ *   no leg quotes) leave the row NULL so a future call can retry.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, num, int, validateBot, botTable, dteMode } from '@/lib/db'
@@ -44,6 +45,12 @@ interface CandidateRow {
 async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
+  // Pick up any closed/expired row in the last 40 days (Tradier's option
+  // timesales horizon) that still has a NULL hypo P&L. We INTENTIONALLY
+  // ignore `hypothetical_eod_computed_at` here: the old scanner used to
+  // stamp `computed_at = NOW()` even when Tradier returned no data,
+  // permanently locking the row out of retry. The new scanner only stamps
+  // on success, and so does this route — see the POST handler below.
   const rows = await dbQuery(
     `SELECT position_id, ticker, expiration,
             put_short_strike, put_long_strike,
@@ -54,7 +61,6 @@ async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
        ${dteFilter}
        AND realized_pnl IS NOT NULL
        AND hypothetical_eod_pnl IS NULL
-       AND hypothetical_eod_computed_at IS NULL
        AND close_time >= NOW() - INTERVAL '40 days'
      ORDER BY close_time DESC`,
   )
@@ -145,20 +151,24 @@ export async function POST(
         close_date: c.close_date,
       })
 
-      // Always set hypothetical_eod_computed_at so we don't retry this row.
-      // hypothetical_eod_pnl stays NULL when Tradier didn't have leg quotes
-      // (most likely cause: trade too old or option chain rolled off).
-      await dbExecute(
-        `UPDATE ${positionsTable}
-         SET hypothetical_eod_pnl = $1,
-             hypothetical_eod_spot = $2,
-             hypothetical_eod_computed_at = NOW()
-         WHERE position_id = $3`,
-        [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, c.position_id],
-      )
-
-      if (result.computed) computed++
-      else { skipped++; failures.push({ position_id: c.position_id, reason: result.reason }) }
+      if (result.computed) {
+        await dbExecute(
+          `UPDATE ${positionsTable}
+           SET hypothetical_eod_pnl = $1,
+               hypothetical_eod_spot = $2,
+               hypothetical_eod_computed_at = NOW()
+           WHERE position_id = $3`,
+          [result.hypothetical_eod_pnl, result.hypothetical_eod_spot, c.position_id],
+        )
+        computed++
+      } else {
+        // Tradier returned no data this attempt. Leave both columns NULL
+        // so the next backfill (or the daily scanner cron) can retry.
+        // The 40-day window in `gatherCandidates` is the eventual cutoff
+        // for permanently giving up — older rows naturally drop out.
+        skipped++
+        failures.push({ position_id: c.position_id, reason: result.reason })
+      }
     }
 
     // Best-effort audit log
