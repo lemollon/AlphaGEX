@@ -34,7 +34,7 @@
  *   - POST /api/spark/briefs/generate (manual trigger, Q1)
  *   - scanner.ts cron hooks (auto-generation, Q2, not yet)
  */
-import { dbQuery, dbExecute, num } from './db'
+import { dbQuery, dbExecute, num, botTable, dteMode } from './db'
 import { getRawQuotes, isConfigured as isTradierConfigured } from './tradier'
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -157,17 +157,22 @@ async function gatherMarketState(): Promise<MarketState> {
   }
 }
 
-async function gatherPositionState(spotPrice: number | null): Promise<PositionState> {
+async function gatherPositionState(bot: string, spotPrice: number | null): Promise<PositionState> {
   // Production positions only — paper/sandbox contract counts don't represent
   // real-money risk and were polluting the brief (e.g. brief warned about a
   // 143-contract sandbox position when production held far less).
+  // FLAME and INFERNO are paper-only so the account_type filter falls
+  // through to whatever rows they have.
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
+  const accountFilter = bot === 'spark' ? `AND account_type = 'production'` : ''
   const rows = await dbQuery(
     `SELECT position_id, ticker, expiration,
             put_long_strike, put_short_strike,
             call_short_strike, call_long_strike,
             contracts, total_credit, open_time, person, account_type
-     FROM spark_positions
-     WHERE status = 'open' AND dte_mode = '1DTE' AND account_type = 'production'
+     FROM ${botTable(bot, 'positions')}
+     WHERE status = 'open' ${dteFilter} ${accountFilter}
      ORDER BY open_time DESC NULLS LAST`,
   )
   if (rows.length === 0) {
@@ -211,19 +216,22 @@ async function gatherPositionState(spotPrice: number | null): Promise<PositionSt
     entry_credit: avgCredit,
     open_time: r.open_time ? new Date(r.open_time).toISOString() : null,
     person: r.person ?? null,
-    account_type: 'production',
+    account_type: r.account_type ?? null,
     pct_to_short_put: pctToShortPut,
     pct_to_short_call: pctToShortCall,
   }
 }
 
-async function gatherRecentTrades(): Promise<RecentTrade[]> {
+async function gatherRecentTrades(bot: string): Promise<RecentTrade[]> {
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
+  const accountFilter = bot === 'spark' ? `AND account_type = 'production'` : ''
   const rows = await dbQuery(
     `SELECT close_time, realized_pnl, close_reason, contracts, total_credit
-     FROM spark_positions
+     FROM ${botTable(bot, 'positions')}
      WHERE status IN ('closed', 'expired')
-       AND dte_mode = '1DTE'
-       AND account_type = 'production'
+       ${dteFilter}
+       ${accountFilter}
        AND close_time >= NOW() - INTERVAL '7 days'
        AND realized_pnl IS NOT NULL
      ORDER BY close_time DESC
@@ -238,10 +246,10 @@ async function gatherRecentTrades(): Promise<RecentTrade[]> {
   }))
 }
 
-export async function gatherInputs(briefType: BriefType): Promise<BriefInputs> {
+export async function gatherInputs(bot: string, briefType: BriefType): Promise<BriefInputs> {
   const marketState = await gatherMarketState()
-  const positionState = await gatherPositionState(marketState.spy_price)
-  const recentTrades = await gatherRecentTrades()
+  const positionState = await gatherPositionState(bot, marketState.spy_price)
+  const recentTrades = await gatherRecentTrades(bot)
   return {
     brief_type: briefType,
     ct_timestamp: ctNow().toISOString(),
@@ -254,11 +262,49 @@ export async function gatherInputs(briefType: BriefType): Promise<BriefInputs> {
 
 // ── Prompt builders ────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a risk advisor for a beginner options trader running a 1DTE Iron Condor bot on SPY called SPARK.
+interface BotProfile {
+  name: string
+  strategy: string
+  dte_label: string
+  is_put_credit_spread: boolean
+}
 
-Your audience is NEW to options. Assume they know what an Iron Condor is but may not know technical terms like VVIX, term structure, contango/backwardation, GEX. Whenever you use such a term, briefly define it inline in plain English.
+const BOT_PROFILES: Record<string, BotProfile> = {
+  spark: {
+    name: 'SPARK',
+    strategy: '1DTE Iron Condor on SPY',
+    dte_label: '1DTE',
+    is_put_credit_spread: false,
+  },
+  flame: {
+    name: 'FLAME',
+    strategy: '2DTE Put Credit Spread on SPY',
+    dte_label: '2DTE',
+    is_put_credit_spread: true,
+  },
+  inferno: {
+    name: 'INFERNO',
+    strategy: '0DTE Iron Condor on SPY (FORTRESS-style aggressive)',
+    dte_label: '0DTE',
+    is_put_credit_spread: false,
+  },
+}
 
-ACCOUNT SCOPE: The "OPEN IRON CONDOR" and "RECENT SPARK TRADES" sections describe the LIVE PRODUCTION (real-money) account only. Do NOT speculate about, mention, or include contract counts from paper, sandbox, or any other account. If the prompt says no open production IC, do not invent one.
+function botProfile(bot: string): BotProfile {
+  return BOT_PROFILES[bot] ?? BOT_PROFILES.spark
+}
+
+function buildSystemPrompt(bot: string): string {
+  const p = botProfile(bot)
+  const structureNoun = p.is_put_credit_spread ? 'Put Credit Spread' : 'Iron Condor'
+  const accountScope = bot === 'spark'
+    ? `ACCOUNT SCOPE: The "OPEN POSITION" and "RECENT TRADES" sections describe the LIVE PRODUCTION (real-money) account only. Do NOT speculate about, mention, or include contract counts from paper, sandbox, or any other account. If the prompt says no open production position, do not invent one.`
+    : `ACCOUNT SCOPE: ${p.name} is paper-only. The "OPEN POSITION" and "RECENT TRADES" sections describe the paper account. Do not speculate about a real-money account.`
+  return `You are a risk advisor for a beginner options trader running a ${p.strategy} bot called ${p.name}.
+
+Your audience is NEW to options. Assume they know what a ${structureNoun} is but may not know technical terms like VVIX, term structure, contango/backwardation, GEX. Whenever you use such a term, briefly define it inline in plain English.
+
+${accountScope}
 
 OUTPUT FORMATTING — STRICT:
 - Plain text only. NO markdown formatting at all.
@@ -269,15 +315,15 @@ OUTPUT FORMATTING — STRICT:
 For each risk factor you identify:
   1. State the factor as a short title in plain English
   2. Briefly define any technical term inline (e.g. "VVIX — the vol of vol")
-  3. Explain WHY it matters specifically for an Iron Condor
-  4. Tie it to the user's open production position (strikes, distance to break-evens) when one exists
+  3. Explain WHY it matters specifically for a ${structureNoun}
+  4. Tie it to the user's open position (strikes, distance to break-evens) when one exists
 
 Your response MUST follow this exact format:
 
 RISK_SCORE: <integer 0-10>
 
 FACTORS:
-1. <short title> — <plain English detail tying it to the open production IC>
+1. <short title> — <plain English detail tying it to the open ${structureNoun}>
 2. <short title> — <plain English detail>
 3. <short title> — <plain English detail>
 
@@ -288,8 +334,12 @@ WATCH_NEXT_HOUR:
 <one sentence of what to watch for next hour>
 
 Keep it under 600 words total. Educate while informing. Plain text only.`
+}
 
-function formatInputsForPrompt(i: BriefInputs): string {
+function formatInputsForPrompt(bot: string, i: BriefInputs): string {
+  const profile = botProfile(bot)
+  const structureLabel = profile.is_put_credit_spread ? 'PUT CREDIT SPREAD' : 'IRON CONDOR'
+  const tradesLabel = profile.is_put_credit_spread ? 'spread' : 'IC'
   const m = i.market_state
   const p = i.position_state
   const lines: string[] = []
@@ -304,29 +354,36 @@ function formatInputsForPrompt(i: BriefInputs): string {
   lines.push(`  Term structure: ${m.term_structure != null ? (m.term_structure * 100).toFixed(2) + '%' : 'n/a'} (${m.term_structure_label})`)
   lines.push('')
   if (p.has_open_ic) {
-    lines.push('OPEN IRON CONDOR:')
+    lines.push(`OPEN ${structureLabel}:`)
     lines.push(`  ${p.contracts}x ${p.ticker} exp ${p.expiration}`)
-    lines.push(`  Put wing: ${p.put_long} / ${p.put_short}  Call wing: ${p.call_short} / ${p.call_long}`)
+    if (profile.is_put_credit_spread) {
+      lines.push(`  Put wing: ${p.put_long} / ${p.put_short}`)
+    } else {
+      lines.push(`  Put wing: ${p.put_long} / ${p.put_short}  Call wing: ${p.call_short} / ${p.call_long}`)
+    }
     lines.push(`  Entry credit: $${(p.entry_credit ?? 0).toFixed(2)}/contract`)
-    if (p.pct_to_short_put != null && p.pct_to_short_call != null) {
-      lines.push(`  Distance to short put: ${p.pct_to_short_put.toFixed(2)}%  Distance to short call: ${p.pct_to_short_call.toFixed(2)}%`)
+    if (p.pct_to_short_put != null && (profile.is_put_credit_spread || p.pct_to_short_call != null)) {
+      const callPart = profile.is_put_credit_spread
+        ? ''
+        : `  Distance to short call: ${(p.pct_to_short_call ?? 0).toFixed(2)}%`
+      lines.push(`  Distance to short put: ${p.pct_to_short_put.toFixed(2)}%${callPart}`)
     }
     lines.push(`  Account: ${p.person ?? '?'} / ${p.account_type ?? '?'}`)
   } else {
-    lines.push('OPEN IRON CONDOR: none (no open SPARK IC right now)')
+    lines.push(`OPEN ${structureLabel}: none (no open ${profile.name} position right now)`)
   }
   lines.push('')
-  lines.push('RECENT SPARK TRADES (last 7 days):')
+  lines.push(`RECENT ${profile.name} TRADES (last 7 days):`)
   if (i.recent_trades.length === 0) {
     lines.push('  (no closed trades in last 7 days)')
   } else {
     for (const t of i.recent_trades.slice(0, 7)) {
       const date = t.closed_at.slice(0, 10)
-      lines.push(`  ${date}: ${t.contracts}x IC, credit $${t.credit.toFixed(2)} → ${t.realized_pnl >= 0 ? '+' : ''}$${t.realized_pnl.toFixed(2)} (${t.close_reason})`)
+      lines.push(`  ${date}: ${t.contracts}x ${tradesLabel}, credit $${t.credit.toFixed(2)} → ${t.realized_pnl >= 0 ? '+' : ''}$${t.realized_pnl.toFixed(2)} (${t.close_reason})`)
     }
   }
   lines.push('')
-  lines.push('STRATEGY REMINDER: SPARK sells 1DTE Iron Condors on SPY, aiming to ride the sliding PT tiers 50% → 30% → 20% of credit retained. Each trade risks up to 15% of the Iron Viper production account BP.')
+  lines.push(`STRATEGY REMINDER: ${profile.name} runs the ${profile.strategy} strategy. Brief should highlight what a beginner needs to watch for that affects this specific structure today.`)
   return lines.join('\n')
 }
 
@@ -337,7 +394,7 @@ interface ClaudeAPIMessage {
   content: string
 }
 
-async function callClaude(messages: ClaudeAPIMessage[]): Promise<{ text: string; model: string }> {
+async function callClaude(bot: string, messages: ClaudeAPIMessage[]): Promise<{ text: string; model: string }> {
   const apiKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY
   if (!apiKey) {
     throw new Error('CLAUDE_API_KEY env var is not set — add it to IronForge Render environment.')
@@ -345,7 +402,7 @@ async function callClaude(messages: ClaudeAPIMessage[]): Promise<{ text: string;
   const body = {
     model: ANTHROPIC_MODEL,
     max_tokens: ANTHROPIC_MAX_TOKENS,
-    system: SYSTEM_PROMPT,
+    system: buildSystemPrompt(bot),
     messages,
   }
   const resp = await fetch(ANTHROPIC_API_URL, {
@@ -426,12 +483,12 @@ export function parseResponse(raw: string): ParsedBrief {
 
 // ── Storage ────────────────────────────────────────────────────────────
 
-export async function storeBrief(parsed: ParsedBrief, inputs: BriefInputs, model: string): Promise<number> {
+export async function storeBrief(bot: string, parsed: ParsedBrief, inputs: BriefInputs, model: string): Promise<number> {
   const ct = new Date(inputs.ct_timestamp)
   const briefDate = new Date(ct.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
     .toISOString().slice(0, 10)
   const rows = await dbQuery(
-    `INSERT INTO spark_market_briefs
+    `INSERT INTO ${botTable(bot, 'market_briefs')}
       (brief_date, brief_type, risk_score, summary, factors_json, raw_inputs_json,
        spy_price, vix, vix3m, term_structure, model)
      VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11)
@@ -455,21 +512,22 @@ export async function storeBrief(parsed: ParsedBrief, inputs: BriefInputs, model
 
 // ── Public orchestrator ────────────────────────────────────────────────
 
-export async function generateBrief(briefType: BriefType): Promise<{
+export async function generateBrief(bot: string, briefType: BriefType): Promise<{
   id: number
   brief: ParsedBrief
   inputs: BriefInputs
   model: string
 }> {
-  const inputs = await gatherInputs(briefType)
-  const userContent = formatInputsForPrompt(inputs)
-  const { text, model } = await callClaude([{ role: 'user', content: userContent }])
+  const inputs = await gatherInputs(bot, briefType)
+  const userContent = formatInputsForPrompt(bot, inputs)
+  const { text, model } = await callClaude(bot, [{ role: 'user', content: userContent }])
   const parsed = parseResponse(text)
-  const id = await storeBrief(parsed, inputs, model)
+  const id = await storeBrief(bot, parsed, inputs, model)
   // Audit log (best effort) — store source marker so we can trace cost later.
+  const dte = dteMode(bot) ?? 'unknown'
   try {
     await dbExecute(
-      `INSERT INTO spark_logs (level, message, details, dte_mode)
+      `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
       [
         'MARKET_BRIEF',
@@ -481,7 +539,7 @@ export async function generateBrief(briefType: BriefType): Promise<{
           risk_score: parsed.risk_score,
           factor_count: parsed.factors.length,
         }),
-        '1DTE',
+        dte,
       ],
     )
   } catch { /* best-effort */ }

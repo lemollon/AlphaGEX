@@ -3759,7 +3759,7 @@ const _lastHypoEodDate: { [bot: string]: string } = {}
  * after 3:05 PM CT (the 2:59 bar is finalized + all PT/EOD exits have
  * happened, so we know the full set of "closed today" trades).
  */
-async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
+async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
   // Run at/after 3:05 PM CT on weekdays only. Before 3:05 the 2:59 bar may
   // not be available yet from Tradier; weekends have no new trades.
   const dow = ct.getDay()
@@ -3768,7 +3768,9 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
   if (minsCt < 905) return // 905 = 3:05 PM
 
   const todayStr = ct.toISOString().slice(0, 10)
-  if (_lastHypoEodDate[PRODUCTION_BOT] === todayStr) return
+  if (_lastHypoEodDate[bot] === todayStr) return
+
+  const positionsTable = botTable(bot, 'positions')
 
   try {
     const rows = await query(
@@ -3776,7 +3778,7 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
               contracts, total_credit, close_time
-       FROM spark_positions
+       FROM ${positionsTable}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND hypothetical_eod_pnl IS NULL
@@ -3784,7 +3786,7 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
          AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date`,
     )
     if (rows.length === 0) {
-      _lastHypoEodDate[PRODUCTION_BOT] = todayStr
+      _lastHypoEodDate[bot] = todayStr
       return
     }
 
@@ -3809,7 +3811,7 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
         close_date: ctDateString(closeTime),
       })
       await dbExecute(
-        `UPDATE spark_positions
+        `UPDATE ${positionsTable}
          SET hypothetical_eod_pnl = $1,
              hypothetical_eod_spot = $2,
              hypothetical_eod_computed_at = NOW()
@@ -3819,11 +3821,11 @@ async function dailyHypoEodComputeForSpark(ct: Date): Promise<void> {
       if (result.computed) computed++; else skipped++
     }
 
-    _lastHypoEodDate[PRODUCTION_BOT] = todayStr
-    console.log(`[scanner] SPARK hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data) of ${rows.length} candidates`)
+    _lastHypoEodDate[bot] = todayStr
+    console.log(`[scanner] ${bot.toUpperCase()} hypo-EOD daily compute: ${computed} computed, ${skipped} skipped (no Tradier data) of ${rows.length} candidates`)
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] SPARK hypo-EOD daily compute error: ${msg}`)
+    console.warn(`[scanner] ${bot.toUpperCase()} hypo-EOD daily compute error: ${msg}`)
   }
 }
 
@@ -4788,15 +4790,17 @@ async function runAllScans(): Promise<void> {
     console.error(`[scanner] EOD safety net sweep failed: ${msg}`)
   }
 
-  // SPARK-only daily hypothetical 2:59 PM P&L compute. Runs once at/after
-  // 3:05 PM CT on weekdays — by then the 2:59 PM bar is finalized and any
-  // closed-today SPARK trades can have their counterfactual P&L computed
-  // and stored. Idempotent — won't re-run for the same date.
-  try {
-    await dailyHypoEodComputeForSpark(ct)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] Hypo-EOD compute failed (non-fatal): ${msg}`)
+  // Daily hypothetical 2:59 PM P&L compute for FLAME / SPARK / INFERNO.
+  // Runs once per bot at/after 3:05 PM CT on weekdays — by then the 2:59 PM
+  // bar is finalized and any closed-today trades can have their counter-
+  // factual P&L computed and stored. Idempotent per (bot, date).
+  for (const hypoBot of ['flame', 'spark', 'inferno']) {
+    try {
+      await dailyHypoEodComputeForBot(hypoBot, ct)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] ${hypoBot.toUpperCase()} hypo-EOD compute failed (non-fatal): ${msg}`)
+    }
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)

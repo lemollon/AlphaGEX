@@ -2,8 +2,8 @@
 
 /**
  * Market Pulse tab — 4-card grid of beginner-friendly risk signals for
- * SPARK 1DTE IC sellers (Commit S1). Fetches /api/spark/risk-signals
- * every 30 seconds; each card shows:
+ * IC / put-credit-spread sellers. Fetches /api/{bot}/risk-signals every
+ * 30 seconds; each card shows:
  *
  *   1. A colored border/dot indicating safety tier
  *   2. Plain-English headline
@@ -12,7 +12,7 @@
  *
  * Does NOT make trading decisions — it's purely a heads-up display so
  * the operator knows whether today is juicy-premium territory or the
- * open IC is in a tight spot.
+ * open position is in a tight spot.
  */
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
@@ -83,12 +83,19 @@ function formatCT(ts: string | null | undefined): string {
   } catch { return ts.slice(0, 19) }
 }
 
-export default function MarketPulseTab() {
+export default function MarketPulseTab({ bot }: { bot: 'flame' | 'spark' | 'inferno' }) {
   const { data, error, isLoading, mutate } = useSWR<RiskSignalsResponse>(
-    '/api/spark/risk-signals',
+    `/api/${bot}/risk-signals`,
     fetcher,
     { refreshInterval: REFRESH_MS },
   )
+
+  const strategyLabel = bot === 'flame'
+    ? '2DTE Put Credit Spread'
+    : bot === 'inferno'
+      ? '0DTE Iron Condor'
+      : '1DTE Iron Condor'
+  const positionWord = bot === 'flame' ? 'spread' : 'IC'
 
   if (isLoading) {
     return (
@@ -113,13 +120,13 @@ export default function MarketPulseTab() {
         <div className="flex items-center gap-4 flex-wrap">
           <h3 className="text-sm font-medium text-gray-200">Market Pulse</h3>
           <span className="text-xs text-forge-muted">
-            Beginner-friendly risk signals for SPARK 1DTE Iron Condor sellers.
+            Beginner-friendly risk signals for {bot.toUpperCase()} {strategyLabel} sellers.
           </span>
         </div>
         <div className="flex items-center gap-4 text-xs text-forge-muted flex-wrap">
           {data.spy_price != null && <span>SPY <span className="text-gray-200 font-mono">${data.spy_price.toFixed(2)}</span></span>}
           {data.vix != null && <span>VIX <span className="text-gray-200 font-mono">{data.vix.toFixed(2)}</span></span>}
-          <span>{data.has_open_position ? 'IC OPEN' : 'No open IC'}</span>
+          <span>{data.has_open_position ? `${positionWord.toUpperCase()} OPEN` : `No open ${positionWord}`}</span>
           <span>Updated {formatCT(data.generated_at)}</span>
           <button
             onClick={() => mutate()}
@@ -132,8 +139,8 @@ export default function MarketPulseTab() {
 
       {/* What each card is — tiny primer for first-time viewers */}
       <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs leading-relaxed text-blue-200/90 space-y-1">
-        <p><strong className="text-blue-300">How to read this:</strong> four signals tell you whether today is a good day to sell premium AND how close your current position is to trouble. Green means favorable for an IC seller. Amber means caution. Red means an open position is under stress.</p>
-        <p className="text-blue-200/70">Nothing here auto-adjusts SPARK. These are informational only.</p>
+        <p><strong className="text-blue-300">How to read this:</strong> four signals tell you whether today is a good day to sell premium AND how close your current position is to trouble. Green means favorable for a premium seller. Amber means caution. Red means an open position is under stress.</p>
+        <p className="text-blue-200/70">Nothing here auto-adjusts {bot.toUpperCase()}. These are informational only.</p>
       </div>
 
       {/* 4 cards */}

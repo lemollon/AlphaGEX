@@ -27,7 +27,7 @@
  *
  * No scanner trading changes. No new env vars.
  */
-import { dbQuery } from './db'
+import { dbQuery, botTable, dteMode } from './db'
 import { getRawQuotes, getTimesales, isConfigured } from './tradier'
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -241,13 +241,15 @@ interface OpenPosition {
 }
 
 /** 3. Strike Distance — SDs to each short strike. */
-async function computeStrikeDistance(spy: number | null, vix: number | null): Promise<SignalTile> {
+async function computeStrikeDistance(bot: string, spy: number | null, vix: number | null): Promise<SignalTile> {
   let pos: OpenPosition | null = null
   try {
+    const dte = dteMode(bot)
+    const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
     const rows = await dbQuery(
       `SELECT put_short_strike, call_short_strike, expiration
-       FROM spark_positions
-       WHERE status = 'open' AND dte_mode = '1DTE'
+       FROM ${botTable(bot, 'positions')}
+       WHERE status = 'open' ${dteFilter}
        ORDER BY open_time DESC NULLS LAST
        LIMIT 1`,
     )
@@ -269,12 +271,12 @@ async function computeStrikeDistance(spy: number | null, vix: number | null): Pr
       key: 'strike_distance',
       title: 'Strike Distance',
       color: 'grey',
-      headline: 'No open SPARK IC',
+      headline: `No open ${bot.toUpperCase()} position`,
       numbers: '',
       beginner:
-        `SPARK doesn\'t have a live IC right now, so there are no strikes to measure distance to. When a trade ` +
-        `is open this tile will show how many standard deviations SPY is from each short strike. Under 1 SD is ` +
-        `the danger zone.`,
+        `${bot.toUpperCase()} doesn\'t have a live position right now, so there are no strikes to measure distance to. ` +
+        `When a trade is open this tile will show how many standard deviations SPY is from each short strike. ` +
+        `Under 1 SD is the danger zone.`,
       values: { put_short: null, call_short: null, sd_put: null, sd_call: null },
     }
   }
@@ -297,9 +299,16 @@ async function computeStrikeDistance(spy: number | null, vix: number | null): Pr
   // Expected move (dollars) = SPY × (VIX/100) × sqrt(DTE/252)
   const expMove = spy * (vix / 100) * Math.sqrt(daysToExp / 252)
   const sdPut = expMove > 0 ? Math.round(((spy - pos.put_short) / expMove) * 100) / 100 : null
-  const sdCall = expMove > 0 ? Math.round(((pos.call_short - spy) / expMove) * 100) / 100 : null
-  const minSd = (sdPut != null && sdCall != null)
-    ? Math.min(Math.abs(sdPut), Math.abs(sdCall))
+  // FLAME (2-leg put credit spread) stores call strikes as 0 — treat that
+  // as "no call leg" and only show the put-side distance.
+  const hasCallLeg = pos.call_short > 0
+  const sdCall = (expMove > 0 && hasCallLeg)
+    ? Math.round(((pos.call_short - spy) / expMove) * 100) / 100
+    : null
+  const minSd = sdPut != null && (hasCallLeg ? sdCall != null : true)
+    ? hasCallLeg
+      ? Math.min(Math.abs(sdPut), Math.abs(sdCall!))
+      : Math.abs(sdPut)
     : null
 
   let color: SignalColor = 'green'
@@ -334,7 +343,9 @@ async function computeStrikeDistance(spy: number | null, vix: number | null): Pr
     headline:
       sdPut != null && sdCall != null
         ? `Put ${sdPut.toFixed(1)}σ · Call ${sdCall.toFixed(1)}σ`
-        : 'Distances unavailable',
+        : sdPut != null
+          ? `Put ${sdPut.toFixed(1)}σ`
+          : 'Distances unavailable',
     numbers: spy != null && expMove > 0 ? `SPY $${spy.toFixed(2)} · ±$${expMove.toFixed(2)} exp move` : '',
     beginner,
     values: {
@@ -436,7 +447,7 @@ async function computeMoveRatio(spy: number | null, vix: number | null): Promise
 
 // ── Public orchestrator ────────────────────────────────────────────────
 
-export async function getRiskSignals(): Promise<RiskSignalsResponse> {
+export async function getRiskSignals(bot: string = 'spark'): Promise<RiskSignalsResponse> {
   if (!isConfigured()) {
     return {
       generated_at: new Date().toISOString(),
@@ -450,14 +461,16 @@ export async function getRiskSignals(): Promise<RiskSignalsResponse> {
   const spyQuote = extractQuote(quotes, 'SPY')
   const vixQuote = extractQuote(quotes, 'VIX')
 
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
   const hasOpenPos = await dbQuery(
-    `SELECT COUNT(*) AS n FROM spark_positions WHERE status = 'open' AND dte_mode = '1DTE'`,
+    `SELECT COUNT(*) AS n FROM ${botTable(bot, 'positions')} WHERE status = 'open' ${dteFilter}`,
   ).then((rows) => Number(rows[0]?.n ?? 0) > 0).catch(() => false)
 
   const [premium, volPulse, strikeDist, moveRatio] = await Promise.all([
     Promise.resolve(computePremiumQuality(vixQuote)),
     computeVolPulse(vixQuote.last),
-    computeStrikeDistance(spyQuote.last, vixQuote.last),
+    computeStrikeDistance(bot, spyQuote.last, vixQuote.last),
     computeMoveRatio(spyQuote.last, vixQuote.last),
   ])
 

@@ -1,14 +1,14 @@
 /**
- * List SPARK market-risk briefs (Commit Q1).
+ * List market-risk briefs.
  *
- *   GET /api/spark/briefs?date=YYYY-MM-DD&limit=50
+ *   GET /api/{bot}/briefs?date=YYYY-MM-DD&limit=50
  *     Returns briefs ordered newest-first. `date` optional (filter to one day).
  *     `limit` capped at 200.
  *
- * SPARK-only. Read-only.
+ * Read-only. Each bot has its own {bot}_market_briefs table.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, validateBot, escapeSql } from '@/lib/db'
+import { dbQuery, validateBot, escapeSql, botTable } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,9 +18,6 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') {
-    return NextResponse.json({ briefs: [] }) // other bots: always empty, no 400
-  }
 
   const dateParam = req.nextUrl.searchParams.get('date')
   const dateFilter = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)
@@ -34,7 +31,7 @@ export async function GET(
       `SELECT id, brief_date, brief_time, brief_type,
               risk_score, summary, factors_json,
               spy_price, vix, vix3m, term_structure, model, created_at
-       FROM spark_market_briefs
+       FROM ${botTable(bot, 'market_briefs')}
        ${dateFilter}
        ORDER BY brief_time DESC
        LIMIT ${limit}`,

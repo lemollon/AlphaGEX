@@ -23,7 +23,7 @@
  * shows how many trades that excludes.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, num, int, escapeSql, validateBot } from '@/lib/db'
+import { dbQuery, num, int, escapeSql, validateBot, botTable, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -65,12 +65,6 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') {
-    return NextResponse.json(
-      { error: 'SPARK-only — hypothetical 2:59 PM tracking only exists on the 1DTE same-day-exit bot.' },
-      { status: 400 },
-    )
-  }
 
   const accountTypeParam = req.nextUrl.searchParams.get('account_type')
   const accountTypeFilter = accountTypeParam
@@ -81,12 +75,16 @@ export async function GET(
     ? `AND person = '${escapeSql(personParam)}'`
     : ''
 
-  // Common WHERE for "closed SPARK trades with realized P&L". Hypo
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
+  const positionsTable = botTable(bot, 'positions')
+
+  // Common WHERE for "closed trades with realized P&L". Hypo
   // aggregates layer on `hypothetical_eod_pnl IS NOT NULL` to keep
   // comparisons apples-to-apples.
   const baseWhere = `WHERE status IN ('closed', 'expired')
     AND realized_pnl IS NOT NULL
-    AND dte_mode = '1DTE'
+    ${dteFilter}
     ${personFilter} ${accountTypeFilter}`
 
   try {
@@ -99,7 +97,7 @@ export async function GET(
            WHERE hypothetical_eod_pnl IS NULL
              AND close_time >= NOW() - INTERVAL '40 days'
          ) AS recent_uncomputed
-       FROM spark_positions
+       FROM ${positionsTable}
        ${baseWhere}`,
     )
     const total = int(covRows[0]?.total)
@@ -111,7 +109,7 @@ export async function GET(
       coverage_pct: total > 0 ? Math.round((withHypo / total) * 1000) / 10 : 0,
       recent_uncomputed: recentUncomputed,
       note: recentUncomputed > 0
-        ? `${recentUncomputed} recent trade(s) lack hypo — try POST /api/spark/backfill-hypo-eod?confirm=true to fill them in.`
+        ? `${recentUncomputed} recent trade(s) lack hypo — try POST /api/${bot}/backfill-hypo-eod?confirm=true to fill them in.`
         : null,
     }
 
@@ -124,7 +122,7 @@ export async function GET(
          COALESCE(SUM(hypothetical_eod_pnl), 0) AS hypo_total,
          COUNT(*) FILTER (WHERE realized_pnl > 0) AS actual_wins,
          COUNT(*) FILTER (WHERE hypothetical_eod_pnl > 0) AS hypo_wins
-       FROM spark_positions
+       FROM ${positionsTable}
        ${baseWhere}
        AND hypothetical_eod_pnl IS NOT NULL`,
     )
@@ -153,7 +151,7 @@ export async function GET(
          COUNT(*) AS trades,
          COALESCE(SUM(realized_pnl), 0) AS actual_total,
          COALESCE(SUM(hypothetical_eod_pnl), 0) AS hypo_total
-       FROM spark_positions
+       FROM ${positionsTable}
        ${baseWhere}
        AND hypothetical_eod_pnl IS NOT NULL
        GROUP BY 1
@@ -182,7 +180,7 @@ export async function GET(
          COUNT(*) AS trades,
          COALESCE(SUM(realized_pnl), 0) AS actual_total,
          COALESCE(SUM(hypothetical_eod_pnl), 0) AS hypo_total
-       FROM spark_positions
+       FROM ${positionsTable}
        ${baseWhere}
        AND hypothetical_eod_pnl IS NOT NULL
        AND close_time >= NOW() - INTERVAL '12 months'
@@ -203,7 +201,7 @@ export async function GET(
     })
 
     return NextResponse.json({
-      bot: 'spark',
+      bot,
       account_type: accountTypeParam ?? 'all',
       person: personParam ?? 'all',
       coverage,

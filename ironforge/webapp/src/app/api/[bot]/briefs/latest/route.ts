@@ -1,13 +1,13 @@
 /**
- * Latest SPARK brief (Commit Q1).
+ * Latest market-risk brief.
  *
- *   GET /api/spark/briefs/latest
+ *   GET /api/{bot}/briefs/latest
  *     Returns the single most recent brief, or null if none exist.
  *
- * Used by the LatestBriefCard component on /spark Equity Curve tab.
+ * Used by the LatestBriefCard component on each bot's Equity Curve tab.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, validateBot } from '@/lib/db'
+import { dbQuery, validateBot, botTable } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,15 +17,12 @@ export async function GET(
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
-  if (bot !== 'spark') {
-    return NextResponse.json({ brief: null })
-  }
   try {
     const rows = await dbQuery(
       `SELECT id, brief_date, brief_time, brief_type,
               risk_score, summary, factors_json,
               spy_price, vix, vix3m, term_structure, model
-       FROM spark_market_briefs
+       FROM ${botTable(bot, 'market_briefs')}
        ORDER BY brief_time DESC
        LIMIT 1`,
     )

@@ -25,14 +25,6 @@ export async function GET(
   const offset = Math.max(0, int(url.searchParams.get('offset')) || 0)
 
   try {
-    // Hypothetical 2:59 PM P&L columns are SPARK-only (Commit L). Other
-    // bots don't have these columns on their positions table; trying to
-    // SELECT them would error. Splitting the column list keeps FLAME and
-    // INFERNO untouched.
-    const hypoCols = bot === 'spark'
-      ? ', hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at'
-      : ''
-
     const rows = await dbQuery(
       `SELECT
         position_id, ticker, expiration,
@@ -42,7 +34,8 @@ export async function GET(
         close_price, close_reason, realized_pnl,
         open_time, close_time,
         underlying_at_entry, vix_at_entry,
-        wings_adjusted, sandbox_order_id${hypoCols}
+        wings_adjusted, sandbox_order_id,
+        hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at
       FROM ${botTable(bot, 'positions')}
       WHERE status IN ('closed', 'expired') ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY close_time DESC
@@ -69,15 +62,11 @@ export async function GET(
       vix_at_entry: num(r.vix_at_entry),
       wings_adjusted: r.wings_adjusted === true || r.wings_adjusted === 'true',
       sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
-      // SPARK-only fields. Preserve null (not 0) so the UI can distinguish
-      // "row not yet computed" (null → "—") from "computed = $0" (rare but real).
-      hypothetical_eod_pnl: bot === 'spark'
-        ? (r.hypothetical_eod_pnl == null ? null : num(r.hypothetical_eod_pnl))
-        : undefined,
-      hypothetical_eod_spot: bot === 'spark'
-        ? (r.hypothetical_eod_spot == null ? null : num(r.hypothetical_eod_spot))
-        : undefined,
-      hypothetical_eod_computed_at: bot === 'spark' ? (r.hypothetical_eod_computed_at || null) : undefined,
+      // Preserve null (not 0) so the UI can distinguish "row not yet
+      // computed" (null → "—") from "computed = $0" (rare but real).
+      hypothetical_eod_pnl: r.hypothetical_eod_pnl == null ? null : num(r.hypothetical_eod_pnl),
+      hypothetical_eod_spot: r.hypothetical_eod_spot == null ? null : num(r.hypothetical_eod_spot),
+      hypothetical_eod_computed_at: r.hypothetical_eod_computed_at || null,
     }))
 
     return NextResponse.json({ trades })
