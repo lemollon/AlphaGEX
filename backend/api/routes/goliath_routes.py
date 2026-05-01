@@ -568,3 +568,130 @@ def goliath_logs(
             "position_id": r[4], "data": data,
         })
     return {"entries": entries, "count": len(entries)}
+
+
+# ---- Config / calibration / kill-state -----------------------------------
+
+# Phase 1.5 calibration values (single source of truth = trading.goliath.models
+# defaults; mirrored here so the API service doesn't need to import the
+# trading package). Update both places in lockstep.
+_CALIBRATION = {
+    "wall_concentration_threshold": {
+        "value": 2.0, "spec_default": 2.0,
+        "tag": "CALIB-SANITY-OK",
+        "notes": "Real-data 90d pull confirmed 2.0x median is a tight-but-fireable threshold across all 5 pairs.",
+    },
+    "tracking_error_fudge": {
+        "value": 0.1, "spec_default": 0.1,
+        "tag": "CALIB-OK",
+        "notes": "TE band of L*sigma*sqrt(t)*sqrt(2/3)*0.1 brackets observed LETF tracking variance for 4/5 pairs.",
+    },
+    "drag_coefficient": {
+        "value": 1.0, "spec_default": 1.0,
+        "tag": "CALIB-BLOCK",
+        "notes": (
+            "Theoretical drag formula misspecified during trending markets "
+            "(positive autocorrelation reduces drag). v0.3 backlog: "
+            "V03-DRAG-AUTOCORR replace formula with autocorr-aware estimator. "
+            "Current 1.0 is conservative for paper-trading."
+        ),
+    },
+    "realized_vol_window_days": {
+        "value": 20, "spec_default": 30,
+        "tag": "CALIB-ADJUST",
+        "notes": (
+            "20d window beat 30d on 4/5 pairs in residual-SD comparison. "
+            "MSTU preferred 30d but margin was inside known vol_window.py "
+            "math-bug noise floor (tracked under V03-DRAG-AUTOCORR)."
+        ),
+    },
+}
+
+
+@router.get("/calibration")
+def goliath_calibration() -> dict[str, Any]:
+    """Current Phase 1.5 calibration values + decision tags.
+
+    Static snapshot of the defaults baked into trading.goliath.models.
+    Updated whenever a calibration re-run lands a new spec default.
+    """
+    return {
+        "phase": "1.5",
+        "last_calibrated": "2026-04-30",   # date of step 9 real-data pull
+        "parameters": _CALIBRATION,
+    }
+
+
+@router.get("/kill-state")
+def goliath_kill_state() -> dict[str, Any]:
+    """Active and historical kill switches.
+
+    Active rows = scope-level kill in effect right now. Recent history
+    (cleared rows from the last 30d) is included so the dashboard can
+    show 'this instance was killed yesterday for T7' context.
+    """
+    active_rows = _safe_query(
+        "SELECT scope, instance_name, trigger_id, reason, context, killed_at "
+        "FROM goliath_kill_state WHERE active = TRUE "
+        "ORDER BY killed_at DESC"
+    )
+    history_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+    history_rows = _safe_query(
+        "SELECT scope, instance_name, trigger_id, reason, killed_at, "
+        "cleared_at, cleared_by FROM goliath_kill_state "
+        "WHERE active = FALSE AND cleared_at >= %s "
+        "ORDER BY cleared_at DESC LIMIT 50",
+        (history_cutoff,),
+    )
+
+    active = []
+    for r in active_rows:
+        ctx = r[4] if isinstance(r[4], dict) else (json.loads(r[4]) if r[4] else {})
+        active.append({
+            "scope": r[0], "instance_name": r[1],
+            "trigger_id": r[2], "reason": r[3], "context": ctx,
+            "killed_at": r[5].isoformat() if r[5] else None,
+        })
+    history = [
+        {
+            "scope": r[0], "instance_name": r[1],
+            "trigger_id": r[2], "reason": r[3],
+            "killed_at": r[4].isoformat() if r[4] else None,
+            "cleared_at": r[5].isoformat() if r[5] else None,
+            "cleared_by": r[6],
+        }
+        for r in history_rows
+    ]
+    return {
+        "active": active, "active_count": len(active),
+        "platform_killed": any(a["scope"] == "PLATFORM" for a in active),
+        "killed_instances": [a["instance_name"] for a in active if a["scope"] == "INSTANCE"],
+        "history": history,
+    }
+
+
+@router.get("/config")
+def goliath_config() -> dict[str, Any]:
+    """Current GoliathConfig defaults + global platform settings.
+
+    Mirrors trading.goliath.models.GoliathConfig + global_config.GlobalConfig.
+    Read-only -- mutations go through the CLI (master spec section 4-6).
+    """
+    return {
+        "global": {
+            "account_capital": _ACCOUNT_CAPITAL,
+            "platform_cap": _PLATFORM_CAP,
+            "max_concurrent_positions": 3,
+            "paper_only": True,
+            "bot_guard_tag_prefix": "GOLIATH",
+        },
+        "instance_defaults": {
+            "leverage": 2.0,
+            "wall_concentration_threshold": 2.0,
+            "tracking_error_fudge": 0.1,
+            "drag_coefficient": 1.0,
+            "realized_vol_window_days": 20,
+        },
+        "instances": _INSTANCES,
+        "phase": "1.5",
+    }
