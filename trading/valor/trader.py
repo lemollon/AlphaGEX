@@ -522,7 +522,7 @@ class ValorTrader:
                     )
                     if not margin_ok:
                         logger.warning(f"VALOR [{ticker}] GATE 6.5 BLOCKED: {margin_reason}")
-                        self.db.save_signal(signal, was_executed=False, skip_reason=f"Margin: {margin_reason}")
+                        self.db.save_signal(signal, was_executed=False, skip_reason=f"Margin: {margin_reason}", ticker=ticker)
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                                skip_reason=f"Margin blocked: {margin_reason}", ticker=ticker)
                         return scan_result
@@ -539,7 +539,7 @@ class ValorTrader:
                         scan_result["trades_executed"] += 1
                         scan_context["position_id"] = position_id
 
-                        self.db.save_signal(signal, was_executed=True)
+                        self.db.save_signal(signal, was_executed=True, ticker=ticker)
                         logger.info(f"VALOR [{ticker}] TRADE EXECUTED: {signal.direction.value} position {position_id}")
 
                         # Log ML shadow prediction
@@ -563,7 +563,7 @@ class ValorTrader:
                                                ticker=ticker)
                     else:
                         logger.warning(f"VALOR [{ticker}] GATE 7 BLOCKED: Execution failed")
-                        self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
+                        self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed", ticker=ticker)
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                                skip_reason="Execution failed", ticker=ticker)
                 else:
@@ -579,7 +579,7 @@ class ValorTrader:
                     logger.warning(
                         f"VALOR [{ticker}] GATE 6 BLOCKED: {signal.direction.value} invalid - [{failed_str}]"
                     )
-                    self.db.save_signal(signal, was_executed=False, skip_reason=f"Invalid: {failed_str}")
+                    self.db.save_signal(signal, was_executed=False, skip_reason=f"Invalid: {failed_str}", ticker=ticker)
                     self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                            skip_reason=f"Invalid signal: {failed_str}", ticker=ticker)
             else:
@@ -751,6 +751,7 @@ class ValorTrader:
                 bid_price=context.get("bid_price", 0),
                 ask_price=context.get("ask_price", 0),
                 underlying_symbol=ticker,
+                ticker=ticker,
                 vix=context.get("vix", 0),
                 atr=context.get("atr", 0),
                 atr_is_estimated=context.get("atr_is_estimated", True),
@@ -1347,7 +1348,8 @@ class ValorTrader:
                             "realized_pnl": realized_pnl,
                             "reason": reason,
                             "status": status.value
-                        }
+                        },
+                        ticker=pos_ticker,
                     )
 
                     logger.info(
@@ -1504,7 +1506,8 @@ class ValorTrader:
                 "sar_trigger_pts": self.config.sar_trigger_pts,
                 "sar_mfe_threshold": self.config.sar_mfe_threshold,
                 "gamma_regime": position.gamma_regime.value
-            }
+            },
+            ticker=pos_ticker,
         )
 
         logger.info(
@@ -1604,7 +1607,8 @@ class ValorTrader:
                     "win_probability": signal.win_probability,
                     "stop_price": signal.stop_price,
                     "reasoning": signal.reasoning
-                }
+                },
+                ticker=ticker,
             )
 
             logger.info(
@@ -2255,8 +2259,12 @@ class ValorTrader:
                         logger.error(f"VALOR EOD [{ticker}]: Failed to process {pos.position_id}: {e}")
                         result['errors'].append(str(e))
 
-            self.db.log("INFO", "EOD_PROCESSING",
-                f"Processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}")
+            self.db.log(
+                "INFO",
+                "EOD_PROCESSING",
+                f"Processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}",
+                ticker="ALL",
+            )
 
         except Exception as e:
             logger.error(f"VALOR EOD processing failed: {e}")
