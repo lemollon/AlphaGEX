@@ -84,10 +84,23 @@ class GoliathInstance:
 
         Does not invoke the gate orchestrator -- caller still runs G10
         for the platform-cap check separately.
+
+        Unit note: open_dollars_at_risk() returns dollars (multiplier=100
+        is applied internally). allocation_cap is also in dollars (e.g.
+        $200 for MSTU per master spec section 5). Compare dollars-to-
+        dollars; do NOT multiply allocation_cap by the option multiplier
+        (prior bug fixed 2026-05-01 audit; reproduced in
+        test_instance.py::CapacityCheck::test_no_capacity_at_or_above_allocation_cap).
+
+        NOTE: this method is currently a test-only utility. Production
+        sizing goes through engine.evaluate_entry -> sizing.calculator,
+        which reads instance.open_dollars_at_risk() directly without
+        going through this helper. Kept here for runner-level code that
+        might want a quick pre-flight check before assembling a snapshot.
         """
         if self.is_killed:
             return False
-        return self.open_dollars_at_risk() < (self.config.allocation_cap * _OPTION_MULTIPLIER)
+        return self.open_dollars_at_risk() < self.config.allocation_cap
 
     # ---- Convenience -------------------------------------------------------
 
