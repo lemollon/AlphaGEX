@@ -289,7 +289,10 @@ class CoinGlassClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("COINGLASS_API_KEY", "")
         self._last_request_time = 0
-        self._rate_limit_ms = 200  # 5 req/sec max
+        # CoinGlass paid plans are tier-throttled. Hobbyist = 30/min (one
+        # call per 2s). Set padding to 2.5s so we stay safely under the
+        # tier limit. Bump down to 200ms only if upgrading to Standard+.
+        self._rate_limit_ms = 2500  # ~24 req/min, fits Hobbyist tier
 
     def _rate_limit(self):
         """Enforce rate limiting."""
@@ -848,7 +851,11 @@ class CryptoDataProvider:
         # Per-symbol cache (supports multi-coin without eviction)
         self._snapshot_cache: Dict[str, CryptoMarketSnapshot] = {}
         self._snapshot_cache_time: Dict[str, float] = {}
-        self._cache_ttl: int = 30  # seconds
+        # 90s TTL keeps us well under CoinGlass rate limits even when 5
+        # perp bots all scan together. Each snapshot does ~5 CoinGlass
+        # calls; with 2.5s padding that's ~12s per snapshot, so the
+        # cache window comfortably covers a single full refresh cycle.
+        self._cache_ttl: int = 90  # seconds
 
     def get_snapshot(self, symbol: str = "ETH") -> CryptoMarketSnapshot:
         """Get complete market microstructure snapshot.
