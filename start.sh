@@ -65,10 +65,14 @@ if [ -z "$TV_USERNAME" ]; then
 fi
 echo ""
 
-# Start the FastAPI server
-echo "🚀 Starting FastAPI server on port ${PORT:-8000}..."
+# Start the FastAPI server.
+# WEB_CONCURRENCY controls worker count. Default 4 — single-worker default
+# was the bottleneck behind p99 latency spiking to 35-38s when the 5 perp
+# dashboards each fired multiple sync calls into CoinGlass / Anthropic.
+echo "🚀 Starting FastAPI server on port ${PORT:-8000} with ${WEB_CONCURRENCY:-4} workers..."
 python -m uvicorn backend.main:app \
     --host 0.0.0.0 \
     --port ${PORT:-8000} \
+    --workers ${WEB_CONCURRENCY:-4} \
     --log-level info \
     --access-log

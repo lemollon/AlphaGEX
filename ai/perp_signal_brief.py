@@ -118,7 +118,10 @@ def get_signal_brief(snapshot_dict: Dict) -> Optional[Dict]:
     )
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        # 15s timeout: Anthropic SDK defaults to 600s, which would tie up a
+        # uvicorn worker for 10 minutes if the call hangs. Brief is best-effort —
+        # falling back to the raw snapshot is fine.
+        client = anthropic.Anthropic(api_key=api_key, timeout=15.0)
         response = client.messages.create(
             model=_BRIEF_MODEL,
             max_tokens=_BRIEF_MAX_TOKENS,
