@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""End-to-end signal verification for all 5 perp tickers.
+
+Run on Render after deploy:
+    curl -s https://raw.githubusercontent.com/lemollon/AlphaGEX/main/scripts/verify_perp_signals.py -o /tmp/v.py && python /tmp/v.py
+"""
+from data.crypto_data_provider import get_crypto_data_provider
+
+p = get_crypto_data_provider()
+print(f"{'SYM':5s} {'SIGNAL':12s} {'CONF':6s} {'FUNDING':22s} {'OI_USD':>10s} {'TAKER_BUY%':>11s}  notes")
+print("-" * 100)
+for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
+    s = p.get_snapshot(sym)
+    if not s:
+        print(f"{sym:5s} (no snapshot)")
+        continue
+    oi_str = f"${s.oi_snapshot.total_usd/1e6:.0f}M" if s.oi_snapshot else "NONE"
+    tv_str = f"{s.taker_volume.buy_ratio*100:.1f}%" if s.taker_volume else "NONE"
+    notes = []
+    if s.crypto_gex:
+        notes.append(f"GEX={s.crypto_gex.gamma_regime}")
+    if s.ls_ratio:
+        notes.append(f"L/S={s.ls_ratio.ratio:.2f}")
+    if s.liquidation_clusters:
+        notes.append(f"liq={len(s.liquidation_clusters)}")
+    note_str = " ".join(notes)
+    print(f"{sym:5s} {s.combined_signal:12s} {s.combined_confidence:6s} {s.funding_regime:22s} {oi_str:>10s} {tv_str:>11s}  {note_str}")
