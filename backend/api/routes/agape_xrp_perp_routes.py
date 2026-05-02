@@ -963,18 +963,24 @@ async def disable_bot():
 
 
 @router.post("/force-close-all")
-async def force_close_all(reason: str = "MANUAL_CLOSE"):
-    """Force-close every open AGAPE-XRP-PERP position at current mark.
+async def force_close_all(reason: str = "MANUAL_CLOSE", limit: int = 0):
+    """Force-close open AGAPE-XRP-PERP positions at current mark.
 
     Operator escape hatch when the bot has stacked into an unsafe state
     (e.g. margin >100%). Each position is closed at the current price
     with realized_pnl recorded; the bot remains enabled/disabled in
     whatever state it was in.
+
+    Args:
+        reason: close_reason recorded on each position.
+        limit:  if >0, close at most this many positions (newest first
+                — get_open_positions returns ORDER BY open_time DESC).
+                0 (default) closes all open positions.
     """
     trader = _get_trader()
     if not trader:
         raise HTTPException(status_code=503, detail="AGAPE-XRP-PERP not available")
-    return {"success": True, "result": trader.force_close_all(reason)}
+    return {"success": True, "result": trader.force_close_all(reason, limit=limit or None)}
 
 
 # ------------------------------------------------------------------
