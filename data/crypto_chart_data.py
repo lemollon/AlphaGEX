@@ -31,19 +31,23 @@ _COINBASE_PRODUCT = {
     "SHIB": "SHIB-USD",
 }
 
-# 5-minute cache per ticker. Charts don't need second-by-second freshness;
-# CoinGlass tier limit is the binding constraint.
+# 30-minute cache per ticker. Charts don't need fresher than this and the
+# CoinGlass Hobbyist tier (~30 req/min, shared with the trader worker) is
+# the binding constraint. Empty arrays are cached too so a transient 429
+# burst doesn't trigger a thundering-herd retry on every poll.
 _CACHE: Dict[str, Dict] = {}
 _CACHE_TIME: Dict[str, float] = {}
-_CACHE_TTL = 300
+_CACHE_TTL = 1800
 
 
 def _coinbase_candles(
-    ticker: str, granularity_seconds: int = 14400, limit: int = 180
+    ticker: str, granularity_seconds: int = 21600, limit: int = 120
 ) -> List[Dict]:
     """Fetch price candles from Coinbase Exchange public API.
 
-    h4 = 14400s, returns up to 300 per call. We ask for 180 = 30 days.
+    Coinbase only accepts {60, 300, 900, 3600, 21600, 86400}. We use 21600
+    (6h) — the closest supported value to the h4 cadence used elsewhere —
+    which gives ~300 candles ≈ 75 days; we slice the most recent 120 = 30d.
     Coinbase response shape: [[time, low, high, open, close, volume], ...]
     Newest first, so we reverse to chronological order.
     """
@@ -52,7 +56,6 @@ def _coinbase_candles(
         return []
     try:
         url = f"https://api.exchange.coinbase.com/products/{product}/candles"
-        # Coinbase caps `granularity` to a fixed set; 14400 = h4 is allowed.
         resp = requests.get(
             url,
             params={"granularity": granularity_seconds},
@@ -176,12 +179,13 @@ def get_chart_data(ticker: str) -> Dict:
 
     payload = {
         "ticker": ticker_upper,
-        "price": price,
-        "ls_ratio": ls_series,
-        "open_interest": oi_series,
-        "funding": funding_series,
+        "price": price,           # h6 candles from Coinbase (closest supported to h4)
+        "ls_ratio": ls_series,    # h4 from CoinGlass
+        "open_interest": oi_series,  # h4 from CoinGlass
+        "funding": funding_series,   # h4 from CoinGlass
         "fetched_at": int(now * 1000),
         "interval": "h4",
+        "price_interval": "h6",
         "lookback_days": 30,
     }
 
