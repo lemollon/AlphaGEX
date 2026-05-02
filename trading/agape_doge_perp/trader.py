@@ -392,15 +392,6 @@ class AgapeDogePerpTrader:
         open_pos = self.db.get_open_positions()
         if len(open_pos) >= self.config.max_open_positions:
             return f"MAX_POSITIONS_{len(open_pos)}/{self.config.max_open_positions}"
-        # Phase 3.3: alt correlation cap - if 2+ sibling alts (XRP/SHIB)
-        # already have positions, wait. Prevents synchronized signal opens
-        # turning a market-wide alt squeeze into a triple drawdown.
-        try:
-            from data.perp_correlation_guard import is_alt_correlation_capped
-            if is_alt_correlation_capped("DOGE"):
-                return "ALT_CORRELATION_CAP"
-        except ImportError:
-            pass
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:
