@@ -170,3 +170,83 @@ def get_position_liquidation_price(
     except Exception as e:
         logger.debug(f"Could not calculate liquidation price: {e}")
         return None
+
+
+def current_margin_usage_pct(
+    bot_name: str,
+    perp_symbol: str,
+    open_positions: list,
+    account_equity: float,
+    current_price: Optional[float] = None,
+) -> Optional[float]:
+    """Compute current margin usage % across all open perp positions.
+
+    Mirrors the math used by the per-bot /margin endpoint so the trader
+    sees the same number the dashboard does. Returns None if the margin
+    spec for this perp can't be found (caller should fail open).
+    """
+    try:
+        from trading.shared.margin_engine import MarginCalculator
+        from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+
+        spec = PERPETUAL_MARGIN_SPECS.get(perp_symbol, {})
+        if not spec:
+            return None
+        if not open_positions or account_equity <= 0:
+            return 0.0
+
+        position_margins = []
+        for pos in open_positions:
+            pos_price = current_price or pos.get("entry_price", 0)
+            if not pos_price:
+                continue
+            leverage = pos.get("leverage_at_entry") or spec.get("default_leverage", 10)
+            result = MarginCalculator.calculate_perpetual_margin(
+                entry_price=pos["entry_price"],
+                current_price=pos_price,
+                quantity=pos.get("quantity", 0),
+                side=pos.get("side", "long"),
+                leverage=leverage,
+                margin_mode="isolated",
+                maintenance_margin_rate=spec.get("maintenance_margin_rate", 0.004),
+                account_equity=account_equity,
+                funding_rate=pos.get("funding_rate_at_entry", 0) or 0,
+                funding_interval_hours=spec.get("funding_interval_hours", 8),
+            )
+            position_margins.append(result)
+
+        if not position_margins:
+            return 0.0
+        summary = MarginCalculator.aggregate_positions(
+            position_margins, account_equity, "crypto_perp"
+        )
+        return float(summary.get("margin_usage_pct", 0.0))
+    except Exception as e:
+        logger.debug(f"current_margin_usage_pct({bot_name}) failed: {e}")
+        return None
+
+
+def is_margin_over_threshold(
+    bot_name: str,
+    perp_symbol: str,
+    open_positions: list,
+    account_equity: float,
+    threshold_pct: float = 70.0,
+    current_price: Optional[float] = None,
+) -> Tuple[bool, float]:
+    """True if current margin usage already exceeds the open-new-trades cap.
+
+    Returns (blocked, current_usage_pct). On computation failure returns
+    (False, 0.0) — fail open so a transient error never freezes the bot,
+    while still surfacing the call site that asked.
+    """
+    usage = current_margin_usage_pct(
+        bot_name=bot_name,
+        perp_symbol=perp_symbol,
+        open_positions=open_positions,
+        account_equity=account_equity,
+        current_price=current_price,
+    )
+    if usage is None:
+        return False, 0.0
+    return usage >= threshold_pct, usage
