@@ -1097,6 +1097,26 @@ const fetchers = {
     const response = await api.get('/api/agape-eth-perp/gex-mapping')
     return response.data
   },
+  agapeEthPerpChartData: async () => {
+    const response = await api.get('/api/agape-eth-perp/chart-data')
+    return response.data
+  },
+  agapeBtcPerpChartData: async () => {
+    const response = await api.get('/api/agape-btc-perp/chart-data')
+    return response.data
+  },
+  agapeXrpPerpChartData: async () => {
+    const response = await api.get('/api/agape-xrp-perp/chart-data')
+    return response.data
+  },
+  agapeDogePerpChartData: async () => {
+    const response = await api.get('/api/agape-doge-perp/chart-data')
+    return response.data
+  },
+  agapeShibPerpChartData: async () => {
+    const response = await api.get('/api/agape-shib-perp/chart-data')
+    return response.data
+  },
 
   // AGAPE-BTC-PERP (BTC Perpetual)
   agapeBtcPerpStatus: async () => {
@@ -2478,6 +2498,52 @@ export function useAGAPEEthPerpGexMapping(options?: LazySWRConfiguration) {
     enabled === false ? null : 'agape-eth-perp-gex-mapping',
     fetchers.agapeEthPerpGexMapping,
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+// =============================================================================
+// AGAPE PERP CHART DATA HOOKS — 30-day h4 history (price + L/S + OI + funding)
+// =============================================================================
+const PERP_CHART_REFRESH = 5 * 60 * 1000  // 5 min, matches backend cache TTL
+
+export function useAGAPEEthPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-eth-perp-chart-data',
+    fetchers.agapeEthPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEBtcPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-perp-chart-data',
+    fetchers.agapeBtcPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEXrpPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-perp-chart-data',
+    fetchers.agapeXrpPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEDogePerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-doge-perp-chart-data',
+    fetchers.agapeDogePerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEShibPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-perp-chart-data',
+    fetchers.agapeShibPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
   )
 }
 

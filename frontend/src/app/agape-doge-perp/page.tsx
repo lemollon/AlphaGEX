@@ -20,9 +20,11 @@ import {
   Settings,
   BarChart3,
   Globe,
+  LineChart,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
 import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
@@ -41,6 +43,7 @@ import {
   useAGAPEDogePerpClosedTrades,
   useAGAPEDogePerpSnapshot,
   useAGAPEDogePerpGexMapping,
+  useAGAPEDogePerpChartData,
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
@@ -61,6 +64,7 @@ const AGAPE_DOGE_PERP_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
   { id: 'snapshot' as const, label: 'Market', icon: Globe, description: 'Crypto microstructure' },
+  { id: 'charts' as const, label: 'Charts', icon: LineChart, description: 'L/S, OI, funding history' },
   { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
   { id: 'history' as const, label: 'History', icon: History, description: 'Closed trades' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and GEX mapping' },
@@ -87,6 +91,7 @@ export default function AgapeDogePerpPage() {
   const { data: scansData } = useAGAPEDogePerpScanActivity(30, { enabled: activeTab === 'activity' })
   const { data: closedData } = useAGAPEDogePerpClosedTrades(50, { enabled: activeTab === 'history' })
   const { data: mappingData } = useAGAPEDogePerpGexMapping({ enabled: activeTab === 'config' })
+  const { data: chartData, isLoading: chartLoading } = useAGAPEDogePerpChartData({ enabled: activeTab === 'charts' })
 
   const status = statusData?.data
   const perf = perfData?.data
@@ -280,6 +285,9 @@ export default function AgapeDogePerpPage() {
             )}
             {activeTab === 'snapshot' && (
               <SnapshotTab data={snapshotData?.data} loading={snapLoading} brand={brand} />
+            )}
+            {activeTab === 'charts' && (
+              <PerpMarketCharts data={chartData?.data} loading={chartLoading} />
             )}
             {activeTab === 'activity' && <ActivityTab data={scansData?.data} brand={brand} />}
             {activeTab === 'history' && <HistoryTab data={closedData?.data} brand={brand} />}
