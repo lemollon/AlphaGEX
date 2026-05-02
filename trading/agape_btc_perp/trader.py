@@ -403,6 +403,31 @@ class AgapeBtcPerpTrader:
                 f"SAR: Closed {side.upper()} {position_id}, Opened {reversal_side.upper()} {reversal_pos.position_id}")
         return True
 
+    def _check_funding_flip_exit(self, pos):
+        """Phase 3.2: exit when funding has flipped to extreme against the position.
+
+        EXTREME_LONG funding regime = longs paying high funding to shorts;
+        holding a long here drains P&L through funding payments alone.
+        Symmetric for shorts. Snapshot is 90s-cached upstream so this
+        adds no API load.
+        """
+        try:
+            provider = getattr(self.signals, "_crypto_provider", None)
+            if provider is None:
+                return None
+            snap = provider.get_snapshot(self.config.ticker)
+            if snap is None:
+                return None
+            regime = getattr(snap, "funding_regime", None)
+            side = pos["side"]
+            if side == "long" and regime == "EXTREME_LONG":
+                return "FUNDING_FLIP_EXIT_LONG"
+            if side == "short" and regime == "EXTREME_SHORT":
+                return "FUNDING_FLIP_EXIT_SHORT"
+        except Exception as e:
+            logger.debug(f"AGAPE-BTC-PERP: funding-flip check failed: {e}")
+        return None
+
     def _check_exit_conditions(self, pos, current_price, now):
         entry_price = pos["entry_price"]
         side = pos["side"]
@@ -418,6 +443,10 @@ class AgapeBtcPerpTrader:
                 return (True, "TAKE_PROFIT")
             elif side == "short" and current_price <= take_profit:
                 return (True, "TAKE_PROFIT")
+        # Phase 3.2: funding-flip exit
+        ff_reason = self._check_funding_flip_exit(pos)
+        if ff_reason:
+            return (True, ff_reason)
         open_time_str = pos.get("open_time")
         if open_time_str:
             try:
@@ -519,6 +548,9 @@ class AgapeBtcPerpTrader:
             "funding_regime": market.get("funding_regime"),
             "ls_ratio": market.get("ls_ratio"),
             "ls_bias": market.get("ls_bias"),
+            "ls_long_pct": market.get("ls_long_pct"),
+            "oi_total_usd": market.get("oi_total_usd"),
+            "taker_buy_ratio": market.get("taker_buy_ratio"),
             "squeeze_risk": market.get("squeeze_risk"),
             "leverage_regime": market.get("leverage_regime"),
             "max_pain": market.get("max_pain"),
