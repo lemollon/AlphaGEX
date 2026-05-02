@@ -211,19 +211,18 @@ class CoinGlassClient:
     """Fetches crypto market structure data from CoinGlass API.
 
     CoinGlass provides:
-    - Funding rates across exchanges
-    - Open interest aggregated data
-    - Liquidation heatmap data
-    - Long/Short ratio
+    - Funding rates across exchanges (v2 public)
+    - Liquidation heatmap data (v4, paid plan)
+    - Long/Short ratio (v4, paid plan)
     """
-    # v3 endpoints are broken (404/500) as of Feb 2026.
-    # v2 public API works: funding endpoint confirmed.
+    # v2 = public legacy endpoint (funding only). No auth header required.
+    # v3 = deprecated, returns 500 server-side regardless of auth.
+    # v4 = current paid API. Header: CG-API-KEY.
     BASE_URL_V2 = "https://open-api.coinglass.com/public/v2"
-    BASE_URL_V3 = "https://open-api-v3.coinglass.com/api"
+    BASE_URL_V4 = "https://open-api-v4.coinglass.com/api"
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("COINGLASS_API_KEY", "")
-        self.headers = {"coinglassSecret": self.api_key} if self.api_key else {}
         self._last_request_time = 0
         self._rate_limit_ms = 200  # 5 req/sec max
 
@@ -234,19 +233,33 @@ class CoinGlassClient:
             time.sleep((self._rate_limit_ms - elapsed) / 1000)
         self._last_request_time = time.time()
 
-    def _request(self, endpoint: str, params: Optional[Dict] = None, use_v2: bool = True) -> Optional[Dict]:
-        """Make an API request with retry logic."""
-        base = self.BASE_URL_V2 if use_v2 else self.BASE_URL_V3
+    def _request(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        version: str = "v4",
+    ) -> Optional[Any]:
+        """Make an API request with retry logic.
+
+        version="v2": legacy public endpoint, no auth header required.
+        version="v4": current paid API, requires CG-API-KEY header.
+        """
+        if version == "v2":
+            base = self.BASE_URL_V2
+            headers = {"coinglassSecret": self.api_key} if self.api_key else {}
+        else:
+            base = self.BASE_URL_V4
+            headers = {"CG-API-KEY": self.api_key} if self.api_key else {}
         url = f"{base}/{endpoint}"
         for attempt in range(3):
             try:
                 self._rate_limit()
-                resp = requests.get(url, headers=self.headers, params=params, timeout=10)
+                resp = requests.get(url, headers=headers, params=params, timeout=10)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("success") or data.get("code") == "0":
                         return data.get("data", data)
-                    logger.warning(f"CoinGlass API error: {data.get('msg', 'unknown')}")
+                    logger.warning(f"CoinGlass API error ({version}): {data.get('msg', 'unknown')}")
                     return None
                 elif resp.status_code == 429:
                     wait = (attempt + 1) * 2
@@ -254,7 +267,7 @@ class CoinGlassClient:
                     time.sleep(wait)
                     continue
                 else:
-                    logger.debug(f"CoinGlass HTTP {resp.status_code} on {endpoint}")
+                    logger.debug(f"CoinGlass HTTP {resp.status_code} on {endpoint} ({version})")
                     return None
             except requests.RequestException as e:
                 logger.error(f"CoinGlass request failed (attempt {attempt + 1}): {e}")
@@ -268,7 +281,7 @@ class CoinGlassClient:
         Uses v2 /funding endpoint which returns an array of exchange data.
         We compute a simple average across exchanges for the target symbol.
         """
-        data = self._request("funding", {"symbol": symbol, "time_type": "all"}, use_v2=True)
+        data = self._request("funding", {"symbol": symbol, "time_type": "all"}, version="v2")
         if not data or not isinstance(data, list):
             return None
         try:
@@ -309,8 +322,9 @@ class CoinGlassClient:
     ) -> List[Dict]:
         """Get historical funding rates for trend analysis."""
         data = self._request(
-            "futures/funding-rate-oi-weight-history",
-            {"symbol": symbol, "limit": limit},
+            "futures/funding-rate/oi-weight-history",
+            {"symbol": symbol, "interval": "h1", "limit": limit},
+            version="v4",
         )
         if not data or not isinstance(data, list):
             return []
@@ -318,65 +332,125 @@ class CoinGlassClient:
 
     def get_open_interest(self, symbol: str = "ETH") -> Optional[Dict]:
         """Get aggregate open interest across exchanges."""
-        data = self._request("futures/open-interest", {"symbol": symbol})
+        data = self._request(
+            "futures/open-interest/exchange-list",
+            {"symbol": symbol},
+            version="v4",
+        )
         if not data:
             return None
         return data
 
     def get_liquidation_data(self, symbol: str = "ETH") -> List[LiquidationCluster]:
-        """Get liquidation heatmap data.
-
-        Note: CoinGlass v2/v3 liquidation endpoints return 500 as of Feb 2026.
-        Returns empty list if unavailable - signal generator handles this gracefully.
-        """
-        data = self._request("futures/liquidation-heatmap", {"symbol": symbol}, use_v2=False)
-        if not data or not isinstance(data, list):
+        """Get liquidation heatmap data (v4, requires paid plan)."""
+        data = self._request(
+            "futures/liquidation/aggregated-heatmap/model1",
+            {"symbol": symbol, "range": "1d"},
+            version="v4",
+        )
+        if not data:
             return []
 
+        # v4 heatmap response shape:
+        # {"y": [price_levels], "data": [[x_idx, y_idx, usd], ...]}
+        # OR a flat list of {"price","longLiquidationUsd","shortLiquidationUsd"} (legacy).
+        # Handle both defensively.
         clusters = []
-        for level in data:
-            try:
-                price = float(level.get("price", 0))
-                long_liq = float(level.get("longLiquidationUsd", 0))
-                short_liq = float(level.get("shortLiquidationUsd", 0))
-                total = long_liq + short_liq
 
-                if total < 100_000:
+        if isinstance(data, dict) and "y" in data and "data" in data:
+            price_axis = data.get("y", [])
+            cells = data.get("data", [])
+            # Aggregate USD per price bucket; v4 doesn't split long/short here
+            # so we approximate by treating all liquidations as "near both sides"
+            # (intensity scoring downstream is what we actually use).
+            by_price: Dict[int, float] = {}
+            for cell in cells:
+                try:
+                    if len(cell) >= 3:
+                        y_idx = int(cell[1])
+                        usd = float(cell[2])
+                        by_price[y_idx] = by_price.get(y_idx, 0.0) + usd
+                except (TypeError, ValueError):
+                    continue
+            for y_idx, total_usd in by_price.items():
+                if y_idx < 0 or y_idx >= len(price_axis):
+                    continue
+                try:
+                    price = float(price_axis[y_idx])
+                except (TypeError, ValueError):
+                    continue
+                if total_usd < 100_000:
                     intensity = "LOW"
-                elif total < 1_000_000:
+                elif total_usd < 1_000_000:
                     intensity = "MEDIUM"
                 else:
                     intensity = "HIGH"
-
                 clusters.append(LiquidationCluster(
                     price_level=price,
-                    long_liquidation_usd=long_liq,
-                    short_liquidation_usd=short_liq,
-                    net_liquidation_usd=short_liq - long_liq,
+                    long_liquidation_usd=total_usd / 2,
+                    short_liquidation_usd=total_usd / 2,
+                    net_liquidation_usd=0.0,
                     intensity=intensity,
-                    distance_pct=0.0,  # Calculated later with spot price
+                    distance_pct=0.0,
                 ))
-            except (KeyError, TypeError, ValueError):
-                continue
+            return clusters
+
+        if isinstance(data, list):
+            for level in data:
+                try:
+                    price = float(level.get("price", 0))
+                    long_liq = float(level.get("longLiquidationUsd", 0))
+                    short_liq = float(level.get("shortLiquidationUsd", 0))
+                    total = long_liq + short_liq
+
+                    if total < 100_000:
+                        intensity = "LOW"
+                    elif total < 1_000_000:
+                        intensity = "MEDIUM"
+                    else:
+                        intensity = "HIGH"
+
+                    clusters.append(LiquidationCluster(
+                        price_level=price,
+                        long_liquidation_usd=long_liq,
+                        short_liquidation_usd=short_liq,
+                        net_liquidation_usd=short_liq - long_liq,
+                        intensity=intensity,
+                        distance_pct=0.0,
+                    ))
+                except (KeyError, TypeError, ValueError):
+                    continue
         return clusters
 
     def get_long_short_ratio(self, symbol: str = "ETH") -> Optional[LongShortRatio]:
-        """Get aggregate long/short ratio across exchanges.
+        """Get aggregate long/short account ratio (v4, requires paid plan).
 
-        Note: CoinGlass v2/v3 long-short endpoints return 500 as of Feb 2026.
-        Returns None if unavailable - signal generator handles this gracefully.
+        v4 endpoint returns a time series; we take the most recent point.
         """
         data = self._request(
-            "futures/global-long-short-account-ratio",
-            {"symbol": symbol},
-            use_v2=False,
+            "futures/global-long-short-account-ratio/history",
+            {"symbol": symbol, "interval": "h1", "limit": 1},
+            version="v4",
         )
         if not data:
             return None
         try:
-            long_pct = float(data.get("longRate", data.get("longAccount", 50)))
-            short_pct = float(data.get("shortRate", data.get("shortAccount", 50)))
-            ratio = long_pct / short_pct if short_pct > 0 else 1.0
+            # v4 history endpoint returns a list of records; take the latest.
+            latest = data[-1] if isinstance(data, list) and data else data
+            if not isinstance(latest, dict):
+                return None
+
+            long_pct = float(latest.get(
+                "longAccount", latest.get("longRate", latest.get("long_account", 50))
+            ))
+            short_pct = float(latest.get(
+                "shortAccount", latest.get("shortRate", latest.get("short_account", 50))
+            ))
+            ratio_field = latest.get("longShortRatio", latest.get("ratio"))
+            if ratio_field is not None:
+                ratio = float(ratio_field)
+            else:
+                ratio = long_pct / short_pct if short_pct > 0 else 1.0
 
             return LongShortRatio(
                 symbol=symbol,
@@ -386,7 +460,7 @@ class CoinGlassClient:
                 exchange="aggregate",
                 timestamp=datetime.now(CENTRAL_TZ),
             )
-        except (KeyError, TypeError, ValueError) as e:
+        except (KeyError, TypeError, ValueError, IndexError) as e:
             logger.error(f"Failed to parse L/S ratio: {e}")
             return None
 
@@ -959,8 +1033,9 @@ class CryptoDataProvider:
         if leverage == "OVERLEVERAGED" and squeeze == "HIGH":
             return ("WAIT", "HIGH")
 
-        # ---- LAST RESORT: Price momentum for coins with no GEX/CoinGlass data ----
-        # (XRP, DOGE, SHIB have no Deribit options data and CoinGlass may not cover them)
+        # ---- LAST RESORT: Price momentum for coins with no signal data ----
+        # XRP, DOGE, SHIB have no Deribit options (no GEX). CoinGlass v4
+        # SHOULD cover them on a paid plan; if it doesn't, this is the safety net.
         # Use cached previous snapshot to detect short-term price direction.
         if spot > 0:
             prev = self._snapshot_cache.get(snapshot.symbol)
