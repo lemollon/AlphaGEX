@@ -415,14 +415,71 @@ class CoinGlassClient:
             return None
 
     def get_funding_rate_history(
-        self, symbol: str = "ETH", limit: int = 100
+        self, symbol: str = "ETH", interval: str = "h4", limit: int = 180
     ) -> List[Dict]:
-        """Get historical funding rates for trend analysis."""
+        """Get historical funding rates (v4).
+
+        Default interval h4 (h1 is plan-gated on Hobbyist tier).
+        180 points × h4 = 30 days of history for charts.
+        """
         data = self._request(
             "futures/funding-rate/oi-weight-history",
-            {"symbol": symbol, "interval": "h1", "limit": limit},
+            {"symbol": symbol, "interval": interval, "limit": limit},
             version="v4",
         )
+        if not data or not isinstance(data, list):
+            return []
+        return data
+
+    def get_oi_history(
+        self, symbol: str = "ETH", interval: str = "h4", limit: int = 180
+    ) -> List[Dict]:
+        """Get historical open interest aggregated across exchanges (v4)."""
+        data = self._request(
+            "futures/open-interest/aggregated-history",
+            {"symbol": symbol, "interval": interval, "limit": limit},
+            version="v4",
+        )
+        if not data or not isinstance(data, list):
+            return []
+        return data
+
+    def get_ls_ratio_history(
+        self,
+        symbol: str = "ETH",
+        exchange: str = "Binance",
+        interval: str = "h4",
+        limit: int = 180,
+    ) -> List[Dict]:
+        """Get historical L/S ratio (v4).
+
+        Uses _LS_SYMBOL_MAP for per-ticker symbol formatting (BTCUSDT,
+        1000SHIBUSDT, etc.). 180 × h4 = 30 days for chart rendering.
+        """
+        ticker = symbol.upper()
+        cg_symbol = self._LS_SYMBOL_MAP.get(ticker, f"{ticker}USDT")
+
+        data = self._request(
+            "futures/global-long-short-account-ratio/history",
+            {
+                "exchange": exchange,
+                "symbol": cg_symbol,
+                "interval": interval,
+                "limit": limit,
+            },
+            version="v4",
+        )
+        if not data and ticker == "SHIB":
+            data = self._request(
+                "futures/global-long-short-account-ratio/history",
+                {
+                    "exchange": exchange,
+                    "symbol": "SHIBUSDT",
+                    "interval": interval,
+                    "limit": limit,
+                },
+                version="v4",
+            )
         if not data or not isinstance(data, list):
             return []
         return data

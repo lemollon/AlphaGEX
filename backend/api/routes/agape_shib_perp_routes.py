@@ -960,3 +960,21 @@ async def disable_bot():
         raise HTTPException(status_code=503, detail="AGAPE-SHIB-PERP not available")
     trader.disable()
     return {"success": True, "message": "AGAPE-SHIB-PERP disabled"}
+
+
+# ------------------------------------------------------------------
+# Chart data: 30 days of h4 history for dashboard charts.
+# ------------------------------------------------------------------
+@router.get("/chart-data")
+async def get_chart_data():
+    """Return 30 days of h4 history (price + L/S + OI + funding) for SHIB charts.
+
+    Five-minute server-side cache. All four series timestamped in epoch
+    milliseconds so the frontend can plot them on a shared X-axis.
+    """
+    try:
+        from data.crypto_chart_data import get_chart_data as _fetch
+        return {"success": True, "data": _fetch("SHIB"), "fetched_at": _format_ct()}
+    except Exception as e:
+        logger.error(f"AGAPE-SHIB-PERP chart-data error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
