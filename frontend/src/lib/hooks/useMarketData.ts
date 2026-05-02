@@ -1117,6 +1117,26 @@ const fetchers = {
     const response = await api.get('/api/agape-shib-perp/chart-data')
     return response.data
   },
+  agapeEthPerpBrief: async () => {
+    const response = await api.get('/api/agape-eth-perp/brief')
+    return response.data
+  },
+  agapeBtcPerpBrief: async () => {
+    const response = await api.get('/api/agape-btc-perp/brief')
+    return response.data
+  },
+  agapeXrpPerpBrief: async () => {
+    const response = await api.get('/api/agape-xrp-perp/brief')
+    return response.data
+  },
+  agapeDogePerpBrief: async () => {
+    const response = await api.get('/api/agape-doge-perp/brief')
+    return response.data
+  },
+  agapeShibPerpBrief: async () => {
+    const response = await api.get('/api/agape-shib-perp/brief')
+    return response.data
+  },
 
   // AGAPE-BTC-PERP (BTC Perpetual)
   agapeBtcPerpStatus: async () => {
@@ -2544,6 +2564,52 @@ export function useAGAPEShibPerpChartData(options?: LazySWRConfiguration) {
     enabled === false ? null : 'agape-shib-perp-chart-data',
     fetchers.agapeShibPerpChartData,
     { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+
+// ===========================================================================
+// AGAPE PERP CLAUDE SIGNAL BRIEF HOOKS — 5-min refresh matches backend cache
+// ===========================================================================
+const PERP_BRIEF_REFRESH = 5 * 60 * 1000
+
+export function useAGAPEEthPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-eth-perp-brief',
+    fetchers.agapeEthPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEBtcPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-btc-perp-brief',
+    fetchers.agapeBtcPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEXrpPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-xrp-perp-brief',
+    fetchers.agapeXrpPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEDogePerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-doge-perp-brief',
+    fetchers.agapeDogePerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEShibPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-perp-brief',
+    fetchers.agapeShibPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
   )
 }
 

@@ -25,6 +25,7 @@ import {
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
+import SignalBriefCard from '@/components/trader/SignalBriefCard'
 import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
@@ -44,6 +45,7 @@ import {
   useAGAPEXrpPerpSnapshot,
   useAGAPEXrpPerpGexMapping,
   useAGAPEXrpPerpChartData,
+  useAGAPEXrpPerpBrief,
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
@@ -92,6 +94,7 @@ export default function AgapeXrpPerpPage() {
   const { data: closedData } = useAGAPEXrpPerpClosedTrades(50, { enabled: activeTab === 'history' })
   const { data: mappingData } = useAGAPEXrpPerpGexMapping({ enabled: activeTab === 'config' })
   const { data: chartData, isLoading: chartLoading } = useAGAPEXrpPerpChartData({ enabled: activeTab === 'charts' })
+  const { data: briefData, isLoading: briefLoading } = useAGAPEXrpPerpBrief({ enabled: activeTab === 'charts' })
 
   const status = statusData?.data
   const perf = perfData?.data
@@ -287,7 +290,10 @@ export default function AgapeXrpPerpPage() {
               <SnapshotTab data={snapshotData?.data} loading={snapLoading} brand={brand} />
             )}
             {activeTab === 'charts' && (
-              <PerpMarketCharts data={chartData?.data} loading={chartLoading} />
+              <div className="space-y-6">
+                <SignalBriefCard data={briefData?.data} loading={briefLoading} reason={briefData?.reason} />
+                <PerpMarketCharts data={chartData?.data} loading={chartLoading} />
+              </div>
             )}
             {activeTab === 'activity' && <ActivityTab data={scansData?.data} brand={brand} />}
             {activeTab === 'history' && <HistoryTab data={closedData?.data} brand={brand} />}
