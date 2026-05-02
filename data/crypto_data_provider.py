@@ -553,31 +553,80 @@ class CoinGlassClient:
                     continue
         return clusters
 
-    def get_long_short_ratio(self, symbol: str = "ETH") -> Optional[LongShortRatio]:
-        """Get aggregate long/short account ratio (v4, requires paid plan).
+    # CoinGlass v4 L/S ratio uses Binance perpetual symbols.
+    # SHIB is too small for SHIBUSDT - Binance lists it as 1000SHIBUSDT.
+    _LS_SYMBOL_MAP = {
+        "BTC": "BTCUSDT",
+        "ETH": "ETHUSDT",
+        "XRP": "XRPUSDT",
+        "DOGE": "DOGEUSDT",
+        "SHIB": "1000SHIBUSDT",
+        "SOL": "SOLUSDT",
+    }
 
-        v4 endpoint returns a time series; we take the most recent point.
+    def get_long_short_ratio(
+        self,
+        symbol: str = "ETH",
+        exchange: str = "Binance",
+        interval: str = "h4",
+    ) -> Optional[LongShortRatio]:
+        """Get long/short account ratio from CoinGlass v4.
+
+        Probe revealed: works on user's plan with explicit exchange + h4
+        interval. h1 is plan-gated (403). Field names are
+        global_account_long_percent / global_account_short_percent /
+        global_account_long_short_ratio.
+
+        SHIB is mapped to 1000SHIBUSDT (Binance's notation for thousand-SHIB).
         """
+        ticker = symbol.upper()
+        cg_symbol = self._LS_SYMBOL_MAP.get(ticker, f"{ticker}USDT")
+
         data = self._request(
             "futures/global-long-short-account-ratio/history",
-            {"symbol": symbol, "interval": "h1", "limit": 1},
+            {
+                "exchange": exchange,
+                "symbol": cg_symbol,
+                "interval": interval,
+                "limit": 1,
+            },
             version="v4",
         )
+
+        # Fallback: if SHIB at 1000SHIBUSDT didn't work, try plain SHIBUSDT
+        if not data and ticker == "SHIB":
+            data = self._request(
+                "futures/global-long-short-account-ratio/history",
+                {
+                    "exchange": exchange,
+                    "symbol": "SHIBUSDT",
+                    "interval": interval,
+                    "limit": 1,
+                },
+                version="v4",
+            )
+
         if not data:
             return None
+
         try:
-            # v4 history endpoint returns a list of records; take the latest.
             latest = data[-1] if isinstance(data, list) and data else data
             if not isinstance(latest, dict):
                 return None
 
+            # v4 field names (confirmed via probe):
             long_pct = float(latest.get(
-                "longAccount", latest.get("longRate", latest.get("long_account", 50))
+                "global_account_long_percent",
+                latest.get("longAccount", latest.get("longRate", 50)),
             ))
             short_pct = float(latest.get(
-                "shortAccount", latest.get("shortRate", latest.get("short_account", 50))
+                "global_account_short_percent",
+                latest.get("shortAccount", latest.get("shortRate", 50)),
             ))
-            ratio_field = latest.get("longShortRatio", latest.get("ratio"))
+            ratio_field = latest.get(
+                "global_account_long_short_ratio",
+                latest.get("longShortRatio", latest.get("ratio")),
+            )
             if ratio_field is not None:
                 ratio = float(ratio_field)
             else:
@@ -588,7 +637,7 @@ class CoinGlassClient:
                 long_pct=long_pct,
                 short_pct=short_pct,
                 ratio=ratio,
-                exchange="aggregate",
+                exchange=exchange,
                 timestamp=datetime.now(CENTRAL_TZ),
             )
         except (KeyError, TypeError, ValueError, IndexError) as e:

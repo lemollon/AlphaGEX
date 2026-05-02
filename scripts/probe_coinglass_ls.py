@@ -46,9 +46,11 @@ if working:
     print()
     print("Now testing all 5 perp tickers with that combo pattern:")
     base_sym = working["symbol"]
+    # SHIB is normally too small for SHIBUSDT - use 1000SHIBUSDT
+    sym_overrides = {"SHIB": "1000SHIBUSDT"}
     for ticker in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
-        sym = base_sym.replace("BTC", ticker)
-        time.sleep(2.5)
+        sym = sym_overrides.get(ticker, base_sym.replace("BTC", ticker))
+        time.sleep(8)  # 8s padding to stay under 30/min rate limit
         try:
             r = requests.get(U, headers=H, params={
                 "exchange": working["exchange"], "symbol": sym,
