@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """End-to-end signal verification for all 5 perp tickers.
 
-Run on Render after deploy:
-    curl -s https://raw.githubusercontent.com/lemollon/AlphaGEX/main/scripts/verify_perp_signals.py -o /tmp/v.py && python /tmp/v.py
+Run on Render after deploy from project root:
+    python scripts/verify_perp_signals.py
 """
+import os
+import sys
+import time
+
+# Ensure project root is importable when run from /tmp or as a script
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from data.crypto_data_provider import get_crypto_data_provider
 
 p = get_crypto_data_provider()
 print(f"{'SYM':5s} {'SIGNAL':12s} {'CONF':6s} {'FUNDING':22s} {'OI_USD':>10s} {'TAKER_BUY%':>11s}  notes")
 print("-" * 100)
 for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
+    # Each snapshot does ~5 CoinGlass calls (funding, OI, taker, L/S, liq).
+    # Pause between symbols to stay under the 30 req/min rate limit.
     s = p.get_snapshot(sym)
     if not s:
         print(f"{sym:5s} (no snapshot)")
@@ -25,3 +36,4 @@ for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
         notes.append(f"liq={len(s.liquidation_clusters)}")
     note_str = " ".join(notes)
     print(f"{sym:5s} {s.combined_signal:12s} {s.combined_confidence:6s} {s.funding_regime:22s} {oi_str:>10s} {tv_str:>11s}  {note_str}")
+    time.sleep(15)  # rate-limit padding before next symbol
