@@ -963,12 +963,15 @@ async def disable_bot():
 
 
 @router.post("/force-close-all")
-async def force_close_all(reason: str = "MANUAL_CLOSE"):
-    """Force-close every open AGAPE-SHIB-PERP position at current mark."""
+async def force_close_all(reason: str = "MANUAL_CLOSE", limit: int = 0):
+    """Force-close open AGAPE-SHIB-PERP positions at current mark.
+
+    limit=0 closes all; limit>0 closes that many newest-first.
+    """
     trader = _get_trader()
     if not trader:
         raise HTTPException(status_code=503, detail="AGAPE-SHIB-PERP not available")
-    return {"success": True, "result": trader.force_close_all(reason)}
+    return {"success": True, "result": trader.force_close_all(reason, limit=limit or None)}
 
 
 # ------------------------------------------------------------------

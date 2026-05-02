@@ -559,12 +559,15 @@ class AgapeShibPerpTrader:
             "return_pct": round(ret_pct, 2),
         }
 
-    def force_close_all(self, reason="MANUAL_CLOSE"):
+    def force_close_all(self, reason="MANUAL_CLOSE", limit=None):
         cp = self.executor.get_current_price()
         if not cp:
             return {"error": "No price", "closed": 0}
+        positions = self.db.get_open_positions()
+        if limit is not None and limit > 0:
+            positions = positions[:limit]
         results = []
-        for pos in self.db.get_open_positions():
+        for pos in positions:
             if self._close_position(pos, cp, reason):
                 d = 1 if pos["side"] == "long" else -1
                 pnl = (cp - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * d

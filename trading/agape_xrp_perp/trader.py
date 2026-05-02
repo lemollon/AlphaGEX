@@ -619,16 +619,25 @@ class AgapeXrpPerpTrader:
             "return_pct": round(ret_pct, 2),
         }
 
-    def force_close_all(self, reason="MANUAL_CLOSE"):
-        """Force close all open positions.
+    def force_close_all(self, reason="MANUAL_CLOSE", limit=None):
+        """Force close open positions at current mark.
+
+        Args:
+            reason: close_reason recorded on each position.
+            limit: if set, close at most this many (newest first, since
+                   get_open_positions returns ORDER BY open_time DESC).
+                   None = close everything.
 
         P&L = (current_price - entry_price) * quantity * direction
         """
         cp = self.executor.get_current_price()
         if not cp:
             return {"error": "No price", "closed": 0}
+        positions = self.db.get_open_positions()
+        if limit is not None and limit > 0:
+            positions = positions[:limit]
         results = []
-        for pos in self.db.get_open_positions():
+        for pos in positions:
             if self._close_position(pos, cp, reason):
                 d = 1 if pos["side"] == "long" else -1
                 quantity = pos.get("quantity", self.config.default_quantity)

@@ -746,8 +746,10 @@ class AgapeBtcPerpTrader:
             "return_pct": round(ret_pct, 2),
         }
 
-    def force_close_all(self, reason="MANUAL_CLOSE"):
+    def force_close_all(self, reason="MANUAL_CLOSE", limit=None):
         open_positions = self.db.get_open_positions()
+        if limit is not None and limit > 0:
+            open_positions = open_positions[:limit]
         current_price = self.executor.get_current_price()
         results = []
         total_pnl = 0.0
@@ -757,7 +759,6 @@ class AgapeBtcPerpTrader:
             closed = self._close_position(pos, current_price, reason)
             if closed:
                 direction = 1 if pos["side"] == "long" else -1
-                # P&L = (current - entry) * quantity * direction
                 pnl = (current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction
                 total_pnl += pnl
                 results.append({"position_id": pos["position_id"], "pnl": round(pnl, 2)})
