@@ -471,6 +471,26 @@ class AgapeBtcPerpSignalGenerator:
         # Clamp to configured bounds
         quantity = max(self.config.min_quantity, min(quantity, self.config.max_quantity))
 
+        # Hard per-position notional cap (see XRP signals.py for full rationale).
+        # Each position uses at most PER_POSITION_MARGIN_PCT of equity as margin
+        # so the bot stacks to ~10 positions before the 70% margin gate trips.
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            spec = PERPETUAL_MARGIN_SPECS.get("BTC-PERP", {})
+            leverage = float(spec.get("default_leverage", 10))
+            per_pos_margin_pct = 7.0
+            max_notional = capital * (per_pos_margin_pct / 100.0) * leverage
+            max_qty_by_notional = max_notional / spot_price if spot_price > 0 else quantity
+            if max_qty_by_notional > 0 and max_qty_by_notional < quantity:
+                logger.debug(
+                    f"AGAPE-BTC-PERP: notional cap reducing size "
+                    f"{quantity:.5f} -> {max_qty_by_notional:.5f} BTC "
+                    f"(per_pos={per_pos_margin_pct:.1f}% margin, lev={leverage}x)"
+                )
+                quantity = max(self.config.min_quantity, max_qty_by_notional)
+        except Exception as e:
+            logger.debug(f"AGAPE-BTC-PERP: notional cap skipped: {e}")
+
         actual_risk = quantity * stop_distance_usd
         return (round(quantity, 5), round(actual_risk, 2))
 

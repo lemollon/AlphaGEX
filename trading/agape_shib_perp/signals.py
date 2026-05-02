@@ -420,6 +420,25 @@ class AgapeShibPerpSignalGenerator:
         risk_per_unit = stop_distance
         quantity = max_risk_usd / risk_per_unit
         quantity = max(self.config.min_quantity, min(quantity, self.config.max_quantity))
+
+        # Hard per-position notional cap (see XRP signals.py for full rationale).
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            spec = PERPETUAL_MARGIN_SPECS.get("SHIB-PERP", {})
+            leverage = float(spec.get("default_leverage", 3))
+            per_pos_margin_pct = 7.0
+            max_notional = capital * (per_pos_margin_pct / 100.0) * leverage
+            max_qty_by_notional = max_notional / spot_price if spot_price > 0 else quantity
+            if max_qty_by_notional > 0 and max_qty_by_notional < quantity:
+                logger.debug(
+                    f"AGAPE-SHIB-PERP: notional cap reducing size "
+                    f"{quantity:.0f} -> {max_qty_by_notional:.0f} SHIB "
+                    f"(per_pos={per_pos_margin_pct:.1f}% margin, lev={leverage}x)"
+                )
+                quantity = max(self.config.min_quantity, max_qty_by_notional)
+        except Exception as e:
+            logger.debug(f"AGAPE-SHIB-PERP: notional cap skipped: {e}")
+
         quantity = round(quantity, 0)
         actual_risk = quantity * stop_distance
         return (quantity, round(actual_risk, 2))
