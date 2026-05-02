@@ -99,6 +99,7 @@ type ActiveCoinId = typeof ACTIVE_COINS[number]
 
 const SECTION_TABS = [
   { id: 'overview' as const,    label: 'Overview',      icon: Layers },
+  { id: 'margin' as const,      label: 'Margin Risk',   icon: Shield },
   { id: 'positions' as const,   label: 'Positions',     icon: Wallet },
   { id: 'performance' as const, label: 'Performance',   icon: BarChart3 },
   { id: 'equity' as const,      label: 'Equity Curve',  icon: TrendingUp },
@@ -400,6 +401,7 @@ export default function PerpetualsCryptoPage() {
               {/* Tab Content */}
               <div className="space-y-5">
                 {activeTab === 'overview' && <OverviewTab coin={selectedCoin} />}
+                {activeTab === 'margin' && <MarginRiskTab coin={selectedCoin} />}
                 {activeTab === 'positions' && <PositionsTab coin={selectedCoin} />}
                 {activeTab === 'performance' && <PerformanceTab coin={selectedCoin} />}
                 {activeTab === 'equity' && <EquityCurveTab coin={selectedCoin} />}
@@ -766,6 +768,191 @@ function MarketSnapshotPanel({ data, coin }: { data: any; coin: CoinId }) {
     </SectionCard>
   )
 }
+
+// ==============================================================================
+// MARGIN RISK TAB
+// ==============================================================================
+
+function usePerpMargin(coin: ActiveCoinId) {
+  const prefix = COIN_META[coin].apiPrefix
+  return useSWR(`${prefix}/margin`, fetcher, { refreshInterval: 15_000 })
+}
+
+function marginHealthClass(health: string | undefined): { text: string; bg: string; border: string } {
+  switch ((health || '').toUpperCase()) {
+    case 'HEALTHY':  return { text: 'text-green-400',   bg: 'bg-green-500/20',   border: 'border-green-700/40' }
+    case 'WARNING':  return { text: 'text-yellow-400',  bg: 'bg-yellow-500/20',  border: 'border-yellow-700/40' }
+    case 'DANGER':   return { text: 'text-orange-400',  bg: 'bg-orange-500/20',  border: 'border-orange-700/40' }
+    case 'CRITICAL': return { text: 'text-red-400',     bg: 'bg-red-500/20',     border: 'border-red-700/40' }
+    default:         return { text: 'text-slate-400',   bg: 'bg-slate-500/20',   border: 'border-slate-700/40' }
+  }
+}
+
+function usagePctClass(pct: number | undefined): string {
+  if (pct == null) return 'bg-slate-500'
+  if (pct >= 100) return 'bg-red-600'
+  if (pct >= 80)  return 'bg-orange-500'
+  if (pct >= 60)  return 'bg-yellow-500'
+  return 'bg-green-500'
+}
+
+function MarginRow({ coin }: { coin: ActiveCoinId }) {
+  const { data, error, isLoading } = usePerpMargin(coin)
+  const meta = COIN_META[coin]
+  const m = data?.data
+  const health = m?.margin_health
+  const cls = marginHealthClass(health)
+  const usage = m?.margin_usage_pct ?? 0
+
+  return (
+    <tr className="border-t border-gray-800 hover:bg-gray-800/40 transition">
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${cls.bg}`} />
+          <span className={`font-bold ${meta.textActive}`}>{coin}-PERP</span>
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {isLoading ? '—' : error ? <span className="text-red-400">err</span> : fmtUsd(m?.account_equity)}
+      </td>
+      <td className="py-3 px-4 text-right">{isLoading ? '—' : fmtUsd(m?.margin_used)}</td>
+      <td className="py-3 px-4 text-right">{isLoading ? '—' : fmtUsd(m?.available_margin)}</td>
+      <td className="py-3 px-4">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-2 bg-gray-800 rounded overflow-hidden">
+            <div
+              className={`h-full ${usagePctClass(usage)}`}
+              style={{ width: `${Math.min(100, usage)}%` }}
+            />
+          </div>
+          <span className={`w-14 text-right font-mono text-xs ${usage >= 100 ? 'text-red-400 font-bold' : usage >= 80 ? 'text-orange-400' : 'text-gray-300'}`}>
+            {isLoading ? '—' : `${usage.toFixed(1)}%`}
+          </span>
+        </div>
+      </td>
+      <td className="py-3 px-4 text-right">
+        {isLoading ? '—' : (m?.position_count ?? 0)}
+      </td>
+      <td className="py-3 px-4 text-right">
+        {isLoading ? '—' : `${(m?.effective_leverage ?? 0).toFixed(2)}x`}
+      </td>
+      <td className="py-3 px-4 text-right">
+        <span className={pnlColor(m?.total_unrealized_pnl ?? 0)}>
+          {isLoading ? '—' : fmtUsd(m?.total_unrealized_pnl)}
+        </span>
+      </td>
+      <td className="py-3 px-4">
+        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${cls.bg} ${cls.text}`}>
+          {isLoading ? '...' : (health || 'UNKNOWN')}
+        </span>
+      </td>
+    </tr>
+  )
+}
+
+function MarginRiskTab({ coin }: { coin: CoinId }) {
+  const coinsToShow: ActiveCoinId[] = coin === 'ALL'
+    ? (ACTIVE_COINS as readonly ActiveCoinId[]).slice() as ActiveCoinId[]
+    : [coin as ActiveCoinId]
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-br from-blue-950/40 to-cyan-950/30 border border-blue-700/40 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <Shield className="w-5 h-5 text-blue-400 mt-0.5" />
+          <div className="text-sm text-gray-300">
+            <div className="text-blue-300 font-semibold mb-1">Margin Risk Manager</div>
+            <p>
+              Position-count cap was removed — every qualifying signal opens a position. Margin engine is the backstop.
+              Watch the usage bar: <span className="text-yellow-400">≥60% caution</span>,{' '}
+              <span className="text-orange-400">≥80% danger</span>,{' '}
+              <span className="text-red-400 font-semibold">≥100% over-leveraged</span>.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
+            <tr>
+              <th className="py-3 px-4 text-left">Bot</th>
+              <th className="py-3 px-4 text-right">Equity</th>
+              <th className="py-3 px-4 text-right">Margin Used</th>
+              <th className="py-3 px-4 text-right">Available</th>
+              <th className="py-3 px-4 text-left min-w-[180px]">Usage</th>
+              <th className="py-3 px-4 text-right">Pos</th>
+              <th className="py-3 px-4 text-right">Lev</th>
+              <th className="py-3 px-4 text-right">uPnL</th>
+              <th className="py-3 px-4 text-left">Health</th>
+            </tr>
+          </thead>
+          <tbody>
+            {coinsToShow.map(c => <MarginRow key={c} coin={c} />)}
+          </tbody>
+        </table>
+      </div>
+
+      {coin !== 'ALL' && <PerCoinPositionMargin coin={coin as ActiveCoinId} />}
+    </div>
+  )
+}
+
+function PerCoinPositionMargin({ coin }: { coin: ActiveCoinId }) {
+  const { data, isLoading } = usePerpMargin(coin)
+  const positions = data?.data?.positions || []
+  const meta = COIN_META[coin]
+
+  if (isLoading) return null
+  if (positions.length === 0) {
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500 text-sm">
+        No open positions for {coin}-PERP.
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-gray-200">
+        Per-Position Breakdown · {coin}-PERP
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
+          <tr>
+            <th className="py-3 px-4 text-left">Position</th>
+            <th className="py-3 px-4 text-left">Side</th>
+            <th className="py-3 px-4 text-right">Qty</th>
+            <th className="py-3 px-4 text-right">Entry</th>
+            <th className="py-3 px-4 text-right">Current</th>
+            <th className="py-3 px-4 text-right">Notional</th>
+            <th className="py-3 px-4 text-right">Margin</th>
+            <th className="py-3 px-4 text-right">Liq Price</th>
+            <th className="py-3 px-4 text-right">uPnL</th>
+          </tr>
+        </thead>
+        <tbody>
+          {positions.map((p: any, i: number) => (
+            <tr key={p.position_id || i} className="border-t border-gray-800">
+              <td className="py-2 px-4 font-mono text-xs text-gray-400">{(p.position_id || '').slice(-8)}</td>
+              <td className="py-2 px-4">
+                <span className={p.side === 'long' ? 'text-green-400' : 'text-red-400'}>{(p.side || '').toUpperCase()}</span>
+              </td>
+              <td className="py-2 px-4 text-right">{(p.quantity ?? 0).toLocaleString()}</td>
+              <td className="py-2 px-4 text-right">{fmtPrice(p.entry_price, meta.priceDecimals)}</td>
+              <td className="py-2 px-4 text-right">{fmtPrice(p.current_price, meta.priceDecimals)}</td>
+              <td className="py-2 px-4 text-right">{fmtUsd(p.notional_value, 0)}</td>
+              <td className="py-2 px-4 text-right">{fmtUsd(p.initial_margin_required, 0)}</td>
+              <td className="py-2 px-4 text-right text-orange-300">{fmtPrice(p.liquidation_price, meta.priceDecimals)}</td>
+              <td className={`py-2 px-4 text-right ${pnlColor(p.unrealized_pnl ?? 0)}`}>{fmtUsd(p.unrealized_pnl)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 
 // ==============================================================================
 // POSITIONS TAB
