@@ -385,13 +385,13 @@ class AgapeDogePerpTrader:
     def _check_entry_conditions(self, now):
         """Check entry conditions. Perpetual contracts trade 24/7/365.
 
-        Checks: bot enabled, max open positions, sufficient capital.
+        Checks: bot enabled, sufficient capital. Position count is not
+        capped — every qualifying signal opens a position until the
+        margin engine refuses for lack of free margin.
         """
         if not self._enabled:
             return "BOT_DISABLED"
         open_pos = self.db.get_open_positions()
-        if len(open_pos) >= self.config.max_open_positions:
-            return f"MAX_POSITIONS_{len(open_pos)}/{self.config.max_open_positions}"
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:

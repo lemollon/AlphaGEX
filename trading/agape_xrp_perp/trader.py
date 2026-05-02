@@ -427,13 +427,13 @@ class AgapeXrpPerpTrader:
         """Check entry conditions for perpetual contracts.
 
         Perpetuals trade 24/7/365 - only bot-level checks apply.
-        Checks: bot enabled, max positions, sufficient capital.
+        Checks: bot enabled, sufficient capital. Position count is not
+        capped — every qualifying signal opens a position until the
+        margin engine refuses for lack of free margin.
         """
         if not self._enabled:
             return "BOT_DISABLED"
         open_pos = self.db.get_open_positions()
-        if len(open_pos) >= self.config.max_open_positions:
-            return "MAX_POSITIONS_REACHED"
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:
