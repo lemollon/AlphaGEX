@@ -286,13 +286,20 @@ class CoinGlassClient:
     BASE_URL_V2 = "https://open-api.coinglass.com/public/v2"
     BASE_URL_V4 = "https://open-api-v4.coinglass.com/api"
 
+    # Substrings in the API "msg" field that indicate the endpoint is
+    # permanently gated by the user's plan tier. Once seen, we stop
+    # calling that endpoint for the rest of the session - no point
+    # burning rate-limit budget on something that always fails.
+    _GATED_MSG_HINTS = ("upgrade plan", "not available for your")
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("COINGLASS_API_KEY", "")
         self._last_request_time = 0
         # CoinGlass paid plans are tier-throttled. Hobbyist = 30/min (one
-        # call per 2s). Set padding to 2.5s so we stay safely under the
-        # tier limit. Bump down to 200ms only if upgrading to Standard+.
-        self._rate_limit_ms = 2500  # ~24 req/min, fits Hobbyist tier
+        # call per 2s). 2.5s padding fits with margin.
+        self._rate_limit_ms = 2500
+        # Endpoints that returned "Upgrade plan" - skip on subsequent calls
+        self._gated_endpoints: set = set()
 
     def _rate_limit(self):
         """Enforce rate limiting."""
@@ -300,6 +307,10 @@ class CoinGlassClient:
         if elapsed < self._rate_limit_ms:
             time.sleep((self._rate_limit_ms - elapsed) / 1000)
         self._last_request_time = time.time()
+
+    def _is_gated_msg(self, msg: str) -> bool:
+        m = (msg or "").lower()
+        return any(hint in m for hint in self._GATED_MSG_HINTS)
 
     def _request(
         self,
@@ -311,7 +322,13 @@ class CoinGlassClient:
 
         version="v2": legacy public endpoint, no auth header required.
         version="v4": current paid API, requires CG-API-KEY header.
+
+        If a previous call to this endpoint returned "Upgrade plan",
+        we short-circuit to None without hitting the API.
         """
+        if endpoint in self._gated_endpoints:
+            return None
+
         if version == "v2":
             base = self.BASE_URL_V2
             headers = {"coinglassSecret": self.api_key} if self.api_key else {}
@@ -319,7 +336,8 @@ class CoinGlassClient:
             base = self.BASE_URL_V4
             headers = {"CG-API-KEY": self.api_key} if self.api_key else {}
         url = f"{base}/{endpoint}"
-        for attempt in range(3):
+        # Only retry transient errors; don't compound 429s with extra calls.
+        for attempt in range(2):
             try:
                 self._rate_limit()
                 resp = requests.get(url, headers=headers, params=params, timeout=10)
@@ -327,13 +345,24 @@ class CoinGlassClient:
                     data = resp.json()
                     if data.get("success") or data.get("code") == "0":
                         return data.get("data", data)
-                    logger.warning(f"CoinGlass API error ({version}): {data.get('msg', 'unknown')}")
+                    msg = data.get("msg", "unknown")
+                    if self._is_gated_msg(msg):
+                        # Permanent plan gate - never call this endpoint again
+                        self._gated_endpoints.add(endpoint)
+                        logger.warning(
+                            f"CoinGlass {endpoint} gated by plan ({msg}); disabled for session"
+                        )
+                    else:
+                        logger.warning(f"CoinGlass API error ({version}): {msg}")
                     return None
                 elif resp.status_code == 429:
-                    wait = (attempt + 1) * 2
-                    logger.warning(f"CoinGlass rate limited, waiting {wait}s")
-                    time.sleep(wait)
-                    continue
+                    # Single backoff retry, not 3. Multiple retries on
+                    # rate-limit just dig the hole deeper.
+                    if attempt == 0:
+                        logger.warning("CoinGlass rate limited, waiting 5s")
+                        time.sleep(5)
+                        continue
+                    return None
                 else:
                     logger.debug(f"CoinGlass HTTP {resp.status_code} on {endpoint} ({version})")
                     return None
