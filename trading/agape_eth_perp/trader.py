@@ -404,9 +404,9 @@ class AgapeEthPerpTrader:
     def _check_entry_conditions(self, now):
         """Check entry conditions. Perpetual contracts trade 24/7/365.
 
-        Checks: bot enabled, sufficient capital. Position count is not
-        capped — every qualifying signal opens a position until the
-        margin engine refuses for lack of free margin.
+        Checks: bot enabled, sufficient capital, margin usage under
+        threshold. Position count is not capped — every qualifying
+        signal opens a position so long as the margin engine has room.
         """
         if not self._enabled:
             return "BOT_DISABLED"
@@ -416,6 +416,35 @@ class AgapeEthPerpTrader:
         if balance <= min_required:
             logger.warning(f"AGAPE-ETH-PERP: Insufficient capital ${balance:.2f} (need ${min_required:.2f})")
             return f"INSUFFICIENT_CAPITAL_${balance:.2f}"
+        margin_block = self._check_margin_usage(open_pos)
+        if margin_block:
+            return margin_block
+        return None
+
+    def _check_margin_usage(self, open_pos):
+        """Refuse new opens once aggregate margin usage crosses the cap."""
+        try:
+            from trading.margin.pre_trade_check import is_margin_over_threshold
+            try:
+                cur_price = self.executor.get_current_price()
+            except Exception:
+                cur_price = None
+            closed = self.db.get_closed_trades(limit=10000) or []
+            realized = sum(float(t.get("realized_pnl", 0) or 0) for t in closed)
+            equity = self.config.starting_capital + realized
+            blocked, usage = is_margin_over_threshold(
+                bot_name="AGAPE_ETH_PERP",
+                perp_symbol="ETH-PERP",
+                open_positions=open_pos,
+                account_equity=equity,
+                threshold_pct=70.0,
+                current_price=cur_price,
+            )
+            if blocked:
+                logger.warning(f"AGAPE-ETH-PERP: margin {usage:.1f}% >= 70% — refusing new opens")
+                return f"MARGIN_OVER_THRESHOLD_{usage:.1f}pct"
+        except (ImportError, Exception) as e:
+            logger.debug(f"AGAPE-ETH-PERP: margin gate skipped: {e}")
         return None
 
     def get_market_status(self, now=None):
