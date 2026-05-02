@@ -36,4 +36,6 @@ for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
         notes.append(f"liq={len(s.liquidation_clusters)}")
     note_str = " ".join(notes)
     print(f"{sym:5s} {s.combined_signal:12s} {s.combined_confidence:6s} {s.funding_regime:22s} {oi_str:>10s} {tv_str:>11s}  {note_str}")
-    time.sleep(15)  # rate-limit padding before next symbol
+    # Client now self-paces at 2.5s/call; brief 2s gap between symbols
+    # is enough cushion. Total runtime ~70s for all 5 perps.
+    time.sleep(2)
