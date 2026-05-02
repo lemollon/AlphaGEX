@@ -147,6 +147,65 @@ class LongShortRatio:
 
 
 @dataclass
+class OpenInterestSnapshot:
+    """Aggregate open interest across exchanges for a perp ticker.
+
+    OI is the leveraged-positioning equivalent of options OI in equity GEX.
+    Used as a directional/conviction signal for assets without Deribit options
+    (XRP, DOGE, SHIB).
+    """
+    symbol: str
+    total_usd: float                # Sum across all exchanges
+    total_quantity: float           # Sum in coin units
+    coin_margin_usd: float          # OI margined in the coin itself
+    stable_margin_usd: float        # OI margined in stables (USDT etc.)
+    exchange_count: int
+    timestamp: datetime
+
+    @property
+    def stable_share(self) -> float:
+        """Fraction of OI in stable-margin (vs coin-margin).
+
+        High stable share = retail/institutional USDT longs (more reactive).
+        High coin share = HODLer hedges (slower, smarter money).
+        """
+        total = self.coin_margin_usd + self.stable_margin_usd
+        return self.stable_margin_usd / total if total > 0 else 0.5
+
+
+@dataclass
+class TakerVolume:
+    """Taker buy vs sell volume - aggressive directional flow.
+
+    Replaces L/S ratio when that endpoint isn't available on the plan tier.
+    Buy ratio > 0.55 = bullish aggression; < 0.45 = bearish aggression.
+    """
+    symbol: str
+    buy_volume_usd: float
+    sell_volume_usd: float
+    exchange: str
+    timestamp: datetime
+
+    @property
+    def buy_ratio(self) -> float:
+        total = self.buy_volume_usd + self.sell_volume_usd
+        return self.buy_volume_usd / total if total > 0 else 0.5
+
+    @property
+    def bias(self) -> str:
+        r = self.buy_ratio
+        if r > 0.60:
+            return "STRONG_BUY"
+        if r > 0.55:
+            return "BUY"
+        if r < 0.40:
+            return "STRONG_SELL"
+        if r < 0.45:
+            return "SELL"
+        return "BALANCED"
+
+
+@dataclass
 class CryptoGEX:
     """Pre-calculated crypto GEX from Deribit options.
 
@@ -190,6 +249,12 @@ class CryptoMarketSnapshot:
 
     # Long/Short Ratio (→ Directional Bias)
     ls_ratio: Optional[LongShortRatio] = None
+
+    # Open Interest (→ Conviction / leveraged positioning)
+    oi_snapshot: Optional["OpenInterestSnapshot"] = None
+
+    # Taker buy/sell volume (→ Aggressive directional flow, L/S substitute)
+    taker_volume: Optional["TakerVolume"] = None
 
     # Crypto GEX (→ Direct GEX)
     crypto_gex: Optional[CryptoGEX] = None
@@ -330,16 +395,82 @@ class CoinGlassClient:
             return []
         return data
 
-    def get_open_interest(self, symbol: str = "ETH") -> Optional[Dict]:
-        """Get aggregate open interest across exchanges."""
+    def get_open_interest(self, symbol: str = "ETH") -> Optional[OpenInterestSnapshot]:
+        """Get aggregate open interest across all exchanges (v4).
+
+        Confirmed working on user's plan for BTC/ETH/XRP/DOGE/SHIB.
+        Returns aggregated totals so the signal layer can use OI as a
+        conviction/positioning input even when L/S ratio is unavailable.
+        """
         data = self._request(
             "futures/open-interest/exchange-list",
             {"symbol": symbol},
             version="v4",
         )
-        if not data:
+        if not data or not isinstance(data, list):
             return None
-        return data
+
+        total_usd = 0.0
+        total_qty = 0.0
+        coin_margin = 0.0
+        stable_margin = 0.0
+        count = 0
+        for ex in data:
+            try:
+                total_usd += float(ex.get("open_interest_usd", 0) or 0)
+                total_qty += float(ex.get("open_interest_quantity", 0) or 0)
+                coin_margin += float(ex.get("open_interest_by_coin_margin", 0) or 0)
+                stable_margin += float(ex.get("open_interest_by_stable_coin_margin", 0) or 0)
+                count += 1
+            except (TypeError, ValueError):
+                continue
+
+        if count == 0:
+            return None
+
+        return OpenInterestSnapshot(
+            symbol=symbol,
+            total_usd=total_usd,
+            total_quantity=total_qty,
+            coin_margin_usd=coin_margin,
+            stable_margin_usd=stable_margin,
+            exchange_count=count,
+            timestamp=datetime.now(CENTRAL_TZ),
+        )
+
+    def get_taker_volume(self, symbol: str = "ETH", range_: str = "1d") -> Optional[TakerVolume]:
+        """Get aggregate taker buy/sell volume across exchanges (v4).
+
+        Used as L/S ratio substitute when L/S endpoint is gated by plan tier.
+        High buy_ratio = aggressive longs hitting offers = bullish flow.
+        """
+        data = self._request(
+            "futures/taker-buy-sell-volume/exchange-list",
+            {"symbol": symbol, "range": range_},
+            version="v4",
+        )
+        if not data or not isinstance(data, list):
+            return None
+
+        buy = 0.0
+        sell = 0.0
+        for ex in data:
+            try:
+                buy += float(ex.get("taker_buy_volume_usd", ex.get("buy_volume_usd", 0)) or 0)
+                sell += float(ex.get("taker_sell_volume_usd", ex.get("sell_volume_usd", 0)) or 0)
+            except (TypeError, ValueError):
+                continue
+
+        if buy + sell <= 0:
+            return None
+
+        return TakerVolume(
+            symbol=symbol,
+            buy_volume_usd=buy,
+            sell_volume_usd=sell,
+            exchange="aggregate",
+            timestamp=datetime.now(CENTRAL_TZ),
+        )
 
     def get_liquidation_data(self, symbol: str = "ETH") -> List[LiquidationCluster]:
         """Get liquidation heatmap data (v4, requires paid plan)."""
@@ -696,6 +827,8 @@ class CryptoDataProvider:
         if self._coinglass:
             snapshot.funding_rate = self._coinglass.get_funding_rate(symbol)
             snapshot.ls_ratio = self._coinglass.get_long_short_ratio(symbol)
+            snapshot.oi_snapshot = self._coinglass.get_open_interest(symbol)
+            snapshot.taker_volume = self._coinglass.get_taker_volume(symbol)
 
             liquidations = self._coinglass.get_liquidation_data(symbol)
             if liquidations and spot:
@@ -1033,10 +1166,46 @@ class CryptoDataProvider:
         if leverage == "OVERLEVERAGED" and squeeze == "HIGH":
             return ("WAIT", "HIGH")
 
-        # ---- LAST RESORT: Price momentum for coins with no signal data ----
-        # XRP, DOGE, SHIB have no Deribit options (no GEX). CoinGlass v4
-        # SHOULD cover them on a paid plan; if it doesn't, this is the safety net.
-        # Use cached previous snapshot to detect short-term price direction.
+        # ---- TIER for alts (XRP/DOGE/SHIB): Funding + OI + Taker volume ----
+        # No Deribit GEX, no liquidation heatmap (paywalled), L/S ratio gated by
+        # plan tier. But OI exchange-list and taker volume DO work on the
+        # current plan for all 5 perp tickers. Use them as the real signal
+        # source instead of falling through to price-momentum noise.
+        taker = snapshot.taker_volume
+        oi = snapshot.oi_snapshot
+        has_taker = taker is not None
+        has_oi = oi is not None
+
+        if has_taker and has_coinglass:
+            taker_bias = taker.bias
+            # Strong directional flow + funding agrees → MEDIUM conviction
+            if taker_bias in ("STRONG_BUY", "BUY"):
+                if funding_regime in ("BALANCED", "MILD_SHORT_BIAS", "OVERLEVERAGED_SHORT", "EXTREME_SHORT"):
+                    # Buyers stepping in while shorts crowded = squeeze setup
+                    return ("LONG", "MEDIUM" if taker_bias == "STRONG_BUY" else "LOW")
+                if funding_regime in ("MILD_LONG_BIAS",):
+                    return ("LONG", "LOW")
+                # Already extreme long: caution, don't chase
+            if taker_bias in ("STRONG_SELL", "SELL"):
+                if funding_regime in ("BALANCED", "MILD_LONG_BIAS", "OVERLEVERAGED_LONG", "EXTREME_LONG"):
+                    return ("SHORT", "MEDIUM" if taker_bias == "STRONG_SELL" else "LOW")
+                if funding_regime in ("MILD_SHORT_BIAS",):
+                    return ("SHORT", "LOW")
+            if taker_bias == "BALANCED" and funding_regime == "BALANCED":
+                return ("RANGE_BOUND", "MEDIUM")
+
+        # OI-only fallback when taker volume isn't available
+        if has_oi and has_coinglass and oi.total_usd > 0:
+            # OI alone can't pick direction, but combined with funding sign:
+            if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG"):
+                return ("SHORT", "LOW")  # Crowded longs + leveraged OI = unwind risk
+            if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT"):
+                return ("LONG", "LOW")
+            if funding_regime == "BALANCED":
+                return ("RANGE_BOUND", "LOW")
+
+        # ---- LAST RESORT: Price momentum (degraded data) ----
+        # Only reached if CoinGlass entirely unavailable.
         if spot > 0:
             prev = self._snapshot_cache.get(snapshot.symbol)
             if prev and prev.spot_price > 0:
