@@ -150,7 +150,10 @@ class AgapeBtcPerpDatabase:
                     signal_action VARCHAR(20),
                     signal_reasoning TEXT,
                     position_id VARCHAR(100),
-                    error_message TEXT
+                    error_message TEXT,
+                    oi_total_usd FLOAT,
+                    ls_long_pct FLOAT,
+                    taker_buy_ratio FLOAT
                 )
             """)
 
@@ -170,6 +173,9 @@ class AgapeBtcPerpDatabase:
             for col_sql in [
                 "ALTER TABLE agape_btc_perp_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE agape_btc_perp_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+                "ALTER TABLE agape_btc_perp_scan_activity ADD COLUMN IF NOT EXISTS oi_total_usd FLOAT",
+                "ALTER TABLE agape_btc_perp_scan_activity ADD COLUMN IF NOT EXISTS ls_long_pct FLOAT",
+                "ALTER TABLE agape_btc_perp_scan_activity ADD COLUMN IF NOT EXISTS taker_buy_ratio FLOAT",
             ]:
                 try:
                     cursor.execute(col_sql)

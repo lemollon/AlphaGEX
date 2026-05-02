@@ -136,7 +136,10 @@ class AgapeShibPerpDatabase:
                     signal_action VARCHAR(20),
                     signal_reasoning TEXT,
                     position_id VARCHAR(100),
-                    error_message TEXT
+                    error_message TEXT,
+                    oi_total_usd FLOAT,
+                    ls_long_pct FLOAT,
+                    taker_buy_ratio FLOAT
                 )
             """)
 
@@ -154,6 +157,9 @@ class AgapeShibPerpDatabase:
             for col_sql in [
                 "ALTER TABLE agape_shib_perp_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE agape_shib_perp_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+                "ALTER TABLE agape_shib_perp_scan_activity ADD COLUMN IF NOT EXISTS oi_total_usd FLOAT",
+                "ALTER TABLE agape_shib_perp_scan_activity ADD COLUMN IF NOT EXISTS ls_long_pct FLOAT",
+                "ALTER TABLE agape_shib_perp_scan_activity ADD COLUMN IF NOT EXISTS taker_buy_ratio FLOAT",
             ]:
                 try:
                     cursor.execute(col_sql)
@@ -451,8 +457,9 @@ class AgapeShibPerpDatabase:
                     combined_signal, combined_confidence,
                     oracle_advice, oracle_win_prob,
                     signal_action, signal_reasoning,
-                    position_id, error_message
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    position_id, error_message,
+                    oi_total_usd, ls_long_pct, taker_buy_ratio
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 scan_data.get("outcome"), scan_data.get("shib_price"),
                 scan_data.get("funding_rate"), scan_data.get("funding_regime"),
@@ -464,6 +471,8 @@ class AgapeShibPerpDatabase:
                 scan_data.get("oracle_win_prob"), scan_data.get("signal_action"),
                 scan_data.get("signal_reasoning"), scan_data.get("position_id"),
                 scan_data.get("error_message"),
+                scan_data.get("oi_total_usd"), scan_data.get("ls_long_pct"),
+                scan_data.get("taker_buy_ratio"),
             ))
             conn.commit()
             return True

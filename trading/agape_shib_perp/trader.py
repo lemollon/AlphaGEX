@@ -289,6 +289,33 @@ class AgapeShibPerpTrader:
             self.db.log("INFO", "SAR_EXECUTED", f"SAR: Reversed to {rev_side.upper()} {rev_pos.position_id}")
         return True
 
+    def _check_funding_flip_exit(self, pos):
+        """Phase 3.2: exit when funding has flipped to extreme against the position.
+
+        EXTREME_LONG funding regime = longs paying high funding to shorts
+        (typically rate > 3% per period). Holding a long here drains P&L
+        through funding payments alone. Symmetric for shorts.
+
+        Snapshot is 90s-cached upstream so this adds no API load.
+        Returns exit reason string, or None if no flip detected.
+        """
+        try:
+            provider = getattr(self.signals, "_crypto_provider", None)
+            if provider is None:
+                return None
+            snap = provider.get_snapshot(self.config.ticker)
+            if snap is None:
+                return None
+            regime = getattr(snap, "funding_regime", None)
+            side = pos["side"]
+            if side == "long" and regime == "EXTREME_LONG":
+                return "FUNDING_FLIP_EXIT_LONG"
+            if side == "short" and regime == "EXTREME_SHORT":
+                return "FUNDING_FLIP_EXIT_SHORT"
+        except Exception as e:
+            logger.debug(f"AGAPE-SHIB-PERP: funding-flip check failed: {e}")
+        return None
+
     def _check_exit(self, pos, current_price, now):
         entry, side = pos["entry_price"], pos["side"]
         sl, tp = pos.get("stop_loss"), pos.get("take_profit")
@@ -298,6 +325,10 @@ class AgapeShibPerpTrader:
         if tp:
             if (side == "long" and current_price >= tp) or (side == "short" and current_price <= tp):
                 return (True, "TAKE_PROFIT")
+        # Phase 3.2: funding-flip exit
+        ff_reason = self._check_funding_flip_exit(pos)
+        if ff_reason:
+            return (True, ff_reason)
         ot_str = pos.get("open_time")
         if ot_str:
             try:
@@ -361,6 +392,15 @@ class AgapeShibPerpTrader:
         open_pos = self.db.get_open_positions()
         if len(open_pos) >= self.config.max_open_positions:
             return "MAX_POSITIONS_REACHED"
+        # Phase 3.3: alt correlation cap - if 2+ sibling alts (XRP/DOGE/SHIB)
+        # already have positions, wait. Prevents synchronized signal opens
+        # turning a market-wide alt squeeze into a triple drawdown.
+        try:
+            from data.perp_correlation_guard import is_alt_correlation_capped
+            if is_alt_correlation_capped("SHIB"):
+                return "ALT_CORRELATION_CAP"
+        except ImportError:
+            pass
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:
@@ -375,6 +415,9 @@ class AgapeShibPerpTrader:
             "outcome": result.get("outcome"), "shib_price": md.get("spot_price"),
             "funding_rate": md.get("funding_rate"), "funding_regime": md.get("funding_regime"),
             "ls_ratio": md.get("ls_ratio"), "ls_bias": md.get("ls_bias"),
+            "ls_long_pct": md.get("ls_long_pct"),
+            "oi_total_usd": md.get("oi_total_usd"),
+            "taker_buy_ratio": md.get("taker_buy_ratio"),
             "squeeze_risk": md.get("squeeze_risk"), "leverage_regime": md.get("leverage_regime"),
             "max_pain": md.get("max_pain"), "crypto_gex": md.get("crypto_gex"),
             "crypto_gex_regime": md.get("crypto_gex_regime"),
