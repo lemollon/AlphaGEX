@@ -962,6 +962,15 @@ async def disable_bot():
     return {"success": True, "message": "AGAPE-SHIB-PERP disabled"}
 
 
+@router.post("/force-close-all")
+async def force_close_all(reason: str = "MANUAL_CLOSE"):
+    """Force-close every open AGAPE-SHIB-PERP position at current mark."""
+    trader = _get_trader()
+    if not trader:
+        raise HTTPException(status_code=503, detail="AGAPE-SHIB-PERP not available")
+    return {"success": True, "result": trader.force_close_all(reason)}
+
+
 # ------------------------------------------------------------------
 # Chart data: 30 days of h4 history for dashboard charts.
 # ------------------------------------------------------------------

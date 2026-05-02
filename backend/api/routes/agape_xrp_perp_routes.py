@@ -962,6 +962,21 @@ async def disable_bot():
     return {"success": True, "message": "AGAPE-XRP-PERP disabled"}
 
 
+@router.post("/force-close-all")
+async def force_close_all(reason: str = "MANUAL_CLOSE"):
+    """Force-close every open AGAPE-XRP-PERP position at current mark.
+
+    Operator escape hatch when the bot has stacked into an unsafe state
+    (e.g. margin >100%). Each position is closed at the current price
+    with realized_pnl recorded; the bot remains enabled/disabled in
+    whatever state it was in.
+    """
+    trader = _get_trader()
+    if not trader:
+        raise HTTPException(status_code=503, detail="AGAPE-XRP-PERP not available")
+    return {"success": True, "result": trader.force_close_all(reason)}
+
+
 # ------------------------------------------------------------------
 # Chart data: 30 days of h4 history for dashboard charts.
 # ------------------------------------------------------------------
