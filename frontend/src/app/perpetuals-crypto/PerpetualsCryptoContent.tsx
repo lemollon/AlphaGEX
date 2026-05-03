@@ -897,7 +897,95 @@ function MarginRiskTab({ coin }: { coin: CoinId }) {
         </table>
       </div>
 
+      <TradeEconomicsTable coinsToShow={coinsToShow} />
+
       {coin !== 'ALL' && <PerCoinPositionMargin coin={coin as ActiveCoinId} />}
+    </div>
+  )
+}
+
+// ==============================================================================
+// TRADE ECONOMICS — what each trade actually costs and how to fund the account
+// ==============================================================================
+
+const PER_POSITION_MARGIN_PCT = 7.0   // matches signals.py cap
+const MARGIN_GATE_PCT = 70.0          // matches trader entry gate
+const TYPICAL_TRADES_TARGET = 10      // funding sized for this many concurrent trades
+
+function TradeEconomicsRow({ coin }: { coin: ActiveCoinId }) {
+  const meta = COIN_META[coin]
+  const { data: marginData } = usePerpMargin(coin)
+  const { data: statusData } = usePerpStatus(coin)
+  const m = (marginData as any)?.data
+  const s = (statusData as any)?.data
+
+  const equity = m?.account_equity ?? s?.starting_capital ?? 0
+  const startingCapital = s?.starting_capital ?? 0
+  const leverage = m?.spec?.default_leverage ?? m?.effective_leverage ?? 0
+  const spot = s?.[meta.priceKey] ?? 0
+  const riskPct = s?.risk_per_trade_pct ?? 5
+
+  // What ONE new position will cost, given the live 7%-of-equity sizer
+  const marginPerTrade = equity * (PER_POSITION_MARGIN_PCT / 100)
+  const notionalPerTrade = marginPerTrade * leverage
+  const qtyPerTrade = spot > 0 ? notionalPerTrade / spot : 0
+  const riskPerTrade = startingCapital * (riskPct / 100)
+  const slotsBeforeGate = marginPerTrade > 0 ? Math.floor((equity * MARGIN_GATE_PCT / 100) / marginPerTrade) : 0
+
+  // Real cash needed for N trades sized at target margin pct
+  const fundForN = (n: number) => (n * marginPerTrade) / (MARGIN_GATE_PCT / 100)
+
+  return (
+    <tr className="border-t border-gray-800 hover:bg-gray-800/40">
+      <td className="py-3 px-3"><span className={`font-bold ${meta.textActive}`}>{coin}</span></td>
+      <td className="py-3 px-3 text-right text-white font-mono text-xs">{spot ? fmtPrice(spot, meta.priceDecimals) : '—'}</td>
+      <td className="py-3 px-3 text-right text-gray-300 text-xs">{leverage ? `${leverage}x` : '—'}</td>
+      <td className="py-3 px-3 text-right text-white font-mono text-xs">{fmtUsd(equity, 0)}</td>
+      <td className="py-3 px-3 text-right text-blue-300 font-mono">{fmtUsd(marginPerTrade, 0)}</td>
+      <td className="py-3 px-3 text-right text-purple-300 font-mono">{fmtUsd(notionalPerTrade, 0)}</td>
+      <td className="py-3 px-3 text-right text-gray-300 font-mono text-xs">{qtyPerTrade > 0 ? qtyPerTrade.toLocaleString(undefined, { maximumFractionDigits: meta.priceDecimals }) : '—'} {meta.quantityLabel}</td>
+      <td className="py-3 px-3 text-right text-orange-400 font-mono">{fmtUsd(riskPerTrade, 0)}</td>
+      <td className="py-3 px-3 text-right text-gray-300 font-mono text-xs">{slotsBeforeGate}</td>
+      <td className="py-3 px-3 text-right text-green-300 font-mono">{fmtUsd(fundForN(TYPICAL_TRADES_TARGET), 0)}</td>
+    </tr>
+  )
+}
+
+function TradeEconomicsTable({ coinsToShow }: { coinsToShow: ActiveCoinId[] }) {
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div className="px-4 py-3 border-b border-gray-800 flex items-start gap-3">
+        <DollarSign className="w-5 h-5 text-green-400 mt-0.5" />
+        <div className="text-sm">
+          <div className="text-green-300 font-semibold">Trade Economics — what each position costs</div>
+          <div className="text-xs text-gray-400 mt-0.5">
+            Sizer caps each new position at <span className="text-blue-300">{PER_POSITION_MARGIN_PCT}% of equity in margin</span>;
+            entry gate refuses opens above <span className="text-yellow-400">{MARGIN_GATE_PCT}%</span>.
+            "Fund for {TYPICAL_TRADES_TARGET} trades" is the real cash needed to comfortably run that many concurrent positions before the gate trips.
+          </div>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-800/60 text-xs uppercase tracking-wide text-gray-400">
+            <tr>
+              <th className="py-3 px-3 text-left">Coin</th>
+              <th className="py-3 px-3 text-right">Spot</th>
+              <th className="py-3 px-3 text-right">Lev</th>
+              <th className="py-3 px-3 text-right">Equity Now</th>
+              <th className="py-3 px-3 text-right">Cost / Trade</th>
+              <th className="py-3 px-3 text-right">Notional / Trade</th>
+              <th className="py-3 px-3 text-right">Size / Trade</th>
+              <th className="py-3 px-3 text-right">Max Loss / Trade</th>
+              <th className="py-3 px-3 text-right">Slots</th>
+              <th className="py-3 px-3 text-right">Fund for {TYPICAL_TRADES_TARGET}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {coinsToShow.map(c => <TradeEconomicsRow key={c} coin={c} />)}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
