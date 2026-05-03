@@ -743,10 +743,11 @@ def _start_scheduler(app: FastAPI):
         logger.info(f"[SpreadWorks] Weekend playbook {'sent' if ok else 'FAILED'}")
 
     # ------------------------------------------------------------------
-    # NEW: Daily One-Month Outlook — every weekday 7:30 AM CT
+    # NEW: Evening Market Brief — every weekday 3:30 PM CT (after close)
     # ------------------------------------------------------------------
     def _claude_macro_synthesis(events: list, vix: float | None = None,
-                                spy_price: float | None = None) -> str | None:
+                                spy_price: float | None = None,
+                                spy_change_pct: float | None = None) -> str | None:
         """Ask Claude for a ~3-line current-macro lean over the next 30 days.
 
         Returns None on any failure (missing key, network, parse, etc.) so
@@ -769,22 +770,25 @@ def _start_scheduler(app: FastAPI):
                 )
             ctx = ""
             if spy_price is not None:
-                ctx += f"SPY: ${spy_price:.2f}. "
+                ctx += f"SPY closed at ${spy_price:.2f}"
+                if spy_change_pct is not None:
+                    sign = "+" if spy_change_pct >= 0 else ""
+                    ctx += f" ({sign}{spy_change_pct:.2f}% on the day)"
+                ctx += ". "
             if vix is not None:
                 ctx += f"VIX: {vix:.1f}. "
 
             prompt = (
-                "You are a macro-aware options strategist writing a 30-day market outlook.\n\n"
-                f"Current snapshot: {ctx or '(no live snapshot)'}\n\n"
+                "You are a macro-aware options strategist writing a post-close evening market brief.\n\n"
+                f"Today's close: {ctx or '(no live snapshot)'}\n\n"
                 f"Upcoming scheduled US macro events (next ~30 days):\n"
                 + "\n".join(event_lines)
                 + "\n\nWrite a 3-sentence synthesis covering:\n"
                 "1. The dominant macro narrative going into this window (rates, inflation, growth, or risk-on/off)\n"
                 "2. Which ONE event is most likely to spark a TREND REVERSAL and why\n"
                 "3. The cleanest premium-selling window in the next 30 days\n\n"
-                "Tone: direct, professional, no hedging filler. Max 110 words total. "
-                "Do NOT use bullet points or numbered lists in the output — "
-                "write 3 flowing sentences."
+                "Tone: direct, professional, slightly punchy — this is for active traders who already know the basics. "
+                "Max 110 words total. Do NOT use bullet points or numbered lists — write 3 flowing sentences."
             )
             msg = client.messages.create(
                 model="claude-sonnet-4-6",
@@ -797,28 +801,29 @@ def _start_scheduler(app: FastAPI):
             logger.warning(f"[SpreadWorks] Claude macro synthesis failed: {e}")
             return None
 
-    async def _fire_monthly_outlook():
-        """7:30 AM CT weekdays — rolling 30-day market-moving event outlook
-        with per-event historical patterns and Claude macro synthesis.
+    async def _fire_evening_brief():
+        """3:30 PM CT weekdays — daily after-close market brief.
+
+        Combines today's close snapshot with the rolling 30-day forward
+        outlook, per-event historical patterns, AI-synthesized macro
+        context, a high-conviction trade idea, and a daily engagement
+        prompt to drive room conversation.
         """
         if not content_loaded or not _is_trading_day():
             return
-        if not _dedup_ok("monthly_outlook"):
+        if not _dedup_ok("evening_brief"):
             return
 
         import asyncio
         from datetime import timedelta
         from .event_intel import get_event_intel, reversal_emoji
+        from .engagement_prompts import get_daily_prompt
 
         now = get_central_now()
         upcoming = get_upcoming_events(days=30, count=40)
         upcoming = [e for e in upcoming if e.get("impact") in ("HIGH", "MEDIUM")]
 
-        if not upcoming:
-            logger.info("[SpreadWorks] No upcoming events in 30-day window — skipping monthly outlook")
-            return
-
-        # Bucket events by week-of (Monday-anchored, in CT)
+        # Bucket events by week-of (Monday-anchored)
         def _week_start(d):
             return (d - timedelta(days=d.weekday())).date()
 
@@ -834,81 +839,142 @@ def _start_scheduler(app: FastAPI):
             if intel and intel["reversal"] == "HIGH":
                 reversal_high_count += 1
 
-        # Pick out THE marquee event (next HIGH-impact catalyst)
         next_high = next((e for e in upcoming if e.get("impact") == "HIGH"), None)
 
-        # Try to grab live SPY/VIX snapshot for Claude context (best-effort)
+        # ---- Live market snapshot (best-effort) ----
         spy_price = None
+        spy_open = None
+        spy_change_pct = None
+        spy_high = None
+        spy_low = None
         vix = None
+        gamma_regime = None
+        flip_point = None
         try:
             base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
             async with httpx.AsyncClient(timeout=8.0) as client:
+                # GEX snapshot
                 resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
                 if resp.status_code == 200:
                     g = resp.json()
                     spy_price = g.get("spot_price")
                     vix = g.get("vix")
-        except Exception:
-            pass
+                    gamma_regime = g.get("gamma_regime")
+                    flip_point = g.get("flip_point")
+                # Today's candles for open/high/low/close move
+                resp = await client.get(
+                    f"{base}/api/spreadworks/candles",
+                    params={"symbol": "SPY", "interval": "15min"},
+                )
+                if resp.status_code == 200:
+                    body = resp.json()
+                    candles = body.get("candles") or []
+                    today = now.date()
+                    today_candles = []
+                    for c in candles:
+                        ts = c.get("date") or c.get("time") or c.get("timestamp")
+                        if ts and str(ts).startswith(str(today)):
+                            today_candles.append(c)
+                    if today_candles:
+                        spy_open = today_candles[0].get("open")
+                        closes = [c.get("close") for c in today_candles if c.get("close") is not None]
+                        highs = [c.get("high") for c in today_candles if c.get("high") is not None]
+                        lows = [c.get("low") for c in today_candles if c.get("low") is not None]
+                        if not spy_price and closes:
+                            spy_price = closes[-1]
+                        if highs:
+                            spy_high = max(highs)
+                        if lows:
+                            spy_low = min(lows)
+                        if spy_open and spy_price:
+                            spy_change_pct = ((spy_price - spy_open) / spy_open) * 100.0
+        except Exception as e:
+            logger.warning(f"[SpreadWorks] Evening brief snapshot fetch failed: {e}")
 
-        # Kick off Claude synthesis in a thread; runs in parallel with field-building
+        # Kick off Claude synthesis in parallel
         macro_task = asyncio.create_task(
-            asyncio.to_thread(_claude_macro_synthesis, upcoming, vix, spy_price)
+            asyncio.to_thread(
+                _claude_macro_synthesis, upcoming, vix, spy_price, spy_change_pct
+            )
         )
+
+        DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # ---- Description: today's close snapshot ----
+        snapshot_lines = []
+        if spy_price is not None:
+            move_str = ""
+            if spy_change_pct is not None:
+                arrow = "▲" if spy_change_pct >= 0 else "▼"
+                move_str = f" {arrow} **{spy_change_pct:+.2f}%**"
+            snapshot_lines.append(f"**SPY** ${spy_price:.2f}{move_str}")
+        if spy_high is not None and spy_low is not None:
+            snapshot_lines.append(f"Range: ${spy_low:.2f} → ${spy_high:.2f}")
+        if vix is not None:
+            vix_label = "calm" if vix < 15 else "normal" if vix < 22 else "elevated" if vix < 28 else "high"
+            snapshot_lines.append(f"**VIX** {vix:.1f} _({vix_label})_")
+        if gamma_regime:
+            regime_emoji = "🟢" if gamma_regime == "POSITIVE" else "🔴" if gamma_regime == "NEGATIVE" else "🟡"
+            snapshot_lines.append(f"**Gamma** {regime_emoji} {gamma_regime}")
+        if flip_point is not None:
+            snapshot_lines.append(f"**Flip** ${flip_point:.0f}")
+
+        description = " · ".join(snapshot_lines) if snapshot_lines else "_(market snapshot unavailable)_"
 
         fields = []
 
-        # ---- Headline catalyst with deep intel ----
+        # ---- Headline catalyst ----
         if next_high:
             countdown = format_countdown(next_high["datetime"])
             intel = get_event_intel(next_high["name"])
             catalyst_value = (
                 f"**{next_high['name']}**\n"
-                f"📆 {next_high['datetime'].strftime('%A, %b %-d')} at {format_event_time(next_high['datetime'])}\n"
-                f"⏱️ {countdown}\n"
-                f"→ {next_high['description']}"
+                f"📆 {next_high['datetime'].strftime('%A, %b %-d')} · {format_event_time(next_high['datetime'])}\n"
+                f"⏱️ {countdown}"
             )
             if intel:
                 catalyst_value += (
                     f"\n\n"
-                    f"{intel['lean_emoji']} **Pre-event lean:** {intel['lean']}\n"
+                    f"{intel['lean_emoji']} **Lean:** {intel['lean']}\n"
                     f"{reversal_emoji(intel['reversal'])} **Reversal risk:** {intel['reversal']}\n"
                     f"📊 **Historical:** {intel['avg_move']}\n"
                     f"🎲 **Playbook:** {intel['playbook']}"
                 )
             fields.append({
-                "name": "🎯 Next Major Catalyst",
+                "name": f"🎯  NEXT MAJOR CATALYST  {DIVIDER[:20]}",
                 "value": catalyst_value,
                 "inline": False,
             })
 
-        # ---- Weekly buckets with inline lean/reversal tags ----
+        # ---- Weekly buckets ----
         sorted_weeks = sorted(buckets.keys())[:4]
-        for ws in sorted_weeks:
+        week_labels = ["📅  THIS WEEK", "📅  NEXT WEEK", "📅  WEEK 3", "📅  WEEK 4"]
+        for idx, ws in enumerate(sorted_weeks):
             events = buckets[ws]
             lines = []
-            for e in events[:5]:  # cap per-week (intel adds chars; lower cap)
+            for e in events[:5]:
                 emoji = "🔴" if e["impact"] == "HIGH" else "🟡"
                 day = e["datetime"].strftime("%a %-m/%-d")
                 t = format_event_time(e["datetime"])
-                base_line = f"{emoji} **{day}** {t} — {e['name']}"
+                base_line = f"{emoji} `{day}` {t} — **{e['name']}**"
                 intel = get_event_intel(e["name"])
                 if intel:
                     base_line += (
-                        f"\n   ↳ {intel['lean_emoji']} {intel['lean'].lower()} "
-                        f"· {reversal_emoji(intel['reversal'])} {intel['reversal']} reversal "
-                        f"· {intel['avg_move']}"
+                        f"\n     ↳ {intel['lean_emoji']} {intel['lean'].lower()} "
+                        f"· {reversal_emoji(intel['reversal'])} {intel['reversal']} "
+                        f"· _{intel['avg_move']}_"
                     )
                 lines.append(base_line)
             if len(events) > 5:
-                lines.append(f"_+{len(events) - 5} more this week_")
+                lines.append(f"_+{len(events) - 5} more_")
+            label = week_labels[idx] if idx < len(week_labels) else f"📅  Week of {ws.strftime('%b %-d')}"
             fields.append({
-                "name": f"📅 Week of {ws.strftime('%b %-d')}  ({len(events)} event{'s' if len(events) != 1 else ''})",
+                "name": f"{label}  ({ws.strftime('%b %-d')})",
                 "value": "\n".join(lines),
                 "inline": False,
             })
 
-        # ---- Claude-synthesized macro narrative (with fallback) ----
+        # ---- Claude macro read (with fallback) ----
         try:
             macro_text = await asyncio.wait_for(macro_task, timeout=20.0)
         except (asyncio.TimeoutError, Exception) as e:
@@ -917,62 +983,103 @@ def _start_scheduler(app: FastAPI):
 
         if macro_text:
             fields.append({
-                "name": "🧠 Macro Read (AI-synthesized)",
+                "name": "🧠  MACRO READ  (AI)",
                 "value": macro_text,
                 "inline": False,
             })
         else:
-            # Pattern-only fallback narrative
-            fallback_lines = []
+            fb = []
             if reversal_high_count >= 3:
-                fallback_lines.append(
-                    "Heavy reversal-risk window — multiple HIGH-impact catalysts can flip the prevailing trend."
-                )
+                fb.append("Heavy reversal-risk window — multiple HIGH-impact catalysts can flip the prevailing trend.")
             elif reversal_high_count >= 1:
-                fallback_lines.append(
-                    "Watch the HIGH-reversal catalyst above — it sets the directional tape for 1-2 weeks after."
-                )
+                fb.append("Watch the HIGH-reversal catalyst above — it sets the directional tape for 1-2 weeks after.")
             else:
-                fallback_lines.append(
-                    "Low reversal-risk month — clean theta-selling window, manage delta normally."
-                )
-            fallback_lines.append(
+                fb.append("Low reversal-risk month — clean theta-selling window, manage delta normally.")
+            fb.append(
                 "Long DTE spreads through HIGH events get vol-crushed on release. "
                 "Either close before the print or size for a 2x expected move."
             )
             fields.append({
-                "name": "💡 Positioning Read",
-                "value": " ".join(fallback_lines),
+                "name": "💡  POSITIONING READ",
+                "value": " ".join(fb),
                 "inline": False,
             })
 
-        # ---- Color reflects how dangerous the next 30 days are ----
-        # Weight HIGH-reversal events more heavily than impact alone
+        # ---- High-conviction trade idea (derived from next catalyst's playbook) ----
+        if next_high:
+            intel = get_event_intel(next_high["name"])
+            if intel:
+                trade_idea = (
+                    f"**Setup:** {next_high['name']} on {next_high['datetime'].strftime('%a %-m/%-d')}\n"
+                    f"**Bias:** {intel['lean']}\n"
+                    f"**Trade:** {intel['playbook']}\n"
+                    f"**Risk:** {intel['avg_move']} — size accordingly."
+                )
+                fields.append({
+                    "name": "🔥  HIGH-CONVICTION SETUP",
+                    "value": trade_idea,
+                    "inline": False,
+                })
+
+        # ---- Engagement: poll prompt ----
+        if next_high:
+            poll_value = (
+                f"React to this message with your lean into **{next_high['name']}**:\n"
+                f"📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
+            )
+        else:
+            poll_value = (
+                "React to this message with your lean for tomorrow:\n"
+                "📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
+            )
+        fields.append({
+            "name": "🗳️  ROOM POLL",
+            "value": poll_value,
+            "inline": False,
+        })
+
+        # ---- Engagement: rotating daily question ----
+        prompt_emoji, prompt_text = get_daily_prompt(now.timetuple().tm_yday)
+        fields.append({
+            "name": f"{prompt_emoji}  TONIGHT'S QUESTION",
+            "value": f"{prompt_text}\n\n_Reply in this thread — best response gets pinned tomorrow._",
+            "inline": False,
+        })
+
+        # ---- Color: blend day's move + danger score ----
         danger_score = high_total + reversal_high_count
-        if danger_score >= 6:
-            color = 0xFF1744  # red — heavy
+        if spy_change_pct is not None and spy_change_pct >= 0.5:
+            color = 0x00E676  # green — bullish day
+        elif spy_change_pct is not None and spy_change_pct <= -0.5:
+            color = 0xFF1744  # red — bearish day
+        elif danger_score >= 6:
+            color = 0xFF6E40  # orange — heavy upcoming, flat tape
         elif danger_score >= 3:
             color = 0xFFD600  # yellow — moderate
         else:
-            color = 0x00E676  # green — light
+            color = 0x448AFF  # blue — calm
 
         embed = {
-            "title": (
-                f"🗓️ 30-DAY MARKET OUTLOOK • {high_total} HIGH catalyst"
-                f"{'s' if high_total != 1 else ''} · {reversal_high_count} reversal risk"
-            ),
+            "title": f"🌃  EVENING BRIEF  ·  {now.strftime('%a %b %-d')}",
+            "description": description,
             "color": color,
             "fields": fields,
             "footer": {
-                "text": f"SpreadWorks • {now.strftime('%A, %B %d, %Y')} • Plan the month, trade the day."
+                "text": (
+                    f"SpreadWorks · Daily after-close brief · "
+                    f"{high_total} HIGH catalyst{'s' if high_total != 1 else ''} & "
+                    f"{reversal_high_count} reversal risk{'s' if reversal_high_count != 1 else ''} "
+                    "in the next 30 days"
+                )
             },
             "timestamp": now.isoformat(),
         }
         ok = await asyncio.to_thread(_send_webhook_sync, embed)
         logger.info(
-            f"[SpreadWorks] Monthly outlook {'sent' if ok else 'FAILED'} "
-            f"({high_total} HIGH, {reversal_high_count} reversal-risk, {len(upcoming)} total, "
-            f"macro={'AI' if macro_text else 'pattern'})"
+            f"[SpreadWorks] Evening brief {'sent' if ok else 'FAILED'} "
+            f"({high_total} HIGH, {reversal_high_count} reversal-risk, {len(upcoming)} events, "
+            f"macro={'AI' if macro_text else 'pattern'}, "
+            f"snapshot={'live' if spy_price is not None else 'none'})"
         )
 
     # ------------------------------------------------------------------
@@ -1149,20 +1256,24 @@ def _start_scheduler(app: FastAPI):
     scheduler.add_job(_fire_weekend_playbook, "cron", hour=10, minute=0,
                       day_of_week="sat", id="discord_weekend_playbook", replace_existing=True)
 
-    # --- Daily 30-day outlook ---
-    # 7:30 AM CT weekdays — rolling 30-day market-moving event outlook
-    scheduler.add_job(_fire_monthly_outlook, "cron", hour=7, minute=30,
-                      day_of_week="mon-fri", id="discord_monthly_outlook", replace_existing=True)
+    # --- Daily after-close evening brief ---
+    # 15:30 CT weekdays — combined day-recap + 30-day forward outlook with
+    # AI macro read, high-conviction setup, and engagement prompts.
+    # Fires after market_close_msg (15:00), eod (15:00:30), and scoreboard
+    # (15:05) so the day's stats are settled before the brief lands.
+    scheduler.add_job(_fire_evening_brief, "cron", hour=15, minute=30,
+                      day_of_week="mon-fri", id="discord_evening_brief", replace_existing=True)
 
     scheduler.start()
     _active_scheduler = scheduler
     logger.info(
         "[SpreadWorks] APScheduler started — 12 jobs: "
-        "monthly_outlook (7:30), market_open_msg (8:00), open_positions (8:00:30), "
+        "market_open_msg (8:00), open_positions (8:00:30), "
         "economic (8:05), gex_briefing (8:30), "
         "midday_pulse (12:00), gex_shift (*/5 min), "
         "market_close_msg (15:00), eod (15:00:30), "
-        "scoreboard (15:05), weekend_playbook (Sat 10:00) CT"
+        "scoreboard (15:05), evening_brief (15:30), "
+        "weekend_playbook (Sat 10:00) CT"
     )
     return scheduler
 
