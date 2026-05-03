@@ -3,10 +3,15 @@ Autonomous Trading Scheduler for Render Deployment
 Uses APScheduler to run trading logic during market hours
 Integrates seamlessly with Streamlit web service
 
-2026-05-03: BTC/DOGE/SHIB perp exit-tuning applied via /api/admin/perp-exit-optimizer/apply
-            (backtest-driven: BTC act=0.5/trail=0.3/16h, DOGE act=1.2/trail=0.8/16h SAR=off,
-             SHIB act=0.3/trail=0.15/16h). This restart bounces the worker so the perp
-             traders re-read autonomous_config and pick up the new exit knobs.
+2026-05-03: ALL 5 PERP BOTS exit-tuning applied via /api/admin/perp-exit-optimizer/apply.
+            Backtest-driven (coarse for BTC/DOGE/SHIB, fine for XRP/ETH):
+              BTC : act=0.5/trail=0.3/16h           -> +$19,542 vs baseline replay
+              DOGE: act=1.2/trail=0.8/16h SAR=off   -> +$1,249, fixes losing strategy
+              SHIB: act=0.3/trail=0.15/16h          -> +$103
+              XRP : act=1.5/trail=0.1/pt=2.5/24h    -> +$2,011 (5.3x baseline)
+              ETH : act=0.7/trail=0.5/maxL=2.0/24h  -> +$4,376 (1.6x baseline)
+            This restart bounces the worker so the perp traders re-read
+            autonomous_config and pick up the new exit knobs.
 
 CAPITAL ALLOCATION:
 ==================
