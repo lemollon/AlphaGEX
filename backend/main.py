@@ -95,6 +95,7 @@ from backend.api.routes import (
     dashboard_batch_routes,  # Dashboard Batch - collapse 50+ API calls into 1 request for /live-trading
     reconciliation_routes,  # Reconciliation - Map Tradier orders/positions to bots
     goliath_routes,  # GOLIATH - LETF earnings-week options paper-trading bot
+    perp_exit_optimizer_routes,  # Admin: backtest exit-rule param grid for the 5 perp bots
 )
 
 # ============================================================================
@@ -371,6 +372,7 @@ app.include_router(bayesian_crypto_routes.router)
 app.include_router(dashboard_batch_routes.router)
 app.include_router(reconciliation_routes.router)
 app.include_router(goliath_routes.router)
+app.include_router(perp_exit_optimizer_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto, goliath")
 
 # Initialize existing AlphaGEX components (singleton pattern)
