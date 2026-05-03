@@ -363,7 +363,7 @@ class AgapeDogePerpDatabase:
                        open_time, close_time,
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
-                       signal_action, signal_confidence
+                       signal_action, signal_confidence, max_risk_usd
                 FROM agape_doge_perp_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
                 ORDER BY close_time DESC LIMIT %s
@@ -381,6 +381,7 @@ class AgapeDogePerpDatabase:
                     "oracle_advice": row[11],
                     "oracle_win_probability": float(row[12]) if row[12] else None,
                     "signal_action": row[13], "signal_confidence": row[14],
+                    "max_risk_usd": float(row[15]) if row[15] is not None else None,
                 }
                 for row in cursor.fetchall()
             ]

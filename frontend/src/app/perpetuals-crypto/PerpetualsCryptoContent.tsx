@@ -491,6 +491,7 @@ function AllCoinsRecentTrades() {
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
             </tr>
@@ -517,6 +518,9 @@ function AllCoinsRecentTrades() {
                   </td>
                   <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.entry_price, dec)}</td>
                   <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.close_price, dec)}</td>
+                  <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
+                    {t.max_risk_usd != null ? fmtUsd(t.max_risk_usd) : '---'}
+                  </td>
                   <td className="px-3 py-2 text-right">
                     <span className={`font-mono font-semibold text-xs ${pnlColor(t.realized_pnl ?? 0)}`}>
                       {fmtUsd(t.realized_pnl)}
@@ -995,9 +999,20 @@ function PositionsTab({ coin }: { coin: CoinId }) {
                 </span>
               )}
             </div>
-            <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
-              {fmtUsd(pos.unrealized_pnl)}
-            </span>
+            <div className="flex items-baseline gap-3">
+              <div className="text-right">
+                <div className="text-xs text-gray-500">P&L</div>
+                <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
+                  {fmtUsd(pos.unrealized_pnl)}
+                </span>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-gray-500">At Risk</div>
+                <span className="text-base font-mono font-semibold text-orange-400">
+                  {pos.max_risk_usd != null ? fmtUsd(pos.max_risk_usd) : '---'}
+                </span>
+              </div>
+            </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
             <div>
@@ -1145,6 +1160,7 @@ function ClosedTradesTable({ coin }: { coin: CoinId }) {
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
             </tr>
@@ -1165,6 +1181,9 @@ function ClosedTradesTable({ coin }: { coin: CoinId }) {
                 </td>
                 <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.entry_price, meta.priceDecimals)}</td>
                 <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.close_price, meta.priceDecimals)}</td>
+                <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
+                  {trade.max_risk_usd != null ? fmtUsd(trade.max_risk_usd) : '---'}
+                </td>
                 <td className="px-3 py-2 text-right">
                   <span className={`font-mono font-semibold text-xs ${pnlColor(trade.realized_pnl ?? 0)}`}>
                     {fmtUsd(trade.realized_pnl)}
@@ -1421,6 +1440,7 @@ function HistoryTab({ coin }: { coin: CoinId }) {
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
             </tr>
@@ -1441,6 +1461,9 @@ function HistoryTab({ coin }: { coin: CoinId }) {
                 </td>
                 <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.entry_price, meta.priceDecimals)}</td>
                 <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.close_price, meta.priceDecimals)}</td>
+                <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
+                  {trade.max_risk_usd != null ? fmtUsd(trade.max_risk_usd) : '---'}
+                </td>
                 <td className="px-3 py-2 text-right">
                   <span className={`font-mono font-semibold text-xs ${pnlColor(trade.realized_pnl ?? 0)}`}>
                     {fmtUsd(trade.realized_pnl)}
