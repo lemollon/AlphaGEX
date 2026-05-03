@@ -177,18 +177,44 @@ def get_chart_data(ticker: str) -> Dict:
         for r in funding_records
     ]
 
+    # Per-series fallback: if a refresh hit a 429 and a series came back
+    # empty, prefer the previously cached good version over poisoning the
+    # cache with empties for another full TTL window.
+    prev = _CACHE.get(ticker_upper, {})
+    def _merge(new_series, key):
+        if new_series:
+            return new_series
+        old = prev.get(key) or []
+        return old
+
+    merged_price    = _merge(price,           "price")
+    merged_ls       = _merge(ls_series,       "ls_ratio")
+    merged_oi       = _merge(oi_series,       "open_interest")
+    merged_funding  = _merge(funding_series,  "funding")
+
     payload = {
         "ticker": ticker_upper,
-        "price": price,           # h6 candles from Coinbase (closest supported to h4)
-        "ls_ratio": ls_series,    # h4 from CoinGlass
-        "open_interest": oi_series,  # h4 from CoinGlass
-        "funding": funding_series,   # h4 from CoinGlass
+        "price": merged_price,           # h6 candles from Coinbase (closest supported to h4)
+        "ls_ratio": merged_ls,           # h4 from CoinGlass
+        "open_interest": merged_oi,      # h4 from CoinGlass
+        "funding": merged_funding,       # h4 from CoinGlass
         "fetched_at": int(now * 1000),
         "interval": "h4",
         "price_interval": "h6",
         "lookback_days": 30,
     }
 
-    _CACHE[ticker_upper] = payload
-    _CACHE_TIME[ticker_upper] = now
+    # Only cache when we got at least one non-empty CoinGlass series. If
+    # every CoinGlass call failed (typically 429-storm) and no prior
+    # cache existed for any of them, returning empty is fine but caching
+    # it would make the next 30 min of dashboards stay blank — so skip.
+    have_any_data = any([merged_ls, merged_oi, merged_funding, merged_price])
+    if have_any_data:
+        _CACHE[ticker_upper] = payload
+        _CACHE_TIME[ticker_upper] = now
+    else:
+        logger.info(
+            f"crypto_chart_data: all series empty for {ticker_upper}, "
+            "skipping cache write so the next request can retry"
+        )
     return {**payload, "cache_age_seconds": 0}
