@@ -745,12 +745,61 @@ def _start_scheduler(app: FastAPI):
     # ------------------------------------------------------------------
     # NEW: Daily One-Month Outlook — every weekday 7:30 AM CT
     # ------------------------------------------------------------------
-    async def _fire_monthly_outlook():
-        """7:30 AM CT weekdays — rolling 30-day market-moving event outlook.
+    def _claude_macro_synthesis(events: list, vix: float | None = None,
+                                spy_price: float | None = None) -> str | None:
+        """Ask Claude for a ~3-line current-macro lean over the next 30 days.
 
-        Groups upcoming HIGH/MEDIUM events into weekly buckets so traders
-        can see the full month at a glance. Complements the Saturday
-        weekend playbook (which only covers the next 7 days).
+        Returns None on any failure (missing key, network, parse, etc.) so
+        the caller can fall back to pattern-only commentary. Designed to
+        run inside `asyncio.to_thread` since the Anthropic SDK is sync.
+        """
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            return None
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+
+            # Build a compact event list — Claude doesn't need the descriptions
+            event_lines = []
+            for e in events[:15]:  # cap input size
+                event_lines.append(
+                    f"- {e['datetime'].strftime('%a %b %-d')}: "
+                    f"{e['name']} ({e['impact']})"
+                )
+            ctx = ""
+            if spy_price is not None:
+                ctx += f"SPY: ${spy_price:.2f}. "
+            if vix is not None:
+                ctx += f"VIX: {vix:.1f}. "
+
+            prompt = (
+                "You are a macro-aware options strategist writing a 30-day market outlook.\n\n"
+                f"Current snapshot: {ctx or '(no live snapshot)'}\n\n"
+                f"Upcoming scheduled US macro events (next ~30 days):\n"
+                + "\n".join(event_lines)
+                + "\n\nWrite a 3-sentence synthesis covering:\n"
+                "1. The dominant macro narrative going into this window (rates, inflation, growth, or risk-on/off)\n"
+                "2. Which ONE event is most likely to spark a TREND REVERSAL and why\n"
+                "3. The cleanest premium-selling window in the next 30 days\n\n"
+                "Tone: direct, professional, no hedging filler. Max 110 words total. "
+                "Do NOT use bullet points or numbered lists in the output — "
+                "write 3 flowing sentences."
+            )
+            msg = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=350,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text = (msg.content[0].text or "").strip()
+            return text or None
+        except Exception as e:
+            logger.warning(f"[SpreadWorks] Claude macro synthesis failed: {e}")
+            return None
+
+    async def _fire_monthly_outlook():
+        """7:30 AM CT weekdays — rolling 30-day market-moving event outlook
+        with per-event historical patterns and Claude macro synthesis.
         """
         if not content_loaded or not _is_trading_day():
             return
@@ -759,9 +808,9 @@ def _start_scheduler(app: FastAPI):
 
         import asyncio
         from datetime import timedelta
+        from .event_intel import get_event_intel, reversal_emoji
 
         now = get_central_now()
-        # Pull a generous window of upcoming events (HIGH + MEDIUM only)
         upcoming = get_upcoming_events(days=30, count=40)
         upcoming = [e for e in upcoming if e.get("impact") in ("HIGH", "MEDIUM")]
 
@@ -775,68 +824,143 @@ def _start_scheduler(app: FastAPI):
 
         buckets = {}
         high_total = 0
+        reversal_high_count = 0
         for event in upcoming:
             ws = _week_start(event["datetime"])
             buckets.setdefault(ws, []).append(event)
             if event.get("impact") == "HIGH":
                 high_total += 1
+            intel = get_event_intel(event["name"])
+            if intel and intel["reversal"] == "HIGH":
+                reversal_high_count += 1
 
         # Pick out THE marquee event (next HIGH-impact catalyst)
         next_high = next((e for e in upcoming if e.get("impact") == "HIGH"), None)
 
+        # Try to grab live SPY/VIX snapshot for Claude context (best-effort)
+        spy_price = None
+        vix = None
+        try:
+            base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
+                if resp.status_code == 200:
+                    g = resp.json()
+                    spy_price = g.get("spot_price")
+                    vix = g.get("vix")
+        except Exception:
+            pass
+
+        # Kick off Claude synthesis in a thread; runs in parallel with field-building
+        macro_task = asyncio.create_task(
+            asyncio.to_thread(_claude_macro_synthesis, upcoming, vix, spy_price)
+        )
+
         fields = []
+
+        # ---- Headline catalyst with deep intel ----
         if next_high:
             countdown = format_countdown(next_high["datetime"])
+            intel = get_event_intel(next_high["name"])
+            catalyst_value = (
+                f"**{next_high['name']}**\n"
+                f"📆 {next_high['datetime'].strftime('%A, %b %-d')} at {format_event_time(next_high['datetime'])}\n"
+                f"⏱️ {countdown}\n"
+                f"→ {next_high['description']}"
+            )
+            if intel:
+                catalyst_value += (
+                    f"\n\n"
+                    f"{intel['lean_emoji']} **Pre-event lean:** {intel['lean']}\n"
+                    f"{reversal_emoji(intel['reversal'])} **Reversal risk:** {intel['reversal']}\n"
+                    f"📊 **Historical:** {intel['avg_move']}\n"
+                    f"🎲 **Playbook:** {intel['playbook']}"
+                )
             fields.append({
-                "name": "\U0001f3af Next Major Catalyst",
-                "value": (
-                    f"**{next_high['name']}**\n"
-                    f"\U0001f4c6 {next_high['datetime'].strftime('%A, %b %-d')} at {format_event_time(next_high['datetime'])}\n"
-                    f"⏱️ {countdown}\n"
-                    f"→ {next_high['description']}"
-                ),
+                "name": "🎯 Next Major Catalyst",
+                "value": catalyst_value,
                 "inline": False,
             })
 
-        # Render up to 4 weekly buckets (covers ~1 month)
+        # ---- Weekly buckets with inline lean/reversal tags ----
         sorted_weeks = sorted(buckets.keys())[:4]
         for ws in sorted_weeks:
             events = buckets[ws]
-            week_label = f"Week of {ws.strftime('%b %-d')}"
             lines = []
-            for e in events[:6]:  # cap per-week to keep embed under Discord limits
-                emoji = "\U0001f534" if e["impact"] == "HIGH" else "\U0001f7e1"
+            for e in events[:5]:  # cap per-week (intel adds chars; lower cap)
+                emoji = "🔴" if e["impact"] == "HIGH" else "🟡"
                 day = e["datetime"].strftime("%a %-m/%-d")
                 t = format_event_time(e["datetime"])
-                lines.append(f"{emoji} **{day}** {t} — {e['name']}")
-            if len(events) > 6:
-                lines.append(f"_+{len(events) - 6} more this week_")
+                base_line = f"{emoji} **{day}** {t} — {e['name']}"
+                intel = get_event_intel(e["name"])
+                if intel:
+                    base_line += (
+                        f"\n   ↳ {intel['lean_emoji']} {intel['lean'].lower()} "
+                        f"· {reversal_emoji(intel['reversal'])} {intel['reversal']} reversal "
+                        f"· {intel['avg_move']}"
+                    )
+                lines.append(base_line)
+            if len(events) > 5:
+                lines.append(f"_+{len(events) - 5} more this week_")
             fields.append({
-                "name": f"\U0001f4c5 {week_label}  ({len(events)} event{'s' if len(events) != 1 else ''})",
+                "name": f"📅 Week of {ws.strftime('%b %-d')}  ({len(events)} event{'s' if len(events) != 1 else ''})",
                 "value": "\n".join(lines),
                 "inline": False,
             })
 
-        fields.append({
-            "name": "\U0001f4a1 Positioning Tip",
-            "value": (
-                "Long DTE spreads through HIGH events get vol-crushed on release. "
-                "Either close before the print or size for a 2x expected move. "
-                "Light-week MEDIUM-only stretches are the cleanest theta windows."
-            ),
-            "inline": False,
-        })
+        # ---- Claude-synthesized macro narrative (with fallback) ----
+        try:
+            macro_text = await asyncio.wait_for(macro_task, timeout=20.0)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"[SpreadWorks] Claude synthesis timeout/error: {e}")
+            macro_text = None
 
-        # Color reflects how loaded the next 30 days are
-        if high_total >= 4:
-            color = 0xFF1744  # red — heavy month
-        elif high_total >= 2:
+        if macro_text:
+            fields.append({
+                "name": "🧠 Macro Read (AI-synthesized)",
+                "value": macro_text,
+                "inline": False,
+            })
+        else:
+            # Pattern-only fallback narrative
+            fallback_lines = []
+            if reversal_high_count >= 3:
+                fallback_lines.append(
+                    "Heavy reversal-risk window — multiple HIGH-impact catalysts can flip the prevailing trend."
+                )
+            elif reversal_high_count >= 1:
+                fallback_lines.append(
+                    "Watch the HIGH-reversal catalyst above — it sets the directional tape for 1-2 weeks after."
+                )
+            else:
+                fallback_lines.append(
+                    "Low reversal-risk month — clean theta-selling window, manage delta normally."
+                )
+            fallback_lines.append(
+                "Long DTE spreads through HIGH events get vol-crushed on release. "
+                "Either close before the print or size for a 2x expected move."
+            )
+            fields.append({
+                "name": "💡 Positioning Read",
+                "value": " ".join(fallback_lines),
+                "inline": False,
+            })
+
+        # ---- Color reflects how dangerous the next 30 days are ----
+        # Weight HIGH-reversal events more heavily than impact alone
+        danger_score = high_total + reversal_high_count
+        if danger_score >= 6:
+            color = 0xFF1744  # red — heavy
+        elif danger_score >= 3:
             color = 0xFFD600  # yellow — moderate
         else:
             color = 0x00E676  # green — light
 
         embed = {
-            "title": f"\U0001f5d3️ 30-DAY MARKET OUTLOOK • {high_total} HIGH-impact catalyst{'s' if high_total != 1 else ''}",
+            "title": (
+                f"🗓️ 30-DAY MARKET OUTLOOK • {high_total} HIGH catalyst"
+                f"{'s' if high_total != 1 else ''} · {reversal_high_count} reversal risk"
+            ),
             "color": color,
             "fields": fields,
             "footer": {
@@ -845,7 +969,11 @@ def _start_scheduler(app: FastAPI):
             "timestamp": now.isoformat(),
         }
         ok = await asyncio.to_thread(_send_webhook_sync, embed)
-        logger.info(f"[SpreadWorks] Monthly outlook {'sent' if ok else 'FAILED'} ({high_total} HIGH, {len(upcoming)} total)")
+        logger.info(
+            f"[SpreadWorks] Monthly outlook {'sent' if ok else 'FAILED'} "
+            f"({high_total} HIGH, {reversal_high_count} reversal-risk, {len(upcoming)} total, "
+            f"macro={'AI' if macro_text else 'pattern'})"
+        )
 
     # ------------------------------------------------------------------
     # NEW: GEX Shift Alert — every 5 min during market hours
