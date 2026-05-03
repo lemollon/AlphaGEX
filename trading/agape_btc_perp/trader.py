@@ -171,6 +171,20 @@ class AgapeBtcPerpTrader:
                 self._log_scan(result, scan_context, signal=signal)
                 return result
 
+            try:
+                from trading.perp_regime_filter import is_signal_blocked
+                blocked, reason = is_signal_blocked(
+                    "AGAPE_BTC_PERP",
+                    signal.action.value,
+                    (market_data or {}).get("funding_regime"),
+                )
+                if blocked:
+                    result["outcome"] = f"REGIME_FILTER_{reason}"
+                    self._log_scan(result, scan_context, signal=signal)
+                    return result
+            except ImportError:
+                pass
+
             position = self.executor.execute_trade(signal)
             if position:
                 self.db.save_position(position)
