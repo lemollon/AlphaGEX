@@ -964,8 +964,20 @@ function PerCoinPositionMargin({ coin }: { coin: ActiveCoinId }) {
 
 function PositionsTab({ coin }: { coin: CoinId }) {
   const { data: posData, isLoading } = usePerpPositions(coin)
+  const marginPrefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
+  const { data: marginData } = useSWR(
+    marginPrefix ? `${marginPrefix}/margin` : null,
+    fetcher,
+    { refreshInterval: 15_000 }
+  )
   const positions = posData?.data || []
   const meta = COIN_META[coin]
+
+  // Build a lookup of margin/notional per position_id from the /margin endpoint
+  const marginByPosId: Record<string, any> = {}
+  for (const p of ((marginData as any)?.data?.positions || [])) {
+    if (p?.position_id) marginByPosId[p.position_id] = p
+  }
 
   if (isLoading) {
     return (
@@ -981,7 +993,9 @@ function PositionsTab({ coin }: { coin: CoinId }) {
 
   return (
     <div className="space-y-3">
-      {positions.map((pos: any, idx: number) => (
+      {positions.map((pos: any, idx: number) => {
+        const m = marginByPosId[pos.position_id] || {}
+        return (
         <div key={pos.position_id || idx} className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
@@ -999,17 +1013,29 @@ function PositionsTab({ coin }: { coin: CoinId }) {
                 </span>
               )}
             </div>
-            <div className="flex items-baseline gap-3">
+            <div className="flex items-baseline gap-4">
               <div className="text-right">
-                <div className="text-xs text-gray-500">P&L</div>
-                <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
-                  {fmtUsd(pos.unrealized_pnl)}
+                <div className="text-xs text-gray-500">Cost (Margin)</div>
+                <span className="text-base font-mono font-semibold text-blue-300">
+                  {m.initial_margin_required != null ? fmtUsd(m.initial_margin_required, 0) : '---'}
+                </span>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-gray-500">Notional</div>
+                <span className="text-base font-mono font-semibold text-purple-300">
+                  {m.notional_value != null ? fmtUsd(m.notional_value, 0) : '---'}
                 </span>
               </div>
               <div className="text-right">
                 <div className="text-xs text-gray-500">At Risk</div>
                 <span className="text-base font-mono font-semibold text-orange-400">
                   {pos.max_risk_usd != null ? fmtUsd(pos.max_risk_usd) : '---'}
+                </span>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-gray-500">P&L</div>
+                <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
+                  {fmtUsd(pos.unrealized_pnl)}
                 </span>
               </div>
             </div>
@@ -1024,8 +1050,8 @@ function PositionsTab({ coin }: { coin: CoinId }) {
               <p className="text-green-400 font-mono">{pos.take_profit ? fmtPrice(pos.take_profit, meta.priceDecimals) : 'No-Loss Trail'}</p>
             </div>
             <div>
-              <span className="text-gray-500">Funding Regime</span>
-              <p className="text-gray-300">{pos.funding_regime_at_entry || '---'}</p>
+              <span className="text-gray-500">Liq Price</span>
+              <p className="text-orange-300 font-mono">{m.liquidation_price != null ? fmtPrice(m.liquidation_price, meta.priceDecimals) : '---'}</p>
             </div>
             <div>
               <span className="text-gray-500">Prophet</span>
@@ -1044,7 +1070,8 @@ function PositionsTab({ coin }: { coin: CoinId }) {
             </div>
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
