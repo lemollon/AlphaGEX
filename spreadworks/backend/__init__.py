@@ -49,9 +49,20 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
-def _send_webhook_sync(embed: dict) -> bool:
-    """Send a single embed to Discord webhook (sync, for scheduler use)."""
+def _send_webhook_sync(embed_or_embeds) -> bool:
+    """Send embeds to Discord webhook (sync, for scheduler use).
+
+    Accepts either a single embed dict or a list of embeds (max 10 per
+    Discord's webhook limit). Multi-embed posts render as a vertical
+    color-coded ladder in Discord — used by the EVENING BRIEF for
+    visually distinct sections.
+    """
     import requests as req
+
+    if isinstance(embed_or_embeds, dict):
+        embeds = [embed_or_embeds]
+    else:
+        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
 
     url = os.getenv("DISCORD_WEBHOOK_URL", "")
     if not url:
@@ -59,10 +70,14 @@ def _send_webhook_sync(embed: dict) -> bool:
         return False
 
     import time as _time
+    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
+    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
+    # processed the message even though the response timed out client-side.
+    # So we only retry on connect errors and 5xx, never on read timeout.
     for attempt in range(3):
         try:
-            resp = req.post(url, json={"embeds": [embed]},
-                            headers={"Content-Type": "application/json"}, timeout=15)
+            resp = req.post(url, json={"embeds": embeds},
+                            headers={"Content-Type": "application/json"}, timeout=30)
             if resp.status_code == 429:
                 retry_after = resp.json().get("retry_after", 5)
                 logger.warning(f"[SpreadWorks] Rate limited, waiting {retry_after}s")
@@ -70,6 +85,10 @@ def _send_webhook_sync(embed: dict) -> bool:
                 continue
             resp.raise_for_status()
             return True
+        except req.exceptions.ReadTimeout:
+            # Don't retry read timeouts — message may already be delivered.
+            logger.error(f"[SpreadWorks] Webhook read timeout on attempt {attempt+1} — NOT retrying (would risk duplicate)")
+            return False
         except Exception as e:
             logger.error(f"[SpreadWorks] Webhook attempt {attempt+1}/3 failed: {e}")
             if attempt < 2:
@@ -942,57 +961,142 @@ def _start_scheduler(app: FastAPI):
             )
         )
 
-        DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        # ─────────────────────────────────────────────────────────────────
+        # Build 5 stacked embeds. Discord renders multi-embed messages as
+        # a vertical color-coded ladder — natural visual separation per
+        # section, no need for divider hacks.
+        # Color palette is intentional: mood goes from cool blue (header)
+        # → red/orange (danger sections) → purple (AI) → gold (engagement).
+        # ─────────────────────────────────────────────────────────────────
+        embeds = []
+        danger_score = high_total + reversal_high_count
 
-        # ---- Description: today's close snapshot ----
-        snapshot_lines = []
+        def _meter_bar(filled: int, total: int = 10) -> str:
+            """Unicode meter: ▰▰▰▰▰▱▱▱▱▱"""
+            f = max(0, min(filled, total))
+            return "▰" * f + "▱" * (total - f)
+
+        # ── EMBED 1: Header card — date + market snapshot in inline triplet ──
+        # Color reflects the day: green=bullish, red=bearish, blue=flat.
+        if spy_change_pct is not None and spy_change_pct >= 0.5:
+            header_color = 0x00E676  # green
+        elif spy_change_pct is not None and spy_change_pct <= -0.5:
+            header_color = 0xFF1744  # red
+        else:
+            header_color = 0x4A90E2  # cool blue
+
+        header_fields = []
         if spy_price is not None:
             move_str = ""
             if spy_change_pct is not None:
                 arrow = "▲" if spy_change_pct >= 0 else "▼"
-                move_str = f" {arrow} **{spy_change_pct:+.2f}%**"
-            snapshot_lines.append(f"**SPY** ${spy_price:.2f}{move_str}")
-        if spy_high is not None and spy_low is not None:
-            snapshot_lines.append(f"Range: ${spy_low:.2f} → ${spy_high:.2f}")
+                move_str = f"  {arrow} {spy_change_pct:+.2f}%"
+            header_fields.append({
+                "name": "📈  SPY",
+                "value": f"```\n${spy_price:.2f}{move_str}\n```",
+                "inline": True,
+            })
         if vix is not None:
-            vix_label = "calm" if vix < 15 else "normal" if vix < 22 else "elevated" if vix < 28 else "high"
-            snapshot_lines.append(f"**VIX** {vix:.1f} _({vix_label})_")
+            vix_label = "calm" if vix < 15 else "normal" if vix < 22 else "elevated" if vix < 28 else "HIGH"
+            vix_emoji = "😴" if vix < 15 else "🙂" if vix < 22 else "😬" if vix < 28 else "🔥"
+            header_fields.append({
+                "name": "🌪️  VIX",
+                "value": f"```\n{vix:.1f}  {vix_emoji} {vix_label}\n```",
+                "inline": True,
+            })
         if gamma_regime:
             regime_emoji = "🟢" if gamma_regime == "POSITIVE" else "🔴" if gamma_regime == "NEGATIVE" else "🟡"
-            snapshot_lines.append(f"**Gamma** {regime_emoji} {gamma_regime}")
+            header_fields.append({
+                "name": "🌀  GAMMA",
+                "value": f"```\n{regime_emoji} {gamma_regime}\n```",
+                "inline": True,
+            })
+        if spy_high is not None and spy_low is not None:
+            header_fields.append({
+                "name": "📐  RANGE",
+                "value": f"```\n${spy_low:.2f} → ${spy_high:.2f}\n```",
+                "inline": True,
+            })
         if flip_point is not None:
-            snapshot_lines.append(f"**Flip** ${flip_point:.0f}")
+            header_fields.append({
+                "name": "🎯  FLIP",
+                "value": f"```\n${flip_point:.0f}\n```",
+                "inline": True,
+            })
+        # Danger meter — visual gauge of how loaded the next 30 days are
+        danger_filled = min(danger_score, 10)
+        danger_label = (
+            "🔥 DANGER" if danger_score >= 8 else
+            "⚡ HEAVY" if danger_score >= 6 else
+            "⚠️ MODERATE" if danger_score >= 3 else
+            "✅ CALM"
+        )
+        header_fields.append({
+            "name": "📊  30-DAY GAUGE",
+            "value": f"```\n{_meter_bar(danger_filled)}  {danger_label}\n```",
+            "inline": False,
+        })
 
-        description = " · ".join(snapshot_lines) if snapshot_lines else "_(market snapshot unavailable)_"
+        embeds.append({
+            "title": f"🌃  EVENING BRIEF",
+            "description": f"**{now.strftime('%A · %B %-d, %Y').upper()}**",
+            "color": header_color,
+            "fields": header_fields,
+            "footer": {
+                "text": f"SpreadWorks · Daily after-close brief · {high_total} HIGH · {reversal_high_count} reversal-risk in 30d",
+            },
+            "timestamp": now.isoformat(),
+        })
 
-        fields = []
-
-        # ---- Headline catalyst ----
+        # ── EMBED 2: Next major catalyst — full intel block ──
         if next_high:
             countdown = format_countdown(next_high["datetime"])
             intel = get_event_intel(next_high["name"])
-            catalyst_value = (
-                f"**{next_high['name']}**\n"
-                f"📆 {next_high['datetime'].strftime('%A, %b %-d')} · {format_event_time(next_high['datetime'])}\n"
-                f"⏱️ {countdown}"
+            cat_color = (
+                0xFF1744 if intel and intel["reversal"] == "HIGH" else
+                0xFF6E40 if intel and intel["reversal"] == "MEDIUM" else
+                0x448AFF
             )
+            cat_fields = []
             if intel:
-                catalyst_value += (
-                    f"\n\n"
-                    f"{intel['lean_emoji']} **Lean:** {intel['lean']}\n"
-                    f"{reversal_emoji(intel['reversal'])} **Reversal risk:** {intel['reversal']}\n"
-                    f"📊 **Historical:** {intel['avg_move']}\n"
-                    f"🎲 **Playbook:** {intel['playbook']}"
-                )
-            fields.append({
-                "name": f"🎯  NEXT MAJOR CATALYST  {DIVIDER[:20]}",
-                "value": catalyst_value,
-                "inline": False,
+                cat_fields.append({
+                    "name": f"{intel['lean_emoji']}  PRE-EVENT LEAN",
+                    "value": f"```\n{intel['lean']}\n```",
+                    "inline": True,
+                })
+                cat_fields.append({
+                    "name": f"{reversal_emoji(intel['reversal'])}  REVERSAL RISK",
+                    "value": f"```\n{intel['reversal']}\n```",
+                    "inline": True,
+                })
+                cat_fields.append({
+                    "name": "📊  HISTORICAL",
+                    "value": f"```\n{intel['avg_move']}\n```",
+                    "inline": True,
+                })
+                cat_fields.append({
+                    "name": "🎲  PLAYBOOK",
+                    "value": intel["playbook"],
+                    "inline": False,
+                })
+
+            embeds.append({
+                "title": f"🎯  NEXT MAJOR CATALYST",
+                "description": (
+                    f"## {next_high['name']}\n"
+                    f"📆 **{next_high['datetime'].strftime('%A, %b %-d')}**  ·  "
+                    f"⏱️ {format_event_time(next_high['datetime'])}\n"
+                    f"⌛ _{countdown}_"
+                ),
+                "color": cat_color,
+                "fields": cat_fields,
             })
 
-        # ---- Weekly buckets ----
+        # ── EMBED 3: 30-Day calendar — weekly buckets ──
         sorted_weeks = sorted(buckets.keys())[:4]
-        week_labels = ["📅  THIS WEEK", "📅  NEXT WEEK", "📅  WEEK 3", "📅  WEEK 4"]
+        week_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+        week_labels = ["THIS WEEK", "NEXT WEEK", "WEEK 3", "WEEK 4"]
+        cal_fields = []
         for idx, ws in enumerate(sorted_weeks):
             events = buckets[ws]
             lines = []
@@ -1000,34 +1104,40 @@ def _start_scheduler(app: FastAPI):
                 emoji = "🔴" if e["impact"] == "HIGH" else "🟡"
                 day = e["datetime"].strftime("%a %-m/%-d")
                 t = format_event_time(e["datetime"])
-                base_line = f"{emoji} `{day}` {t} — **{e['name']}**"
+                base_line = f"{emoji} `{day}` `{t}` **{e['name']}**"
                 intel = get_event_intel(e["name"])
                 if intel:
                     base_line += (
-                        f"\n     ↳ {intel['lean_emoji']} {intel['lean'].lower()} "
-                        f"· {reversal_emoji(intel['reversal'])} {intel['reversal']} "
-                        f"· _{intel['avg_move']}_"
+                        f"\n   {intel['lean_emoji']} {intel['lean'].lower()}  ·  "
+                        f"{reversal_emoji(intel['reversal'])} {intel['reversal']}  ·  "
+                        f"_{intel['avg_move']}_"
                     )
                 lines.append(base_line)
             if len(events) > 5:
-                lines.append(f"_+{len(events) - 5} more_")
-            label = week_labels[idx] if idx < len(week_labels) else f"📅  Week of {ws.strftime('%b %-d')}"
-            fields.append({
-                "name": f"{label}  ({ws.strftime('%b %-d')})",
+                lines.append(f"_+{len(events) - 5} more this week_")
+            cal_fields.append({
+                "name": f"{week_emojis[idx]}  {week_labels[idx]}  ·  {ws.strftime('%b %-d')}",
                 "value": "\n".join(lines),
                 "inline": False,
             })
 
-        # ---- Claude macro read (with fallback) ----
+        embeds.append({
+            "title": f"🗓️  30-DAY HORIZON",
+            "color": 0x4A90E2,
+            "fields": cal_fields,
+        })
+
+        # ── EMBED 4: AI macro read + high-conviction trade idea ──
         try:
             macro_text = await asyncio.wait_for(macro_task, timeout=20.0)
         except (asyncio.TimeoutError, Exception) as e:
             logger.warning(f"[SpreadWorks] Claude synthesis timeout/error: {e}")
             macro_text = None
 
+        ai_fields = []
         if macro_text:
-            fields.append({
-                "name": "🧠  MACRO READ  (AI)",
+            ai_fields.append({
+                "name": "🧠  MACRO READ  ·  AI-synthesized",
                 "value": macro_text,
                 "inline": False,
             })
@@ -1043,86 +1153,64 @@ def _start_scheduler(app: FastAPI):
                 "Long DTE spreads through HIGH events get vol-crushed on release. "
                 "Either close before the print or size for a 2x expected move."
             )
-            fields.append({
+            ai_fields.append({
                 "name": "💡  POSITIONING READ",
                 "value": " ".join(fb),
                 "inline": False,
             })
 
-        # ---- High-conviction trade idea (derived from next catalyst's playbook) ----
         if next_high:
             intel = get_event_intel(next_high["name"])
             if intel:
-                trade_idea = (
-                    f"**Setup:** {next_high['name']} on {next_high['datetime'].strftime('%a %-m/%-d')}\n"
-                    f"**Bias:** {intel['lean']}\n"
-                    f"**Trade:** {intel['playbook']}\n"
-                    f"**Risk:** {intel['avg_move']} — size accordingly."
-                )
-                fields.append({
+                ai_fields.append({
                     "name": "🔥  HIGH-CONVICTION SETUP",
-                    "value": trade_idea,
+                    "value": (
+                        f"**Setup:** {next_high['name']} on `{next_high['datetime'].strftime('%a %-m/%-d')}`\n"
+                        f"**Bias:** {intel['lean']}\n"
+                        f"**Risk:** {intel['avg_move']} — size accordingly\n"
+                        f"```\n{intel['playbook']}\n```"
+                    ),
                     "inline": False,
                 })
 
-        # ---- Engagement: poll prompt ----
-        if next_high:
-            poll_value = (
-                f"React to this message with your lean into **{next_high['name']}**:\n"
-                f"📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
-            )
-        else:
-            poll_value = (
-                "React to this message with your lean for tomorrow:\n"
-                "📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
-            )
-        fields.append({
-            "name": "🗳️  ROOM POLL",
-            "value": poll_value,
-            "inline": False,
+        embeds.append({
+            "title": f"🧭  THE READ",
+            "color": 0x9C27B0,  # purple
+            "fields": ai_fields,
         })
 
-        # ---- Engagement: rotating daily question ----
+        # ── EMBED 5: Engagement — poll + rotating daily question ──
         prompt_emoji, prompt_text = get_daily_prompt(now.timetuple().tm_yday)
-        fields.append({
+        engagement_fields = []
+        if next_high:
+            engagement_fields.append({
+                "name": "🗳️  TODAY'S POLL",
+                "value": (
+                    f"**React below with your lean into {next_high['name']}:**\n"
+                    f"```\n📈 bullish    📉 bearish    😐 neutral    🤷 not playing\n```"
+                ),
+                "inline": False,
+            })
+        engagement_fields.append({
             "name": f"{prompt_emoji}  TONIGHT'S QUESTION",
-            "value": f"{prompt_text}\n\n_Reply in this thread — best response gets pinned tomorrow._",
+            "value": (
+                f"> {prompt_text}\n\n"
+                f"_Reply in thread — best response gets pinned tomorrow._ 📌"
+            ),
             "inline": False,
         })
 
-        # ---- Color: blend day's move + danger score ----
-        danger_score = high_total + reversal_high_count
-        if spy_change_pct is not None and spy_change_pct >= 0.5:
-            color = 0x00E676  # green — bullish day
-        elif spy_change_pct is not None and spy_change_pct <= -0.5:
-            color = 0xFF1744  # red — bearish day
-        elif danger_score >= 6:
-            color = 0xFF6E40  # orange — heavy upcoming, flat tape
-        elif danger_score >= 3:
-            color = 0xFFD600  # yellow — moderate
-        else:
-            color = 0x448AFF  # blue — calm
+        embeds.append({
+            "title": f"💬  JOIN THE CONVO",
+            "color": 0xFFC107,  # gold
+            "fields": engagement_fields,
+        })
 
-        embed = {
-            "title": f"🌃  EVENING BRIEF  ·  {now.strftime('%a %b %-d')}",
-            "description": description,
-            "color": color,
-            "fields": fields,
-            "footer": {
-                "text": (
-                    f"SpreadWorks · Daily after-close brief · "
-                    f"{high_total} HIGH catalyst{'s' if high_total != 1 else ''} & "
-                    f"{reversal_high_count} reversal risk{'s' if reversal_high_count != 1 else ''} "
-                    "in the next 30 days"
-                )
-            },
-            "timestamp": now.isoformat(),
-        }
-        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        ok = await asyncio.to_thread(_send_webhook_sync, embeds)
         logger.info(
             f"[SpreadWorks] Evening brief {'sent' if ok else 'FAILED'} "
-            f"({high_total} HIGH, {reversal_high_count} reversal-risk, {len(upcoming)} events, "
-            f"macro={'AI' if macro_text else 'pattern'}, "
+            f"({len(embeds)} embeds, {high_total} HIGH, {reversal_high_count} reversal-risk, "
+            f"{len(upcoming)} events, macro={'AI' if macro_text else 'pattern'}, "
             f"snapshot={'live' if spy_price is not None else 'none'})"
         )
 
