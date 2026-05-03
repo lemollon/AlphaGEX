@@ -156,6 +156,129 @@ _EVENT_PATTERNS = [
             "stick to indices unless you want the IV crush trade."
         ),
     },
+    # ===== Big-tech earnings (FAAMG + TSLA + NVDA) — these single-name prints can move SPY =====
+    {
+        "match": "NVDA Earnings",
+        "lean": "Vol expansion · room holds breath",
+        "lean_emoji": "💥",
+        "reversal": "HIGH",
+        "avg_move": "NVDA ±8-10%, SPY ±0.5-1.5%",
+        "playbook": (
+            "The single biggest single-name SPY mover post-2023. Skip new SPY/SPX positions "
+            "the afternoon of the print. AI-capex commentary on the call is what actually "
+            "moves the tape, not the headline number."
+        ),
+    },
+    {
+        "match": "AAPL Earnings",
+        "lean": "Range-bound pre-print",
+        "lean_emoji": "↔️",
+        "reversal": "MEDIUM",
+        "avg_move": "AAPL ±4-6%, SPY ±0.3%",
+        "playbook": (
+            "iPhone units + China + services growth. Largest weight in QQQ/SPY by market cap, "
+            "so a >5% AAPL move drags index materially. Watch services margin trend."
+        ),
+    },
+    {
+        "match": "MSFT Earnings",
+        "lean": "Cautious pre-print",
+        "lean_emoji": "↔️",
+        "reversal": "MEDIUM",
+        "avg_move": "MSFT ±5-7%, SPY ±0.3%",
+        "playbook": (
+            "Azure growth rate is the swing factor. Decel below ~28% YoY = sell-off; reaccel = "
+            "rally. AI Copilot run-rate increasingly matters."
+        ),
+    },
+    {
+        "match": "GOOGL Earnings",
+        "lean": "Range-bound pre-print",
+        "lean_emoji": "↔️",
+        "reversal": "MEDIUM",
+        "avg_move": "GOOGL ±5-7%, SPY ±0.2%",
+        "playbook": (
+            "Search ad revenue + YouTube + cloud growth. AI competitive narrative drives "
+            "post-print direction more than the numbers themselves."
+        ),
+    },
+    {
+        "match": "META Earnings",
+        "lean": "Vol expansion",
+        "lean_emoji": "💥",
+        "reversal": "HIGH",
+        "avg_move": "META ±8-12%, SPY ±0.3%",
+        "playbook": (
+            "Reality Labs losses + capex guide are the two levers. Capex guide that comes in "
+            "above expectations = sell-off (dilutive); below = rally."
+        ),
+    },
+    {
+        "match": "AMZN Earnings",
+        "lean": "Cautious pre-print",
+        "lean_emoji": "↔️",
+        "reversal": "MEDIUM",
+        "avg_move": "AMZN ±5-8%, SPY ±0.3%",
+        "playbook": (
+            "AWS growth + retail operating margin. AWS deceleration triggers sharp sell-offs; "
+            "retail margin expansion fuels rallies."
+        ),
+    },
+    {
+        "match": "TSLA Earnings",
+        "lean": "Vol expansion",
+        "lean_emoji": "💥",
+        "reversal": "HIGH",
+        "avg_move": "TSLA ±10-15%, SPY ±0.2%",
+        "playbook": (
+            "Most volatile single-name on the megacap list. Q2 deliveries pre-announced — "
+            "focus shifts to gross margins + FSD/Robotaxi commentary."
+        ),
+    },
+    {
+        "match": "NFLX Earnings",
+        "lean": "Range-bound pre-print",
+        "lean_emoji": "↔️",
+        "reversal": "MEDIUM",
+        "avg_move": "NFLX ±6-10%, SPY ±0.1%",
+        "playbook": (
+            "First FAANG to report — sets sector tone. Subscriber net adds + ad-tier revenue "
+            "are the primary swing factors."
+        ),
+    },
+    {
+        "match": "JPM Earnings",
+        "lean": "Vol expansion",
+        "lean_emoji": "💥",
+        "reversal": "MEDIUM",
+        "avg_move": "JPM ±3-5%, SPY ±0.3%",
+        "playbook": (
+            "Kicks off bank earnings + sets the financials sector tone for the week. "
+            "NII guide + loan loss provisions drive the move. Watch IB fees recovery."
+        ),
+    },
+    {
+        "match": "GS Earnings",
+        "lean": "Light",
+        "lean_emoji": "→",
+        "reversal": "LOW",
+        "avg_move": "GS ±3-5%, SPY ±0.1%",
+        "playbook": (
+            "Trading + IB fees. Less broad market read than JPM, but tells you about "
+            "capital-markets activity health."
+        ),
+    },
+    {
+        "match": "WMT Earnings",
+        "lean": "Light",
+        "lean_emoji": "→",
+        "reversal": "LOW",
+        "avg_move": "WMT ±3-5%, SPY ±0.1%",
+        "playbook": (
+            "Best read on low-end / value-conscious consumer. Comp sales + traffic split "
+            "matters; trade-down from premium retailers shows up here first."
+        ),
+    },
 ]
 
 

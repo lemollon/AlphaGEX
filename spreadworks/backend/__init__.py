@@ -79,6 +79,7 @@ def _send_webhook_sync(embed: dict) -> bool:
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
 _last_posted = {}  # in-process fast-path: {message_key: timestamp}
+_evening_brief_fn = None  # set by _start_scheduler so routes can manual-trigger
 
 
 def _claim_post_slot_db(key: str, fire_date) -> bool:
@@ -750,9 +751,12 @@ def _start_scheduler(app: FastAPI):
                                 spy_change_pct: float | None = None) -> str | None:
         """Ask Claude for a ~3-line current-macro lean over the next 30 days.
 
-        Returns None on any failure (missing key, network, parse, etc.) so
-        the caller can fall back to pattern-only commentary. Designed to
-        run inside `asyncio.to_thread` since the Anthropic SDK is sync.
+        Uses Claude's web_search tool so the synthesis reflects TODAY's news
+        flow — recent CPI/FOMC commentary, Fed-speak, earnings reactions —
+        not just the model's training knowledge. Returns None on any
+        failure (missing key, network, parse, etc.) so the caller falls
+        back to pattern-only commentary. Designed to run inside
+        `asyncio.to_thread` since the Anthropic SDK is sync.
         """
         api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
@@ -781,47 +785,87 @@ def _start_scheduler(app: FastAPI):
             prompt = (
                 "You are a macro-aware options strategist writing a post-close evening market brief.\n\n"
                 f"Today's close: {ctx or '(no live snapshot)'}\n\n"
-                f"Upcoming scheduled US macro events (next ~30 days):\n"
+                f"Upcoming scheduled US macro + earnings events (next ~30 days):\n"
                 + "\n".join(event_lines)
-                + "\n\nWrite a 3-sentence synthesis covering:\n"
-                "1. The dominant macro narrative going into this window (rates, inflation, growth, or risk-on/off)\n"
-                "2. Which ONE event is most likely to spark a TREND REVERSAL and why\n"
+                + "\n\n**Use web_search to find TODAY's market-moving news**: latest "
+                "Fed-speak, recent inflation prints, earnings reactions in the last 24-48h, "
+                "and any breaking macro story. Weave that into your synthesis — don't "
+                "regurgitate what's already in your training data.\n\n"
+                "Then write a 3-sentence synthesis covering:\n"
+                "1. The dominant macro narrative RIGHT NOW (cite the news you found)\n"
+                "2. Which ONE upcoming event is most likely to spark a TREND REVERSAL and why\n"
                 "3. The cleanest premium-selling window in the next 30 days\n\n"
-                "Tone: direct, professional, slightly punchy — this is for active traders who already know the basics. "
-                "Max 110 words total. Do NOT use bullet points or numbered lists — write 3 flowing sentences."
+                "Tone: direct, professional, slightly punchy — for active traders who "
+                "already know the basics. Max 130 words total. Do NOT use bullet points "
+                "or numbered lists — write 3 flowing sentences. Do NOT include URLs or "
+                "citation markers in the final output (the search is for context only)."
             )
-            msg = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=350,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = (msg.content[0].text or "").strip()
+            # Web search keeps the synthesis grounded in TODAY's news flow.
+            # web_search_20260209 has dynamic filtering built in (no separate
+            # code_execution tool needed). Supported on Sonnet 4.6.
+            tools = [{"type": "web_search_20260209", "name": "web_search"}]
+            messages = [{"role": "user", "content": prompt}]
+
+            # Server-side tools may pause_turn if the loop hits its iteration
+            # limit — re-send to resume. Cap at 3 continuations.
+            text = ""
+            for _ in range(3):
+                msg = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=1500,  # web search blocks consume tokens
+                    tools=tools,
+                    messages=messages,
+                )
+                # Collect any final text from this turn
+                for block in msg.content:
+                    if block.type == "text" and block.text:
+                        text = block.text.strip()
+                if msg.stop_reason == "pause_turn":
+                    messages = [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": msg.content},
+                    ]
+                    continue
+                break
             return text or None
         except Exception as e:
             logger.warning(f"[SpreadWorks] Claude macro synthesis failed: {e}")
             return None
 
-    async def _fire_evening_brief():
+    async def _fire_evening_brief(force: bool = False):
         """3:30 PM CT weekdays — daily after-close market brief.
 
         Combines today's close snapshot with the rolling 30-day forward
         outlook, per-event historical patterns, AI-synthesized macro
         context, a high-conviction trade idea, and a daily engagement
         prompt to drive room conversation.
+
+        ``force=True`` bypasses the trading-day and dedup gates — used
+        by the manual-trigger route so a one-off preview can fire on
+        a weekend or right after a scheduled brief.
         """
-        if not content_loaded or not _is_trading_day():
+        if not content_loaded:
             return
-        if not _dedup_ok("evening_brief"):
-            return
+        if not force:
+            if not _is_trading_day():
+                return
+            if not _dedup_ok("evening_brief"):
+                return
 
         import asyncio
         from datetime import timedelta
         from .event_intel import get_event_intel, reversal_emoji
         from .engagement_prompts import get_daily_prompt
+        from .earnings_calendar import get_upcoming_earnings
 
         now = get_central_now()
         upcoming = get_upcoming_events(days=30, count=40)
         upcoming = [e for e in upcoming if e.get("impact") in ("HIGH", "MEDIUM")]
+
+        # Merge in big-tech + bank earnings — they move SPY just as hard as
+        # macro prints. Sort the combined list chronologically.
+        upcoming.extend(get_upcoming_earnings(from_date=now, days=30))
+        upcoming.sort(key=lambda e: e["datetime"])
 
         # Bucket events by week-of (Monday-anchored)
         def _week_start(d):
@@ -1263,6 +1307,10 @@ def _start_scheduler(app: FastAPI):
     # (15:05) so the day's stats are settled before the brief lands.
     scheduler.add_job(_fire_evening_brief, "cron", hour=15, minute=30,
                       day_of_week="mon-fri", id="discord_evening_brief", replace_existing=True)
+
+    # Expose for manual triggering via the API route
+    global _evening_brief_fn
+    _evening_brief_fn = _fire_evening_brief
 
     scheduler.start()
     _active_scheduler = scheduler
