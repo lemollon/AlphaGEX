@@ -78,17 +78,90 @@ def _send_webhook_sync(embed: dict) -> bool:
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
-_last_posted = {}  # dedup guard: {message_key: timestamp} — prevents duplicate posts
+_last_posted = {}  # in-process fast-path: {message_key: timestamp}
+_evening_brief_fn = None  # set by _start_scheduler so routes can manual-trigger
 
 
-def _dedup_ok(key: str, cooldown_seconds: int = 300) -> bool:
-    """Return True if this message type hasn't been posted in the last N seconds."""
+def _claim_post_slot_db(key: str, fire_date) -> bool:
+    """Atomically claim a (key, fire_date) slot in the DB.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING so only ONE process — even across
+    multiple uvicorn workers, multiple Render replicas, or overlapping
+    deploys — successfully claims the slot. Returns True iff this caller
+    inserted the row (i.e. is the unique poster for that day).
+
+    Falls back to True if the DB is unavailable, so a misconfigured env
+    doesn't silently kill all scheduled messages.
+    """
+    try:
+        from .db import SessionLocal
+        from sqlalchemy import text as sa_text
+    except Exception:
+        return True
+    if SessionLocal is None:
+        return True
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            sa_text(
+                "INSERT INTO discord_post_log (message_key, fire_date) "
+                "VALUES (:k, :d) ON CONFLICT DO NOTHING"
+            ),
+            {"k": key, "d": fire_date},
+        )
+        db.commit()
+        # rowcount is 1 if we inserted, 0 if another process already had the slot
+        claimed = (result.rowcount or 0) > 0
+        if not claimed:
+            logger.warning(
+                f"[SpreadWorks] Dedup blocked (DB): another process already posted {key} for {fire_date}"
+            )
+        return claimed
+    except Exception as e:
+        # Don't crash the scheduler if the table is missing on first deploy
+        logger.error(f"[SpreadWorks] Dedup DB claim failed for {key}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return True
+    finally:
+        db.close()
+
+
+def _dedup_ok(key: str, cooldown_seconds: int = 300, fire_date=None) -> bool:
+    """Return True if this message hasn't been posted recently AND we win
+    the cross-process race for today's slot.
+
+    Two-layer guard:
+      1. In-memory cooldown — fast, prevents the same process from posting
+         twice within `cooldown_seconds` (e.g. APScheduler misfire bursts).
+      2. DB unique slot — survives restarts, multiple workers, and
+         multi-replica deploys. THIS is what stops the duplicate-message
+         bug we saw on the Sat 10:00 weekend playbook.
+    """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     last = _last_posted.get(key)
     if last and (now - last).total_seconds() < cooldown_seconds:
-        logger.warning(f"[SpreadWorks] Dedup blocked: {key} was posted {(now - last).total_seconds():.0f}s ago")
+        logger.warning(
+            f"[SpreadWorks] Dedup blocked (mem): {key} posted "
+            f"{(now - last).total_seconds():.0f}s ago"
+        )
         return False
+
+    # Daily DB slot — default to today's CT date if caller didn't pass one
+    if fire_date is None:
+        try:
+            from .economic_events import get_central_now
+            fire_date = get_central_now().date()
+        except Exception:
+            from zoneinfo import ZoneInfo
+            fire_date = datetime.now(ZoneInfo("America/Chicago")).date()
+
+    if not _claim_post_slot_db(key, fire_date):
+        return False
+
     _last_posted[key] = now
     return True
 
@@ -671,6 +744,389 @@ def _start_scheduler(app: FastAPI):
         logger.info(f"[SpreadWorks] Weekend playbook {'sent' if ok else 'FAILED'}")
 
     # ------------------------------------------------------------------
+    # NEW: Evening Market Brief — every weekday 3:30 PM CT (after close)
+    # ------------------------------------------------------------------
+    def _claude_macro_synthesis(events: list, vix: float | None = None,
+                                spy_price: float | None = None,
+                                spy_change_pct: float | None = None) -> str | None:
+        """Ask Claude for a ~3-line current-macro lean over the next 30 days.
+
+        Uses Claude's web_search tool so the synthesis reflects TODAY's news
+        flow — recent CPI/FOMC commentary, Fed-speak, earnings reactions —
+        not just the model's training knowledge. Returns None on any
+        failure (missing key, network, parse, etc.) so the caller falls
+        back to pattern-only commentary. Designed to run inside
+        `asyncio.to_thread` since the Anthropic SDK is sync.
+        """
+        api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            return None
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+
+            # Build a compact event list — Claude doesn't need the descriptions
+            event_lines = []
+            for e in events[:15]:  # cap input size
+                event_lines.append(
+                    f"- {e['datetime'].strftime('%a %b %-d')}: "
+                    f"{e['name']} ({e['impact']})"
+                )
+            ctx = ""
+            if spy_price is not None:
+                ctx += f"SPY closed at ${spy_price:.2f}"
+                if spy_change_pct is not None:
+                    sign = "+" if spy_change_pct >= 0 else ""
+                    ctx += f" ({sign}{spy_change_pct:.2f}% on the day)"
+                ctx += ". "
+            if vix is not None:
+                ctx += f"VIX: {vix:.1f}. "
+
+            prompt = (
+                "You are a macro-aware options strategist writing a post-close evening market brief.\n\n"
+                f"Today's close: {ctx or '(no live snapshot)'}\n\n"
+                f"Upcoming scheduled US macro + earnings events (next ~30 days):\n"
+                + "\n".join(event_lines)
+                + "\n\n**Use web_search to find TODAY's market-moving news**: latest "
+                "Fed-speak, recent inflation prints, earnings reactions in the last 24-48h, "
+                "and any breaking macro story. Weave that into your synthesis — don't "
+                "regurgitate what's already in your training data.\n\n"
+                "Then write a 3-sentence synthesis covering:\n"
+                "1. The dominant macro narrative RIGHT NOW (cite the news you found)\n"
+                "2. Which ONE upcoming event is most likely to spark a TREND REVERSAL and why\n"
+                "3. The cleanest premium-selling window in the next 30 days\n\n"
+                "Tone: direct, professional, slightly punchy — for active traders who "
+                "already know the basics. Max 130 words total. Do NOT use bullet points "
+                "or numbered lists — write 3 flowing sentences. Do NOT include URLs or "
+                "citation markers in the final output (the search is for context only)."
+            )
+            # Web search keeps the synthesis grounded in TODAY's news flow.
+            # web_search_20260209 has dynamic filtering built in (no separate
+            # code_execution tool needed). Supported on Sonnet 4.6.
+            tools = [{"type": "web_search_20260209", "name": "web_search"}]
+            messages = [{"role": "user", "content": prompt}]
+
+            # Server-side tools may pause_turn if the loop hits its iteration
+            # limit — re-send to resume. Cap at 3 continuations.
+            text = ""
+            for _ in range(3):
+                msg = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=1500,  # web search blocks consume tokens
+                    tools=tools,
+                    messages=messages,
+                )
+                # Collect any final text from this turn
+                for block in msg.content:
+                    if block.type == "text" and block.text:
+                        text = block.text.strip()
+                if msg.stop_reason == "pause_turn":
+                    messages = [
+                        {"role": "user", "content": prompt},
+                        {"role": "assistant", "content": msg.content},
+                    ]
+                    continue
+                break
+            return text or None
+        except Exception as e:
+            logger.warning(f"[SpreadWorks] Claude macro synthesis failed: {e}")
+            return None
+
+    async def _fire_evening_brief(force: bool = False):
+        """3:30 PM CT weekdays — daily after-close market brief.
+
+        Combines today's close snapshot with the rolling 30-day forward
+        outlook, per-event historical patterns, AI-synthesized macro
+        context, a high-conviction trade idea, and a daily engagement
+        prompt to drive room conversation.
+
+        ``force=True`` bypasses the trading-day and dedup gates — used
+        by the manual-trigger route so a one-off preview can fire on
+        a weekend or right after a scheduled brief.
+        """
+        if not content_loaded:
+            return
+        if not force:
+            if not _is_trading_day():
+                return
+            if not _dedup_ok("evening_brief"):
+                return
+
+        import asyncio
+        from datetime import timedelta
+        from .event_intel import get_event_intel, reversal_emoji
+        from .engagement_prompts import get_daily_prompt
+        from .earnings_calendar import get_upcoming_earnings
+
+        now = get_central_now()
+        upcoming = get_upcoming_events(days=30, count=40)
+        upcoming = [e for e in upcoming if e.get("impact") in ("HIGH", "MEDIUM")]
+
+        # Merge in big-tech + bank earnings — they move SPY just as hard as
+        # macro prints. Sort the combined list chronologically.
+        upcoming.extend(get_upcoming_earnings(from_date=now, days=30))
+        upcoming.sort(key=lambda e: e["datetime"])
+
+        # Bucket events by week-of (Monday-anchored)
+        def _week_start(d):
+            return (d - timedelta(days=d.weekday())).date()
+
+        buckets = {}
+        high_total = 0
+        reversal_high_count = 0
+        for event in upcoming:
+            ws = _week_start(event["datetime"])
+            buckets.setdefault(ws, []).append(event)
+            if event.get("impact") == "HIGH":
+                high_total += 1
+            intel = get_event_intel(event["name"])
+            if intel and intel["reversal"] == "HIGH":
+                reversal_high_count += 1
+
+        next_high = next((e for e in upcoming if e.get("impact") == "HIGH"), None)
+
+        # ---- Live market snapshot (best-effort) ----
+        spy_price = None
+        spy_open = None
+        spy_change_pct = None
+        spy_high = None
+        spy_low = None
+        vix = None
+        gamma_regime = None
+        flip_point = None
+        try:
+            base = os.getenv("SPREADWORKS_INTERNAL_URL", "http://127.0.0.1:8000")
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                # GEX snapshot
+                resp = await client.get(f"{base}/api/spreadworks/gex", params={"symbol": "SPY"})
+                if resp.status_code == 200:
+                    g = resp.json()
+                    spy_price = g.get("spot_price")
+                    vix = g.get("vix")
+                    gamma_regime = g.get("gamma_regime")
+                    flip_point = g.get("flip_point")
+                # Today's candles for open/high/low/close move
+                resp = await client.get(
+                    f"{base}/api/spreadworks/candles",
+                    params={"symbol": "SPY", "interval": "15min"},
+                )
+                if resp.status_code == 200:
+                    body = resp.json()
+                    candles = body.get("candles") or []
+                    today = now.date()
+                    today_candles = []
+                    for c in candles:
+                        ts = c.get("date") or c.get("time") or c.get("timestamp")
+                        if ts and str(ts).startswith(str(today)):
+                            today_candles.append(c)
+                    if today_candles:
+                        spy_open = today_candles[0].get("open")
+                        closes = [c.get("close") for c in today_candles if c.get("close") is not None]
+                        highs = [c.get("high") for c in today_candles if c.get("high") is not None]
+                        lows = [c.get("low") for c in today_candles if c.get("low") is not None]
+                        if not spy_price and closes:
+                            spy_price = closes[-1]
+                        if highs:
+                            spy_high = max(highs)
+                        if lows:
+                            spy_low = min(lows)
+                        if spy_open and spy_price:
+                            spy_change_pct = ((spy_price - spy_open) / spy_open) * 100.0
+        except Exception as e:
+            logger.warning(f"[SpreadWorks] Evening brief snapshot fetch failed: {e}")
+
+        # Kick off Claude synthesis in parallel
+        macro_task = asyncio.create_task(
+            asyncio.to_thread(
+                _claude_macro_synthesis, upcoming, vix, spy_price, spy_change_pct
+            )
+        )
+
+        DIVIDER = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+        # ---- Description: today's close snapshot ----
+        snapshot_lines = []
+        if spy_price is not None:
+            move_str = ""
+            if spy_change_pct is not None:
+                arrow = "▲" if spy_change_pct >= 0 else "▼"
+                move_str = f" {arrow} **{spy_change_pct:+.2f}%**"
+            snapshot_lines.append(f"**SPY** ${spy_price:.2f}{move_str}")
+        if spy_high is not None and spy_low is not None:
+            snapshot_lines.append(f"Range: ${spy_low:.2f} → ${spy_high:.2f}")
+        if vix is not None:
+            vix_label = "calm" if vix < 15 else "normal" if vix < 22 else "elevated" if vix < 28 else "high"
+            snapshot_lines.append(f"**VIX** {vix:.1f} _({vix_label})_")
+        if gamma_regime:
+            regime_emoji = "🟢" if gamma_regime == "POSITIVE" else "🔴" if gamma_regime == "NEGATIVE" else "🟡"
+            snapshot_lines.append(f"**Gamma** {regime_emoji} {gamma_regime}")
+        if flip_point is not None:
+            snapshot_lines.append(f"**Flip** ${flip_point:.0f}")
+
+        description = " · ".join(snapshot_lines) if snapshot_lines else "_(market snapshot unavailable)_"
+
+        fields = []
+
+        # ---- Headline catalyst ----
+        if next_high:
+            countdown = format_countdown(next_high["datetime"])
+            intel = get_event_intel(next_high["name"])
+            catalyst_value = (
+                f"**{next_high['name']}**\n"
+                f"📆 {next_high['datetime'].strftime('%A, %b %-d')} · {format_event_time(next_high['datetime'])}\n"
+                f"⏱️ {countdown}"
+            )
+            if intel:
+                catalyst_value += (
+                    f"\n\n"
+                    f"{intel['lean_emoji']} **Lean:** {intel['lean']}\n"
+                    f"{reversal_emoji(intel['reversal'])} **Reversal risk:** {intel['reversal']}\n"
+                    f"📊 **Historical:** {intel['avg_move']}\n"
+                    f"🎲 **Playbook:** {intel['playbook']}"
+                )
+            fields.append({
+                "name": f"🎯  NEXT MAJOR CATALYST  {DIVIDER[:20]}",
+                "value": catalyst_value,
+                "inline": False,
+            })
+
+        # ---- Weekly buckets ----
+        sorted_weeks = sorted(buckets.keys())[:4]
+        week_labels = ["📅  THIS WEEK", "📅  NEXT WEEK", "📅  WEEK 3", "📅  WEEK 4"]
+        for idx, ws in enumerate(sorted_weeks):
+            events = buckets[ws]
+            lines = []
+            for e in events[:5]:
+                emoji = "🔴" if e["impact"] == "HIGH" else "🟡"
+                day = e["datetime"].strftime("%a %-m/%-d")
+                t = format_event_time(e["datetime"])
+                base_line = f"{emoji} `{day}` {t} — **{e['name']}**"
+                intel = get_event_intel(e["name"])
+                if intel:
+                    base_line += (
+                        f"\n     ↳ {intel['lean_emoji']} {intel['lean'].lower()} "
+                        f"· {reversal_emoji(intel['reversal'])} {intel['reversal']} "
+                        f"· _{intel['avg_move']}_"
+                    )
+                lines.append(base_line)
+            if len(events) > 5:
+                lines.append(f"_+{len(events) - 5} more_")
+            label = week_labels[idx] if idx < len(week_labels) else f"📅  Week of {ws.strftime('%b %-d')}"
+            fields.append({
+                "name": f"{label}  ({ws.strftime('%b %-d')})",
+                "value": "\n".join(lines),
+                "inline": False,
+            })
+
+        # ---- Claude macro read (with fallback) ----
+        try:
+            macro_text = await asyncio.wait_for(macro_task, timeout=20.0)
+        except (asyncio.TimeoutError, Exception) as e:
+            logger.warning(f"[SpreadWorks] Claude synthesis timeout/error: {e}")
+            macro_text = None
+
+        if macro_text:
+            fields.append({
+                "name": "🧠  MACRO READ  (AI)",
+                "value": macro_text,
+                "inline": False,
+            })
+        else:
+            fb = []
+            if reversal_high_count >= 3:
+                fb.append("Heavy reversal-risk window — multiple HIGH-impact catalysts can flip the prevailing trend.")
+            elif reversal_high_count >= 1:
+                fb.append("Watch the HIGH-reversal catalyst above — it sets the directional tape for 1-2 weeks after.")
+            else:
+                fb.append("Low reversal-risk month — clean theta-selling window, manage delta normally.")
+            fb.append(
+                "Long DTE spreads through HIGH events get vol-crushed on release. "
+                "Either close before the print or size for a 2x expected move."
+            )
+            fields.append({
+                "name": "💡  POSITIONING READ",
+                "value": " ".join(fb),
+                "inline": False,
+            })
+
+        # ---- High-conviction trade idea (derived from next catalyst's playbook) ----
+        if next_high:
+            intel = get_event_intel(next_high["name"])
+            if intel:
+                trade_idea = (
+                    f"**Setup:** {next_high['name']} on {next_high['datetime'].strftime('%a %-m/%-d')}\n"
+                    f"**Bias:** {intel['lean']}\n"
+                    f"**Trade:** {intel['playbook']}\n"
+                    f"**Risk:** {intel['avg_move']} — size accordingly."
+                )
+                fields.append({
+                    "name": "🔥  HIGH-CONVICTION SETUP",
+                    "value": trade_idea,
+                    "inline": False,
+                })
+
+        # ---- Engagement: poll prompt ----
+        if next_high:
+            poll_value = (
+                f"React to this message with your lean into **{next_high['name']}**:\n"
+                f"📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
+            )
+        else:
+            poll_value = (
+                "React to this message with your lean for tomorrow:\n"
+                "📈 bullish · 📉 bearish · 😐 neutral · 🤷 not playing"
+            )
+        fields.append({
+            "name": "🗳️  ROOM POLL",
+            "value": poll_value,
+            "inline": False,
+        })
+
+        # ---- Engagement: rotating daily question ----
+        prompt_emoji, prompt_text = get_daily_prompt(now.timetuple().tm_yday)
+        fields.append({
+            "name": f"{prompt_emoji}  TONIGHT'S QUESTION",
+            "value": f"{prompt_text}\n\n_Reply in this thread — best response gets pinned tomorrow._",
+            "inline": False,
+        })
+
+        # ---- Color: blend day's move + danger score ----
+        danger_score = high_total + reversal_high_count
+        if spy_change_pct is not None and spy_change_pct >= 0.5:
+            color = 0x00E676  # green — bullish day
+        elif spy_change_pct is not None and spy_change_pct <= -0.5:
+            color = 0xFF1744  # red — bearish day
+        elif danger_score >= 6:
+            color = 0xFF6E40  # orange — heavy upcoming, flat tape
+        elif danger_score >= 3:
+            color = 0xFFD600  # yellow — moderate
+        else:
+            color = 0x448AFF  # blue — calm
+
+        embed = {
+            "title": f"🌃  EVENING BRIEF  ·  {now.strftime('%a %b %-d')}",
+            "description": description,
+            "color": color,
+            "fields": fields,
+            "footer": {
+                "text": (
+                    f"SpreadWorks · Daily after-close brief · "
+                    f"{high_total} HIGH catalyst{'s' if high_total != 1 else ''} & "
+                    f"{reversal_high_count} reversal risk{'s' if reversal_high_count != 1 else ''} "
+                    "in the next 30 days"
+                )
+            },
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(
+            f"[SpreadWorks] Evening brief {'sent' if ok else 'FAILED'} "
+            f"({high_total} HIGH, {reversal_high_count} reversal-risk, {len(upcoming)} events, "
+            f"macro={'AI' if macro_text else 'pattern'}, "
+            f"snapshot={'live' if spy_price is not None else 'none'})"
+        )
+
+    # ------------------------------------------------------------------
     # NEW: GEX Shift Alert — every 5 min during market hours
     # ------------------------------------------------------------------
     _last_flip_point = {"SPY": None}  # in-memory state for comparison
@@ -844,15 +1300,28 @@ def _start_scheduler(app: FastAPI):
     scheduler.add_job(_fire_weekend_playbook, "cron", hour=10, minute=0,
                       day_of_week="sat", id="discord_weekend_playbook", replace_existing=True)
 
+    # --- Daily after-close evening brief ---
+    # 15:30 CT weekdays — combined day-recap + 30-day forward outlook with
+    # AI macro read, high-conviction setup, and engagement prompts.
+    # Fires after market_close_msg (15:00), eod (15:00:30), and scoreboard
+    # (15:05) so the day's stats are settled before the brief lands.
+    scheduler.add_job(_fire_evening_brief, "cron", hour=15, minute=30,
+                      day_of_week="mon-fri", id="discord_evening_brief", replace_existing=True)
+
+    # Expose for manual triggering via the API route
+    global _evening_brief_fn
+    _evening_brief_fn = _fire_evening_brief
+
     scheduler.start()
     _active_scheduler = scheduler
     logger.info(
-        "[SpreadWorks] APScheduler started — 11 jobs: "
+        "[SpreadWorks] APScheduler started — 12 jobs: "
         "market_open_msg (8:00), open_positions (8:00:30), "
         "economic (8:05), gex_briefing (8:30), "
         "midday_pulse (12:00), gex_shift (*/5 min), "
         "market_close_msg (15:00), eod (15:00:30), "
-        "scoreboard (15:05), weekend_playbook (Sat 10:00) CT"
+        "scoreboard (15:05), evening_brief (15:30), "
+        "weekend_playbook (Sat 10:00) CT"
     )
     return scheduler
 

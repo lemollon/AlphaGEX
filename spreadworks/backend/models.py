@@ -84,6 +84,19 @@ class GexSnapshot(Base):
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class DiscordPostLog(Base):
+    """One row per (message_key, fire_date). Cross-process / cross-replica
+    dedup for scheduled Discord posts — guarantees only one worker actually
+    sends a given daily message no matter how many uvicorn workers / Render
+    instances are running.
+    """
+    __tablename__ = "discord_post_log"
+
+    message_key = Column(String(64), primary_key=True)
+    fire_date = Column(Date, primary_key=True)
+    posted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class Position(Base):
     __tablename__ = "positions"
 

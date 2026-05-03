@@ -2529,6 +2529,31 @@ async def discord_test():
                 "detail": str(e)}
 
 
+@router.post("/discord/evening-brief")
+async def discord_evening_brief():
+    """Manually trigger the daily after-close evening brief once.
+
+    Bypasses the trading-day and dedup gates so it can be used to preview
+    the post at any time (weekends, right after the scheduled brief, etc).
+    Each call posts a fresh embed to DISCORD_WEBHOOK_URL.
+    """
+    if not _discord_url():
+        raise HTTPException(503, "DISCORD_WEBHOOK_URL not configured")
+    from . import _evening_brief_fn
+    if _evening_brief_fn is None:
+        raise HTTPException(
+            503,
+            "Evening brief scheduler hasn't started yet — wait for "
+            "the FastAPI lifespan to finish initializing.",
+        )
+    try:
+        await _evening_brief_fn(force=True)
+        return {"success": True, "detail": "Evening brief posted to Discord"}
+    except Exception as e:
+        logger.error(f"[evening-brief] manual trigger failed: {e}")
+        raise HTTPException(500, f"Evening brief failed: {e}")
+
+
 @router.post("/discord/test-daily")
 async def discord_test_daily():
     """Fire all 3 rich daily posts (market open, economic, market close) immediately for testing."""
