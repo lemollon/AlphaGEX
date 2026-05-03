@@ -25,7 +25,11 @@ import {
   Target,
   ArrowUpDown,
   Settings,
+  LineChart,
+  Brain,
 } from 'lucide-react'
+import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
+import SignalBriefCard from '@/components/trader/SignalBriefCard'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 
@@ -99,6 +103,7 @@ type ActiveCoinId = typeof ACTIVE_COINS[number]
 
 const SECTION_TABS = [
   { id: 'overview' as const,    label: 'Overview',      icon: Layers },
+  { id: 'analytics' as const,   label: 'Analytics + AI',icon: Brain },
   { id: 'margin' as const,      label: 'Margin Risk',   icon: Shield },
   { id: 'positions' as const,   label: 'Positions',     icon: Wallet },
   { id: 'performance' as const, label: 'Performance',   icon: BarChart3 },
@@ -401,6 +406,7 @@ export default function PerpetualsCryptoPage() {
               {/* Tab Content */}
               <div className="space-y-5">
                 {activeTab === 'overview' && <OverviewTab coin={selectedCoin} />}
+                {activeTab === 'analytics' && <AnalyticsTab coin={selectedCoin} />}
                 {activeTab === 'margin' && <MarginRiskTab coin={selectedCoin} />}
                 {activeTab === 'positions' && <PositionsTab coin={selectedCoin} />}
                 {activeTab === 'performance' && <PerformanceTab coin={selectedCoin} />}
@@ -772,6 +778,80 @@ function MarketSnapshotPanel({ data, coin }: { data: any; coin: CoinId }) {
     </SectionCard>
   )
 }
+
+// ==============================================================================
+// ANALYTICS + AI TAB — charts and Claude commentary per coin
+// ==============================================================================
+
+function usePerpChartData(coin: ActiveCoinId) {
+  const prefix = COIN_META[coin].apiPrefix
+  return useSWR(`${prefix}/chart-data`, fetcher, { refreshInterval: 5 * 60_000 })
+}
+
+function usePerpBrief(coin: ActiveCoinId) {
+  const prefix = COIN_META[coin].apiPrefix
+  return useSWR(`${prefix}/brief`, fetcher, { refreshInterval: 5 * 60_000 })
+}
+
+function CoinAnalytics({ coin }: { coin: ActiveCoinId }) {
+  const meta = COIN_META[coin]
+  const { data: chartData, isLoading: chartLoading } = usePerpChartData(coin)
+  const { data: briefData, isLoading: briefLoading } = usePerpBrief(coin)
+
+  const chart = (chartData as any)?.data
+  const brief = (briefData as any)?.data
+  const briefReason = (briefData as any)?.reason
+
+  return (
+    <div className={`rounded-xl border ${meta.borderCard} ${meta.bgCard} p-4 space-y-4`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-1 rounded text-sm font-bold ${meta.bgActive}/30 ${meta.textActive}`}>
+            {meta.symbol}
+          </span>
+          <span className="text-xs text-gray-500">
+            {chart ? `${chart.lookback_days}d / ${chart.interval}` : '...'}
+          </span>
+        </div>
+        {chart?.fetched_at && (
+          <span className="text-xs text-gray-500">
+            data: {new Date(chart.fetched_at).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+      <SignalBriefCard data={brief} loading={briefLoading} reason={briefReason} />
+      <PerpMarketCharts data={chart || null} loading={chartLoading} />
+    </div>
+  )
+}
+
+function AnalyticsTab({ coin }: { coin: CoinId }) {
+  const coinsToShow: ActiveCoinId[] = coin === 'ALL'
+    ? (ACTIVE_COINS as readonly ActiveCoinId[]).slice() as ActiveCoinId[]
+    : [coin as ActiveCoinId]
+
+  return (
+    <div className="space-y-5">
+      <div className="bg-gradient-to-br from-purple-900/30 to-blue-900/30 border border-purple-700/40 rounded-lg p-4">
+        <div className="flex items-start gap-3">
+          <Brain className="w-5 h-5 text-purple-300 mt-0.5" />
+          <div className="text-sm text-gray-200">
+            <div className="text-purple-200 font-semibold mb-1">Per-Coin Analytics + Claude Commentary</div>
+            <p className="text-gray-300">
+              30-day h4 history of <span className="text-blue-300">price</span>, <span className="text-green-300">L/S ratio</span>,{' '}
+              <span className="text-purple-300">open interest</span>, and <span className="text-orange-300">funding rate</span> from CoinGlass.
+              Claude reads the live market data and writes a plain-English brief on what the bot is seeing and what it likely means for the next move.
+              Switch coins above to drill into one, or pick "ALL" to see all 5 stacked.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {coinsToShow.map(c => <CoinAnalytics key={c} coin={c} />)}
+    </div>
+  )
+}
+
 
 // ==============================================================================
 // MARGIN RISK TAB
