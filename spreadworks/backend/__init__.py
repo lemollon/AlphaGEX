@@ -78,17 +78,89 @@ def _send_webhook_sync(embed: dict) -> bool:
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
-_last_posted = {}  # dedup guard: {message_key: timestamp} — prevents duplicate posts
+_last_posted = {}  # in-process fast-path: {message_key: timestamp}
 
 
-def _dedup_ok(key: str, cooldown_seconds: int = 300) -> bool:
-    """Return True if this message type hasn't been posted in the last N seconds."""
+def _claim_post_slot_db(key: str, fire_date) -> bool:
+    """Atomically claim a (key, fire_date) slot in the DB.
+
+    Uses INSERT ... ON CONFLICT DO NOTHING so only ONE process — even across
+    multiple uvicorn workers, multiple Render replicas, or overlapping
+    deploys — successfully claims the slot. Returns True iff this caller
+    inserted the row (i.e. is the unique poster for that day).
+
+    Falls back to True if the DB is unavailable, so a misconfigured env
+    doesn't silently kill all scheduled messages.
+    """
+    try:
+        from .db import SessionLocal
+        from sqlalchemy import text as sa_text
+    except Exception:
+        return True
+    if SessionLocal is None:
+        return True
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            sa_text(
+                "INSERT INTO discord_post_log (message_key, fire_date) "
+                "VALUES (:k, :d) ON CONFLICT DO NOTHING"
+            ),
+            {"k": key, "d": fire_date},
+        )
+        db.commit()
+        # rowcount is 1 if we inserted, 0 if another process already had the slot
+        claimed = (result.rowcount or 0) > 0
+        if not claimed:
+            logger.warning(
+                f"[SpreadWorks] Dedup blocked (DB): another process already posted {key} for {fire_date}"
+            )
+        return claimed
+    except Exception as e:
+        # Don't crash the scheduler if the table is missing on first deploy
+        logger.error(f"[SpreadWorks] Dedup DB claim failed for {key}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return True
+    finally:
+        db.close()
+
+
+def _dedup_ok(key: str, cooldown_seconds: int = 300, fire_date=None) -> bool:
+    """Return True if this message hasn't been posted recently AND we win
+    the cross-process race for today's slot.
+
+    Two-layer guard:
+      1. In-memory cooldown — fast, prevents the same process from posting
+         twice within `cooldown_seconds` (e.g. APScheduler misfire bursts).
+      2. DB unique slot — survives restarts, multiple workers, and
+         multi-replica deploys. THIS is what stops the duplicate-message
+         bug we saw on the Sat 10:00 weekend playbook.
+    """
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc)
     last = _last_posted.get(key)
     if last and (now - last).total_seconds() < cooldown_seconds:
-        logger.warning(f"[SpreadWorks] Dedup blocked: {key} was posted {(now - last).total_seconds():.0f}s ago")
+        logger.warning(
+            f"[SpreadWorks] Dedup blocked (mem): {key} posted "
+            f"{(now - last).total_seconds():.0f}s ago"
+        )
         return False
+
+    # Daily DB slot — default to today's CT date if caller didn't pass one
+    if fire_date is None:
+        try:
+            from .economic_events import get_central_now
+            fire_date = get_central_now().date()
+        except Exception:
+            from zoneinfo import ZoneInfo
+            fire_date = datetime.now(ZoneInfo("America/Chicago")).date()
+
+    if not _claim_post_slot_db(key, fire_date):
+        return False
+
     _last_posted[key] = now
     return True
 
@@ -671,6 +743,111 @@ def _start_scheduler(app: FastAPI):
         logger.info(f"[SpreadWorks] Weekend playbook {'sent' if ok else 'FAILED'}")
 
     # ------------------------------------------------------------------
+    # NEW: Daily One-Month Outlook — every weekday 7:30 AM CT
+    # ------------------------------------------------------------------
+    async def _fire_monthly_outlook():
+        """7:30 AM CT weekdays — rolling 30-day market-moving event outlook.
+
+        Groups upcoming HIGH/MEDIUM events into weekly buckets so traders
+        can see the full month at a glance. Complements the Saturday
+        weekend playbook (which only covers the next 7 days).
+        """
+        if not content_loaded or not _is_trading_day():
+            return
+        if not _dedup_ok("monthly_outlook"):
+            return
+
+        import asyncio
+        from datetime import timedelta
+
+        now = get_central_now()
+        # Pull a generous window of upcoming events (HIGH + MEDIUM only)
+        upcoming = get_upcoming_events(days=30, count=40)
+        upcoming = [e for e in upcoming if e.get("impact") in ("HIGH", "MEDIUM")]
+
+        if not upcoming:
+            logger.info("[SpreadWorks] No upcoming events in 30-day window — skipping monthly outlook")
+            return
+
+        # Bucket events by week-of (Monday-anchored, in CT)
+        def _week_start(d):
+            return (d - timedelta(days=d.weekday())).date()
+
+        buckets = {}
+        high_total = 0
+        for event in upcoming:
+            ws = _week_start(event["datetime"])
+            buckets.setdefault(ws, []).append(event)
+            if event.get("impact") == "HIGH":
+                high_total += 1
+
+        # Pick out THE marquee event (next HIGH-impact catalyst)
+        next_high = next((e for e in upcoming if e.get("impact") == "HIGH"), None)
+
+        fields = []
+        if next_high:
+            countdown = format_countdown(next_high["datetime"])
+            fields.append({
+                "name": "\U0001f3af Next Major Catalyst",
+                "value": (
+                    f"**{next_high['name']}**\n"
+                    f"\U0001f4c6 {next_high['datetime'].strftime('%A, %b %-d')} at {format_event_time(next_high['datetime'])}\n"
+                    f"⏱️ {countdown}\n"
+                    f"→ {next_high['description']}"
+                ),
+                "inline": False,
+            })
+
+        # Render up to 4 weekly buckets (covers ~1 month)
+        sorted_weeks = sorted(buckets.keys())[:4]
+        for ws in sorted_weeks:
+            events = buckets[ws]
+            week_label = f"Week of {ws.strftime('%b %-d')}"
+            lines = []
+            for e in events[:6]:  # cap per-week to keep embed under Discord limits
+                emoji = "\U0001f534" if e["impact"] == "HIGH" else "\U0001f7e1"
+                day = e["datetime"].strftime("%a %-m/%-d")
+                t = format_event_time(e["datetime"])
+                lines.append(f"{emoji} **{day}** {t} — {e['name']}")
+            if len(events) > 6:
+                lines.append(f"_+{len(events) - 6} more this week_")
+            fields.append({
+                "name": f"\U0001f4c5 {week_label}  ({len(events)} event{'s' if len(events) != 1 else ''})",
+                "value": "\n".join(lines),
+                "inline": False,
+            })
+
+        fields.append({
+            "name": "\U0001f4a1 Positioning Tip",
+            "value": (
+                "Long DTE spreads through HIGH events get vol-crushed on release. "
+                "Either close before the print or size for a 2x expected move. "
+                "Light-week MEDIUM-only stretches are the cleanest theta windows."
+            ),
+            "inline": False,
+        })
+
+        # Color reflects how loaded the next 30 days are
+        if high_total >= 4:
+            color = 0xFF1744  # red — heavy month
+        elif high_total >= 2:
+            color = 0xFFD600  # yellow — moderate
+        else:
+            color = 0x00E676  # green — light
+
+        embed = {
+            "title": f"\U0001f5d3️ 30-DAY MARKET OUTLOOK • {high_total} HIGH-impact catalyst{'s' if high_total != 1 else ''}",
+            "color": color,
+            "fields": fields,
+            "footer": {
+                "text": f"SpreadWorks • {now.strftime('%A, %B %d, %Y')} • Plan the month, trade the day."
+            },
+            "timestamp": now.isoformat(),
+        }
+        ok = await asyncio.to_thread(_send_webhook_sync, embed)
+        logger.info(f"[SpreadWorks] Monthly outlook {'sent' if ok else 'FAILED'} ({high_total} HIGH, {len(upcoming)} total)")
+
+    # ------------------------------------------------------------------
     # NEW: GEX Shift Alert — every 5 min during market hours
     # ------------------------------------------------------------------
     _last_flip_point = {"SPY": None}  # in-memory state for comparison
@@ -844,11 +1021,16 @@ def _start_scheduler(app: FastAPI):
     scheduler.add_job(_fire_weekend_playbook, "cron", hour=10, minute=0,
                       day_of_week="sat", id="discord_weekend_playbook", replace_existing=True)
 
+    # --- Daily 30-day outlook ---
+    # 7:30 AM CT weekdays — rolling 30-day market-moving event outlook
+    scheduler.add_job(_fire_monthly_outlook, "cron", hour=7, minute=30,
+                      day_of_week="mon-fri", id="discord_monthly_outlook", replace_existing=True)
+
     scheduler.start()
     _active_scheduler = scheduler
     logger.info(
-        "[SpreadWorks] APScheduler started — 11 jobs: "
-        "market_open_msg (8:00), open_positions (8:00:30), "
+        "[SpreadWorks] APScheduler started — 12 jobs: "
+        "monthly_outlook (7:30), market_open_msg (8:00), open_positions (8:00:30), "
         "economic (8:05), gex_briefing (8:30), "
         "midday_pulse (12:00), gex_shift (*/5 min), "
         "market_close_msg (15:00), eod (15:00:30), "
