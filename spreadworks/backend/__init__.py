@@ -1023,27 +1023,47 @@ def _start_scheduler(app: FastAPI):
                 "value": f"```\n${flip_point:.0f}\n```",
                 "inline": True,
             })
-        # Danger meter — visual gauge of how loaded the next 30 days are
+        # Danger meter — visual gauge of how loaded the next 30 days are.
+        # Score = HIGH-impact event count + HIGH-reversal event count.
+        # Higher score = more risk that scheduled events disrupt your positions.
         danger_filled = min(danger_score, 10)
-        danger_label = (
-            "🔥 DANGER" if danger_score >= 8 else
-            "⚡ HEAVY" if danger_score >= 6 else
-            "⚠️ MODERATE" if danger_score >= 3 else
-            "✅ CALM"
-        )
+        if danger_score >= 8:
+            danger_label = "🔥 DANGER"
+            danger_explainer = "Multiple back-to-back catalysts likely to whipsaw the tape — size down."
+        elif danger_score >= 6:
+            danger_label = "⚡ HEAVY"
+            danger_explainer = "Heavy event week ahead — close DTE-sensitive positions before HIGH prints."
+        elif danger_score >= 3:
+            danger_label = "⚠️ MODERATE"
+            danger_explainer = "Normal event flow — manage delta around HIGH-reversal prints."
+        else:
+            danger_label = "✅ CALM"
+            danger_explainer = "Light event calendar — clean theta-selling window."
+
         header_fields.append({
-            "name": "📊  30-DAY GAUGE",
-            "value": f"```\n{_meter_bar(danger_filled)}  {danger_label}\n```",
+            "name": f"📊  EVENT-RISK GAUGE  ·  {danger_score}/10",
+            "value": (
+                f"```\n{_meter_bar(danger_filled)}  {danger_label}\n```\n"
+                f"_{danger_explainer}_\n\n"
+                f"**Scored from:** {high_total} HIGH-impact catalyst{'s' if high_total != 1 else ''} "
+                f"+ {reversal_high_count} HIGH-reversal-risk event{'s' if reversal_high_count != 1 else ''} "
+                f"in the next 30 days. Detail in the cards below."
+            ),
             "inline": False,
         })
 
         embeds.append({
-            "title": f"🌃  EVENING BRIEF",
-            "description": f"**{now.strftime('%A · %B %-d, %Y').upper()}**",
+            "title": "🌃  EVENING BRIEF",
+            "description": (
+                f"**{now.strftime('%A · %B %-d, %Y').upper()}**\n"
+                "_Daily after-close briefing: today's tape recap, the next 30 days of "
+                "market-moving events, an AI-synthesized macro read, and a high-conviction "
+                "trade idea. Five sections below — scroll on through._"
+            ),
             "color": header_color,
             "fields": header_fields,
             "footer": {
-                "text": f"SpreadWorks · Daily after-close brief · {high_total} HIGH · {reversal_high_count} reversal-risk in 30d",
+                "text": "SpreadWorks · Plan the month, trade the day · Scroll for catalysts ↓",
             },
             "timestamp": now.isoformat(),
         })
