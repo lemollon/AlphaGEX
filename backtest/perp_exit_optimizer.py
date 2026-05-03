@@ -79,13 +79,16 @@ def _grid(level: str) -> dict[str, list]:
             "sar":        [(False, 0.0, 0.0), (True, 1.5, 0.3)],
         }
     if level == "fine":
+        # Includes every current-production point (XRP 1.0/0.75, BTC&ETH 1.5/1.25,
+        # DOGE 0.2/0.1, SHIB 0.15/0.05) plus 24h max_hold so the live config IS in
+        # the grid and the comparison is apples-to-apples.
         return {
-            "activation": [0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0, 1.2, 1.5],
-            "trail":      [0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8],
-            "profit_tgt": [0.0, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0],
-            "max_loss":   [0.4, 0.6, 0.8, 1.0, 1.5, 2.0, 2.5, 3.0],
-            "max_hold":   [3, 4, 6, 8, 12, 16, 24],
-            "sar":        [(False, 0.0, 0.0), (True, 1.0, 0.3), (True, 1.5, 0.3), (True, 2.0, 0.3)],
+            "activation": [0.15, 0.2, 0.3, 0.5, 0.7, 1.0, 1.2, 1.5],
+            "trail":      [0.05, 0.1, 0.15, 0.3, 0.5, 0.75, 1.0, 1.25],
+            "profit_tgt": [0.0, 1.0, 1.5, 2.5],
+            "max_loss":   [0.5, 1.0, 2.0, 3.0],
+            "max_hold":   [8, 12, 16, 24],
+            "sar":        [(False, 0.0, 0.0), (True, 1.5, 0.3)],
         }
     raise ValueError(f"unknown grid level: {level}")
 

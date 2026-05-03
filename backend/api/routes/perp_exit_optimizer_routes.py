@@ -142,6 +142,143 @@ class RunRequest(BaseModel):
     bot: Optional[str] = None
 
 
+# Map ticker -> (bot_name, autonomous_config key prefix). The bot's
+# AgapeXxxPerpConfig.load_from_db reads `key LIKE '<prefix>%'` and strips
+# the prefix to produce the attr name, so the keys we write here must
+# match the dataclass attribute names exactly.
+_BOT_KEY_PREFIX = {
+    "XRP":  "agape_xrp_perp_",
+    "BTC":  "agape_btc_perp_",
+    "ETH":  "agape_eth_perp_",
+    "DOGE": "agape_doge_perp_",
+    "SHIB": "agape_shib_perp_",
+}
+
+# Whitelist of exit-rule knobs the apply endpoint is allowed to change.
+# Anything not in this set is rejected so the endpoint can't be used to
+# muck with risk caps, sizing, or oracle gates.
+_ALLOWED_KEYS = {
+    "no_loss_activation_pct",
+    "no_loss_trail_distance_pct",
+    "no_loss_profit_target_pct",
+    "max_unrealized_loss_pct",
+    "no_loss_emergency_stop_pct",
+    "max_hold_hours",
+    "use_sar",
+    "sar_trigger_pct",
+    "sar_mfe_threshold_pct",
+    "use_no_loss_trailing",
+}
+
+
+class ApplyRequest(BaseModel):
+    bot: str                          # one of XRP / BTC / ETH / DOGE / SHIB
+    config: dict[str, Any]            # subset of _ALLOWED_KEYS -> value
+    note: Optional[str] = None
+
+
+def _upsert_config(prefix: str, key: str, value: Any) -> bool:
+    if get_connection is None:
+        return False
+    conn = get_connection()
+    if not conn:
+        return False
+    try:
+        cur = conn.cursor()
+        full_key = f"{prefix}{key}"
+        # autonomous_config schema: (key TEXT PRIMARY KEY, value TEXT)
+        cur.execute(
+            """
+            INSERT INTO autonomous_config (key, value)
+            VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+            """,
+            (full_key, str(value)),
+        )
+        conn.commit()
+        cur.close()
+        return True
+    except Exception as e:
+        logger.error(f"autonomous_config UPSERT failed for {prefix}{key}={value}: {e}")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@router.post("/apply")
+async def apply_config(req: ApplyRequest):
+    """Apply an exit-rule config to a live perp bot's autonomous_config rows.
+
+    Only the keys in `_ALLOWED_KEYS` may be written. The change takes effect
+    next time the bot's AgapeXxxPerpConfig.load_from_db runs — typically
+    after the alphagex-trader worker restarts. Push a small commit to main
+    to bounce the worker, or restart it manually on Render.
+    """
+    if not OPTIMIZER_AVAILABLE:
+        raise HTTPException(status_code=500, detail="optimizer module not available")
+
+    ticker = req.bot.upper().replace("AGAPE_", "").replace("_PERP", "")
+    prefix = _BOT_KEY_PREFIX.get(ticker)
+    if not prefix:
+        raise HTTPException(status_code=400, detail=f"unknown bot {req.bot}")
+
+    bad = [k for k in req.config if k not in _ALLOWED_KEYS]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"keys not allowed: {bad}")
+    if not req.config:
+        raise HTTPException(status_code=400, detail="config is empty")
+
+    written: dict[str, Any] = {}
+    failed: dict[str, str] = {}
+    for k, v in req.config.items():
+        if _upsert_config(prefix, k, v):
+            written[k] = v
+        else:
+            failed[k] = "upsert failed"
+
+    return {
+        "success": len(failed) == 0,
+        "bot": ticker,
+        "key_prefix": prefix,
+        "written": written,
+        "failed": failed,
+        "note": req.note,
+        "next_step": "Push a small commit to main (or manually redeploy alphagex-trader on Render) so the worker re-reads autonomous_config.",
+    }
+
+
+@router.get("/applied")
+async def get_applied(bot: str):
+    """Return current autonomous_config rows for a bot's exit-rule knobs."""
+    ticker = bot.upper().replace("AGAPE_", "").replace("_PERP", "")
+    prefix = _BOT_KEY_PREFIX.get(ticker)
+    if not prefix:
+        raise HTTPException(status_code=400, detail=f"unknown bot {bot}")
+    if get_connection is None:
+        raise HTTPException(status_code=500, detail="db unavailable")
+    conn = get_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="db unavailable")
+    try:
+        cur = conn.cursor()
+        like = f"{prefix}%"
+        cur.execute("SELECT key, value FROM autonomous_config WHERE key LIKE %s ORDER BY key", (like,))
+        rows = cur.fetchall()
+        cur.close()
+        applied = {row[0].replace(prefix, ""): row[1] for row in rows}
+        # Filter to only exit-rule keys
+        exit_only = {k: v for k, v in applied.items() if k in _ALLOWED_KEYS}
+        return {"success": True, "bot": ticker, "applied_exit_keys": exit_only, "all_keys": applied}
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @router.post("/run")
 async def run_optimizer(req: RunRequest, background: BackgroundTasks):
     if not OPTIMIZER_AVAILABLE:
