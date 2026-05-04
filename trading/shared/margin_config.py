@@ -153,6 +153,28 @@ PERPETUAL_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
         "funding_interval_hours": 8,
         "market_type": "crypto_perp",
     },
+    "SOL-PERP": {
+        "name": "Solana Perpetual",
+        "exchange": "PERPETUAL",
+        "max_leverage": 25,
+        "default_leverage": 10,
+        "maintenance_margin_rate": 0.006,   # 0.6% (higher than BTC/ETH)
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 8,
+        "market_type": "crypto_perp",
+    },
+    "AVAX-PERP": {
+        "name": "Avalanche Perpetual",
+        "exchange": "PERPETUAL",
+        "max_leverage": 20,
+        "default_leverage": 5,
+        "maintenance_margin_rate": 0.008,   # 0.8% (thinner liquidity)
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 8,
+        "market_type": "crypto_perp",
+    },
     "XRP-PERP": {
         "name": "XRP Perpetual",
         "exchange": "PERPETUAL",
@@ -204,6 +226,8 @@ BOT_MARGIN_SPEC: Dict[str, str] = {
     # Crypto Perpetuals
     "AGAPE_BTC_PERP": "BTC-PERP",
     "AGAPE_ETH_PERP": "ETH-PERP",
+    "AGAPE_SOL_PERP": "SOL-PERP",
+    "AGAPE_AVAX_PERP": "AVAX-PERP",
     "AGAPE_XRP_PERP": "XRP-PERP",
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",

@@ -83,6 +83,12 @@ from backend.api.routes.agape_xrp_routes import (
 from backend.api.routes.agape_eth_perp_routes import (
     get_equity_curve as agape_eth_perp_equity_curve,
 )
+from backend.api.routes.agape_sol_perp_routes import (
+    get_equity_curve as agape_sol_perp_equity_curve,
+)
+from backend.api.routes.agape_avax_perp_routes import (
+    get_equity_curve as agape_avax_perp_equity_curve,
+)
 from backend.api.routes.agape_btc_perp_routes import (
     get_equity_curve as agape_btc_perp_equity_curve,
 )
@@ -236,6 +242,8 @@ async def _fetch_equity_curves(days: int) -> dict:
         _safe("agape_btc_eq", agape_btc_equity_curve(days)),
         _safe("agape_xrp_eq", agape_xrp_equity_curve(days)),
         _safe("agape_eth_perp_eq", agape_eth_perp_equity_curve(days)),
+        _safe("agape_sol_perp_eq", agape_sol_perp_equity_curve(days)),
+        _safe("agape_avax_perp_eq", agape_avax_perp_equity_curve(days)),
         _safe("agape_btc_perp_eq", agape_btc_perp_equity_curve(days)),
         _safe("agape_xrp_perp_eq", agape_xrp_perp_equity_curve(days)),
         _safe("agape_doge_perp_eq", agape_doge_perp_equity_curve(days)),
@@ -254,10 +262,12 @@ async def _fetch_equity_curves(days: int) -> dict:
         "agape_btc": results[9],
         "agape_xrp": results[10],
         "agape_eth_perp": results[11],
-        "agape_btc_perp": results[12],
-        "agape_xrp_perp": results[13],
-        "agape_doge_perp": results[14],
-        "agape_shib_perp": results[15],
+        "agape_sol_perp": results[12],
+        "agape_avax_perp": results[13],
+        "agape_btc_perp": results[14],
+        "agape_xrp_perp": results[15],
+        "agape_doge_perp": results[16],
+        "agape_shib_perp": results[17],
     }
 
 

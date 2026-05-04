@@ -40,6 +40,8 @@ BOTS = [
     {"name": "AGAPE_XRP_PERP",  "ticker": "XRP",  "table": "agape_xrp_perp",  "price_col": "xrp_price",  "starting_capital": 9000.0},
     {"name": "AGAPE_BTC_PERP",  "ticker": "BTC",  "table": "agape_btc_perp",  "price_col": "btc_price",  "starting_capital": 25000.0},
     {"name": "AGAPE_ETH_PERP",  "ticker": "ETH",  "table": "agape_eth_perp",  "price_col": "eth_price",  "starting_capital": 12500.0},
+    {"name": "AGAPE_SOL_PERP",  "ticker": "SOL",  "table": "agape_sol_perp",  "price_col": "sol_price",  "starting_capital": 5000.0},
+    {"name": "AGAPE_AVAX_PERP", "ticker": "AVAX", "table": "agape_avax_perp", "price_col": "avax_price", "starting_capital": 2500.0},
     {"name": "AGAPE_DOGE_PERP", "ticker": "DOGE", "table": "agape_doge_perp", "price_col": "doge_price", "starting_capital": 5000.0},
     {"name": "AGAPE_SHIB_PERP", "ticker": "SHIB", "table": "agape_shib_perp", "price_col": "shib_price", "starting_capital": 5000.0},
 ]
@@ -63,6 +65,8 @@ CURRENT_DEFAULTS = {
     "AGAPE_XRP_PERP":  ExitConfig(1.0, 0.75, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_BTC_PERP":  ExitConfig(1.5, 1.25, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_ETH_PERP":  ExitConfig(1.5, 1.25, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_SOL_PERP":  ExitConfig(1.5, 1.25, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_AVAX_PERP": ExitConfig(1.5, 1.25, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_DOGE_PERP": ExitConfig(0.2, 0.1,  0.0, 0.75, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_SHIB_PERP": ExitConfig(0.15, 0.05, 0.0, 0.5, 5.0, 24, True, 1.5, 0.3),
 }

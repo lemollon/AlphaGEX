@@ -200,6 +200,26 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-SOL-PERP (SOL Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_SOL_PERP: {
+    displayName: 'AGAPE-SOL-PERP',
+    verse: '"Love does not delight in evil but rejoices with the truth."',
+    reference: '1 Corinthians 13:6',
+    why: 'AGAPE-SOL-PERP trades SOL perpetual contracts seeking truth in the market — patient with conviction, agile in execution.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-AVAX-PERP (AVAX Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_AVAX_PERP: {
+    displayName: 'AGAPE-AVAX-PERP',
+    verse: '"Love bears all things, believes all things, hopes all things, endures all things."',
+    reference: '1 Corinthians 13:7',
+    why: 'AGAPE-AVAX-PERP trades AVAX perpetual contracts with endurance through volatility — bearing the storms, hoping through drawdowns.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // AGAPE-BTC-PERP → AGAPE-BTC-PERP (BTC Perpetual Contract)
   // ─────────────────────────────────────────────────────────────────────────────
   AGAPE_BTC_PERP: {
@@ -330,6 +350,8 @@ export const BOT_DISPLAY_NAMES = {
   AGAPE_BTC: BOT_SCRIPTURES.AGAPE_BTC.displayName,
   AGAPE_XRP: BOT_SCRIPTURES.AGAPE_XRP.displayName,
   AGAPE_ETH_PERP: BOT_SCRIPTURES.AGAPE_ETH_PERP.displayName,
+  AGAPE_SOL_PERP: BOT_SCRIPTURES.AGAPE_SOL_PERP.displayName,
+  AGAPE_AVAX_PERP: BOT_SCRIPTURES.AGAPE_AVAX_PERP.displayName,
   AGAPE_BTC_PERP: BOT_SCRIPTURES.AGAPE_BTC_PERP.displayName,
   AGAPE_XRP_PERP: BOT_SCRIPTURES.AGAPE_XRP_PERP.displayName,
   AGAPE_DOGE_PERP: BOT_SCRIPTURES.AGAPE_DOGE_PERP.displayName,

@@ -37,7 +37,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type CoinId = 'ALL' | 'ETH' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB'
+type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB'
 
 // ==============================================================================
 // CONSTANTS
@@ -45,7 +45,7 @@ type CoinId = 'ALL' | 'ETH' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB'
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const COINS: CoinId[] = ['ALL', 'ETH', 'BTC', 'XRP', 'DOGE', 'SHIB']
+const COINS: CoinId[] = ['ALL', 'ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB']
 
 const COIN_META: Record<CoinId, {
   symbol: string; label: string; instrument: string; hexColor: string;
@@ -67,6 +67,20 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-fuchsia-950/30', borderCard: 'border-fuchsia-700/40',
     apiPrefix: '/api/agape-eth-perp', priceKey: 'current_eth_price', priceField: 'eth_price', priceDecimals: 2,
     quantityLabel: 'ETH', startingCapital: 12500,
+  },
+  'SOL': {
+    symbol: 'SOL', label: 'Solana', instrument: 'SOL-PERP', hexColor: '#22D3EE',
+    bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
+    bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
+    apiPrefix: '/api/agape-sol-perp', priceKey: 'current_sol_price', priceField: 'sol_price', priceDecimals: 2,
+    quantityLabel: 'SOL', startingCapital: 5000,
+  },
+  'AVAX': {
+    symbol: 'AVAX', label: 'Avalanche', instrument: 'AVAX-PERP', hexColor: '#EF4444',
+    bgActive: 'bg-red-600', borderActive: 'border-red-500', textActive: 'text-red-400',
+    bgCard: 'bg-red-950/30', borderCard: 'border-red-700/40',
+    apiPrefix: '/api/agape-avax-perp', priceKey: 'current_avax_price', priceField: 'avax_price', priceDecimals: 2,
+    quantityLabel: 'AVAX', startingCapital: 2500,
   },
   'BTC': {
     symbol: 'BTC', label: 'Bitcoin', instrument: 'BTC-PERP', hexColor: '#F97316',
@@ -98,7 +112,7 @@ const COIN_META: Record<CoinId, {
   },
 }
 
-const ACTIVE_COINS = ['ETH', 'BTC', 'XRP', 'DOGE', 'SHIB'] as const
+const ACTIVE_COINS = ['ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB'] as const
 type ActiveCoinId = typeof ACTIVE_COINS[number]
 
 const SECTION_TABS = [
@@ -113,7 +127,7 @@ const SECTION_TABS = [
 ]
 type SectionTabId = typeof SECTION_TABS[number]['id']
 
-const TOTAL_CAPITAL = 50000
+const TOTAL_CAPITAL = 57500  // ETH 12.5 + SOL 5 + AVAX 2.5 + BTC 25 + XRP 9 + DOGE 2.5 + SHIB 1
 
 const TIME_FRAMES = [
   { id: 'today', label: 'Today', days: 0 },
@@ -245,24 +259,28 @@ export default function PerpetualsCryptoPage() {
   const [activeTab, setActiveTab] = useState<SectionTabId>('overview')
   const sidebarPadding = useSidebarPadding()
 
-  // Fetch all 5 bots status for the combined view and price ticker
+  // Fetch all 7 bots status for the combined view and price ticker
   const { data: ethStatusData, isLoading: ethLoading, mutate: refreshEth } = useSWR('/api/agape-eth-perp/status', fetcher, { refreshInterval: 10_000 })
+  const { data: solStatusData, isLoading: solLoading, mutate: refreshSol } = useSWR('/api/agape-sol-perp/status', fetcher, { refreshInterval: 10_000 })
+  const { data: avaxStatusData, isLoading: avaxLoading, mutate: refreshAvax } = useSWR('/api/agape-avax-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: btcStatusData, isLoading: btcLoading, mutate: refreshBtc } = useSWR('/api/agape-btc-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: xrpStatusData, isLoading: xrpLoading, mutate: refreshXrp } = useSWR('/api/agape-xrp-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: dogeStatusData, isLoading: dogeLoading, mutate: refreshDoge } = useSWR('/api/agape-doge-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: shibStatusData, isLoading: shibLoading, mutate: refreshShib } = useSWR('/api/agape-shib-perp/status', fetcher, { refreshInterval: 10_000 })
 
-  // Fetch all 5 performance for combined stats
+  // Fetch all 7 performance for combined stats
   const { data: ethPerfData } = useSWR('/api/agape-eth-perp/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: solPerfData } = useSWR('/api/agape-sol-perp/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: avaxPerfData } = useSWR('/api/agape-avax-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: btcPerfData } = useSWR('/api/agape-btc-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: xrpPerfData } = useSWR('/api/agape-xrp-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: dogePerfData } = useSWR('/api/agape-doge-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: shibPerfData } = useSWR('/api/agape-shib-perp/performance', fetcher, { refreshInterval: 30_000 })
 
   const isAllView = selectedCoin === 'ALL'
-  const allLoading = ethLoading && btcLoading && xrpLoading && dogeLoading && shibLoading
+  const allLoading = ethLoading && solLoading && avaxLoading && btcLoading && xrpLoading && dogeLoading && shibLoading
 
-  const refreshAll = () => { refreshEth(); refreshBtc(); refreshXrp(); refreshDoge(); refreshShib() }
+  const refreshAll = () => { refreshEth(); refreshSol(); refreshAvax(); refreshBtc(); refreshXrp(); refreshDoge(); refreshShib() }
 
   // Build per-coin summary data for the combined view
   const coinSummaries = useMemo(() => {
@@ -288,15 +306,17 @@ export default function PerpetualsCryptoPage() {
     }
     return {
       ETH: build(ethStatusData, ethPerfData, 'ETH'),
+      SOL: build(solStatusData, solPerfData, 'SOL'),
+      AVAX: build(avaxStatusData, avaxPerfData, 'AVAX'),
       BTC: build(btcStatusData, btcPerfData, 'BTC'),
       XRP: build(xrpStatusData, xrpPerfData, 'XRP'),
       DOGE: build(dogeStatusData, dogePerfData, 'DOGE'),
       SHIB: build(shibStatusData, shibPerfData, 'SHIB'),
     }
-  }, [ethStatusData, btcStatusData, xrpStatusData, dogeStatusData, shibStatusData, ethPerfData, btcPerfData, xrpPerfData, dogePerfData, shibPerfData])
+  }, [ethStatusData, solStatusData, avaxStatusData, btcStatusData, xrpStatusData, dogeStatusData, shibStatusData, ethPerfData, solPerfData, avaxPerfData, btcPerfData, xrpPerfData, dogePerfData, shibPerfData])
 
   // Loading state
-  if (allLoading && !ethStatusData && !btcStatusData && !xrpStatusData && !dogeStatusData && !shibStatusData) {
+  if (allLoading && !ethStatusData && !solStatusData && !avaxStatusData && !btcStatusData && !xrpStatusData && !dogeStatusData && !shibStatusData) {
     return (
       <>
         <Navigation />
@@ -460,6 +480,8 @@ function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any>
 
 function AllCoinsRecentTrades() {
   const { data: ethClosed } = useSWR('/api/agape-eth-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: solClosed } = useSWR('/api/agape-sol-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: avaxClosed } = useSWR('/api/agape-avax-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: btcClosed } = useSWR('/api/agape-btc-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: xrpClosed } = useSWR('/api/agape-xrp-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: dogeClosed } = useSWR('/api/agape-doge-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
@@ -470,6 +492,8 @@ function AllCoinsRecentTrades() {
       (data?.data || []).map((t: any) => ({ ...t, _coin: coin }))
     const combined = [
       ...tagged(ethClosed, 'ETH'),
+      ...tagged(solClosed, 'SOL'),
+      ...tagged(avaxClosed, 'AVAX'),
       ...tagged(btcClosed, 'BTC'),
       ...tagged(xrpClosed, 'XRP'),
       ...tagged(dogeClosed, 'DOGE'),
@@ -481,7 +505,7 @@ function AllCoinsRecentTrades() {
       return tb - ta
     })
     return combined.slice(0, 25)
-  }, [ethClosed, btcClosed, xrpClosed, dogeClosed, shibClosed])
+  }, [ethClosed, solClosed, avaxClosed, btcClosed, xrpClosed, dogeClosed, shibClosed])
 
   if (allTrades.length === 0) return null
 

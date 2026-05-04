@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end signal verification for all 5 perp tickers.
+"""End-to-end signal verification for all 7 perp tickers.
 
 Run on Render after deploy from project root:
     python scripts/verify_perp_signals.py
@@ -18,7 +18,7 @@ from data.crypto_data_provider import get_crypto_data_provider
 p = get_crypto_data_provider()
 print(f"{'SYM':5s} {'SIGNAL':12s} {'CONF':6s} {'FUNDING':22s} {'OI_USD':>10s} {'TAKER_BUY%':>11s}  notes")
 print("-" * 100)
-for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
+for sym in ["BTC", "ETH", "SOL", "AVAX", "XRP", "DOGE", "SHIB"]:
     # Each snapshot does ~5 CoinGlass calls (funding, OI, taker, L/S, liq).
     # Pause between symbols to stay under the 30 req/min rate limit.
     s = p.get_snapshot(sym)
@@ -37,5 +37,5 @@ for sym in ["BTC", "ETH", "XRP", "DOGE", "SHIB"]:
     note_str = " ".join(notes)
     print(f"{sym:5s} {s.combined_signal:12s} {s.combined_confidence:6s} {s.funding_regime:22s} {oi_str:>10s} {tv_str:>11s}  {note_str}")
     # Client now self-paces at 2.5s/call; brief 2s gap between symbols
-    # is enough cushion. Total runtime ~70s for all 5 perps.
+    # is enough cushion. Total runtime ~100s for all 7 perps.
     time.sleep(2)
