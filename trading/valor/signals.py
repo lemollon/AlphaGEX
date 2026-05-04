@@ -1840,8 +1840,65 @@ def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str
                         result['data_source'] = f'overnight_cache_{symbol}'
                         return result
 
-        # Cache miss or stale — try TradingVolatility (with stale cache clearing)
-        logger.info(f"[VALOR][{ticker}] Overnight GEX cache miss — calling TradingVolatility/{symbol}")
+        # Cache miss or stale — try Tradier first (mirrors market-hours primary).
+        # Tradier reads the live options chain so it serves the next session's
+        # GEX on Sunday-evening reopens and on weekday overnights, which is the
+        # only path that produces non-zero levels when the proxy-ETF options
+        # market is closed but the futures session is open.
+        if ticker == "MES":
+            tradier_symbol = "SPX"
+        else:
+            tradier_symbol = (
+                ticker_cfg.get('gex_symbol')
+                or ticker_cfg.get('proxy_etf')
+                or symbol
+            )
+
+        calculator = _get_tradier_gex_calculator()
+        if calculator:
+            try:
+                gex_result = calculator.calculate_gex(tradier_symbol)
+                if gex_result:
+                    raw_flip = float(gex_result.get('flip_point', 0) or 0)
+                    if raw_flip > 0:
+                        raw_call = float(gex_result.get('call_wall', 0) or 0) or raw_flip * 1.01
+                        raw_put = float(gex_result.get('put_wall', 0) or 0) or raw_flip * 0.99
+                        net_gex = float(gex_result.get('net_gex', 0) or 0)
+                        raw_data = {
+                            'flip_point': raw_flip,
+                            'call_wall': raw_call,
+                            'put_wall': raw_put,
+                            'net_gex': net_gex,
+                            'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                        }
+                        if ticker == "MES":
+                            gex_data = dict(raw_data)
+                            gex_data['data_source'] = 'tradier_calculator_overnight'
+                        else:
+                            gex_data = _scale_gex_data(raw_data, scale_factor)
+                            gex_data['data_source'] = f'tradier_calculator_overnight_{tradier_symbol}'
+                        gex_data['n1_flip_point'] = gex_data['flip_point']
+                        gex_data['n1_call_wall'] = gex_data['call_wall']
+                        gex_data['n1_put_wall'] = gex_data['put_wall']
+                        logger.info(
+                            f"[VALOR][{ticker}] Source: Tradier/{tradier_symbol} (overnight) | "
+                            f"flip={gex_data['flip_point']:.2f}, call={gex_data['call_wall']:.2f}, "
+                            f"put={gex_data['put_wall']:.2f}, net_gex={net_gex:.2e} | Status: OK"
+                        )
+                        _gex_cache_by_ticker[ticker] = {'data': gex_data, 'cache_time': now}
+                        _persist_gex_cache_to_db(gex_data, now, ticker=ticker)
+                        if ticker == "MES":
+                            _gex_cache.clear()
+                            _gex_cache.update(gex_data)
+                            _gex_cache_time = now
+                        return gex_data
+            except Exception as e:
+                logger.warning(
+                    f"[VALOR][{ticker}] Overnight Tradier error for {tradier_symbol}: {e}"
+                )
+
+        # Tradier unavailable or empty — fall back to TradingVolatility (with stale cache clearing)
+        logger.info(f"[VALOR][{ticker}] Overnight: Tradier unavailable — calling TradingVolatility/{symbol}")
         raw_data = _fetch_gex_from_trading_volatility(symbol, clear_stale_cache=True)
         if raw_data:
             scaled_data = _scale_gex_data(raw_data, scale_factor)
@@ -1887,12 +1944,14 @@ def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str
         response = requests.get(f"http://localhost:8000/api/gex/{api_symbol}", timeout=5)
         if response.status_code == 200:
             data = response.json()
+            # /api/gex/{symbol} wraps payload as {"success": true, "data": {...}}
+            payload = data.get('data') if isinstance(data.get('data'), dict) else data
             raw = {
-                'flip_point': data.get('flip_point', 0),
-                'call_wall': data.get('call_wall', 0),
-                'put_wall': data.get('put_wall', 0),
-                'net_gex': data.get('net_gex', 0),
-                'gex_ratio': data.get('gex_ratio', 1.0),
+                'flip_point': payload.get('flip_point', 0),
+                'call_wall': payload.get('call_wall', 0),
+                'put_wall': payload.get('put_wall', 0),
+                'net_gex': payload.get('net_gex', 0),
+                'gex_ratio': payload.get('gex_ratio', 1.0),
             }
             scaled = _scale_gex_data(raw, scale_factor)
             scaled['data_source'] = 'api_fallback'
