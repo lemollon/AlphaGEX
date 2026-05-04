@@ -1001,6 +1001,22 @@ class CryptoDataProvider:
                 # Build crypto GEX from OI data
                 snapshot.crypto_gex = self._build_crypto_gex(symbol, spot, oi_levels)
 
+        # Synthetic fallback for coins without Deribit options (AVAX, XRP,
+        # DOGE, SHIB, etc.). Approximates max_pain from liquidation clusters
+        # and gamma_regime from L/S extremes. Source-tagged "synthetic_perp_oi"
+        # so callers can distinguish from real options-derived GEX.
+        if snapshot.crypto_gex is None and snapshot.spot_price:
+            synth = self._build_synthetic_crypto_gex(
+                symbol=symbol,
+                spot=snapshot.spot_price,
+                liquidations=snapshot.liquidation_clusters or [],
+                ls_ratio=snapshot.ls_ratio,
+            )
+            if synth is not None:
+                snapshot.crypto_gex = synth
+                if snapshot.max_pain is None:
+                    snapshot.max_pain = synth.max_pain
+
         # Derive combined signals
         self._derive_signals(snapshot)
 
@@ -1132,6 +1148,123 @@ class CryptoDataProvider:
             max_pain=max_pain or spot,
             strikes=per_strike,
             timestamp=datetime.now(CENTRAL_TZ),
+        )
+
+    def _build_synthetic_crypto_gex(
+        self,
+        symbol: str,
+        spot: float,
+        liquidations: List[LiquidationCluster],
+        ls_ratio: Optional[LongShortRatio],
+    ) -> Optional[CryptoGEX]:
+        """Approximate crypto GEX for coins without a Deribit options market.
+
+        Real GEX measures dealer gamma positioning derived from options open
+        interest. For coins with no options market (AVAX, XRP, DOGE, SHIB,
+        etc.), we synthesize a proxy from perpetual-futures positioning data:
+
+        - **max_pain proxy**: USD-weighted centroid of liquidation clusters.
+          Where most leveraged positions get unwound acts as a price magnet,
+          analogous to options max pain.
+        - **gamma_regime proxy**: derived from the long/short ratio.
+          - LS > 1.3 (long-heavy)  → NEGATIVE (longs vulnerable, downside risk)
+          - LS < 0.77 (short-heavy) → POSITIVE (shorts vulnerable, squeeze potential)
+          - otherwise               → NEUTRAL
+        - **net_gex magnitude**: scaled by how extreme the L/S deviation is
+          (capped). Direction matches the regime.
+        - **strikes**: each liquidation cluster becomes a pseudo-strike,
+          letting downstream code that iterates strikes still work.
+
+        The result is tagged `source="synthetic_perp_oi"` so analytics can
+        distinguish proxy data from real options-derived GEX.
+
+        Returns None if there's insufficient data (no liquidations AND no L/S).
+        The bot's signal layer already null-guards crypto_gex / max_pain, so
+        returning None just means those signals don't fire (same as today).
+        """
+        if not liquidations and ls_ratio is None:
+            return None
+
+        # ---- pseudo max_pain from liquidation centroid ----
+        synth_max_pain: Optional[float] = None
+        per_strike: List[Dict] = []
+        if liquidations:
+            total_usd = 0.0
+            weighted_price = 0.0
+            for liq in liquidations:
+                cluster_usd = (liq.long_liquidation_usd or 0) + (liq.short_liquidation_usd or 0)
+                if cluster_usd > 0 and liq.price_level > 0:
+                    weighted_price += liq.price_level * cluster_usd
+                    total_usd += cluster_usd
+                    # Each cluster becomes a pseudo-strike. Longs liquidated
+                    # below spot ≈ "put OI" (downside support); shorts
+                    # liquidated above spot ≈ "call OI" (upside resistance).
+                    distance = abs(liq.price_level - spot) / spot if spot else 0
+                    proximity_weight = max(0.0, 1.0 - distance * 5)
+                    if proximity_weight > 0.05:
+                        per_strike.append({
+                            "strike": liq.price_level,
+                            "call_gex": round((liq.short_liquidation_usd or 0) * proximity_weight / 1e6, 2),
+                            "put_gex": round(-(liq.long_liquidation_usd or 0) * proximity_weight / 1e6, 2),
+                            "net_gex": round(
+                                ((liq.short_liquidation_usd or 0) - (liq.long_liquidation_usd or 0))
+                                * proximity_weight / 1e6, 2,
+                            ),
+                            "total_oi": cluster_usd,
+                            "proximity": round(proximity_weight, 3),
+                            "source": "liquidation_cluster",
+                        })
+            if total_usd > 0:
+                synth_max_pain = weighted_price / total_usd
+
+        # ---- pseudo gamma_regime from L/S ratio ----
+        regime = "NEUTRAL"
+        net_gex = 0.0
+        ls_value: Optional[float] = None
+        if ls_ratio is not None:
+            ls_value = getattr(ls_ratio, "ratio", None) or getattr(ls_ratio, "long_short_ratio", None)
+        if ls_value is not None and ls_value > 0:
+            # Magnitude: how extreme is the deviation from balanced (1.0)?
+            # Cap at 2x deviation to avoid runaway values.
+            deviation = max(-1.0, min(1.0, ls_value - 1.0))
+            # Scale to roughly the same order of magnitude as real Deribit GEX
+            # outputs (which are typically in millions).
+            magnitude = abs(deviation) * 1_000_000.0
+            if ls_value > 1.3:
+                regime = "NEGATIVE"   # long-heavy → downside-vulnerable, like negative gamma
+                net_gex = -magnitude
+            elif ls_value < 0.77:
+                regime = "POSITIVE"   # short-heavy → upside squeeze potential
+                net_gex = magnitude
+            else:
+                regime = "NEUTRAL"
+                net_gex = 0.0
+
+        # If we couldn't derive a max_pain proxy, fall back to spot
+        flip_point = synth_max_pain if synth_max_pain is not None else spot
+
+        # Split net_gex between call/put for downstream display/logging
+        if net_gex > 0:
+            call_gex_val = net_gex
+            put_gex_val = 0.0
+        elif net_gex < 0:
+            call_gex_val = 0.0
+            put_gex_val = net_gex
+        else:
+            call_gex_val = 0.0
+            put_gex_val = 0.0
+
+        return CryptoGEX(
+            symbol=symbol,
+            net_gex=round(net_gex, 2),
+            flip_point=flip_point,
+            call_gex=round(call_gex_val, 2),
+            put_gex=round(put_gex_val, 2),
+            gamma_regime=regime,
+            max_pain=flip_point,
+            strikes=per_strike,
+            timestamp=datetime.now(CENTRAL_TZ),
+            source="synthetic_perp_oi",
         )
 
     def _derive_signals(self, snapshot: CryptoMarketSnapshot):
