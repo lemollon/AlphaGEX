@@ -155,9 +155,22 @@ def _safe_tradier_letf_spot_and_chain(
 
         # Use nearest expiration (Tradier returns first in get_option_expirations
         # which is the nearest valid expiry; per spec target is 7-DTE).
+        # OptionChain stores contracts in `chains: Dict[expiration -> List[OptionContract]]`
+        # — flatten all expirations (typically only the nearest one when no
+        # expiration was passed). Earlier code looked for a non-existent
+        # `.contracts` attribute and silently produced an empty chain.
         chain_obj = client.get_option_chain(letf_ticker, greeks=True)
         chain: dict[tuple[float, str], OptionLeg] = {}
-        for c in getattr(chain_obj, "contracts", []) or []:
+        chains_by_exp = getattr(chain_obj, "chains", None) or {}
+        all_contracts = []
+        if isinstance(chains_by_exp, dict):
+            for contracts_list in chains_by_exp.values():
+                if contracts_list:
+                    all_contracts.extend(contracts_list)
+        else:
+            # Backwards-compat: tolerate a flat `.contracts` attribute too.
+            all_contracts = list(getattr(chain_obj, "contracts", []) or [])
+        for c in all_contracts:
             try:
                 kind = "put" if c.option_type == "put" else "call"
                 chain[(float(c.strike), kind)] = OptionLeg(
