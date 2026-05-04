@@ -384,14 +384,15 @@ async def get_valor_logs(
 
 @router.get("/api/valor/signals/recent")
 async def get_valor_recent_signals(
-    limit: int = Query(1000, ge=1, le=10000, description="Number of signals")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of signals"),
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get recent VALOR signals (scan activity).
     """
     try:
         trader = _get_trader()
-        signals = trader.get_recent_signals(limit=limit)
+        signals = trader.get_recent_signals(limit=limit, ticker=ticker)
         return {
             "signals": signals,
             "count": len(signals),
@@ -789,7 +790,8 @@ async def get_valor_scan_activity(
     limit: int = Query(1000, ge=1, le=10000, description="Number of scans to return (default: 1000 to show all daily activity)"),
     outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, SKIP, ERROR)"),
     gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)"),
-    today_only: bool = Query(False, description="If true, only return today's scans")
+    today_only: bool = Query(False, description="If true, only return today's scans"),
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR scan activity log.
@@ -809,7 +811,8 @@ async def get_valor_scan_activity(
         scans = trader.db.get_scan_activity(
             limit=limit,
             outcome=outcome,
-            gamma_regime=gamma_regime
+            gamma_regime=gamma_regime,
+            ticker=ticker
         )
 
         # Filter to today only if requested

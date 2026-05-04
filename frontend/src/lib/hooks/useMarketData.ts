@@ -804,10 +804,11 @@ const fetchers = {
     const response = await api.get('/api/valor/paper-account')
     return response.data
   },
-  valorScanActivity: async (limit?: number, outcome?: string) => {
+  valorScanActivity: async (limit?: number, outcome?: string, ticker?: string) => {
     const params = new URLSearchParams()
     params.append('limit', String(limit || 100))
     if (outcome) params.append('outcome', outcome)
+    if (ticker) params.append('ticker', ticker)
     const response = await api.get(`/api/valor/scan-activity?${params}`)
     return response.data
   },
@@ -819,8 +820,11 @@ const fetchers = {
     const response = await api.get('/api/valor/ml/training-data-stats')
     return response.data
   },
-  valorSignals: async (limit: number = 50) => {
-    const response = await api.get(`/api/valor/signals/recent?limit=${limit}`)
+  valorSignals: async (limit: number = 50, ticker?: string) => {
+    const params = new URLSearchParams()
+    params.append('limit', String(limit))
+    if (ticker) params.append('ticker', ticker)
+    const response = await api.get(`/api/valor/signals/recent?${params}`)
     return response.data
   },
   valorMLStatus: async () => {
@@ -2041,10 +2045,10 @@ export function useValorPaperAccount(options?: SWRConfiguration) {
   })
 }
 
-export function useValorScanActivity(limit: number = 100, outcome?: string, options?: SWRConfiguration) {
+export function useValorScanActivity(limit: number = 100, outcome?: string, ticker?: string, options?: SWRConfiguration) {
   return useSWR(
-    `valor-scan-activity-${limit}-${outcome || 'all'}`,
-    () => fetchers.valorScanActivity(limit, outcome),
+    `valor-scan-activity-${limit}-${outcome || 'all'}-${ticker || 'all'}`,
+    () => fetchers.valorScanActivity(limit, outcome, ticker),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
@@ -2065,10 +2069,10 @@ export function useValorMLTrainingDataStats(options?: SWRConfiguration) {
   })
 }
 
-export function useValorSignals(limit: number = 50, options?: SWRConfiguration) {
+export function useValorSignals(limit: number = 50, ticker?: string, options?: SWRConfiguration) {
   return useSWR(
-    `valor-signals-${limit}`,
-    () => fetchers.valorSignals(limit),
+    `valor-signals-${limit}-${ticker || 'all'}`,
+    () => fetchers.valorSignals(limit, ticker),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }

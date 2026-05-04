@@ -166,7 +166,7 @@ export default function ValorPage() {
   const { data: intradayEquityData } = useValorIntradayEquity(selectedTicker)
   const { data: tickersData } = useValorTickers()
   const { data: tickerStatsData } = useValorTickerStats()
-  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000, undefined)
+  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000, undefined, selectedTicker)
   const { data: mlTrainingData } = useValorMLTrainingData()
   const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
   const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
@@ -175,7 +175,7 @@ export default function ValorPage() {
   const { data: mlShadowData, mutate: refreshShadow } = useValorMLShadowStatus()
   const { data: abTestStatus, mutate: refreshABTestStatus } = useValorABTestStatus()
   const { data: abTestResults, mutate: refreshABTestResults } = useValorABTestResults()
-  const { data: signalsData } = useValorSignals(50)
+  const { data: signalsData } = useValorSignals(50, selectedTicker)
 
   // Margin zone data (inline fetch, 15s refresh)
   const [marginZoneData, setMarginZoneData] = useState<any>(null)
@@ -1802,7 +1802,7 @@ export default function ValorPage() {
                                   </span>
                                 )}
                               </td>
-                              <td className="px-4 py-3 text-right font-mono">{signal.entry_price?.toFixed(2) || signal.price?.toFixed(2) || '—'}</td>
+                              <td className="px-4 py-3 text-right font-mono">{signal.current_price?.toFixed(2) || signal.entry_price?.toFixed(2) || signal.price?.toFixed(2) || '—'}</td>
                               <td className="px-4 py-3 text-right font-mono text-xs">
                                 {signal.win_probability != null
                                   ? <span className={signal.win_probability >= 0.55 ? 'text-green-400' : signal.win_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
