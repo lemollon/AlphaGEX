@@ -33,21 +33,17 @@ logger = logging.getLogger(__name__)
 
 # (bot_name, signal_action, funding_regime_match) → reason string.
 # funding_regime_match=None means "any regime".
-_BLOCKED_PATTERNS: dict = {
-    # BTC
-    ("AGAPE_BTC_PERP",  "LONG",  "MILD_SHORT_BIAS"): "BTC_LONG_in_MILD_SHORT_BIAS_loses",
-    ("AGAPE_BTC_PERP",  "SHORT", "UNKNOWN"):         "BTC_SHORT_in_UNKNOWN_funding_loses",
-    ("AGAPE_BTC_PERP",  "SHORT", "BALANCED"):        "BTC_SHORT_in_BALANCED_loses",
-    # DOGE
-    ("AGAPE_DOGE_PERP", "SHORT", "BALANCED"):        "DOGE_SHORT_in_BALANCED_loses",
-    # XRP SHORT block REMOVED 2026-05-03: the original -$1,240 / 41.5% WR was
-    # measured under the old XRP exit config (act=1.0/trail=0.75). After the
-    # exit-tuning applied 2026-05-03 (act=1.5/trail=0.1/profit_target=2.5/24h),
-    # the same 52 historical XRP entries replay at +$2,011 / 60% WR / PF 1.57.
-    # Filter was overcorrecting and zero-traded the bot — every XRP signal is
-    # SHORT (contrarian against EXTREME_LONG L/S), so blocking SHORT == fully
-    # disabling XRP. Re-evaluate after another ~30 trades under new exits.
-}
+#
+# All buckets cleared 2026-05-03: every entry in this dict was sourced from
+# a backtest measured under the old per-bot exit configs (BTC/ETH 1.5/1.25,
+# XRP 1.0/0.75, DOGE 0.2/0.1). Today's exit-tuning made those WR/P&L numbers
+# obsolete — e.g. BTC went +$4.7K → +$24K on the same entries, DOGE went
+# −$104 → +$1,144, XRP went +$471 → +$2,011 — so the "losing buckets" the
+# filter targets no longer exist. Keeping the rules zero-traded XRP and
+# would silently suppress winning combinations on the others. Repopulate
+# only after we have ≥30 closed trades per bot under the new exits and a
+# fresh backtest confirms a real losing bucket.
+_BLOCKED_PATTERNS: dict = {}
 
 
 def is_signal_blocked(
