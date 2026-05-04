@@ -6784,8 +6784,20 @@ class AutonomousTraderScheduler:
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
-        # Create scheduler with Central Texas timezone
-        self.scheduler = BackgroundScheduler(timezone='America/Chicago')
+        # Create scheduler with Central Texas timezone.
+        # job_defaults tunes the apscheduler defaults that were silently dropping
+        # late-registered bots: with the stock misfire_grace_time=1s, any job
+        # whose first dispatch lands 1+s late under multi-worker contention is
+        # discarded ("Run time of job ... was missed by 0:00:01"). 60s of grace
+        # absorbs observed 1.1–7.4s jitter without exceeding the 5-min interval.
+        self.scheduler = BackgroundScheduler(
+            timezone='America/Chicago',
+            job_defaults={
+                'misfire_grace_time': 60,
+                'coalesce': True,
+                'max_instances': 1,
+            },
+        )
 
         # =================================================================
         # LAZARUS JOB: DISABLED - Handled by AutonomousTrader (every 5 min)
