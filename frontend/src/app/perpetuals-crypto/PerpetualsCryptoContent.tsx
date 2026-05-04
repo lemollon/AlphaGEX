@@ -45,7 +45,8 @@ type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB' |
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const COINS: CoinId[] = ['ALL', 'ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB', 'LINK', 'LTC', 'BCH']
+// Fixed top 3 by user pref: ETH, BTC, XRP. Remaining ordered by market cap / name recognition.
+const COINS: CoinId[] = ['ALL', 'ETH', 'BTC', 'XRP', 'SOL', 'DOGE', 'AVAX', 'LINK', 'LTC', 'BCH', 'SHIB']
 
 // productType marks each bot as a perpetual ("PERP") or dated futures ("FUTURE").
 // PERP = Coinbase International (1000SHIB-PERP-INTX, geo-blocked from US) OR
@@ -169,7 +170,7 @@ const COIN_META: Record<CoinId, {
   },
 }
 
-const ACTIVE_COINS = ['ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB', 'LINK', 'LTC', 'BCH'] as const
+const ACTIVE_COINS = ['ETH', 'BTC', 'XRP', 'SOL', 'DOGE', 'AVAX', 'LINK', 'LTC', 'BCH', 'SHIB'] as const
 type ActiveCoinId = typeof ACTIVE_COINS[number]
 
 const SECTION_TABS = [
@@ -421,7 +422,7 @@ export default function PerpetualsCryptoPage() {
                 </span>
               </div>
               <p className="text-gray-500 text-sm mt-1">
-                Perpetuals + monthly futures: ETH, SOL, AVAX, BTC, XRP, DOGE, SHIB, LINK, LTC, BCH
+                Perpetuals + monthly futures: ETH, BTC, XRP, SOL, DOGE, AVAX, LINK, LTC, BCH, SHIB
               </p>
             </div>
             <button
