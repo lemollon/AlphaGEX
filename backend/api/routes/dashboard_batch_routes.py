@@ -104,6 +104,15 @@ from backend.api.routes.agape_shib_perp_routes import (
 from backend.api.routes.agape_shib_futures_routes import (
     get_equity_curve as agape_shib_futures_equity_curve,
 )
+from backend.api.routes.agape_link_futures_routes import (
+    get_equity_curve as agape_link_futures_equity_curve,
+)
+from backend.api.routes.agape_ltc_futures_routes import (
+    get_equity_curve as agape_ltc_futures_equity_curve,
+)
+from backend.api.routes.agape_bch_futures_routes import (
+    get_equity_curve as agape_bch_futures_equity_curve,
+)
 from backend.api.routes.gex_routes import get_gex_data
 from backend.api.routes.vix_routes import get_vix_current
 from backend.api.routes.prophet_routes import prophet_status
@@ -252,6 +261,9 @@ async def _fetch_equity_curves(days: int) -> dict:
         _safe("agape_doge_perp_eq", agape_doge_perp_equity_curve(days)),
         _safe("agape_shib_perp_eq", agape_shib_perp_equity_curve(days)),
         _safe("agape_shib_futures_eq", agape_shib_futures_equity_curve(days)),
+        _safe("agape_link_futures_eq", agape_link_futures_equity_curve(days)),
+        _safe("agape_ltc_futures_eq", agape_ltc_futures_equity_curve(days)),
+        _safe("agape_bch_futures_eq", agape_bch_futures_equity_curve(days)),
     )
     return {
         "fortress": results[0],
@@ -273,6 +285,9 @@ async def _fetch_equity_curves(days: int) -> dict:
         "agape_doge_perp": results[16],
         "agape_shib_perp": results[17],
         "agape_shib_futures": results[18],
+        "agape_link_futures": results[19],
+        "agape_ltc_futures": results[20],
+        "agape_bch_futures": results[21],
     }
 
 

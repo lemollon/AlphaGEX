@@ -41,6 +41,9 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   AGAPE_DOGE_PERP: 2500,
   AGAPE_SHIB_PERP: 1000,
   AGAPE_SHIB_FUTURES: 1000,
+  AGAPE_LINK_FUTURES: 2500,
+  AGAPE_LTC_FUTURES: 2500,
+  AGAPE_BCH_FUTURES: 2500,
 }
 
 // Bot configuration with colors
@@ -64,6 +67,9 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'AGAPE_DOGE_PERP', endpoint: '/api/agape-doge-perp/equity-curve' },
   { name: 'AGAPE_SHIB_PERP', endpoint: '/api/agape-shib-perp/equity-curve' },
   { name: 'AGAPE_SHIB_FUTURES', endpoint: '/api/agape-shib-futures/equity-curve' },
+  { name: 'AGAPE_LINK_FUTURES', endpoint: '/api/agape-link-futures/equity-curve' },
+  { name: 'AGAPE_LTC_FUTURES', endpoint: '/api/agape-ltc-futures/equity-curve' },
+  { name: 'AGAPE_BCH_FUTURES', endpoint: '/api/agape-bch-futures/equity-curve' },
 ]
 
 interface EquityCurvePoint {
@@ -128,6 +134,9 @@ export default function MultiBotEquityCurve({
     AGAPE_DOGE_PERP: true,
     AGAPE_SHIB_PERP: true,
     AGAPE_SHIB_FUTURES: true,
+    AGAPE_LINK_FUTURES: true,
+    AGAPE_LTC_FUTURES: true,
+    AGAPE_BCH_FUTURES: true,
     LAZARUS: false,
     CORNERSTONE: false,
   })
@@ -229,8 +238,23 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: agapeLinkFuturesData, isLoading: agapeLinkFuturesLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[19].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
+  const { data: agapeLtcFuturesData, isLoading: agapeLtcFuturesLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[20].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
+  const { data: agapeBchFuturesData, isLoading: agapeBchFuturesLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[21].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading || agapeBtcLoading || agapeXrpLoading || agapeEthPerpLoading || agapeSolPerpLoading || agapeAvaxPerpLoading || agapeBtcPerpLoading || agapeXrpPerpLoading || agapeDogePerpLoading || agapeShibPerpLoading || agapeShibFuturesLoading
+  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading || agapeBtcLoading || agapeXrpLoading || agapeEthPerpLoading || agapeSolPerpLoading || agapeAvaxPerpLoading || agapeBtcPerpLoading || agapeXrpPerpLoading || agapeDogePerpLoading || agapeShibPerpLoading || agapeShibFuturesLoading || agapeLinkFuturesLoading || agapeLtcFuturesLoading || agapeBchFuturesLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -255,6 +279,9 @@ export default function MultiBotEquityCurve({
     AGAPE_DOGE_PERP: agapeDogePerpData,
     AGAPE_SHIB_PERP: agapeShibPerpData,
     AGAPE_SHIB_FUTURES: agapeShibFuturesData,
+    AGAPE_LINK_FUTURES: agapeLinkFuturesData,
+    AGAPE_LTC_FUTURES: agapeLtcFuturesData,
+    AGAPE_BCH_FUTURES: agapeBchFuturesData,
     LAZARUS: undefined,
     CORNERSTONE: undefined,
   }
@@ -302,7 +329,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData, agapeBtcData, agapeXrpData, agapeEthPerpData, agapeSolPerpData, agapeAvaxPerpData, agapeBtcPerpData, agapeXrpPerpData, agapeDogePerpData, agapeShibPerpData, agapeShibFuturesData, showPercentage])
+  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData, agapeBtcData, agapeXrpData, agapeEthPerpData, agapeSolPerpData, agapeAvaxPerpData, agapeBtcPerpData, agapeXrpPerpData, agapeDogePerpData, agapeShibPerpData, agapeShibFuturesData, agapeLinkFuturesData, agapeLtcFuturesData, agapeBchFuturesData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -326,6 +353,9 @@ export default function MultiBotEquityCurve({
       AGAPE_DOGE_PERP: null,
       AGAPE_SHIB_PERP: null,
       AGAPE_SHIB_FUTURES: null,
+      AGAPE_LINK_FUTURES: null,
+      AGAPE_LTC_FUTURES: null,
+      AGAPE_BCH_FUTURES: null,
       FAITH: null,
       GRACE: null,
       LAZARUS: null,

@@ -104,6 +104,9 @@ export default function AllBotReportsSummary() {
     AGAPE_DOGE_PERP: undefined,
     AGAPE_SHIB_PERP: undefined,
     AGAPE_SHIB_FUTURES: undefined,
+    AGAPE_LINK_FUTURES: undefined,
+    AGAPE_LTC_FUTURES: undefined,
+    AGAPE_BCH_FUTURES: undefined,
   }
 
   // Calculate aggregate stats

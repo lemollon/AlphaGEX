@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP' | 'AGAPE_SHIB_FUTURES'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP' | 'AGAPE_SHIB_FUTURES' | 'AGAPE_LINK_FUTURES' | 'AGAPE_LTC_FUTURES' | 'AGAPE_BCH_FUTURES'
 
 export interface BotBrand {
   name: BotName
@@ -876,6 +876,114 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#F59E0B',
     hexLight: '#FCD34D',
     hexDark: '#D97706',
+  },
+  AGAPE_LINK_FUTURES: {
+    name: 'AGAPE_LINK_FUTURES',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_LINK_FUTURES,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_LINK_FUTURES} Chainlink Monthly Futures`,
+    description: 'Chainlink Monthly Futures Contracts (LNK-DDMMMYY-CDE) via Coinbase Derivatives FCM',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (LINK-FUT)',
+    // Primary - Blue (Chainlink brand)
+    primaryColor: 'blue',
+    primaryBg: 'bg-blue-600',
+    primaryBorder: 'border-blue-500',
+    primaryText: 'text-blue-400',
+    // Light variants
+    lightBg: 'bg-blue-900/20',
+    lightText: 'text-blue-300',
+    lightBorder: 'border-blue-700/50',
+    // Chart colors
+    chartLine: 'stroke-blue-400',
+    chartFill: 'fill-blue-500/20',
+    chartPositive: 'text-blue-400',
+    chartNegative: 'text-blue-600',
+    // Position cards
+    positionBorder: 'border-blue-600/50',
+    positionBg: 'bg-blue-950/30',
+    positionAccent: 'bg-blue-500',
+    // Badges
+    badgeBg: 'bg-blue-900/50',
+    badgeText: 'text-blue-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-blue-500',
+    gradientTo: 'to-blue-900',
+    // Hex for Recharts
+    hexPrimary: '#3B82F6',
+    hexLight: '#93C5FD',
+    hexDark: '#1D4ED8',
+  },
+  AGAPE_LTC_FUTURES: {
+    name: 'AGAPE_LTC_FUTURES',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_LTC_FUTURES,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_LTC_FUTURES} Litecoin Monthly Futures`,
+    description: 'Litecoin Monthly Futures Contracts (LTC-DDMMMYY-CDE) via Coinbase Derivatives FCM',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (LTC-FUT)',
+    // Primary - Slate (Litecoin silver brand)
+    primaryColor: 'slate',
+    primaryBg: 'bg-slate-600',
+    primaryBorder: 'border-slate-500',
+    primaryText: 'text-slate-300',
+    // Light variants
+    lightBg: 'bg-slate-900/20',
+    lightText: 'text-slate-300',
+    lightBorder: 'border-slate-700/50',
+    // Chart colors
+    chartLine: 'stroke-slate-400',
+    chartFill: 'fill-slate-500/20',
+    chartPositive: 'text-slate-300',
+    chartNegative: 'text-slate-500',
+    // Position cards
+    positionBorder: 'border-slate-600/50',
+    positionBg: 'bg-slate-950/30',
+    positionAccent: 'bg-slate-500',
+    // Badges
+    badgeBg: 'bg-slate-900/50',
+    badgeText: 'text-slate-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-slate-500',
+    gradientTo: 'to-slate-900',
+    // Hex for Recharts
+    hexPrimary: '#94A3B8',
+    hexLight: '#CBD5E1',
+    hexDark: '#475569',
+  },
+  AGAPE_BCH_FUTURES: {
+    name: 'AGAPE_BCH_FUTURES',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_BCH_FUTURES,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_BCH_FUTURES} Bitcoin Cash Monthly Futures`,
+    description: 'Bitcoin Cash Monthly Futures Contracts (BCH-DDMMMYY-CDE) via Coinbase Derivatives FCM',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (BCH-FUT)',
+    // Primary - Green (Bitcoin Cash brand)
+    primaryColor: 'green',
+    primaryBg: 'bg-green-600',
+    primaryBorder: 'border-green-500',
+    primaryText: 'text-green-400',
+    // Light variants
+    lightBg: 'bg-green-900/20',
+    lightText: 'text-green-300',
+    lightBorder: 'border-green-700/50',
+    // Chart colors
+    chartLine: 'stroke-green-400',
+    chartFill: 'fill-green-500/20',
+    chartPositive: 'text-green-400',
+    chartNegative: 'text-green-600',
+    // Position cards
+    positionBorder: 'border-green-600/50',
+    positionBg: 'bg-green-950/30',
+    positionAccent: 'bg-green-500',
+    // Badges
+    badgeBg: 'bg-green-900/50',
+    badgeText: 'text-green-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-green-500',
+    gradientTo: 'to-green-900',
+    // Hex for Recharts
+    hexPrimary: '#22C55E',
+    hexLight: '#86EFAC',
+    hexDark: '#15803D',
   },
 }
 

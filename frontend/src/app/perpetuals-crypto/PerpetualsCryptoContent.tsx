@@ -37,7 +37,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB'
+type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB' | 'LINK' | 'LTC' | 'BCH'
 
 // ==============================================================================
 // CONSTANTS
@@ -45,7 +45,7 @@ type CoinId = 'ALL' | 'ETH' | 'SOL' | 'AVAX' | 'BTC' | 'XRP' | 'DOGE' | 'SHIB'
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const COINS: CoinId[] = ['ALL', 'ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB']
+const COINS: CoinId[] = ['ALL', 'ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB', 'LINK', 'LTC', 'BCH']
 
 // productType marks each bot as a perpetual ("PERP") or dated futures ("FUTURE").
 // PERP = Coinbase International (1000SHIB-PERP-INTX, geo-blocked from US) OR
@@ -137,9 +137,39 @@ const COIN_META: Record<CoinId, {
     productTypeNote: 'Coinbase US 1k SHIB futures (SHB-29MAY26-CDE, monthly roll, FCM)',
     liveAvailableUS: true,  // contract IS available; live integration pending
   },
+  'LINK': {
+    symbol: 'LINK', label: 'Chainlink', instrument: 'LINK-FUT', hexColor: '#3B82F6',
+    bgActive: 'bg-blue-600', borderActive: 'border-blue-500', textActive: 'text-blue-400',
+    bgCard: 'bg-blue-950/30', borderCard: 'border-blue-700/40',
+    apiPrefix: '/api/agape-link-futures', priceKey: 'current_link_price', priceField: 'link_price', priceDecimals: 2,
+    quantityLabel: 'LINK', startingCapital: 2500,
+    productType: 'FUTURE',
+    productTypeNote: 'Coinbase US LINK futures (LNK-29MAY26-CDE, 100 LINK/contract, monthly roll, FCM)',
+    liveAvailableUS: true,
+  },
+  'LTC': {
+    symbol: 'LTC', label: 'Litecoin', instrument: 'LTC-FUT', hexColor: '#94A3B8',
+    bgActive: 'bg-slate-600', borderActive: 'border-slate-500', textActive: 'text-slate-300',
+    bgCard: 'bg-slate-950/30', borderCard: 'border-slate-700/40',
+    apiPrefix: '/api/agape-ltc-futures', priceKey: 'current_ltc_price', priceField: 'ltc_price', priceDecimals: 2,
+    quantityLabel: 'LTC', startingCapital: 2500,
+    productType: 'FUTURE',
+    productTypeNote: 'Coinbase US LTC futures (LTC-29MAY26-CDE, 50 LTC/contract, monthly roll, FCM)',
+    liveAvailableUS: true,
+  },
+  'BCH': {
+    symbol: 'BCH', label: 'Bitcoin Cash', instrument: 'BCH-FUT', hexColor: '#22C55E',
+    bgActive: 'bg-green-600', borderActive: 'border-green-500', textActive: 'text-green-400',
+    bgCard: 'bg-green-950/30', borderCard: 'border-green-700/40',
+    apiPrefix: '/api/agape-bch-futures', priceKey: 'current_bch_price', priceField: 'bch_price', priceDecimals: 2,
+    quantityLabel: 'BCH', startingCapital: 2500,
+    productType: 'FUTURE',
+    productTypeNote: 'Coinbase US BCH futures (BCH-29MAY26-CDE, 25 BCH/contract, monthly roll, FCM)',
+    liveAvailableUS: true,
+  },
 }
 
-const ACTIVE_COINS = ['ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB'] as const
+const ACTIVE_COINS = ['ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB', 'LINK', 'LTC', 'BCH'] as const
 type ActiveCoinId = typeof ACTIVE_COINS[number]
 
 const SECTION_TABS = [
@@ -154,7 +184,7 @@ const SECTION_TABS = [
 ]
 type SectionTabId = typeof SECTION_TABS[number]['id']
 
-const TOTAL_CAPITAL = 57500  // ETH 12.5 + SOL 5 + AVAX 2.5 + BTC 25 + XRP 9 + DOGE 2.5 + SHIB 1
+const TOTAL_CAPITAL = 65000  // ETH 12.5 + SOL 5 + AVAX 2.5 + BTC 25 + XRP 9 + DOGE 2.5 + SHIB 1 + LINK 2.5 + LTC 2.5 + BCH 2.5
 
 const TIME_FRAMES = [
   { id: 'today', label: 'Today', days: 0 },
@@ -294,8 +324,11 @@ export default function PerpetualsCryptoPage() {
   const { data: xrpStatusData, isLoading: xrpLoading, mutate: refreshXrp } = useSWR('/api/agape-xrp-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: dogeStatusData, isLoading: dogeLoading, mutate: refreshDoge } = useSWR('/api/agape-doge-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: shibStatusData, isLoading: shibLoading, mutate: refreshShib } = useSWR('/api/agape-shib-futures/status', fetcher, { refreshInterval: 10_000 })
+  const { data: linkStatusData, isLoading: linkLoading, mutate: refreshLink } = useSWR('/api/agape-link-futures/status', fetcher, { refreshInterval: 10_000 })
+  const { data: ltcStatusData, isLoading: ltcLoading, mutate: refreshLtc } = useSWR('/api/agape-ltc-futures/status', fetcher, { refreshInterval: 10_000 })
+  const { data: bchStatusData, isLoading: bchLoading, mutate: refreshBch } = useSWR('/api/agape-bch-futures/status', fetcher, { refreshInterval: 10_000 })
 
-  // Fetch all 7 performance for combined stats
+  // Fetch all 10 performance for combined stats
   const { data: ethPerfData } = useSWR('/api/agape-eth-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: solPerfData } = useSWR('/api/agape-sol-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: avaxPerfData } = useSWR('/api/agape-avax-perp/performance', fetcher, { refreshInterval: 30_000 })
@@ -303,11 +336,14 @@ export default function PerpetualsCryptoPage() {
   const { data: xrpPerfData } = useSWR('/api/agape-xrp-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: dogePerfData } = useSWR('/api/agape-doge-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: shibPerfData } = useSWR('/api/agape-shib-futures/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: linkPerfData } = useSWR('/api/agape-link-futures/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: ltcPerfData } = useSWR('/api/agape-ltc-futures/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: bchPerfData } = useSWR('/api/agape-bch-futures/performance', fetcher, { refreshInterval: 30_000 })
 
   const isAllView = selectedCoin === 'ALL'
-  const allLoading = ethLoading && solLoading && avaxLoading && btcLoading && xrpLoading && dogeLoading && shibLoading
+  const allLoading = ethLoading && solLoading && avaxLoading && btcLoading && xrpLoading && dogeLoading && shibLoading && linkLoading && ltcLoading && bchLoading
 
-  const refreshAll = () => { refreshEth(); refreshSol(); refreshAvax(); refreshBtc(); refreshXrp(); refreshDoge(); refreshShib() }
+  const refreshAll = () => { refreshEth(); refreshSol(); refreshAvax(); refreshBtc(); refreshXrp(); refreshDoge(); refreshShib(); refreshLink(); refreshLtc(); refreshBch() }
 
   // Build per-coin summary data for the combined view
   const coinSummaries = useMemo(() => {
@@ -339,11 +375,14 @@ export default function PerpetualsCryptoPage() {
       XRP: build(xrpStatusData, xrpPerfData, 'XRP'),
       DOGE: build(dogeStatusData, dogePerfData, 'DOGE'),
       SHIB: build(shibStatusData, shibPerfData, 'SHIB'),
+      LINK: build(linkStatusData, linkPerfData, 'LINK'),
+      LTC: build(ltcStatusData, ltcPerfData, 'LTC'),
+      BCH: build(bchStatusData, bchPerfData, 'BCH'),
     }
-  }, [ethStatusData, solStatusData, avaxStatusData, btcStatusData, xrpStatusData, dogeStatusData, shibStatusData, ethPerfData, solPerfData, avaxPerfData, btcPerfData, xrpPerfData, dogePerfData, shibPerfData])
+  }, [ethStatusData, solStatusData, avaxStatusData, btcStatusData, xrpStatusData, dogeStatusData, shibStatusData, linkStatusData, ltcStatusData, bchStatusData, ethPerfData, solPerfData, avaxPerfData, btcPerfData, xrpPerfData, dogePerfData, shibPerfData, linkPerfData, ltcPerfData, bchPerfData])
 
   // Loading state
-  if (allLoading && !ethStatusData && !solStatusData && !avaxStatusData && !btcStatusData && !xrpStatusData && !dogeStatusData && !shibStatusData) {
+  if (allLoading && !ethStatusData && !solStatusData && !avaxStatusData && !btcStatusData && !xrpStatusData && !dogeStatusData && !shibStatusData && !linkStatusData && !ltcStatusData && !bchStatusData) {
     return (
       <>
         <Navigation />
@@ -382,7 +421,7 @@ export default function PerpetualsCryptoPage() {
                 </span>
               </div>
               <p className="text-gray-500 text-sm mt-1">
-                Perpetuals + monthly futures: ETH, SOL, AVAX, BTC, XRP, DOGE, SHIB
+                Perpetuals + monthly futures: ETH, SOL, AVAX, BTC, XRP, DOGE, SHIB, LINK, LTC, BCH
               </p>
             </div>
             <button
@@ -541,6 +580,9 @@ function AllCoinsRecentTrades() {
   const { data: xrpClosed } = useSWR('/api/agape-xrp-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: dogeClosed } = useSWR('/api/agape-doge-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: shibClosed } = useSWR('/api/agape-shib-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: linkClosed } = useSWR('/api/agape-link-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: ltcClosed } = useSWR('/api/agape-ltc-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: bchClosed } = useSWR('/api/agape-bch-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
 
   const allTrades = useMemo(() => {
     const tagged = (data: any, coin: CoinId) =>
@@ -553,6 +595,9 @@ function AllCoinsRecentTrades() {
       ...tagged(xrpClosed, 'XRP'),
       ...tagged(dogeClosed, 'DOGE'),
       ...tagged(shibClosed, 'SHIB'),
+      ...tagged(linkClosed, 'LINK'),
+      ...tagged(ltcClosed, 'LTC'),
+      ...tagged(bchClosed, 'BCH'),
     ]
     combined.sort((a, b) => {
       const ta = a.close_time ? new Date(a.close_time).getTime() : 0
@@ -560,7 +605,7 @@ function AllCoinsRecentTrades() {
       return tb - ta
     })
     return combined.slice(0, 25)
-  }, [ethClosed, solClosed, avaxClosed, btcClosed, xrpClosed, dogeClosed, shibClosed])
+  }, [ethClosed, solClosed, avaxClosed, btcClosed, xrpClosed, dogeClosed, shibClosed, linkClosed, ltcClosed, bchClosed])
 
   if (allTrades.length === 0) return null
 
