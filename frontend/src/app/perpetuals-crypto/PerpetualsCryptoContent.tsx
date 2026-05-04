@@ -124,7 +124,7 @@ const COIN_META: Record<CoinId, {
     symbol: 'SHIB', label: 'Shiba Inu', instrument: '1000SHIB-FUT', hexColor: '#FB7185',
     bgActive: 'bg-rose-600', borderActive: 'border-rose-500', textActive: 'text-rose-400',
     bgCard: 'bg-rose-950/30', borderCard: 'border-rose-700/40',
-    apiPrefix: '/api/agape-shib-perp', priceKey: 'current_shib_price', priceField: 'shib_price', priceDecimals: 8,
+    apiPrefix: '/api/agape-shib-futures', priceKey: 'current_shib_price', priceField: 'shib_price', priceDecimals: 8,
     quantityLabel: 'SHIB', startingCapital: 1000,
     // SHIB has no US-accessible perpetual (Coinbase International lists
     // 1000SHIB-PERP-INTX but it geo-blocks US persons). The US-accessible
@@ -293,7 +293,7 @@ export default function PerpetualsCryptoPage() {
   const { data: btcStatusData, isLoading: btcLoading, mutate: refreshBtc } = useSWR('/api/agape-btc-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: xrpStatusData, isLoading: xrpLoading, mutate: refreshXrp } = useSWR('/api/agape-xrp-perp/status', fetcher, { refreshInterval: 10_000 })
   const { data: dogeStatusData, isLoading: dogeLoading, mutate: refreshDoge } = useSWR('/api/agape-doge-perp/status', fetcher, { refreshInterval: 10_000 })
-  const { data: shibStatusData, isLoading: shibLoading, mutate: refreshShib } = useSWR('/api/agape-shib-perp/status', fetcher, { refreshInterval: 10_000 })
+  const { data: shibStatusData, isLoading: shibLoading, mutate: refreshShib } = useSWR('/api/agape-shib-futures/status', fetcher, { refreshInterval: 10_000 })
 
   // Fetch all 7 performance for combined stats
   const { data: ethPerfData } = useSWR('/api/agape-eth-perp/performance', fetcher, { refreshInterval: 30_000 })
@@ -302,7 +302,7 @@ export default function PerpetualsCryptoPage() {
   const { data: btcPerfData } = useSWR('/api/agape-btc-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: xrpPerfData } = useSWR('/api/agape-xrp-perp/performance', fetcher, { refreshInterval: 30_000 })
   const { data: dogePerfData } = useSWR('/api/agape-doge-perp/performance', fetcher, { refreshInterval: 30_000 })
-  const { data: shibPerfData } = useSWR('/api/agape-shib-perp/performance', fetcher, { refreshInterval: 30_000 })
+  const { data: shibPerfData } = useSWR('/api/agape-shib-futures/performance', fetcher, { refreshInterval: 30_000 })
 
   const isAllView = selectedCoin === 'ALL'
   const allLoading = ethLoading && solLoading && avaxLoading && btcLoading && xrpLoading && dogeLoading && shibLoading
@@ -540,7 +540,7 @@ function AllCoinsRecentTrades() {
   const { data: btcClosed } = useSWR('/api/agape-btc-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: xrpClosed } = useSWR('/api/agape-xrp-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
   const { data: dogeClosed } = useSWR('/api/agape-doge-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: shibClosed } = useSWR('/api/agape-shib-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
+  const { data: shibClosed } = useSWR('/api/agape-shib-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
 
   const allTrades = useMemo(() => {
     const tagged = (data: any, coin: CoinId) =>

@@ -127,6 +127,7 @@ function buildFallback(data: Record<string, any> | undefined): Record<string, an
       agape_xrp_perp: `/api/agape-xrp-perp/equity-curve?days=${days}`,
       agape_doge_perp: `/api/agape-doge-perp/equity-curve?days=${days}`,
       agape_shib_perp: `/api/agape-shib-perp/equity-curve?days=${days}`,
+      agape_shib_futures: `/api/agape-shib-futures/equity-curve?days=${days}`,
     }
     for (const [bot, key] of Object.entries(mapping)) {
       if (eq[bot]) f[key] = eq[bot]

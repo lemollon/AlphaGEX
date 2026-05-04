@@ -66,6 +66,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   AGAPE_XRP_PERP: 9000,
   AGAPE_DOGE_PERP: 2500,
   AGAPE_SHIB_PERP: 1000,
+  AGAPE_SHIB_FUTURES: 1000,
 }
 
 export default function PortfolioSummaryCard() {

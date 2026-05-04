@@ -430,6 +430,23 @@ MARKET_DEFAULTS: Dict[str, MarketConfig] = {
         has_funding_rate=True,
         funding_interval_hours=8.0,
     ),
+    "1000SHIB-FUT": MarketConfig(
+        market_type=MarketType.CRYPTO_FUTURES,
+        exchange="COINBASE_DERIVATIVES_FCM",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.MARGIN_CALL,
+        initial_margin_rate=0.10,          # 10% = 10x max leverage (FCM lower than perps)
+        maintenance_margin_rate=0.015,     # 1.5% maintenance (matches SHIB-PERP)
+        is_margin_per_contract=False,
+        max_leverage=10.0,
+        default_leverage=3.0,
+        contract_multiplier=10_000.0,      # 1 contract = 10,000 units of "1000SHIB" index = 10M SHIB
+        tick_size=0.00001,
+        tick_value=0.10,                   # 0.00001 * 10,000 = 0.10 USD per tick
+        has_expiry=True,                   # Monthly expiry — SHB-DDMMMYY-CDE
+        settlement_type=SettlementType.DAILY_MTM,
+        has_funding_rate=False,            # Futures have no funding
+    ),
 
     # --- Options (SPX/SPY via Tradier) ---
     "SPX": MarketConfig(
@@ -526,6 +543,7 @@ BOT_INSTRUMENT_MAP: Dict[str, str] = {
     "AGAPE_XRP_PERP": "XRP-PERP",
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",
+    "AGAPE_SHIB_FUTURES": "1000SHIB-FUT",
 
     # Crypto Spot
     "AGAPE_SPOT": "ETH-USD",       # Primary ticker

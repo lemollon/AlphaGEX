@@ -305,6 +305,15 @@ except ImportError:
     AgapeShibPerpTrader = None
     print("Warning: AGAPE-SHIB-PERP not available. SHIB perpetual trading will be disabled.")
 
+# Import AGAPE-SHIB-FUTURES (1000SHIB Monthly Futures Contract)
+try:
+    from trading.agape_shib_futures.trader import AgapeShibFuturesTrader, create_agape_shib_futures_trader
+    AGAPE_SHIB_FUTURES_AVAILABLE = True
+except ImportError:
+    AGAPE_SHIB_FUTURES_AVAILABLE = False
+    AgapeShibFuturesTrader = None
+    print("Warning: AGAPE-SHIB-FUTURES not available. SHIB futures trading will be disabled.")
+
 # Import FAITH (2DTE Paper Iron Condor)
 try:
     from trading.faith.trader import FaithTrader
@@ -1021,6 +1030,18 @@ class AutonomousTraderScheduler:
                 logger.warning(f"AGAPE-SHIB-PERP initialization failed: {e}")
                 self.agape_shib_perp_trader = None
 
+        # AGAPE-SHIB-FUTURES - 1000SHIB Monthly Futures Contract (Coinbase Derivatives FCM)
+        # Replaces AGAPE-SHIB-PERP (perpetual is geo-blocked); trades monthly futures via Tastytrade FCM.
+        # PAPER mode: Simulated trades with $1k starting capital.
+        self.agape_shib_futures_trader = None
+        if AGAPE_SHIB_FUTURES_AVAILABLE:
+            try:
+                self.agape_shib_futures_trader = create_agape_shib_futures_trader()
+                logger.info("✅ AGAPE-SHIB-FUTURES initialized (1000SHIB-FUT Monthly Futures, PAPER mode - $1k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-SHIB-FUTURES initialization failed: {e}")
+                self.agape_shib_futures_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   LAZARUS: ${CAPITAL_ALLOCATION['LAZARUS']:,}")
@@ -1040,6 +1061,7 @@ class AutonomousTraderScheduler:
             "AGAPE-XRP-PERP": self.agape_xrp_perp_trader is not None,
             "AGAPE-DOGE-PERP": self.agape_doge_perp_trader is not None,
             "AGAPE-SHIB-PERP": self.agape_shib_perp_trader is not None,
+            "AGAPE-SHIB-FUTURES": self.agape_shib_futures_trader is not None,
         }
         alive = [k for k, v in crypto_status.items() if v]
         dead = [k for k, v in crypto_status.items() if not v]
@@ -3843,6 +3865,57 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SHIB-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_shib_futures_logic(self):
+        """
+        AGAPE-SHIB-FUTURES - runs every 5 minutes, 24/7.
+        Coinbase Derivatives 1000SHIB monthly futures contracts via Tastytrade FCM.
+        """
+        if not self.agape_shib_futures_trader:
+            if not getattr(self, '_shib_futures_none_logged', False):
+                logger.error("AGAPE-SHIB-FUTURES: trader is None — initialization failed. Bot will NOT trade.")
+                self._shib_futures_none_logged = True
+            return
+
+        try:
+            result = self.agape_shib_futures_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-SHIB-FUTURES: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-SHIB-FUTURES: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-SHIB-FUTURES: Cycle error: {result['error']}")
+            else:
+                if self.agape_shib_futures_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-SHIB-FUTURES scan #{self.agape_shib_futures_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SHIB-FUTURES scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_shib_futures_eod_logic(self):
+        """AGAPE-SHIB-FUTURES End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-SHIB-FUTURES EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_shib_futures_trader:
+            return
+
+        try:
+            result = self.agape_shib_futures_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-SHIB-FUTURES EOD: Closed {closed} position(s)")
+
+            perf = self.agape_shib_futures_trader.get_performance()
+            logger.info(f"AGAPE-SHIB-FUTURES EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SHIB-FUTURES EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_jubilee_daily_logic(self):
@@ -7277,8 +7350,11 @@ class AutonomousTraderScheduler:
 
         # =================================================================
         # AGAPE-SHIB-PERP JOB: SHIB Perpetual Contract - every 5 minutes, 24/7
+        # RETIRED 2026-05-03: replaced by AGAPE-SHIB-FUTURES (1000SHIB-FUT monthly futures via FCM).
+        # The trader, init, scheduled_logic methods, and route module are intentionally retained
+        # so historical positions/equity/scan-activity remain queryable from the dashboard.
         # =================================================================
-        if self.agape_shib_perp_trader:
+        if False and self.agape_shib_perp_trader:  # RETIRED 2026-05-03: replaced by AGAPE-SHIB-FUTURES (1000SHIB-FUT monthly futures via FCM)
             self.scheduler.add_job(
                 self.scheduled_agape_shib_perp_logic,
                 trigger=IntervalTrigger(
@@ -7305,7 +7381,41 @@ class AutonomousTraderScheduler:
             )
             logger.info("✅ AGAPE-SHIB-PERP EOD job scheduled (3:45 PM CT daily)")
         else:
-            logger.warning("⚠️ AGAPE-SHIB-PERP not available - SHIB perpetual trading disabled")
+            logger.info("ℹ️ AGAPE-SHIB-PERP retired — replaced by AGAPE-SHIB-FUTURES")
+
+        # =================================================================
+        # AGAPE-SHIB-FUTURES JOB: 1000SHIB Monthly Futures Contract - every 5 minutes, 24/7
+        # Replaces AGAPE-SHIB-PERP. Trades Coinbase Derivatives monthly futures (SHB-DDMMMYY-CDE)
+        # via Tastytrade FCM (live execution TBD; paper mode active).
+        # =================================================================
+        if self.agape_shib_futures_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_shib_futures_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_shib_futures_trading',
+                name='AGAPE-SHIB-FUTURES - 1000SHIB Monthly Futures (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SHIB-FUTURES job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_shib_futures_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_shib_futures_eod',
+                name='AGAPE-SHIB-FUTURES - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SHIB-FUTURES EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-SHIB-FUTURES not available - SHIB futures trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT

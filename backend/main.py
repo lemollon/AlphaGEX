@@ -91,7 +91,8 @@ from backend.api.routes import (
     agape_btc_perp_routes,  # AGAPE-BTC-PERP - BTC Perpetual Contract bot
     agape_xrp_perp_routes,  # AGAPE-XRP-PERP - XRP Perpetual Contract bot
     agape_doge_perp_routes,  # AGAPE-DOGE-PERP - DOGE Perpetual Contract bot
-    agape_shib_perp_routes,  # AGAPE-SHIB-PERP - SHIB Perpetual Contract bot
+    agape_shib_perp_routes,  # AGAPE-SHIB-PERP - SHIB Perpetual Contract bot (RETIRED 2026-05-03; routes kept for historical data)
+    agape_shib_futures_routes,  # AGAPE-SHIB-FUTURES - 1000SHIB-FUT monthly futures bot (replaces SHIB-PERP)
     omega_routes,  # OMEGA - Central Trading Decision Orchestrator (4-layer pipeline + gap implementations)
     bayesian_crypto_routes,  # Bayesian Crypto Performance Tracker - statistical edge detection for crypto strategies
     dashboard_batch_routes,  # Dashboard Batch - collapse 50+ API calls into 1 request for /live-trading
@@ -371,6 +372,7 @@ app.include_router(agape_btc_perp_routes.router)
 app.include_router(agape_xrp_perp_routes.router)
 app.include_router(agape_doge_perp_routes.router)
 app.include_router(agape_shib_perp_routes.router)
+app.include_router(agape_shib_futures_routes.router)
 app.include_router(omega_routes.router)
 app.include_router(bayesian_crypto_routes.router)
 app.include_router(dashboard_batch_routes.router)

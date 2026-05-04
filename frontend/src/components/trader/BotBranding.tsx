@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP' | 'AGAPE_SHIB_FUTURES'
 
 export interface BotBrand {
   name: BotName
@@ -840,6 +840,42 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#F43F5E',
     hexLight: '#FDA4AF',
     hexDark: '#E11D48',
+  },
+  AGAPE_SHIB_FUTURES: {
+    name: 'AGAPE_SHIB_FUTURES',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_SHIB_FUTURES,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_SHIB_FUTURES} 1000SHIB Monthly Futures`,
+    description: '1000SHIB Monthly Futures Contracts via Coinbase Derivatives FCM',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (1000SHIB-FUT)',
+    // Primary - Amber (futures convention from PerpetualsCryptoContent)
+    primaryColor: 'amber',
+    primaryBg: 'bg-amber-600',
+    primaryBorder: 'border-amber-500',
+    primaryText: 'text-amber-400',
+    // Light variants
+    lightBg: 'bg-amber-900/20',
+    lightText: 'text-amber-300',
+    lightBorder: 'border-amber-700/50',
+    // Chart colors
+    chartLine: 'stroke-amber-400',
+    chartFill: 'fill-amber-500/20',
+    chartPositive: 'text-amber-400',
+    chartNegative: 'text-amber-600',
+    // Position cards
+    positionBorder: 'border-amber-600/50',
+    positionBg: 'bg-amber-950/30',
+    positionAccent: 'bg-amber-500',
+    // Badges
+    badgeBg: 'bg-amber-900/50',
+    badgeText: 'text-amber-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-amber-500',
+    gradientTo: 'to-amber-900',
+    // Hex for Recharts
+    hexPrimary: '#F59E0B',
+    hexLight: '#FCD34D',
+    hexDark: '#D97706',
   },
 }
 
