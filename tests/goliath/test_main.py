@@ -134,6 +134,43 @@ class EntryCycleSkips(unittest.TestCase):
         self.assertEqual(result.entries_approved, 0)
         self.assertTrue(all("kill_active" in s for s in result.skips))
 
+    def test_none_snapshot_skips_instance_without_aborting_cycle(self):
+        # Regression: build_market_snapshot returns None when the LETF chain
+        # is empty. Earlier the runner passed None straight into
+        # engine.evaluate_entry, which crashed with AttributeError on the
+        # first instance and aborted the entire cycle (only MSTU got a
+        # heartbeat in production, TSLL/NVDL/CONL/AMDL never ran).
+        broker = MagicMock()
+        runner = Runner(
+            snapshot_fetcher=lambda _inst: None,
+            platform_fetcher=_empty_platform,
+            broker_executor=broker,
+            dry_run=True,
+        )
+        result = runner.run_entry_cycle(now=_TODAY)
+        self.assertEqual(result.instances_evaluated, 5)
+        self.assertEqual(result.entries_approved, 0)
+        self.assertEqual(len(result.skips), 5)
+        self.assertTrue(all("snapshot_none" in s for s in result.skips))
+
+    def test_unhandled_evaluate_entry_error_does_not_abort_cycle(self):
+        # Regression: any per-instance failure in evaluate_entry must skip
+        # the instance, not abort the loop for the remaining 4.
+        engine = MagicMock()
+        engine.evaluate_entry.side_effect = RuntimeError("boom")
+        runner = Runner(
+            engine=engine,
+            snapshot_fetcher=_good_snapshot,
+            platform_fetcher=_empty_platform,
+            broker_executor=MagicMock(),
+            dry_run=True,
+        )
+        result = runner.run_entry_cycle(now=_TODAY)
+        self.assertEqual(result.instances_evaluated, 5)
+        self.assertEqual(engine.evaluate_entry.call_count, 5)
+        self.assertEqual(len(result.skips), 5)
+        self.assertTrue(all("cycle_error" in s for s in result.skips))
+
 
 class EntryCycleGateBlocks(unittest.TestCase):
     def setUp(self):
