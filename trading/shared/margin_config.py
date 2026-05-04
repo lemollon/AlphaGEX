@@ -222,6 +222,48 @@ PERPETUAL_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
         "tick_size": 0.00001,
         "settlement": "monthly",      # SHB-DDMMMYY-CDE pattern
     },
+    "LINK-FUT": {
+        "name": "Chainlink Monthly Futures",
+        "exchange": "COINBASE_DERIVATIVES_FCM",
+        "max_leverage": 10,
+        "default_leverage": 3,
+        "maintenance_margin_rate": 0.015,
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 0,
+        "market_type": "crypto_futures",
+        "contract_size": 100,         # 1 contract = 100 LINK
+        "tick_size": 0.01,
+        "settlement": "monthly",      # LNK-DDMMMYY-CDE pattern
+    },
+    "LTC-FUT": {
+        "name": "Litecoin Monthly Futures",
+        "exchange": "COINBASE_DERIVATIVES_FCM",
+        "max_leverage": 10,
+        "default_leverage": 3,
+        "maintenance_margin_rate": 0.015,
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 0,
+        "market_type": "crypto_futures",
+        "contract_size": 50,          # 1 contract = 50 LTC
+        "tick_size": 0.01,
+        "settlement": "monthly",      # LTC-DDMMMYY-CDE pattern
+    },
+    "BCH-FUT": {
+        "name": "Bitcoin Cash Monthly Futures",
+        "exchange": "COINBASE_DERIVATIVES_FCM",
+        "max_leverage": 10,
+        "default_leverage": 3,
+        "maintenance_margin_rate": 0.015,
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 0,
+        "market_type": "crypto_futures",
+        "contract_size": 25,          # 1 contract = 25 BCH
+        "tick_size": 0.05,
+        "settlement": "monthly",      # BCH-DDMMMYY-CDE pattern
+    },
 }
 
 
@@ -246,6 +288,9 @@ BOT_MARGIN_SPEC: Dict[str, str] = {
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",
     "AGAPE_SHIB_FUTURES": "1000SHIB-FUT",
+    "AGAPE_LINK_FUTURES": "LINK-FUT",
+    "AGAPE_LTC_FUTURES": "LTC-FUT",
+    "AGAPE_BCH_FUTURES": "BCH-FUT",
 }
 
 

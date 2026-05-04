@@ -979,6 +979,9 @@ async def crypto_bot_diagnostics():
             "AGAPE-DOGE-PERP": "agape_doge_perp_scan_activity",
             "AGAPE-SHIB-PERP": "agape_shib_perp_scan_activity",
             "AGAPE-SHIB-FUTURES": "agape_shib_futures_scan_activity",
+            "AGAPE-LINK-FUTURES": "agape_link_futures_scan_activity",
+            "AGAPE-LTC-FUTURES": "agape_ltc_futures_scan_activity",
+            "AGAPE-BCH-FUTURES": "agape_bch_futures_scan_activity",
         }
 
         for bot_name, table in scan_tables.items():
@@ -1022,6 +1025,9 @@ async def crypto_bot_diagnostics():
             "AGAPE-DOGE-PERP": "agape_doge_perp_positions",
             "AGAPE-SHIB-PERP": "agape_shib_perp_positions",
             "AGAPE-SHIB-FUTURES": "agape_shib_futures_positions",
+            "AGAPE-LINK-FUTURES": "agape_link_futures_positions",
+            "AGAPE-LTC-FUTURES": "agape_ltc_futures_positions",
+            "AGAPE-BCH-FUTURES": "agape_bch_futures_positions",
         }
 
         for bot_name, table in position_tables.items():

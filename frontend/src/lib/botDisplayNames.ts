@@ -268,6 +268,36 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: '1 John 4:7',
     why: 'AGAPE-SHIB-FUTURES trades 1000SHIB monthly futures contracts via Coinbase Derivatives. Replacing the geo-blocked perpetual, the same unconditional love continues through monthly settlement.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-LINK-FUTURES → AGAPE-LINK-FUTURES (Chainlink Monthly Futures Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_LINK_FUTURES: {
+    displayName: 'AGAPE-LINK-FUTURES',
+    verse: '"Above all, love each other deeply, because love covers over a multitude of sins."',
+    reference: '1 Peter 4:8',
+    why: 'AGAPE-LINK-FUTURES trades Chainlink monthly futures via Coinbase Derivatives FCM. The same disciplined unconditional love, now extended to the DeFi oracle network — the bridge connecting all things.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-LTC-FUTURES → AGAPE-LTC-FUTURES (Litecoin Monthly Futures Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_LTC_FUTURES: {
+    displayName: 'AGAPE-LTC-FUTURES',
+    verse: '"Love is patient, love is kind. It does not envy, it does not boast, it is not proud."',
+    reference: '1 Corinthians 13:4',
+    why: 'AGAPE-LTC-FUTURES trades Litecoin monthly futures via Coinbase Derivatives FCM. The OG large-cap of crypto receives the same patient, disciplined approach — unconditional love that endures through every halving cycle.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-BCH-FUTURES → AGAPE-BCH-FUTURES (Bitcoin Cash Monthly Futures Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_BCH_FUTURES: {
+    displayName: 'AGAPE-BCH-FUTURES',
+    verse: '"And now these three remain: faith, hope and love. But the greatest of these is love."',
+    reference: '1 Corinthians 13:13',
+    why: 'AGAPE-BCH-FUTURES trades Bitcoin Cash monthly futures via Coinbase Derivatives FCM. The fork that walked its own path still receives the same unconditional love — disciplined trading regardless of which family branch.',
+  },
 }
 
 // =============================================================================
@@ -367,6 +397,9 @@ export const BOT_DISPLAY_NAMES = {
   AGAPE_DOGE_PERP: BOT_SCRIPTURES.AGAPE_DOGE_PERP.displayName,
   AGAPE_SHIB_PERP: BOT_SCRIPTURES.AGAPE_SHIB_PERP.displayName,
   AGAPE_SHIB_FUTURES: BOT_SCRIPTURES.AGAPE_SHIB_FUTURES.displayName,
+  AGAPE_LINK_FUTURES: BOT_SCRIPTURES.AGAPE_LINK_FUTURES.displayName,
+  AGAPE_LTC_FUTURES: BOT_SCRIPTURES.AGAPE_LTC_FUTURES.displayName,
+  AGAPE_BCH_FUTURES: BOT_SCRIPTURES.AGAPE_BCH_FUTURES.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {

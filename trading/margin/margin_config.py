@@ -447,6 +447,57 @@ MARKET_DEFAULTS: Dict[str, MarketConfig] = {
         settlement_type=SettlementType.DAILY_MTM,
         has_funding_rate=False,            # Futures have no funding
     ),
+    "LINK-FUT": MarketConfig(
+        market_type=MarketType.CRYPTO_FUTURES,
+        exchange="COINBASE_DERIVATIVES_FCM",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.MARGIN_CALL,
+        initial_margin_rate=0.10,
+        maintenance_margin_rate=0.015,
+        is_margin_per_contract=False,
+        max_leverage=10.0,
+        default_leverage=3.0,
+        contract_multiplier=100.0,         # 1 contract = 100 LINK
+        tick_size=0.01,
+        tick_value=1.0,                    # 0.01 * 100 = $1 per tick
+        has_expiry=True,                   # Monthly expiry — LNK-DDMMMYY-CDE
+        settlement_type=SettlementType.DAILY_MTM,
+        has_funding_rate=False,
+    ),
+    "LTC-FUT": MarketConfig(
+        market_type=MarketType.CRYPTO_FUTURES,
+        exchange="COINBASE_DERIVATIVES_FCM",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.MARGIN_CALL,
+        initial_margin_rate=0.10,
+        maintenance_margin_rate=0.015,
+        is_margin_per_contract=False,
+        max_leverage=10.0,
+        default_leverage=3.0,
+        contract_multiplier=50.0,          # 1 contract = 50 LTC
+        tick_size=0.01,
+        tick_value=0.50,                   # 0.01 * 50 = $0.50 per tick
+        has_expiry=True,                   # Monthly expiry — LTC-DDMMMYY-CDE
+        settlement_type=SettlementType.DAILY_MTM,
+        has_funding_rate=False,
+    ),
+    "BCH-FUT": MarketConfig(
+        market_type=MarketType.CRYPTO_FUTURES,
+        exchange="COINBASE_DERIVATIVES_FCM",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.MARGIN_CALL,
+        initial_margin_rate=0.10,
+        maintenance_margin_rate=0.015,
+        is_margin_per_contract=False,
+        max_leverage=10.0,
+        default_leverage=3.0,
+        contract_multiplier=25.0,          # 1 contract = 25 BCH
+        tick_size=0.05,
+        tick_value=1.25,                   # 0.05 * 25 = $1.25 per tick
+        has_expiry=True,                   # Monthly expiry — BCH-DDMMMYY-CDE
+        settlement_type=SettlementType.DAILY_MTM,
+        has_funding_rate=False,
+    ),
 
     # --- Options (SPX/SPY via Tradier) ---
     "SPX": MarketConfig(
@@ -544,6 +595,9 @@ BOT_INSTRUMENT_MAP: Dict[str, str] = {
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",
     "AGAPE_SHIB_FUTURES": "1000SHIB-FUT",
+    "AGAPE_LINK_FUTURES": "LINK-FUT",
+    "AGAPE_LTC_FUTURES": "LTC-FUT",
+    "AGAPE_BCH_FUTURES": "BCH-FUT",
 
     # Crypto Spot
     "AGAPE_SPOT": "ETH-USD",       # Primary ticker

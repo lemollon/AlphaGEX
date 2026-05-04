@@ -1205,6 +1205,18 @@ const fetchers = {
     const response = await api.get('/api/agape-shib-futures/chart-data')
     return response.data
   },
+  agapeLinkFuturesChartData: async () => {
+    const response = await api.get('/api/agape-link-futures/chart-data')
+    return response.data
+  },
+  agapeLtcFuturesChartData: async () => {
+    const response = await api.get('/api/agape-ltc-futures/chart-data')
+    return response.data
+  },
+  agapeBchFuturesChartData: async () => {
+    const response = await api.get('/api/agape-bch-futures/chart-data')
+    return response.data
+  },
   agapeEthPerpBrief: async () => {
     const response = await api.get('/api/agape-eth-perp/brief')
     return response.data
@@ -1235,6 +1247,18 @@ const fetchers = {
   },
   agapeShibFuturesBrief: async () => {
     const response = await api.get('/api/agape-shib-futures/brief')
+    return response.data
+  },
+  agapeLinkFuturesBrief: async () => {
+    const response = await api.get('/api/agape-link-futures/brief')
+    return response.data
+  },
+  agapeLtcFuturesBrief: async () => {
+    const response = await api.get('/api/agape-ltc-futures/brief')
+    return response.data
+  },
+  agapeBchFuturesBrief: async () => {
+    const response = await api.get('/api/agape-bch-futures/brief')
     return response.data
   },
 
@@ -1425,6 +1449,120 @@ const fetchers = {
   },
   agapeShibFuturesGexMapping: async () => {
     const response = await api.get('/api/agape-shib-futures/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-LINK-FUTURES (Chainlink Monthly Futures Contract)
+  agapeLinkFuturesStatus: async () => {
+    const response = await api.get('/api/agape-link-futures/status')
+    return response.data
+  },
+  agapeLinkFuturesPositions: async () => {
+    const response = await api.get('/api/agape-link-futures/positions')
+    return response.data
+  },
+  agapeLinkFuturesClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-link-futures/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeLinkFuturesEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-link-futures/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeLinkFuturesIntradayEquity: async () => {
+    const response = await api.get('/api/agape-link-futures/equity-curve/intraday')
+    return response.data
+  },
+  agapeLinkFuturesPerformance: async () => {
+    const response = await api.get('/api/agape-link-futures/performance')
+    return response.data
+  },
+  agapeLinkFuturesScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-link-futures/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeLinkFuturesSnapshot: async () => {
+    const response = await api.get('/api/agape-link-futures/snapshot')
+    return response.data
+  },
+  agapeLinkFuturesGexMapping: async () => {
+    const response = await api.get('/api/agape-link-futures/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-LTC-FUTURES (Litecoin Monthly Futures Contract)
+  agapeLtcFuturesStatus: async () => {
+    const response = await api.get('/api/agape-ltc-futures/status')
+    return response.data
+  },
+  agapeLtcFuturesPositions: async () => {
+    const response = await api.get('/api/agape-ltc-futures/positions')
+    return response.data
+  },
+  agapeLtcFuturesClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-ltc-futures/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeLtcFuturesEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-ltc-futures/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeLtcFuturesIntradayEquity: async () => {
+    const response = await api.get('/api/agape-ltc-futures/equity-curve/intraday')
+    return response.data
+  },
+  agapeLtcFuturesPerformance: async () => {
+    const response = await api.get('/api/agape-ltc-futures/performance')
+    return response.data
+  },
+  agapeLtcFuturesScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-ltc-futures/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeLtcFuturesSnapshot: async () => {
+    const response = await api.get('/api/agape-ltc-futures/snapshot')
+    return response.data
+  },
+  agapeLtcFuturesGexMapping: async () => {
+    const response = await api.get('/api/agape-ltc-futures/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-BCH-FUTURES (Bitcoin Cash Monthly Futures Contract)
+  agapeBchFuturesStatus: async () => {
+    const response = await api.get('/api/agape-bch-futures/status')
+    return response.data
+  },
+  agapeBchFuturesPositions: async () => {
+    const response = await api.get('/api/agape-bch-futures/positions')
+    return response.data
+  },
+  agapeBchFuturesClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-bch-futures/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeBchFuturesEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-bch-futures/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeBchFuturesIntradayEquity: async () => {
+    const response = await api.get('/api/agape-bch-futures/equity-curve/intraday')
+    return response.data
+  },
+  agapeBchFuturesPerformance: async () => {
+    const response = await api.get('/api/agape-bch-futures/performance')
+    return response.data
+  },
+  agapeBchFuturesScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-bch-futures/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeBchFuturesSnapshot: async () => {
+    const response = await api.get('/api/agape-bch-futures/snapshot')
+    return response.data
+  },
+  agapeBchFuturesGexMapping: async () => {
+    const response = await api.get('/api/agape-bch-futures/gex-mapping')
     return response.data
   },
 
@@ -2880,6 +3018,30 @@ export function useAGAPEShibFuturesChartData(options?: LazySWRConfiguration) {
     { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
   )
 }
+export function useAGAPELinkFuturesChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-link-futures-chart-data',
+    fetchers.agapeLinkFuturesChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPELtcFuturesChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-ltc-futures-chart-data',
+    fetchers.agapeLtcFuturesChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEBchFuturesChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-bch-futures-chart-data',
+    fetchers.agapeBchFuturesChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
 
 // ===========================================================================
 // AGAPE PERP CLAUDE SIGNAL BRIEF HOOKS — 5-min refresh matches backend cache
@@ -2947,6 +3109,30 @@ export function useAGAPEShibFuturesBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-futures-brief',
     fetchers.agapeShibFuturesBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPELinkFuturesBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-link-futures-brief',
+    fetchers.agapeLinkFuturesBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPELtcFuturesBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-ltc-futures-brief',
+    fetchers.agapeLtcFuturesBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEBchFuturesBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-bch-futures-brief',
+    fetchers.agapeBchFuturesBrief,
     { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
   )
 }
@@ -3347,6 +3533,246 @@ export function useAGAPEShibFuturesGexMapping(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-futures-gex-mapping',
     fetchers.agapeShibFuturesGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+// =============================================================================
+// AGAPE-LINK-FUTURES (Chainlink Monthly Futures Contract) HOOKS
+// =============================================================================
+
+export function useAGAPELinkFuturesStatus(options?: SWRConfiguration) {
+  return useSWR('agape-link-futures-status', fetchers.agapeLinkFuturesStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELinkFuturesPositions(options?: SWRConfiguration) {
+  return useSWR('agape-link-futures-positions', fetchers.agapeLinkFuturesPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELinkFuturesClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-link-futures-closed-trades-${limit}`,
+    () => fetchers.agapeLinkFuturesClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELinkFuturesEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-link-futures-equity-curve-${days}`,
+    () => fetchers.agapeLinkFuturesEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPELinkFuturesIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-link-futures-intraday-equity', fetchers.agapeLinkFuturesIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELinkFuturesPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-link-futures-performance', fetchers.agapeLinkFuturesPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELinkFuturesScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-link-futures-scan-activity-${limit}`,
+    () => fetchers.agapeLinkFuturesScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELinkFuturesSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-link-futures-snapshot',
+    fetchers.agapeLinkFuturesSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELinkFuturesGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-link-futures-gex-mapping',
+    fetchers.agapeLinkFuturesGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+// =============================================================================
+// AGAPE-LTC-FUTURES (Litecoin Monthly Futures Contract) HOOKS
+// =============================================================================
+
+export function useAGAPELtcFuturesStatus(options?: SWRConfiguration) {
+  return useSWR('agape-ltc-futures-status', fetchers.agapeLtcFuturesStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELtcFuturesPositions(options?: SWRConfiguration) {
+  return useSWR('agape-ltc-futures-positions', fetchers.agapeLtcFuturesPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELtcFuturesClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-ltc-futures-closed-trades-${limit}`,
+    () => fetchers.agapeLtcFuturesClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELtcFuturesEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-ltc-futures-equity-curve-${days}`,
+    () => fetchers.agapeLtcFuturesEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPELtcFuturesIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-ltc-futures-intraday-equity', fetchers.agapeLtcFuturesIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELtcFuturesPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-ltc-futures-performance', fetchers.agapeLtcFuturesPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPELtcFuturesScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-ltc-futures-scan-activity-${limit}`,
+    () => fetchers.agapeLtcFuturesScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELtcFuturesSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-ltc-futures-snapshot',
+    fetchers.agapeLtcFuturesSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPELtcFuturesGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-ltc-futures-gex-mapping',
+    fetchers.agapeLtcFuturesGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+// =============================================================================
+// AGAPE-BCH-FUTURES (Bitcoin Cash Monthly Futures Contract) HOOKS
+// =============================================================================
+
+export function useAGAPEBchFuturesStatus(options?: SWRConfiguration) {
+  return useSWR('agape-bch-futures-status', fetchers.agapeBchFuturesStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBchFuturesPositions(options?: SWRConfiguration) {
+  return useSWR('agape-bch-futures-positions', fetchers.agapeBchFuturesPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBchFuturesClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-bch-futures-closed-trades-${limit}`,
+    () => fetchers.agapeBchFuturesClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEBchFuturesEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-bch-futures-equity-curve-${days}`,
+    () => fetchers.agapeBchFuturesEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBchFuturesIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-bch-futures-intraday-equity', fetchers.agapeBchFuturesIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBchFuturesPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-bch-futures-performance', fetchers.agapeBchFuturesPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBchFuturesScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-bch-futures-scan-activity-${limit}`,
+    () => fetchers.agapeBchFuturesScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEBchFuturesSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-bch-futures-snapshot',
+    fetchers.agapeBchFuturesSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEBchFuturesGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-bch-futures-gex-mapping',
+    fetchers.agapeBchFuturesGexMapping,
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
   )
 }

@@ -45,6 +45,9 @@ BOTS = [
     {"name": "AGAPE_DOGE_PERP", "ticker": "DOGE", "table": "agape_doge_perp", "price_col": "doge_price", "starting_capital": 5000.0},
     {"name": "AGAPE_SHIB_PERP", "ticker": "SHIB", "table": "agape_shib_perp", "price_col": "shib_price", "starting_capital": 5000.0},
     {"name": "AGAPE_SHIB_FUTURES", "ticker": "SHIB", "table": "agape_shib_futures", "price_col": "shib_price", "starting_capital": 1000.0},
+    {"name": "AGAPE_LINK_FUTURES", "ticker": "LINK", "table": "agape_link_futures", "price_col": "link_price", "starting_capital": 2500.0},
+    {"name": "AGAPE_LTC_FUTURES",  "ticker": "LTC",  "table": "agape_ltc_futures",  "price_col": "ltc_price",  "starting_capital": 2500.0},
+    {"name": "AGAPE_BCH_FUTURES",  "ticker": "BCH",  "table": "agape_bch_futures",  "price_col": "bch_price",  "starting_capital": 2500.0},
 ]
 
 
@@ -71,6 +74,9 @@ CURRENT_DEFAULTS = {
     "AGAPE_DOGE_PERP": ExitConfig(0.2, 0.1,  0.0, 0.75, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_SHIB_PERP": ExitConfig(0.15, 0.05, 0.0, 0.5, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_SHIB_FUTURES": ExitConfig(0.3, 0.2, 0.0, 0.5, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_LINK_FUTURES": ExitConfig(0.5, 0.3, 0.0, 1.5, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_LTC_FUTURES":  ExitConfig(0.5, 0.3, 0.0, 1.5, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_BCH_FUTURES":  ExitConfig(0.6, 0.4, 0.0, 1.5, 5.0, 24, True, 1.5, 0.3),
 }
 
 

@@ -314,6 +314,33 @@ except ImportError:
     AgapeShibFuturesTrader = None
     print("Warning: AGAPE-SHIB-FUTURES not available. SHIB futures trading will be disabled.")
 
+# Import AGAPE-LINK-FUTURES (Chainlink Monthly Futures Contract)
+try:
+    from trading.agape_link_futures.trader import AgapeLinkFuturesTrader, create_agape_link_futures_trader
+    AGAPE_LINK_FUTURES_AVAILABLE = True
+except ImportError:
+    AGAPE_LINK_FUTURES_AVAILABLE = False
+    AgapeLinkFuturesTrader = None
+    print("Warning: AGAPE-LINK-FUTURES not available. LINK futures trading will be disabled.")
+
+# Import AGAPE-LTC-FUTURES (Litecoin Monthly Futures Contract)
+try:
+    from trading.agape_ltc_futures.trader import AgapeLtcFuturesTrader, create_agape_ltc_futures_trader
+    AGAPE_LTC_FUTURES_AVAILABLE = True
+except ImportError:
+    AGAPE_LTC_FUTURES_AVAILABLE = False
+    AgapeLtcFuturesTrader = None
+    print("Warning: AGAPE-LTC-FUTURES not available. LTC futures trading will be disabled.")
+
+# Import AGAPE-BCH-FUTURES (Bitcoin Cash Monthly Futures Contract)
+try:
+    from trading.agape_bch_futures.trader import AgapeBchFuturesTrader, create_agape_bch_futures_trader
+    AGAPE_BCH_FUTURES_AVAILABLE = True
+except ImportError:
+    AGAPE_BCH_FUTURES_AVAILABLE = False
+    AgapeBchFuturesTrader = None
+    print("Warning: AGAPE-BCH-FUTURES not available. BCH futures trading will be disabled.")
+
 # Import FAITH (2DTE Paper Iron Condor)
 try:
     from trading.faith.trader import FaithTrader
@@ -1042,6 +1069,39 @@ class AutonomousTraderScheduler:
                 logger.warning(f"AGAPE-SHIB-FUTURES initialization failed: {e}")
                 self.agape_shib_futures_trader = None
 
+        # AGAPE-LINK-FUTURES - Chainlink Monthly Futures Contract (Coinbase Derivatives FCM)
+        # PAPER mode: Simulated trades with $2.5k starting capital.
+        self.agape_link_futures_trader = None
+        if AGAPE_LINK_FUTURES_AVAILABLE:
+            try:
+                self.agape_link_futures_trader = create_agape_link_futures_trader()
+                logger.info("✅ AGAPE-LINK-FUTURES initialized (LINK-FUT Monthly Futures, PAPER mode - $2.5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-LINK-FUTURES initialization failed: {e}")
+                self.agape_link_futures_trader = None
+
+        # AGAPE-LTC-FUTURES - Litecoin Monthly Futures Contract (Coinbase Derivatives FCM)
+        # PAPER mode: Simulated trades with $2.5k starting capital.
+        self.agape_ltc_futures_trader = None
+        if AGAPE_LTC_FUTURES_AVAILABLE:
+            try:
+                self.agape_ltc_futures_trader = create_agape_ltc_futures_trader()
+                logger.info("✅ AGAPE-LTC-FUTURES initialized (LTC-FUT Monthly Futures, PAPER mode - $2.5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-LTC-FUTURES initialization failed: {e}")
+                self.agape_ltc_futures_trader = None
+
+        # AGAPE-BCH-FUTURES - Bitcoin Cash Monthly Futures Contract (Coinbase Derivatives FCM)
+        # PAPER mode: Simulated trades with $2.5k starting capital.
+        self.agape_bch_futures_trader = None
+        if AGAPE_BCH_FUTURES_AVAILABLE:
+            try:
+                self.agape_bch_futures_trader = create_agape_bch_futures_trader()
+                logger.info("✅ AGAPE-BCH-FUTURES initialized (BCH-FUT Monthly Futures, PAPER mode - $2.5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-BCH-FUTURES initialization failed: {e}")
+                self.agape_bch_futures_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   LAZARUS: ${CAPITAL_ALLOCATION['LAZARUS']:,}")
@@ -1062,6 +1122,9 @@ class AutonomousTraderScheduler:
             "AGAPE-DOGE-PERP": self.agape_doge_perp_trader is not None,
             "AGAPE-SHIB-PERP": self.agape_shib_perp_trader is not None,
             "AGAPE-SHIB-FUTURES": self.agape_shib_futures_trader is not None,
+            "AGAPE-LINK-FUTURES": self.agape_link_futures_trader is not None,
+            "AGAPE-LTC-FUTURES": self.agape_ltc_futures_trader is not None,
+            "AGAPE-BCH-FUTURES": self.agape_bch_futures_trader is not None,
         }
         alive = [k for k, v in crypto_status.items() if v]
         dead = [k for k, v in crypto_status.items() if not v]
@@ -3916,6 +3979,159 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SHIB-FUTURES EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_link_futures_logic(self):
+        """
+        AGAPE-LINK-FUTURES - runs every 5 minutes, 24/7.
+        Coinbase Derivatives LINK monthly futures contracts via Tastytrade FCM.
+        """
+        if not self.agape_link_futures_trader:
+            if not getattr(self, '_link_futures_none_logged', False):
+                logger.error("AGAPE-LINK-FUTURES: trader is None — initialization failed. Bot will NOT trade.")
+                self._link_futures_none_logged = True
+            return
+
+        try:
+            result = self.agape_link_futures_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-LINK-FUTURES: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-LINK-FUTURES: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-LINK-FUTURES: Cycle error: {result['error']}")
+            else:
+                if self.agape_link_futures_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-LINK-FUTURES scan #{self.agape_link_futures_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-LINK-FUTURES scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_link_futures_eod_logic(self):
+        """AGAPE-LINK-FUTURES End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-LINK-FUTURES EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_link_futures_trader:
+            return
+
+        try:
+            result = self.agape_link_futures_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-LINK-FUTURES EOD: Closed {closed} position(s)")
+
+            perf = self.agape_link_futures_trader.get_performance()
+            logger.info(f"AGAPE-LINK-FUTURES EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-LINK-FUTURES EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_ltc_futures_logic(self):
+        """
+        AGAPE-LTC-FUTURES - runs every 5 minutes, 24/7.
+        Coinbase Derivatives LTC monthly futures contracts via Tastytrade FCM.
+        """
+        if not self.agape_ltc_futures_trader:
+            if not getattr(self, '_ltc_futures_none_logged', False):
+                logger.error("AGAPE-LTC-FUTURES: trader is None — initialization failed. Bot will NOT trade.")
+                self._ltc_futures_none_logged = True
+            return
+
+        try:
+            result = self.agape_ltc_futures_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-LTC-FUTURES: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-LTC-FUTURES: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-LTC-FUTURES: Cycle error: {result['error']}")
+            else:
+                if self.agape_ltc_futures_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-LTC-FUTURES scan #{self.agape_ltc_futures_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-LTC-FUTURES scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_ltc_futures_eod_logic(self):
+        """AGAPE-LTC-FUTURES End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-LTC-FUTURES EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_ltc_futures_trader:
+            return
+
+        try:
+            result = self.agape_ltc_futures_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-LTC-FUTURES EOD: Closed {closed} position(s)")
+
+            perf = self.agape_ltc_futures_trader.get_performance()
+            logger.info(f"AGAPE-LTC-FUTURES EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-LTC-FUTURES EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_bch_futures_logic(self):
+        """
+        AGAPE-BCH-FUTURES - runs every 5 minutes, 24/7.
+        Coinbase Derivatives BCH monthly futures contracts via Tastytrade FCM.
+        """
+        if not self.agape_bch_futures_trader:
+            if not getattr(self, '_bch_futures_none_logged', False):
+                logger.error("AGAPE-BCH-FUTURES: trader is None — initialization failed. Bot will NOT trade.")
+                self._bch_futures_none_logged = True
+            return
+
+        try:
+            result = self.agape_bch_futures_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-BCH-FUTURES: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-BCH-FUTURES: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-BCH-FUTURES: Cycle error: {result['error']}")
+            else:
+                if self.agape_bch_futures_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-BCH-FUTURES scan #{self.agape_bch_futures_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BCH-FUTURES scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_bch_futures_eod_logic(self):
+        """AGAPE-BCH-FUTURES End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-BCH-FUTURES EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_bch_futures_trader:
+            return
+
+        try:
+            result = self.agape_bch_futures_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-BCH-FUTURES EOD: Closed {closed} position(s)")
+
+            perf = self.agape_bch_futures_trader.get_performance()
+            logger.info(f"AGAPE-BCH-FUTURES EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BCH-FUTURES EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_jubilee_daily_logic(self):
@@ -7416,6 +7632,108 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE-SHIB-FUTURES EOD job scheduled (3:45 PM CT daily)")
         else:
             logger.warning("⚠️ AGAPE-SHIB-FUTURES not available - SHIB futures trading disabled")
+
+        # =================================================================
+        # AGAPE-LINK-FUTURES JOB: Chainlink Monthly Futures Contract - every 5 minutes, 24/7
+        # Trades Coinbase Derivatives monthly futures (LNK-DDMMMYY-CDE) via Tastytrade FCM
+        # (live execution TBD; paper mode active).
+        # =================================================================
+        if self.agape_link_futures_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_link_futures_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_link_futures_trading',
+                name='AGAPE-LINK-FUTURES - LINK Monthly Futures (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-LINK-FUTURES job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_link_futures_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_link_futures_eod',
+                name='AGAPE-LINK-FUTURES - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-LINK-FUTURES EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-LINK-FUTURES not available - LINK futures trading disabled")
+
+        # =================================================================
+        # AGAPE-LTC-FUTURES JOB: Litecoin Monthly Futures Contract - every 5 minutes, 24/7
+        # Trades Coinbase Derivatives monthly futures (LTC-DDMMMYY-CDE) via Tastytrade FCM
+        # (live execution TBD; paper mode active).
+        # =================================================================
+        if self.agape_ltc_futures_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_ltc_futures_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_ltc_futures_trading',
+                name='AGAPE-LTC-FUTURES - LTC Monthly Futures (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-LTC-FUTURES job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_ltc_futures_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_ltc_futures_eod',
+                name='AGAPE-LTC-FUTURES - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-LTC-FUTURES EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-LTC-FUTURES not available - LTC futures trading disabled")
+
+        # =================================================================
+        # AGAPE-BCH-FUTURES JOB: Bitcoin Cash Monthly Futures Contract - every 5 minutes, 24/7
+        # Trades Coinbase Derivatives monthly futures (BCH-DDMMMYY-CDE) via Tastytrade FCM
+        # (live execution TBD; paper mode active).
+        # =================================================================
+        if self.agape_bch_futures_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_bch_futures_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_bch_futures_trading',
+                name='AGAPE-BCH-FUTURES - BCH Monthly Futures (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BCH-FUTURES job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_bch_futures_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_bch_futures_eod',
+                name='AGAPE-BCH-FUTURES - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BCH-FUTURES EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-BCH-FUTURES not available - BCH futures trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT

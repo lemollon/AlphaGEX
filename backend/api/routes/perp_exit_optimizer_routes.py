@@ -155,6 +155,9 @@ _BOT_KEY_PREFIX = {
     "DOGE": "agape_doge_perp_",
     "SHIB": "agape_shib_perp_",
     "SHIB_FUTURES": "agape_shib_futures_",
+    "LINK_FUTURES": "agape_link_futures_",
+    "LTC_FUTURES": "agape_ltc_futures_",
+    "BCH_FUTURES": "agape_bch_futures_",
 }
 
 # Whitelist of exit-rule knobs the apply endpoint is allowed to change.
