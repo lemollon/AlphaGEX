@@ -249,9 +249,9 @@ export default function GoliathContent() {
     return (
       <div className="min-h-screen bg-[#030712] text-gray-100">
         <Navigation />
-        <div style={{ paddingLeft: sidebarPadding }} className="p-8">
+        <main className={`pt-24 px-4 pb-4 md:px-6 md:pb-6 transition-all duration-300 ${sidebarPadding}`}>
           <div className="animate-pulse text-gray-400">Loading GOLIATH…</div>
-        </div>
+        </main>
       </div>
     )
   }
@@ -259,7 +259,7 @@ export default function GoliathContent() {
   return (
     <div className="min-h-screen bg-[#030712] text-gray-100">
       <Navigation />
-      <div style={{ paddingLeft: sidebarPadding }} className="p-6 space-y-6">
+      <main className={`pt-24 px-4 pb-4 md:px-6 md:pb-6 space-y-6 transition-all duration-300 ${sidebarPadding}`}>
 
         {/* Header */}
         <div className="flex items-start justify-between">
@@ -431,7 +431,7 @@ export default function GoliathContent() {
         {tab === 'audit' && <AuditTab audit={audit} gates={gates} />}
         {tab === 'kills' && <KillsTab kills={kills} />}
         {tab === 'config' && <ConfigTab calibration={calibration} platform={platform} />}
-      </div>
+      </main>
     </div>
   )
 }
