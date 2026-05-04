@@ -433,23 +433,30 @@ class TastytradeExecutor:
         Returns:
             (success, message, order_id)
         """
-        # Pre-trade margin check - strict only in LIVE mode.
-        # Paper mode uses strict=False so trades aren't blocked when the margin
-        # monitor can't determine equity from the database.
-        from trading.margin.pre_trade_check import check_margin_before_trade
+        # Pre-trade margin check (LIVE only). VALOR is multi-instrument but the
+        # shared margin engine looks up specs by bot_name, and BOT_INSTRUMENT_MAP
+        # pins VALOR → MES, so MNQ's $27k entry × 4 ctr × MES multiplier 5.0 is
+        # treated as $558k notional (true MNQ multiplier is 2.0 → real notional
+        # ~$223k). The 2.5x inflated notional pushes effective leverage past the
+        # bot config limit and silently blocks every MNQ trade. VALOR already has
+        # its own per-ticker controls (GATE 4.5 max_open_positions + ValorMarginManager
+        # with VALOR_MARGIN_REQUIREMENTS), so the global check is redundant in paper.
+        # Skip it in paper mode; live mode keeps the (still-buggy) check until
+        # the shared engine learns to take per-trade instrument overrides.
         ticker = getattr(signal, 'ticker', None) or "MES"
-        is_live = self.config.mode != TradingMode.PAPER
-        approved, reason = check_margin_before_trade(
-            bot_name="VALOR",
-            symbol=ticker,
-            side=signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction),
-            quantity=float(signal.contracts),
-            entry_price=signal.entry_price,
-            strict=is_live,
-        )
-        if not approved:
-            logger.warning(f"VALOR: Trade BLOCKED by margin check: {reason}")
-            return False, f"Margin check failed: {reason}", None
+        if self.config.mode != TradingMode.PAPER:
+            from trading.margin.pre_trade_check import check_margin_before_trade
+            approved, reason = check_margin_before_trade(
+                bot_name="VALOR",
+                symbol=ticker,
+                side=signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction),
+                quantity=float(signal.contracts),
+                entry_price=signal.entry_price,
+                strict=True,
+            )
+            if not approved:
+                logger.warning(f"VALOR: Trade BLOCKED by margin check: {reason}")
+                return False, f"Margin check failed: {reason}", None
 
         if self.config.mode == TradingMode.PAPER:
             return self._simulate_execution(signal, position_id)
