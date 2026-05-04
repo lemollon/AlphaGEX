@@ -7255,314 +7255,344 @@ class AutonomousTraderScheduler:
         # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
         # Uses Deribit GEX as primary signal source
         # =================================================================
-        if self.agape_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_trading',
-                name='AGAPE - ETH Micro Futures (5-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE job scheduled (every 5 min, checks CME crypto hours internally)")
+        try:
+            if self.agape_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_trading',
+                    name='AGAPE - ETH Micro Futures (5-min intervals)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE job scheduled (every 5 min, checks CME crypto hours internally)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_eod',
-                name='AGAPE - Force Close Before CME Maintenance',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE not available - ETH crypto trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_eod',
+                    name='AGAPE - Force Close Before CME Maintenance',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE not available - ETH crypto trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-SPOT JOB: 24/7 Coinbase Spot Multi-Coin - every 1 minute
         # Trades around the clock, no market hours restrictions
         # Faster scans = tighter trailing stops + quicker signal detection
         # =================================================================
-        if self.agape_spot_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_spot_logic,
-                trigger=IntervalTrigger(
-                    minutes=1,
-                    timezone='America/Chicago'
-                ),
-                id='agape_spot_trading',
-                name='AGAPE-SPOT - 24/7 Coinbase Spot Multi-Coin (1-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-SPOT job scheduled (every 1 min, 24/7)")
-        else:
-            logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
+        try:
+            if self.agape_spot_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_spot_logic,
+                    trigger=IntervalTrigger(
+                        minutes=1,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_spot_trading',
+                    name='AGAPE-SPOT - 24/7 Coinbase Spot Multi-Coin (1-min intervals)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-SPOT job scheduled (every 1 min, 24/7)")
+            else:
+                logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-SPOT scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-BTC JOB: BTC Micro Futures (/MBT) - every 5 minutes
         # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
         # =================================================================
-        if self.agape_btc_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_btc_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_btc_trading',
-                name='AGAPE-BTC - BTC Micro Futures (5-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BTC job scheduled (every 5 min, checks CME crypto hours internally)")
+        try:
+            if self.agape_btc_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_btc_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_btc_trading',
+                    name='AGAPE-BTC - BTC Micro Futures (5-min intervals)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BTC job scheduled (every 5 min, checks CME crypto hours internally)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_btc_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_btc_eod',
-                name='AGAPE-BTC - Force Close Before CME Maintenance',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BTC EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-BTC not available - BTC crypto trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_btc_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_btc_eod',
+                    name='AGAPE-BTC - Force Close Before CME Maintenance',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BTC EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-BTC not available - BTC crypto trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-BTC scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-XRP JOB: XRP Futures (/XRP) - every 5 minutes
         # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
         # =================================================================
-        if self.agape_xrp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_xrp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_xrp_trading',
-                name='AGAPE-XRP - XRP Futures (5-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-XRP job scheduled (every 5 min, checks CME crypto hours internally)")
+        try:
+            if self.agape_xrp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_xrp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_xrp_trading',
+                    name='AGAPE-XRP - XRP Futures (5-min intervals)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-XRP job scheduled (every 5 min, checks CME crypto hours internally)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_xrp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_xrp_eod',
-                name='AGAPE-XRP - Force Close Before CME Maintenance',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-XRP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-XRP not available - XRP crypto trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_xrp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_xrp_eod',
+                    name='AGAPE-XRP - Force Close Before CME Maintenance',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-XRP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-XRP not available - XRP crypto trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-XRP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-ETH-PERP JOB: ETH Perpetual Contract - every 5 minutes, 24/7
         # Perpetual contracts trade around the clock on crypto exchanges
         # Uses real Deribit/CoinGlass/Coinbase data
         # =================================================================
-        if self.agape_eth_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_eth_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_eth_perp_trading',
-                name='AGAPE-ETH-PERP - ETH Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-ETH-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_eth_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_eth_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_eth_perp_trading',
+                    name='AGAPE-ETH-PERP - ETH Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-ETH-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_eth_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_eth_perp_eod',
-                name='AGAPE-ETH-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-ETH-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-ETH-PERP not available - ETH perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_eth_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_eth_perp_eod',
+                    name='AGAPE-ETH-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-ETH-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-ETH-PERP not available - ETH perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-ETH-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-SOL-PERP JOB: SOL Perpetual Contract - every 5 minutes, 24/7
         # =================================================================
-        if self.agape_sol_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_sol_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_sol_perp_trading',
-                name='AGAPE-SOL-PERP - SOL Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-SOL-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_sol_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_sol_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_sol_perp_trading',
+                    name='AGAPE-SOL-PERP - SOL Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-SOL-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_sol_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_sol_perp_eod',
-                name='AGAPE-SOL-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-SOL-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-SOL-PERP not available - SOL perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_sol_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_sol_perp_eod',
+                    name='AGAPE-SOL-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-SOL-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-SOL-PERP not available - SOL perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-SOL-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-AVAX-PERP JOB: AVAX Perpetual Contract - every 5 minutes, 24/7
         # =================================================================
-        if self.agape_avax_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_avax_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_avax_perp_trading',
-                name='AGAPE-AVAX-PERP - AVAX Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-AVAX-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_avax_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_avax_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_avax_perp_trading',
+                    name='AGAPE-AVAX-PERP - AVAX Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-AVAX-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_avax_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_avax_perp_eod',
-                name='AGAPE-AVAX-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-AVAX-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-AVAX-PERP not available - AVAX perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_avax_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_avax_perp_eod',
+                    name='AGAPE-AVAX-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-AVAX-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-AVAX-PERP not available - AVAX perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-AVAX-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-BTC-PERP JOB: BTC Perpetual Contract - every 5 minutes, 24/7
         # =================================================================
-        if self.agape_btc_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_btc_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_btc_perp_trading',
-                name='AGAPE-BTC-PERP - BTC Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BTC-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_btc_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_btc_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_btc_perp_trading',
+                    name='AGAPE-BTC-PERP - BTC Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BTC-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_btc_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_btc_perp_eod',
-                name='AGAPE-BTC-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BTC-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-BTC-PERP not available - BTC perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_btc_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_btc_perp_eod',
+                    name='AGAPE-BTC-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BTC-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-BTC-PERP not available - BTC perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-BTC-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-XRP-PERP JOB: XRP Perpetual Contract - every 5 minutes, 24/7
         # =================================================================
-        if self.agape_xrp_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_xrp_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_xrp_perp_trading',
-                name='AGAPE-XRP-PERP - XRP Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-XRP-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_xrp_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_xrp_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_xrp_perp_trading',
+                    name='AGAPE-XRP-PERP - XRP Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-XRP-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_xrp_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_xrp_perp_eod',
-                name='AGAPE-XRP-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-XRP-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-XRP-PERP not available - XRP perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_xrp_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_xrp_perp_eod',
+                    name='AGAPE-XRP-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-XRP-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-XRP-PERP not available - XRP perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-XRP-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-DOGE-PERP JOB: DOGE Perpetual Contract - every 5 minutes, 24/7
         # =================================================================
-        if self.agape_doge_perp_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_doge_perp_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_doge_perp_trading',
-                name='AGAPE-DOGE-PERP - DOGE Perpetual (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-DOGE-PERP job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_doge_perp_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_doge_perp_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_doge_perp_trading',
+                    name='AGAPE-DOGE-PERP - DOGE Perpetual (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-DOGE-PERP job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_doge_perp_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_doge_perp_eod',
-                name='AGAPE-DOGE-PERP - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-DOGE-PERP EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-DOGE-PERP not available - DOGE perpetual trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_doge_perp_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_doge_perp_eod',
+                    name='AGAPE-DOGE-PERP - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-DOGE-PERP EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-DOGE-PERP not available - DOGE perpetual trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-DOGE-PERP scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-SHIB-PERP JOB: SHIB Perpetual Contract - every 5 minutes, 24/7
@@ -7604,136 +7634,148 @@ class AutonomousTraderScheduler:
         # Replaces AGAPE-SHIB-PERP. Trades Coinbase Derivatives monthly futures (SHB-DDMMMYY-CDE)
         # via Tastytrade FCM (live execution TBD; paper mode active).
         # =================================================================
-        if self.agape_shib_futures_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_shib_futures_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_shib_futures_trading',
-                name='AGAPE-SHIB-FUTURES - 1000SHIB Monthly Futures (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-SHIB-FUTURES job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_shib_futures_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_shib_futures_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_shib_futures_trading',
+                    name='AGAPE-SHIB-FUTURES - 1000SHIB Monthly Futures (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-SHIB-FUTURES job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_shib_futures_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_shib_futures_eod',
-                name='AGAPE-SHIB-FUTURES - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-SHIB-FUTURES EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-SHIB-FUTURES not available - SHIB futures trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_shib_futures_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_shib_futures_eod',
+                    name='AGAPE-SHIB-FUTURES - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-SHIB-FUTURES EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-SHIB-FUTURES not available - SHIB futures trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-SHIB-FUTURES scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-LINK-FUTURES JOB: Chainlink Monthly Futures Contract - every 5 minutes, 24/7
         # Trades Coinbase Derivatives monthly futures (LNK-DDMMMYY-CDE) via Tastytrade FCM
         # (live execution TBD; paper mode active).
         # =================================================================
-        if self.agape_link_futures_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_link_futures_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_link_futures_trading',
-                name='AGAPE-LINK-FUTURES - LINK Monthly Futures (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-LINK-FUTURES job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_link_futures_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_link_futures_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_link_futures_trading',
+                    name='AGAPE-LINK-FUTURES - LINK Monthly Futures (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-LINK-FUTURES job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_link_futures_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_link_futures_eod',
-                name='AGAPE-LINK-FUTURES - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-LINK-FUTURES EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-LINK-FUTURES not available - LINK futures trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_link_futures_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_link_futures_eod',
+                    name='AGAPE-LINK-FUTURES - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-LINK-FUTURES EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-LINK-FUTURES not available - LINK futures trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-LINK-FUTURES scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-LTC-FUTURES JOB: Litecoin Monthly Futures Contract - every 5 minutes, 24/7
         # Trades Coinbase Derivatives monthly futures (LTC-DDMMMYY-CDE) via Tastytrade FCM
         # (live execution TBD; paper mode active).
         # =================================================================
-        if self.agape_ltc_futures_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_ltc_futures_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_ltc_futures_trading',
-                name='AGAPE-LTC-FUTURES - LTC Monthly Futures (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-LTC-FUTURES job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_ltc_futures_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_ltc_futures_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_ltc_futures_trading',
+                    name='AGAPE-LTC-FUTURES - LTC Monthly Futures (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-LTC-FUTURES job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_ltc_futures_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_ltc_futures_eod',
-                name='AGAPE-LTC-FUTURES - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-LTC-FUTURES EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-LTC-FUTURES not available - LTC futures trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_ltc_futures_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_ltc_futures_eod',
+                    name='AGAPE-LTC-FUTURES - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-LTC-FUTURES EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-LTC-FUTURES not available - LTC futures trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-LTC-FUTURES scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # AGAPE-BCH-FUTURES JOB: Bitcoin Cash Monthly Futures Contract - every 5 minutes, 24/7
         # Trades Coinbase Derivatives monthly futures (BCH-DDMMMYY-CDE) via Tastytrade FCM
         # (live execution TBD; paper mode active).
         # =================================================================
-        if self.agape_bch_futures_trader:
-            self.scheduler.add_job(
-                self.scheduled_agape_bch_futures_logic,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='agape_bch_futures_trading',
-                name='AGAPE-BCH-FUTURES - BCH Monthly Futures (5-min intervals, 24/7)',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BCH-FUTURES job scheduled (every 5 min, 24/7)")
+        try:
+            if self.agape_bch_futures_trader:
+                self.scheduler.add_job(
+                    self.scheduled_agape_bch_futures_logic,
+                    trigger=IntervalTrigger(
+                        minutes=5,
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_bch_futures_trading',
+                    name='AGAPE-BCH-FUTURES - BCH Monthly Futures (5-min intervals, 24/7)',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BCH-FUTURES job scheduled (every 5 min, 24/7)")
 
-            self.scheduler.add_job(
-                self.scheduled_agape_bch_futures_eod_logic,
-                trigger=CronTrigger(
-                    hour=15,
-                    minute=45,
-                    day_of_week='mon-fri',
-                    timezone='America/Chicago'
-                ),
-                id='agape_bch_futures_eod',
-                name='AGAPE-BCH-FUTURES - Daily Summary',
-                replace_existing=True
-            )
-            logger.info("✅ AGAPE-BCH-FUTURES EOD job scheduled (3:45 PM CT daily)")
-        else:
-            logger.warning("⚠️ AGAPE-BCH-FUTURES not available - BCH futures trading disabled")
+                self.scheduler.add_job(
+                    self.scheduled_agape_bch_futures_eod_logic,
+                    trigger=CronTrigger(
+                        hour=15,
+                        minute=45,
+                        day_of_week='mon-fri',
+                        timezone='America/Chicago'
+                    ),
+                    id='agape_bch_futures_eod',
+                    name='AGAPE-BCH-FUTURES - Daily Summary',
+                    replace_existing=True
+                )
+                logger.info("✅ AGAPE-BCH-FUTURES EOD job scheduled (3:45 PM CT daily)")
+            else:
+                logger.warning("⚠️ AGAPE-BCH-FUTURES not available - BCH futures trading disabled")
+        except Exception as _e:
+            logger.error(f"❌ AGAPE-BCH-FUTURES scheduler registration failed: {_e}", exc_info=True)
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT
