@@ -47,19 +47,30 @@ const API = process.env.NEXT_PUBLIC_API_URL || ''
 
 const COINS: CoinId[] = ['ALL', 'ETH', 'SOL', 'AVAX', 'BTC', 'XRP', 'DOGE', 'SHIB']
 
+// productType marks each bot as a perpetual ("PERP") or dated futures ("FUTURE").
+// PERP = Coinbase International (1000SHIB-PERP-INTX, geo-blocked from US) OR
+//        Coinbase Derivatives 5-year-dated "perpetual-style" (e.g., BIP-20DEC30-CDE).
+// FUTURE = Coinbase Derivatives monthly dated futures (e.g., SHB-29MAY26-CDE),
+//          traded via FCM (Tastytrade/NinjaTrader/IBKR) with monthly contract rolls.
+type ProductType = 'PERP' | 'FUTURE'
+
 const COIN_META: Record<CoinId, {
   symbol: string; label: string; instrument: string; hexColor: string;
   bgActive: string; borderActive: string; textActive: string;
   bgCard: string; borderCard: string;
   apiPrefix: string; priceKey: string; priceField: string; priceDecimals: number;
   quantityLabel: string; startingCapital: number;
+  productType: ProductType;        // PERP or FUTURE — drives UI badge
+  productTypeNote?: string;        // optional sub-label (e.g., "US, no roll" / "monthly roll")
+  liveAvailableUS: boolean;        // false = paper-only because no US-accessible market
 }> = {
   'ALL': {
-    symbol: 'ALL', label: 'All Perpetuals', instrument: '', hexColor: '#06B6D4',
+    symbol: 'ALL', label: 'All Derivatives', instrument: '', hexColor: '#06B6D4',
     bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
     bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
     apiPrefix: '', priceKey: '', priceField: '', priceDecimals: 2,
     quantityLabel: '', startingCapital: 50000,
+    productType: 'PERP', liveAvailableUS: true,
   },
   'ETH': {
     symbol: 'ETH', label: 'Ethereum', instrument: 'ETH-PERP', hexColor: '#D946EF',
@@ -67,6 +78,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-fuchsia-950/30', borderCard: 'border-fuchsia-700/40',
     apiPrefix: '/api/agape-eth-perp', priceKey: 'current_eth_price', priceField: 'eth_price', priceDecimals: 2,
     quantityLabel: 'ETH', startingCapital: 12500,
+    productType: 'PERP', productTypeNote: 'Coinbase US (ETP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'SOL': {
     symbol: 'SOL', label: 'Solana', instrument: 'SOL-PERP', hexColor: '#22D3EE',
@@ -74,6 +86,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
     apiPrefix: '/api/agape-sol-perp', priceKey: 'current_sol_price', priceField: 'sol_price', priceDecimals: 2,
     quantityLabel: 'SOL', startingCapital: 5000,
+    productType: 'PERP', productTypeNote: 'Coinbase US (SLP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'AVAX': {
     symbol: 'AVAX', label: 'Avalanche', instrument: 'AVAX-PERP', hexColor: '#EF4444',
@@ -81,6 +94,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-red-950/30', borderCard: 'border-red-700/40',
     apiPrefix: '/api/agape-avax-perp', priceKey: 'current_avax_price', priceField: 'avax_price', priceDecimals: 2,
     quantityLabel: 'AVAX', startingCapital: 2500,
+    productType: 'PERP', productTypeNote: 'Coinbase US (AVP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'BTC': {
     symbol: 'BTC', label: 'Bitcoin', instrument: 'BTC-PERP', hexColor: '#F97316',
@@ -88,6 +102,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40',
     apiPrefix: '/api/agape-btc-perp', priceKey: 'current_btc_price', priceField: 'btc_price', priceDecimals: 2,
     quantityLabel: 'BTC', startingCapital: 25000,
+    productType: 'PERP', productTypeNote: 'Coinbase US (BIP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'XRP': {
     symbol: 'XRP', label: 'Ripple', instrument: 'XRP-PERP', hexColor: '#0EA5E9',
@@ -95,6 +110,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-sky-950/30', borderCard: 'border-sky-700/40',
     apiPrefix: '/api/agape-xrp-perp', priceKey: 'current_xrp_price', priceField: 'xrp_price', priceDecimals: 4,
     quantityLabel: 'XRP', startingCapital: 9000,
+    productType: 'PERP', productTypeNote: 'Coinbase US (XPP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'DOGE': {
     symbol: 'DOGE', label: 'Dogecoin', instrument: 'DOGE-PERP', hexColor: '#FACC15',
@@ -102,6 +118,7 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40',
     apiPrefix: '/api/agape-doge-perp', priceKey: 'current_doge_price', priceField: 'doge_price', priceDecimals: 6,
     quantityLabel: 'DOGE', startingCapital: 2500,
+    productType: 'PERP', productTypeNote: 'Coinbase US (DOP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'SHIB': {
     symbol: 'SHIB', label: 'Shiba Inu', instrument: 'SHIB-PERP', hexColor: '#FB7185',
@@ -109,6 +126,11 @@ const COIN_META: Record<CoinId, {
     bgCard: 'bg-rose-950/30', borderCard: 'border-rose-700/40',
     apiPrefix: '/api/agape-shib-perp', priceKey: 'current_shib_price', priceField: 'shib_price', priceDecimals: 8,
     quantityLabel: 'SHIB', startingCapital: 1000,
+    // SHIB has no US-accessible perpetual. Coinbase International lists
+    // 1000SHIB-PERP-INTX but it geo-blocks US persons. The US-accessible
+    // SHIB exposure is monthly futures (SHB-29MAY26-CDE etc) via FCM —
+    // a separate AGAPE-SHIB-FUTURES bot will use those when built.
+    productType: 'PERP', productTypeNote: 'Paper only — no US perp; SHIB-FUTURES bot pending', liveAvailableUS: false,
   },
 }
 
@@ -323,7 +345,7 @@ export default function PerpetualsCryptoPage() {
         <div className="flex items-center justify-center h-screen bg-gray-950">
           <div className="text-center space-y-3">
             <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
-            <p className="text-gray-400 text-sm">Loading Perpetuals Crypto...</p>
+            <p className="text-gray-400 text-sm">Loading AGAPE Derivatives...</p>
           </div>
         </div>
       </>
@@ -339,17 +361,23 @@ export default function PerpetualsCryptoPage() {
           {/* PAGE HEADER */}
           <div className="flex items-start justify-between">
             <div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-2xl md:text-3xl font-bold text-white">
-                  AGAPE <span className="text-cyan-400">Perpetual</span>
+                  AGAPE <span className="text-cyan-400">Derivatives</span>
                 </h1>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-900/40 border border-green-500/40 rounded-full text-xs font-semibold text-green-400">
                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  24/7 PERPETUAL - ALWAYS OPEN
+                  24/7
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-900/40 border border-blue-500/30 rounded text-[11px] font-bold text-blue-300" title="Perpetual contracts — no expiration, no contract rolls">
+                  PERP = Perpetual
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-900/40 border border-amber-500/30 rounded text-[11px] font-bold text-amber-300" title="Dated futures — monthly expiration, requires contract rolls (FCM-traded)">
+                  FUTURE = Monthly Futures
                 </span>
               </div>
               <p className="text-gray-500 text-sm mt-1">
-                24/7 Perpetual Contract Trading: ETH, BTC, XRP, DOGE, SHIB
+                Perpetuals + monthly futures: ETH, SOL, AVAX, BTC, XRP, DOGE, SHIB
               </p>
             </div>
             <button
@@ -382,6 +410,28 @@ export default function PerpetualsCryptoPage() {
                   }`}
                 >
                   <span className="font-bold">{meta.symbol}</span>
+                  {coin !== 'ALL' && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+                        meta.productType === 'PERP'
+                          ? (isActive ? 'bg-white/25 text-white' : 'bg-blue-900/60 text-blue-300')
+                          : (isActive ? 'bg-white/25 text-white' : 'bg-amber-900/60 text-amber-300')
+                      }`}
+                      title={meta.productTypeNote || meta.productType}
+                    >
+                      {meta.productType}
+                    </span>
+                  )}
+                  {coin !== 'ALL' && !meta.liveAvailableUS && (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        isActive ? 'bg-white/25 text-white' : 'bg-gray-700 text-gray-400'
+                      }`}
+                      title="Paper-only — no US-accessible market for this product"
+                    >
+                      PAPER
+                    </span>
+                  )}
                   {coin !== 'ALL' && summary?.price != null && (
                     <span className={`text-xs font-mono ${isActive ? 'text-white/80' : 'text-gray-500'}`}>
                       {fmtPrice(summary.price, meta.priceDecimals)}
@@ -586,12 +636,31 @@ function SingleCoinHeader({ coin, summaries }: { coin: CoinId; summaries: Record
   const meta = COIN_META[coin]
   const summary = summaries[coin]
 
+  const productLabel = meta.productType === 'PERP' ? 'Perpetual Contract' : 'Monthly Futures'
   return (
     <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className={`text-2xl font-bold ${meta.textActive}`}>{meta.symbol}</span>
           <span className="text-gray-400 text-sm">{meta.label}</span>
+          <span
+            className={`px-2 py-0.5 rounded text-[11px] font-bold tracking-wide ${
+              meta.productType === 'PERP'
+                ? 'bg-blue-900/60 text-blue-300 border border-blue-700/50'
+                : 'bg-amber-900/60 text-amber-300 border border-amber-700/50'
+            }`}
+            title={meta.productTypeNote || meta.productType}
+          >
+            {meta.productType}
+          </span>
+          {!meta.liveAvailableUS && (
+            <span
+              className="px-2 py-0.5 rounded text-[11px] font-bold bg-gray-700 text-gray-400 border border-gray-600"
+              title="Paper-only — no US-accessible market for this product"
+            >
+              PAPER ONLY
+            </span>
+          )}
           <ArrowRight className="w-4 h-4 text-gray-600" />
           <span className="text-white font-mono text-lg">{fmtPrice(summary?.price, meta.priceDecimals)}</span>
         </div>
@@ -613,7 +682,8 @@ function SingleCoinHeader({ coin, summaries }: { coin: CoinId; summaries: Record
         </div>
       </div>
       <p className="text-gray-500 text-xs">
-        Perpetual Contract: {meta.instrument} | Directional trading (Long & Short) | {fmtUsd(meta.startingCapital)} starting capital
+        {productLabel}: {meta.instrument} | Directional trading (Long & Short) | {fmtUsd(meta.startingCapital)} starting capital
+        {meta.productTypeNote && <span className="text-gray-600"> | {meta.productTypeNote}</span>}
       </p>
     </div>
   )
@@ -1813,8 +1883,23 @@ function CoinCard({ coin, data }: { coin: string; data: any }) {
   return (
     <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}>
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
+          <span
+            className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wide ${
+              meta.productType === 'PERP'
+                ? 'bg-blue-900/60 text-blue-300'
+                : 'bg-amber-900/60 text-amber-300'
+            }`}
+            title={meta.productTypeNote || meta.productType}
+          >
+            {meta.productType}
+          </span>
+          {!meta.liveAvailableUS && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-700 text-gray-400" title="Paper-only">
+              PAPER
+            </span>
+          )}
           <span className="text-gray-500 text-xs">{meta.label}</span>
         </div>
         <span className="text-white font-mono text-sm">{fmtPrice(data?.price, meta.priceDecimals)}</span>
