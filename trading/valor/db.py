@@ -1604,17 +1604,25 @@ class ValorDatabase:
             logger.error(f"Failed to save signal: {e}")
             return False
 
-    def get_recent_signals(self, limit: int = 50) -> List[Dict]:
+    def get_recent_signals(self, limit: int = 50, ticker: Optional[str] = None) -> List[Dict]:
         """Get recent signals"""
         signals = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                c.execute("""
-                    SELECT * FROM valor_signals
-                    ORDER BY signal_time DESC
-                    LIMIT %s
-                """, (limit,))
+                if ticker:
+                    c.execute("""
+                        SELECT * FROM valor_signals
+                        WHERE ticker = %s
+                        ORDER BY signal_time DESC
+                        LIMIT %s
+                    """, (ticker, limit))
+                else:
+                    c.execute("""
+                        SELECT * FROM valor_signals
+                        ORDER BY signal_time DESC
+                        LIMIT %s
+                    """, (limit,))
 
                 rows = c.fetchall()
                 columns = [desc[0] for desc in c.description]
@@ -2588,7 +2596,8 @@ class ValorDatabase:
         outcome: Optional[str] = None,
         gamma_regime: Optional[str] = None,
         start_date: Optional[date] = None,
-        end_date: Optional[date] = None
+        end_date: Optional[date] = None,
+        ticker: Optional[str] = None
     ) -> List[Dict]:
         """Get scan activity for analysis and display"""
         scans = []
@@ -2605,6 +2614,9 @@ class ValorDatabase:
                 if gamma_regime:
                     query += " AND gamma_regime = %s"
                     params.append(gamma_regime)
+                if ticker:
+                    query += " AND ticker = %s"
+                    params.append(ticker)
                 if start_date:
                     query += " AND scan_time >= %s"
                     params.append(start_date)

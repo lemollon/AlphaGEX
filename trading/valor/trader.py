@@ -2476,9 +2476,9 @@ class ValorTrader:
         """Get recent closed trades, optionally filtered by ticker"""
         return self.db.get_closed_trades(limit=limit, ticker=ticker)
 
-    def get_recent_signals(self, limit: int = 50) -> List[Dict]:
+    def get_recent_signals(self, limit: int = 50, ticker: Optional[str] = None) -> List[Dict]:
         """Get recent signals"""
-        return self.db.get_recent_signals(limit)
+        return self.db.get_recent_signals(limit, ticker=ticker)
 
     def get_logs(self, limit: int = 100) -> List[Dict]:
         """Get recent logs"""
