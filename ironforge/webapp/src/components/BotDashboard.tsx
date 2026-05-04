@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { getCTNow, getCTMinutes } from '@/lib/pt-tiers'
 import StatusCard from './StatusCard'
+import EventBlackoutBanner from './EventBlackoutBanner'
 import PerformanceCard from './PerformanceCard'
 import EquityChart, { type Period } from './EquityChart'
 import LatestBriefCard from './LatestBriefCard'
@@ -444,6 +445,11 @@ export default function BotDashboard({
           ) : null}
         </div>
       )}
+
+      {/* Vigil event-blackout banner (only renders during/within-7d of a blackout) */}
+      <ComponentErrorBoundary fallback="Blackout banner error">
+        <EventBlackoutBanner bot={bot} />
+      </ComponentErrorBoundary>
 
       {/* Status card */}
       {status && (

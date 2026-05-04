@@ -25,6 +25,8 @@
 
 import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
 import { postFlameOpen, postFlameClose } from './discord'
+import { eventCalendarRefresh } from './eventCalendar/refresh'
+import { isEventBlackoutActive } from './eventCalendar/gate'
 import {
   getQuote,
   getOptionExpirations,
@@ -2362,6 +2364,14 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
 /* ------------------------------------------------------------------ */
 
 async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<string> {
+  // Vigil: macro-event blackout gate. First check, before any DB heavy work,
+  // so a Friday-prior FOMC blackout costs one config read + one indexed range
+  // query.  Does NOT close existing positions — only blocks new entries.
+  const blackout = await isEventBlackoutActive(bot.name, new Date())
+  if (blackout.blocked) {
+    return `skip:${blackout.reason}`
+  }
+
   // FLAME is now a bull put credit spread bot. Completely separate entry
   // flow — 2-leg strikes, VIX > 18 gate, 10%-risk sizing, no sandbox order
   // placement. Delegates to tryOpenFlamePutSpread so this function keeps
@@ -4964,6 +4974,14 @@ async function runAllScans(): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] Config override load failed (using defaults): ${msg}`)
   }
+
+  // Vigil: refresh FOMC calendar from Finnhub once per ~20h. Idempotent +
+  // non-throwing — failures are logged to ironforge_event_calendar_meta and
+  // never block trading.
+  eventCalendarRefresh().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] event-calendar refresh failed (non-fatal): ${msg}`)
+  })
 
   // Daily sandbox cleanup at market open — MUST complete before FLAME can trade.
   // Stale positions from yesterday consume buying power and cause every new order

@@ -117,6 +117,34 @@ CREATE TABLE IF NOT EXISTS ironforge_production_pause (
   paused_reason TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Vigil: macro-event blackout calendar (FOMC + custom events)
+CREATE TABLE IF NOT EXISTS ironforge_event_calendar (
+  event_id          TEXT PRIMARY KEY,
+  source            TEXT NOT NULL,
+  event_type        TEXT NOT NULL,
+  title             TEXT NOT NULL,
+  description       TEXT,
+  event_date        DATE NOT NULL,
+  event_time_ct     TIME NOT NULL,
+  halt_start_ts     TIMESTAMPTZ NOT NULL,
+  halt_end_ts       TIMESTAMPTZ NOT NULL,
+  resume_offset_min INT NOT NULL DEFAULT 60,
+  is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by        TEXT NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_event_calendar_halt_window
+  ON ironforge_event_calendar (halt_start_ts, halt_end_ts) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_event_calendar_event_date
+  ON ironforge_event_calendar (event_date);
+CREATE TABLE IF NOT EXISTS ironforge_event_calendar_meta (
+  id                INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  last_refresh_ts   TIMESTAMPTZ,
+  last_refresh_status  TEXT,
+  events_added      INT DEFAULT 0,
+  events_updated    INT DEFAULT 0
+);
 ` + ['flame', 'spark', 'inferno'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -448,7 +476,22 @@ async function ensureTables(): Promise<void> {
           `ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS trailing_retrace_dollars NUMERIC(5, 4)`,
         )
       } catch { /* column already exists or table doesn't exist yet */ }
+
+      // Vigil: per-bot opt-out toggle for the macro-event blackout system.
+      // Default TRUE so all bots honor blackout windows by default.
+      try {
+        await client.query(
+          `ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS event_blackout_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+        )
+      } catch { /* column already exists or table doesn't exist yet */ }
     }
+
+    // Vigil: seed the singleton meta row for refresh tracking.
+    try {
+      await client.query(
+        `INSERT INTO ironforge_event_calendar_meta (id) VALUES (1) ON CONFLICT DO NOTHING`,
+      )
+    } catch { /* ignore */ }
 
     // Hypothetical "what if we had held to 2:59 PM" P&L tracking. Three
     // columns on each bot's positions table so historical analysis can
