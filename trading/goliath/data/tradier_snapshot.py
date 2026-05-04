@@ -36,8 +36,25 @@ _DEFAULT_DTE_YEARS = 7.0 / 365.0
 
 
 def _safe_get_tv_gex(symbol: str) -> tuple[float, list[GammaStrike]]:
-    """Fetch (net_gex, strike-level gamma list) from TV. Returns (0, []) on
-    failure -- downstream G01/G02/G03 will fail closed."""
+    """Fetch (net_gex, strike-level gamma list).
+
+    Tries TV v2 first (lowest latency, single network call). On any TV
+    failure — token unset, rate-limit, network error, malformed response —
+    falls back to computing per-strike gamma directly from the Tradier
+    options chain (same approach as backend/api/routes/gex_routes.py uses
+    when TradingVolatilityAPI is unavailable). Returns (0.0, []) only when
+    both sources are unavailable; downstream G01/G02/G03 then fail closed.
+    """
+    net_gex, strikes = _try_tv_gex(symbol)
+    if strikes:
+        return net_gex, strikes
+    # TV failed (or returned empty strikes). Fall back to Tradier-derived
+    # gamma so goliath does not require the v2 Bearer token to operate.
+    return _tradier_gex_fallback(symbol)
+
+
+def _try_tv_gex(symbol: str) -> tuple[float, list[GammaStrike]]:
+    """Original TV v2 path, isolated so the fallback can be triggered cleanly."""
     try:
         from core_classes_and_engines import TradingVolatilityAPI  # type: ignore
     except ImportError as exc:
@@ -79,6 +96,72 @@ def _safe_get_tv_gex(symbol: str) -> tuple[float, list[GammaStrike]]:
         return net_gex, strikes
     except Exception as exc:  # noqa: BLE001
         logger.warning("[snapshot] TV fetch failed for %s: %r", symbol, exc)
+        return 0.0, []
+
+
+def _tradier_gex_fallback(symbol: str) -> tuple[float, list[GammaStrike]]:
+    """Compute (net_gex, per-strike gamma) from Tradier options chain.
+
+    Uses data.gex_calculator.calculate_gex_from_chain (same path
+    backend/api/routes/gex_routes.py uses when TV is unreachable). The
+    GEXResult.strikes_data list provides {strike, call_gex, put_gex, net_gex}
+    in dollars; we collapse to a non-negative gamma per strike via
+    abs(call_gex) + abs(put_gex), which matches TV's "total_gamma"
+    semantics for wall detection (both call concentration and put
+    concentration count toward a wall).
+    """
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher  # type: ignore
+        from data.gex_calculator import calculate_gex_from_chain  # type: ignore
+    except ImportError as exc:
+        logger.warning("[snapshot] gex-calc fallback unavailable for %s: %r", symbol, exc)
+        return 0.0, []
+
+    try:
+        client = TradierDataFetcher(sandbox=False)
+        quote = client.get_quote(symbol)
+        if not isinstance(quote, dict):
+            return 0.0, []
+        spot = float(quote.get("last") or quote.get("close") or 0)
+        if spot <= 0:
+            return 0.0, []
+
+        chain_obj = client.get_option_chain(symbol, greeks=True)
+        chains_by_exp = getattr(chain_obj, "chains", None) or {}
+        contracts = []
+        if isinstance(chains_by_exp, dict):
+            for exp_contracts in chains_by_exp.values():
+                for c in exp_contracts or []:
+                    try:
+                        contracts.append({
+                            "strike": float(c.strike),
+                            "gamma": float(c.gamma or 0),
+                            "open_interest": int(c.open_interest or 0),
+                            "option_type": c.option_type,
+                        })
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+        if not contracts:
+            logger.warning("[snapshot] Tradier-derived GEX %s: empty chain", symbol)
+            return 0.0, []
+
+        result = calculate_gex_from_chain(symbol, spot, contracts)
+        net_gex = float(getattr(result, "net_gex", 0) or 0)
+        strikes: list[GammaStrike] = []
+        for row in (getattr(result, "strikes_data", None) or []):
+            try:
+                k = float(row.get("strike"))
+                # Treat both call concentration and put concentration as
+                # contributing to "gamma at strike" for wall detection.
+                gamma = abs(float(row.get("call_gex") or 0)) + abs(float(row.get("put_gex") or 0))
+                strikes.append(GammaStrike(strike=k, gamma=gamma))
+            except (TypeError, ValueError, AttributeError):
+                continue
+        logger.info("[snapshot] Tradier-derived GEX %s: net=%.2e, strikes=%d",
+                    symbol, net_gex, len(strikes))
+        return net_gex, strikes
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[snapshot] Tradier-derived GEX failed for %s: %r", symbol, exc)
         return 0.0, []
 
 
