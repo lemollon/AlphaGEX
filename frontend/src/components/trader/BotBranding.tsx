@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
 
 export interface BotBrand {
   name: BotName
@@ -624,6 +624,78 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#D946EF',
     hexLight: '#E879F9',
     hexDark: '#C026D3',
+  },
+  AGAPE_SOL_PERP: {
+    name: 'AGAPE_SOL_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_SOL_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_SOL_PERP} SOL Perpetual`,
+    description: 'SOL Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (SOL-PERP)',
+    // Primary - Cyan (Solana brand)
+    primaryColor: 'cyan',
+    primaryBg: 'bg-cyan-600',
+    primaryBorder: 'border-cyan-500',
+    primaryText: 'text-cyan-400',
+    // Light variants
+    lightBg: 'bg-cyan-900/20',
+    lightText: 'text-cyan-300',
+    lightBorder: 'border-cyan-700/50',
+    // Chart colors
+    chartLine: 'stroke-cyan-400',
+    chartFill: 'fill-cyan-500/20',
+    chartPositive: 'text-cyan-400',
+    chartNegative: 'text-cyan-600',
+    // Position cards
+    positionBorder: 'border-cyan-600/50',
+    positionBg: 'bg-cyan-950/30',
+    positionAccent: 'bg-cyan-500',
+    // Badges
+    badgeBg: 'bg-cyan-900/50',
+    badgeText: 'text-cyan-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-cyan-500',
+    gradientTo: 'to-cyan-900',
+    // Hex for Recharts
+    hexPrimary: '#06B6D4',
+    hexLight: '#22D3EE',
+    hexDark: '#0891B2',
+  },
+  AGAPE_AVAX_PERP: {
+    name: 'AGAPE_AVAX_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_AVAX_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_AVAX_PERP} AVAX Perpetual`,
+    description: 'AVAX Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (AVAX-PERP)',
+    // Primary - Red (Avalanche brand)
+    primaryColor: 'red',
+    primaryBg: 'bg-red-600',
+    primaryBorder: 'border-red-500',
+    primaryText: 'text-red-400',
+    // Light variants
+    lightBg: 'bg-red-900/20',
+    lightText: 'text-red-300',
+    lightBorder: 'border-red-700/50',
+    // Chart colors
+    chartLine: 'stroke-red-400',
+    chartFill: 'fill-red-500/20',
+    chartPositive: 'text-red-400',
+    chartNegative: 'text-red-600',
+    // Position cards
+    positionBorder: 'border-red-600/50',
+    positionBg: 'bg-red-950/30',
+    positionAccent: 'bg-red-500',
+    // Badges
+    badgeBg: 'bg-red-900/50',
+    badgeText: 'text-red-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-red-500',
+    gradientTo: 'to-red-900',
+    // Hex for Recharts
+    hexPrimary: '#DC2626',
+    hexLight: '#F87171',
+    hexDark: '#B91C1C',
   },
   AGAPE_BTC_PERP: {
     name: 'AGAPE_BTC_PERP',

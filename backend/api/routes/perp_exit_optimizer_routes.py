@@ -150,6 +150,8 @@ _BOT_KEY_PREFIX = {
     "XRP":  "agape_xrp_perp_",
     "BTC":  "agape_btc_perp_",
     "ETH":  "agape_eth_perp_",
+    "SOL":  "agape_sol_perp_",
+    "AVAX": "agape_avax_perp_",
     "DOGE": "agape_doge_perp_",
     "SHIB": "agape_shib_perp_",
 }

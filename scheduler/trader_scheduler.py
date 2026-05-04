@@ -251,6 +251,24 @@ except ImportError:
     AgapeEthPerpTrader = None
     print("Warning: AGAPE-ETH-PERP not available. ETH perpetual trading will be disabled.")
 
+# Import AGAPE-SOL-PERP (SOL Perpetual Contract)
+try:
+    from trading.agape_sol_perp.trader import AgapeSolPerpTrader, create_agape_sol_perp_trader
+    AGAPE_SOL_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_SOL_PERP_AVAILABLE = False
+    AgapeSolPerpTrader = None
+    print("Warning: AGAPE-SOL-PERP not available. SOL perpetual trading will be disabled.")
+
+# Import AGAPE-AVAX-PERP (AVAX Perpetual Contract)
+try:
+    from trading.agape_avax_perp.trader import AgapeAvaxPerpTrader, create_agape_avax_perp_trader
+    AGAPE_AVAX_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_AVAX_PERP_AVAILABLE = False
+    AgapeAvaxPerpTrader = None
+    print("Warning: AGAPE-AVAX-PERP not available. AVAX perpetual trading will be disabled.")
+
 # Import AGAPE-BTC-PERP (BTC Perpetual Contract)
 try:
     from trading.agape_btc_perp.trader import AgapeBtcPerpTrader, create_agape_btc_perp_trader
@@ -931,6 +949,30 @@ class AutonomousTraderScheduler:
                 logger.warning(f"AGAPE-ETH-PERP initialization failed: {e}")
                 self.agape_eth_perp_trader = None
 
+        # AGAPE-SOL-PERP - SOL Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_sol_perp_trader = None
+        if AGAPE_SOL_PERP_AVAILABLE:
+            try:
+                self.agape_sol_perp_trader = create_agape_sol_perp_trader()
+                logger.info("✅ AGAPE-SOL-PERP initialized (SOL Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-SOL-PERP initialization failed: {e}")
+                self.agape_sol_perp_trader = None
+
+        # AGAPE-AVAX-PERP - AVAX Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $2.5k starting capital
+        self.agape_avax_perp_trader = None
+        if AGAPE_AVAX_PERP_AVAILABLE:
+            try:
+                self.agape_avax_perp_trader = create_agape_avax_perp_trader()
+                logger.info("✅ AGAPE-AVAX-PERP initialized (AVAX Perpetual, PAPER mode - $2.5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-AVAX-PERP initialization failed: {e}")
+                self.agape_avax_perp_trader = None
+
         # AGAPE-BTC-PERP - BTC Perpetual Contract
         # 24/7 perpetual contract trading with real exchange data
         # PAPER mode: Simulated trades with $5k starting capital
@@ -992,6 +1034,8 @@ class AutonomousTraderScheduler:
             "AGAPE-SPOT": self.agape_spot_trader is not None,
             "AGAPE-BTC": self.agape_btc_trader is not None if hasattr(self, 'agape_btc_trader') else False,
             "AGAPE-ETH-PERP": self.agape_eth_perp_trader is not None,
+            "AGAPE-SOL-PERP": self.agape_sol_perp_trader is not None,
+            "AGAPE-AVAX-PERP": self.agape_avax_perp_trader is not None,
             "AGAPE-BTC-PERP": self.agape_btc_perp_trader is not None,
             "AGAPE-XRP-PERP": self.agape_xrp_perp_trader is not None,
             "AGAPE-DOGE-PERP": self.agape_doge_perp_trader is not None,
@@ -3492,6 +3536,109 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-ETH-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_sol_perp_logic(self):
+        """
+        AGAPE-SOL-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        Uses real Deribit/CoinGlass/Coinbase data for signals.
+        """
+        if not self.agape_sol_perp_trader:
+            if not getattr(self, '_sol_perp_none_logged', False):
+                logger.error("AGAPE-SOL-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._sol_perp_none_logged = True
+            return
+
+        try:
+            result = self.agape_sol_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-SOL-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-SOL-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-SOL-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_sol_perp_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-SOL-PERP scan #{self.agape_sol_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SOL-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_sol_perp_eod_logic(self):
+        """AGAPE-SOL-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-SOL-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_sol_perp_trader:
+            return
+
+        try:
+            result = self.agape_sol_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-SOL-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_sol_perp_trader.get_performance()
+            logger.info(f"AGAPE-SOL-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SOL-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_avax_perp_logic(self):
+        """
+        AGAPE-AVAX-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        """
+        if not self.agape_avax_perp_trader:
+            if not getattr(self, '_avax_perp_none_logged', False):
+                logger.error("AGAPE-AVAX-PERP: trader is None — initialization failed. Bot will NOT trade.")
+                self._avax_perp_none_logged = True
+            return
+
+        try:
+            result = self.agape_avax_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-AVAX-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-AVAX-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-AVAX-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_avax_perp_trader._cycle_count % 12 == 0:
+                    logger.info(f"AGAPE-AVAX-PERP scan #{self.agape_avax_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-AVAX-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_avax_perp_eod_logic(self):
+        """AGAPE-AVAX-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-AVAX-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_avax_perp_trader:
+            return
+
+        try:
+            result = self.agape_avax_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-AVAX-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_avax_perp_trader.get_performance()
+            logger.info(f"AGAPE-AVAX-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-AVAX-PERP EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_agape_btc_perp_logic(self):
@@ -6967,6 +7114,70 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE-ETH-PERP EOD job scheduled (3:45 PM CT daily)")
         else:
             logger.warning("⚠️ AGAPE-ETH-PERP not available - ETH perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-SOL-PERP JOB: SOL Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_sol_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_sol_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_sol_perp_trading',
+                name='AGAPE-SOL-PERP - SOL Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SOL-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_sol_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_sol_perp_eod',
+                name='AGAPE-SOL-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SOL-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-SOL-PERP not available - SOL perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-AVAX-PERP JOB: AVAX Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_avax_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_avax_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_avax_perp_trading',
+                name='AGAPE-AVAX-PERP - AVAX Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-AVAX-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_avax_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_avax_perp_eod',
+                name='AGAPE-AVAX-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-AVAX-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-AVAX-PERP not available - AVAX perpetual trading disabled")
 
         # =================================================================
         # AGAPE-BTC-PERP JOB: BTC Perpetual Contract - every 5 minutes, 24/7

@@ -121,6 +121,8 @@ function buildFallback(data: Record<string, any> | undefined): Record<string, an
       agape_btc: `/api/agape-btc/equity-curve?days=${days}`,
       agape_xrp: `/api/agape-xrp/equity-curve?days=${days}`,
       agape_eth_perp: `/api/agape-eth-perp/equity-curve?days=${days}`,
+      agape_sol_perp: `/api/agape-sol-perp/equity-curve?days=${days}`,
+      agape_avax_perp: `/api/agape-avax-perp/equity-curve?days=${days}`,
       agape_btc_perp: `/api/agape-btc-perp/equity-curve?days=${days}`,
       agape_xrp_perp: `/api/agape-xrp-perp/equity-curve?days=${days}`,
       agape_doge_perp: `/api/agape-doge-perp/equity-curve?days=${days}`,

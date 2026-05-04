@@ -86,6 +86,8 @@ from backend.api.routes import (
     agape_btc_routes,  # AGAPE-BTC - BTC Micro Futures (/MBT) bot using crypto microstructure signals
     agape_xrp_routes,  # AGAPE-XRP - XRP Futures (/XRP) bot using crypto microstructure signals
     agape_eth_perp_routes,  # AGAPE-ETH-PERP - ETH Perpetual Contract bot
+    agape_sol_perp_routes,  # AGAPE-SOL-PERP - SOL Perpetual Contract bot
+    agape_avax_perp_routes,  # AGAPE-AVAX-PERP - AVAX Perpetual Contract bot
     agape_btc_perp_routes,  # AGAPE-BTC-PERP - BTC Perpetual Contract bot
     agape_xrp_perp_routes,  # AGAPE-XRP-PERP - XRP Perpetual Contract bot
     agape_doge_perp_routes,  # AGAPE-DOGE-PERP - DOGE Perpetual Contract bot
@@ -363,6 +365,8 @@ app.include_router(agape_spot_routes.router)
 app.include_router(agape_btc_routes.router)
 app.include_router(agape_xrp_routes.router)
 app.include_router(agape_eth_perp_routes.router)
+app.include_router(agape_sol_perp_routes.router)
+app.include_router(agape_avax_perp_routes.router)
 app.include_router(agape_btc_perp_routes.router)
 app.include_router(agape_xrp_perp_routes.router)
 app.include_router(agape_doge_perp_routes.router)

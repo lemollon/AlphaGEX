@@ -651,6 +651,7 @@ class CoinGlassClient:
         "DOGE": "DOGEUSDT",
         "SHIB": "1000SHIBUSDT",
         "SOL": "SOLUSDT",
+        "AVAX": "AVAXUSDT",
     }
 
     def get_long_short_ratio(

@@ -972,6 +972,8 @@ async def crypto_bot_diagnostics():
         scan_tables = {
             "AGAPE-SPOT": "agape_spot_scan_activity",
             "AGAPE-ETH-PERP": "agape_eth_perp_scan_activity",
+            "AGAPE-SOL-PERP": "agape_sol_perp_scan_activity",
+            "AGAPE-AVAX-PERP": "agape_avax_perp_scan_activity",
             "AGAPE-BTC-PERP": "agape_btc_perp_scan_activity",
             "AGAPE-XRP-PERP": "agape_xrp_perp_scan_activity",
             "AGAPE-DOGE-PERP": "agape_doge_perp_scan_activity",
@@ -1012,6 +1014,8 @@ async def crypto_bot_diagnostics():
         position_tables = {
             "AGAPE-SPOT": "agape_spot_positions",
             "AGAPE-ETH-PERP": "agape_eth_perp_positions",
+            "AGAPE-SOL-PERP": "agape_sol_perp_positions",
+            "AGAPE-AVAX-PERP": "agape_avax_perp_positions",
             "AGAPE-BTC-PERP": "agape_btc_perp_positions",
             "AGAPE-XRP-PERP": "agape_xrp_perp_positions",
             "AGAPE-DOGE-PERP": "agape_doge_perp_positions",

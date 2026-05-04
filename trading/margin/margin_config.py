@@ -333,6 +333,42 @@ MARKET_DEFAULTS: Dict[str, MarketConfig] = {
         has_funding_rate=True,
         funding_interval_hours=8.0,
     ),
+    "SOL-PERP": MarketConfig(
+        market_type=MarketType.CRYPTO_PERPETUAL,
+        exchange="PERPETUAL",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.AUTO_FULL,
+        initial_margin_rate=0.04,          # 4% = 25x max leverage
+        maintenance_margin_rate=0.02,      # 2% maintenance
+        is_margin_per_contract=False,
+        max_leverage=25.0,
+        default_leverage=10.0,
+        contract_multiplier=1.0,
+        tick_size=0.01,
+        tick_value=0.01,
+        has_expiry=False,
+        settlement_type=SettlementType.CONTINUOUS,
+        has_funding_rate=True,
+        funding_interval_hours=8.0,
+    ),
+    "AVAX-PERP": MarketConfig(
+        market_type=MarketType.CRYPTO_PERPETUAL,
+        exchange="PERPETUAL",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.AUTO_FULL,
+        initial_margin_rate=0.05,          # 5% = 20x max leverage
+        maintenance_margin_rate=0.025,
+        is_margin_per_contract=False,
+        max_leverage=20.0,
+        default_leverage=5.0,              # Thinner liquidity, lower default leverage
+        contract_multiplier=1.0,
+        tick_size=0.01,
+        tick_value=0.01,
+        has_expiry=False,
+        settlement_type=SettlementType.CONTINUOUS,
+        has_funding_rate=True,
+        funding_interval_hours=8.0,
+    ),
     "XRP-PERP": MarketConfig(
         market_type=MarketType.CRYPTO_PERPETUAL,
         exchange="PERPETUAL",
@@ -485,6 +521,8 @@ BOT_INSTRUMENT_MAP: Dict[str, str] = {
     # Crypto Perpetuals
     "AGAPE_BTC_PERP": "BTC-PERP",
     "AGAPE_ETH_PERP": "ETH-PERP",
+    "AGAPE_SOL_PERP": "SOL-PERP",
+    "AGAPE_AVAX_PERP": "AVAX-PERP",
     "AGAPE_XRP_PERP": "XRP-PERP",
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",

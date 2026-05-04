@@ -97,6 +97,8 @@ export default function AllBotReportsSummary() {
     AGAPE_BTC: undefined,
     AGAPE_XRP: undefined,
     AGAPE_ETH_PERP: undefined,
+    AGAPE_SOL_PERP: undefined,
+    AGAPE_AVAX_PERP: undefined,
     AGAPE_BTC_PERP: undefined,
     AGAPE_XRP_PERP: undefined,
     AGAPE_DOGE_PERP: undefined,

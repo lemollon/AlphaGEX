@@ -39,6 +39,8 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "AGAPE":                "AGAPE",         # ETH Micro Futures - 1 Cor 13:4,7
     "AGAPE_SPOT":           "AGAPE-SPOT",    # 24/7 Crypto Spot - 1 Cor 13:8
     "AGAPE_ETH_PERP":   "AGAPE-ETH-PERP",    # ETH Perpetual Contract
+    "AGAPE_SOL_PERP":   "AGAPE-SOL-PERP",     # SOL Perpetual Contract
+    "AGAPE_AVAX_PERP":  "AGAPE-AVAX-PERP",    # AVAX Perpetual Contract
     "AGAPE_BTC_PERP":   "AGAPE-BTC-PERP",     # BTC Perpetual Contract
     "AGAPE_XRP_PERP":   "AGAPE-XRP-PERP",     # XRP Perpetual Contract
     "AGAPE_DOGE_PERP":  "AGAPE-DOGE-PERP",    # DOGE Perpetual Contract
@@ -79,7 +81,8 @@ DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in BOT_DISPLAY_NAMES.items(
                                             "AGAPE_SPOT", "ARES", "ATHENA", "TITAN",
                                             "PEGASUS", "ICARUS", "PHOENIX", "ATLAS",
                                             "HERMES", "PROMETHEUS", "HERACLES", "AGAPE",
-                                            "AGAPE_ETH_PERP", "AGAPE_BTC_PERP",
+                                            "AGAPE_ETH_PERP", "AGAPE_SOL_PERP",
+                                            "AGAPE_AVAX_PERP", "AGAPE_BTC_PERP",
                                             "AGAPE_XRP_PERP", "AGAPE_DOGE_PERP",
                                             "AGAPE_SHIB_PERP"
                                         )}

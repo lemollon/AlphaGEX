@@ -2,9 +2,11 @@
 """
 RESET ALL PERPETUAL BOT TRADING DATA
 
-This script performs a complete data reset for all 5 perpetual trading bots:
+This script performs a complete data reset for all 7 perpetual trading bots:
   - AGAPE-BTC-PERP
   - AGAPE-ETH-PERP
+  - AGAPE-SOL-PERP
+  - AGAPE-AVAX-PERP
   - AGAPE-XRP-PERP
   - AGAPE-DOGE-PERP
   - AGAPE-SHIB-PERP
@@ -63,6 +65,28 @@ PERP_BOTS = {
             "agape_eth_perp_equity_snapshots",
             "agape_eth_perp_scan_activity",
             "agape_eth_perp_activity_log",
+        ],
+    },
+    "SOL-PERP": {
+        "prefix": "agape_sol_perp",
+        "starting_capital": 5000.0,
+        "config_key": "agape_sol_perp_starting_capital",
+        "tables": [
+            "agape_sol_perp_positions",
+            "agape_sol_perp_equity_snapshots",
+            "agape_sol_perp_scan_activity",
+            "agape_sol_perp_activity_log",
+        ],
+    },
+    "AVAX-PERP": {
+        "prefix": "agape_avax_perp",
+        "starting_capital": 2500.0,
+        "config_key": "agape_avax_perp_starting_capital",
+        "tables": [
+            "agape_avax_perp_positions",
+            "agape_avax_perp_equity_snapshots",
+            "agape_avax_perp_scan_activity",
+            "agape_avax_perp_activity_log",
         ],
     },
     "XRP-PERP": {

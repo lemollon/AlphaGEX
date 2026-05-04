@@ -1069,40 +1069,120 @@ const fetchers = {
     const response = await api.get('/api/agape-eth-perp/status')
     return response.data
   },
+  agapeSolPerpStatus: async () => {
+    const response = await api.get('/api/agape-sol-perp/status')
+    return response.data
+  },
+  agapeAvaxPerpStatus: async () => {
+    const response = await api.get('/api/agape-avax-perp/status')
+    return response.data
+  },
   agapeEthPerpPositions: async () => {
     const response = await api.get('/api/agape-eth-perp/positions')
+    return response.data
+  },
+  agapeSolPerpPositions: async () => {
+    const response = await api.get('/api/agape-sol-perp/positions')
+    return response.data
+  },
+  agapeAvaxPerpPositions: async () => {
+    const response = await api.get('/api/agape-avax-perp/positions')
     return response.data
   },
   agapeEthPerpClosedTrades: async (limit: number = 50) => {
     const response = await api.get(`/api/agape-eth-perp/closed-trades?limit=${limit}`)
     return response.data
   },
+  agapeSolPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-sol-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeAvaxPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-avax-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
   agapeEthPerpEquityCurve: async (days: number = 30) => {
     const response = await api.get(`/api/agape-eth-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeSolPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-sol-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeAvaxPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-avax-perp/equity-curve?days=${days}`)
     return response.data
   },
   agapeEthPerpIntradayEquity: async () => {
     const response = await api.get('/api/agape-eth-perp/equity-curve/intraday')
     return response.data
   },
+  agapeSolPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-sol-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeAvaxPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-avax-perp/equity-curve/intraday')
+    return response.data
+  },
   agapeEthPerpPerformance: async () => {
     const response = await api.get('/api/agape-eth-perp/performance')
+    return response.data
+  },
+  agapeSolPerpPerformance: async () => {
+    const response = await api.get('/api/agape-sol-perp/performance')
+    return response.data
+  },
+  agapeAvaxPerpPerformance: async () => {
+    const response = await api.get('/api/agape-avax-perp/performance')
     return response.data
   },
   agapeEthPerpScanActivity: async (limit: number = 30) => {
     const response = await api.get(`/api/agape-eth-perp/scan-activity?limit=${limit}`)
     return response.data
   },
+  agapeSolPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-sol-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeAvaxPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-avax-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
   agapeEthPerpSnapshot: async () => {
     const response = await api.get('/api/agape-eth-perp/snapshot')
+    return response.data
+  },
+  agapeSolPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-sol-perp/snapshot')
+    return response.data
+  },
+  agapeAvaxPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-avax-perp/snapshot')
     return response.data
   },
   agapeEthPerpGexMapping: async () => {
     const response = await api.get('/api/agape-eth-perp/gex-mapping')
     return response.data
   },
+  agapeSolPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-sol-perp/gex-mapping')
+    return response.data
+  },
+  agapeAvaxPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-avax-perp/gex-mapping')
+    return response.data
+  },
   agapeEthPerpChartData: async () => {
     const response = await api.get('/api/agape-eth-perp/chart-data')
+    return response.data
+  },
+  agapeSolPerpChartData: async () => {
+    const response = await api.get('/api/agape-sol-perp/chart-data')
+    return response.data
+  },
+  agapeAvaxPerpChartData: async () => {
+    const response = await api.get('/api/agape-avax-perp/chart-data')
     return response.data
   },
   agapeBtcPerpChartData: async () => {
@@ -1123,6 +1203,14 @@ const fetchers = {
   },
   agapeEthPerpBrief: async () => {
     const response = await api.get('/api/agape-eth-perp/brief')
+    return response.data
+  },
+  agapeSolPerpBrief: async () => {
+    const response = await api.get('/api/agape-sol-perp/brief')
+    return response.data
+  },
+  agapeAvaxPerpBrief: async () => {
+    const response = await api.get('/api/agape-avax-perp/brief')
     return response.data
   },
   agapeBtcPerpBrief: async () => {
@@ -2457,8 +2545,40 @@ export function useAGAPEEthPerpStatus(options?: SWRConfiguration) {
   })
 }
 
+export function useAGAPESolPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-sol-perp-status', fetchers.agapeSolPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEAvaxPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-avax-perp-status', fetchers.agapeAvaxPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
 export function useAGAPEEthPerpPositions(options?: SWRConfiguration) {
   return useSWR('agape-eth-perp-positions', fetchers.agapeEthPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPESolPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-sol-perp-positions', fetchers.agapeSolPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEAvaxPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-avax-perp-positions', fetchers.agapeAvaxPerpPositions, {
     ...swrConfig,
     refreshInterval: 15 * 1000,
     ...options,
@@ -2474,10 +2594,44 @@ export function useAGAPEEthPerpClosedTrades(limit: number = 50, options?: LazySW
   )
 }
 
+export function useAGAPESolPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-sol-perp-closed-trades-${limit}`,
+    () => fetchers.agapeSolPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEAvaxPerpClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-avax-perp-closed-trades-${limit}`,
+    () => fetchers.agapeAvaxPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
 export function useAGAPEEthPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
     `agape-eth-perp-equity-curve-${days}`,
     () => fetchers.agapeEthPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPESolPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-sol-perp-equity-curve-${days}`,
+    () => fetchers.agapeSolPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEAvaxPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-avax-perp-equity-curve-${days}`,
+    () => fetchers.agapeAvaxPerpEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
@@ -2490,8 +2644,40 @@ export function useAGAPEEthPerpIntradayEquity(options?: SWRConfiguration) {
   })
 }
 
+export function useAGAPESolPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-sol-perp-intraday-equity', fetchers.agapeSolPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEAvaxPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-avax-perp-intraday-equity', fetchers.agapeAvaxPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
 export function useAGAPEEthPerpPerformance(options?: SWRConfiguration) {
   return useSWR('agape-eth-perp-performance', fetchers.agapeEthPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPESolPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-sol-perp-performance', fetchers.agapeSolPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEAvaxPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-avax-perp-performance', fetchers.agapeAvaxPerpPerformance, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -2507,6 +2693,24 @@ export function useAGAPEEthPerpScanActivity(limit: number = 30, options?: LazySW
   )
 }
 
+export function useAGAPESolPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-sol-perp-scan-activity-${limit}`,
+    () => fetchers.agapeSolPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEAvaxPerpScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-avax-perp-scan-activity-${limit}`,
+    () => fetchers.agapeAvaxPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
 export function useAGAPEEthPerpSnapshot(options?: LazySWRConfiguration) {
   const { enabled, ...swrOpts } = options || {}
   return useSWR(
@@ -2516,11 +2720,47 @@ export function useAGAPEEthPerpSnapshot(options?: LazySWRConfiguration) {
   )
 }
 
+export function useAGAPESolPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-sol-perp-snapshot',
+    fetchers.agapeSolPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEAvaxPerpSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-avax-perp-snapshot',
+    fetchers.agapeAvaxPerpSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
 export function useAGAPEEthPerpGexMapping(options?: LazySWRConfiguration) {
   const { enabled, ...swrOpts } = options || {}
   return useSWR(
     enabled === false ? null : 'agape-eth-perp-gex-mapping',
     fetchers.agapeEthPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPESolPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-sol-perp-gex-mapping',
+    fetchers.agapeSolPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEAvaxPerpGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-avax-perp-gex-mapping',
+    fetchers.agapeAvaxPerpGexMapping,
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
   )
 }
@@ -2535,6 +2775,22 @@ export function useAGAPEEthPerpChartData(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-eth-perp-chart-data',
     fetchers.agapeEthPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPESolPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-sol-perp-chart-data',
+    fetchers.agapeSolPerpChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEAvaxPerpChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-avax-perp-chart-data',
+    fetchers.agapeAvaxPerpChartData,
     { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
   )
 }
@@ -2581,6 +2837,22 @@ export function useAGAPEEthPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-eth-perp-brief',
     fetchers.agapeEthPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPESolPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-sol-perp-brief',
+    fetchers.agapeSolPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEAvaxPerpBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-avax-perp-brief',
+    fetchers.agapeAvaxPerpBrief,
     { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
   )
 }

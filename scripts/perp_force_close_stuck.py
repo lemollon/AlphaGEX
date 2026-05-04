@@ -20,6 +20,8 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # All perp bots with their table prefix and price ticker
 PERP_BOTS = [
     {"prefix": "agape_eth_perp", "ticker": "ETH", "label": "ETH-PERP"},
+    {"prefix": "agape_sol_perp", "ticker": "SOL", "label": "SOL-PERP"},
+    {"prefix": "agape_avax_perp", "ticker": "AVAX", "label": "AVAX-PERP"},
     {"prefix": "agape_btc_perp", "ticker": "BTC", "label": "BTC-PERP"},
     {"prefix": "agape_xrp_perp", "ticker": "XRP", "label": "XRP-PERP"},
     {"prefix": "agape_doge_perp", "ticker": "DOGE", "label": "DOGE-PERP"},
