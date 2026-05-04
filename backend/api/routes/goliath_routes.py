@@ -695,3 +695,85 @@ def goliath_config() -> dict[str, Any]:
         "instances": _INSTANCES,
         "phase": "1.5",
     }
+
+
+# ---- Admin: one-shot cycle trigger ---------------------------------------
+#
+# Per master spec the entry cycle fires Monday 10:30 ET on alphagex-trader.
+# When a deploy lands mid-week (or the prior Monday's cycle aborted before
+# completing all 5 instances) we need a way to re-run the cycle on demand
+# without waiting until next Monday. This admin endpoint runs the same
+# Runner the trader uses, in-process on alphagex-api, against the live DB.
+# Paper-only by configuration; no live broker calls are possible because
+# every InstanceConfig has paper_only=True.
+@router.post("/admin/run-entry-cycle")
+def admin_run_entry_cycle() -> dict[str, Any]:
+    """Run one GOLIATH entry cycle synchronously and return the summary.
+
+    Same wiring as scheduler/goliath_scheduler.py: Tradier snapshot fetcher
+    + paper broker executor. Calls every non-killed instance once.
+    """
+    try:
+        from trading.goliath.broker.paper_executor import paper_broker_executor
+        from trading.goliath.data.tradier_snapshot import build_market_snapshot
+        from trading.goliath.engine import GoliathEngine, PlatformContext as PC
+        from trading.goliath.main import Runner
+    except ImportError as exc:
+        logger.exception("[goliath admin] import failed: %r", exc)
+        raise HTTPException(status_code=503, detail=f"goliath import failed: {exc!r}")
+
+    def _platform_fetcher(instances) -> "PC":
+        total_count = sum(inst.open_count for inst in instances.values())
+        total_dollars = sum(inst.open_dollars_at_risk() for inst in instances.values())
+        return PC(open_position_count=total_count, open_dollars_at_risk=total_dollars)
+
+    runner = Runner(
+        engine=GoliathEngine(),
+        snapshot_fetcher=build_market_snapshot,
+        platform_fetcher=_platform_fetcher,
+        broker_executor=paper_broker_executor,
+        dry_run=False,
+    )
+    cycle = runner.run_entry_cycle()
+    return {
+        "instances_evaluated": cycle.instances_evaluated,
+        "entries_approved": cycle.entries_approved,
+        "entries_filled": cycle.entries_filled,
+        "skips": cycle.skips,
+    }
+
+
+@router.post("/admin/run-management-cycle")
+def admin_run_management_cycle() -> dict[str, Any]:
+    """Run one GOLIATH management cycle synchronously and return the summary.
+
+    Mirrors admin_run_entry_cycle but evaluates triggers on open positions
+    rather than evaluating new entries.
+    """
+    try:
+        from trading.goliath.broker.paper_executor import paper_broker_executor
+        from trading.goliath.data.tradier_snapshot import build_market_snapshot
+        from trading.goliath.engine import GoliathEngine, PlatformContext as PC
+        from trading.goliath.main import Runner
+    except ImportError as exc:
+        logger.exception("[goliath admin] import failed: %r", exc)
+        raise HTTPException(status_code=503, detail=f"goliath import failed: {exc!r}")
+
+    def _platform_fetcher(instances) -> "PC":
+        total_count = sum(inst.open_count for inst in instances.values())
+        total_dollars = sum(inst.open_dollars_at_risk() for inst in instances.values())
+        return PC(open_position_count=total_count, open_dollars_at_risk=total_dollars)
+
+    runner = Runner(
+        engine=GoliathEngine(),
+        snapshot_fetcher=build_market_snapshot,
+        platform_fetcher=_platform_fetcher,
+        broker_executor=paper_broker_executor,
+        dry_run=False,
+    )
+    cycle = runner.run_management_cycle()
+    return {
+        "instances_evaluated": cycle.instances_evaluated,
+        "triggers_fired": cycle.triggers_fired,
+        "skips": cycle.skips,
+    }

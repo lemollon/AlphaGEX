@@ -104,75 +104,105 @@ class Runner:
         platform = self.platform_fetcher(self.instances)
 
         for name, instance in self.instances.items():
-            result.instances_evaluated += 1
-
-            # Heartbeat per-instance per-cycle. Best-effort, never raises.
-            if not self.dry_run:
-                monitoring_heartbeat.record_heartbeat(
-                    bot_name=name,
-                    status="KILLED" if instance.is_killed else "OK",
-                    details={"cycle": "entry"},
-                )
-
-            if instance.is_killed:
-                result.skips.append(f"{name}: kill_active")
-                logger.info("skip %s -- instance kill active", name)
-                continue
-
             try:
-                snapshot = self.snapshot_fetcher(instance)
+                self._run_one_entry(name, instance, platform, now, result)
             except Exception as exc:  # noqa: BLE001
-                result.skips.append(f"{name}: snapshot_error={exc!r}")
-                logger.warning("skip %s -- snapshot fetch failed: %r", name, exc)
-                # Track TV API failures so the rate-limit alert can fire.
-                # Generic snapshot errors count toward the same window;
-                # caller can refine if/when we split TV vs yfinance signals.
-                if not self.dry_run:
+                # Defensive: one instance's unexpected failure must not abort
+                # the cycle for the other 4. Caught here so the for-loop
+                # always reaches the next instance.
+                result.skips.append(f"{name}: cycle_error={exc!r}")
+                logger.exception("entry cycle failed for %s: %r", name, exc)
+
+        return result
+
+    def _run_one_entry(
+        self,
+        name: str,
+        instance: GoliathInstance,
+        platform: PlatformContext,
+        now: datetime,
+        result: CycleResult,
+    ) -> None:
+        """One iteration of the entry cycle for a single instance."""
+        result.instances_evaluated += 1
+
+        # Heartbeat per-instance per-cycle. Best-effort, never raises.
+        if not self.dry_run:
+            monitoring_heartbeat.record_heartbeat(
+                bot_name=name,
+                status="KILLED" if instance.is_killed else "OK",
+                details={"cycle": "entry"},
+            )
+
+        if instance.is_killed:
+            result.skips.append(f"{name}: kill_active")
+            logger.info("skip %s -- instance kill active", name)
+            return
+
+        try:
+            snapshot = self.snapshot_fetcher(instance)
+        except Exception as exc:  # noqa: BLE001
+            result.skips.append(f"{name}: snapshot_error={exc!r}")
+            logger.warning("skip %s -- snapshot fetch failed: %r", name, exc)
+            # Track TV API failures so the rate-limit alert can fire.
+            # Generic snapshot errors count toward the same window;
+            # caller can refine if/when we split TV vs yfinance signals.
+            if not self.dry_run:
+                try:
                     monitoring_alerts.record_tv_api_failure()
                     if monitoring_alerts.check_tv_api_failure_rate():
                         monitoring_alerts.alert_tv_api_failures()
-                continue
+                except Exception as alert_exc:  # noqa: BLE001
+                    logger.warning("tv_api_failure alert chain failed for %s: %r",
+                                   name, alert_exc)
+            return
 
-            decision = self.engine.evaluate_entry(instance, snapshot, platform, now=now)
+        # Per build_market_snapshot contract: returns None when the snapshot
+        # cannot be assembled (e.g. empty Tradier chain). Skip the instance
+        # rather than crashing engine.evaluate_entry on a None argument.
+        if snapshot is None:
+            result.skips.append(f"{name}: snapshot_none")
+            logger.warning("skip %s -- snapshot fetcher returned None", name)
+            return
 
-            if not self.dry_run:
-                _record_entry_eval(instance, decision)
+        decision = self.engine.evaluate_entry(instance, snapshot, platform, now=now)
 
-            if not decision.approved:
-                continue
-            result.entries_approved += 1
+        if not self.dry_run:
+            _record_entry_eval(instance, decision)
 
-            if self.dry_run:
-                logger.info("dry-run %s -- approved (%d contracts)",
-                            name, decision.contracts_to_trade)
-                continue
+        if not decision.approved:
+            return
+        result.entries_approved += 1
 
+        if self.dry_run:
+            logger.info("dry-run %s -- approved (%d contracts)",
+                        name, decision.contracts_to_trade)
+            return
+
+        try:
+            position_id = self.broker_executor(instance, decision)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("broker submit failed for %s: %r", name, exc)
+            return
+
+        if position_id:
+            result.entries_filled += 1
+            logger.info("filled %s position=%s contracts=%d",
+                        name, position_id, decision.contracts_to_trade)
+            # Discord notification on broker fill. Best-effort.
             try:
-                position_id = self.broker_executor(instance, decision)
+                monitoring_alerts.alert_entry_filled(
+                    instance=name,
+                    structure={
+                        "short_put_strike": decision.structure.short_put.strike,
+                        "long_put_strike": decision.structure.long_put.strike,
+                        "long_call_strike": decision.structure.long_call.strike,
+                        "net_cost": decision.structure.net_cost,
+                    },
+                    contracts=decision.contracts_to_trade,
+                )
             except Exception as exc:  # noqa: BLE001
-                logger.error("broker submit failed for %s: %r", name, exc)
-                continue
-
-            if position_id:
-                result.entries_filled += 1
-                logger.info("filled %s position=%s contracts=%d",
-                            name, position_id, decision.contracts_to_trade)
-                # Discord notification on broker fill. Best-effort.
-                try:
-                    monitoring_alerts.alert_entry_filled(
-                        instance=name,
-                        structure={
-                            "short_put_strike": decision.structure.short_put.strike,
-                            "long_put_strike": decision.structure.long_put.strike,
-                            "long_call_strike": decision.structure.long_call.strike,
-                            "net_cost": decision.structure.net_cost,
-                        },
-                        contracts=decision.contracts_to_trade,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("alert_entry_filled failed for %s: %r", name, exc)
-
-        return result
+                logger.warning("alert_entry_filled failed for %s: %r", name, exc)
 
     def run_management_cycle(self, now: Optional[datetime] = None) -> CycleResult:
         """Run manage_open_positions on every instance with open positions."""
@@ -180,39 +210,11 @@ class Runner:
         result = CycleResult()
 
         for name, instance in self.instances.items():
-            if instance.open_count == 0:
-                continue
-            result.instances_evaluated += 1
-
-            # Heartbeat per-instance per-management-cycle. Best-effort.
-            if not self.dry_run:
-                monitoring_heartbeat.record_heartbeat(
-                    bot_name=name,
-                    status="KILLED" if instance.is_killed else "OK",
-                    details={"cycle": "management", "open_positions": instance.open_count},
-                )
-
-            actions = self.engine.manage_open_positions(instance, now=now)
-            result.triggers_fired += len(actions)
-
-            if not actions:
-                continue
-            for position, action in actions:
-                logger.info("trigger %s fired on %s/%s: %s",
-                            action.trigger_id, name, position.position_id, action.reason)
-                if not self.dry_run:
-                    audit_recorder.record_management_eval(
-                        instance=name,
-                        position_id=position.position_id,
-                        triggers_evaluated=[action.trigger_id],
-                        fired_action={
-                            "trigger_id": action.trigger_id,
-                            "close_call": action.close_call,
-                            "close_put_spread": action.close_put_spread,
-                            "reason": action.reason,
-                        },
-                        position_snapshot={"state": position.state.value},
-                    )
+            try:
+                self._run_one_management(name, instance, now, result)
+            except Exception as exc:  # noqa: BLE001
+                # Defensive: one instance failing must not abort the cycle.
+                logger.exception("management cycle failed for %s: %r", name, exc)
 
         # Equity snapshots for the dashboard equity-curve endpoints.
         # Best-effort: DB unavailable returns 0; never raises.
@@ -223,6 +225,48 @@ class Runner:
                 logger.warning("equity snapshot write failed: %r", exc)
 
         return result
+
+    def _run_one_management(
+        self,
+        name: str,
+        instance: GoliathInstance,
+        now: datetime,
+        result: CycleResult,
+    ) -> None:
+        """One iteration of the management cycle for a single instance."""
+        if instance.open_count == 0:
+            return
+        result.instances_evaluated += 1
+
+        # Heartbeat per-instance per-management-cycle. Best-effort.
+        if not self.dry_run:
+            monitoring_heartbeat.record_heartbeat(
+                bot_name=name,
+                status="KILLED" if instance.is_killed else "OK",
+                details={"cycle": "management", "open_positions": instance.open_count},
+            )
+
+        actions = self.engine.manage_open_positions(instance, now=now)
+        result.triggers_fired += len(actions)
+
+        if not actions:
+            return
+        for position, action in actions:
+            logger.info("trigger %s fired on %s/%s: %s",
+                        action.trigger_id, name, position.position_id, action.reason)
+            if not self.dry_run:
+                audit_recorder.record_management_eval(
+                    instance=name,
+                    position_id=position.position_id,
+                    triggers_evaluated=[action.trigger_id],
+                    fired_action={
+                        "trigger_id": action.trigger_id,
+                        "close_call": action.close_call,
+                        "close_put_spread": action.close_put_spread,
+                        "reason": action.reason,
+                    },
+                    position_snapshot={"state": position.state.value},
+                )
 
 
 def _record_entry_eval(instance: GoliathInstance, decision: EngineEntryDecision) -> None:
