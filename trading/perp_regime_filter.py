@@ -40,8 +40,13 @@ _BLOCKED_PATTERNS: dict = {
     ("AGAPE_BTC_PERP",  "SHORT", "BALANCED"):        "BTC_SHORT_in_BALANCED_loses",
     # DOGE
     ("AGAPE_DOGE_PERP", "SHORT", "BALANCED"):        "DOGE_SHORT_in_BALANCED_loses",
-    # XRP — all SHORT regimes are losers in our sample
-    ("AGAPE_XRP_PERP",  "SHORT", None):              "XRP_SHORT_no_edge_in_any_regime",
+    # XRP SHORT block REMOVED 2026-05-03: the original -$1,240 / 41.5% WR was
+    # measured under the old XRP exit config (act=1.0/trail=0.75). After the
+    # exit-tuning applied 2026-05-03 (act=1.5/trail=0.1/profit_target=2.5/24h),
+    # the same 52 historical XRP entries replay at +$2,011 / 60% WR / PF 1.57.
+    # Filter was overcorrecting and zero-traded the bot — every XRP signal is
+    # SHORT (contrarian against EXTREME_LONG L/S), so blocking SHORT == fully
+    # disabling XRP. Re-evaluate after another ~30 trades under new exits.
 }
 
 
