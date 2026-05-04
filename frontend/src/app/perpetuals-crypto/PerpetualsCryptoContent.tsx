@@ -121,16 +121,21 @@ const COIN_META: Record<CoinId, {
     productType: 'PERP', productTypeNote: 'Coinbase US (DOP-20DEC30-CDE)', liveAvailableUS: true,
   },
   'SHIB': {
-    symbol: 'SHIB', label: 'Shiba Inu', instrument: 'SHIB-PERP', hexColor: '#FB7185',
+    symbol: 'SHIB', label: 'Shiba Inu', instrument: '1000SHIB-FUT', hexColor: '#FB7185',
     bgActive: 'bg-rose-600', borderActive: 'border-rose-500', textActive: 'text-rose-400',
     bgCard: 'bg-rose-950/30', borderCard: 'border-rose-700/40',
     apiPrefix: '/api/agape-shib-perp', priceKey: 'current_shib_price', priceField: 'shib_price', priceDecimals: 8,
     quantityLabel: 'SHIB', startingCapital: 1000,
-    // SHIB has no US-accessible perpetual. Coinbase International lists
-    // 1000SHIB-PERP-INTX but it geo-blocks US persons. The US-accessible
-    // SHIB exposure is monthly futures (SHB-29MAY26-CDE etc) via FCM —
-    // a separate AGAPE-SHIB-FUTURES bot will use those when built.
-    productType: 'PERP', productTypeNote: 'Paper only — no US perp; SHIB-FUTURES bot pending', liveAvailableUS: false,
+    // SHIB has no US-accessible perpetual (Coinbase International lists
+    // 1000SHIB-PERP-INTX but it geo-blocks US persons). The US-accessible
+    // SHIB exposure is the monthly 1000SHIB futures on Coinbase Derivatives
+    // (SHB-29MAY26-CDE, SHB-26JUN26-CDE, etc.) traded via FCM (Tastytrade /
+    // NinjaTrader / IBKR). Each contract = 10K units of "1000SHIB" = 10M SHIB.
+    // The paper bot still uses the agape_shib_perp directory; live execution
+    // via Tastytrade FCM with monthly contract rolls is a separate build.
+    productType: 'FUTURE',
+    productTypeNote: 'Coinbase US 1k SHIB futures (SHB-29MAY26-CDE, monthly roll, FCM)',
+    liveAvailableUS: true,  // contract IS available; live integration pending
   },
 }
 
