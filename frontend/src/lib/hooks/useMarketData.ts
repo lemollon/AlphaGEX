@@ -1201,6 +1201,10 @@ const fetchers = {
     const response = await api.get('/api/agape-shib-perp/chart-data')
     return response.data
   },
+  agapeShibFuturesChartData: async () => {
+    const response = await api.get('/api/agape-shib-futures/chart-data')
+    return response.data
+  },
   agapeEthPerpBrief: async () => {
     const response = await api.get('/api/agape-eth-perp/brief')
     return response.data
@@ -1227,6 +1231,10 @@ const fetchers = {
   },
   agapeShibPerpBrief: async () => {
     const response = await api.get('/api/agape-shib-perp/brief')
+    return response.data
+  },
+  agapeShibFuturesBrief: async () => {
+    const response = await api.get('/api/agape-shib-futures/brief')
     return response.data
   },
 
@@ -1379,6 +1387,44 @@ const fetchers = {
   },
   agapeShibPerpGexMapping: async () => {
     const response = await api.get('/api/agape-shib-perp/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-SHIB-FUTURES (1000SHIB Monthly Futures Contract)
+  agapeShibFuturesStatus: async () => {
+    const response = await api.get('/api/agape-shib-futures/status')
+    return response.data
+  },
+  agapeShibFuturesPositions: async () => {
+    const response = await api.get('/api/agape-shib-futures/positions')
+    return response.data
+  },
+  agapeShibFuturesClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-shib-futures/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeShibFuturesEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-shib-futures/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeShibFuturesIntradayEquity: async () => {
+    const response = await api.get('/api/agape-shib-futures/equity-curve/intraday')
+    return response.data
+  },
+  agapeShibFuturesPerformance: async () => {
+    const response = await api.get('/api/agape-shib-futures/performance')
+    return response.data
+  },
+  agapeShibFuturesScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-shib-futures/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeShibFuturesSnapshot: async () => {
+    const response = await api.get('/api/agape-shib-futures/snapshot')
+    return response.data
+  },
+  agapeShibFuturesGexMapping: async () => {
+    const response = await api.get('/api/agape-shib-futures/gex-mapping')
     return response.data
   },
 
@@ -2826,6 +2872,14 @@ export function useAGAPEShibPerpChartData(options?: LazySWRConfiguration) {
     { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
   )
 }
+export function useAGAPEShibFuturesChartData(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-futures-chart-data',
+    fetchers.agapeShibFuturesChartData,
+    { ...swrConfig, refreshInterval: PERP_CHART_REFRESH, ...swrOpts }
+  )
+}
 
 // ===========================================================================
 // AGAPE PERP CLAUDE SIGNAL BRIEF HOOKS — 5-min refresh matches backend cache
@@ -2885,6 +2939,14 @@ export function useAGAPEShibPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-perp-brief',
     fetchers.agapeShibPerpBrief,
+    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+  )
+}
+export function useAGAPEShibFuturesBrief(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-futures-brief',
+    fetchers.agapeShibFuturesBrief,
     { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
   )
 }
@@ -3205,6 +3267,86 @@ export function useAGAPEShibPerpGexMapping(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-perp-gex-mapping',
     fetchers.agapeShibPerpGexMapping,
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
+  )
+}
+
+// =============================================================================
+// AGAPE-SHIB-FUTURES (1000SHIB Monthly Futures Contract) HOOKS
+// =============================================================================
+
+export function useAGAPEShibFuturesStatus(options?: SWRConfiguration) {
+  return useSWR('agape-shib-futures-status', fetchers.agapeShibFuturesStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibFuturesPositions(options?: SWRConfiguration) {
+  return useSWR('agape-shib-futures-positions', fetchers.agapeShibFuturesPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibFuturesClosedTrades(limit: number = 50, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-shib-futures-closed-trades-${limit}`,
+    () => fetchers.agapeShibFuturesClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEShibFuturesEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-shib-futures-equity-curve-${days}`,
+    () => fetchers.agapeShibFuturesEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEShibFuturesIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-shib-futures-intraday-equity', fetchers.agapeShibFuturesIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibFuturesPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-shib-futures-performance', fetchers.agapeShibFuturesPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibFuturesScanActivity(limit: number = 30, options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : `agape-shib-futures-scan-activity-${limit}`,
+    () => fetchers.agapeShibFuturesScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEShibFuturesSnapshot(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-futures-snapshot',
+    fetchers.agapeShibFuturesSnapshot,
+    { ...swrConfig, refreshInterval: 30 * 1000, ...swrOpts }
+  )
+}
+
+export function useAGAPEShibFuturesGexMapping(options?: LazySWRConfiguration) {
+  const { enabled, ...swrOpts } = options || {}
+  return useSWR(
+    enabled === false ? null : 'agape-shib-futures-gex-mapping',
+    fetchers.agapeShibFuturesGexMapping,
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...swrOpts }
   )
 }

@@ -208,6 +208,20 @@ PERPETUAL_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
         "funding_interval_hours": 8,
         "market_type": "crypto_perp",
     },
+    "1000SHIB-FUT": {
+        "name": "1k SHIB Monthly Futures",
+        "exchange": "COINBASE_DERIVATIVES_FCM",
+        "max_leverage": 10,           # FCM futures lower leverage than perps
+        "default_leverage": 3,
+        "maintenance_margin_rate": 0.015,  # 1.5% (matches SHIB-PERP)
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0006,
+        "funding_interval_hours": 0,  # futures have no funding
+        "market_type": "crypto_futures",
+        "contract_size": 10_000,
+        "tick_size": 0.00001,
+        "settlement": "monthly",      # SHB-DDMMMYY-CDE pattern
+    },
 }
 
 
@@ -231,6 +245,7 @@ BOT_MARGIN_SPEC: Dict[str, str] = {
     "AGAPE_XRP_PERP": "XRP-PERP",
     "AGAPE_DOGE_PERP": "DOGE-PERP",
     "AGAPE_SHIB_PERP": "SHIB-PERP",
+    "AGAPE_SHIB_FUTURES": "1000SHIB-FUT",
 }
 
 

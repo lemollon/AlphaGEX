@@ -44,6 +44,7 @@ BOTS = [
     {"name": "AGAPE_AVAX_PERP", "ticker": "AVAX", "table": "agape_avax_perp", "price_col": "avax_price", "starting_capital": 2500.0},
     {"name": "AGAPE_DOGE_PERP", "ticker": "DOGE", "table": "agape_doge_perp", "price_col": "doge_price", "starting_capital": 5000.0},
     {"name": "AGAPE_SHIB_PERP", "ticker": "SHIB", "table": "agape_shib_perp", "price_col": "shib_price", "starting_capital": 5000.0},
+    {"name": "AGAPE_SHIB_FUTURES", "ticker": "SHIB", "table": "agape_shib_futures", "price_col": "shib_price", "starting_capital": 1000.0},
 ]
 
 
@@ -69,6 +70,7 @@ CURRENT_DEFAULTS = {
     "AGAPE_AVAX_PERP": ExitConfig(1.5, 1.25, 0.0, 3.0, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_DOGE_PERP": ExitConfig(0.2, 0.1,  0.0, 0.75, 5.0, 24, True, 1.5, 0.3),
     "AGAPE_SHIB_PERP": ExitConfig(0.15, 0.05, 0.0, 0.5, 5.0, 24, True, 1.5, 0.3),
+    "AGAPE_SHIB_FUTURES": ExitConfig(0.3, 0.2, 0.0, 0.5, 5.0, 24, True, 1.5, 0.3),
 }
 
 

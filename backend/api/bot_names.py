@@ -44,7 +44,8 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "AGAPE_BTC_PERP":   "AGAPE-BTC-PERP",     # BTC Perpetual Contract
     "AGAPE_XRP_PERP":   "AGAPE-XRP-PERP",     # XRP Perpetual Contract
     "AGAPE_DOGE_PERP":  "AGAPE-DOGE-PERP",    # DOGE Perpetual Contract
-    "AGAPE_SHIB_PERP":  "AGAPE-SHIB-PERP",    # SHIB Perpetual Contract
+    "AGAPE_SHIB_PERP":  "AGAPE-SHIB-PERP",    # SHIB Perpetual Contract (RETIRED 2026-05-03; replaced by AGAPE-SHIB-FUTURES)
+    "AGAPE_SHIB_FUTURES": "AGAPE-SHIB-FUTURES", # 1000SHIB Monthly Futures Contract (Coinbase Derivatives FCM)
 }
 
 # Also accept the new names as keys (identity mapping)
@@ -84,7 +85,7 @@ DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in BOT_DISPLAY_NAMES.items(
                                             "AGAPE_ETH_PERP", "AGAPE_SOL_PERP",
                                             "AGAPE_AVAX_PERP", "AGAPE_BTC_PERP",
                                             "AGAPE_XRP_PERP", "AGAPE_DOGE_PERP",
-                                            "AGAPE_SHIB_PERP"
+                                            "AGAPE_SHIB_PERP", "AGAPE_SHIB_FUTURES"
                                         )}
 
 ADVISOR_DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in ADVISOR_DISPLAY_NAMES.items()}

@@ -258,6 +258,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: '1 John 4:7',
     why: 'AGAPE-SHIB-PERP trades SHIB perpetual contracts with divine patience. Even the smallest token receives the same unconditional love and disciplined approach.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-SHIB-FUTURES → AGAPE-SHIB-FUTURES (1000SHIB Monthly Futures Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_SHIB_FUTURES: {
+    displayName: 'AGAPE-SHIB-FUTURES',
+    verse: '"Dear friends, let us love one another, for love comes from God."',
+    reference: '1 John 4:7',
+    why: 'AGAPE-SHIB-FUTURES trades 1000SHIB monthly futures contracts via Coinbase Derivatives. Replacing the geo-blocked perpetual, the same unconditional love continues through monthly settlement.',
+  },
 }
 
 // =============================================================================
@@ -356,6 +366,7 @@ export const BOT_DISPLAY_NAMES = {
   AGAPE_XRP_PERP: BOT_SCRIPTURES.AGAPE_XRP_PERP.displayName,
   AGAPE_DOGE_PERP: BOT_SCRIPTURES.AGAPE_DOGE_PERP.displayName,
   AGAPE_SHIB_PERP: BOT_SCRIPTURES.AGAPE_SHIB_PERP.displayName,
+  AGAPE_SHIB_FUTURES: BOT_SCRIPTURES.AGAPE_SHIB_FUTURES.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
