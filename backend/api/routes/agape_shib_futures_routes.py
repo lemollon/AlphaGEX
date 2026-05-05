@@ -2,8 +2,10 @@
 AGAPE-SHIB-FUTURES API Routes - SHIB Futures Contract Trading Bot endpoints.
 
 AGAPE-SHIB-FUTURES trades 1000SHIB-FUT futures contracts using crypto market
-microstructure signals as GEX equivalents. Futures trade 24/7 with
-no expiry - P&L is simply (current_price - entry_price) * quantity * direction.
+microstructure signals as GEX equivalents. Futures trade 24/7 with no expiry.
+Prices stored are 1000SHIB index prices (raw SHIB spot * 1000); P&L is
+(current - entry) * quantity * SHIB_FUTURES_CONTRACT_SIZE * direction
+(contract size = 10_000 units of 1000SHIB index per contract).
 
 Endpoints follow the standard bot pattern:
   /status        - Bot health and config
@@ -32,6 +34,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agape-shib-futures", tags=["AGAPE-SHIB-FUTURES"])
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# 1000SHIB-FUT contract spec: 1 contract controls 10,000 units of the
+# "1000SHIB" index (= 10M raw SHIB). Mirrors AgapeShibFuturesConfig.contract_size.
+SHIB_FUTURES_CONTRACT_SIZE = 10_000
 
 # Graceful imports
 AGAPE_SHIB_FUTURES_AVAILABLE = False
@@ -136,11 +142,11 @@ async def get_positions():
         positions = trader.db.get_open_positions()
         current_price = trader.executor.get_current_price()
 
-        # Add unrealized P&L - Futures: no contract_size multiplier
+        # Unrealized P&L on 1000SHIB-FUT: index-price delta * contracts * contract_size.
         for pos in positions:
             if current_price:
                 direction = 1 if pos["side"] == "long" else -1
-                pnl = (current_price - pos["entry_price"]) * pos.get("quantity", 0) * direction
+                pnl = (current_price - pos["entry_price"]) * pos.get("quantity", 0) * SHIB_FUTURES_CONTRACT_SIZE * direction
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
             else:
@@ -403,7 +409,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         today_closes = cursor.fetchall()
 
         # Calculate unrealized P&L from open positions
-        # Futures: P&L = (current - entry) * quantity * direction
+        # 1000SHIB-FUT: P&L = (current - entry) * quantity * contract_size * direction
         unrealized_pnl = 0.0
         open_positions_count = 0
 
@@ -436,7 +442,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
                     quantity = float(pos_row[2])
                     entry_price = float(pos_row[3])
                     direction = 1 if side == 'long' else -1
-                    pnl = (current_shib_price - entry_price) * quantity * direction
+                    pnl = (current_shib_price - entry_price) * quantity * SHIB_FUTURES_CONTRACT_SIZE * direction
                     unrealized_pnl += pnl
 
         conn.close()
@@ -862,7 +868,8 @@ async def get_gex_mapping():
                 "exchange": "Coinbase Derivatives FCM",
                 "type": "Monthly Futures Contract",
                 "contract_size": "1 contract = 10,000 units of 1000SHIB index = 10M SHIB underlying",
-                "pnl_formula": "(current_price - entry_price) * quantity * direction",
+                "pnl_formula": "(current_index_price - entry_index_price) * contracts * 10000 * direction",
+                "price_basis": "1000SHIB index price = raw SHIB spot * 1000 (~ $0.018 vs ~ $0.000018)",
                 "margin": "Varies by exchange and leverage",
             },
         },

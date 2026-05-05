@@ -238,7 +238,12 @@ class AgapeShibFuturesSignal:
 
 @dataclass
 class AgapeShibFuturesPosition:
-    """An open or closed AGAPE-SHIB-FUTURES position."""
+    """An open or closed AGAPE-SHIB-FUTURES position.
+
+    quantity is the number of 1000SHIB-FUT contracts (integer).
+    entry_price/close_price are 1000SHIB index prices (raw SHIB spot * 1000).
+    contract_size is the number of "1000SHIB" units per contract (10,000).
+    """
     position_id: str
     side: PositionSide
     quantity: float
@@ -268,6 +273,9 @@ class AgapeShibFuturesPosition:
     signal_confidence: str
     signal_reasoning: str
 
+    # 1000SHIB-FUT contract spec: 10,000 units of 1000SHIB index per contract.
+    contract_size: int = 10_000
+
     # Status
     status: PositionStatus = PositionStatus.OPEN
     open_time: Optional[datetime] = None
@@ -284,10 +292,11 @@ class AgapeShibFuturesPosition:
     def calculate_pnl(self, current_price: float) -> float:
         """Calculate P&L for current price.
 
-        Futures: P&L = (current - entry) * quantity * direction
+        1000SHIB-FUT: P&L = (current - entry) * quantity * contract_size * direction
+        where current/entry are 1000SHIB index prices and contract_size is 10,000.
         """
         direction = 1 if self.side == PositionSide.LONG else -1
-        pnl = (current_price - self.entry_price) * self.quantity * direction
+        pnl = (current_price - self.entry_price) * self.quantity * self.contract_size * direction
         return round(pnl, 2)
 
     def to_dict(self) -> Dict[str, Any]:
