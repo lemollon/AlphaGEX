@@ -15,6 +15,11 @@ export interface FinnhubFomcEvent {
 }
 
 const FOMC_TITLE_RE = /FOMC|Fed Interest Rate|Federal Funds/i
+// Exclude "Minutes" releases — those are summaries of prior meetings, not
+// rate decisions, and rarely produce ±2σ moves the bots need to halt for.
+// Also exclude bare speeches, projections, and testimony, which can move
+// markets but are not trade-halting events for short-vol IC strategies.
+export const FOMC_EXCLUDE_RE = /Minutes|Speaks|Speech|Projection|Forecast|Testimony/i
 
 /**
  * Convert a Finnhub UTC timestamp ("2025-06-18 18:00:00") to CT date + HH:MM.
@@ -48,6 +53,7 @@ export function parseFinnhubFomcEvents(json: any): FinnhubFomcEvent[] {
     if (row.country !== 'US') continue
     if ((row.impact || '').toLowerCase() !== 'high') continue
     if (typeof row.event !== 'string' || !FOMC_TITLE_RE.test(row.event)) continue
+    if (FOMC_EXCLUDE_RE.test(row.event)) continue
     if (typeof row.time !== 'string') continue
     const { date, time } = utcToCtDateTime(row.time)
     out.push({ date, time, title: row.event })

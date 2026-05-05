@@ -44,6 +44,29 @@ describe('parseFinnhubFomcEvents', () => {
     expect(parseFinnhubFomcEvents(json)).toHaveLength(0)
   })
 
+  it('excludes "FOMC Minutes" releases (summaries of prior meetings, not rate decisions)', () => {
+    const json = {
+      economicCalendar: [
+        { country: 'US', event: 'FOMC Minutes', impact: 'high', time: '2026-05-20 19:00:00' },
+        { country: 'US', event: 'FOMC Meeting', impact: 'high', time: '2026-06-17 18:00:00' },
+      ],
+    }
+    const r = parseFinnhubFomcEvents(json)
+    expect(r).toHaveLength(1)
+    expect(r[0].title).toBe('FOMC Meeting')
+  })
+
+  it('excludes Powell speeches, projections, and testimony even at high impact', () => {
+    const json = {
+      economicCalendar: [
+        { country: 'US', event: 'FOMC Member Powell Speaks', impact: 'high', time: '2026-05-15 14:00:00' },
+        { country: 'US', event: 'FOMC Economic Projections', impact: 'high', time: '2026-05-15 18:00:00' },
+        { country: 'US', event: 'Fed Chair Testimony', impact: 'high', time: '2026-05-15 14:00:00' },
+      ],
+    }
+    expect(parseFinnhubFomcEvents(json)).toHaveLength(0)
+  })
+
   it('returns empty array for missing / malformed payload', () => {
     expect(parseFinnhubFomcEvents({})).toEqual([])
     expect(parseFinnhubFomcEvents({ economicCalendar: null })).toEqual([])

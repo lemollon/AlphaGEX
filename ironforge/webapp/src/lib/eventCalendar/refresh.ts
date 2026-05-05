@@ -8,8 +8,9 @@
  * admin UI surfaces them, but the scanner cycle continues.
  */
 
-import { fetchFinnhubFomcEvents } from './finnhub'
+import { fetchFinnhubFomcEvents, FOMC_EXCLUDE_RE } from './finnhub'
 import { upsertEvent, getRefreshMeta, setRefreshMeta } from './repo'
+import { dbExecute } from '../db'
 
 const REFRESH_COOLDOWN_HOURS = 20
 
@@ -59,6 +60,17 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
       if (result.inserted) added++
       else updated++
     }
+    // Self-heal: deactivate any previously-stored finnhub events whose title
+    // now matches the exclusion regex (e.g. "FOMC Minutes" rows persisted
+    // before the parser tightened). Idempotent + cheap.
+    const excludeSrc = FOMC_EXCLUDE_RE.source
+    await dbExecute(
+      `UPDATE ironforge_event_calendar
+       SET is_active = FALSE, updated_at = NOW()
+       WHERE source = 'finnhub' AND is_active = TRUE
+         AND title ~* $1`,
+      [excludeSrc],
+    ).catch(() => {})
     await setRefreshMeta('ok', added, updated)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
