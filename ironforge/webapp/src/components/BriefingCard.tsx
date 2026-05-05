@@ -55,7 +55,7 @@ export default function BriefingCard({ brief, compact = false }: { brief: BriefR
       <BriefingWisdom wisdom={brief.wisdom} />
       <div className="text-gray-200 leading-relaxed whitespace-pre-line">{brief.summary}</div>
       <div className="grid md:grid-cols-2 gap-4">
-        <BriefingTradeOfDay trade={brief.trade_of_day} />
+        <BriefingTradeOfDay trade={brief.trade_of_day} macro={brief.macro_ribbon} />
         <BriefingFactors factors={brief.factors} />
       </div>
       <div className="pt-4 border-t border-gray-800 space-y-3">
