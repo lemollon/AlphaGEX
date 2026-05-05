@@ -160,8 +160,11 @@ class AgapeShibFuturesSignalGenerator:
             snapshot = self._crypto_provider.get_snapshot(self.config.ticker)
             if not snapshot or snapshot.spot_price <= 0:
                 return None
+            # Coinbase 1000SHIB-FUT trades on a "1000SHIB" index priced at 1000x raw SHIB.
+            # All downstream entry/stop/PnL math runs on the index price, not raw spot.
+            index_price = snapshot.spot_price * 1000
             return {
-                "symbol": snapshot.symbol, "spot_price": snapshot.spot_price,
+                "symbol": snapshot.symbol, "spot_price": index_price,
                 "timestamp": snapshot.timestamp,
                 "funding_rate": snapshot.funding_rate.rate if snapshot.funding_rate else 0,
                 "funding_regime": snapshot.funding_regime,
@@ -407,18 +410,21 @@ class AgapeShibFuturesSignalGenerator:
         return " | ".join(parts)
 
     def _calculate_position_size(self, spot_price):
-        """Calculate position size in SHIB quantity.
+        """Calculate position size in 1000SHIB-FUT contracts.
 
-        Futures: integer-contract sizing.
-        P&L = (current - entry) * quantity * direction
+        spot_price is the 1000SHIB index price (raw SHIB * 1000). 1 contract
+        controls `contract_size` units of that index, so dollar risk and
+        notional scale by contract_size.
+        P&L = (current - entry) * quantity * contract_size * direction
         """
         capital = self.config.starting_capital
+        contract_size = self.config.contract_size
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
         stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
         if stop_distance <= 0:
             return (self.config.default_quantity, max_risk_usd)
-        risk_per_unit = stop_distance
-        quantity = max_risk_usd / risk_per_unit
+        risk_per_contract = stop_distance * contract_size
+        quantity = max_risk_usd / risk_per_contract
         quantity = max(self.config.min_quantity, min(quantity, self.config.max_quantity))
 
         # Hard per-position notional cap (see XRP signals.py for full rationale).
@@ -428,11 +434,12 @@ class AgapeShibFuturesSignalGenerator:
             leverage = float(spec.get("default_leverage", 3))
             per_pos_margin_pct = 7.0
             max_notional = capital * (per_pos_margin_pct / 100.0) * leverage
-            max_qty_by_notional = max_notional / spot_price if spot_price > 0 else quantity
+            notional_per_contract = spot_price * contract_size
+            max_qty_by_notional = max_notional / notional_per_contract if notional_per_contract > 0 else quantity
             if max_qty_by_notional > 0 and max_qty_by_notional < quantity:
                 logger.debug(
                     f"AGAPE-SHIB-FUTURES: notional cap reducing size "
-                    f"{quantity:.0f} -> {max_qty_by_notional:.0f} SHIB "
+                    f"{quantity:.0f} -> {max_qty_by_notional:.0f} contracts "
                     f"(per_pos={per_pos_margin_pct:.1f}% margin, lev={leverage}x)"
                 )
                 quantity = max(self.config.min_quantity, max_qty_by_notional)
@@ -440,7 +447,7 @@ class AgapeShibFuturesSignalGenerator:
             logger.debug(f"AGAPE-SHIB-FUTURES: notional cap skipped: {e}")
 
         quantity = round(quantity, 0)
-        actual_risk = quantity * stop_distance
+        actual_risk = quantity * stop_distance * contract_size
         return (quantity, round(actual_risk, 2))
 
     def _calculate_levels(self, spot, side, market_data):

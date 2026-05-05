@@ -92,11 +92,17 @@ class AgapeShibFuturesExecutor:
             return None
 
     def get_current_price(self) -> Optional[float]:
-        """Get current SHIB price from CryptoDataProvider."""
+        """Return the 1000SHIB-FUT index price (raw SHIB spot * 1000).
+
+        The futures contract trades on a "1000SHIB" index that's 1000x raw spot,
+        so all entry/stop/PnL math in this bot must use the index price.
+        """
         try:
             from data.crypto_data_provider import get_crypto_data_provider
             provider = get_crypto_data_provider()
             snapshot = provider.get_snapshot("SHIB")
-            return snapshot.spot_price if snapshot else None
+            if not snapshot or not snapshot.spot_price:
+                return None
+            return snapshot.spot_price * 1000
         except Exception:
             return None

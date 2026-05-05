@@ -81,7 +81,7 @@ class AgapeShibFuturesTrader:
                         close_price = current_price or pos["entry_price"]
                         direction = 1 if pos["side"] == "long" else -1
                         qty = pos.get("quantity", self.config.default_quantity)
-                        pnl = round((close_price - pos["entry_price"]) * qty * direction, 2)
+                        pnl = round((close_price - pos["entry_price"]) * qty * self.config.contract_size * direction, 2)
                         self.db.close_position(pos["position_id"], close_price, pnl, "STALE_RECOVERY")
                         stale_closed += 1
                         logger.warning(
@@ -344,7 +344,7 @@ class AgapeShibFuturesTrader:
     def _close_position(self, pos, current_price, reason):
         pid = pos["position_id"]
         direction = 1 if pos["side"] == "long" else -1
-        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction, 2)
+        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * self.config.contract_size * direction, 2)
         success = self.db.expire_position(pid, pnl, current_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, current_price, pnl, reason)
         if success:
             won = pnl > 0
@@ -377,7 +377,7 @@ class AgapeShibFuturesTrader:
                 for p in open_pos:
                     d = 1 if p["side"] == "long" else -1
                     qty = p.get("quantity", self.config.default_quantity)
-                    unrealized += (cp - p["entry_price"]) * qty * d
+                    unrealized += (cp - p["entry_price"]) * qty * self.config.contract_size * d
             return self.config.starting_capital + realized + unrealized
         except Exception:
             return self.config.starting_capital
@@ -458,7 +458,7 @@ class AgapeShibFuturesTrader:
             if cp and open_pos:
                 for p in open_pos:
                     d = 1 if p["side"] == "long" else -1
-                    unrealized += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                    unrealized += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * self.config.contract_size * d
             closed = self.db.get_closed_trades(limit=10000)
             realized_cum = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
             equity = self.config.starting_capital + realized_cum + unrealized
@@ -485,7 +485,7 @@ class AgapeShibFuturesTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                total_unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                total_unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * self.config.contract_size * d
         closed = self.db.get_closed_trades(limit=10000)
         realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
         total_pnl = realized + total_unr
@@ -531,7 +531,7 @@ class AgapeShibFuturesTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * self.config.contract_size * d
         if not closed:
             ret_pct = max(-100.0, unr / self.config.starting_capital * 100) if self.config.starting_capital else 0
             return {"total_trades": 0, "open_positions": len(open_pos), "win_rate": None,
@@ -570,7 +570,7 @@ class AgapeShibFuturesTrader:
         for pos in positions:
             if self._close_position(pos, cp, reason):
                 d = 1 if pos["side"] == "long" else -1
-                pnl = (cp - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * d
+                pnl = (cp - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * self.config.contract_size * d
                 results.append({"position_id": pos["position_id"], "pnl": round(pnl, 2)})
         return {"closed": len(results), "total_pnl": round(sum(r["pnl"] for r in results), 2), "details": results}
 
