@@ -49,9 +49,9 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
     let updated = 0
     for (const ev of events) {
       const result = await upsertEvent({
-        event_id: `finnhub:FOMC:${ev.date}`,
+        event_id: `finnhub:${ev.event_type}:${ev.date}`,
         source: 'finnhub',
-        event_type: 'FOMC',
+        event_type: ev.event_type,
         title: ev.title,
         event_date: ev.date,
         event_time_ct: ev.time,
