@@ -24,7 +24,11 @@ _DIRECTIONAL_SIGNALS = {"LONG", "SHORT"}
 def _get(snap: Any, key: str):
     if isinstance(snap, dict):
         return snap.get(key)
-    return getattr(snap, key, None)
+    val = getattr(snap, key, None)
+    # Bound methods are truthy but not what callers want — only return real values.
+    if callable(val) and not isinstance(val, type):
+        return None
+    return val
 
 
 def classify_regime(snap: Any) -> Regime:

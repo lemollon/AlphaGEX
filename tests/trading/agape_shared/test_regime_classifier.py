@@ -47,3 +47,14 @@ def test_accepts_object_with_attributes():
         combined_confidence = "HIGH"
         crypto_gex_regime = "NEUTRAL"
     assert classify_regime(Snap()) == Regime.TREND
+
+
+def test_method_attribute_does_not_classify_as_trend():
+    """Methods named like signal fields shouldn't leak through as truthy strings."""
+    class Snap:
+        def combined_signal(self):  # noqa: D401 — intentional method, not property
+            return "LONG"
+        combined_confidence = "HIGH"
+        crypto_gex_regime = None
+    # The method is callable; classifier should ignore it and fall back to UNKNOWN.
+    assert classify_regime(Snap()) == Regime.UNKNOWN
