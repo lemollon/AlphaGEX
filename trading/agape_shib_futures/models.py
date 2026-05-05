@@ -98,6 +98,13 @@ class AgapeShibFuturesConfig:
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
+    # Regime-aware exits feature flag (default off — current behaviour preserved).
+    use_regime_aware_exits: bool = False
+    # Optional per-regime profile overrides; stored as JSON strings in
+    # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
+    exit_profile_chop_json: Optional[str] = None
+    exit_profile_trend_json: Optional[str] = None
+
     # Timing (24/7/365 - futures contracts never close)
     entry_start: str = "00:00"
     entry_end: str = "23:59"
@@ -289,6 +296,10 @@ class AgapeShibFuturesPosition:
     high_water_mark: float = 0.0
     last_update: Optional[datetime] = None
 
+    # Regime at entry (chop / trend / unknown). Set by trader.run_cycle when
+    # use_regime_aware_exits is enabled; None for legacy rows.
+    regime_at_entry: Optional[str] = None
+
     def calculate_pnl(self, current_price: float) -> float:
         """Calculate P&L for current price.
 
@@ -332,3 +343,27 @@ class AgapeShibFuturesPosition:
             "unrealized_pnl": self.unrealized_pnl,
             "high_water_mark": self.high_water_mark,
         }
+
+import json as _json
+from trading.agape_shared.exit_profile import (
+    ExitProfile,
+    default_chop_profile,
+    default_trend_profile,
+)
+
+
+def _resolve_profile(json_str, default_factory):
+    if not json_str:
+        return default_factory()
+    try:
+        return ExitProfile.from_dict(_json.loads(json_str))
+    except Exception:
+        return default_factory()
+
+
+def get_chop_profile(cfg) -> ExitProfile:
+    return _resolve_profile(cfg.exit_profile_chop_json, default_chop_profile)
+
+
+def get_trend_profile(cfg) -> ExitProfile:
+    return _resolve_profile(cfg.exit_profile_trend_json, default_trend_profile)

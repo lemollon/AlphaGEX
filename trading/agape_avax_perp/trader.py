@@ -151,6 +151,10 @@ class AgapeAvaxPerpTrader:
                 return result
             position = self.executor.execute_trade(signal)
             if position:
+                # Stamp entry-time regime so the exit path can choose its profile.
+                from trading.agape_shared.regime_classifier import classify_regime
+                regime = classify_regime(market_data) if market_data else None
+                position.regime_at_entry = regime.value if regime else None
                 self.db.save_position(position)
                 result["new_trade"] = True
                 result["outcome"] = f"TRADED_{signal.side.upper()}"
