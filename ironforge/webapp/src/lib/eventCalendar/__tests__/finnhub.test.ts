@@ -59,12 +59,27 @@ describe('parseFinnhubFomcEvents — CPI/PPI/NFP', () => {
       economicCalendar: [
         { country: 'US', event: 'Nonfarm Payrolls', impact: 'high', time: '2026-06-05 12:30:00' },
         { country: 'US', event: 'Non-Farm Payrolls', impact: 'high', time: '2026-07-03 12:30:00' },
-        { country: 'US', event: 'Employment Situation', impact: 'high', time: '2026-08-07 12:30:00' },
+        { country: 'US', event: 'Non Farm Payrolls', impact: 'high', time: '2026-08-07 12:30:00' },
+        { country: 'US', event: 'Employment Situation', impact: 'high', time: '2026-09-04 12:30:00' },
       ],
     }
     const r = parseFinnhubFomcEvents(json)
-    expect(r).toHaveLength(3)
+    expect(r).toHaveLength(4)
     for (const e of r) expect(e.event_type).toBe('NFP')
+  })
+
+  it('matches Finnhub-style "Inflation Rate" titles as CPI', () => {
+    const json = {
+      economicCalendar: [
+        { country: 'US', event: 'Inflation Rate YoY', impact: 'high', time: '2026-05-12 12:30:00' },
+        { country: 'US', event: 'Inflation Rate MoM', impact: 'high', time: '2026-05-12 12:30:00' },
+        { country: 'US', event: 'Core Inflation Rate YoY', impact: 'high', time: '2026-05-12 12:30:00' },
+        { country: 'US', event: 'Core Inflation Rate MoM', impact: 'high', time: '2026-05-12 12:30:00' },
+      ],
+    }
+    const r = parseFinnhubFomcEvents(json)
+    expect(r).toHaveLength(4)
+    for (const e of r) expect(e.event_type).toBe('CPI')
   })
 
   it('does not classify a CPI entry that says "FOMC" as CPI (FOMC takes precedence)', () => {

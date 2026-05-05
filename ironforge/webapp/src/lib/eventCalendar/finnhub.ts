@@ -25,11 +25,19 @@ export interface FinnhubFomcEvent {
 
 // Per-type match patterns. Order matters: FOMC is checked first so
 // "FOMC Member Powell speaks on CPI" is classified as FOMC, not CPI.
+//
+// Naming follows what Finnhub's /calendar/economic actually publishes for US
+// (verified via /api/calendar/diagnose-finnhub):
+//   CPI → "Inflation Rate YoY/MoM" + "Core Inflation Rate YoY/MoM"
+//   PPI → "PPI MoM" / "PPI YoY"
+//   NFP → "Non Farm Payrolls" (note the space — not "Nonfarm")
+// We keep the conventional acronyms and US-press labels too so other data
+// vendors and manual entries continue to match.
 const TYPE_PATTERNS: Array<{ type: FinnhubEventType; re: RegExp }> = [
   { type: 'FOMC', re: /FOMC|Fed Interest Rate|Federal Funds/i },
-  { type: 'CPI',  re: /\bCPI\b|Consumer Price Index/i },
+  { type: 'CPI',  re: /\bCPI\b|Consumer Price Index|Inflation Rate/i },
   { type: 'PPI',  re: /\bPPI\b|Producer Price Index/i },
-  { type: 'NFP',  re: /\bNFP\b|Nonfarm Payrolls?|Non-Farm Payrolls?|Employment Situation/i },
+  { type: 'NFP',  re: /\bNFP\b|Non[- ]?Farm Payrolls?|Employment Situation/i },
 ]
 
 // Exclude commentary / summary / forecast events that match the patterns
