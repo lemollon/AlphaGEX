@@ -58,9 +58,12 @@ export default function BriefingCard({ brief, compact = false }: { brief: BriefR
         <BriefingTradeOfDay trade={brief.trade_of_day} />
         <BriefingFactors factors={brief.factors} />
       </div>
-      <div className="pt-4 border-t border-gray-800 flex items-center justify-between">
-        <BriefingSparkline data={brief.sparkline_data} />
-        <div className="flex gap-3">
+      <div className="pt-4 border-t border-gray-800 space-y-3">
+        <div>
+          <div className="text-amber-300 text-xs uppercase tracking-wider mb-1">7-Day Equity</div>
+          <BriefingSparkline data={brief.sparkline_data} />
+        </div>
+        <div className="flex justify-end gap-3">
           <a href={`/api/briefings/${encodeURIComponent(brief.brief_id)}/png`} download className="text-amber-400 hover:text-amber-300 text-sm">
             Download PNG
           </a>
