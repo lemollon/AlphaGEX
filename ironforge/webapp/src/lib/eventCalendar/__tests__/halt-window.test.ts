@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   computeFridayPriorAt0830CT,
   computeEventDayAt,
-  computePriorTradingDayCloseCT,
+  computeNTradingDaysPriorAt0830CT,
 } from '../halt-window'
 
 describe('computeFridayPriorAt0830CT', () => {
@@ -62,34 +62,34 @@ describe('computeEventDayAt', () => {
   })
 })
 
-describe('computePriorTradingDayCloseCT', () => {
-  it('returns Thu 15:00 CT for a Fri NFP (DST → CDT, UTC-5)', () => {
-    // Fri May 8 2026 → Thu May 7 2026 15:00 CDT = 20:00 UTC
-    const result = computePriorTradingDayCloseCT('2026-05-08')
-    expect(result.toISOString()).toBe('2026-05-07T20:00:00.000Z')
+describe('computeNTradingDaysPriorAt0830CT (n=2 — IronForge halt-start)', () => {
+  it('returns Mon 08:30 CT for a Wed FOMC (DST → CDT, UTC-5)', () => {
+    // Wed Jun 17 2026 → Mon Jun 15 2026 08:30 CDT = 13:30 UTC
+    const result = computeNTradingDaysPriorAt0830CT('2026-06-17', 2)
+    expect(result.toISOString()).toBe('2026-06-15T13:30:00.000Z')
   })
 
-  it('returns Mon 15:00 CT for a Tue CPI', () => {
-    // Tue May 12 2026 → Mon May 11 2026 15:00 CDT = 20:00 UTC
-    const result = computePriorTradingDayCloseCT('2026-05-12')
-    expect(result.toISOString()).toBe('2026-05-11T20:00:00.000Z')
+  it('returns Wed 08:30 CT for a Fri NFP', () => {
+    // Fri May 8 2026 → Wed May 6 2026 08:30 CDT = 13:30 UTC
+    const result = computeNTradingDaysPriorAt0830CT('2026-05-08', 2)
+    expect(result.toISOString()).toBe('2026-05-06T13:30:00.000Z')
   })
 
-  it('returns Tue 15:00 CT for a Wed PPI', () => {
-    // Wed May 13 2026 → Tue May 12 2026 15:00 CDT = 20:00 UTC
-    const result = computePriorTradingDayCloseCT('2026-05-13')
-    expect(result.toISOString()).toBe('2026-05-12T20:00:00.000Z')
+  it('skips weekend: Tue CPI → Fri-prior 08:30 CT', () => {
+    // Tue May 12 2026 → Fri May 8 2026 08:30 CDT = 13:30 UTC
+    const result = computeNTradingDaysPriorAt0830CT('2026-05-12', 2)
+    expect(result.toISOString()).toBe('2026-05-08T13:30:00.000Z')
   })
 
-  it('returns previous Friday 15:00 CT for a Mon event (skips weekend)', () => {
-    // Mon Jan 5 2026 → Fri Jan 2 2026 15:00 CST = 21:00 UTC
-    const result = computePriorTradingDayCloseCT('2026-01-05')
-    expect(result.toISOString()).toBe('2026-01-02T21:00:00.000Z')
+  it('skips weekend: Mon event → Thu-prior 08:30 CT', () => {
+    // Mon Jan 5 2026 → Thu Jan 1 2026 08:30 CST = 14:30 UTC
+    const result = computeNTradingDaysPriorAt0830CT('2026-01-05', 2)
+    expect(result.toISOString()).toBe('2026-01-01T14:30:00.000Z')
   })
 
-  it('handles standard time correctly (no DST)', () => {
-    // Wed Feb 11 2026 → Tue Feb 10 2026 15:00 CST = 21:00 UTC
-    const result = computePriorTradingDayCloseCT('2026-02-11')
-    expect(result.toISOString()).toBe('2026-02-10T21:00:00.000Z')
+  it('handles standard time (no DST)', () => {
+    // Wed Feb 11 2026 → Mon Feb 9 2026 08:30 CST = 14:30 UTC
+    const result = computeNTradingDaysPriorAt0830CT('2026-02-11', 2)
+    expect(result.toISOString()).toBe('2026-02-09T14:30:00.000Z')
   })
 })
