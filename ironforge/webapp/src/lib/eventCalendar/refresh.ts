@@ -10,6 +10,7 @@
 
 import { fetchFinnhubFomcEvents, FOMC_EXCLUDE_RE } from './finnhub'
 import { upsertEvent, getRefreshMeta, setRefreshMeta } from './repo'
+import { FED_FOMC_SCHEDULE, fedFomcTitle } from './fedSchedule'
 import { dbExecute } from '../db'
 
 const REFRESH_COOLDOWN_HOURS = 20
@@ -44,10 +45,39 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
   }
 
   try {
-    const events = await fetchFinnhubFomcEvents(todayPlus(0), todayPlus(395), apiKey)
     let added = 0
     let updated = 0
+
+    // 1. Seed the authoritative FOMC schedule from the Federal Reserve.
+    //    Finnhub's free tier doesn't return rate-decision rows, so we keep
+    //    a hand-curated list of meeting dates (16 dates per 2 years).
+    //    Forward-looking only: skip meetings whose halt window has already
+    //    fully closed so we don't churn historical rows.
+    const todayUtc = new Date()
+    for (const m of FED_FOMC_SCHEDULE) {
+      // Cheap cutoff: skip meetings whose date is more than 2 days in the past.
+      const eventMs = Date.parse(`${m.date}T00:00:00Z`)
+      if (eventMs < todayUtc.getTime() - 2 * 86400 * 1000) continue
+      const result = await upsertEvent({
+        event_id: `fed:FOMC:${m.date}`,
+        source: 'fed',
+        event_type: 'FOMC',
+        title: fedFomcTitle(m),
+        event_date: m.date,
+        event_time_ct: m.time_ct,
+        created_by: 'fed-schedule',
+      })
+      if (result.inserted) added++
+      else updated++
+    }
+
+    // 2. Pull macro data releases (CPI/PPI/NFP) from Finnhub. The free tier
+    //    only publishes ~2 weeks ahead so this rolls forward daily.
+    const events = await fetchFinnhubFomcEvents(todayPlus(0), todayPlus(395), apiKey)
     for (const ev of events) {
+      // FOMC is now sourced authoritatively from fedSchedule.ts; ignore any
+      // FOMC rows from Finnhub (they're typically just Minutes anyway).
+      if (ev.event_type === 'FOMC') continue
       const result = await upsertEvent({
         event_id: `finnhub:${ev.event_type}:${ev.date}`,
         source: 'finnhub',

@@ -7,11 +7,17 @@
  */
 
 import { query, dbExecute } from '../db'
-import { computeFridayPriorAt0830CT, computeEventDayAt } from './halt-window'
+import {
+  computeFridayPriorAt0830CT,
+  computeEventDayAt,
+  computePriorTradingDayCloseCT,
+} from './halt-window'
+
+export type CalendarSource = 'finnhub' | 'manual' | 'fed'
 
 export interface CalendarEvent {
   event_id: string
-  source: 'finnhub' | 'manual'
+  source: CalendarSource
   event_type: string
   title: string
   description: string | null
@@ -26,7 +32,7 @@ export interface CalendarEvent {
 
 export interface UpsertEventInput {
   event_id: string
-  source: 'finnhub' | 'manual'
+  source: CalendarSource
   event_type: string
   title: string
   description?: string | null
@@ -34,6 +40,21 @@ export interface UpsertEventInput {
   event_time_ct: string
   resume_offset_min?: number
   created_by: string
+}
+
+/**
+ * Pick the halt-window start for an event based on its type.
+ *  - FOMC → Friday-prior 08:30 CT (Powell/leak-up risk; user's brainstorm choice)
+ *  - CPI / PPI / NFP → prior trading day 15:00 CT (overnight halt; data prints
+ *    are point-in-time, no pre-event runup, so a multi-day halt is wasteful)
+ *  - Manual / unknown → fall back to Friday-prior (conservative)
+ */
+function computeHaltStart(eventType: string, eventDate: string): Date {
+  const t = eventType.toUpperCase()
+  if (t === 'CPI' || t === 'PPI' || t === 'NFP') {
+    return computePriorTradingDayCloseCT(eventDate)
+  }
+  return computeFridayPriorAt0830CT(eventDate)
 }
 
 export interface RefreshMeta {
@@ -46,7 +67,7 @@ export interface RefreshMeta {
 /** Upsert one event; computes halt window automatically. */
 export async function upsertEvent(input: UpsertEventInput): Promise<{ inserted: boolean }> {
   const offset = input.resume_offset_min ?? 60
-  const haltStart = computeFridayPriorAt0830CT(input.event_date)
+  const haltStart = computeHaltStart(input.event_type, input.event_date)
   const haltEnd   = computeEventDayAt(input.event_date, input.event_time_ct, offset)
   const rows = await query<{ inserted: boolean }>(`
     INSERT INTO ironforge_event_calendar (
