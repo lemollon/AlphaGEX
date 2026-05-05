@@ -22,7 +22,6 @@
  * admin UI surfaces them, but the scanner cycle continues.
  */
 
-import { FOMC_EXCLUDE_RE } from './finnhub'
 import { upsertEvent, getRefreshMeta, setRefreshMeta } from './repo'
 import { FED_FOMC_SCHEDULE, fedFomcTitle } from './fedSchedule'
 import { BLS_RELEASES } from './blsSchedule'
@@ -110,17 +109,15 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
       else updated++
     }
 
-    // 3. Self-heal: deactivate any previously-stored finnhub events whose
-    //    title now matches the FOMC-exclusion regex (e.g. "FOMC Minutes"
-    //    rows persisted before the parser tightened, or before we retired
-    //    the Finnhub seed entirely). Idempotent + cheap.
-    const excludeSrc = FOMC_EXCLUDE_RE.source
+    // 3. Self-heal: deactivate ALL still-active source='finnhub' rows.
+    //    Finnhub seeding was retired when the BLS schedule landed — any
+    //    leftover rows are now duplicates of bls:* equivalents (same date,
+    //    same halt window) and just clutter the calendar. Soft-delete only;
+    //    the rows stay queryable for audit. Idempotent + cheap.
     await dbExecute(
       `UPDATE ironforge_event_calendar
        SET is_active = FALSE, updated_at = NOW()
-       WHERE source = 'finnhub' AND is_active = TRUE
-         AND title ~* $1`,
-      [excludeSrc],
+       WHERE source = 'finnhub' AND is_active = TRUE`,
     ).catch(() => {})
 
     await setRefreshMeta('ok', added, updated)
