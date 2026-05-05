@@ -76,11 +76,42 @@ function stripMarkdown(s: string | null | undefined): string {
 }
 
 export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inferno' }) {
-  const { data, error, isLoading, mutate } = useSWR<{ brief: Brief | null }>(
-    `/api/${bot}/briefs/latest`,
+  // Forge Reports — prefer the new forge_briefings table when populated. Falls
+  // back to the legacy {bot}_market_briefs table while migration is in flight.
+  const { data: forgeResp } = useSWR<{ briefs: any[] }>(
+    `/api/briefings?bot=${bot}&type=daily_eod&limit=1`,
     fetcher,
     { refreshInterval: BRIEF_REFRESH_MS },
   )
+  const hasForgeBrief = (forgeResp?.briefs?.length ?? 0) > 0
+  const { data: legacyData, error, isLoading, mutate } = useSWR<{ brief: Brief | null }>(
+    !hasForgeBrief ? `/api/${bot}/briefs/latest` : null,
+    fetcher,
+    { refreshInterval: BRIEF_REFRESH_MS },
+  )
+
+  // Map forge_briefings row → Brief shape this component already renders.
+  const data: { brief: Brief | null } = hasForgeBrief
+    ? {
+        brief: {
+          id: 0,
+          brief_date: String(forgeResp!.briefs[0].brief_date),
+          brief_time: String(forgeResp!.briefs[0].brief_time),
+          brief_type: 'eod_debrief',
+          risk_score: forgeResp!.briefs[0].risk_score,
+          summary: forgeResp!.briefs[0].summary,
+          factors_json: {
+            factors: (forgeResp!.briefs[0].factors || []).map((f: any) => ({ title: f.title, detail: f.detail })),
+            watch_next_hour: null,
+          },
+          spy_price: forgeResp!.briefs[0].macro_ribbon?.spy_close ?? null,
+          vix: forgeResp!.briefs[0].macro_ribbon?.vix ?? null,
+          vix3m: null,
+          term_structure: null,
+          model: forgeResp!.briefs[0].model,
+        },
+      }
+    : (legacyData ?? { brief: null })
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState<string | null>(null)
 
