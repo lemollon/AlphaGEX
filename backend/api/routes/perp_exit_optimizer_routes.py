@@ -178,7 +178,8 @@ _ALLOWED_KEYS = {
 
 
 class ApplyRequest(BaseModel):
-    bot: str                          # one of XRP / BTC / ETH / DOGE / SHIB
+    bot: str                          # one of XRP / BTC / ETH / SOL / AVAX / DOGE / SHIB
+                                      # / SHIB_FUTURES / LINK_FUTURES / LTC_FUTURES / BCH_FUTURES
     config: dict[str, Any]            # subset of _ALLOWED_KEYS -> value
     note: Optional[str] = None
 
