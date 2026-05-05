@@ -87,3 +87,25 @@ export function computeEventDayAt(
   const base = ctWallToUtc(eventDate, eventTimeCt)
   return new Date(base.getTime() + offsetMinutes * 60000)
 }
+
+/**
+ * Returns the prior trading day at 15:00 CT (regular market close) for `eventDate`.
+ * Walks back at least one calendar day, skipping Sat/Sun. Used as the halt-start
+ * for tighter same-morning data releases (CPI/PPI/NFP) where there is no
+ * pre-event runup risk — only the print itself moves SPY.
+ *
+ * - Mon event → returns previous Friday 15:00 CT
+ * - Tue–Fri event → returns previous calendar day 15:00 CT
+ * - Sat event → returns Friday 15:00 CT (n/a in practice; data prints are weekdays)
+ * - Sun event → returns Friday 15:00 CT (same)
+ */
+export function computePriorTradingDayCloseCT(eventDate: string): Date {
+  let daysBack = 1
+  let dow = dayOfWeek(subtractDays(eventDate, daysBack))
+  while (dow === 0 || dow === 6) {
+    daysBack += 1
+    dow = dayOfWeek(subtractDays(eventDate, daysBack))
+  }
+  const priorDateStr = subtractDays(eventDate, daysBack)
+  return ctWallToUtc(priorDateStr, '15:00')
+}
