@@ -77,60 +77,115 @@ def fetch_applied_config(cursor, prefix):
     return exit_only, applied
 
 
+def _scalar(cursor, sql, params):
+    """Run an aggregate query, return the single scalar in row 0 col 0 or None."""
+    cursor.execute(sql, params)
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    return row[0]
+
+
 def fetch_trade_summary(cursor, table, since_date):
-    """Closed-trade outcomes since `since_date`."""
+    """Closed-trade outcomes since `since_date`. Multiple small queries for
+    robustness — one query per scalar avoids per-row tuple-shape surprises and
+    keeps each result independent of the others."""
+    out = {}
     try:
-        cursor.execute(
-            f"""
-            SELECT
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped') AND realized_pnl > 0),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped') AND realized_pnl <= 0),
-                COALESCE(SUM(realized_pnl) FILTER (WHERE status IN ('closed', 'expired', 'stopped')), 0),
-                COALESCE(AVG(realized_pnl) FILTER (WHERE status IN ('closed', 'expired', 'stopped') AND realized_pnl > 0), 0),
-                COALESCE(AVG(realized_pnl) FILTER (WHERE status IN ('closed', 'expired', 'stopped') AND realized_pnl <= 0), 0),
-                COALESCE(MAX(realized_pnl) FILTER (WHERE status IN ('closed', 'expired', 'stopped')), 0),
-                COALESCE(MIN(realized_pnl) FILTER (WHERE status IN ('closed', 'expired', 'stopped')), 0),
-                COUNT(*) FILTER (WHERE status = 'open'),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')
-                                  AND close_reason LIKE 'TRAIL_STOP%'),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')
-                                  AND close_reason LIKE 'MAX_LOSS%'),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')
-                                  AND close_reason = 'MAX_HOLD_TIME'),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')
-                                  AND close_reason LIKE 'TAKE_PROFIT%'),
-                COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'stopped')
-                                  AND close_reason LIKE 'STOP_LOSS%')
+        # Counts and aggregates over closed trades since cutoff
+        out["n_closed"] = int(_scalar(cursor, f"""
+            SELECT COUNT(*) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+        """, (since_date,)) or 0)
+
+        out["wins"] = int(_scalar(cursor, f"""
+            SELECT COUNT(*) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+              AND realized_pnl > 0
+        """, (since_date,)) or 0)
+
+        out["losses"] = int(_scalar(cursor, f"""
+            SELECT COUNT(*) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+              AND realized_pnl <= 0
+        """, (since_date,)) or 0)
+
+        out["sum_pnl"] = float(_scalar(cursor, f"""
+            SELECT COALESCE(SUM(realized_pnl), 0) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+        """, (since_date,)) or 0)
+
+        out["avg_win"] = float(_scalar(cursor, f"""
+            SELECT COALESCE(AVG(realized_pnl), 0) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+              AND realized_pnl > 0
+        """, (since_date,)) or 0)
+
+        out["avg_loss"] = float(_scalar(cursor, f"""
+            SELECT COALESCE(AVG(realized_pnl), 0) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+              AND realized_pnl <= 0
+        """, (since_date,)) or 0)
+
+        out["best"] = float(_scalar(cursor, f"""
+            SELECT COALESCE(MAX(realized_pnl), 0) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+        """, (since_date,)) or 0)
+
+        out["worst"] = float(_scalar(cursor, f"""
+            SELECT COALESCE(MIN(realized_pnl), 0) FROM {table}
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+        """, (since_date,)) or 0)
+
+        out["n_open"] = int(_scalar(cursor, f"""
+            SELECT COUNT(*) FROM {table} WHERE status = 'open'
+        """, ()) or 0)
+
+        # Close-reason histogram (group by reason, then bucket into our 5 categories)
+        cursor.execute(f"""
+            SELECT close_reason, COUNT(*)
             FROM {table}
-            WHERE COALESCE(close_time, open_time) >= %s
-            """,
-            (since_date,),
-        )
-        r = cursor.fetchone()
-        n = int(r[0] or 0)
-        wins = int(r[1] or 0)
-        losses = int(r[2] or 0)
-        return {
-            "n_closed": n,
-            "wins": wins,
-            "losses": losses,
-            "win_rate_pct": round(wins / n * 100, 1) if n else None,
-            "sum_pnl": float(r[3] or 0),
-            "avg_win": float(r[4] or 0),
-            "avg_loss": float(r[5] or 0),
-            "best": float(r[6] or 0),
-            "worst": float(r[7] or 0),
-            "n_open": int(r[8] or 0),
-            "by_reason": {
-                "TRAIL_STOP":   int(r[9] or 0),
-                "MAX_LOSS":     int(r[10] or 0),
-                "MAX_HOLD":     int(r[11] or 0),
-                "TAKE_PROFIT":  int(r[12] or 0),
-                "STOP_LOSS":    int(r[13] or 0),
-            },
-        }
+            WHERE status IN ('closed','expired','stopped')
+              AND COALESCE(close_time, open_time) >= %s
+            GROUP BY close_reason
+        """, (since_date,))
+        buckets = {"TRAIL_STOP": 0, "MAX_LOSS": 0, "MAX_HOLD": 0,
+                   "TAKE_PROFIT": 0, "STOP_LOSS": 0, "OTHER": 0}
+        for reason, count in cursor.fetchall():
+            r = (reason or "").upper()
+            n = int(count or 0)
+            if r.startswith("TRAIL_STOP"):
+                buckets["TRAIL_STOP"] += n
+            elif r.startswith("MAX_LOSS") or r.startswith("EMERGENCY_STOP") or r.startswith("MARGIN_LIQUIDATION"):
+                buckets["MAX_LOSS"] += n
+            elif r == "MAX_HOLD_TIME" or r == "STALE_RECOVERY":
+                buckets["MAX_HOLD"] += n
+            elif r.startswith("TAKE_PROFIT") or r.startswith("PROFIT_TARGET"):
+                buckets["TAKE_PROFIT"] += n
+            elif r.startswith("STOP_LOSS"):
+                buckets["STOP_LOSS"] += n
+            else:
+                buckets["OTHER"] += n
+        out["by_reason"] = buckets
+
+        n = out["n_closed"]
+        out["win_rate_pct"] = round(out["wins"] / n * 100, 1) if n else None
+        return out
     except Exception as e:
+        # If anything blew up mid-stream, rollback so subsequent bots' queries
+        # aren't poisoned by a transaction-aborted state.
+        try:
+            cursor.connection.rollback()
+        except Exception:
+            pass
         return {"error": str(e)}
 
 
@@ -159,7 +214,8 @@ def print_bot(label, applied_exit, summary):
             f"max_loss={br['MAX_LOSS']} ({pct(br['MAX_LOSS'])})  "
             f"max_hold={br['MAX_HOLD']} ({pct(br['MAX_HOLD'])})  "
             f"take_profit={br['TAKE_PROFIT']} ({pct(br['TAKE_PROFIT'])})  "
-            f"stop_loss={br['STOP_LOSS']} ({pct(br['STOP_LOSS'])})"
+            f"stop_loss={br['STOP_LOSS']} ({pct(br['STOP_LOSS'])})  "
+            f"other={br.get('OTHER', 0)} ({pct(br.get('OTHER', 0))})"
         )
 
 
