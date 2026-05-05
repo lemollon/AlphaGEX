@@ -27,6 +27,7 @@ import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
 import { postFlameOpen, postFlameClose } from './discord'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
+import { forgeBriefingsTick } from './forgeBriefings/tick'
 import {
   getQuote,
   getOptionExpirations,
@@ -4981,6 +4982,14 @@ async function runAllScans(): Promise<void> {
   eventCalendarRefresh().catch((err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] event-calendar refresh failed (non-fatal): ${msg}`)
+  })
+
+  // Forge Reports: per-cycle scheduler tick. Decides which briefings (if any)
+  // should fire right now, then calls Claude.  Idempotent + non-throwing —
+  // failures log to forge_briefings_meta and never block trading.
+  forgeBriefingsTick().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] forge-briefings tick failed (non-fatal): ${msg}`)
   })
 
   // Daily sandbox cleanup at market open — MUST complete before FLAME can trade.

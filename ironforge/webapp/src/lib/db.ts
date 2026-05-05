@@ -145,6 +145,49 @@ CREATE TABLE IF NOT EXISTS ironforge_event_calendar_meta (
   events_added      INT DEFAULT 0,
   events_updated    INT DEFAULT 0
 );
+-- Forge Reports: Claude-generated daily/weekly/monthly briefings
+CREATE TABLE IF NOT EXISTS forge_briefings (
+  brief_id            TEXT PRIMARY KEY,
+  bot                 TEXT NOT NULL,
+  brief_type          TEXT NOT NULL,
+  brief_date          DATE NOT NULL,
+  brief_time          TIMESTAMPTZ NOT NULL,
+  title               TEXT NOT NULL,
+  summary             TEXT NOT NULL,
+  wisdom              TEXT,
+  risk_score          INT,
+  mood                TEXT,
+  bot_voice_signature TEXT,
+  factors             JSONB,
+  trade_of_day        JSONB,
+  macro_ribbon        JSONB,
+  sparkline_data      JSONB,
+  prior_briefs_referenced TEXT[],
+  codex_referenced    TEXT,
+  model               TEXT,
+  tokens_in           INT,
+  tokens_out          INT,
+  cost_usd            NUMERIC(8,4),
+  generation_status   TEXT NOT NULL DEFAULT 'ok',
+  is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_forge_briefings_bot_date
+  ON forge_briefings (bot, brief_date DESC) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_forge_briefings_type_date
+  ON forge_briefings (brief_type, brief_date DESC) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_forge_briefings_lookup
+  ON forge_briefings (bot, brief_type, brief_date) WHERE is_active = TRUE;
+CREATE TABLE IF NOT EXISTS forge_briefings_meta (
+  bot                 TEXT NOT NULL,
+  brief_type          TEXT NOT NULL,
+  last_run_ts         TIMESTAMPTZ,
+  last_run_status     TEXT,
+  last_brief_id       TEXT,
+  retry_count         INT DEFAULT 0,
+  PRIMARY KEY (bot, brief_type)
+);
 ` + ['flame', 'spark', 'inferno'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -482,6 +525,14 @@ async function ensureTables(): Promise<void> {
       try {
         await client.query(
           `ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS event_blackout_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
+        )
+      } catch { /* column already exists or table doesn't exist yet */ }
+
+      // Forge Reports: per-bot opt-out toggle for briefing generation.
+      // Default TRUE so all bots get briefings by default.
+      try {
+        await client.query(
+          `ALTER TABLE ${bot}_config ADD COLUMN IF NOT EXISTS forge_briefings_enabled BOOLEAN NOT NULL DEFAULT TRUE`,
         )
       } catch { /* column already exists or table doesn't exist yet */ }
     }
