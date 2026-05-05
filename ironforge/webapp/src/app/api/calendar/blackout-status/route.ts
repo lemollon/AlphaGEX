@@ -13,8 +13,10 @@ export async function GET(req: NextRequest) {
   try {
     const now = new Date()
     const status = await isEventBlackoutActive(bot, now)
+    // next_blackout = next halt-triggering event whose halt window hasn't started yet.
+    // Informational Tier-2/3 events (PCE, GDP, ISM, JOLTs) are skipped.
     const upcoming = await listUpcomingEvents()
-    const next = upcoming.find(e => new Date(e.halt_start_ts as any) > now) ?? null
+    const next = upcoming.find(e => e.halts_bots && new Date(e.halt_start_ts as any) > now) ?? null
     return NextResponse.json({
       bot,
       now: now.toISOString(),

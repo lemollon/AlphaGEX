@@ -139,6 +139,19 @@ export const EVENT_PLAYBOOKS: Record<string, EventPlaybook> = {
       { label: 'ISM Reports', url: 'https://www.ismworld.org/supply-management-news-and-reports/reports/ism-report-on-business/' },
     ],
   },
+  GDP: {
+    display_name: 'GDP (Quarterly Estimate)',
+    tier: 'tier2',
+    halts_bots: false,
+    one_liner: 'Quarterly real-GDP print (advance / second / third estimate). Backward-looking; market reaction depends on whether the surprise contradicts the recession/soft-landing narrative.',
+    pre_event: 'Mild IV buildup the day before for the advance estimate; second / third estimates are mostly non-events because most of the data is already known.',
+    post_event:
+      'A surprise advance estimate (especially the headline real-GDP growth and PCE-deflator-within-GDP) can move SPY 0.5–1%. Second and third revisions rarely move the index unless they shift the prior quarter\'s trajectory materially.',
+    pattern: 'Advance estimate is the only one that moves SPY; revisions = bond-market only',
+    sources: [
+      { label: 'BEA GDP', url: 'https://www.bea.gov/data/gdp' },
+    ],
+  },
   JOLTS: {
     display_name: 'JOLTs Job Openings',
     tier: 'tier3',
