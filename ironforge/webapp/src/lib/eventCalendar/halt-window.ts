@@ -89,23 +89,31 @@ export function computeEventDayAt(
 }
 
 /**
- * Returns the prior trading day at 15:00 CT (regular market close) for `eventDate`.
- * Walks back at least one calendar day, skipping Sat/Sun. Used as the halt-start
- * for tighter same-morning data releases (CPI/PPI/NFP) where there is no
- * pre-event runup risk — only the print itself moves SPY.
+ * Returns `n` TRADING days (Mon–Fri) before `eventDate`, at 08:30 CT (RTH open),
+ * as a UTC Date. Walks back calendar days, only counting weekdays.
  *
- * - Mon event → returns previous Friday 15:00 CT
- * - Tue–Fri event → returns previous calendar day 15:00 CT
- * - Sat event → returns Friday 15:00 CT (n/a in practice; data prints are weekdays)
- * - Sun event → returns Friday 15:00 CT (same)
+ * Used as the IronForge halt-start: we want short-premium bots flat through
+ * the IV runup window. Two trading days back covers FLAME's 2DTE worst case
+ * (any open position will have expired before the event).
+ *
+ * Examples (n=2):
+ *   Wed event → Mon 08:30 CT
+ *   Fri event → Wed 08:30 CT
+ *   Tue event → Fri-prior 08:30 CT (skips weekend)
+ *   Mon event → Thu-prior 08:30 CT (skips weekend)
  */
-export function computePriorTradingDayCloseCT(eventDate: string): Date {
-  let daysBack = 1
-  let dow = dayOfWeek(subtractDays(eventDate, daysBack))
-  while (dow === 0 || dow === 6) {
-    daysBack += 1
-    dow = dayOfWeek(subtractDays(eventDate, daysBack))
+export function computeNTradingDaysPriorAt0830CT(
+  eventDate: string,
+  n: number,
+): Date {
+  let counted = 0
+  let stepsBack = 0
+  while (counted < n) {
+    stepsBack += 1
+    const candidate = subtractDays(eventDate, stepsBack)
+    const dow = dayOfWeek(candidate)
+    if (dow !== 0 && dow !== 6) counted += 1
   }
-  const priorDateStr = subtractDays(eventDate, daysBack)
-  return ctWallToUtc(priorDateStr, '15:00')
+  const haltDateStr = subtractDays(eventDate, stepsBack)
+  return ctWallToUtc(haltDateStr, '08:30')
 }

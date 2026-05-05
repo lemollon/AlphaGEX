@@ -7,11 +7,18 @@
  */
 
 import { query, dbExecute } from '../db'
-import {
-  computeFridayPriorAt0830CT,
-  computeEventDayAt,
-  computePriorTradingDayCloseCT,
-} from './halt-window'
+import { computeNTradingDaysPriorAt0830CT, computeEventDayAt } from './halt-window'
+
+/**
+ * IronForge halt policy: short-premium ICs are short vega. IV inflates for
+ * ~2 trading days running into a known macro event (FOMC, CPI, PPI, NFP),
+ * MTM hits the 2x stop before the post-event vol crush, so the bots eat
+ * vega-up but never collect vega-down. Halting `EVENT_HALT_TRADING_DAYS`
+ * trading days before the event keeps every position flat through the
+ * runup. Same window for FOMC, CPI, PPI, NFP, manual entries; same window
+ * for FLAME, SPARK, INFERNO.
+ */
+const EVENT_HALT_TRADING_DAYS = 2
 
 export type CalendarSource = 'finnhub' | 'manual' | 'fed'
 
@@ -42,21 +49,6 @@ export interface UpsertEventInput {
   created_by: string
 }
 
-/**
- * Pick the halt-window start for an event based on its type.
- *  - FOMC → Friday-prior 08:30 CT (Powell/leak-up risk; user's brainstorm choice)
- *  - CPI / PPI / NFP → prior trading day 15:00 CT (overnight halt; data prints
- *    are point-in-time, no pre-event runup, so a multi-day halt is wasteful)
- *  - Manual / unknown → fall back to Friday-prior (conservative)
- */
-function computeHaltStart(eventType: string, eventDate: string): Date {
-  const t = eventType.toUpperCase()
-  if (t === 'CPI' || t === 'PPI' || t === 'NFP') {
-    return computePriorTradingDayCloseCT(eventDate)
-  }
-  return computeFridayPriorAt0830CT(eventDate)
-}
-
 export interface RefreshMeta {
   last_refresh_ts: Date | null
   last_refresh_status: string | null
@@ -67,7 +59,7 @@ export interface RefreshMeta {
 /** Upsert one event; computes halt window automatically. */
 export async function upsertEvent(input: UpsertEventInput): Promise<{ inserted: boolean }> {
   const offset = input.resume_offset_min ?? 60
-  const haltStart = computeHaltStart(input.event_type, input.event_date)
+  const haltStart = computeNTradingDaysPriorAt0830CT(input.event_date, EVENT_HALT_TRADING_DAYS)
   const haltEnd   = computeEventDayAt(input.event_date, input.event_time_ct, offset)
   const rows = await query<{ inserted: boolean }>(`
     INSERT INTO ironforge_event_calendar (
