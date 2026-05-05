@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import CalendarStatusBanner from '@/components/CalendarStatusBanner'
 import CalendarMonthGrid from '@/components/CalendarMonthGrid'
+import UpcomingMacroEvents from '@/components/UpcomingMacroEvents'
 
 export default function CalendarPage() {
   const [year, setYear] = useState(new Date().getFullYear())
@@ -27,6 +28,8 @@ export default function CalendarPage() {
       </div>
 
       <CalendarStatusBanner />
+
+      <UpcomingMacroEvents />
 
       <div className="flex items-center justify-between">
         <button
