@@ -76,14 +76,15 @@ class AgapeSolPerpConfig:
     profit_target_pct: float = 50.0
     stop_loss_pct: float = 100.0
     trailing_stop_pct: float = 0.0
-    max_hold_hours: int = 24
+    max_hold_hours: int = 16
 
-    # No-Loss Trailing Strategy (ported from VALOR)
+    # No-Loss Trailing Strategy (ETH-pattern retune 2026-05-05; was 1.5/1.25/3.0/24h
+    # which let SOL whip to +2%, fail to arm trail, and round-trip to -3% stop.)
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 1.5
-    no_loss_trail_distance_pct: float = 1.25
+    no_loss_activation_pct: float = 0.7
+    no_loss_trail_distance_pct: float = 0.5
     no_loss_emergency_stop_pct: float = 5.0
-    max_unrealized_loss_pct: float = 3.0
+    max_unrealized_loss_pct: float = 2.0
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
