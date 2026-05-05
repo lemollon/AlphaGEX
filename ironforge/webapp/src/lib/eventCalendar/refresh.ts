@@ -97,7 +97,7 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
       const pb = getPlaybook(r.type)
       const result = await upsertEvent({
         event_id: `bls:${r.type}:${r.date}`,
-        source: 'manual',           // 'bls' would need the source CHECK loosened; reuse 'manual'
+        source: 'bls',
         event_type: r.type,
         title: r.title,
         event_date: r.date,
@@ -109,15 +109,24 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
       else updated++
     }
 
-    // 3. Self-heal: deactivate ALL still-active source='finnhub' rows.
-    //    Finnhub seeding was retired when the BLS schedule landed — any
-    //    leftover rows are now duplicates of bls:* equivalents (same date,
-    //    same halt window) and just clutter the calendar. Soft-delete only;
-    //    the rows stay queryable for audit. Idempotent + cheap.
+    // 3a. Self-heal: deactivate ALL still-active source='finnhub' rows.
+    //     Finnhub seeding was retired when the BLS schedule landed — any
+    //     leftover rows are now duplicates of bls:* equivalents (same date,
+    //     same halt window) and just clutter the calendar. Soft-delete only;
+    //     the rows stay queryable for audit. Idempotent + cheap.
     await dbExecute(
       `UPDATE ironforge_event_calendar
        SET is_active = FALSE, updated_at = NOW()
        WHERE source = 'finnhub' AND is_active = TRUE`,
+    ).catch(() => {})
+
+    // 3b. Self-heal: BLS rows seeded before source='bls' was added were
+    //     stored as source='manual'. Rewrite them so the UI shows BLS.
+    //     Identified by event_id prefix; idempotent.
+    await dbExecute(
+      `UPDATE ironforge_event_calendar
+       SET source = 'bls', updated_at = NOW()
+       WHERE source = 'manual' AND event_id LIKE 'bls:%'`,
     ).catch(() => {})
 
     await setRefreshMeta('ok', added, updated)

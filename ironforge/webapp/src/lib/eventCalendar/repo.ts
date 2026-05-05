@@ -20,7 +20,7 @@ import { computeNTradingDaysPriorAt0830CT, computeEventDayAt } from './halt-wind
  */
 const EVENT_HALT_TRADING_DAYS = 2
 
-export type CalendarSource = 'finnhub' | 'manual' | 'fed'
+export type CalendarSource = 'finnhub' | 'manual' | 'fed' | 'bls'
 
 export interface CalendarEvent {
   event_id: string
