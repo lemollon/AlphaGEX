@@ -117,7 +117,7 @@ def evaluate_exit(state: Mapping[str, Any], profile: ExitProfile) -> ExitDecisio
         if below_floor:
             return ExitDecision(
                 ExitAction.CLOSE,
-                reason=f"MFE_GIVEBACK_{int(profile.mfe_giveback_pct)}pct_of_+{max_profit_pct:.2f}pct",
+                reason=f"MFE_GIVEBACK_{profile.mfe_giveback_pct:g}pct_of_+{max_profit_pct:.2f}pct",
                 close_price=current,
             )
 
@@ -144,7 +144,7 @@ def evaluate_exit(state: Mapping[str, Any], profile: ExitProfile) -> ExitDecisio
         trail_dist = entry * (profile.trail_distance_pct / 100.0)
         if side == "long":
             new_stop = hwm - trail_dist
-            if new_stop > (current_stop or 0) and new_stop >= entry:
+            if current_stop is not None and new_stop > current_stop and new_stop >= entry:
                 return ExitDecision(ExitAction.UPDATE_TRAIL, new_stop=new_stop)
         else:
             new_stop = hwm + trail_dist

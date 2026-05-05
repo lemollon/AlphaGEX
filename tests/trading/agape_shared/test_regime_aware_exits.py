@@ -97,3 +97,24 @@ def test_short_side_giveback():
     d = evaluate_exit(s, PROFILE_CHOP)
     assert d.action == ExitAction.CLOSE
     assert d.reason.startswith("MFE_GIVEBACK_")
+
+
+def test_arm_trail_skipped_when_long_current_below_proposed_stop():
+    """If current already retraced past where the stop would be placed, don't arm."""
+    # hwm=100.5 → activation crossed (+0.5% > 0.3%); trail_dist = 0.15
+    # proposed new_stop = max(100, 100.5 - 0.15) = 100.35
+    # current=100.20 < 100.35 → should NOT arm; would breach instantly.
+    s = _state(current=100.20, hwm=100.5, trailing_active=False)
+    d = evaluate_exit(s, PROFILE_CHOP)
+    assert d.action != ExitAction.ARM_TRAIL
+
+
+def test_arm_trail_skipped_when_short_current_above_proposed_stop():
+    """Symmetric short-side guard: if price already bounced above where the stop
+    would be placed, skip arming."""
+    # Short entry 100, hwm=99.5 (MFE +0.5% > activation 0.3%), trail_dist=0.15
+    # proposed new_stop = min(100, 99.5 + 0.15) = 99.65
+    # current=99.80 > 99.65 → should NOT arm.
+    s = _state(side="short", entry=100.0, current=99.80, hwm=99.5, trailing_active=False)
+    d = evaluate_exit(s, PROFILE_CHOP)
+    assert d.action != ExitAction.ARM_TRAIL
