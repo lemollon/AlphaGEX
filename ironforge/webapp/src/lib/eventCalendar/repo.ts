@@ -33,6 +33,9 @@ export interface CalendarEvent {
   halt_start_ts: string | Date
   halt_end_ts: string | Date
   resume_offset_min: number
+  /** True = the bots STOP trading during this event's halt window.
+   *  False = informational-only (e.g. Tier 2/3 macro releases). */
+  halts_bots: boolean
   is_active: boolean
   created_by: string
 }
@@ -46,6 +49,8 @@ export interface UpsertEventInput {
   event_date: string
   event_time_ct: string
   resume_offset_min?: number
+  /** Defaults true if omitted, preserving the original Vigil contract. */
+  halts_bots?: boolean
   created_by: string
 }
 
@@ -61,13 +66,14 @@ export async function upsertEvent(input: UpsertEventInput): Promise<{ inserted: 
   const offset = input.resume_offset_min ?? 60
   const haltStart = computeNTradingDaysPriorAt0830CT(input.event_date, EVENT_HALT_TRADING_DAYS)
   const haltEnd   = computeEventDayAt(input.event_date, input.event_time_ct, offset)
+  const haltsBots = input.halts_bots ?? true
   const rows = await query<{ inserted: boolean }>(`
     INSERT INTO ironforge_event_calendar (
       event_id, source, event_type, title, description,
       event_date, event_time_ct, halt_start_ts, halt_end_ts,
-      resume_offset_min, created_by
+      resume_offset_min, halts_bots, created_by
     )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT (event_id) DO UPDATE SET
       title             = EXCLUDED.title,
       description       = EXCLUDED.description,
@@ -75,13 +81,14 @@ export async function upsertEvent(input: UpsertEventInput): Promise<{ inserted: 
       halt_start_ts     = EXCLUDED.halt_start_ts,
       halt_end_ts       = EXCLUDED.halt_end_ts,
       resume_offset_min = EXCLUDED.resume_offset_min,
+      halts_bots        = EXCLUDED.halts_bots,
       is_active         = TRUE,
       updated_at        = NOW()
     RETURNING (xmax = 0) AS inserted
   `, [
     input.event_id, input.source, input.event_type, input.title, input.description ?? null,
     input.event_date, input.event_time_ct, haltStart, haltEnd,
-    offset, input.created_by,
+    offset, haltsBots, input.created_by,
   ])
   return { inserted: rows[0]?.inserted ?? false }
 }
@@ -93,7 +100,7 @@ export async function listUpcomingEvents(): Promise<CalendarEvent[]> {
            event_date::text AS event_date,
            to_char(event_time_ct, 'HH24:MI') AS event_time_ct,
            halt_start_ts, halt_end_ts,
-           resume_offset_min, is_active, created_by
+           resume_offset_min, halts_bots, is_active, created_by
     FROM ironforge_event_calendar
     WHERE is_active = TRUE AND halt_end_ts >= NOW()
     ORDER BY event_date ASC
@@ -107,23 +114,28 @@ export async function listEventsInRange(fromDate: string, toDate: string): Promi
            event_date::text AS event_date,
            to_char(event_time_ct, 'HH24:MI') AS event_time_ct,
            halt_start_ts, halt_end_ts,
-           resume_offset_min, is_active, created_by
+           resume_offset_min, halts_bots, is_active, created_by
     FROM ironforge_event_calendar
     WHERE is_active = TRUE AND event_date BETWEEN $1::date AND $2::date
     ORDER BY event_date ASC
   `, [fromDate, toDate])
 }
 
-/** Find currently-active blackout (halt_start_ts <= now <= halt_end_ts). */
+/**
+ * Find currently-active blackout (halt_start_ts <= now <= halt_end_ts).
+ * Only halt-triggering events count — informational Tier-2/3 rows on the
+ * calendar (PCE, GDP, ISM, JOLTs) are skipped.
+ */
 export async function findCurrentBlackout(now: Date): Promise<CalendarEvent | null> {
   const rows = await query<CalendarEvent>(`
     SELECT event_id, source, event_type, title, description,
            event_date::text AS event_date,
            to_char(event_time_ct, 'HH24:MI') AS event_time_ct,
            halt_start_ts, halt_end_ts,
-           resume_offset_min, is_active, created_by
+           resume_offset_min, halts_bots, is_active, created_by
     FROM ironforge_event_calendar
-    WHERE is_active = TRUE AND $1 BETWEEN halt_start_ts AND halt_end_ts
+    WHERE is_active = TRUE AND halts_bots = TRUE
+      AND $1 BETWEEN halt_start_ts AND halt_end_ts
     ORDER BY halt_end_ts ASC
     LIMIT 1
   `, [now])

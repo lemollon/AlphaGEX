@@ -50,7 +50,13 @@ export default function CalendarPage() {
       {isLoading ? (
         <div className="text-gray-400">Loading…</div>
       ) : (
-        <CalendarMonthGrid year={year} events={data?.events || []} />
+        <CalendarMonthGrid
+          year={year}
+          // Only halt-triggering events get the red blackout shading on
+          // the year grid. Informational Tier-2/3 events still appear in
+          // the Upcoming panel above with full context.
+          events={(data?.events || []).filter((e: any) => e.halts_bots !== false)}
+        />
       )}
 
       <div className="text-xs text-gray-500 flex gap-4 flex-wrap pt-2 border-t border-gray-800">

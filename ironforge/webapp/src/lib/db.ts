@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS ironforge_event_calendar (
   halt_start_ts     TIMESTAMPTZ NOT NULL,
   halt_end_ts       TIMESTAMPTZ NOT NULL,
   resume_offset_min INT NOT NULL DEFAULT 60,
+  halts_bots        BOOLEAN NOT NULL DEFAULT TRUE,
   is_active         BOOLEAN NOT NULL DEFAULT TRUE,
   created_by        TEXT NOT NULL,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -543,6 +544,16 @@ async function ensureTables(): Promise<void> {
         `INSERT INTO ironforge_event_calendar_meta (id) VALUES (1) ON CONFLICT DO NOTHING`,
       )
     } catch { /* ignore */ }
+
+    // Vigil: per-event flag distinguishing halt-triggering events (FOMC,
+    // CPI, NFP, PPI) from informational-only ones (PCE, GDP, ISM, JOLTs).
+    // Defaults TRUE so existing rows preserve their old halting behavior.
+    try {
+      await client.query(
+        `ALTER TABLE ironforge_event_calendar
+         ADD COLUMN IF NOT EXISTS halts_bots BOOLEAN NOT NULL DEFAULT TRUE`,
+      )
+    } catch { /* column already exists */ }
 
     // Hypothetical "what if we had held to 2:59 PM" P&L tracking. Three
     // columns on each bot's positions table so historical analysis can
