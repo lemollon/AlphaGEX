@@ -35,9 +35,14 @@ export default function WeeklySynthesisHero() {
       {brief.wisdom ? (
         <p className="text-amber-300 italic text-lg" style={{ fontFamily: 'Georgia, serif' }}>&ldquo;{brief.wisdom}&rdquo;</p>
       ) : null}
-      <div className="mt-4 flex items-center justify-between">
-        <BriefingSparkline data={brief.sparkline_data} />
-        <span className="text-amber-400 text-sm">Read full →</span>
+      <div className="mt-4 space-y-3">
+        <div>
+          <div className="text-amber-300 text-xs uppercase tracking-wider mb-1">7-Day Equity</div>
+          <BriefingSparkline data={brief.sparkline_data} />
+        </div>
+        <div className="text-right">
+          <span className="text-amber-400 text-sm">Read full →</span>
+        </div>
       </div>
     </Link>
   )

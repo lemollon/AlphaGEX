@@ -1,5 +1,30 @@
 import { query, dbExecute } from '../db'
-import type { BriefRow, BotKey, BriefType, ParsedBrief, MacroRibbon, SparklinePoint, Mood } from './types'
+import type { BriefRow, BotKey, BriefType, ParsedBrief, MacroRibbon, SparklinePoint, Mood, Factor } from './types'
+import { stripDecorativeUnicode } from './sanitize'
+
+/**
+ * Strip any emoji / decorative-symbol unicode from text fields before they
+ * leave the read layer. The voice prompts already prohibit emojis in new
+ * briefs, but historic rows generated before that rule may contain them
+ * and would render as black tofu boxes in the UI.
+ */
+function sanitizeBrief<T extends BriefRow | null>(row: T): T {
+  if (!row) return row
+  return {
+    ...row,
+    title: stripDecorativeUnicode(row.title),
+    summary: stripDecorativeUnicode(row.summary),
+    wisdom: row.wisdom ? stripDecorativeUnicode(row.wisdom) : row.wisdom,
+    bot_voice_signature: stripDecorativeUnicode(row.bot_voice_signature),
+    factors: Array.isArray(row.factors)
+      ? row.factors.map((f: Factor) => ({
+          ...f,
+          title: stripDecorativeUnicode(f.title),
+          detail: stripDecorativeUnicode(f.detail),
+        }))
+      : row.factors,
+  } as T
+}
 
 export interface UpsertBriefInput {
   brief_id: string
@@ -69,7 +94,7 @@ export async function findById(briefId: string): Promise<BriefRow | null> {
     `SELECT * FROM forge_briefings WHERE brief_id = $1 AND is_active = TRUE`,
     [briefId],
   )
-  return rows[0] ?? null
+  return sanitizeBrief(rows[0] ?? null)
 }
 
 export async function existsOk(briefId: string): Promise<boolean> {
@@ -81,12 +106,13 @@ export async function existsOk(briefId: string): Promise<boolean> {
 }
 
 export async function listForBot(bot: BotKey, briefType: BriefType, limit: number): Promise<BriefRow[]> {
-  return query<BriefRow>(
+  const rows = await query<BriefRow>(
     `SELECT * FROM forge_briefings
      WHERE bot = $1 AND brief_type = $2 AND is_active = TRUE
      ORDER BY brief_date DESC LIMIT $3`,
     [bot, briefType, limit],
   )
+  return rows.map(r => sanitizeBrief(r) as BriefRow)
 }
 
 export async function listInRange(opts: {
@@ -103,19 +129,20 @@ export async function listInRange(opts: {
   const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
   const offset = Math.max(0, opts.offset ?? 0)
   params.push(limit, offset)
-  return query<BriefRow>(
+  const rows = await query<BriefRow>(
     `SELECT * FROM forge_briefings WHERE ${where.join(' AND ')}
      ORDER BY brief_date DESC, brief_time DESC
      LIMIT $${idx++} OFFSET $${idx++}`,
     params,
   )
+  return rows.map(r => sanitizeBrief(r) as BriefRow)
 }
 
 export async function listCalendarBadges(from: string, to: string): Promise<Array<{
   brief_date: string; bot: BotKey; brief_id: string; risk_score: number | null;
   mood: Mood | null; first_sentence: string
 }>> {
-  return query<any>(`
+  const rows = await query<any>(`
     SELECT brief_date::text AS brief_date, bot, brief_id, risk_score, mood,
            split_part(summary, '.', 1) || '.' AS first_sentence
     FROM forge_briefings
@@ -124,6 +151,7 @@ export async function listCalendarBadges(from: string, to: string): Promise<Arra
       AND brief_date BETWEEN $1::date AND $2::date
     ORDER BY brief_date ASC
   `, [from, to])
+  return rows.map(r => ({ ...r, first_sentence: stripDecorativeUnicode(r.first_sentence) }))
 }
 
 export async function setMetaOk(bot: BotKey, briefType: BriefType, briefId: string): Promise<void> {

@@ -1,5 +1,16 @@
 import type { BotKey, BriefType, GatheredContext } from './types'
 
+const STYLE_RULES = `
+HARD STYLE RULES (apply to every string field below):
+- No emojis. None. Not in title, not in summary, not in wisdom, not in factor titles or details.
+- No decorative symbol characters (no ✓, ✗, ⚠, ★, ☀, ➜, →, ▲, ▼, etc.). The site uses
+  custom SVG glyphs for all visual indicators; emit plain text only and let the UI add visuals.
+- Plain ASCII text plus standard punctuation only. Em-dashes (—), en-dashes (–), middle dots
+  (·), and curly quotes ("" '') are fine. Anything outside that is not.
+- This rule overrides any tendency to add expressive characters. Violating it will cause the
+  text to render as empty or broken boxes in the user's browser.
+`
+
 const SCHEMA_INSTRUCTION = `
 You MUST respond with a single JSON object matching this exact schema. No prose before or after.
 {
@@ -49,7 +60,7 @@ const TYPE_INTRO: Record<BriefType, string> = {
 export function buildSystemPrompt(bot: BotKey, briefType: BriefType): string {
   const voice = VOICES[bot]
   const intro = TYPE_INTRO[briefType]
-  return `${voice}\n\n${intro}\n\n${SCHEMA_INSTRUCTION}`
+  return `${voice}\n\n${intro}\n${STYLE_RULES}\n${SCHEMA_INSTRUCTION}`
 }
 
 export function buildUserPrompt(ctx: GatheredContext): string {
