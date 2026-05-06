@@ -143,6 +143,9 @@ class AgapeLinkFuturesConfig:
                 for key, value in db_config.items():
                     if key in code_controlled_keys:
                         continue
+                    if key in ("exit_profile_chop_json", "exit_profile_trend_json"):
+                        setattr(config, key, str(value) if value is not None else None)
+                        continue
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))
                         if attr_type == float:
