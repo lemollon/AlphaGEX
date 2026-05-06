@@ -29,6 +29,31 @@ export default function CalendarPage() {
 
       <CalendarStatusBanner />
 
+      <section className="rounded-lg border border-amber-800/40 bg-amber-950/20 p-4 text-sm">
+        <div className="text-amber-300 font-medium mb-1">Day-of-news halt policy</div>
+        <div className="text-amber-200/80 leading-snug">
+          IronForge IC bots (FLAME · SPARK · INFERNO) only stand aside on the
+          actual release day — not the days before.
+        </div>
+        <ul className="mt-2 space-y-1 text-gray-300 list-disc list-inside marker:text-amber-500/60">
+          <li>
+            <span className="text-emerald-300">Pre-market release</span>{' '}
+            (before 8:30 AM CT) — bots wake up and trade normally at the bell.
+            IV crush has already happened by the time RTH opens.
+          </li>
+          <li>
+            <span className="text-red-300">Mid-day release</span>{' '}
+            (during RTH) — bots stay flat through the print and the initial
+            whipsaw, then resume <span className="text-white">30 minutes after</span>{' '}
+            the release.
+          </li>
+          <li>
+            <span className="text-gray-300">Tier 2 / Tier 3 events</span> appear
+            in the upcoming list for context but do not pause the bots.
+          </li>
+        </ul>
+      </section>
+
       <UpcomingMacroEvents />
 
       <div className="flex items-center justify-between">
@@ -61,8 +86,7 @@ export default function CalendarPage() {
 
       <div className="text-xs text-gray-500 flex gap-4 flex-wrap pt-2 border-t border-gray-800">
         <span><span className="inline-block w-3 h-3 rounded bg-emerald-900/30 align-middle mr-1" /> Trading day</span>
-        <span><span className="inline-block w-3 h-3 rounded bg-red-800/40 align-middle mr-1" /> Blackout day</span>
-        <span><span className="inline-block w-3 h-3 rounded bg-gradient-to-r from-red-700/50 to-emerald-700/40 align-middle mr-1" /> Event day (split)</span>
+        <span><span className="inline-block w-3 h-3 rounded bg-red-800/40 align-middle mr-1" /> Event day (intraday halt)</span>
         <span><span className="inline-block w-3 h-3 rounded bg-gray-800/30 align-middle mr-1" /> Weekend</span>
       </div>
     </div>

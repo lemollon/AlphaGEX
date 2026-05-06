@@ -5,7 +5,13 @@ import { fetcher } from '@/lib/fetcher'
 
 interface BlackoutStatus {
   blackout: { blocked: boolean; eventTitle?: string; resumesAt?: string }
-  next_blackout: { title: string; halt_start_ts: string } | null
+  next_blackout: {
+    title: string
+    halt_start_ts: string
+    halt_end_ts?: string
+    event_date?: string
+    event_time_ct?: string
+  } | null
 }
 
 function fmtCT(iso: string): string {
@@ -51,10 +57,15 @@ export default function EventBlackoutBanner({ bot }: { bot: string }) {
     const start = new Date(data.next_blackout.halt_start_ts)
     const ms = start.getTime() - now
     if (ms < 7 * 24 * 3600 * 1000 && ms > 0) {
+      const eventDate = data.next_blackout.event_date ?? ''
+      const eventTime = data.next_blackout.event_time_ct ?? ''
+      const eventLabel = eventDate
+        ? `${eventDate} at ${eventTime} CT`
+        : fmtCT(data.next_blackout.halt_start_ts)
       return (
         <div className="rounded border border-blue-800/40 bg-blue-950/20 px-4 py-2 text-sm">
           <span className="text-blue-300">
-            ℹ Upcoming blackout: {data.next_blackout.title} begins {fmtCT(data.next_blackout.halt_start_ts)} ({fmtDuration(ms)})
+            ℹ Upcoming event halt: {data.next_blackout.title} · {eventLabel} (in {fmtDuration(ms)})
           </span>
         </div>
       )

@@ -3,7 +3,12 @@
 import useSWR from 'swr'
 import { useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
-import { getPlaybook, type PlaybookTier } from '@/lib/eventCalendar/playbook'
+import {
+  getPlaybook,
+  getEventStrategy,
+  type PlaybookTier,
+  type EventStrategyKind,
+} from '@/lib/eventCalendar/playbook'
 
 interface CalendarEvent {
   event_id: string
@@ -14,6 +19,20 @@ interface CalendarEvent {
   event_time_ct: string    // HH:MM
   halt_start_ts: string
   halt_end_ts: string
+  resume_offset_min?: number
+  halts_bots?: boolean
+}
+
+const STRATEGY_BADGE: Record<EventStrategyKind, { cls: string }> = {
+  pre_market: {
+    cls: 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/40',
+  },
+  mid_day: {
+    cls: 'bg-red-900/40 text-red-300 border border-red-700/40',
+  },
+  no_halt: {
+    cls: 'bg-gray-800/40 text-gray-400 border border-gray-700/40',
+  },
 }
 
 const TIER_BADGE: Record<PlaybookTier, { label: string; cls: string; cellCls: string }> = {
@@ -79,12 +98,20 @@ export default function UpcomingMacroEvents() {
 
   return (
     <section className="bg-forge-card/40 border border-gray-800 rounded-lg p-4 space-y-3">
-      <header className="flex items-baseline justify-between">
-        <h2 className="text-amber-300 text-sm uppercase tracking-wider">
-          Upcoming 30 Days · Macro Events
-        </h2>
-        <div className="text-[11px] text-gray-500">
-          Tier 1 = halts the bots · Tier 2 = watch · Tier 3 = informational
+      <header className="space-y-1">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-amber-300 text-sm uppercase tracking-wider">
+            Upcoming 30 Days · Macro Events
+          </h2>
+          <div className="text-[11px] text-gray-500">
+            Tier 1 = halts the bots · Tier 2 = watch · Tier 3 = informational
+          </div>
+        </div>
+        <div className="text-[11px] text-gray-400 leading-snug">
+          <span className="text-amber-300/80">Day-of-news policy:</span>{' '}
+          pre-market releases → bots trade at the 8:30 AM CT open ·
+          mid-day releases → bots resume 30 min after the print.
+          No multi-day blackouts.
         </div>
       </header>
 
@@ -97,6 +124,14 @@ export default function UpcomingMacroEvents() {
           {events.map(ev => {
             const pb = getPlaybook(ev.event_type)
             const tierMeta = TIER_BADGE[pb.tier]
+            const haltsBots = ev.halts_bots ?? pb.halts_bots
+            const strategy = getEventStrategy(
+              ev.event_type,
+              ev.event_time_ct,
+              haltsBots,
+              ev.resume_offset_min ?? 30,
+            )
+            const stratMeta = STRATEGY_BADGE[strategy.kind]
             const isOpen = openId === ev.event_id
             return (
               <li key={ev.event_id} className={`bg-forge-card/70 rounded ${tierMeta.cellCls}`}>
@@ -116,8 +151,8 @@ export default function UpcomingMacroEvents() {
                   <span className="text-sm text-gray-200 flex-1 truncate">
                     {pb.display_name}
                   </span>
-                  <span className="text-[11px] text-gray-500 hidden md:inline">
-                    {pb.halts_bots ? 'halts bots' : 'no halt'}
+                  <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded hidden md:inline ${stratMeta.cls}`}>
+                    {strategy.label}
                   </span>
                   <span className="text-amber-400 text-xs">{isOpen ? '−' : '+'}</span>
                 </button>
@@ -125,6 +160,13 @@ export default function UpcomingMacroEvents() {
                 {isOpen && (
                   <div className="px-3 pb-3 pt-1 space-y-3 border-t border-gray-800">
                     <p className="text-sm text-gray-300 italic">{pb.one_liner}</p>
+
+                    <div className={`rounded border px-3 py-2 ${stratMeta.cls.replace('text-', 'border-').replace('border border-', 'border-')} bg-forge-card/40 border-l-2`}>
+                      <div className="text-[10px] uppercase tracking-wider text-amber-300/80 mb-1">
+                        Bot strategy · {strategy.label}
+                      </div>
+                      <p className="text-sm text-gray-200">{strategy.detail}</p>
+                    </div>
 
                     <div className="grid md:grid-cols-2 gap-3 text-sm">
                       <div>
@@ -155,8 +197,8 @@ export default function UpcomingMacroEvents() {
                       </div>
                       <div className="md:col-span-2">
                         <span className="text-gray-500">Halt window</span>{' '}
-                        <span className={pb.halts_bots ? 'text-red-300' : 'text-gray-400'}>
-                          {pb.halts_bots ? fmtHaltSpan(ev.halt_start_ts, ev.halt_end_ts) : 'No halt — bots continue trading'}
+                        <span className={haltsBots ? 'text-red-300' : 'text-gray-400'}>
+                          {haltsBots ? fmtHaltSpan(ev.halt_start_ts, ev.halt_end_ts) : 'No halt — bots continue trading'}
                         </span>
                       </div>
                     </div>

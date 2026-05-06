@@ -12,6 +12,12 @@
  *   tier1 — regularly causes a ±1σ+ same-day move; bots MUST be flat
  *   tier2 — occasionally moves SPY ±0.5σ; bots may halt depending on regime
  *   tier3 — informational only; rarely meaningful for SPY in isolation
+ *
+ * Strategy (effective 2026-05-06): day-of-news halt only. Pre-market
+ * releases get full RTH access starting at 08:30 CT; mid-day releases
+ * resume 30 min after the print. Each playbook's `pre_event` /
+ * `post_event` text describes what to expect, but the GATE only acts on
+ * release-time + 30 min.
  */
 
 export type PlaybookTier = 'tier1' | 'tier2' | 'tier3'
@@ -213,4 +219,71 @@ export const UNKNOWN_PLAYBOOK: EventPlaybook = {
 
 export function getPlaybook(eventType: string): EventPlaybook {
   return EVENT_PLAYBOOKS[eventType.toUpperCase()] || UNKNOWN_PLAYBOOK
+}
+
+/**
+ * Returns the IronForge bot strategy for a given event time, under the
+ * day-of-news policy (effective 2026-05-06).
+ *
+ * The shape is meant for UI display next to each event — it tells the
+ * operator what the gate will actually do, in plain English.
+ *
+ *   - `kind: 'pre_market'`   → release before 08:30 CT, bots trade at open
+ *   - `kind: 'mid_day'`      → release during RTH, bots resume +30 min
+ *   - `kind: 'no_halt'`      → informational event, bots never paused
+ */
+export type EventStrategyKind = 'pre_market' | 'mid_day' | 'no_halt'
+
+export interface EventStrategy {
+  kind: EventStrategyKind
+  /** Short label for badges / chips. */
+  label: string
+  /** One-sentence description of what the bots will do. */
+  detail: string
+}
+
+const MARKET_OPEN_MIN = 8 * 60 + 30 // 08:30 CT
+
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return (h || 0) * 60 + (m || 0)
+}
+
+function fmtCtTime(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number)
+  const hour12 = ((h + 11) % 12) + 1
+  const ampm = h < 12 ? 'AM' : 'PM'
+  return `${hour12}:${String(m).padStart(2, '0')} ${ampm} CT`
+}
+
+export function getEventStrategy(
+  eventType: string,
+  eventTimeCt: string,
+  haltsBots: boolean,
+  resumeOffsetMin = 30,
+): EventStrategy {
+  if (!haltsBots) {
+    return {
+      kind: 'no_halt',
+      label: 'No halt',
+      detail: 'Informational only — IronForge bots continue trading normally on this day.',
+    }
+  }
+  const eventMin = hhmmToMinutes(eventTimeCt)
+  if (eventMin < MARKET_OPEN_MIN) {
+    return {
+      kind: 'pre_market',
+      label: 'Pre-market release',
+      detail: `${fmtCtTime(eventTimeCt)} release. IV crush already done by the bell — bots trade normally from 8:30 AM CT market open.`,
+    }
+  }
+  const resumeMin = eventMin + resumeOffsetMin
+  const resumeHh = String(Math.floor(resumeMin / 60)).padStart(2, '0')
+  const resumeMm = String(resumeMin % 60).padStart(2, '0')
+  const resumeHhmm = `${resumeHh}:${resumeMm}`
+  return {
+    kind: 'mid_day',
+    label: 'Mid-day release',
+    detail: `${fmtCtTime(eventTimeCt)} release. Bots stand aside through the print + initial whipsaw, resume at ${fmtCtTime(resumeHhmm)} (release + ${resumeOffsetMin} min).`,
+  }
 }
