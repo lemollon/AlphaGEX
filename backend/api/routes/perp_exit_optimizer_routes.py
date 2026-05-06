@@ -174,6 +174,10 @@ _ALLOWED_KEYS = {
     "sar_trigger_pct",
     "sar_mfe_threshold_pct",
     "use_no_loss_trailing",
+    # NEW — regime-aware exits
+    "use_regime_aware_exits",
+    "exit_profile_chop_json",
+    "exit_profile_trend_json",
 }
 
 

@@ -138,6 +138,10 @@ class AgapeBchFuturesTrader:
                 return result
             position = self.executor.execute_trade(signal)
             if position:
+                # Stamp entry-time regime so the exit path can choose its profile.
+                from trading.agape_shared.regime_classifier import classify_regime
+                regime = classify_regime(market_data) if market_data else None
+                position.regime_at_entry = regime.value if regime else None
                 self.db.save_position(position)
                 result["new_trade"] = True
                 result["outcome"] = f"TRADED_{signal.side.upper()}"
@@ -216,6 +220,9 @@ class AgapeBchFuturesTrader:
         return (len(open_positions), closed)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
+        if getattr(self.config, "use_regime_aware_exits", False):
+            return self._manage_regime_aware(pos, current_price, now)
+        # ----- legacy path (unchanged below) -----
         entry = pos["entry_price"]
         is_long = pos["side"] == "long"
         profit_pct = ((current_price - entry) / entry * 100) if is_long else ((entry - current_price) / entry * 100)
@@ -263,6 +270,59 @@ class AgapeBchFuturesTrader:
                     return self._close_position(pos, current_price, "MAX_HOLD_TIME")
             except (ValueError, TypeError):
                 pass
+        return False
+
+    def _manage_regime_aware(self, pos, current_price, now):
+        # NOTE: Regime-aware path does not invoke SAR. Spec §non-goals; revisit if needed.
+        from trading.agape_shared.regime_aware_exits import (
+            evaluate_exit, ExitAction,
+        )
+        from trading.agape_bch_futures.models import (
+            get_chop_profile, get_trend_profile,
+        )
+        from trading.agape_shared.regime_classifier import Regime
+
+        regime = (pos.get("regime_at_entry") or "").lower()
+        profile = (
+            get_trend_profile(self.config) if regime == Regime.TREND.value
+            else get_chop_profile(self.config)
+        )
+
+        open_time_str = pos.get("open_time")
+        try:
+            ot = datetime.fromisoformat(open_time_str) if isinstance(open_time_str, str) else open_time_str
+            if ot and ot.tzinfo is None:
+                ot = ot.replace(tzinfo=CENTRAL_TZ)
+            open_age_hours = ((now - ot).total_seconds() / 3600.0) if ot else 0.0
+        except Exception:
+            open_age_hours = 0.0
+
+        state = {
+            "side": pos["side"],
+            "entry_price": pos["entry_price"],
+            "current_price": current_price,
+            "high_water_mark": pos.get("high_water_mark") or pos["entry_price"],
+            "open_age_hours": open_age_hours,
+            "trailing_active": pos.get("trailing_active", False),
+            "current_stop": pos.get("current_stop"),
+        }
+        decision = evaluate_exit(state, profile)
+        if decision.action == ExitAction.CLOSE:
+            return self._close_position(pos, decision.close_price, decision.reason)
+        if decision.action == ExitAction.ARM_TRAIL:
+            self.db._execute(
+                "UPDATE agape_bch_futures_positions SET trailing_active = TRUE, current_stop = %s "
+                "WHERE position_id = %s AND status = 'open'",
+                (round(decision.new_stop, 8), pos["position_id"]),
+            )
+            return False
+        if decision.action == ExitAction.UPDATE_TRAIL:
+            self.db._execute(
+                "UPDATE agape_bch_futures_positions SET current_stop = %s "
+                "WHERE position_id = %s AND status = 'open'",
+                (round(decision.new_stop, 8), pos["position_id"]),
+            )
+            return False
         return False
 
     def _execute_sar(self, pos, current_price):

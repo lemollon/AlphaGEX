@@ -191,6 +191,39 @@ def load_price_stream(conn, table: str, price_col: str) -> tuple[list[float], li
     return out_ts, out_px
 
 
+def load_regime_per_entry(conn, table: str) -> dict[str, str]:
+    """Map position_id -> regime label ('chop'|'trend'|'unknown') by looking
+    up the scan_activity row that opened each position and running the
+    saved combined_signal/combined_confidence/crypto_gex_regime through
+    the same classifier used by live trading.
+
+    Defensive ORDER BY timestamp ASC + setdefault means we always take the
+    FIRST (chronological) scan that stamped a position_id, even if a future
+    code change starts setting position_id on management cycles too.
+    """
+    from trading.agape_shared.regime_classifier import classify_regime
+    sql = f"""
+        SELECT position_id, combined_signal, combined_confidence, crypto_gex_regime
+        FROM {table}_scan_activity
+        WHERE position_id IS NOT NULL
+        ORDER BY timestamp ASC
+    """
+    cur = conn.cursor()
+    cur.execute(sql)
+    out: dict[str, str] = {}
+    for pid, sig, conf, gex in cur.fetchall():
+        if pid in out:
+            continue
+        snap = {
+            "combined_signal": sig,
+            "combined_confidence": conf,
+            "crypto_gex_regime": gex,
+        }
+        out[pid] = classify_regime(snap).value
+    cur.close()
+    return out
+
+
 # ---------- simulation ----------
 
 def simulate(entry: dict, ts_arr: list[float], px_arr: list[float], cfg: ExitConfig) -> tuple[float, str, float, float, float]:
@@ -285,6 +318,73 @@ def simulate(entry: dict, ts_arr: list[float], px_arr: list[float], cfg: ExitCon
     return (last_price, "STREAM_END", (ts_arr[-1] - open_ts) / 3600.0, mfe_pct_max, mae_pct_max)
 
 
+def simulate_with_profile(entry, ts_arr, px_arr, profile) -> tuple[float, str, float, float, float]:
+    """Profile-driven version of simulate(). Mirrors
+    trading.agape_shared.regime_aware_exits.evaluate_exit's priority order
+    (no SAR, MFE-giveback added). Returns the same tuple shape as simulate()
+    so the existing evaluate() aggregator can call either."""
+    import bisect
+    from trading.agape_shared.regime_aware_exits import (
+        evaluate_exit, ExitAction,
+    )
+    open_ts = entry["open_time"].timestamp()
+    entry_price = float(entry["entry_price"])
+    is_long = entry["side"] == "long"
+    deadline_ts = open_ts + profile.max_hold_hours * 3600.0
+
+    start = bisect.bisect_left(ts_arr, open_ts)
+    if start >= len(ts_arr):
+        return (entry_price, "NO_FORWARD_DATA", 0.0, 0.0, 0.0)
+
+    hwm = entry_price
+    trailing_active = False
+    current_stop: float | None = None
+    mfe_pct_max = 0.0
+    mae_pct_max = 0.0
+    last_price = entry_price
+
+    n = len(ts_arr)
+    i = start
+    while i < n:
+        ts = ts_arr[i]
+        if ts > deadline_ts:
+            return (last_price, "MAX_HOLD_TIME", profile.max_hold_hours, mfe_pct_max, mae_pct_max)
+        price = px_arr[i]
+        last_price = price
+        i += 1
+
+        direction = 1.0 if is_long else -1.0
+        profit_pct = ((price - entry_price) / entry_price * 100.0) * direction
+        if profit_pct > mfe_pct_max:
+            mfe_pct_max = profit_pct
+        if profit_pct < mae_pct_max:
+            mae_pct_max = profit_pct
+
+        state = {
+            "side": entry["side"],
+            "entry_price": entry_price,
+            "current_price": price,
+            "high_water_mark": hwm,
+            "open_age_hours": (ts - open_ts) / 3600.0,
+            "trailing_active": trailing_active,
+            "current_stop": current_stop,
+        }
+        d = evaluate_exit(state, profile)
+        if d.action == ExitAction.CLOSE:
+            return (d.close_price, d.reason, (ts - open_ts) / 3600.0, mfe_pct_max, mae_pct_max)
+        if d.action == ExitAction.ARM_TRAIL:
+            trailing_active = True
+            current_stop = d.new_stop
+        elif d.action == ExitAction.UPDATE_TRAIL:
+            current_stop = d.new_stop
+
+        # Update hwm AFTER exit checks (matches live trader cadence)
+        if (is_long and price > hwm) or ((not is_long) and price < hwm):
+            hwm = price
+
+    return (last_price, "STREAM_END", (ts_arr[-1] - open_ts) / 3600.0, mfe_pct_max, mae_pct_max)
+
+
 def evaluate(entries: list[dict], ts_arr: list[float], px_arr: list[float], cfg: ExitConfig) -> dict:
     total_pnl = 0.0
     sum_win = 0.0
@@ -337,6 +437,53 @@ def evaluate(entries: list[dict], ts_arr: list[float], px_arr: list[float], cfg:
         "avg_loss": round(sum_loss / losses, 2) if losses else 0.0,
         "profit_factor": pf_capped,
         "avg_hold_hours": round(hold_hours_sum / counted, 2) if counted else 0.0,
+        "reasons": reasons,
+    }
+
+
+def evaluate_with_profile(entries, ts_arr, px_arr, profile) -> dict:
+    """Mirror of evaluate() but using simulate_with_profile."""
+    total_pnl = 0.0
+    sum_win = 0.0
+    sum_loss = 0.0
+    wins = losses = 0
+    reasons: dict[str, int] = {}
+    skipped = 0
+    hold_hours_sum = 0.0
+    counted = 0
+    for e in entries:
+        cp, reason, hold_h, _, _ = simulate_with_profile(e, ts_arr, px_arr, profile)
+        if reason in ("NO_FORWARD_DATA", "STREAM_END"):
+            skipped += 1
+            continue
+        qty = float(e["quantity"])
+        d = 1.0 if e["side"] == "long" else -1.0
+        pnl = (cp - float(e["entry_price"])) * qty * d
+        total_pnl += pnl
+        counted += 1
+        hold_hours_sum += hold_h
+        if pnl > 0:
+            wins += 1
+            sum_win += pnl
+        else:
+            losses += 1
+            sum_loss += abs(pnl)
+        bucket = reason.split("_")[0]
+        if reason.startswith("MAX_LOSS"): bucket = "MAX_LOSS"
+        elif reason == "MAX_HOLD_TIME": bucket = "MAX_HOLD"
+        elif reason.startswith("PROFIT_TARGET"): bucket = "PROFIT_TARGET"
+        elif reason.startswith("TRAIL_STOP"): bucket = "TRAIL_STOP"
+        elif reason.startswith("MFE_GIVEBACK"): bucket = "MFE_GIVEBACK"
+        reasons[bucket] = reasons.get(bucket, 0) + 1
+    return {
+        "total_pnl": round(total_pnl, 2),
+        "trades": counted,
+        "wins": wins, "losses": losses,
+        "win_rate_pct": round(wins / counted * 100.0, 1) if counted else None,
+        "avg_win": round(sum_win / wins, 2) if wins else 0.0,
+        "avg_loss": round(sum_loss / losses, 2) if losses else 0.0,
+        "avg_hold_hours": round(hold_hours_sum / counted, 2) if counted else 0.0,
+        "skipped": skipped,
         "reasons": reasons,
     }
 

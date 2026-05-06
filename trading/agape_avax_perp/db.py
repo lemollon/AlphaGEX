@@ -170,6 +170,7 @@ class AgapeAvaxPerpDatabase:
                 "ALTER TABLE agape_avax_perp_scan_activity ADD COLUMN IF NOT EXISTS oi_total_usd FLOAT",
                 "ALTER TABLE agape_avax_perp_scan_activity ADD COLUMN IF NOT EXISTS ls_long_pct FLOAT",
                 "ALTER TABLE agape_avax_perp_scan_activity ADD COLUMN IF NOT EXISTS taker_buy_ratio FLOAT",
+                "ALTER TABLE agape_avax_perp_positions ADD COLUMN IF NOT EXISTS regime_at_entry VARCHAR(20)",
             ]:
                 try:
                     cursor.execute(col_sql)
@@ -233,11 +234,12 @@ class AgapeAvaxPerpDatabase:
                     oracle_advice, oracle_win_probability, oracle_confidence,
                     oracle_top_factors,
                     signal_action, signal_confidence, signal_reasoning,
-                    status, open_time, high_water_mark
+                    status, open_time, high_water_mark,
+                    regime_at_entry
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s
                 )
             """, (
                 pos.position_id, pos.side.value, pos.quantity, pos.entry_price,
@@ -251,6 +253,7 @@ class AgapeAvaxPerpDatabase:
                 pos.signal_action, pos.signal_confidence, pos.signal_reasoning,
                 pos.status.value, pos.open_time or _now_ct(),
                 pos.entry_price,
+                getattr(pos, "regime_at_entry", None),
             ))
             conn.commit()
             return True
@@ -322,7 +325,8 @@ class AgapeAvaxPerpDatabase:
                        oracle_top_factors,
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
-                       COALESCE(trailing_active, FALSE), current_stop
+                       COALESCE(trailing_active, FALSE), current_stop,
+                       regime_at_entry
                 FROM agape_avax_perp_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -354,6 +358,7 @@ class AgapeAvaxPerpDatabase:
                     "high_water_mark": float(row[24]) if row[24] and float(row[24]) > 0 else float(row[3]),
                     "trailing_active": bool(row[25]),
                     "current_stop": float(row[26]) if row[26] else None,
+                    "regime_at_entry": row[27],
                 })
             return positions
         except Exception as e:
@@ -375,7 +380,8 @@ class AgapeAvaxPerpDatabase:
                        open_time, close_time,
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
-                       signal_action, signal_confidence, max_risk_usd
+                       signal_action, signal_confidence, max_risk_usd,
+                       regime_at_entry
                 FROM agape_avax_perp_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
                 ORDER BY close_time DESC LIMIT %s
@@ -394,6 +400,7 @@ class AgapeAvaxPerpDatabase:
                     "oracle_win_probability": float(row[12]) if row[12] else None,
                     "signal_action": row[13], "signal_confidence": row[14],
                     "max_risk_usd": float(row[15]) if row[15] is not None else None,
+                    "regime_at_entry": row[16],
                 }
                 for row in cursor.fetchall()
             ]
