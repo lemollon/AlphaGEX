@@ -93,6 +93,7 @@ _ALLOWED_KEYS = {
     "use_regime_aware_exits",
     "exit_profile_chop_json",
     "exit_profile_trend_json",
+    "min_confidence",
 }
 
 

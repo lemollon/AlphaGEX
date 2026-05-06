@@ -178,6 +178,10 @@ _ALLOWED_KEYS = {
     "use_regime_aware_exits",
     "exit_profile_chop_json",
     "exit_profile_trend_json",
+    # Entry-side confidence floor. Useful for pausing a bot whose data
+    # pipeline is degraded (e.g. XRP without Deribit GEX) — bump to "HIGH"
+    # to block all current entries until upstream signals improve.
+    "min_confidence",
 }
 
 
