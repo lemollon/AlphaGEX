@@ -32,6 +32,7 @@ import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
 import SignalBriefCard from '@/components/trader/SignalBriefCard'
 import Navigation from '@/components/Navigation'
 import { TradeHistoryTable } from '@/components/perpetuals/TradeHistoryTable'
+import { MultiBotPerpEquityChart, type ChartBot } from '@/components/perpetuals/MultiBotPerpEquityChart'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 
 // ==============================================================================
@@ -180,6 +181,15 @@ const COIN_TO_BOT_ID: Record<ActiveCoinId, string> = {
   DOGE: 'doge', SHIB: 'shib_futures', LINK: 'link_futures',
   LTC: 'ltc_futures', BCH: 'bch_futures',
 }
+
+// Bot list passed to MultiBotPerpEquityChart. Built once at module scope so
+// the chart's per-bot useSWR hook order is stable across renders.
+const CHART_BOTS: ChartBot[] = ACTIVE_COINS.map(c => ({
+  bot_id: COIN_TO_BOT_ID[c],
+  label: COIN_META[c].instrument,
+  color: COIN_META[c].hexColor,
+  apiPrefix: COIN_META[c].apiPrefix,
+}))
 
 const SECTION_TABS = [
   { id: 'overview' as const,    label: 'Overview',      icon: Layers },
@@ -569,6 +579,9 @@ function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any>
           <CoinCard key={coin} coin={coin} data={summaries[coin]} />
         ))}
       </div>
+
+      {/* Normalized multi-bot performance comparison */}
+      <MultiBotPerpEquityChart bots={CHART_BOTS} defaultMode="indexed" defaultWindow="30d" />
 
       {/* Recent activity across all coins */}
       <AllCoinsRecentTrades />
