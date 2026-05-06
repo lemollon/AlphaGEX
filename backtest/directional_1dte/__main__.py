@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 from backtest.directional_1dte.config import BOT_CONFIGS
-from backtest.directional_1dte.engine import run
+from backtest.directional_1dte.data import BulkLoaders
+from backtest.directional_1dte.engine import run_with_loaders
 from backtest.directional_1dte.report import write_results, write_comparison
 
 
@@ -39,12 +40,15 @@ def main():
                     f"backtest/results/{dt.date.today().isoformat()}-solomon-gideon-1dte")
     out_root.mkdir(parents=True, exist_ok=True)
 
+    print("Bulk-loading ORAT data once for all bots...", flush=True)
+    loaders = BulkLoaders(start, end, ticker="SPY")
+
     bot_names = ["solomon", "gideon"] if args.bot == "both" else [args.bot]
     results = {}
     for name in bot_names:
         cfg = BOT_CONFIGS[name]
         print(f"[{name}] running {start} -> {end} ...", flush=True)
-        res = run(cfg, start, end)
+        res = run_with_loaders(cfg, start, end, loaders)
         write_results(res, out_root / name)
         results[name] = res
         print(f"[{name}] {len(res.trades)} trades, {len(res.skips)} skips, "
