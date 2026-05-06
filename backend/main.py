@@ -95,6 +95,7 @@ from backend.api.routes import (
     agape_link_futures_routes,  # AGAPE-LINK-FUTURES - LINK-FUT monthly futures bot
     agape_ltc_futures_routes,   # AGAPE-LTC-FUTURES - LTC-FUT monthly futures bot
     agape_bch_futures_routes,   # AGAPE-BCH-FUTURES - BCH-FUT monthly futures bot
+    agape_perpetuals_trades_routes,  # AGAPE Perpetuals aggregated trade history
     omega_routes,  # OMEGA - Central Trading Decision Orchestrator (4-layer pipeline + gap implementations)
     bayesian_crypto_routes,  # Bayesian Crypto Performance Tracker - statistical edge detection for crypto strategies
     dashboard_batch_routes,  # Dashboard Batch - collapse 50+ API calls into 1 request for /live-trading
@@ -377,6 +378,7 @@ app.include_router(agape_shib_futures_routes.router)
 app.include_router(agape_link_futures_routes.router)
 app.include_router(agape_ltc_futures_routes.router)
 app.include_router(agape_bch_futures_routes.router)
+app.include_router(agape_perpetuals_trades_routes.router)
 app.include_router(omega_routes.router)
 app.include_router(bayesian_crypto_routes.router)
 app.include_router(dashboard_batch_routes.router)
