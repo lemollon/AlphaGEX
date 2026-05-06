@@ -22,7 +22,12 @@
  * admin UI surfaces them, but the scanner cycle continues.
  */
 
-import { upsertEvent, getRefreshMeta, setRefreshMeta } from './repo'
+import {
+  upsertEvent,
+  getRefreshMeta,
+  setRefreshMeta,
+  recomputeActiveHaltWindows,
+} from './repo'
 import { FED_FOMC_SCHEDULE, fedFomcTitle } from './fedSchedule'
 import { BLS_RELEASES } from './blsSchedule'
 import { getPlaybook } from './playbook'
@@ -128,6 +133,15 @@ export async function eventCalendarRefresh(opts: { force?: boolean } = {}): Prom
        SET source = 'bls', updated_at = NOW()
        WHERE source = 'manual' AND event_id LIKE 'bls:%'`,
     ).catch(() => {})
+
+    // 3c. Recompute halt windows on every active future row. The FED + BLS
+    //     loops above already overwrite their own rows on every refresh, but
+    //     `source='manual'` rows are NOT iterated and would otherwise stay
+    //     pinned to whatever halt math was current when they were inserted.
+    //     This guarantees a policy change (e.g. the 2026-05-06 switch from
+    //     multi-day to day-of-news halts) propagates to manual entries on
+    //     the next refresh cycle. Idempotent.
+    await recomputeActiveHaltWindows().catch(() => {})
 
     await setRefreshMeta('ok', added, updated)
   } catch (err) {
