@@ -1,6 +1,6 @@
 # IronForge Landing & Auth — Design Spec
 
-**Status:** Draft — awaiting hero variant selection (1 of 5)
+**Status:** Draft — recommended direction documented in §6 (final approval pending)
 **Date:** 2026-05-06
 **Scope:** Public landing page + authentication (sign-up / sign-in) + gating of existing dashboards
 
@@ -148,18 +148,19 @@ These are **shared** tables (no `flame_/spark_/inferno_` prefix). They live alon
 - Text: `#fafafa` (white), `#fde68a` (warm warm), `#a1a1aa` (muted), `#71717a` (dim)
 - Hot iron gradient: `linear-gradient(180deg, #fef3c7 0%, #fbbf24 50%, #b45309 100%)`
 
-**Hero atmospheric stack (5 layers, in z-order):**
-1. **Background photograph** — full-bleed Unsplash forge image with cinematic dark gradient overlay (top scrim, bottom scrim) so text always sits on dark
-2. **Color grading wash** — warm radial overlays (`mix-blend-mode: overlay`, opacity 0.5) to make the fire pop
-3. **Forge breath** — pulsing radial glow at lower-center, 4s breathing animation, `mix-blend-mode: screen`
-4. **Ember field, three depths:**
+**Hero atmospheric stack (7 layers, in z-order):**
+1. **Background photograph** — full-bleed Unsplash forge image with cinematic dark gradient overlay (top scrim, bottom scrim) so text always sits on dark. Photo has a slow 6s `brightness/saturate` pulse so the fire feels alive, not static.
+2. **Color grading wash** — warm radial overlays (`mix-blend-mode: overlay`, opacity 0.6) to make the fire pop
+3. **Live SVG flame layer** — 7 CSS-shaped flame "tongues" (gradient-filled, blurred, asymmetric border-radius) flickering at the bottom edge with `transform: scale + translateY + skewX` keyframes on staggered durations (0.55s–0.85s). Each flame has its own `--dur` CSS variable. Two of the larger flames have an inner brighter "tip" element with its own faster flicker. `mix-blend-mode: screen` so they layer over the photo realistically. The hero must read as *real fire dancing*, not just particles.
+4. **Heat distortion** — SVG `feTurbulence` + `feDisplacementMap` filter applied to the bottom 380px region. `baseFrequency` is animated (0.010→0.018→0.010 over 6s) producing real heat-haze ripple over the embers and lower photo. Filter is GPU-accelerated; falls back to CSS-only shimmer in browsers that don't support SVG filters in this context.
+5. **Ember field, three depths:**
    - Background embers (12 instances, `2px`, slow 14s rise, faint)
    - Mid embers (11 instances, `3px`, 9s rise, glowing amber-orange)
-   - Foreground bokeh embers (5 instances, `8px` blurred, 7s rise, large soft red-orange)
-5. **Heat shimmer** — vertical waver overlay at bottom 200px (3s repeating)
-6. **Spark bursts** — 10 sparks emanating from a single anvil-point, varied trajectories, 3.5s ease-out
+   - Foreground bokeh embers (5 instances, `9px` blurred, 7s rise, large soft red-orange)
+6. **Spark stream** — 8 continuous sparks emanating from a single anvil-point (mid-hero), varied trajectories, 3.5s ease-out. Higher density than v1 so the page reads as actively forging.
+7. **Cursor warm glow** — 380px radial glow with `mix-blend-mode: screen` follows the cursor, fades in on `hover`, out on `mouseleave`.
 
-Plus a slow gold sweep across the primary CTA every 4 seconds.
+Plus a slow gold sweep across the primary CTA every 4 seconds, and a continuous sweep across the in-hero sign-up submit button.
 
 **Animation philosophy:** Ambient layers are slow (4–14s cycles) and soft (blurred, eased). Interactive layers (see §5b) are immediate but proportionate. The page should read as atmosphere when idle, alive when engaged.
 
@@ -196,6 +197,11 @@ The rest of the page (sections 7.2 onward) inherits the same interactive system 
 ---
 
 ## 6. Hero Variations (USER TO PICK 1 OF 15)
+
+**My recommendation:** Variant **#4 The Mythic** photo + the *"As iron sharpens iron"* headline (the user-flagged favorite in §6, photo `1557951959-e3e30ee937e5`). It's the heaviest fire imagery in the set, the headline is the Proverbs verse the user explicitly said is meaningful, and it pairs naturally with the deeper scriptures referenced in §7 below.
+
+The recommendation is shown end-to-end (live flames, integrated sign-up, 3-pillar Why section, final CTA) in `final-pitch.html` in the brainstorm artifacts. **The user retains all 15 options for comparison** — the recommendation is not a lock-in.
+
 
 All fifteen share the locked visual system (§5) and the locked interactive system (§5b). They differ in **photograph, eyebrow, headline, tagline, CTA copy, and footer scrim**. Grouped into three families so the user can compare like-with-like.
 
@@ -237,13 +243,24 @@ All fifteen share the locked visual system (§5) and the locked interactive syst
 
 The landing page (`/`) is a single scrollable page with these sections:
 
-1. **Hero** (above the fold) — the chosen variant from §6, ~100vh
-2. **The Three Bots** — three cards (FLAME / SPARK / INFERNO) with current bot icons, brief description, DTE badge. Cards have subtle hover lift + glow per bot color (matches existing `botGlow` system).
-3. **How It Works** — 4-step horizontal flow (Market Data → Filter Gates → Strike Calc → Execute), styled like the existing "Signal Flow" section but with refined typography.
-4. **Live Stats Strip** — calls the new public `/api/landing/stats` endpoint (§2). Shows aggregate paper P&L, total trades, composite win rate. Animated count-up on scroll into view. Refreshes every 60s via SWR.
-5. **Architecture** — short visual showing Next.js + Render + Postgres + Tradier (no full audit, just trust signals).
-6. **Final CTA** — full-bleed dark section with the same headline echo and a single "Join the Forge" button.
-7. **Footer** — minimal: logo, links to `/sign-in`, `/sign-up`, GitHub (if public), the Proverbs verse, copyright.
+1. **Hero** (above the fold) — the chosen variant from §6, ~100vh, with **integrated inline sign-up** (Google button + email/password form) on the right column so visitors can convert without scrolling. Left column carries the eyebrow, headline, tagline, scripture pull-quote, and a 4-stat strip (Bots Live / Scan Interval / Underlying / Transparency).
+2. **Why IronForge — Three Pillars** — three cards on a dark forge backdrop, each with a Roman-numeral heading, a body paragraph, and a Bible verse footer. Pillars: *Refined by repetition* (Proverbs 17:3), *Patience over pressure* (Proverbs 16:32), *Sharpened by fire* (1 Peter 1:7). Each pillar fades + slides up on scroll.
+3. **The Three Bots** — three cards (FLAME / SPARK / INFERNO) with current bot icons, brief description, DTE badge. Cards have subtle hover lift + glow per bot color (matches existing `botGlow` system) plus an "ignite on hover" ember field per card.
+4. **How It Works** — 4-step horizontal flow (Market Data → Filter Gates → Strike Calc → Execute), styled like the existing "Signal Flow" section but with refined typography.
+5. **Live Stats Strip** — calls the new public `/api/landing/stats` endpoint (§2). Shows aggregate paper P&L, total trades, composite win rate. Animated count-up on scroll into view. Refreshes every 60s via SWR.
+6. **Architecture** — short visual showing Next.js + Render + Postgres + Tradier (no full audit, just trust signals).
+7. **Final CTA** — full-bleed dark section with a pulsing forge-glow at the bottom, the *"As iron sharpens iron"* verse displayed in full, and a single oversized "Create Your Account →" button.
+8. **Footer** — minimal: logo, links to `/sign-in`, `/sign-up`, GitHub (if public), the Proverbs verse, copyright.
+
+**Scriptures referenced across the page (the user noted these are deep and meaningful — keep them):**
+
+| Where | Verse | Reference |
+|-------|-------|-----------|
+| Hero eyebrow + final CTA | *As iron sharpens iron, so one person sharpens another.* | Proverbs 27:17 |
+| Hero scripture-block | *I have refined you, though not as silver; I have tested you in the furnace of affliction.* | Isaiah 48:10 |
+| Pillar i (Repetition) | *The crucible for silver and the furnace for gold, but the LORD tests the heart.* | Proverbs 17:3 |
+| Pillar ii (Patience) | *Better a patient person than a warrior, one with self-control than one who takes a city.* | Proverbs 16:32 |
+| Pillar iii (Refinement) | *Your faith of greater worth than gold, which perishes even though refined by fire.* | 1 Peter 1:7 |
 
 Sections 2–6 use scroll-triggered fade/slide-in via Framer Motion's `whileInView`. Stagger the children so it reads as choreographed, not all-at-once.
 
