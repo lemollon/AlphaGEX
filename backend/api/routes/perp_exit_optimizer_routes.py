@@ -261,6 +261,121 @@ async def apply_config(req: ApplyRequest):
     }
 
 
+# Bot label -> scan_activity table prefix. Matches _BOT_KEY_PREFIX shape but
+# the tickers are written without the trailing _ for human readability.
+_HISTOGRAM_TABLES = {
+    "BTC":          "agape_btc_perp",
+    "ETH":          "agape_eth_perp",
+    "SOL":          "agape_sol_perp",
+    "AVAX":         "agape_avax_perp",
+    "XRP":          "agape_xrp_perp",
+    "DOGE":         "agape_doge_perp",
+    "SHIB_PERP":    "agape_shib_perp",
+    "SHIB_FUTURES": "agape_shib_futures",
+    "LINK_FUTURES": "agape_link_futures",
+    "LTC_FUTURES":  "agape_ltc_futures",
+    "BCH_FUTURES":  "agape_bch_futures",
+    # Bare SHIB/LINK/LTC/BCH default to the active futures bot
+    "SHIB":         "agape_shib_futures",
+    "LINK":         "agape_link_futures",
+    "LTC":          "agape_ltc_futures",
+    "BCH":          "agape_bch_futures",
+}
+
+
+def _classify_inline(sig, conf, gex):
+    """Inline mirror of trading.agape_shared.regime_classifier.classify_regime."""
+    if sig in ("LONG", "SHORT") and conf in ("MEDIUM", "HIGH"):
+        return "trend"
+    if sig == "RANGE_BOUND":
+        return "chop"
+    if sig in ("LONG", "SHORT"):
+        return "chop"
+    if sig is None:
+        if gex == "NEGATIVE":
+            return "trend"
+        if gex == "POSITIVE":
+            return "chop"
+    return "unknown"
+
+
+@router.get("/signal-histogram")
+async def signal_histogram(bot: str, since: Optional[str] = None):
+    """Diagnostic: counts every (combined_signal, combined_confidence,
+    crypto_gex_regime) triple that ever stamped a position_id on the bot's
+    scan_activity table, plus how each triple would be classified by
+    classify_regime. Use to debug why the regime split shows trend=0.
+    """
+    bot_label = bot.upper()
+    table = _HISTOGRAM_TABLES.get(bot_label)
+    if not table:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown bot '{bot}'. Available: {list(_HISTOGRAM_TABLES)}",
+        )
+    if get_connection is None:
+        raise HTTPException(status_code=500, detail="db unavailable")
+    conn = get_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="db unavailable")
+    try:
+        cur = conn.cursor()
+        where = "WHERE position_id IS NOT NULL"
+        params: list = []
+        if since:
+            where += " AND timestamp >= %s"
+            params.append(since)
+        cur.execute(
+            f"""
+            SELECT
+                COALESCE(combined_signal, '<none>'),
+                COALESCE(combined_confidence, '<none>'),
+                COALESCE(crypto_gex_regime, '<none>'),
+                COUNT(*)
+            FROM {table}_scan_activity
+            {where}
+            GROUP BY combined_signal, combined_confidence, crypto_gex_regime
+            ORDER BY COUNT(*) DESC
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+        cur.close()
+
+        total = sum(int(r[3] or 0) for r in rows)
+        regime_totals = {"chop": 0, "trend": 0, "unknown": 0}
+        items = []
+        for sig, conf, gex, n in rows:
+            n = int(n or 0)
+            sig_v = None if sig == "<none>" else sig
+            conf_v = None if conf == "<none>" else conf
+            gex_v = None if gex == "<none>" else gex
+            regime = _classify_inline(sig_v, conf_v, gex_v)
+            regime_totals[regime] += n
+            items.append({
+                "combined_signal": sig,
+                "combined_confidence": conf,
+                "crypto_gex_regime": gex,
+                "count": n,
+                "pct": round((n / total * 100) if total else 0.0, 2),
+                "regime": regime,
+            })
+        return {
+            "success": True,
+            "bot": bot_label,
+            "table": f"{table}_scan_activity",
+            "since": since,
+            "total_scans_with_position_id": total,
+            "regime_totals": regime_totals,
+            "histogram": items,
+        }
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 @router.get("/applied")
 async def get_applied(bot: str):
     """Return current autonomous_config rows for a bot's exit-rule knobs."""
