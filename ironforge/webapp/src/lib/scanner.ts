@@ -117,8 +117,13 @@ interface BotConfig {
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  // SPARK 1DTE min_credit raised 0.05 → 0.25 on 2026-05-06: a $0.18 IC opened
+  // earlier that day (5-wide spread, 7 contracts) couldn't round-trip the
+  // combo bid/ask spread — 9 sequential PT limits failed and the kill switch
+  // closed it at break-even. With a $0.25 floor the bot tightens strikes
+  // (lower SD) to reach acceptable credit or skips the day entirely.
+  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
 }
 
@@ -202,6 +207,13 @@ async function loadConfigOverrides(): Promise<void> {
         if (isNaN(n)) continue
         merged[mapping.key] = mapping.transform ? mapping.transform(n) : n
       }
+      // min_credit code-level floor: DB values below the bot's DEFAULT_CONFIG
+      // floor are clamped UP to the default. This makes a code-level safety
+      // bump (e.g., SPARK 0.05 → 0.25 on 2026-05-06 to skip un-fillable thin
+      // ICs) effective immediately without requiring a manual DB UPDATE.
+      // Operators can RAISE min_credit via DB; they cannot LOWER it below the
+      // strategy's floor without a code change + review.
+      merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
 
       // entry_end from config table is stored as "14:00" string — parse to HHMM int
       const entryEndStr = row.entry_end
@@ -288,6 +300,8 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
       if (isNaN(n)) continue
       merged[mapping.key] = mapping.transform ? mapping.transform(n) : n
     }
+    // Same code-level min_credit floor as the sandbox loader above.
+    merged.min_credit = Math.max(merged.min_credit, DEFAULT_CONFIG[bot.name].min_credit)
     const entryEndStr = row.entry_end
     if (entryEndStr && typeof entryEndStr === 'string' && entryEndStr.includes(':')) {
       const [h, m] = entryEndStr.split(':').map(Number)
@@ -1102,14 +1116,26 @@ async function monitorSinglePosition(
           )
 
           if (slippageGuardFired) {
-            // Relax the limit upward toward current mid to make the fill more
-            // attainable, but HARD-CAP at currentTierTarget (the tier floor)
-            // so we never fill below the tier's minimum profit. Also ensure
-            // we don't tighten below the existing limit (only loosen).
-            const relaxTarget = Math.max(
-              existingLimitPrice ?? 0,
-              mtmForGuard!.cost_to_close_mid,
-            )
+            // Aggressive-fill ladder (added 2026-05-06 after Logan/production
+            // SPARK-A0393D took 9 sequential reprices without filling):
+            //
+            //   Reprice #1 → relax UPWARD toward mid (legacy behavior).
+            //   Reprice #2+ at same tier → CROSS the combo ask by 1¢. The
+            //     mid-relax never crossed the bid/ask combo on thin 1DTEs,
+            //     so the limit just sat there each cycle. Crossing the ask
+            //     trades a few cents of theoretical edge for actual fills.
+            //
+            // The HARD CAP at currentTierTarget (tier floor) is preserved on
+            // both branches so we still never fill below the tier's minimum
+            // profit. The reprice count resets on tier-advance.
+            const repriceCountAtTier = typeof pendingInfo._slippage_reprice_count === 'number'
+              ? pendingInfo._slippage_reprice_count
+              : 0
+            const useAggressiveCross = repriceCountAtTier >= 1
+            const CROSS_ASK_OFFSET_REPRICE = 0.01
+            const relaxTarget = useAggressiveCross
+              ? mtmForGuard!.cost_to_close + CROSS_ASK_OFFSET_REPRICE
+              : Math.max(existingLimitPrice ?? 0, mtmForGuard!.cost_to_close_mid)
             const aggressivePrice = Math.round(
               Math.min(currentTierTarget, relaxTarget) * 10000,
             ) / 10000
@@ -1127,20 +1153,25 @@ async function monitorSinglePosition(
                WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
               [pid, bot.dte],
             )
+            const ladderMode = useAggressiveCross ? 'ask_cross' : 'mid_relax'
+            const newRepriceCount = repriceCountAtTier + 1
             try {
               await query(
                 `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
                  VALUES ($1, $2, $3, $4)`,
                 [
                   'PT_SLIPPAGE_REPRICE',
-                  `${pid}: cancel stale limit ($${existingLimitPrice.toFixed(4)}) after ${Math.round(ageMs / 60000)}m — min_cost_seen=$${(currentMin ?? 0).toFixed(4)} touched trigger but didn't fill. Will reprice near mid ($${aggressivePrice.toFixed(4)}).`,
+                  `${pid}: cancel stale limit ($${existingLimitPrice.toFixed(4)}) after ${Math.round(ageMs / 60000)}m — min_cost_seen=$${(currentMin ?? 0).toFixed(4)} touched trigger but didn't fill. Reprice #${newRepriceCount} via ${ladderMode} → $${aggressivePrice.toFixed(4)}.`,
                   JSON.stringify({
                     position_id: pid,
                     prior_limit: existingLimitPrice,
                     min_cost_seen: currentMin,
                     mid: mtmForGuard!.cost_to_close_mid,
+                    combo_ask: mtmForGuard!.cost_to_close,
                     age_ms: ageMs,
                     new_aggressive_limit: aggressivePrice,
+                    ladder_mode: ladderMode,
+                    reprice_count_at_tier: newRepriceCount,
                     order_id_canceled: userPending.order_id,
                   }),
                   bot.dte,
@@ -1159,7 +1190,30 @@ async function monitorSinglePosition(
                 `${pendingInfo._pending_reason ?? 'profit_target'}_slippage_reprice`,
                 aggressivePrice, 'debit', aggressivePrice,
               )
-              return { status: `pt_slippage_reprice@${aggressivePrice.toFixed(4)}`, unrealizedPnl: 0 }
+              // Stamp the running reprice counter onto the freshly-written
+              // pending JSON. closePosition writes its own _slippage_reprice_count=0
+              // implicitly via spread {...sandboxCloseInfo}; we merge the carried
+              // count back in so the next slippage-guard cycle sees it.
+              try {
+                const pendingNowRows = await query(
+                  `SELECT sandbox_close_order_id FROM ${botTable(bot.name, 'positions')}
+                   WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+                  [pid, bot.dte],
+                )
+                const pendingNowRaw = pendingNowRows[0]?.sandbox_close_order_id
+                if (pendingNowRaw) {
+                  let pendingNow: Record<string, any> = {}
+                  try { pendingNow = JSON.parse(pendingNowRaw) } catch { /* leave empty */ }
+                  pendingNow._slippage_reprice_count = newRepriceCount
+                  await query(
+                    `UPDATE ${botTable(bot.name, 'positions')}
+                     SET sandbox_close_order_id = $1, updated_at = NOW()
+                     WHERE position_id = $2 AND status = 'open' AND dte_mode = $3`,
+                    [JSON.stringify(pendingNow), pid, bot.dte],
+                  )
+                }
+              } catch { /* counter persist is best-effort */ }
+              return { status: `pt_slippage_reprice@${aggressivePrice.toFixed(4)}(${ladderMode})`, unrealizedPnl: 0 }
             } catch (err: unknown) {
               const msg = err instanceof Error ? err.message : String(err)
               console.error(`[scanner] ${bot.name.toUpperCase()} ${pid}: slippage-guard reprice failed: ${msg}`)
@@ -1622,11 +1676,14 @@ async function monitorSinglePosition(
   // Profit target: the tier's profitTargetPrice is the FLOOR (worst acceptable
   // fill = minimum profit guaranteed). Trigger fires when costToCloseLast is at
   // or below that floor (≥ tier % profit). The close order is placed as a debit
-  // limit at costToCloseLast — the favorable current market — so any fill at
-  // that price or below captures profit ABOVE the floor when the market gives
-  // it. If the tighter limit doesn't fill, the slippage guard below relaxes the
-  // limit upward toward mid, but is HARD-CAPPED at profitTargetPrice so we
-  // never fill below the tier's minimum profit. Applies to all tiers (50/30/20).
+  // limit at costToClose + crossOffset (the EXECUTABLE combo ask, not the stale
+  // last-print) so the limit actually crosses the market, capped at
+  // profitTargetPrice so we never fill below the tier's minimum profit.
+  // Pre-2026-05-06 the limit was placed at costToCloseLast, which sat 1–2¢
+  // BELOW the combo ask on illiquid 1DTE chains and never filled (5/6 SPARK
+  // production: 9 sequential limits exhausted from 13:08–14:00 ET, eventually
+  // killed at break-even). Crossing the ask by 1¢ trades off worst-case fill
+  // price (still ≤ floor) for actual execution.
   if (costToCloseLast <= profitTargetPrice) {
     // Commit R1: DB-level trigger log so we can definitively confirm PT
     // fired (or didn't) on the next premature-close investigation.
@@ -1660,13 +1717,16 @@ async function monitorSinglePosition(
     // monitorSinglePosition reads these columns next cycle and catches
     // retracements even if this close order doesn't fill immediately.
     await trailingDbSeed(bot, pid, costToCloseLast)
-    // Initial limit = costToCloseLast (favorable current market). A buy limit
-    // at this price fills only at this price or LOWER (= more profit). The
-    // slippage guard will relax toward profitTargetPrice if no fill, never above.
-    const initialLimitPrice = Math.min(
-      profitTargetPrice,
-      Math.max(0, Math.round(costToCloseLast * 10000) / 10000),
-    )
+    // Initial limit = combo ask (costToClose) + CROSS_ASK_OFFSET, capped at
+    // profitTargetPrice. The buy limit must cross the executable combo ask to
+    // fill on illiquid 1DTE chains; placing at last-print or mid sits below
+    // the ask and never executes. A 1¢ cross is the smallest amount that
+    // reliably clears the spread without paying away material edge — and the
+    // tier-floor cap guarantees we still capture ≥ tier% even when the cross
+    // pushes above last/mid.
+    const CROSS_ASK_OFFSET = 0.01
+    const askCrossPrice = Math.max(0, Math.round((costToClose + CROSS_ASK_OFFSET) * 10000) / 10000)
+    const initialLimitPrice = Math.min(profitTargetPrice, askCrossPrice)
     await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
