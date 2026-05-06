@@ -187,7 +187,6 @@ class BotName(Enum):
     ANCHOR = "ANCHOR"    # SPX Iron Condor ($10 spreads, weekly)
     GIDEON = "GIDEON"      # Aggressive Directional Spreads (relaxed filters)
     SAMSON = "SAMSON"        # Aggressive SPX Iron Condor ($12 spreads)
-    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
     FAITH = "FAITH"      # 2DTE Paper Iron Condor (SPY)
     GRACE = "GRACE"      # 1DTE Paper Iron Condor (SPY)
 
@@ -1383,7 +1382,6 @@ class ProphetAdvisor:
         'LAZARUS': 'directional_model',  # SPY directional calls
         'CORNERSTONE': 'directional_model',  # SPY Cash-Secured Puts
         'SAMSON': 'ic_model',         # SPX IC (ANCHOR variant)
-        'JUBILEE': 'ic_model',        # SPX IC (ANCHOR variant)
     }
 
     # IC sub-model: base features + wall position, Friday flag
@@ -1741,7 +1739,7 @@ class ProphetAdvisor:
                         for rp in regime_perf:
                             if rp.regime and rp.regime.upper() == market_regime.upper():
                                 # Check if this is an IC or directional bot
-                                is_ic_bot = bot_name.upper() in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+                                is_ic_bot = bot_name.upper() in ['FORTRESS', 'SAMSON', 'ANCHOR']
                                 if is_ic_bot:
                                     advisory.regime_ic_win_rate = rp.win_rate
                                 else:

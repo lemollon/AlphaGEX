@@ -34,7 +34,6 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "PHOENIX":              "LAZARUS",       # 0DTE Momentum - John 11:43-44
     "ATLAS":                "CORNERSTONE",   # SPX Wheel - Psalm 118:22
     "HERMES":               "SHEPHERD",      # Manual Wheel - Psalm 23:1-2
-    "PROMETHEUS":           "JUBILEE",       # Box Spread + IC - Leviticus 25:10
     "HERACLES":             "VALOR",         # MES Futures Scalping - Joshua 1:9
     "AGAPE":                "AGAPE",         # ETH Micro Futures - 1 Cor 13:4,7
     "AGAPE_SPOT":           "AGAPE-SPOT",    # 24/7 Crypto Spot - 1 Cor 13:8
@@ -84,7 +83,7 @@ DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in BOT_DISPLAY_NAMES.items(
                                         if k == k.upper() and "_" not in k or k in (
                                             "AGAPE_SPOT", "ARES", "ATHENA", "TITAN",
                                             "PEGASUS", "ICARUS", "PHOENIX", "ATLAS",
-                                            "HERMES", "PROMETHEUS", "HERACLES", "AGAPE",
+                                            "HERMES", "HERACLES", "AGAPE",
                                             "AGAPE_ETH_PERP", "AGAPE_SOL_PERP",
                                             "AGAPE_AVAX_PERP", "AGAPE_BTC_PERP",
                                             "AGAPE_XRP_PERP", "AGAPE_DOGE_PERP",

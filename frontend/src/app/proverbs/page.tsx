@@ -1475,7 +1475,6 @@ export default function ProverbsPage() {
                 <option value="SAMSON">SAMSON</option>
                 <option value="ANCHOR">ANCHOR</option>
                 <option value="GIDEON">GIDEON</option>
-                <option value="JUBILEE">JUBILEE</option>
               </select>
             </div>
 

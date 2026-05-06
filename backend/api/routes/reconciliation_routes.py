@@ -31,13 +31,11 @@ BOT_REGISTRY = [
     # (bot_name, positions_table, closed_table, order_id_columns, ticker)
     #
     # NOTE: Most bots store open AND closed positions in the SAME table
-    # (status column distinguishes them). Only JUBILEE_IC and VALOR have
-    # separate closed_trades tables. Set closed_table=None for the rest
-    # so we don't query non-existent tables.
+    # (status column distinguishes them). Only VALOR has a separate
+    # closed_trades table. Set closed_table=None for the rest so we
+    # don't query non-existent tables.
     ("ANCHOR",      "anchor_positions",     None,                       ["put_order_id", "call_order_id"],              "SPX"),
     ("SAMSON",      "samson_positions",      None,                       ["put_order_id", "call_order_id"],              "SPX"),
-    ("JUBILEE_BOX", "jubilee_positions",     None,                       ["put_spread_order_id", "call_spread_order_id"],"SPX"),
-    ("JUBILEE_IC",  "jubilee_ic_positions",  "jubilee_ic_closed_trades", ["put_spread_order_id", "call_spread_order_id"],"SPX"),
     ("FORTRESS",    "fortress_positions",    None,                       ["put_order_id", "call_order_id"],              "SPY"),
     ("FAITH",       "faith_positions",       None,                       ["put_order_id", "call_order_id"],              "SPY"),
     ("GRACE",       "grace_positions",       None,                       ["put_order_id", "call_order_id"],              "SPY"),

@@ -98,23 +98,6 @@ def run_endpoint_existence_tests(base_url: str):
         ("/api/valor/win-tracker", "GET", 200),
     ]
 
-    # JUBILEE endpoints (Box Spread + IC)
-    jubilee_endpoints = [
-        ("/api/jubilee/status", "GET", 200),
-        ("/api/jubilee/positions", "GET", 200),
-        ("/api/jubilee/equity-curve", "GET", 200),
-        ("/api/jubilee/equity-curve/intraday", "GET", 200),
-        ("/api/jubilee/analytics/rates", "GET", 200),
-        ("/api/jubilee/analytics/capital-flow", "GET", 200),
-        ("/api/jubilee/ic/status", "GET", 200),
-        ("/api/jubilee/ic/positions", "GET", 200),
-        ("/api/jubilee/ic/equity-curve", "GET", 200),
-        ("/api/jubilee/ic/equity-curve/intraday", "GET", 200),
-        ("/api/jubilee/ic/performance", "GET", 200),
-        ("/api/jubilee/combined/performance", "GET", 200),
-        ("/api/jubilee/reconciliation", "GET", 200),
-    ]
-
     # FORTRESS endpoints (SPY Iron Condor)
     fortress_endpoints = [
         ("/api/fortress/status", "GET", 200),
@@ -175,7 +158,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     all_endpoints = (
-        core_endpoints + valor_endpoints + jubilee_endpoints +
+        core_endpoints + valor_endpoints +
         fortress_endpoints + samson_endpoints + anchor_endpoints +
         solomon_endpoints + gideon_endpoints + prophet_endpoints + metrics_endpoints
     )
@@ -202,10 +185,6 @@ def run_response_shape_tests(base_url: str):
         ("/api/valor/ml/status", ["model_trained"]),
         ("/api/valor/ml/approval-status", ["ml_approved", "probability_source"]),
         ("/api/valor/ab-test/status", ["ab_test_enabled"]),
-
-        # JUBILEE
-        ("/api/jubilee/status", ["status"]),
-        ("/api/jubilee/combined/performance", ["available"]),
 
         # FORTRESS
         ("/api/fortress/status", ["status"]),

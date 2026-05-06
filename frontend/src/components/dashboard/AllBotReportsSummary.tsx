@@ -88,7 +88,6 @@ export default function AllBotReportsSummary() {
     SAMSON: titanReport,
     LAZARUS: undefined,
     CORNERSTONE: undefined,
-    JUBILEE: undefined,
     VALOR: undefined,
     FAITH: undefined,
     GRACE: undefined,

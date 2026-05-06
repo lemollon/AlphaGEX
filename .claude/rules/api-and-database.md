@@ -71,7 +71,7 @@ GET  /api/data-transparency/regime-signals  # All 80+ regime signals
 - `unified_trades`, `trading_decisions`
 
 ### Bot-Specific Tables (pattern: `{bot}_*`)
-Each bot (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON, JUBILEE, VALOR, FAITH, GRACE) has:
+Each bot (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON, VALOR, FAITH, GRACE) has:
 - `{bot}_positions`, `{bot}_closed_trades`, `{bot}_equity_snapshots`, `{bot}_scan_activity`, `{bot}_config`
 
 ### Crypto Tables (AGAPE family)

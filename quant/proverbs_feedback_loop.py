@@ -144,7 +144,6 @@ class BotName(Enum):
     SAMSON = "SAMSON"         # SPX Aggressive Iron Condor
     ANCHOR = "ANCHOR"     # SPX Weekly Iron Condor
     GIDEON = "GIDEON"       # SPY Aggressive Directional
-    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
     VALOR = "VALOR"       # MES Futures Scalping (GEX-based)
     # Legacy bots (not actively traded)
     CORNERSTONE = "CORNERSTONE"         # SPX Wheel (Cash-Secured Puts)
@@ -1833,7 +1832,6 @@ class ProverbsFeedbackLoop:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table = BOT_TABLES.get(bot_name.upper())
@@ -1979,7 +1977,6 @@ class ProverbsFeedbackLoop:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -2045,7 +2042,6 @@ class ProverbsFeedbackLoop:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table = BOT_TABLES.get(bot_name.upper())
@@ -2152,7 +2148,7 @@ class ProverbsFeedbackLoop:
         """
         try:
             # Determine strategy type and appropriate adjustments
-            ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+            ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR']
             is_ic = bot_name.upper() in ic_bots
 
             if is_ic:
@@ -2274,8 +2270,8 @@ class ProverbsFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        # All active trading bots - IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE | Directional: SOLOMON, GIDEON
-        bots = [BotName.FORTRESS, BotName.SOLOMON, BotName.SAMSON, BotName.ANCHOR, BotName.GIDEON, BotName.JUBILEE]
+        # All active trading bots - IC bots: FORTRESS, SAMSON, ANCHOR | Directional: SOLOMON, GIDEON
+        bots = [BotName.FORTRESS, BotName.SOLOMON, BotName.SAMSON, BotName.ANCHOR, BotName.GIDEON]
 
         try:
             # Step 1: Expire old proposals

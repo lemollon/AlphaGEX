@@ -176,8 +176,8 @@ def main():
               True,
               f"{order_count} recent orders")
 
-    # ── CHECK 3: SPX quote (critical for JUBILEE IC) ──
-    print("\n--- 3. SPX QUOTE (Critical for JUBILEE IC) ---")
+    # ── CHECK 3: SPX quote (critical for SPX IC bots) ──
+    print("\n--- 3. SPX QUOTE (Critical for SPX IC bots) ---")
     data, status = tradier_get(BASE_URL, api_token, '/markets/quotes?symbols=$SPX.X')
     spx_price = None
     if status == 200:

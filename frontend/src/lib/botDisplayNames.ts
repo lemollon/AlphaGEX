@@ -130,16 +130,6 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // PROMETHEUS → JUBILEE (Box Spread Borrowing - Debt Freedom, Provision)
-  // ─────────────────────────────────────────────────────────────────────────────
-  PROMETHEUS: {
-    displayName: 'JUBILEE',
-    verse: '"Consecrate the fiftieth year and proclaim liberty throughout the land to all its inhabitants. It shall be a jubilee for you."',
-    reference: 'Leviticus 25:10 (see Leviticus 25:8-55)',
-    why: 'The Year of Jubilee was when all debts were cancelled and financial freedom proclaimed. Box spreads provide synthetic borrowing at favorable rates—financial leverage that enables freedom to trade.',
-  },
-
-  // ─────────────────────────────────────────────────────────────────────────────
   // HERACLES → VALOR (MES Futures Scalping - Courage, Strength)
   // ─────────────────────────────────────────────────────────────────────────────
   HERACLES: {
@@ -383,7 +373,6 @@ export const BOT_DISPLAY_NAMES = {
   LAZARUS: BOT_SCRIPTURES.PHOENIX.displayName,
   CORNERSTONE: BOT_SCRIPTURES.ATLAS.displayName,
   SHEPHERD: BOT_SCRIPTURES.HERMES.displayName,
-  JUBILEE: BOT_SCRIPTURES.PROMETHEUS.displayName,
   VALOR: BOT_SCRIPTURES.HERACLES.displayName,
   AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
   AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,

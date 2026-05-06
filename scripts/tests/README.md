@@ -55,7 +55,7 @@ python scripts/tests/test_api_endpoints.py
 - Market data (GEX, VIX, Psychology)
 - PYTHIA (Probability) endpoints
 - PROPHET AI endpoints
-- PROMETHEUS (ML) endpoints
+- ML endpoints
 - Wheel Strategy endpoints
 - Trader endpoints
 - KRONOS backtest endpoints
@@ -73,7 +73,7 @@ python scripts/tests/test_integration.py
 **Flows tested:**
 - PROPHET prediction flow
 - PYTHIA calibration flow
-- PROMETHEUS ML flow
+- ML training/prediction flow
 - Wheel cycle management
 - Trader decision flow
 - GEXIS conversation flow

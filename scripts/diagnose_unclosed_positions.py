@@ -32,8 +32,6 @@ BOTS = {
     "FORTRESS": {"positions": "fortress_positions", "logs": "fortress_logs"},
     "ANCHOR": {"positions": "anchor_positions", "logs": "anchor_logs"},
     "GIDEON": {"positions": "gideon_positions", "logs": "gideon_logs"},
-    "JUBILEE": {"positions": "jubilee_positions", "logs": "jubilee_logs"},
-    "JUBILEE_IC": {"positions": "jubilee_ic_positions", "logs": "jubilee_logs"},
     "SAMSON": {"positions": "samson_positions", "logs": "samson_logs"},
     "SOLOMON": {"positions": "solomon_positions", "logs": "solomon_logs"},
     "VALOR": {"positions": "valor_positions", "logs": "valor_logs"},

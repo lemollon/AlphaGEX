@@ -566,7 +566,6 @@ class TimeOfDayAnalyzer:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -663,7 +662,6 @@ class CrossBotAnalyzer:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_a = BOT_TABLES.get(bot_a.upper())
@@ -747,8 +745,8 @@ class CrossBotAnalyzer:
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
         # Migration 023: Updated bot list to match actual trading bots
-        # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE | Directional bots: SOLOMON, GIDEON
-        bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']
+        # IC bots: FORTRESS, SAMSON, ANCHOR | Directional bots: SOLOMON, GIDEON
+        bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -786,7 +784,6 @@ class RegimePerformanceTracker:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -1252,10 +1249,9 @@ class WeekendPreChecker:
 
         # Analyze each bot
         # Migration 023: Updated bot list to include SAMSON and GIDEON
-        # Migration 024: Added JUBILEE (Box Spread + IC Trading)
         # Migration 025: Added VALOR (MES Futures Scalping)
         bot_recommendations = {}
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE', 'VALOR']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'VALOR']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1399,9 +1395,8 @@ class DailyDigestGenerator:
         total_wins = 0
 
         # Migration 023: Updated bot list to include SAMSON and GIDEON
-        # Migration 024: Added JUBILEE (Box Spread + IC Trading)
         # Migration 025: Added VALOR (MES Futures Scalping)
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE', 'VALOR']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'VALOR']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 
@@ -1441,7 +1436,6 @@ class DailyDigestGenerator:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -2216,7 +2210,6 @@ class ProverbsEnhanced:
         'FORTRESS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
         'SAMSON': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
         'ANCHOR': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
-        'JUBILEE': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},  # Box Spread + IC
         # Directional bots - want price movement in predicted direction
         'SOLOMON': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
         'GIDEON': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
@@ -2242,7 +2235,6 @@ class ProverbsEnhanced:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
         ic_bot_breakdown = {}
@@ -2254,8 +2246,8 @@ class ProverbsEnhanced:
             try:
                 cursor = conn.cursor()
 
-                # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE
-                for bot_name in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']:
+                # IC bots: FORTRESS, SAMSON, ANCHOR
+                for bot_name in ['FORTRESS', 'SAMSON', 'ANCHOR']:
                     table = BOT_TABLES.get(bot_name)
                     if table:
                         cursor.execute(f"""
@@ -2322,7 +2314,7 @@ class ProverbsEnhanced:
                 'win_rate': (ic_wins / ic_trades * 100) if ic_trades > 0 else 0,
                 'total_pnl': ic_total_pnl,
                 'avg_pnl': ic_avg_pnl,
-                'bots': ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE'],
+                'bots': ['FORTRESS', 'SAMSON', 'ANCHOR'],
                 'bot_breakdown': ic_bot_breakdown
             }
 
@@ -2409,10 +2401,9 @@ class ProverbsEnhanced:
             'SAMSON': 'samson_positions',
             'ANCHOR': 'anchor_positions',
             'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
         }
 
-        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR']
 
         by_advice = {}
         by_strategy = {

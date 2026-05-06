@@ -58,10 +58,6 @@ from backend.api.routes.samson_routes import (
     get_samson_positions,
     get_samson_equity_curve,
 )
-from backend.api.routes.jubilee_routes import (
-    get_jubilee_status,
-    get_ic_equity_curve as jubilee_ic_equity_curve,
-)
 from backend.api.routes.valor_routes import (
     get_valor_paper_equity_curve,
 )
@@ -185,7 +181,6 @@ async def _fetch_bot_statuses() -> dict:
         _safe("gideon_status", get_gideon_status()),
         _safe("anchor_status", get_anchor_status()),
         _safe("samson_status", get_samson_status()),
-        _safe("jubilee_status", get_jubilee_status()),
         _safe("agape_status", agape_status()),
         _safe("agape_btc_status", agape_btc_status()),
         _safe("agape_xrp_status", agape_xrp_status()),
@@ -196,15 +191,14 @@ async def _fetch_bot_statuses() -> dict:
         "gideon": results[2],
         "anchor": results[3],
         "samson": results[4],
-        "jubilee": results[5],
-        "agape": results[6],
-        "agape_btc": results[7],
-        "agape_xrp": results[8],
+        "agape": results[5],
+        "agape_btc": results[6],
+        "agape_xrp": results[7],
     }
 
 
 async def _fetch_bot_live_pnl() -> dict:
-    """Fetch live PnL for the 5 core bots + jubilee."""
+    """Fetch live PnL for the 5 core bots."""
     results = await asyncio.gather(
         _safe("fortress_pnl", fortress_live_pnl()),
         _safe("solomon_pnl", get_solomon_live_pnl()),
@@ -247,7 +241,6 @@ async def _fetch_equity_curves(days: int) -> dict:
         _safe("gideon_eq", get_gideon_equity_curve(days)),
         _safe("anchor_eq", get_anchor_equity_curve(days)),
         _safe("samson_eq", get_samson_equity_curve(days)),
-        _safe("jubilee_eq", jubilee_ic_equity_curve()),
         _safe("valor_eq", get_valor_paper_equity_curve(days)),
         _safe("agape_eq", agape_equity_curve(days)),
         _safe("agape_spot_eq", agape_spot_equity_curve(None, days)),
@@ -271,23 +264,22 @@ async def _fetch_equity_curves(days: int) -> dict:
         "gideon": results[2],
         "anchor": results[3],
         "samson": results[4],
-        "jubilee": results[5],
-        "valor": results[6],
-        "agape": results[7],
-        "agape_spot": results[8],
-        "agape_btc": results[9],
-        "agape_xrp": results[10],
-        "agape_eth_perp": results[11],
-        "agape_sol_perp": results[12],
-        "agape_avax_perp": results[13],
-        "agape_btc_perp": results[14],
-        "agape_xrp_perp": results[15],
-        "agape_doge_perp": results[16],
-        "agape_shib_perp": results[17],
-        "agape_shib_futures": results[18],
-        "agape_link_futures": results[19],
-        "agape_ltc_futures": results[20],
-        "agape_bch_futures": results[21],
+        "valor": results[5],
+        "agape": results[6],
+        "agape_spot": results[7],
+        "agape_btc": results[8],
+        "agape_xrp": results[9],
+        "agape_eth_perp": results[10],
+        "agape_sol_perp": results[11],
+        "agape_avax_perp": results[12],
+        "agape_btc_perp": results[13],
+        "agape_xrp_perp": results[14],
+        "agape_doge_perp": results[15],
+        "agape_shib_perp": results[16],
+        "agape_shib_futures": results[17],
+        "agape_link_futures": results[18],
+        "agape_ltc_futures": results[19],
+        "agape_bch_futures": results[20],
     }
 
 
@@ -375,7 +367,7 @@ async def dashboard_batch(req: BatchRequest):
     does not affect others.
 
     Sections:
-    - bot_statuses: Status for all 9 bots (FORTRESS, SOLOMON, GIDEON, ANCHOR, SAMSON, JUBILEE, AGAPE, AGAPE_BTC, AGAPE_XRP)
+    - bot_statuses: Status for all 8 bots (FORTRESS, SOLOMON, GIDEON, ANCHOR, SAMSON, AGAPE, AGAPE_BTC, AGAPE_XRP)
     - bot_live_pnl: Live P&L for 5 core bots
     - bot_positions: Open positions for 5 core bots
     - bot_equity_curves: Equity curves for all 16 bots (configurable days)

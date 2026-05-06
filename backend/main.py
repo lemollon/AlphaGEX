@@ -78,7 +78,6 @@ from backend.api.routes import (
     drift_routes,  # Drift Detection - Backtest vs Live performance comparison
     unified_metrics_routes,  # Unified Bot Metrics - Single source of truth for all bot stats
     bot_reports_routes,  # Bot Daily Reports - End-of-day analysis with Claude AI
-    jubilee_routes,  # JUBILEE Box Spread - Synthetic Borrowing for IC Volume Scaling
     tastytrade_routes,  # Tastytrade API - VALOR futures bot integration
     valor_routes,  # VALOR - MES Futures Scalping Bot using GEX signals
     agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
@@ -361,7 +360,6 @@ app.include_router(validation_routes.router)
 app.include_router(drift_routes.router)
 app.include_router(unified_metrics_routes.router)
 app.include_router(bot_reports_routes.router)
-app.include_router(jubilee_routes.router)
 app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
 app.include_router(agape_routes.router)
@@ -385,7 +383,7 @@ app.include_router(dashboard_batch_routes.router)
 app.include_router(reconciliation_routes.router)
 app.include_router(goliath_routes.router)
 app.include_router(perp_exit_optimizer_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto, goliath")
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto, goliath")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
@@ -2315,12 +2313,6 @@ async def startup_event():
             'athena': ('solomon', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
             'pegasus': ('anchor', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
             'icarus': ('gideon', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
-            'prometheus': ('jubilee', [
-                'positions', 'signals', 'capital_deployments', 'rate_analysis',
-                'daily_briefings', 'roll_decisions', 'config', 'logs',
-                'equity_snapshots', 'ic_positions', 'ic_closed_trades',
-                'ic_signals', 'ic_config', 'ic_equity_snapshots',
-            ]),
             'heracles': ('valor', [
                 'positions', 'closed_trades', 'signals', 'equity_snapshots',
                 'config', 'win_tracker', 'logs', 'daily_perf',

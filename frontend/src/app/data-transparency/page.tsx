@@ -536,62 +536,6 @@ export default function DataTransparencyPage() {
 
     return (
       <div className="space-y-6">
-        {/* Jubilee Training History */}
-        {mlData.jubilee_training?.length > 0 && (
-          <div>
-            <h3 className="text-lg font-semibold text-white mb-4">Jubilee Training History</h3>
-            <div className="space-y-3">
-              {mlData.jubilee_training.map((training: any, index: number) => (
-                <div key={index} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-white font-medium">{training.training_id}</span>
-                    <span className="text-gray-400 text-sm">{training.training_date}</span>
-                  </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-500">Accuracy</p>
-                      <p className="text-lg font-bold text-green-400">
-                        {(training.accuracy * 100).toFixed(2)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">F1 Score</p>
-                      <p className="text-lg font-bold text-blue-400">
-                        {(training.f1_score * 100).toFixed(2)}%
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Brier Score</p>
-                      <p className="text-lg font-bold text-purple-400">
-                        {training.brier_score?.toFixed(4)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500">Samples</p>
-                      <p className="text-lg font-bold text-white">
-                        {training.total_samples?.toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                  {training.honest_assessment && (
-                    <div className="mt-3 p-3 bg-gray-900 rounded">
-                      <p className="text-xs text-gray-500 mb-1">Honest Assessment</p>
-                      <p className="text-sm text-gray-300">{training.honest_assessment}</p>
-                    </div>
-                  )}
-                  {training.feature_importance && (
-                    <div className="mt-3">
-                      <p className="text-xs text-gray-500 mb-1">Feature Importance</p>
-                      <pre className="text-xs text-gray-400 overflow-auto max-h-32 bg-gray-900 p-2 rounded">
-                        {JSON.stringify(training.feature_importance, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* Calibration History */}
         {mlData.calibration_history?.length > 0 && (
