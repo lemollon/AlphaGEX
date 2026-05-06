@@ -76,7 +76,15 @@ export default function SandboxKillSwitch() {
     setError(null)
     setShowConfirm(false)
     try {
-      const res = await fetch('/api/sandbox/emergency-close', { method: 'POST' })
+      const res = await fetch('/api/sandbox/emergency-close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'manual',
+          caller: 'SandboxKillSwitch.tsx',
+          reason: 'operator pressed EMERGENCY CLOSE ALL button',
+        }),
+      })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       setResult(data)

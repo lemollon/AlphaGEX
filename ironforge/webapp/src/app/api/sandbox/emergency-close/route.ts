@@ -161,7 +161,15 @@ export async function GET(): Promise<NextResponse> {
  *
  * Also force-closes all open paper positions in the DB and reconciles balances.
  *
- * Body (optional): { "paper_only": true } to skip sandbox API calls and only close DB positions.
+ * Body (optional):
+ *   - paper_only: boolean — skip sandbox API calls, close DB positions only
+ *   - caller: string — who/what fired the switch (UI button id, scheduler job, operator name)
+ *   - reason: string — free-text rationale for the trip
+ *   - source: string — high-level category ("manual", "scheduled_eod", "circuit_breaker", etc.)
+ *
+ * All four are best-effort context for postmortems. The default `source` falls
+ * back to "emergency_kill_switch" with no further detail (the historical
+ * pre-2026-05-06 behavior — opaque to investigators).
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const accounts = getSandboxAccounts()
@@ -170,10 +178,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   let paperOnly = false
+  let bodyCaller = ''
+  let bodyReason = ''
+  let bodySource = ''
   try {
     const body = await req.json()
     paperOnly = !!body?.paper_only
+    bodyCaller = typeof body?.caller === 'string' ? body.caller.slice(0, 200) : ''
+    bodyReason = typeof body?.reason === 'string' ? body.reason.slice(0, 500) : ''
+    bodySource = typeof body?.source === 'string' ? body.source.slice(0, 100) : ''
   } catch { /* no body is fine */ }
+
+  // Capture HTTP-layer context as additional postmortem evidence. None of these
+  // are strongly authenticated, but they help disambiguate "browser button vs
+  // scheduler vs cron" when the body doesn't say.
+  const reqUserAgent = req.headers.get('user-agent') ?? ''
+  const reqForwardedFor = req.headers.get('x-forwarded-for') ?? ''
+  const reqReferer = req.headers.get('referer') ?? ''
+  const triggeredAt = new Date().toISOString()
+  const sourceLabel = bodySource || 'emergency_kill_switch'
 
   const accountResults: AccountResult[] = []
 
@@ -324,12 +347,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
        WHERE dte_mode = '${escapeSql(dte)}'`,
     )
 
-    // Log the emergency action
+    // Log the emergency action with full attribution so postmortems can
+    // identify caller/source without guessing. Pre-2026-05-06 only paper_only
+    // was recorded — Logan/production SPARK-A0393D's 14:28 ET trip had no
+    // attribution at all, costing ~30 min of investigation on 2026-05-06.
     await dbExecute(
       `INSERT INTO ${botTable(bot, 'logs')} (log_time, level, message, details, dte_mode)
        VALUES (NOW(), 'RECOVERY',
-               '${escapeSql(`EMERGENCY KILL SWITCH: ${openPositions.length} positions force-closed`)}',
-               '${escapeSql(JSON.stringify({ positions_closed: openPositions.length, source: 'emergency_kill_switch', paper_only: paperOnly }))}',
+               '${escapeSql(`EMERGENCY KILL SWITCH: ${openPositions.length} positions force-closed (source=${sourceLabel}${bodyCaller ? `, caller=${bodyCaller}` : ''})`)}',
+               '${escapeSql(JSON.stringify({
+                 positions_closed: openPositions.length,
+                 source: sourceLabel,
+                 caller: bodyCaller || null,
+                 reason: bodyReason || null,
+                 paper_only: paperOnly,
+                 triggered_at: triggeredAt,
+                 user_agent: reqUserAgent || null,
+                 forwarded_for: reqForwardedFor || null,
+                 referer: reqReferer || null,
+               }))}',
                '${escapeSql(dte)}')`,
     )
 
