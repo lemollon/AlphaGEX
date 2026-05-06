@@ -357,13 +357,35 @@ class AgapeBchFuturesDatabase:
             cursor.close()
             conn.close()
 
-    def get_closed_trades(self, limit: int = 100) -> List[Dict]:
+    def get_closed_trades(
+        self,
+        limit: int = 100,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        before_close_time: Optional[str] = None,
+        before_position_id: Optional[str] = None,
+    ) -> List[Dict]:
         conn = self._get_conn()
         if not conn:
             return []
         try:
             cursor = conn.cursor()
-            cursor.execute("""
+            where = ["status IN ('closed', 'expired', 'stopped')"]
+            params: list = []
+            if since:
+                where.append("close_time >= %s")
+                params.append(since)
+            if until:
+                where.append("close_time <= %s")
+                params.append(until)
+            if before_close_time:
+                if before_position_id:
+                    where.append("(close_time < %s OR (close_time = %s AND position_id > %s))")
+                    params.extend([before_close_time, before_close_time, before_position_id])
+                else:
+                    where.append("close_time < %s")
+                    params.append(before_close_time)
+            sql = f"""
                 SELECT position_id, side, quantity, entry_price,
                        close_price, realized_pnl, close_reason,
                        open_time, close_time,
@@ -372,9 +394,12 @@ class AgapeBchFuturesDatabase:
                        signal_action, signal_confidence, max_risk_usd,
                        regime_at_entry
                 FROM agape_bch_futures_positions
-                WHERE status IN ('closed', 'expired', 'stopped')
-                ORDER BY close_time DESC LIMIT %s
-            """, (limit,))
+                WHERE {' AND '.join(where)}
+                ORDER BY close_time DESC, position_id ASC
+                LIMIT %s
+            """
+            params.append(limit)
+            cursor.execute(sql, params)
             return [
                 {
                     "position_id": row[0], "side": row[1], "quantity": float(row[2]),

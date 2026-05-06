@@ -31,6 +31,8 @@ import {
 import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
 import SignalBriefCard from '@/components/trader/SignalBriefCard'
 import Navigation from '@/components/Navigation'
+import { TradeHistoryTable } from '@/components/perpetuals/TradeHistoryTable'
+import { MultiBotPerpEquityChart, type ChartBot } from '@/components/perpetuals/MultiBotPerpEquityChart'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 
 // ==============================================================================
@@ -173,6 +175,22 @@ const COIN_META: Record<CoinId, {
 const ACTIVE_COINS = ['ETH', 'BTC', 'XRP', 'SOL', 'DOGE', 'AVAX', 'LINK', 'LTC', 'BCH', 'SHIB'] as const
 type ActiveCoinId = typeof ACTIVE_COINS[number]
 
+// Maps the all-page CoinId to the bot_id slug used by /api/agape-perpetuals/trades.
+const COIN_TO_BOT_ID: Record<ActiveCoinId, string> = {
+  ETH: 'eth', SOL: 'sol', AVAX: 'avax', BTC: 'btc', XRP: 'xrp',
+  DOGE: 'doge', SHIB: 'shib_futures', LINK: 'link_futures',
+  LTC: 'ltc_futures', BCH: 'bch_futures',
+}
+
+// Bot list passed to MultiBotPerpEquityChart. Built once at module scope so
+// the chart's per-bot useSWR hook order is stable across renders.
+const CHART_BOTS: ChartBot[] = ACTIVE_COINS.map(c => ({
+  bot_id: COIN_TO_BOT_ID[c],
+  label: COIN_META[c].instrument,
+  color: COIN_META[c].hexColor,
+  apiPrefix: COIN_META[c].apiPrefix,
+}))
+
 const SECTION_TABS = [
   { id: 'overview' as const,    label: 'Overview',      icon: Layers },
   { id: 'analytics' as const,   label: 'Analytics + AI',icon: Brain },
@@ -233,11 +251,6 @@ function usePerpEquityCurve(coin: CoinId, days: number = 30) {
 function usePerpIntradayEquity(coin: CoinId) {
   const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
   return useSWR(prefix ? `${prefix}/equity-curve/intraday` : null, fetcher, { refreshInterval: 15_000 })
-}
-
-function usePerpClosedTrades(coin: CoinId, limit: number = 50) {
-  const prefix = coin !== 'ALL' ? COIN_META[coin].apiPrefix : null
-  return useSWR(prefix ? `${prefix}/closed-trades?limit=${limit}` : null, fetcher, { refreshInterval: 60_000 })
 }
 
 function usePerpScanActivity(coin: CoinId, limit: number = 30) {
@@ -567,6 +580,9 @@ function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any>
         ))}
       </div>
 
+      {/* Normalized multi-bot performance comparison */}
+      <MultiBotPerpEquityChart bots={CHART_BOTS} defaultMode="indexed" defaultWindow="30d" />
+
       {/* Recent activity across all coins */}
       <AllCoinsRecentTrades />
     </div>
@@ -574,108 +590,14 @@ function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any>
 }
 
 function AllCoinsRecentTrades() {
-  const { data: ethClosed } = useSWR('/api/agape-eth-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: solClosed } = useSWR('/api/agape-sol-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: avaxClosed } = useSWR('/api/agape-avax-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: btcClosed } = useSWR('/api/agape-btc-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: xrpClosed } = useSWR('/api/agape-xrp-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: dogeClosed } = useSWR('/api/agape-doge-perp/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: shibClosed } = useSWR('/api/agape-shib-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: linkClosed } = useSWR('/api/agape-link-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: ltcClosed } = useSWR('/api/agape-ltc-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-  const { data: bchClosed } = useSWR('/api/agape-bch-futures/closed-trades?limit=10', fetcher, { refreshInterval: 60_000 })
-
-  const allTrades = useMemo(() => {
-    const tagged = (data: any, coin: CoinId) =>
-      (data?.data || []).map((t: any) => ({ ...t, _coin: coin }))
-    const combined = [
-      ...tagged(ethClosed, 'ETH'),
-      ...tagged(solClosed, 'SOL'),
-      ...tagged(avaxClosed, 'AVAX'),
-      ...tagged(btcClosed, 'BTC'),
-      ...tagged(xrpClosed, 'XRP'),
-      ...tagged(dogeClosed, 'DOGE'),
-      ...tagged(shibClosed, 'SHIB'),
-      ...tagged(linkClosed, 'LINK'),
-      ...tagged(ltcClosed, 'LTC'),
-      ...tagged(bchClosed, 'BCH'),
-    ]
-    combined.sort((a, b) => {
-      const ta = a.close_time ? new Date(a.close_time).getTime() : 0
-      const tb = b.close_time ? new Date(b.close_time).getTime() : 0
-      return tb - ta
-    })
-    return combined.slice(0, 25)
-  }, [ethClosed, solClosed, avaxClosed, btcClosed, xrpClosed, dogeClosed, shibClosed, linkClosed, ltcClosed, bchClosed])
-
-  if (allTrades.length === 0) return null
-
+  const allBotIds = ACTIVE_COINS.map(c => COIN_TO_BOT_ID[c])
   return (
-    <SectionCard title="Recent Closed Trades (All Coins)" icon={<History className="w-5 h-5 text-gray-400" />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800">
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Coin</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Side</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60">
-            {allTrades.map((t: any, i: number) => {
-              const meta = COIN_META[t._coin as CoinId]
-              const dec = meta.priceDecimals
-              return (
-                <tr key={i} className="hover:bg-gray-800/30">
-                  <td className="px-3 py-2 text-gray-500 font-mono text-xs">
-                    {t.close_time ? new Date(t.close_time).toLocaleString() : '---'}
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`font-bold text-xs ${meta.textActive}`}>{meta.symbol}</span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`text-xs font-bold ${t.side === 'long' ? 'text-green-400' : 'text-red-400'}`}>
-                      {t.side?.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-right text-white font-mono text-xs">
-                    {t.quantity ?? t.contracts ?? '---'} {meta.quantityLabel}-PERP
-                  </td>
-                  <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.entry_price, dec)}</td>
-                  <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.close_price, dec)}</td>
-                  <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
-                    {t.max_risk_usd != null ? fmtUsd(t.max_risk_usd) : '---'}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className={`font-mono font-semibold text-xs ${pnlColor(t.realized_pnl ?? 0)}`}>
-                      {fmtUsd(t.realized_pnl)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      t.close_reason?.includes('SAR') ? 'bg-violet-900/30 text-violet-300' :
-                      t.close_reason?.includes('TRAIL') ? 'bg-cyan-900/30 text-cyan-300' :
-                      t.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
-                      t.close_reason?.includes('STOP') ? 'bg-red-900/30 text-red-300' :
-                      t.close_reason?.includes('LIQUIDAT') ? 'bg-red-900/30 text-red-300' :
-                      'text-gray-400'
-                    }`}>
-                      {t.close_reason || '---'}
-                    </span>
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
+    <TradeHistoryTable
+      bots={allBotIds}
+      showBotColumn
+      defaultRange="30d"
+      title="Recent Trades — All Bots"
+    />
   )
 }
 
@@ -1483,70 +1405,16 @@ function PerformanceTab({ coin }: { coin: CoinId }) {
 }
 
 function ClosedTradesTable({ coin }: { coin: CoinId }) {
-  const { data: closedData } = usePerpClosedTrades(coin, 50)
-  const trades = closedData?.data || []
+  if (coin === 'ALL') return null
   const meta = COIN_META[coin]
-
-  if (trades.length === 0) return null
-
+  const botId = COIN_TO_BOT_ID[coin as ActiveCoinId]
   return (
-    <SectionCard title={`Closed Trades (${trades.length})`} icon={<History className={`w-5 h-5 ${meta.textActive}`} />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800">
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Closed</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Side</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60">
-            {trades.map((trade: any, i: number) => (
-              <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-3 py-2 text-gray-500 font-mono text-xs">
-                  {trade.close_time ? new Date(trade.close_time).toLocaleString() : '---'}
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs font-bold ${trade.side === 'long' ? 'text-green-400' : 'text-red-400'}`}>
-                    {trade.side?.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right text-white font-mono text-xs">
-                  {trade.quantity ?? trade.contracts ?? '---'} {meta.quantityLabel}-PERP
-                </td>
-                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.entry_price, meta.priceDecimals)}</td>
-                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.close_price, meta.priceDecimals)}</td>
-                <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
-                  {trade.max_risk_usd != null ? fmtUsd(trade.max_risk_usd) : '---'}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <span className={`font-mono font-semibold text-xs ${pnlColor(trade.realized_pnl ?? 0)}`}>
-                    {fmtUsd(trade.realized_pnl)}
-                  </span>
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    trade.close_reason?.includes('SAR') ? 'bg-violet-900/30 text-violet-300' :
-                    trade.close_reason?.includes('TRAIL') ? 'bg-cyan-900/30 text-cyan-300' :
-                    trade.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
-                    trade.close_reason?.includes('STOP') || trade.close_reason?.includes('EMERGENCY') ? 'bg-red-900/30 text-red-300' :
-                    trade.close_reason?.includes('LIQUIDAT') ? 'bg-red-900/30 text-red-300' :
-                    'text-gray-400'
-                  }`}>
-                    {trade.close_reason || '---'}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
+    <TradeHistoryTable
+      bots={[botId]}
+      showBotColumn={false}
+      defaultRange="30d"
+      title={`${meta.symbol} Closed Trades`}
+    />
   )
 }
 
@@ -1753,80 +1621,16 @@ function ActivityTab({ coin }: { coin: CoinId }) {
 // ==============================================================================
 
 function HistoryTab({ coin }: { coin: CoinId }) {
-  const { data: closedData, isLoading } = usePerpClosedTrades(coin, 50)
-  const trades = closedData?.data || []
+  if (coin === 'ALL') return null
   const meta = COIN_META[coin]
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-16">
-        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
-      </div>
-    )
-  }
-
-  if (trades.length === 0) {
-    return <EmptyBox message={`No closed trades for ${meta.symbol} yet.`} />
-  }
-
+  const botId = COIN_TO_BOT_ID[coin as ActiveCoinId]
   return (
-    <SectionCard title={`Trade History (${trades.length})`} icon={<History className={`w-5 h-5 ${meta.textActive}`} />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-800">
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Closed</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Side</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">Quantity</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">At Risk</th>
-              <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800/60">
-            {trades.map((trade: any, i: number) => (
-              <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-3 py-2 text-gray-500 font-mono text-xs">
-                  {trade.close_time ? new Date(trade.close_time).toLocaleString() : '---'}
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs font-bold ${trade.side === 'long' ? 'text-green-400' : 'text-red-400'}`}>
-                    {trade.side?.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right text-white font-mono text-xs">
-                  {trade.quantity ?? trade.contracts ?? '---'} {meta.quantityLabel}-PERP
-                </td>
-                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.entry_price, meta.priceDecimals)}</td>
-                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.close_price, meta.priceDecimals)}</td>
-                <td className="px-3 py-2 text-right text-orange-400 font-mono text-xs">
-                  {trade.max_risk_usd != null ? fmtUsd(trade.max_risk_usd) : '---'}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <span className={`font-mono font-semibold text-xs ${pnlColor(trade.realized_pnl ?? 0)}`}>
-                    {fmtUsd(trade.realized_pnl)}
-                  </span>
-                </td>
-                <td className="px-3 py-2">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    trade.close_reason?.includes('SAR') ? 'bg-violet-900/30 text-violet-300' :
-                    trade.close_reason?.includes('TRAIL') ? 'bg-cyan-900/30 text-cyan-300' :
-                    trade.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
-                    trade.close_reason?.includes('STOP') || trade.close_reason?.includes('EMERGENCY') ? 'bg-red-900/30 text-red-300' :
-                    trade.close_reason?.includes('LIQUIDAT') ? 'bg-red-900/30 text-red-300' :
-                    'text-gray-400'
-                  }`}>
-                    {trade.close_reason || '---'}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
+    <TradeHistoryTable
+      bots={[botId]}
+      showBotColumn={false}
+      defaultRange="30d"
+      title={`${meta.symbol} Trade History`}
+    />
   )
 }
 

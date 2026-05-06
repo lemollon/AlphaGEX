@@ -25,6 +25,7 @@ import {
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import PerpMarketCharts from '@/components/charts/PerpMarketCharts'
+import { TradeHistoryTable } from '@/components/perpetuals/TradeHistoryTable'
 import SignalBriefCard from '@/components/trader/SignalBriefCard'
 import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -41,7 +42,6 @@ import {
   useAGAPEBtcPerpPerformance,
   useAGAPEBtcPerpPositions,
   useAGAPEBtcPerpScanActivity,
-  useAGAPEBtcPerpClosedTrades,
   useAGAPEBtcPerpSnapshot,
   useAGAPEBtcPerpGexMapping,
   useAGAPEBtcPerpChartData,
@@ -91,7 +91,6 @@ export default function AgapeBtcPerpPage() {
   const { data: positionsData, isLoading: posLoading } = useAGAPEBtcPerpPositions()
   const { data: snapshotData, isLoading: snapLoading } = useAGAPEBtcPerpSnapshot({ enabled: activeTab === 'snapshot' })
   const { data: scansData } = useAGAPEBtcPerpScanActivity(30, { enabled: activeTab === 'activity' })
-  const { data: closedData } = useAGAPEBtcPerpClosedTrades(50, { enabled: activeTab === 'history' })
   const { data: mappingData } = useAGAPEBtcPerpGexMapping({ enabled: activeTab === 'config' })
   const { data: chartData, isLoading: chartLoading } = useAGAPEBtcPerpChartData({ enabled: activeTab === 'charts' })
   const { data: briefData, isLoading: briefLoading } = useAGAPEBtcPerpBrief({ enabled: activeTab === 'charts' })
@@ -296,7 +295,9 @@ export default function AgapeBtcPerpPage() {
               </div>
             )}
             {activeTab === 'activity' && <ActivityTab data={scansData?.data} brand={brand} />}
-            {activeTab === 'history' && <HistoryTab data={closedData?.data} brand={brand} />}
+            {activeTab === 'history' && (
+              <TradeHistoryTable bots={['btc']} showBotColumn={false} defaultRange="30d" title="BTC-PERP Trade History" />
+            )}
             {activeTab === 'config' && <ConfigTab status={status} mappingData={mappingData?.data} brand={brand} />}
           </div>
         </div>
@@ -855,79 +856,6 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AG
                     'bg-gray-800 text-gray-500'
                   }`}>
                     {scan.outcome}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </BotCard>
-  )
-}
-
-// ==============================================================================
-// HISTORY TAB
-// ==============================================================================
-
-function HistoryTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AGAPE_BTC_PERP }) {
-  const trades = data || []
-
-  if (trades.length === 0) {
-    return (
-      <EmptyState
-        icon={<History className="w-12 h-12" />}
-        title="No closed trades yet"
-        description="Completed trades will appear here"
-      />
-    )
-  }
-
-  return (
-    <BotCard title={`Trade History (${trades.length})`} botName="AGAPE_BTC_PERP" icon={<History className="w-5 h-5" />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-800/50">
-            <tr>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Closed</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Side</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Entry</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Exit</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">P&L</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {trades.map((trade: any, i: number) => (
-              <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-4 py-2 text-gray-400 font-mono text-xs">
-                  {trade.close_time ? new Date(trade.close_time).toLocaleString() : '---'}
-                </td>
-                <td className="px-4 py-2">
-                  <span className={`text-xs font-bold ${
-                    trade.side === 'long' ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {trade.side?.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-white font-mono">${trade.entry_price?.toFixed(2)}</td>
-                <td className="px-4 py-2 text-white font-mono">${trade.close_price?.toFixed(2) || '---'}</td>
-                <td className="px-4 py-2">
-                  <span className={`font-mono font-semibold ${
-                    (trade.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {(trade.realized_pnl || 0) >= 0 ? '+' : ''}${trade.realized_pnl?.toFixed(2) || '0.00'}
-                  </span>
-                </td>
-                <td className="px-4 py-2">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    trade.close_reason?.includes('SAR') ? 'bg-violet-900/30 text-violet-300' :
-                    trade.close_reason?.includes('TRAIL') ? `${brand.badgeBg} ${brand.badgeText}` :
-                    trade.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
-                    trade.close_reason?.includes('EMERGENCY') ? 'bg-red-900/30 text-red-300' :
-                    'text-gray-400'
-                  }`}>
-                    {trade.close_reason}
                   </span>
                 </td>
               </tr>
