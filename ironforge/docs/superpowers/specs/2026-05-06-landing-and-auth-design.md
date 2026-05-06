@@ -161,19 +161,45 @@ These are **shared** tables (no `flame_/spark_/inferno_` prefix). They live alon
 
 Plus a slow gold sweep across the primary CTA every 4 seconds.
 
-**Animation philosophy:** Everything is slow (4–14s cycles) and soft (blurred, eased). Nothing is sharp or fast. The page should read as atmosphere, not as motion.
+**Animation philosophy:** Ambient layers are slow (4–14s cycles) and soft (blurred, eased). Interactive layers (see §5b) are immediate but proportionate. The page should read as atmosphere when idle, alive when engaged.
 
 **Performance budget:**
-- All animations are CSS transforms/opacity (GPU-accelerated)
-- No JavaScript animation loop
+- All ambient animations are CSS transforms/opacity (GPU-accelerated)
 - Embers + sparks are static DOM nodes with staggered animation delays
 - Hero photograph is `next/image` with `priority` and AVIF/WebP
+- Interactive handlers throttle (`mousemove` ember spawn capped at ~14/sec) and clean up nodes (`setTimeout` removal so the DOM doesn't grow)
+- All interactivity is `prefers-reduced-motion` aware: the cursor ember trail, parallax tilt, and click-strike sparks all collapse to no-ops when reduced motion is set; the magnetic CTA falls back to a static hover-glow
+
+## 5b. Interactive Layer
+
+Interactivity is part of the locked visual system, not an optional polish pass. The interactive features all live on the hero (and propagate to every Hero variant) and are wired by a single `useInteractiveHero()` hook.
+
+| Interaction | Trigger | Behaviour | Implementation |
+|-------------|---------|-----------|----------------|
+| **Cursor ember trail** | `mousemove` over hero | Small embers (`4px`, glowing amber) spawn at the cursor and drift up + fade over ~1.4s. Throttled to ~14/sec. | One DOM node per spawn, removed after animation ends. |
+| **Cursor warm glow** | `mousemove` over hero | A soft `320×320px` warm radial glow (`blur(24px)`, `mix-blend-mode: screen`) follows the cursor. Fades in on enter, out on leave. | Single persistent element, position via CSS vars. No reflow. |
+| **Click-to-strike** | `click` on hero (not on a CTA / nav / logo) | Spawns a shockwave ring (`scale 0 → 8`, opacity `1 → 0`) plus 12 sparks bursting radially from the click point with `±0.4rad` angle jitter. ~1s. | Per-click DOM allocation, all removed after `setTimeout`. |
+| **Parallax photo tilt** | `mousemove` over hero | The hero photograph translates ±12px / ±8px on its `transform` based on cursor position. Eased via `cubic-bezier(0.16, 1, 0.3, 1)` so it feels weighted, not jittery. | CSS transform on `<img>`. |
+| **Magnetic primary CTA** | `mousemove` within 120px of CTA centre | The "Join the Forge" button gently lerps toward the cursor (max `25%` of the offset, plus a `1.04×` scale boost at full pull). Returns to rest on `mouseleave`. | CSS transform from JS-computed deltas. |
+| **CTA hover glow intensify** | `mouseenter` on primary CTA | Box-shadow doubles in radius and intensity. Pure CSS. | `:hover` state. |
+| **Logo mark flip** | `mouseenter` on `<Logo>` | Diamond mark spins `180°` + `1.15×` scale. 600ms eased. Pure CSS. | `:hover` state on parent. |
+| **Nav link ignite** | `mouseenter` on nav links | Color shifts to amber + adds an amber text-shadow. 200ms. Pure CSS. | `:hover` state. |
+| **Bot card ignite** | `mouseenter` on bot cards (Section 7.2) | Card lifts `−4px`, border color shifts to bot-tint, edge gets a faint embered glow. Pure CSS + a small ember field per card that fades in on hover. | `:hover` state + opacity-toggled child layer. |
+| **Scroll reveal** | `IntersectionObserver` per section | Sections 7.2–7.7 fade in with a 12px upward translate as they cross 30% viewport. Stagger children by `60ms`. | Framer Motion `whileInView` with `viewport={{ once: true, margin: '-30%' }}`. |
+| **Scroll-driven forge intensity** | `scroll` over the hero | As the user scrolls past the hero, the forge-breath pulse subtly amplifies (one-shot, capped). Signals "you've seen the hero, the forge is hotter now". | Framer Motion `useScroll` + `useTransform`. |
+| **Live stats count-up** | section enters viewport | The Live Stats Strip (§7.4) numbers count up from 0 to actual value over 1.4s easing. Once per visit. | Single `requestAnimationFrame` loop per stat. |
+
+All effects share these constraints: GPU-friendly properties only (`transform`, `opacity`), throttled where touching the DOM, removed cleanly, and gated by `prefers-reduced-motion`.
+
+The rest of the page (sections 7.2 onward) inherits the same interactive system at a smaller scale — bot card hover effects mirror the hero's hover behavior; the final CTA section repeats the strike effect.
 
 ---
 
-## 6. Hero Variations (USER TO PICK 1 OF 5)
+## 6. Hero Variations (USER TO PICK 1 OF 10)
 
-All five share the locked visual system above. They differ in **photograph, eyebrow, headline, tagline, CTA copy, and footer scrim**.
+All ten share the locked visual system above (§5) and the locked interactive system (§5b). They differ in **photograph, eyebrow, headline, tagline, CTA copy, and footer scrim**. Variants 6–10 use photos with no human figure (pure forge / molten metal / embers / sparks).
+
+**Variants with people in the photo:**
 
 | # | Personality | Photo (Unsplash) | Headline | Tone |
 |---|-------------|------------------|----------|------|
@@ -183,7 +209,17 @@ All five share the locked visual system above. They differ in **photograph, eyeb
 | 4 | **The Mythic** | photo-1557951959-e3e30ee937e5 | *The forge of markets* | Epic, dramatic |
 | 5 | **The Minimal** | photo-1716469801933-1d7db4c8aebb | *Sharpen the edge.* | Stripped down, Apple-grade |
 
-**Decision required:** User picks 1 — that becomes the locked hero copy. The other four are deleted from this spec and the implementation plan.
+**No-human variants:**
+
+| # | Personality | Photo (Unsplash) | Headline | Tone |
+|---|-------------|------------------|----------|------|
+| 6 | **The Crucible** | photo-1745356800818-a00f613aaab5 | *Tempered by the market* | Process metaphor, no figure |
+| 7 | **Pure Ember** | photo-1687190917342-9fe4015e7729 | *Where signal becomes fire* | Abstract, atmospheric |
+| 8 | **Strike. Refine. Repeat.** | photo-1641824997957-1820d326c166 | *Strike. Refine. Repeat.* | Process pitch, mirrors 1-min scan loop |
+| 9 | **Liquid Heat** | photo-1754342536501-93ba6323efd3 | *Liquid edge. Solid execution.* | Two-state metaphor (data → trades) |
+| 10 | **Crimson Forge** | photo-1709327999896-6979d5fd52e4 | *Built in fire.* | Most stripped down, premium-watch energy |
+
+**Decision required:** User picks 1 of 10 — that becomes the locked hero copy. The other nine are deleted from this spec and the implementation plan.
 
 ---
 
@@ -255,10 +291,13 @@ ironforge/webapp/src/
 │   │   ├── SparkBurst.tsx               (NEW)
 │   │   ├── BotCards.tsx                 (NEW)
 │   │   ├── HowItWorks.tsx               (NEW)
-│   │   ├── LiveStatsStrip.tsx           (NEW)
+│   │   ├── LiveStatsStrip.tsx           (NEW — count-up via requestAnimationFrame)
 │   │   ├── ArchitectureSection.tsx      (NEW)
 │   │   ├── FinalCTA.tsx                 (NEW)
 │   │   └── Footer.tsx                   (NEW)
+│   └── hooks/
+│       ├── useInteractiveHero.ts        (NEW — wires §5b: cursor trail, click-strike, parallax, magnetic CTA)
+│       └── useReducedMotion.ts          (NEW — wraps `prefers-reduced-motion` for §5b gating)
 │   ├── auth/
 │   │   ├── AuthShell.tsx                (NEW — shared sign-in/up/reset shell)
 │   │   ├── GoogleButton.tsx             (NEW)
