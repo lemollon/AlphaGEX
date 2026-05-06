@@ -148,19 +148,20 @@ These are **shared** tables (no `flame_/spark_/inferno_` prefix). They live alon
 - Text: `#fafafa` (white), `#fde68a` (warm warm), `#a1a1aa` (muted), `#71717a` (dim)
 - Hot iron gradient: `linear-gradient(180deg, #fef3c7 0%, #fbbf24 50%, #b45309 100%)`
 
-**Hero atmospheric stack (7 layers, in z-order):**
-1. **Background photograph** — full-bleed Unsplash forge image with cinematic dark gradient overlay (top scrim, bottom scrim) so text always sits on dark. Photo has a slow 6s `brightness/saturate` pulse so the fire feels alive, not static.
-2. **Color grading wash** — warm radial overlays (`mix-blend-mode: overlay`, opacity 0.6) to make the fire pop
-3. **Live SVG flame layer** — 7 CSS-shaped flame "tongues" (gradient-filled, blurred, asymmetric border-radius) flickering at the bottom edge with `transform: scale + translateY + skewX` keyframes on staggered durations (0.55s–0.85s). Each flame has its own `--dur` CSS variable. Two of the larger flames have an inner brighter "tip" element with its own faster flicker. `mix-blend-mode: screen` so they layer over the photo realistically. The hero must read as *real fire dancing*, not just particles.
-4. **Heat distortion** — SVG `feTurbulence` + `feDisplacementMap` filter applied to the bottom 380px region. `baseFrequency` is animated (0.010→0.018→0.010 over 6s) producing real heat-haze ripple over the embers and lower photo. Filter is GPU-accelerated; falls back to CSS-only shimmer in browsers that don't support SVG filters in this context.
-5. **Ember field, three depths:**
+**Hero atmospheric stack (5 layers, in z-order):**
+
+The fire is **the photo's own fire**, not a fake layer added on top. Adding fire-shaped CSS overlays to a photo that already shows fire reads as cheap and doubled-up (an early pitch attempted SVG flame "tongues" and was scrapped on user feedback). The photo is the fire. Everything else is subtle atmosphere.
+
+1. **Background photograph** — full-bleed Unsplash forge image (variant from §6) with cinematic dark gradient overlay so text always sits on dark. Photo has a slow 6s `brightness/saturate/contrast` pulse so the fire in the photo feels like it's breathing instead of frozen. No fake flame layer added.
+2. **Color grading wash** — warm radial overlays (`mix-blend-mode: overlay`, opacity 0.5) to make the photo's fire pop more.
+3. **Heat shimmer** — vertical waver overlay at bottom 220px, pure CSS `repeating-linear-gradient` of faint warm bands with `filter: blur(2px)` and a 4s `translateY` cycle. Suggests heat distortion without a heavy SVG filter.
+4. **Ember field, three depths:**
    - Background embers (12 instances, `2px`, slow 14s rise, faint)
    - Mid embers (11 instances, `3px`, 9s rise, glowing amber-orange)
    - Foreground bokeh embers (5 instances, `9px` blurred, 7s rise, large soft red-orange)
-6. **Spark stream** — 8 continuous sparks emanating from a single anvil-point (mid-hero), varied trajectories, 3.5s ease-out. Higher density than v1 so the page reads as actively forging.
-7. **Cursor warm glow** — 380px radial glow with `mix-blend-mode: screen` follows the cursor, fades in on `hover`, out on `mouseleave`.
+5. **Spark stream** — 8 continuous sparks emanating from a single anvil-point (mid-hero), varied trajectories, 3.5s ease-out.
 
-Plus a slow gold sweep across the primary CTA every 4 seconds, and a continuous sweep across the in-hero sign-up submit button.
+Plus the cursor warm glow (380px radial, `mix-blend-mode: screen`, fades in/out on hover) and a slow gold sweep across the primary CTA every 4s.
 
 **Animation philosophy:** Ambient layers are slow (4–14s cycles) and soft (blurred, eased). Interactive layers (see §5b) are immediate but proportionate. The page should read as atmosphere when idle, alive when engaged.
 
