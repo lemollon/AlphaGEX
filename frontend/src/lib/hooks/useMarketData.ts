@@ -2942,16 +2942,27 @@ export function useAGAPEBchFuturesChartData(options?: LazySWRConfiguration) {
 }
 
 // ===========================================================================
-// AGAPE PERP CLAUDE SIGNAL BRIEF HOOKS — 5-min refresh matches backend cache
+// AGAPE PERP CLAUDE SIGNAL BRIEF HOOKS
+// Briefs are generated server-side once per day at 3:30 PM CT and persisted.
+// The /brief endpoints read from the DB; they never call Claude on demand.
+// So the frontend only needs to poll occasionally (1 hour) and must NOT
+// revalidate on focus/reconnect/stale — those triggers used to fan out into
+// dozens of Claude API calls when a user tabbed back into the dashboard.
 // ===========================================================================
-const PERP_BRIEF_REFRESH = 5 * 60 * 1000
+const PERP_BRIEF_SWR_OPTS = {
+  refreshInterval: 60 * 60 * 1000,
+  revalidateOnFocus: false,
+  revalidateIfStale: false,
+  revalidateOnReconnect: false,
+  dedupingInterval: 60 * 60 * 1000,
+}
 
 export function useAGAPEEthPerpBrief(options?: LazySWRConfiguration) {
   const { enabled, ...swrOpts } = options || {}
   return useSWR(
     enabled === false ? null : 'agape-eth-perp-brief',
     fetchers.agapeEthPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPESolPerpBrief(options?: LazySWRConfiguration) {
@@ -2959,7 +2970,7 @@ export function useAGAPESolPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-sol-perp-brief',
     fetchers.agapeSolPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEAvaxPerpBrief(options?: LazySWRConfiguration) {
@@ -2967,7 +2978,7 @@ export function useAGAPEAvaxPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-avax-perp-brief',
     fetchers.agapeAvaxPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEBtcPerpBrief(options?: LazySWRConfiguration) {
@@ -2975,7 +2986,7 @@ export function useAGAPEBtcPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-btc-perp-brief',
     fetchers.agapeBtcPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEXrpPerpBrief(options?: LazySWRConfiguration) {
@@ -2983,7 +2994,7 @@ export function useAGAPEXrpPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-xrp-perp-brief',
     fetchers.agapeXrpPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEDogePerpBrief(options?: LazySWRConfiguration) {
@@ -2991,7 +3002,7 @@ export function useAGAPEDogePerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-doge-perp-brief',
     fetchers.agapeDogePerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEShibPerpBrief(options?: LazySWRConfiguration) {
@@ -2999,7 +3010,7 @@ export function useAGAPEShibPerpBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-perp-brief',
     fetchers.agapeShibPerpBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEShibFuturesBrief(options?: LazySWRConfiguration) {
@@ -3007,7 +3018,7 @@ export function useAGAPEShibFuturesBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-shib-futures-brief',
     fetchers.agapeShibFuturesBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPELinkFuturesBrief(options?: LazySWRConfiguration) {
@@ -3015,7 +3026,7 @@ export function useAGAPELinkFuturesBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-link-futures-brief',
     fetchers.agapeLinkFuturesBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPELtcFuturesBrief(options?: LazySWRConfiguration) {
@@ -3023,7 +3034,7 @@ export function useAGAPELtcFuturesBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-ltc-futures-brief',
     fetchers.agapeLtcFuturesBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 export function useAGAPEBchFuturesBrief(options?: LazySWRConfiguration) {
@@ -3031,7 +3042,7 @@ export function useAGAPEBchFuturesBrief(options?: LazySWRConfiguration) {
   return useSWR(
     enabled === false ? null : 'agape-bch-futures-brief',
     fetchers.agapeBchFuturesBrief,
-    { ...swrConfig, refreshInterval: PERP_BRIEF_REFRESH, ...swrOpts }
+    { ...swrConfig, ...PERP_BRIEF_SWR_OPTS, ...swrOpts }
   )
 }
 

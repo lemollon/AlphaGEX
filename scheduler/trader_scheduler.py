@@ -7699,6 +7699,30 @@ class AutonomousTraderScheduler:
         else:
             logger.info(f"✅ Active bots: {', '.join(active_bots)}")
 
+        # AGAPE perp Claude signal briefs — generated once per day after
+        # equity close (3:30 PM CT, Mon-Fri) by ai/perp_brief_daily_runner.
+        # Briefs persist in agape_perp_signal_briefs and are read by every
+        # /api/agape-*/brief route, so dashboards no longer trigger Claude
+        # calls on each SWR refresh.
+        try:
+            from ai.perp_brief_daily_runner import run_daily_briefs
+            self.scheduler.add_job(
+                run_daily_briefs,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=30,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_perp_briefs_daily',
+                name='AGAPE Perp Signal Briefs - Daily (3:30 PM CT)',
+                replace_existing=True,
+                max_instances=1,
+            )
+            logger.info("✅ AGAPE perp daily-briefs job scheduled (3:30 PM CT, Mon-Fri)")
+        except Exception as exc:
+            logger.warning(f"AGAPE perp daily-briefs hook failed: {exc!r}")
+
         # GOLIATH paper-trading jobs (Q4 2026-05-01: co-host on alphagex-trader).
         # Two jobs: Monday 10:30 ET entry cycle + 15-min management cycle.
         # All paper-only; no real Tradier execution. Wired with the

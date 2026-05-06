@@ -31,10 +31,15 @@ logger = logging.getLogger(__name__)
 _BRIEF_MODEL = os.getenv("PERP_BRIEF_MODEL", "claude-sonnet-4-6")
 _BRIEF_MAX_TOKENS = 400
 
-# 5-minute cache per ticker, keyed by ticker + minute-bucket of fetched_at
+# In-memory cache per ticker. Briefs are now generated on a daily schedule
+# (3:30 PM CT, see ai/perp_brief_daily_runner.py) and persisted to
+# `agape_perp_signal_briefs`; routes read from that table. This in-process
+# cache only protects the legacy on-demand call path against runaway loops
+# — the 24h TTL means even if a caller bypasses the DB read, we won't fire
+# more than once per ticker per day.
 _CACHE: Dict[str, Dict] = {}
 _CACHE_TIME: Dict[str, float] = {}
-_CACHE_TTL = 300
+_CACHE_TTL = 86400
 
 _SYSTEM_PROMPT = """You are an expert crypto perpetual futures analyst writing a short signal brief for a trading bot's dashboard. Your audience is the bot operator who wants plain-English context for what the bot is seeing right now.
 

@@ -993,61 +993,19 @@ async def get_chart_data():
 
 
 # ------------------------------------------------------------------
-# Claude-generated plain-English Signal Brief.
-# 5-minute server cache; system prompt is prompt-cached across calls.
+# Daily signal brief (read-only). Briefs are generated once per day at
+# 3:30 PM CT by ai/perp_brief_daily_runner.py and persisted to
+# agape_perp_signal_briefs. This route never calls Claude.
 # ------------------------------------------------------------------
 @router.get("/brief")
 async def get_signal_brief():
-    """Return Claude-generated brief explaining what the bot sees for SHIB.
-
-    Reads the current snapshot, asks Claude for a 3-4 sentence
-    plain-English read on funding/L/S/OI/GEX positioning. Falls back
-    silently when Anthropic key isn't set or call fails - frontend
-    just shows the raw snapshot in that case.
-    """
-    if not CRYPTO_PROVIDER_AVAILABLE:
-        return {"success": False, "data_unavailable": True, "reason": "no provider"}
+    """Return today's stored Claude-generated brief for SHIB."""
     try:
-        from ai.perp_signal_brief import get_signal_brief as _brief
-        # Reuse the snapshot endpoint shape exactly so the brief sees the
-        # same fields the dashboard sees.
-        provider = get_crypto_data_provider()
-        snap = provider.get_snapshot("SHIB")
-        if not snap:
-            return {"success": False, "reason": "snapshot unavailable"}
-        snap_dict = {
-            "symbol": snap.symbol,
-            "spot_price": snap.spot_price,
-            "funding": {
-                "rate": snap.funding_rate.rate if snap.funding_rate else None,
-                "regime": snap.funding_regime,
-                "annualized": snap.funding_rate.annualized_rate if snap.funding_rate else None,
-            },
-            "long_short": {
-                "ratio": snap.ls_ratio.ratio if snap.ls_ratio else None,
-                "long_pct": snap.ls_ratio.long_pct if snap.ls_ratio else None,
-                "short_pct": snap.ls_ratio.short_pct if snap.ls_ratio else None,
-                "bias": snap.ls_ratio.bias if snap.ls_ratio else None,
-            },
-            "open_interest": {
-                "total_usd": snap.oi_snapshot.total_usd if snap.oi_snapshot else None,
-            },
-            "crypto_gex": {
-                "regime": snap.crypto_gex.gamma_regime if snap.crypto_gex else None,
-                "net_gex": snap.crypto_gex.net_gex if snap.crypto_gex else None,
-                "flip_point": snap.crypto_gex.flip_point if snap.crypto_gex else None,
-            },
-            "signals": {
-                "combined_signal": snap.combined_signal,
-                "combined_confidence": snap.combined_confidence,
-                "directional_bias": snap.directional_bias,
-                "volatility_regime": snap.volatility_regime,
-            },
-        }
-        brief = _brief(snap_dict)
-        if brief is None:
-            return {"success": False, "reason": "Claude unavailable; check ANTHROPIC_API_KEY"}
-        return {"success": True, "data": brief, "fetched_at": _format_ct()}
+        from ai.perp_brief_storage import read_brief
+        payload = read_brief("SHIB")
+        if not payload:
+            return {"success": False, "reason": "no brief generated yet — runs daily at 3:30 PM CT"}
+        return {"success": True, "data": payload, "fetched_at": _format_ct()}
     except Exception as e:
         logger.error(f"AGAPE-SHIB-PERP brief error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
