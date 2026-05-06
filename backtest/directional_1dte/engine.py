@@ -99,12 +99,30 @@ def run_with_loaders(config: BotConfig, start: dt.date, end: dt.date, loaders) -
         chain_t = loaders.load_chain(t_day, ticker=config.ticker)
         vix_t = loaders.load_vix(t_day)
         walls_t = loaders.load_gex_walls(t_day, ticker=config.ticker)
-        spot_t = walls_t["spot"] if walls_t else None
 
-        if spot_t is None or chain_t.empty:
-            result.skips.append(Skip(config.name, t_day, "NO_DATA",
-                                     "missing chain or walls"))
+        if chain_t.empty:
+            result.skips.append(Skip(config.name, t_day, "NO_DATA", "missing chain"))
             continue
+
+        # Spot must come from the chain itself (gex_structure_daily.spot_close is
+        # systematically wrong by ~$13 — appears to be a stale or SPX-derived copy).
+        # Walls remain from gex_structure_daily but spot for strike selection
+        # and wall-distance must match the chain pricing.
+        chain_underlying = chain_t["underlying_price"].dropna()
+        if chain_underlying.empty:
+            result.skips.append(Skip(config.name, t_day, "NO_DATA",
+                                     "no underlying_price in chain"))
+            continue
+        spot_t = float(chain_underlying.median())
+
+        if walls_t is None:
+            result.skips.append(Skip(config.name, t_day, "NO_WALLS_FOUND",
+                                     "no walls from gex_structure_daily"))
+            continue
+        # Override walls dict spot with the correct chain spot for downstream code
+        walls_t = {"call_wall": walls_t["call_wall"],
+                   "put_wall": walls_t["put_wall"],
+                   "spot": spot_t}
 
         # Generate signal
         signal, reason = generate_signal(walls_t, spot_t, vix_t, config)
