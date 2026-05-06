@@ -26,32 +26,50 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/agape-perpetuals", tags=["AGAPE-PERPETUALS"])
 
 
-def _trader_factory(import_path: str, attr: str) -> Callable[[], Optional[object]]:
-    """Build a lazy trader factory. Failures return None so the aggregator stays up."""
+def _db_factory(import_path: str, class_name: str) -> Callable[[], Optional[object]]:
+    """Build a memoized db factory.
+
+    The aggregator only needs `db.get_closed_trades(...)`, not the full trader,
+    so we instantiate the bot's *Database* class directly. This avoids two bugs
+    of the prior trader-getter approach:
+      1. Bare getters return None until the per-bot route's `_get_trader()`
+         has been hit on this process, so a coin's History tab was empty until
+         the user visited that bot's individual page.
+      2. Trader.__init__ runs `_startup_recovery()` (force-closes stale
+         positions) and instantiates an Executor that calls Coinbase. Neither
+         is appropriate from the read-only API web service.
+
+    Failures return None so the aggregator stays up if one bot is unhealthy.
+    """
+    cached: Dict[str, object] = {}
     def _factory() -> Optional[object]:
+        if "db" in cached:
+            return cached["db"]
         try:
-            mod = __import__(import_path, fromlist=[attr])
-            getter = getattr(mod, attr)
-            return getter()
+            mod = __import__(import_path, fromlist=[class_name])
+            cls = getattr(mod, class_name)
+            db = cls()
+            cached["db"] = db
+            return db
         except Exception as e:
             logger.warning(
-                f"agape-perpetuals trades: registry factory {import_path}.{attr} failed: {e}"
+                f"agape-perpetuals trades: db factory {import_path}.{class_name} failed: {e}"
             )
             return None
     return _factory
 
 
 _BOT_REGISTRY: Dict[str, Dict] = {
-    "eth":          {"label": "ETH-PERP",  "factory": _trader_factory("trading.agape_eth_perp.trader",  "get_agape_eth_perp_trader")},
-    "sol":          {"label": "SOL-PERP",  "factory": _trader_factory("trading.agape_sol_perp.trader",  "get_agape_sol_perp_trader")},
-    "avax":         {"label": "AVAX-PERP", "factory": _trader_factory("trading.agape_avax_perp.trader", "get_agape_avax_perp_trader")},
-    "btc":          {"label": "BTC-PERP",  "factory": _trader_factory("trading.agape_btc_perp.trader",  "get_agape_btc_perp_trader")},
-    "xrp":          {"label": "XRP-PERP",  "factory": _trader_factory("trading.agape_xrp_perp.trader",  "get_agape_xrp_perp_trader")},
-    "doge":         {"label": "DOGE-PERP", "factory": _trader_factory("trading.agape_doge_perp.trader", "get_agape_doge_perp_trader")},
-    "shib_futures": {"label": "SHIB-FUT",  "factory": _trader_factory("trading.agape_shib_futures.trader", "get_agape_shib_futures_trader")},
-    "link_futures": {"label": "LINK-FUT",  "factory": _trader_factory("trading.agape_link_futures.trader", "get_agape_link_futures_trader")},
-    "ltc_futures":  {"label": "LTC-FUT",   "factory": _trader_factory("trading.agape_ltc_futures.trader",  "get_agape_ltc_futures_trader")},
-    "bch_futures":  {"label": "BCH-FUT",   "factory": _trader_factory("trading.agape_bch_futures.trader",  "get_agape_bch_futures_trader")},
+    "eth":          {"label": "ETH-PERP",  "factory": _db_factory("trading.agape_eth_perp.db",      "AgapeEthPerpDatabase")},
+    "sol":          {"label": "SOL-PERP",  "factory": _db_factory("trading.agape_sol_perp.db",      "AgapeSolPerpDatabase")},
+    "avax":         {"label": "AVAX-PERP", "factory": _db_factory("trading.agape_avax_perp.db",     "AgapeAvaxPerpDatabase")},
+    "btc":          {"label": "BTC-PERP",  "factory": _db_factory("trading.agape_btc_perp.db",      "AgapeBtcPerpDatabase")},
+    "xrp":          {"label": "XRP-PERP",  "factory": _db_factory("trading.agape_xrp_perp.db",      "AgapeXrpPerpDatabase")},
+    "doge":         {"label": "DOGE-PERP", "factory": _db_factory("trading.agape_doge_perp.db",     "AgapeDogePerpDatabase")},
+    "shib_futures": {"label": "SHIB-FUT",  "factory": _db_factory("trading.agape_shib_futures.db",  "AgapeShibFuturesDatabase")},
+    "link_futures": {"label": "LINK-FUT",  "factory": _db_factory("trading.agape_link_futures.db",  "AgapeLinkFuturesDatabase")},
+    "ltc_futures":  {"label": "LTC-FUT",   "factory": _db_factory("trading.agape_ltc_futures.db",   "AgapeLtcFuturesDatabase")},
+    "bch_futures":  {"label": "BCH-FUT",   "factory": _db_factory("trading.agape_bch_futures.db",   "AgapeBchFuturesDatabase")},
 }
 
 ALL_BOT_IDS: List[str] = list(_BOT_REGISTRY.keys())
@@ -70,11 +88,11 @@ def _fetch_bot_trades(
     entry = _BOT_REGISTRY.get(bot_id)
     if not entry:
         return []
-    trader = entry["factory"]()
-    if trader is None or not getattr(trader, "db", None):
+    db = entry["factory"]()
+    if db is None:
         return []
     try:
-        return trader.db.get_closed_trades(
+        return db.get_closed_trades(
             limit=limit,
             since=since,
             until=until,
