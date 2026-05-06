@@ -67,7 +67,6 @@ const navItems = [
   { href: '/omega', label: 'OMEGA (Orchestrator)', icon: Layers, category: 'AI & Testing' },
   { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
   { href: '/live-trading', label: 'Live Trading', icon: LayoutDashboard, category: 'Live Trading' },
-  { href: '/jubilee', label: `${BOT_DISPLAY_NAMES.JUBILEE} (Box Spread + IC)`, icon: Flame, category: 'Live Trading' },
   { href: '/fortress', label: `${BOT_DISPLAY_NAMES.FORTRESS} (SPY Iron Condor)`, icon: Sword, category: 'Live Trading' },
   { href: '/faith', label: `${BOT_DISPLAY_NAMES.FAITH} (2DTE Paper IC)`, icon: Sword, category: 'Live Trading' },
   { href: '/grace', label: `${BOT_DISPLAY_NAMES.GRACE} (1DTE Paper IC)`, icon: Heart, category: 'Live Trading' },

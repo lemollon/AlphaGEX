@@ -141,10 +141,7 @@ These are real, recurring bugs from our codebase history. Every single item belo
 - **Test with NO data, ONE data point, and FULL data**
 - **Clean up ALL old code when migrating chart libraries**
 
-## 17. Capital Architecture & Position Sizing (6 fixes)
-- **Box spread is the sole capital source for JUBILEE**
-- **Box spread opens ONCE, IC trader trades DAILY**
-- **Paper box spreads should auto-extend, not roll**
+## 17. Capital Architecture & Position Sizing (3 fixes)
 - **Position sizing must be balance-aware** — read actual account balance
 - **Kelly criterion sizing requires real data**
 - **Capital deployment tables need schema alignment**

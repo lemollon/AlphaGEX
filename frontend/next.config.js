@@ -23,11 +23,6 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/jubilee-box',
-        destination: '/jubilee',
-        permanent: true,
-      },
-      {
         source: '/counselor',
         destination: '/counselor-commands',
         permanent: true,

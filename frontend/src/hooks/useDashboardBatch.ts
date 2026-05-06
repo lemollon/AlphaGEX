@@ -55,7 +55,6 @@ function buildFallback(data: Record<string, any> | undefined): Record<string, an
     if (statuses.gideon) f['gideon-status'] = statuses.gideon
     if (statuses.anchor) f['anchor-status'] = statuses.anchor
     if (statuses.samson) f['samson-status'] = statuses.samson
-    if (statuses.jubilee) f['jubilee-status'] = statuses.jubilee
     if (statuses.agape) f['agape-status'] = statuses.agape
     if (statuses.agape_btc) f['agape-btc-status'] = statuses.agape_btc
     if (statuses.agape_xrp) f['agape-xrp-status'] = statuses.agape_xrp
@@ -114,7 +113,6 @@ function buildFallback(data: Record<string, any> | undefined): Record<string, an
       gideon: `/api/gideon/equity-curve?days=${days}`,
       anchor: `/api/anchor/equity-curve?days=${days}`,
       samson: `/api/samson/equity-curve?days=${days}`,
-      jubilee: `/api/jubilee/ic/equity-curve?days=${days}`,
       valor: `/api/valor/paper-equity-curve?days=${days}`,
       agape: `/api/agape/equity-curve?days=${days}`,
       agape_spot: `/api/agape-spot/equity-curve?days=${days}`,

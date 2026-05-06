@@ -22,19 +22,18 @@ When a bug is found in one bot, you apply the fix to ALL affected bots. Fixing o
 ## Naming Convention
 Greek mythology (internal/code) → Biblical (display/UI):
 - ARES → FORTRESS, ATHENA → SOLOMON, TITAN → SAMSON, PEGASUS → ANCHOR
-- ICARUS → GIDEON, PROMETHEUS → JUBILEE, HERACLES → VALOR
+- ICARUS → GIDEON, HERACLES → VALOR
 - Directories: `trading/fortress_v2/`, `trading/samson/`, etc.
 - Routes: `backend/api/routes/fortress_routes.py`, etc.
 - Tables: `fortress_positions`, `samson_closed_trades`, etc.
 
-## Bot Directories (14 bots)
+## Bot Directories (13 bots)
 Options bots (each has: trader.py, models.py, db.py, executor.py, signals.py):
 - `trading/fortress_v2/` + `backend/api/routes/fortress_routes.py`
 - `trading/solomon_v2/` + `backend/api/routes/solomon_routes.py`
 - `trading/samson/` + `backend/api/routes/samson_routes.py`
 - `trading/anchor/` + `backend/api/routes/anchor_routes.py`
 - `trading/gideon/` + `backend/api/routes/gideon_routes.py`
-- `trading/jubilee/` + `backend/api/routes/jubilee_routes.py`
 - `trading/valor/` + `backend/api/routes/valor_routes.py`
 - `trading/faith/` + `backend/api/routes/faith_routes.py`
 - `trading/grace/` + `backend/api/routes/grace_routes.py`

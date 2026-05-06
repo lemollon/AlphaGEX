@@ -900,56 +900,6 @@ const fetchers = {
     return response.data
   },
 
-  // JUBILEE Box Spread Synthetic Borrowing + IC Trading Bot
-  jubileeStatus: async () => {
-    try {
-      const response = await api.get('/api/jubilee/status')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  jubileeICStatus: async () => {
-    try {
-      const response = await api.get('/api/jubilee/ic/status')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  jubileePositions: async () => {
-    try {
-      const response = await api.get('/api/jubilee/positions')
-      return response.data
-    } catch {
-      return { success: false, data: { positions: [] } }
-    }
-  },
-  jubileeICPositions: async () => {
-    try {
-      const response = await api.get('/api/jubilee/ic/positions')
-      return response.data
-    } catch {
-      return { success: false, data: { positions: [] } }
-    }
-  },
-  jubileeLivePnL: async () => {
-    try {
-      const response = await api.get('/api/jubilee/combined/performance')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  jubileeReconciliation: async () => {
-    try {
-      const response = await api.get('/api/jubilee/reconciliation')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-
   // AGAPE ETH Micro Futures Bot
   agapeStatus: async () => {
     const response = await api.get('/api/agape/status')
@@ -2423,58 +2373,6 @@ export async function enableValorABTest() {
 
 export async function disableValorABTest() {
   return fetchers.valorABTestDisable()
-}
-
-// =============================================================================
-// JUBILEE BOX SPREAD + IC TRADING HOOKS
-// =============================================================================
-
-export function useJUBILEEStatus(options?: SWRConfiguration) {
-  return useSWR('jubilee-status', fetchers.jubileeStatus, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useJUBILEEICStatus(options?: SWRConfiguration) {
-  return useSWR('jubilee-ic-status', fetchers.jubileeICStatus, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useJUBILEEPositions(options?: SWRConfiguration) {
-  return useSWR('jubilee-positions', fetchers.jubileePositions, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useJUBILEEICPositions(options?: SWRConfiguration) {
-  return useSWR('jubilee-ic-positions', fetchers.jubileeICPositions, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useJUBILEELivePnL(options?: SWRConfiguration) {
-  return useSWR('jubilee-live-pnl', fetchers.jubileeLivePnL, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useJUBILEEReconciliation(options?: SWRConfiguration) {
-  return useSWR('jubilee-reconciliation', fetchers.jubileeReconciliation, {
-    ...swrConfig,
-    refreshInterval: 60 * 1000,
-    ...options,
-  })
 }
 
 // =============================================================================

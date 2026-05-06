@@ -190,8 +190,8 @@ def test_pythia_calibration_flow():
 
 
 def test_ml_training_flow():
-    """Test JUBILEE ML training and prediction flow"""
-    print_header("JUBILEE ML FLOW TEST")
+    """Test ML training and prediction flow"""
+    print_header("ML FLOW TEST")
     results = []
 
     # Step 1: Check ML status
@@ -476,7 +476,7 @@ def main():
         "database": test_database_operations(),
         "oracle_flow": test_oracle_prediction_flow(),
         "pythia_flow": test_pythia_calibration_flow(),
-        "jubilee_flow": test_ml_training_flow(),
+        "ml_flow": test_ml_training_flow(),
         "wheel_flow": test_wheel_cycle_flow(),
         "trader_flow": test_trader_decision_flow(),
         "counselor_flow": test_counselor_conversation_flow(),

@@ -138,9 +138,8 @@ PARTIAL IMPLEMENTATION BOTS:
 AI & ML SYSTEMS:
 6. CHRONICLES - GEX Calculator and 0DTE Condor backtester
 7. PROPHET - AI Trading Advisor with probability calibration
-8. JUBILEE - ML prediction system for trade outcome forecasting
-9. PROVERBS - Feedback Loop system for continuous learning
-10. DISCERNMENT - ML-powered options scanner
+8. PROVERBS - Feedback Loop system for continuous learning
+9. DISCERNMENT - ML-powered options scanner
 
 ANALYSIS & VISUALIZATION:
 11. WATCHTOWER - Real-time 0DTE Gamma visualization

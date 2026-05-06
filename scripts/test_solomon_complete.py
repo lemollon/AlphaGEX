@@ -515,7 +515,6 @@ class ProverbsTestSuite:
                 ('SAMSON', 'samson_positions'),
                 ('ANCHOR', 'anchor_positions'),
                 ('GIDEON', 'gideon_positions'),
-                ('JUBILEE', 'jubilee_ic_positions'),
             ]
 
             found_data = False

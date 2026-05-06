@@ -47,7 +47,6 @@ def check_frontend(frontend_url: str):
         "/",
         "/dashboard",
         "/valor",
-        "/jubilee",
         "/fortress",
         "/solomon",
         "/samson",
@@ -102,7 +101,6 @@ def check_bot_status(backend_url: str):
 
     bots = [
         ("valor", "/api/valor/status"),
-        ("jubilee", "/api/jubilee/status"),
         ("fortress", "/api/fortress/status"),
         ("solomon", "/api/solomon/status"),
         ("samson", "/api/samson/status"),

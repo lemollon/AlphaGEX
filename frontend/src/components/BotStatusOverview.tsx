@@ -18,8 +18,7 @@ import {
   Target,
   Zap,
   Flame,
-  Rocket,
-  Boxes
+  Rocket
 } from 'lucide-react'
 import {
   useFortressStatus,
@@ -27,13 +26,11 @@ import {
   useANCHORStatus,
   useGideonStatus,
   useSamsonStatus,
-  useJUBILEEStatus,
   useFortressLivePnL,
   useSolomonLivePnL,
   useANCHORLivePnL,
   useGideonLivePnL,
   useSamsonLivePnL,
-  useJUBILEELivePnL,
   useAGAPEStatus,
   useAGAPEBTCStatus,
   useAGAPEXRPStatus,
@@ -165,7 +162,6 @@ export default function BotStatusOverview() {
   // Paper trading bots
   const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useGideonStatus()
   const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useSamsonStatus()
-  const { data: jubileeStatus, isLoading: jubileeLoading, mutate: refreshJubilee } = useJUBILEEStatus()
 
   // Crypto futures bots
   const { data: agapeEthStatus, isLoading: agapeEthLoading, mutate: refreshAgapeEth } = useAGAPEStatus()
@@ -177,7 +173,6 @@ export default function BotStatusOverview() {
   const { data: anchorLivePnL } = useANCHORLivePnL()
   const { data: icarusLivePnL } = useGideonLivePnL()
   const { data: titanLivePnL } = useSamsonLivePnL()
-  const { data: jubileeLivePnL } = useJUBILEELivePnL()
 
   // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
   const refreshAll = useCallback(() => {
@@ -186,11 +181,10 @@ export default function BotStatusOverview() {
     refreshAnchor()
     refreshIcarus()
     refreshTitan()
-    refreshJubilee()
     refreshAgapeEth()
     refreshAgapeBtc()
     refreshAgapeXrp()
-  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee, refreshAgapeEth, refreshAgapeBtc, refreshAgapeXrp])
+  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshAgapeEth, refreshAgapeBtc, refreshAgapeXrp])
 
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
@@ -201,9 +195,8 @@ export default function BotStatusOverview() {
                         (solomonLivePnL?.data?.total_unrealized_pnl || 0) +
                         (anchorLivePnL?.data?.total_unrealized_pnl || 0),
     paperTodayPnL: (icarusLivePnL?.data?.today_pnl || 0) +
-                   (titanLivePnL?.data?.today_pnl || 0) +
-                   (jubileeLivePnL?.net_profit || 0)
-  }), [aresLivePnL, solomonLivePnL, anchorLivePnL, icarusLivePnL, titanLivePnL, jubileeLivePnL])
+                   (titanLivePnL?.data?.today_pnl || 0)
+  }), [aresLivePnL, solomonLivePnL, anchorLivePnL, icarusLivePnL, titanLivePnL])
 
   // PERFORMANCE FIX: useMemo for active bot counts (was filtering on every render)
   const { activeLiveBots, activePaperBots, totalActiveBots } = useMemo(() => {
@@ -216,7 +209,6 @@ export default function BotStatusOverview() {
     const paper = [
       icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
       titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE',
-      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled,
     ].filter(Boolean).length
 
     const crypto = [
@@ -226,7 +218,7 @@ export default function BotStatusOverview() {
     ].filter(Boolean).length
 
     return { activeLiveBots: live, activePaperBots: paper, activeCryptoBots: crypto, totalActiveBots: live + paper + crypto }
-  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus, agapeEthStatus, agapeBtcStatus, agapeXrpStatus])
+  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, agapeEthStatus, agapeBtcStatus, agapeXrpStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -340,22 +332,6 @@ export default function BotStatusOverview() {
                 livePnL={titanLivePnL?.data}
                 color="rose"
                 isLoading={titanLoading}
-              />
-              <BotStatusCard
-                name="JUBILEE"
-                icon={<Boxes className="w-5 h-5 text-orange-500" />}
-                href="/jubilee"
-                status={{
-                  is_active: jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled,
-                  open_positions: (jubileeStatus?.box_spread?.open_positions || 0) + (jubileeStatus?.ic_trading?.open_positions || 0),
-                  last_scan_at: jubileeStatus?.last_updated
-                }}
-                livePnL={{
-                  today_pnl: jubileeLivePnL?.net_profit || 0,
-                  total_unrealized_pnl: jubileeLivePnL?.ic_unrealized || 0
-                }}
-                color="orange"
-                isLoading={jubileeLoading}
               />
             </div>
           </div>

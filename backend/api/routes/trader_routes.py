@@ -2105,9 +2105,9 @@ async def get_all_bots_status():
     """
     Get status of all trading bots.
 
-    Returns status for all 10 bots:
+    Returns status for all 9 bots:
     - LIVE: FORTRESS, SOLOMON, ANCHOR
-    - PAPER: SAMSON, GIDEON, JUBILEE
+    - PAPER: SAMSON, GIDEON
     - LEGACY/MANUAL: LAZARUS, CORNERSTONE, SHEPHERD, PROPHET
     """
     try:
@@ -2172,18 +2172,6 @@ async def get_all_bots_status():
                 "symbol": "SPY",
                 "data_sources": ["GEX", "Prophet", "VIX"]
             },
-            "JUBILEE": {
-                "name": "JUBILEE",
-                "description": "Box Spread Synthetic Borrowing + IC Trading",
-                "type": "autonomous",
-                "mode": "PAPER",
-                "scheduled": True,
-                "schedule": "Box: Daily 9:30 AM CT | IC: Every 10 min",
-                "strategy": "Borrow via box spreads, trade ICs with borrowed capital",
-                "symbol": "SPX",
-                "data_sources": ["Fed Funds Rate", "Prophet (ANCHOR rules)", "Tradier Production"]
-            },
-
             # === LEGACY / PARTIAL IMPLEMENTATION ===
             "LAZARUS": {
                 "name": "LAZARUS",

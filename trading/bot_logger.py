@@ -49,7 +49,6 @@ class BotName(Enum):
     GIDEON = "GIDEON"    # Aggressive Directional Spreads (relaxed GEX filters)
     ANCHOR = "ANCHOR"  # SPX Iron Condor ($10 spreads, weekly)
     SAMSON = "SAMSON"      # Aggressive SPX Iron Condor ($12 spreads)
-    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -918,6 +917,3 @@ def get_samson_logger():
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "SAMSON" else None
 
 
-def get_jubilee_logger():
-    """Get a pre-configured logger for JUBILEE"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "JUBILEE" else None

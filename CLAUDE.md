@@ -86,7 +86,6 @@ AlphaGEX/
 │   ├── samson/                 # SAMSON (TITAN) Aggressive SPX IC
 │   ├── anchor/                 # ANCHOR (PEGASUS) SPX Weekly IC
 │   ├── gideon/                 # GIDEON (ICARUS) Aggressive Directional
-│   ├── jubilee/                # JUBILEE (PROMETHEUS) Box Spread + IC
 │   ├── valor/                  # VALOR (HERACLES) MES Futures
 │   ├── faith/                  # FAITH - 2DTE Paper IC
 │   ├── grace/                  # GRACE - 1DTE Paper IC

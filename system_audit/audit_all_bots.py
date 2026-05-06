@@ -222,9 +222,6 @@ def main():
     bot_map = {
         "SAMSON": "samson_positions",
         "SAMSON (closed)": "samson_closed_trades",
-        "JUBILEE IC": "jubilee_ic_positions",
-        "JUBILEE IC (closed)": "jubilee_ic_closed_trades",
-        "JUBILEE Box": "jubilee_positions",
         "ANCHOR": "anchor_positions",
         "ANCHOR (closed)": "anchor_closed_trades",
         "GIDEON": "gideon_positions",

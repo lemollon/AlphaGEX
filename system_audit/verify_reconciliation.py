@@ -30,8 +30,6 @@ TRADIER_BASE_URL = 'https://api.tradier.com/v1'
 BOT_REGISTRY = [
     ("ANCHOR",      "anchor_positions",     ["put_order_id", "call_order_id"]),
     ("SAMSON",      "samson_positions",      ["put_order_id", "call_order_id"]),
-    ("JUBILEE_BOX", "jubilee_positions",     ["put_spread_order_id", "call_spread_order_id"]),
-    ("JUBILEE_IC",  "jubilee_ic_positions",  ["put_spread_order_id", "call_spread_order_id"]),
     ("FORTRESS",    "fortress_positions",    ["put_order_id", "call_order_id"]),
     ("FAITH",       "faith_positions",       ["put_order_id", "call_order_id"]),
     ("GRACE",       "grace_positions",       ["put_order_id", "call_order_id"]),

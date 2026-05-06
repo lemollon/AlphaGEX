@@ -214,8 +214,8 @@ def test_oracle_endpoints():
 
 
 def test_ml_endpoints():
-    """Test JUBILEE (ML system) endpoints"""
-    print_header("JUBILEE (ML) ENDPOINTS")
+    """Test ML system endpoints"""
+    print_header("ML ENDPOINTS")
     results = []
 
     # Get ML status
@@ -437,7 +437,7 @@ def main():
         "market_data": test_market_data_endpoints(),
         "pythia": test_pythia_endpoints(),
         "prophet": test_oracle_endpoints(),
-        "jubilee": test_ml_endpoints(),
+        "ml": test_ml_endpoints(),
         "wheel": test_wheel_endpoints(),
         "trader": test_trader_endpoints(),
         "chronicles": test_backtest_endpoints(),

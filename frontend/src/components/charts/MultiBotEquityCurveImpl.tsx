@@ -25,7 +25,6 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   SAMSON: 200000,
   LAZARUS: 100000,
   CORNERSTONE: 100000,
-  JUBILEE: 100000,
   VALOR: 100000,
   FAITH: 5000,
   GRACE: 5000,
@@ -53,7 +52,6 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'GIDEON', endpoint: '/api/gideon/equity-curve' },
   { name: 'ANCHOR', endpoint: '/api/anchor/equity-curve' },
   { name: 'SAMSON', endpoint: '/api/samson/equity-curve' },
-  { name: 'JUBILEE', endpoint: '/api/jubilee/ic/equity-curve' },
   { name: 'VALOR', endpoint: '/api/valor/paper-equity-curve' },
   { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
   { name: 'AGAPE_SPOT', endpoint: '/api/agape-spot/equity-curve' },
@@ -118,7 +116,6 @@ export default function MultiBotEquityCurve({
     GIDEON: true,
     ANCHOR: true,
     SAMSON: true,
-    JUBILEE: true,
     VALOR: true,
     FAITH: false,
     GRACE: false,
@@ -168,93 +165,88 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: jubileeData, isLoading: jubileeLoading } = useSWR<BotEquityData>(
+  const { data: valorData, isLoading: valorLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[5].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: valorData, isLoading: valorLoading } = useSWR<BotEquityData>(
+  const { data: agapeData, isLoading: agapeLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[6].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeData, isLoading: agapeLoading } = useSWR<BotEquityData>(
+  const { data: agapeSpotData, isLoading: agapeSpotLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[7].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeSpotData, isLoading: agapeSpotLoading } = useSWR<BotEquityData>(
+  const { data: agapeBtcData, isLoading: agapeBtcLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[8].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeBtcData, isLoading: agapeBtcLoading } = useSWR<BotEquityData>(
+  const { data: agapeXrpData, isLoading: agapeXrpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[9].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeXrpData, isLoading: agapeXrpLoading } = useSWR<BotEquityData>(
+  const { data: agapeEthPerpData, isLoading: agapeEthPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[10].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeEthPerpData, isLoading: agapeEthPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeSolPerpData, isLoading: agapeSolPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[11].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeSolPerpData, isLoading: agapeSolPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeAvaxPerpData, isLoading: agapeAvaxPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[12].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeAvaxPerpData, isLoading: agapeAvaxPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeBtcPerpData, isLoading: agapeBtcPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[13].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeBtcPerpData, isLoading: agapeBtcPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeXrpPerpData, isLoading: agapeXrpPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[14].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeXrpPerpData, isLoading: agapeXrpPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeDogePerpData, isLoading: agapeDogePerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[15].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeDogePerpData, isLoading: agapeDogePerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeShibPerpData, isLoading: agapeShibPerpLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[16].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeShibPerpData, isLoading: agapeShibPerpLoading } = useSWR<BotEquityData>(
+  const { data: agapeShibFuturesData, isLoading: agapeShibFuturesLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[17].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeShibFuturesData, isLoading: agapeShibFuturesLoading } = useSWR<BotEquityData>(
+  const { data: agapeLinkFuturesData, isLoading: agapeLinkFuturesLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[18].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeLinkFuturesData, isLoading: agapeLinkFuturesLoading } = useSWR<BotEquityData>(
+  const { data: agapeLtcFuturesData, isLoading: agapeLtcFuturesLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[19].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeLtcFuturesData, isLoading: agapeLtcFuturesLoading } = useSWR<BotEquityData>(
+  const { data: agapeBchFuturesData, isLoading: agapeBchFuturesLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[20].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: agapeBchFuturesData, isLoading: agapeBchFuturesLoading } = useSWR<BotEquityData>(
-    `${LIVE_BOTS[21].endpoint}?days=${selectedDays}`,
-    fetcher,
-    { refreshInterval: 300000 }
-  )
 
-  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading || agapeBtcLoading || agapeXrpLoading || agapeEthPerpLoading || agapeSolPerpLoading || agapeAvaxPerpLoading || agapeBtcPerpLoading || agapeXrpPerpLoading || agapeDogePerpLoading || agapeShibPerpLoading || agapeShibFuturesLoading || agapeLinkFuturesLoading || agapeLtcFuturesLoading || agapeBchFuturesLoading
+  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || valorLoading || agapeLoading || agapeSpotLoading || agapeBtcLoading || agapeXrpLoading || agapeEthPerpLoading || agapeSolPerpLoading || agapeAvaxPerpLoading || agapeBtcPerpLoading || agapeXrpPerpLoading || agapeDogePerpLoading || agapeShibPerpLoading || agapeShibFuturesLoading || agapeLinkFuturesLoading || agapeLtcFuturesLoading || agapeBchFuturesLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -263,7 +255,6 @@ export default function MultiBotEquityCurve({
     GIDEON: gideonData,
     ANCHOR: anchorData,
     SAMSON: samsonData,
-    JUBILEE: jubileeData,
     VALOR: valorData,
     FAITH: undefined,
     GRACE: undefined,
@@ -329,7 +320,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData, agapeBtcData, agapeXrpData, agapeEthPerpData, agapeSolPerpData, agapeAvaxPerpData, agapeBtcPerpData, agapeXrpPerpData, agapeDogePerpData, agapeShibPerpData, agapeShibFuturesData, agapeLinkFuturesData, agapeLtcFuturesData, agapeBchFuturesData, showPercentage])
+  }, [fortressData, solomonData, gideonData, anchorData, samsonData, valorData, agapeData, agapeSpotData, agapeBtcData, agapeXrpData, agapeEthPerpData, agapeSolPerpData, agapeAvaxPerpData, agapeBtcPerpData, agapeXrpPerpData, agapeDogePerpData, agapeShibPerpData, agapeShibFuturesData, agapeLinkFuturesData, agapeLtcFuturesData, agapeBchFuturesData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -339,7 +330,6 @@ export default function MultiBotEquityCurve({
       GIDEON: null,
       ANCHOR: null,
       SAMSON: null,
-      JUBILEE: null,
       VALOR: null,
       AGAPE: null,
       AGAPE_SPOT: null,
@@ -376,7 +366,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData])
+  }, [fortressData, solomonData, gideonData, anchorData, samsonData, valorData, agapeData, agapeSpotData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

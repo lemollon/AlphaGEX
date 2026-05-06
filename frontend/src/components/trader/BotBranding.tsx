@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP' | 'AGAPE_SHIB_FUTURES' | 'AGAPE_LINK_FUTURES' | 'AGAPE_LTC_FUTURES' | 'AGAPE_BCH_FUTURES'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_SOL_PERP' | 'AGAPE_AVAX_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP' | 'AGAPE_SHIB_FUTURES' | 'AGAPE_LINK_FUTURES' | 'AGAPE_LTC_FUTURES' | 'AGAPE_BCH_FUTURES'
 
 export interface BotBrand {
   name: BotName
@@ -300,42 +300,6 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#6366F1',
     hexLight: '#A5B4FC',
     hexDark: '#4F46E5',
-  },
-  JUBILEE: {
-    name: 'JUBILEE',
-    displayName: BOT_DISPLAY_NAMES.JUBILEE,  // JUBILEE - Leviticus 25:10
-    fullName: `${BOT_DISPLAY_NAMES.JUBILEE} Box Spread + IC`,
-    description: 'Synthetic Borrowing via Box Spreads + Iron Condor Trading',
-    strategy: 'Box Spread Synthetic Borrowing + IC Strategy',
-    // Primary - Emerald/Green (wealth, growth, fire-bringer)
-    primaryColor: 'emerald',
-    primaryBg: 'bg-emerald-600',
-    primaryBorder: 'border-emerald-500',
-    primaryText: 'text-emerald-400',
-    // Light variants
-    lightBg: 'bg-emerald-900/20',
-    lightText: 'text-emerald-300',
-    lightBorder: 'border-emerald-700/50',
-    // Chart colors
-    chartLine: 'stroke-emerald-400',
-    chartFill: 'fill-emerald-500/20',
-    chartPositive: 'text-emerald-400',
-    chartNegative: 'text-emerald-600',
-    // Position cards
-    positionBorder: 'border-emerald-600/50',
-    positionBg: 'bg-emerald-950/30',
-    positionAccent: 'bg-emerald-500',
-    // Badges
-    badgeBg: 'bg-emerald-900/50',
-    badgeText: 'text-emerald-300',
-    // Gradient
-    icon: TrendingUp,
-    gradientFrom: 'from-emerald-500',
-    gradientTo: 'to-emerald-900',
-    // Hex for Recharts
-    hexPrimary: '#10B981',
-    hexLight: '#6EE7B7',
-    hexDark: '#059669',
   },
   FAITH: {
     name: 'FAITH',

@@ -814,7 +814,6 @@ async def get_realtime_status(
                 'ANCHOR': 'anchor_positions',
                 'GIDEON': 'gideon_positions',
                 'VALOR': 'valor_positions',
-                'JUBILEE': 'jubilee_ic_positions',
             }
 
             days_interval = f'{days} days'
@@ -900,7 +899,7 @@ async def get_realtime_status(
 
         # Build bot status
         bots = {}
-        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR']
         dir_bots = ['SOLOMON', 'GIDEON']
 
         for row in bot_rows:

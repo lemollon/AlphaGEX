@@ -50,7 +50,6 @@ class BotName(Enum):
     ANCHOR = "ANCHOR"  # AnchorTrader - SPX Iron Condor ($10 spreads, weekly)
     GIDEON = "GIDEON"    # GideonTrader - Aggressive Directional Spreads
     SAMSON = "SAMSON"      # SamsonTrader - Aggressive SPX Iron Condor ($12 spreads)
-    JUBILEE = "JUBILEE"  # JubileeTrader - Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -1342,8 +1341,3 @@ def get_samson_logger() -> DecisionLogger:
     return _bot_loggers['SAMSON']
 
 
-def get_jubilee_logger() -> DecisionLogger:
-    """Get logger for JUBILEE (Box Spread Synthetic Borrowing + IC Trading)"""
-    if 'JUBILEE' not in _bot_loggers:
-        _bot_loggers['JUBILEE'] = DecisionLogger()
-    return _bot_loggers['JUBILEE']

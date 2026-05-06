@@ -304,7 +304,6 @@ VOLATILITY:
 - /alerts - Trading alerts management
 
 BETA FEATURES:
-- /jubilee - JUBILEE ML prediction system
 - /trader - LAZARUS SPY 0DTE trading
 - /wheel - SHEPHERD Manual Wheel strategy
 - /spx-wheel - CORNERSTONE SPX Wheel automation
