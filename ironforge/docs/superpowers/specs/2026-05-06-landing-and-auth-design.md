@@ -197,27 +197,20 @@ The rest of the page (sections 7.2 onward) inherits the same interactive system 
 
 ## 6. Hero Variations (USER TO PICK 1 OF 10)
 
-All ten share the locked visual system above (§5) and the locked interactive system (§5b). They differ in **photograph, eyebrow, headline, tagline, CTA copy, and footer scrim**. Variants 6–10 use photos with no human figure (pure forge / molten metal / embers / sparks).
-
-**Variants with people in the photo:**
+All ten share the locked visual system (§5) and the locked interactive system (§5b). They differ in **photograph, eyebrow, headline, tagline, CTA copy, and footer scrim**. All ten photos are confirmed fire/flame imagery (no humans, no incidental subjects).
 
 | # | Personality | Photo (Unsplash) | Headline | Tone |
 |---|-------------|------------------|----------|------|
-| 1 | **The Scripture** | photo-1716469801932-3b1b5494615c | *As iron sharpens iron* | Scholarly, biblical |
-| 2 | **The Declaration** | photo-1685713011172-3ba27ff25e22 | *Forged in fire.* | Confident, modern |
-| 3 | **The Discipline** | photo-1711829799900-42470ee55689 | *Where discipline meets edge* | Cerebral, institutional |
-| 4 | **The Mythic** | photo-1557951959-e3e30ee937e5 | *The forge of markets* | Epic, dramatic |
-| 5 | **The Minimal** | photo-1716469801933-1d7db4c8aebb | *Sharpen the edge.* | Stripped down, Apple-grade |
-
-**No-human variants:**
-
-| # | Personality | Photo (Unsplash) | Headline | Tone |
-|---|-------------|------------------|----------|------|
-| 6 | **The Crucible** | photo-1745356800818-a00f613aaab5 | *Tempered by the market* | Process metaphor, no figure |
-| 7 | **Pure Ember** | photo-1687190917342-9fe4015e7729 | *Where signal becomes fire* | Abstract, atmospheric |
-| 8 | **Strike. Refine. Repeat.** | photo-1641824997957-1820d326c166 | *Strike. Refine. Repeat.* | Process pitch, mirrors 1-min scan loop |
-| 9 | **Liquid Heat** | photo-1754342536501-93ba6323efd3 | *Liquid edge. Solid execution.* | Two-state metaphor (data → trades) |
-| 10 | **Crimson Forge** | photo-1709327999896-6979d5fd52e4 | *Built in fire.* | Most stripped down, premium-watch energy |
+| 1 | **The Scripture** | photo-1502824965758-f8a6043066f5 | *As iron sharpens iron* | Scholarly, biblical |
+| 2 | **The Declaration** | photo-1556608053-bc7b64163ba6 | *Forged in fire.* | Confident, modern |
+| 3 | **The Discipline** | photo-1470549584009-d347338fc0ff | *Where discipline meets edge* | Cerebral, institutional |
+| 4 | **The Mythic** | photo-1464808646948-8f732deb6e4b | *The forge of markets* | Epic, dramatic |
+| 5 | **The Minimal** | photo-1552571219-d6e38a3f4849 | *Sharpen the edge.* | Stripped down, Apple-grade |
+| 6 | **The Crucible** | photo-1566996533071-2c578080c06e | *Tempered by the market* | Process metaphor |
+| 7 | **Pure Ember** | photo-1721585621878-fb2c9404cb23 | *Where signal becomes fire* | Abstract, atmospheric |
+| 8 | **Strike. Refine. Repeat.** | photo-1727593458591-aed56a590222 | *Strike. Refine. Repeat.* | Process pitch, mirrors 1-min scan loop |
+| 9 | **Liquid Heat** | photo-1612881177996-23adb4bb5a74 | *Liquid edge. Solid execution.* | Two-state metaphor (data → trades) |
+| 10 | **Crimson Forge** | photo-1639337296777-563a536975f1 | *Built in fire.* | Most stripped down, premium-watch energy |
 
 **Decision required:** User picks 1 of 10 — that becomes the locked hero copy. The other nine are deleted from this spec and the implementation plan.
 
