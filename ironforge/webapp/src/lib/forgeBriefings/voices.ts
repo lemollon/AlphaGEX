@@ -49,10 +49,20 @@ const VOICES: Record<BotKey, string> = {
   portfolio: MASTER_VOICE,
 }
 
+// Halt policy reminder shared by event-related briefs. As of 2026-05-06,
+// IronForge IC bots no longer take a multi-day break around scheduled macro
+// releases. The halt is day-of-news only: pre-market releases (CPI, PPI,
+// PCE, GDP, NFP, etc.) resume at the 8:30 CT open, mid-day or 1pm Fed
+// releases resume 30 minutes after the print. There is no overnight or
+// next-day blackout. Briefs must NOT tell the operator the bots are off
+// for multiple days, and must NOT use the legacy "Vigil blackout" framing.
+const HALT_POLICY_NOTE =
+  'Halt policy reminder: bots stand down only during the day-of-news release window — pre-market releases resume at the 8:30 CT open, mid-day releases resume release+30min. There is no multi-day blackout. Do not call this a Vigil and do not say trading is paused for tomorrow or the rest of the week.'
+
 const TYPE_INTRO: Record<BriefType, string> = {
   daily_eod: 'This is your end-of-day debrief. Today is now closed. Reflect on the day that was.',
-  fomc_eve: 'This is your FOMC-eve preview. The blackout starts tomorrow. Consider what this week sets up.',
-  post_event: 'This is your post-event debrief. The Vigil blackout has ended and the bots resume trading. Analyze the macro move that just happened and what it means for the days ahead.',
+  fomc_eve: `This is your FOMC-eve preview. A scheduled macro release lands tomorrow. ${HALT_POLICY_NOTE} Consider what this week sets up.`,
+  post_event: `This is your post-event debrief. The day-of-news halt has lifted and the bots have already resumed (pre-market releases at the 8:30 CT open; mid-day releases at release+30min). ${HALT_POLICY_NOTE} Analyze the macro move that just happened and what it means for the days ahead.`,
   weekly_synth: 'This is your weekly synthesis. Five trading days are now closed. Tell the story of the week.',
   codex_monthly: 'This is your monthly codex entry — a permanent long-memory summary. Distill the month into themes a future-you should remember a year from now. ~600 words.',
 }

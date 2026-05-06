@@ -4939,6 +4939,21 @@ async function runAllScans(): Promise<void> {
   const hhmm = ctHHMM(ct)
   const dow = ct.getDay()
 
+  // Forge Reports tick MUST run before the off-hours early-returns below, because
+  // most brief windows are scheduled outside the trading day:
+  //   daily_eod      15:30-15:34 CT  (after the 1510 guard)
+  //   fomc_eve       15:35-15:39 CT  (after the 1510 guard)
+  //   weekly_synth   16:00-16:04 CT  (after the 1510 guard)
+  //   codex_monthly  17:00-17:04 CT  (after the 1510 guard)
+  //   post_event     09:00-09:04 CT  (in-hours, would have run anyway)
+  // Idempotent + non-throwing — failures log to forge_briefings_meta and never
+  // block trading. decideTriggers handles weekend / off-window gating internally,
+  // so it is safe to call on every cycle including weekends.
+  forgeBriefingsTick().catch((err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] forge-briefings tick failed (non-fatal): ${msg}`)
+  })
+
   if (dow === 0 || dow === 6) {
     // Log once per hour on weekends to avoid log spam
     if (_scanCount === 1 || _scanCount % 60 === 0) {
@@ -4984,13 +4999,8 @@ async function runAllScans(): Promise<void> {
     console.warn(`[scanner] event-calendar refresh failed (non-fatal): ${msg}`)
   })
 
-  // Forge Reports: per-cycle scheduler tick. Decides which briefings (if any)
-  // should fire right now, then calls Claude.  Idempotent + non-throwing —
-  // failures log to forge_briefings_meta and never block trading.
-  forgeBriefingsTick().catch((err: unknown) => {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] forge-briefings tick failed (non-fatal): ${msg}`)
-  })
+  // (Forge Reports tick already ran above the off-hours gates so daily_eod,
+  // weekly_synth, codex_monthly, and fomc_eve windows fire as scheduled.)
 
   // Daily sandbox cleanup at market open — MUST complete before FLAME can trade.
   // Stale positions from yesterday consume buying power and cause every new order
