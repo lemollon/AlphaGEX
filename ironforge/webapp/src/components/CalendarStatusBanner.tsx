@@ -7,7 +7,13 @@ interface BlackoutStatus {
   bot: string
   now: string
   blackout: { blocked: boolean; eventTitle?: string; resumesAt?: string }
-  next_blackout: { title: string; halt_start_ts: string; halt_end_ts: string } | null
+  next_blackout: {
+    title: string
+    halt_start_ts: string
+    halt_end_ts: string
+    event_date?: string
+    event_time_ct?: string
+  } | null
 }
 
 function fmtCT(iso: string): string {
@@ -50,12 +56,14 @@ export default function CalendarStatusBanner() {
   }
 
   if (data.next_blackout) {
-    const start = new Date(data.next_blackout.halt_start_ts)
+    const resume = new Date(data.next_blackout.halt_end_ts)
     return (
       <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-4">
         <div className="text-emerald-300 font-medium">✓ Trading normally</div>
         <div className="text-sm text-emerald-200/80 mt-1">
-          Next blackout: {data.next_blackout.title} starts {fmtCT(data.next_blackout.halt_start_ts)} (in {fmtDuration(start.getTime() - now)})
+          Next event halt: {data.next_blackout.title} on{' '}
+          {data.next_blackout.event_date ?? '—'} at{' '}
+          {data.next_blackout.event_time_ct ?? '—'} CT · bots resume {fmtCT(data.next_blackout.halt_end_ts)} (in {fmtDuration(resume.getTime() - now)})
         </div>
       </div>
     )

@@ -89,18 +89,12 @@ export function computeEventDayAt(
 }
 
 /**
+ * @deprecated Pre-2026-05-06 multi-day halt math. Kept only for legacy
+ * call-site safety; current IronForge policy is day-of-news only via
+ * `computeDayOfNewsHaltWindow` below.
+ *
  * Returns `n` TRADING days (Mon–Fri) before `eventDate`, at 08:30 CT (RTH open),
  * as a UTC Date. Walks back calendar days, only counting weekdays.
- *
- * Used as the IronForge halt-start: we want short-premium bots flat through
- * the IV runup window. Two trading days back covers FLAME's 2DTE worst case
- * (any open position will have expired before the event).
- *
- * Examples (n=2):
- *   Wed event → Mon 08:30 CT
- *   Fri event → Wed 08:30 CT
- *   Tue event → Fri-prior 08:30 CT (skips weekend)
- *   Mon event → Thu-prior 08:30 CT (skips weekend)
  */
 export function computeNTradingDaysPriorAt0830CT(
   eventDate: string,
@@ -116,4 +110,45 @@ export function computeNTradingDaysPriorAt0830CT(
   }
   const haltDateStr = subtractDays(eventDate, stepsBack)
   return ctWallToUtc(haltDateStr, '08:30')
+}
+
+/** Market open in CT — bots only trade RTH (08:30–15:00 CT). */
+const MARKET_OPEN_CT = '08:30'
+
+/** Convert HH:MM (24h) into minutes-from-midnight. */
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
+/**
+ * IronForge halt window under the day-of-news policy (effective 2026-05-06,
+ * replacing the prior multi-day halt). Same date for halt-start; halt-end
+ * branches on whether the release is pre-market or mid-day:
+ *
+ *   - Pre-market release (event_time_ct < 08:30 CT):
+ *       resume at market open (08:30 CT). The release has already crushed
+ *       IV by the time the bots wake up, so trading at the bell is fine.
+ *
+ *   - Mid-day release (event_time_ct >= 08:30 CT):
+ *       resume `resumeOffsetMin` minutes after the release timestamp
+ *       (default 30 min). Bots stay flat through the release and the
+ *       initial whipsaw, then resume.
+ *
+ * `halt_start_ts` is set to the event date at 00:00 CT for both branches.
+ * The bots don't trade overnight anyway, so the 00:00 anchor just guarantees
+ * the gate is hot from the first scanner cycle of the event day forward.
+ */
+export function computeDayOfNewsHaltWindow(
+  eventDate: string,
+  eventTimeCt: string,
+  resumeOffsetMin: number,
+): { haltStart: Date; haltEnd: Date } {
+  const haltStart = ctWallToUtc(eventDate, '00:00')
+  const eventMin = hhmmToMinutes(eventTimeCt)
+  const openMin = hhmmToMinutes(MARKET_OPEN_CT)
+  const haltEnd = eventMin < openMin
+    ? ctWallToUtc(eventDate, MARKET_OPEN_CT)
+    : computeEventDayAt(eventDate, eventTimeCt, resumeOffsetMin)
+  return { haltStart, haltEnd }
 }

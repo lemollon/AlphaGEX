@@ -7,18 +7,21 @@
  */
 
 import { query, dbExecute } from '../db'
-import { computeNTradingDaysPriorAt0830CT, computeEventDayAt } from './halt-window'
+import { computeDayOfNewsHaltWindow } from './halt-window'
 
 /**
- * IronForge halt policy: short-premium ICs are short vega. IV inflates for
- * ~2 trading days running into a known macro event (FOMC, CPI, PPI, NFP),
- * MTM hits the 2x stop before the post-event vol crush, so the bots eat
- * vega-up but never collect vega-down. Halting `EVENT_HALT_TRADING_DAYS`
- * trading days before the event keeps every position flat through the
- * runup. Same window for FOMC, CPI, PPI, NFP, manual entries; same window
- * for FLAME, SPARK, INFERNO.
+ * IronForge halt policy (2026-05-06): day-of-news only. The prior multi-day
+ * runup halt was retired in favor of letting the bots trade through the
+ * runup and only standing aside at the moment of release.
+ *
+ *   - Pre-market release  → bots resume at the 08:30 CT market open.
+ *   - Mid-day release     → bots resume `DEFAULT_RESUME_OFFSET_MIN` minutes
+ *                            after the release timestamp.
+ *
+ * Same rule for FOMC, CPI, PPI, NFP, manual entries; same rule for FLAME,
+ * SPARK, INFERNO. See `halt-window.ts` for the math.
  */
-const EVENT_HALT_TRADING_DAYS = 2
+const DEFAULT_RESUME_OFFSET_MIN = 30
 
 export type CalendarSource = 'finnhub' | 'manual' | 'fed' | 'bls'
 
@@ -63,9 +66,12 @@ export interface RefreshMeta {
 
 /** Upsert one event; computes halt window automatically. */
 export async function upsertEvent(input: UpsertEventInput): Promise<{ inserted: boolean }> {
-  const offset = input.resume_offset_min ?? 60
-  const haltStart = computeNTradingDaysPriorAt0830CT(input.event_date, EVENT_HALT_TRADING_DAYS)
-  const haltEnd   = computeEventDayAt(input.event_date, input.event_time_ct, offset)
+  const offset = input.resume_offset_min ?? DEFAULT_RESUME_OFFSET_MIN
+  const { haltStart, haltEnd } = computeDayOfNewsHaltWindow(
+    input.event_date,
+    input.event_time_ct,
+    offset,
+  )
   const haltsBots = input.halts_bots ?? true
   const rows = await query<{ inserted: boolean }>(`
     INSERT INTO ironforge_event_calendar (

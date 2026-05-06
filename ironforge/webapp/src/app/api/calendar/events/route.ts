@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       description: body.description ?? null,
       event_date: body.event_date,
       event_time_ct: body.event_time_ct,
-      resume_offset_min: body.resume_offset_min ?? 60,
+      resume_offset_min: body.resume_offset_min ?? 30,
       created_by: 'admin-ui',
     })
     return NextResponse.json({ event_id: id, inserted: result.inserted })

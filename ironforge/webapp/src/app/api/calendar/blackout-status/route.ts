@@ -26,6 +26,10 @@ export async function GET(req: NextRequest) {
         title: next.title,
         halt_start_ts: next.halt_start_ts,
         halt_end_ts: next.halt_end_ts,
+        event_date: next.event_date,
+        event_time_ct: next.event_time_ct,
+        event_type: next.event_type,
+        resume_offset_min: next.resume_offset_min,
       } : null,
     })
   } catch (err) {

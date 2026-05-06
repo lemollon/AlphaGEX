@@ -14,7 +14,7 @@ export default function CalendarAdminPage() {
     event_type: 'CUSTOM',
     event_date: '',
     event_time_ct: '13:00',
-    resume_offset_min: 60,
+    resume_offset_min: 30,
     description: '',
   })
 
@@ -34,7 +34,7 @@ export default function CalendarAdminPage() {
       body: JSON.stringify(form),
     })
     if (res.ok) {
-      setForm({ title: '', event_type: 'CUSTOM', event_date: '', event_time_ct: '13:00', resume_offset_min: 60, description: '' })
+      setForm({ title: '', event_type: 'CUSTOM', event_date: '', event_time_ct: '13:00', resume_offset_min: 30, description: '' })
       await mutate('/api/calendar/events')
     } else {
       alert('Failed to add event: ' + (await res.text()))
