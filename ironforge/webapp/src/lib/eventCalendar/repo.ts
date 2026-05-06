@@ -156,6 +156,50 @@ export async function deactivateEvent(eventId: string): Promise<number> {
   )
 }
 
+/**
+ * Recompute `halt_start_ts` / `halt_end_ts` for every active future event
+ * using the current day-of-news halt math. Used after a policy change so
+ * pre-existing rows (especially `source='manual'` rows that the daily
+ * refresh doesn't iterate) get migrated to the new windows.
+ *
+ * Returns the number of rows updated. Idempotent: a second call with no
+ * intervening policy change is a no-op.
+ */
+export async function recomputeActiveHaltWindows(): Promise<{ updated: number }> {
+  const rows = await query<{
+    event_id: string
+    event_date: string
+    event_time_ct: string
+    resume_offset_min: number | null
+  }>(`
+    SELECT event_id,
+           event_date::text AS event_date,
+           to_char(event_time_ct, 'HH24:MI') AS event_time_ct,
+           resume_offset_min
+    FROM ironforge_event_calendar
+    WHERE is_active = TRUE AND event_date >= (NOW() AT TIME ZONE 'America/Chicago')::date - INTERVAL '1 day'
+  `)
+
+  let updated = 0
+  for (const r of rows) {
+    const offset = r.resume_offset_min ?? DEFAULT_RESUME_OFFSET_MIN
+    const { haltStart, haltEnd } = computeDayOfNewsHaltWindow(
+      r.event_date,
+      r.event_time_ct,
+      offset,
+    )
+    await dbExecute(
+      `UPDATE ironforge_event_calendar
+       SET halt_start_ts = $1, halt_end_ts = $2, updated_at = NOW()
+       WHERE event_id = $3
+         AND (halt_start_ts IS DISTINCT FROM $1 OR halt_end_ts IS DISTINCT FROM $2)`,
+      [haltStart, haltEnd, r.event_id],
+    )
+    updated += 1
+  }
+  return { updated }
+}
+
 /** Get refresh meta. */
 export async function getRefreshMeta(): Promise<RefreshMeta> {
   const rows = await query<any>(`SELECT last_refresh_ts, last_refresh_status, events_added, events_updated FROM ironforge_event_calendar_meta WHERE id=1`)
