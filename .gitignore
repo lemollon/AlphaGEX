@@ -89,3 +89,6 @@ data/circuit_breaker_state.json
 
 # GOLIATH calibration parquet cache (per-day invalidation; runtime artifact)
 .goliath_cache/
+
+# Superpowers brainstorming session artifacts (HTML mockups, server state)
+.superpowers/
