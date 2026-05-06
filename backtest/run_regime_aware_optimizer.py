@@ -26,15 +26,47 @@ from backtest.perp_exit_optimizer import (
 )
 
 
+# Bare-ticker convention: PERPS for tickers with both perp and futures bots,
+# FUTURES for tickers that exist only as Coinbase Derivatives futures, and the
+# explicit "_FUTURES" / "_PERP" suffix always wins. SHIB is the one ticker
+# where the bare label is ambiguous (perp retired 2026-05-03 in favour of the
+# 1000SHIB-FUT bot), so we route bare SHIB to the active futures bot.
+_BARE_TICKER_TO_BOT = {
+    "BTC":  "AGAPE_BTC_PERP",
+    "ETH":  "AGAPE_ETH_PERP",
+    "SOL":  "AGAPE_SOL_PERP",
+    "AVAX": "AGAPE_AVAX_PERP",
+    "XRP":  "AGAPE_XRP_PERP",
+    "DOGE": "AGAPE_DOGE_PERP",
+    "SHIB": "AGAPE_SHIB_FUTURES",   # active bot; AGAPE_SHIB_PERP is retired
+    "LINK": "AGAPE_LINK_FUTURES",
+    "LTC":  "AGAPE_LTC_FUTURES",
+    "BCH":  "AGAPE_BCH_FUTURES",
+}
+
+
 def _bot_by_label(label: str) -> dict:
-    norm = f"AGAPE_{label.upper()}"
-    if not norm.endswith(("_PERP", "_FUTURES")):
-        # Caller said e.g. SOL — assume perp
-        norm = norm + "_PERP" if norm.split("_")[1] not in ("LINK","LTC","BCH","SHIB_FUTURES") else norm
+    """Resolve --bot input (e.g. 'SOL', 'SHIB_FUTURES', 'AGAPE_BTC_PERP') to a
+    BOTS row. Bare tickers default to the active live bot per
+    _BARE_TICKER_TO_BOT; explicit _FUTURES / _PERP suffixes are honored as-is;
+    AGAPE_-prefixed names are matched verbatim."""
+    s = label.upper()
+    # Try direct full-name match first (with or without AGAPE_ prefix)
+    candidates = [s, f"AGAPE_{s}"]
     for b in BOTS:
-        if b["name"].endswith(label.upper()) or b["name"] == norm:
+        if b["name"] in candidates:
             return b
-    raise SystemExit(f"unknown bot {label}")
+    # Bare ticker → conventional bot
+    target = _BARE_TICKER_TO_BOT.get(s)
+    if target:
+        for b in BOTS:
+            if b["name"] == target:
+                return b
+    raise SystemExit(
+        f"unknown bot '{label}'; "
+        f"try one of: {', '.join(sorted(_BARE_TICKER_TO_BOT)) } "
+        f"or full names {', '.join(b['name'] for b in BOTS)}"
+    )
 
 
 def _split_entries(entries, regimes):

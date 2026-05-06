@@ -196,17 +196,24 @@ def load_regime_per_entry(conn, table: str) -> dict[str, str]:
     up the scan_activity row that opened each position and running the
     saved combined_signal/combined_confidence/crypto_gex_regime through
     the same classifier used by live trading.
+
+    Defensive ORDER BY timestamp ASC + setdefault means we always take the
+    FIRST (chronological) scan that stamped a position_id, even if a future
+    code change starts setting position_id on management cycles too.
     """
     from trading.agape_shared.regime_classifier import classify_regime
     sql = f"""
         SELECT position_id, combined_signal, combined_confidence, crypto_gex_regime
         FROM {table}_scan_activity
         WHERE position_id IS NOT NULL
+        ORDER BY timestamp ASC
     """
     cur = conn.cursor()
     cur.execute(sql)
     out: dict[str, str] = {}
     for pid, sig, conf, gex in cur.fetchall():
+        if pid in out:
+            continue
         snap = {
             "combined_signal": sig,
             "combined_confidence": conf,
