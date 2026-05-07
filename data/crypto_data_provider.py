@@ -1431,12 +1431,17 @@ class CryptoDataProvider:
 
         # CoinGlass-only low-confidence fallback
         if has_coinglass:
-            if leverage == "BALANCED" and squeeze == "LOW":
-                return ("RANGE_BOUND", "MEDIUM")
+            # Bias check fires FIRST: BALANCED leverage with crowded L/S
+            # ratio (e.g. XRP at 70% long → bias=BEARISH) was being swallowed
+            # by the RANGE_BOUND catch-all below, which only ever fires when
+            # funding is too tight to push leverage out of BALANCED. Honor
+            # the L/S signal before the catch-all.
             if bias == "BULLISH" and squeeze != "HIGH":
                 return ("LONG", "LOW")
             if bias == "BEARISH" and squeeze != "HIGH":
                 return ("SHORT", "LOW")
+            if leverage == "BALANCED" and squeeze == "LOW":
+                return ("RANGE_BOUND", "MEDIUM")
 
         # Too uncertain or too dangerous
         if leverage == "OVERLEVERAGED" and squeeze == "HIGH":
