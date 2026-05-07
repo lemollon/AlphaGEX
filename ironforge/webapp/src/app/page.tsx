@@ -56,7 +56,7 @@ const configRows: Array<{ label: string; value: string; hint?: string }> = [
   { label: 'Risk Per Trade', value: sharedConfig.riskPerTrade, hint: 'Of account' },
   { label: 'Spread Width', value: sharedConfig.spreadWidth, hint: 'Per leg' },
   { label: 'Strike SD', value: sharedConfig.sdMultiplier, hint: 'Expected move multiplier' },
-  { label: 'Profit Target', value: '50/30/20%', hint: 'Sliding (time-based)' },
+  { label: 'Profit Target', value: '30/20/15%', hint: 'Sliding (time-based)' },
   { label: 'Stop Loss', value: sharedConfig.stopLoss, hint: 'Cost ≥ 2x entry credit' },
   { label: 'Max Contracts', value: String(sharedConfig.maxContracts), hint: 'Per trade' },
   { label: 'Max Trades/Day', value: String(sharedConfig.maxTradesPerDay) },
@@ -133,9 +133,9 @@ const bots = [
 /* ── Exit Logic ─────────────────────────────────────────────────────── */
 
 const exitRules = [
-  { trigger: 'PT (Morning)', condition: '50%  8:30–10:29 AM CT', color: 'text-emerald-400' },
-  { trigger: 'PT (Midday)', condition: '30%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
-  { trigger: 'PT (Afternoon)', condition: '20%  1:00–2:50 PM CT', color: 'text-orange-400' },
+  { trigger: 'PT (Morning)', condition: '30%  8:30–10:29 AM CT', color: 'text-emerald-400' },
+  { trigger: 'PT (Midday)', condition: '20%  10:30 AM–12:59 PM CT', color: 'text-yellow-400' },
+  { trigger: 'PT (Afternoon)', condition: '15%  1:00–2:50 PM CT', color: 'text-orange-400' },
   { trigger: 'PT (INFERNO)', condition: '20% → 30% → 50% (reversed slide)', color: 'text-red-400' },
   { trigger: 'Stop Loss', condition: '200%  Cost ≥ 2x entry credit', color: 'text-red-400' },
   { trigger: 'EOD Cutoff', condition: '2:50 PM CT', color: 'text-amber-400' },
@@ -412,7 +412,7 @@ export default function Home() {
                 { param: 'SD Multiplier', flame: '1.0x', spark: '1.2x', inferno: '1.0x', diff: true },
                 { param: 'Min Credit', flame: '$1.50', spark: '$0.05', inferno: '$0.15', diff: true },
                 { param: 'VIX Gate', flame: '> 18', spark: '< 32', inferno: '< 32', diff: true },
-                { param: 'Profit Target', flame: '50/30/20%', spark: '50/30/20%', inferno: '20/30/50%', diff: true },
+                { param: 'Profit Target', flame: '30/20/15%', spark: '30/20/15%', inferno: '20/30/50%', diff: true },
                 { param: 'Stop Loss', flame: '200%', spark: '200%', inferno: '200%', diff: false },
                 { param: 'Position Sizing', flame: '10% account risk', spark: 'Kelly (BP-aware)', inferno: 'Half-Kelly', diff: true },
                 { param: 'Max Trades/Day', flame: '1', spark: '1', inferno: 'Unlimited', diff: true },
