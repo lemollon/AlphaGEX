@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IronForge · Landing Page Demos</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 28px 80px; background: #050201; color: #fafafa; font-family: 'Inter', sans-serif; min-height: 100vh; }
+    .header { max-width: 1240px; margin: 0 auto 36px; }
+    .h-eyebrow { font-size: 10px; color: #fbbf24; letter-spacing: 4px; text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }
+    .h-title { font-family: 'Cormorant Garamond', serif; font-size: 44px; font-weight: 300; color: #fff; line-height: 1.05; margin: 0 0 12px; letter-spacing: -1px; }
+    .h-title em { color: #fbbf24; font-style: italic; }
+    .h-sub { font-family: 'Cormorant Garamond', serif; font-style: italic; font-size: 16px; color: #fde68a; max-width: 720px; line-height: 1.55; margin: 0 0 22px; }
+    .h-help { background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.25); border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #d4d4d8; line-height: 1.6; max-width: 760px; }
+    .h-help kbd { background: rgba(251,191,36,0.15); color: #fbbf24; padding: 1px 6px; border-radius: 3px; font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 700; border: 1px solid rgba(251,191,36,0.3); }
+    .picked-banner { display: none; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.4); border-radius: 8px; padding: 12px 16px; margin-top: 16px; font-size: 13px; color: #4ade80; max-width: 760px; }
+    .picked-banner strong { color: #fff; }
+    .grid { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: linear-gradient(180deg, rgba(20,10,4,0.7), rgba(10,3,1,0.4)); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden; transition: transform 0.18s, border-color 0.18s, box-shadow 0.18s; cursor: pointer; }
+    .card:hover { transform: translateY(-3px); border-color: rgba(251,191,36,0.45); box-shadow: 0 18px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(251,191,36,0.15); }
+    .card .iframe-wrap { position: relative; width: 100%; padding-top: 60%; background: #0a0a0c; overflow: hidden; }
+    .card iframe { position: absolute; top: 0; left: 0; width: 200%; height: 200%; border: none; transform: scale(0.5); transform-origin: 0 0; pointer-events: none; }
+    .card-meta { padding: 18px 20px; }
+    .card-num { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #fbbf24; letter-spacing: 2px; font-weight: 700; }
+    .card-num .badge { display: inline-block; padding: 2px 7px; border-radius: 3px; margin-left: 8px; font-size: 9px; letter-spacing: 1.5px; }
+    .card-num .badge.kept { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+    .card-num .badge.new { background: rgba(168,85,247,0.12); color: #c4b5fd; border: 1px solid rgba(168,85,247,0.3); }
+    .card-name { font-family: 'Cormorant Garamond', serif; font-size: 24px; color: #fafafa; margin: 6px 0 4px; font-weight: 400; }
+    .card-name em { color: #fbbf24; font-style: italic; }
+    .card-line { font-family: 'Cormorant Garamond', serif; font-style: italic; color: #fde68a; font-size: 13px; margin-bottom: 10px; }
+    .card-desc { font-size: 11.5px; color: #a1a1aa; line-height: 1.55; margin-bottom: 14px; }
+    .card-cta { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); border-radius: 5px; font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; text-decoration: none; }
+    .card-cta:hover { background: rgba(251,191,36,0.25); }
+    .card-cta::after { content: ' →'; }
+    .footer { max-width: 1240px; margin: 50px auto 0; text-align: center; font-size: 12px; color: #71717a; line-height: 1.7; }
+    .footer a { color: #fbbf24; text-decoration: none; }
+    .section-divider { max-width: 1240px; margin: 36px auto 18px; padding: 0 8px; display: flex; align-items: center; gap: 14px; }
+    .section-divider::before, .section-divider::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, transparent, rgba(251,191,36,0.4), transparent); }
+    .section-divider h2 { font-family: 'Cormorant Garamond', serif; font-weight: 400; font-size: 22px; color: #fafafa; margin: 0; white-space: nowrap; }
+    .section-divider h2 span { color: #fbbf24; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="h-eyebrow">IRONFORGE · LANDING PAGE DEMOS</div>
+  <h1 class="h-title">Eight directions. <em>One pick.</em></h1>
+  <p class="h-sub">Live previews of eight candidate landing pages, each as it would render on the production IronForge site. Click any card to open the full-page demo. Tell me which one to ship.</p>
+  <div class="h-help">
+    Each demo is a full landing page — hero + bot cards + final CTA — using IronForge's real numbers (FLAME +28.5% / SPARK +22.1% / INFERNO +33.7% over 30 days). All eight share the dark/gold palette and trading-vocabulary headlines. Use the floating bar inside each demo to navigate back. <kbd>?picked=N</kbd> in the URL after returning highlights your pick.
+  </div>
+  <div class="picked-banner" id="picked-banner"></div>
+</div>
+
+<div class="section-divider"><h2>The four picks · <span>refined headlines, % over time</span></h2></div>
+
+<div class="grid">
+  <a class="card" href="2.html">
+    <div class="iframe-wrap"><iframe src="2.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 02 <span class="badge kept">REFINED</span></div>
+      <div class="card-name">Equity Curve · <em>Credit where credit's due.</em></div>
+      <div class="card-line">"The line is the credit, and where it's due."</div>
+      <div class="card-desc">Live equity chart background, % over time as the headline metric, three bot cards with verses, final CTA on Proverbs 27:17.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="3.html">
+    <div class="iframe-wrap"><iframe src="3.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 03 <span class="badge kept">REFINED</span></div>
+      <div class="card-name">IC Payoff · <em>Wings before flight.</em></div>
+      <div class="card-line">"Loss is bounded the moment the trade opens."</div>
+      <div class="card-desc">Iron condor payoff diagram with live SPY price marker, profit zone shaded, headline plays on "wings" twice — IC mechanics + lift-off.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="8.html">
+    <div class="iframe-wrap"><iframe src="8.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 08 <span class="badge kept">REFINED</span></div>
+      <div class="card-name">Timeline · <em>The forge taught the trade.</em></div>
+      <div class="card-line">"Strike, hedge, refine — all came from the anvil first."</div>
+      <div class="card-desc">Vertical timeline 970 BC → 2026, three biblical anchors, then three bot biographies extending the timeline into the present.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="16.html">
+    <div class="iframe-wrap"><iframe src="16.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 16 <span class="badge kept">REFINED</span></div>
+      <div class="card-name">Decisions · <em>Open positions. Open books.</em></div>
+      <div class="card-line">"Every cycle, every decision, in plain English."</div>
+      <div class="card-desc">Today's three trades laid out card-by-card with reasoning + strikes + MTM%, plus a 30-day per-bot summary section below.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+</div>
+
+<div class="section-divider"><h2>Four new dark concepts · <span>same gold/amber palette</span></h2></div>
+
+<div class="grid">
+  <a class="card" href="41.html">
+    <div class="iframe-wrap"><iframe src="41.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 41 <span class="badge new">CONSOLE</span></div>
+      <div class="card-name">The Console · <em>Public source. Public sums.</em></div>
+      <div class="card-line">"Source = code. Sums = math. Both public."</div>
+      <div class="card-desc">Terminal-meets-IDE. Tab bar at top, side panels with live quotes + per-bot %, command-line login. Most "trader's IDE" of the set.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="42.html">
+    <div class="iframe-wrap"><iframe src="42.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 42 <span class="badge new">BRIEFING</span></div>
+      <div class="card-name">Daily Briefing · <em>Cleared. Posted. Signed.</em></div>
+      <div class="card-line">"Three-beat military rhythm. Declassified by default."</div>
+      <div class="card-desc">Military-intel aesthetic with classified bar, intel panel showing live operative status by bot, "CLEARED FOR DISTRIBUTION" stamp.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="43.html">
+    <div class="iframe-wrap"><iframe src="43.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 43 <span class="badge new">CODEX</span></div>
+      <div class="card-name">The Codex · <em>Chapter and strike.</em></div>
+      <div class="card-line">"Chapter and verse" + option strike — perfect crossover.</div>
+      <div class="card-desc">Modern scripture-reader UI: TOC sidebar of chapters (Forge, Iron, FLAME, SPARK, INFERNO...), passage with verse numbers, live context panel.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+  <a class="card" href="44.html">
+    <div class="iframe-wrap"><iframe src="44.html" loading="lazy" scrolling="no"></iframe></div>
+    <div class="card-meta">
+      <div class="card-num">DEMO 44 <span class="badge new">MISSION CTRL</span></div>
+      <div class="card-name">Mission Control · <em>Telemetry over testimony.</em></div>
+      <div class="card-line">"The data carries the claim, not the marketing."</div>
+      <div class="card-desc">NASA / mission-control aesthetic. Live mission clock, telemetry panel with % per bot per timeframe, capacity bar, scripture as logged transmission.</div>
+      <span class="card-cta">View as full page</span>
+    </div>
+  </a>
+</div>
+
+<div class="footer">
+  IronForge · 8 candidate landing pages · same dark/gold palette · all numbers shown as % over time<br/>
+  Click any card → opens that demo as a full page · in the floating bar inside, "Pick this" returns here with your pick highlighted
+</div>
+
+<script>
+  const NAMES = {
+    '2': '02 · Equity Curve · "Credit where credit\\'s due."',
+    '3': '03 · IC Payoff · "Wings before flight."',
+    '8': '08 · Timeline · "The forge taught the trade."',
+    '16': '16 · Decisions · "Open positions. Open books."',
+    '41': '41 · The Console · "Public source. Public sums."',
+    '42': '42 · Daily Briefing · "Cleared. Posted. Signed."',
+    '43': '43 · The Codex · "Chapter and strike."',
+    '44': '44 · Mission Control · "Telemetry over testimony."'
+  };
+  const params = new URLSearchParams(window.location.search);
+  const picked = params.get('picked');
+  if (picked && NAMES[picked]) {
+    const banner = document.getElementById('picked-banner');
+    banner.style.display = 'block';
+    banner.innerHTML = '✓ You picked <strong>' + NAMES[picked] + '</strong> — tell me to ship it.';
+  }
+</script>
+
+</body>
+</html>

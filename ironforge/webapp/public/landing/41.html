@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IronForge · Demo 41 · "Public source. Public sums."</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { margin: 0; background: #050201; color: #fff; }
+    .demo-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(10,3,1,0.92); backdrop-filter: blur(12px); border: 1px solid rgba(251,191,36,0.35); border-radius: 10px; padding: 8px 14px; display: flex; gap: 12px; align-items: center; font-family: 'Inter', sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+    .demo-bar .lbl { font-size: 9px; color: #fbbf24; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; padding-right: 12px; border-right: 1px solid rgba(251,191,36,0.25); }
+    .demo-bar a { font-size: 10px; color: #fde68a; text-decoration: none; padding: 5px 11px; border-radius: 5px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700; }
+    .demo-bar a:hover { background: rgba(251,191,36,0.1); }
+    .demo-bar a.pri { background: rgba(251,191,36,0.2); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); }
+    .demo-bar a.pri:hover { background: rgba(251,191,36,0.3); }
+  </style>
+</head>
+<body>
+<div class="demo-bar"><span class="lbl">Demo 41 · "Public source. Public sums."</span><a href="/landing/">← Gallery</a><a href="/landing/?picked=41" class="pri">Pick this</a></div>
+
+<div class="cn-hero">
+  <div class="cn-bg-grid"></div><div class="cn-glow"></div>
+  <div class="cn-tabbar">
+    <div class="cn-tab active">FORGE</div><div class="cn-tab">FLAME</div><div class="cn-tab">SPARK</div><div class="cn-tab">INFERNO</div><div class="cn-tab" style="margin-left:auto">DOCS</div><div class="cn-tab">SIGN IN</div>
+  </div>
+  <div class="cn-grid">
+    <div class="cn-side">
+      <div class="cn-side-title">QUOTES</div>
+      <div class="cn-row"><span class="l">SPY</span><span class="v gold">$487.32</span></div>
+      <div class="cn-row"><span class="l">VIX</span><span class="v">14.82</span></div>
+      <div class="cn-row"><span class="l">GEX</span><span class="v green">+$3.2B</span></div>
+      <div class="cn-row"><span class="l">FLIP</span><span class="v">$486.50</span></div>
+      <div class="cn-side-title" style="margin-top:18px">TODAY · % RETURN</div>
+      <div class="cn-row"><span class="l">FLAME</span><span class="v green">+1.4%</span></div>
+      <div class="cn-row"><span class="l">SPARK</span><span class="v green">+0.87%</span></div>
+      <div class="cn-row"><span class="l">INFERNO</span><span class="v green">+2.14%</span></div>
+      <div class="cn-row" style="border-top:1px solid rgba(251,191,36,0.2);padding-top:6px;margin-top:6px"><span class="l">DAY NET</span><span class="v gold">+4.4%</span></div>
+    </div>
+    <div class="cn-main">
+      <div class="cn-eyebrow">SYSTEM ONLINE · SCAN INTERVAL 60s</div>
+      <h1 class="cn-headline">Public source.<br/>Public <em>sums.</em></h1>
+      <p class="cn-sub">Three autonomous SPY iron condor bots. Real Tradier data. The console below is the same one we use — every signal, every fill, every kill switch — and the math, public.</p>
+      <div class="cn-cmd">login --new-account <span class="typed">you@example.com</span></div>
+      <div class="cn-cta"><a class="pri">CREATE_ACCOUNT</a><a class="sec">VIEW_DOCS</a></div>
+      <div class="cn-scripture">"I have refined you, though not as silver; I have tested you in the furnace of affliction."<div class="cn-scripture-cite">— ISAIAH 48:10</div></div>
+    </div>
+    <div class="cn-side right">
+      <div class="cn-side-title">30D RETURN · BY BOT</div>
+      <div class="cn-row"><span class="l">FLAME</span><span class="v gold">+28.5%</span></div>
+      <div class="cn-row"><span class="l">SPARK</span><span class="v gold">+22.1%</span></div>
+      <div class="cn-row"><span class="l">INFERNO</span><span class="v gold">+33.7%</span></div>
+      <div class="cn-row" style="border-top:1px solid rgba(251,191,36,0.2);padding-top:6px;margin-top:6px"><span class="l">COMPOSITE</span><span class="v gold">+84.2%</span></div>
+      <div class="cn-side-title" style="margin-top:18px">WIN RATE · 30D</div>
+      <div class="cn-row"><span class="l">FLAME</span><span class="v green">68%</span></div>
+      <div class="cn-row"><span class="l">SPARK</span><span class="v green">71%</span></div>
+      <div class="cn-row"><span class="l">INFERNO</span><span class="v green">76%</span></div>
+    </div>
+  </div>
+</div>
+<section class="bots-sec">
+  <div class="bots-eyebrow">SYSTEM PROCESSES · 3 RUNNING</div>
+  <h2 class="bots-headline">FLAME · SPARK · <em>INFERNO.</em></h2>
+  <p class="bots-sub">Three processes, three strategies, three verses. All transparent.</p>
+  <div class="bots-grid">
+    <div class="bot-card flame"><div class="bot-head"><div class="bot-name">FLAME</div><div class="bot-tag">2DTE</div></div><div class="bot-strat"><strong>Bull Put Credit Spread.</strong> 1.0 SD OTM. Slow theta.</div><div class="bot-perf"><div><div class="v gold">+28.5%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">68%</div><div class="l">WIN RATE</div></div></div></div>
+    <div class="bot-card spark"><div class="bot-head"><div class="bot-name">SPARK</div><div class="bot-tag">1DTE</div></div><div class="bot-strat"><strong>Iron Condor.</strong> 1.2 SD strikes, Kelly-sized.</div><div class="bot-perf"><div><div class="v gold">+22.1%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">71%</div><div class="l">WIN RATE</div></div></div></div>
+    <div class="bot-card inferno"><div class="bot-head"><div class="bot-name">INFERNO</div><div class="bot-tag">0DTE</div></div><div class="bot-strat"><strong>FORTRESS-style.</strong> Multiple positions, half-Kelly.</div><div class="bot-perf"><div><div class="v gold">+33.7%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">76%</div><div class="l">WIN RATE</div></div></div></div>
+  </div>
+</section>
+<section class="cta-sec">
+  <div class="cta-glow"></div>
+  <div class="cta-content">
+    <div class="cta-eyebrow">$ CONNECT TO THE FORGE</div>
+    <h2 class="cta-title">Sharpen your <em>edge.</em></h2>
+    <div class="cta-verse">"As iron sharpens iron, so one person sharpens another."</div>
+    <div class="cta-cite">— PROVERBS 27:17</div>
+    <a class="cta-btn">Create Your Account</a>
+  </div>
+</section>
+</body>
+</html>

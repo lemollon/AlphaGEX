@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IronForge · Demo 8 · "The forge taught the trade."</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { margin: 0; background: #050201; color: #fff; }
+    .demo-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(10,3,1,0.92); backdrop-filter: blur(12px); border: 1px solid rgba(251,191,36,0.35); border-radius: 10px; padding: 8px 14px; display: flex; gap: 12px; align-items: center; font-family: 'Inter', sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+    .demo-bar .lbl { font-size: 9px; color: #fbbf24; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; padding-right: 12px; border-right: 1px solid rgba(251,191,36,0.25); }
+    .demo-bar a { font-size: 10px; color: #fde68a; text-decoration: none; padding: 5px 11px; border-radius: 5px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700; }
+    .demo-bar a:hover { background: rgba(251,191,36,0.1); }
+    .demo-bar a.pri { background: rgba(251,191,36,0.2); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); }
+    .demo-bar a.pri:hover { background: rgba(251,191,36,0.3); }
+  </style>
+</head>
+<body>
+<div class="demo-bar"><span class="lbl">Demo 8 · "The forge taught the trade."</span><a href="/landing/">← Gallery</a><a href="/landing/?picked=8" class="pri">Pick this</a></div>
+
+<div class="tl-hero">
+  <div class="tl-vert"></div>
+  <div class="tl-top">
+    <div class="tl-eyebrow">A TIMELINE OF DISCIPLINE</div>
+    <h1 class="tl-headline">The forge taught the <em>trade.</em></h1>
+    <p class="tl-sub">The hammer-and-anvil came first. The market vocabulary borrowed it later — strike, hedge, refine. We just put three bots back at the anvil, and let them labour daily.</p>
+  </div>
+  <div class="tl-row"><div class="tl-cell left"><div class="tl-year">~970 BC</div><div class="tl-title">Solomon writes Proverbs</div><div class="tl-body">Discipline as metalwork: friction creates the edge.</div></div><div class="tl-marker"></div><div class="tl-cell right"><div class="tl-verse">"As iron sharpens iron, so one person sharpens another."</div><div class="tl-cite">— Proverbs 27:17</div></div></div>
+  <div class="tl-row"><div class="tl-cell left"><div class="tl-verse">"I have refined you, though not as silver; I have tested you in the furnace of affliction."</div><div class="tl-cite">— Isaiah 48:10</div></div><div class="tl-marker"></div><div class="tl-cell right"><div class="tl-year">~700 BC</div><div class="tl-title">Isaiah on the furnace</div><div class="tl-body">Refinement is not destruction. The furnace tests, it does not consume.</div></div></div>
+  <div class="tl-row"><div class="tl-cell left"><div class="tl-year">2026</div><div class="tl-title">IronForge launches</div><div class="tl-body">Three iron condor bots running on Render + Tradier. Same discipline, new anvil.</div></div><div class="tl-marker split"></div><div class="tl-cell right"><div class="tl-verse">"Better a patient person than a warrior, one with self-control than one who takes a city."</div><div class="tl-cite">— Proverbs 16:32</div></div></div>
+
+  <div class="tl-bots-wrap">
+    <div class="tl-bots-title">The three bots</div>
+    <div class="tl-bots-grid">
+      <div class="tl-bot flame">
+        <div class="tl-bot-name">FLAME</div>
+        <div class="tl-bot-meta">2DTE · BULL PUT CREDIT SPREAD · 1.0 SD</div>
+        <div class="tl-bot-strat">Slow theta, rich premium. Two days to expiration. Patient, deliberate, takes the put-side bet when premium is rich.</div>
+        <div class="tl-bot-stats"><div class="tl-bot-stat"><div class="v">+28.5%</div><div class="l">30D RETURN</div></div><div class="tl-bot-stat"><div class="v">68%</div><div class="l">WIN RATE</div></div><div class="tl-bot-stat"><div class="v">142</div><div class="l">TRADES</div></div></div>
+        <div class="tl-bot-verse">"As iron sharpens iron."<div class="tl-bot-verse-cite">— PROVERBS 27:17</div></div>
+      </div>
+      <div class="tl-bot spark">
+        <div class="tl-bot-name">SPARK</div>
+        <div class="tl-bot-meta">1DTE · IRON CONDOR · KELLY-SIZED</div>
+        <div class="tl-bot-strat">One day to expiration. Both sides hedged, faster theta. Kelly-sized contracts, 50/30/20 sliding profit target.</div>
+        <div class="tl-bot-stats"><div class="tl-bot-stat"><div class="v">+22.1%</div><div class="l">30D RETURN</div></div><div class="tl-bot-stat"><div class="v">71%</div><div class="l">WIN RATE</div></div><div class="tl-bot-stat"><div class="v">156</div><div class="l">TRADES</div></div></div>
+        <div class="tl-bot-verse">"Patience over pressure."<div class="tl-bot-verse-cite">— PROVERBS 16:32</div></div>
+      </div>
+      <div class="tl-bot inferno">
+        <div class="tl-bot-name">INFERNO</div>
+        <div class="tl-bot-meta">0DTE · FORTRESS-STYLE · AGGRESSIVE</div>
+        <div class="tl-bot-strat">Same-day resolution. Multiple positions per day, half-Kelly sizing, reverse-slide PT (20→30→50%). The fastest furnace.</div>
+        <div class="tl-bot-stats"><div class="tl-bot-stat"><div class="v">+33.7%</div><div class="l">30D RETURN</div></div><div class="tl-bot-stat"><div class="v">76%</div><div class="l">WIN RATE</div></div><div class="tl-bot-stat"><div class="v">114</div><div class="l">TRADES</div></div></div>
+        <div class="tl-bot-verse">"Refined in the furnace of affliction."<div class="tl-bot-verse-cite">— ISAIAH 48:10</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tl-cta"><a>Add Your Name to the Timeline</a></div>
+</div>
+<section class="cta-sec">
+  <div class="cta-glow"></div>
+  <div class="cta-content">
+    <div class="cta-eyebrow">JOIN THE TRADITION</div>
+    <h2 class="cta-title">Sharpen your <em>edge.</em></h2>
+    <div class="cta-verse">"As iron sharpens iron, so one person sharpens another."</div>
+    <div class="cta-cite">— PROVERBS 27:17</div>
+    <a class="cta-btn">Create Your Account</a>
+  </div>
+</section>
+</body>
+</html>

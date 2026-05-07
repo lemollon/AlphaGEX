@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IronForge · Demo 3 · "Wings before flight."</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    body { margin: 0; background: #050201; color: #fff; }
+    .demo-bar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(10,3,1,0.92); backdrop-filter: blur(12px); border: 1px solid rgba(251,191,36,0.35); border-radius: 10px; padding: 8px 14px; display: flex; gap: 12px; align-items: center; font-family: 'Inter', sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+    .demo-bar .lbl { font-size: 9px; color: #fbbf24; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; padding-right: 12px; border-right: 1px solid rgba(251,191,36,0.25); }
+    .demo-bar a { font-size: 10px; color: #fde68a; text-decoration: none; padding: 5px 11px; border-radius: 5px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 700; }
+    .demo-bar a:hover { background: rgba(251,191,36,0.1); }
+    .demo-bar a.pri { background: rgba(251,191,36,0.2); color: #fbbf24; border: 1px solid rgba(251,191,36,0.4); }
+    .demo-bar a.pri:hover { background: rgba(251,191,36,0.3); }
+  </style>
+</head>
+<body>
+<div class="demo-bar"><span class="lbl">Demo 3 · "Wings before flight."</span><a href="/landing/">← Gallery</a><a href="/landing/?picked=3" class="pri">Pick this</a></div>
+
+<div class="ic-hero">
+  <div class="ic-left">
+    <div class="ic-eyebrow">SPY · IRON CONDOR · 1DTE · LIVE</div>
+    <h1 class="ic-headline">Wings<br/>before <em>flight.</em></h1>
+    <p class="ic-sub">An iron condor buys its wings — the protective long options — before the position takes off. Loss is bounded the moment the trade opens. Premium does the rest.</p>
+    <div class="ic-cta"><a class="pri">See the Bots</a><a class="sec">How it works</a></div>
+  </div>
+  <div class="ic-right">
+    <svg class="ic-payoff" viewBox="0 0 480 320">
+      <line class="grid" x1="0" y1="60" x2="480" y2="60"/><line class="grid" x1="0" y1="120" x2="480" y2="120"/><line class="grid" x1="0" y1="200" x2="480" y2="200"/><line class="grid" x1="0" y1="260" x2="480" y2="260"/>
+      <rect class="loss-zone" x="0" y="60" width="80" height="200"/>
+      <rect class="profit-zone" x="120" y="60" width="240" height="200"/>
+      <rect class="loss-zone" x="400" y="60" width="80" height="200"/>
+      <line class="strike-line" x1="80" y1="60" x2="80" y2="260"/><line class="strike-line" x1="120" y1="60" x2="120" y2="260"/><line class="strike-line" x1="360" y1="60" x2="360" y2="260"/><line class="strike-line" x1="400" y1="60" x2="400" y2="260"/>
+      <text class="label-sm" x="80" y="280">478</text><text class="label-sm" x="120" y="280">483</text><text class="label-sm" x="360" y="280">492</text><text class="label-sm" x="400" y="280">497</text>
+      <path class="payoff-line" d="M 0,160 L 80,160 L 120,120 L 360,120 L 400,160 L 480,160"/>
+      <line class="current-price" x1="240" y1="50" x2="240" y2="270"/>
+      <circle class="current-dot" cx="240" cy="120" r="6"/>
+      <text class="label" x="240" y="40" text-anchor="middle">$487 ←</text>
+      <text class="label" x="240" y="100" text-anchor="middle" fill="#4ade80" style="font-weight:700">PROFIT · $0.85 credit · +4.5%</text>
+    </svg>
+    <div class="ic-caption">Live: SPY $487 · Strikes 478/483/492/497 · Today <span style="color:#4ade80;font-weight:700">+4.4%</span></div>
+  </div>
+</div>
+<section class="bots-sec">
+  <div class="bots-eyebrow">THREE BOTS · ONE FORGE</div>
+  <h2 class="bots-headline">Built on <em>discipline.</em></h2>
+  <p class="bots-sub">FLAME, SPARK, INFERNO each build a different iron condor on the SPY anvil — three strategies, three verses.</p>
+  <div class="bots-grid">
+    <div class="bot-card flame"><div class="bot-head"><div class="bot-name">FLAME</div><div class="bot-tag">2DTE</div></div><div class="bot-strat"><strong>Bull Put Credit Spread.</strong> 1.0 SD OTM, slow theta, more premium.</div><div class="bot-perf"><div><div class="v gold">+28.5%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">68%</div><div class="l">WIN RATE</div></div></div></div>
+    <div class="bot-card spark"><div class="bot-head"><div class="bot-name">SPARK</div><div class="bot-tag">1DTE</div></div><div class="bot-strat"><strong>Iron Condor.</strong> 1.2 SD strikes, Kelly-sized, 50/30/20 sliding PT.</div><div class="bot-perf"><div><div class="v gold">+22.1%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">71%</div><div class="l">WIN RATE</div></div></div></div>
+    <div class="bot-card inferno"><div class="bot-head"><div class="bot-name">INFERNO</div><div class="bot-tag">0DTE</div></div><div class="bot-strat"><strong>FORTRESS-style.</strong> Multiple positions, half-Kelly, same-day resolution.</div><div class="bot-perf"><div><div class="v gold">+33.7%</div><div class="l">30D RETURN</div></div><div style="text-align:right"><div class="v">76%</div><div class="l">WIN RATE</div></div></div></div>
+  </div>
+</section>
+<section class="cta-sec">
+  <div class="cta-glow"></div>
+  <div class="cta-content">
+    <div class="cta-eyebrow">STEP INTO THE FORGE</div>
+    <h2 class="cta-title">Sharpen your <em>edge.</em></h2>
+    <div class="cta-verse">"As iron sharpens iron, so one person sharpens another."</div>
+    <div class="cta-cite">— PROVERBS 27:17</div>
+    <a class="cta-btn">Create Your Account</a>
+  </div>
+</section>
+</body>
+</html>
