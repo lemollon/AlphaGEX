@@ -122,8 +122,8 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // combo bid/ask spread — 9 sequential PT limits failed and the kill switch
   // closed it at break-even. With a $0.25 floor the bot tightens strikes
   // (lower SD) to reach acceptable credit or skips the day entirely.
-  flame:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
   inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
 }
 
@@ -536,10 +536,10 @@ function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
  * fill ≤ that price (i.e., ≥ ptFraction profit) is accepted. The tier value is
  * the *guaranteed minimum* return, not an exact target — better fills are kept.
  *
- * SPARK   (1DTE, base=0.50): MORNING 50% (until 12:00 PM CT) → MIDDAY 30% → AFTERNOON 20%
- *   Extended MORNING window keeps the close limit aggressive (50% of credit)
+ * SPARK   (1DTE, base=0.30): MORNING 30% (until 12:00 PM CT) → MIDDAY 20% → AFTERNOON 15%
+ *   Extended MORNING window keeps the close limit aggressive (30% of credit)
  *   for longer to avoid stuck unfilled limits when the tier slides down.
- * FLAME   (base=0.50):       MORNING 50% (until 10:30 AM CT) → MIDDAY 30% → AFTERNOON 20%
+ * FLAME   (base=0.30):       MORNING 30% (until 10:30 AM CT) → MIDDAY 20% → AFTERNOON 15%
  * INFERNO (0DTE):            MORNING 20% → MIDDAY 30% → AFTERNOON 50%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
  *   let theta work in afternoon (decay accelerates into close).
@@ -557,10 +557,10 @@ function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [num
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
     if (isInferno) return [0.30, 'MIDDAY']
-    return [Math.max(0.10, basePt - 0.20), 'MIDDAY']
+    return [Math.max(0.10, basePt - 0.10), 'MIDDAY']
   } else {
     if (isInferno) return [0.50, 'AFTERNOON']
-    return [Math.max(0.10, basePt - 0.30), 'AFTERNOON']
+    return [Math.max(0.10, basePt - 0.15), 'AFTERNOON']
   }
 }
 

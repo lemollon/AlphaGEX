@@ -288,10 +288,11 @@ export async function postFlameOpen(args: {
   const breakeven = putShort - credit
   const otmPct = spot > 0 ? ((spot - putShort) / spot) * 100 : 0
 
-  // Profit-target ladder targets (mirrors getSlidingProfitTarget defaults)
-  const ptMorning = credit * 0.30
-  const ptMidday = credit * 0.40
-  const ptAfter = credit * 0.50
+  // Profit-target ladder cost-to-close thresholds (mirrors getSlidingProfitTarget):
+  // 30% / 20% / 15% profit → credit × 0.70 / 0.80 / 0.85
+  const ptMorning = credit * 0.70
+  const ptMidday = credit * 0.80
+  const ptAfter = credit * 0.85
   const stopLoss = credit * 2.0
 
   const desc = [

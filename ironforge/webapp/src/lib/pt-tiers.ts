@@ -1,21 +1,21 @@
 /**
  * Sliding Profit Target tiers — must match the scanner schedule exactly.
  *
- * Schedule (Central Time):
- *   FLAME / INFERNO (morning ends 10:30 AM):
- *     8:30 – 10:29  → 50% MORNING
- *     10:30 – 12:59 → 30% MIDDAY
- *     1:00 – 2:44   → 20% AFTERNOON
+ * Schedule (Central Time) for FLAME / SPARK:
+ *   FLAME (morning ends 10:30 AM):
+ *     8:30 – 10:29  → 30% MORNING
+ *     10:30 – 12:59 → 20% MIDDAY
+ *     1:00 – 2:44   → 15% AFTERNOON
  *
  *   SPARK (morning extended to 12:00 PM per scanner — keeps the close limit
  *   aggressive longer to avoid stuck unfilled limits when the tier slides):
- *     8:30 – 11:59  → 50% MORNING
- *     12:00 – 12:59 → 30% MIDDAY
- *     1:00 – 2:44   → 20% AFTERNOON
+ *     8:30 – 11:59  → 30% MORNING
+ *     12:00 – 12:59 → 20% MIDDAY
+ *     1:00 – 2:44   → 15% AFTERNOON
  *
  *   2:45 PM+        → handled by EOD cutoff
  *
- * INFERNO (0DTE) uses its own reversed 20/30/50 schedule in scanner.ts;
+ * INFERNO (0DTE) uses its own reversed schedule in scanner.ts;
  * the UI tier helpers below treat it like FLAME for display purposes.
  */
 
@@ -30,7 +30,7 @@ export interface PTTier {
 }
 
 const MORNING: PTTier = {
-  pct: 0.50,
+  pct: 0.30,
   label: 'Morning',
   color: 'text-emerald-400',
   bgColor: 'bg-emerald-500/20',
@@ -38,7 +38,7 @@ const MORNING: PTTier = {
 }
 
 const MIDDAY: PTTier = {
-  pct: 0.30,
+  pct: 0.20,
   label: 'Midday',
   color: 'text-yellow-400',
   bgColor: 'bg-yellow-500/20',
@@ -46,7 +46,7 @@ const MIDDAY: PTTier = {
 }
 
 const AFTERNOON: PTTier = {
-  pct: 0.20,
+  pct: 0.15,
   label: 'Afternoon',
   color: 'text-orange-400',
   bgColor: 'bg-orange-500/20',
@@ -100,11 +100,11 @@ export function secondsUntilNextTier(ctDate?: Date, bot?: string): { seconds: nu
 
   if (mins < morningEnd) {
     // Morning → Midday at morningEnd
-    return { seconds: morningEnd * 60 - totalSecs, nextLabel: '30% Midday' }
+    return { seconds: morningEnd * 60 - totalSecs, nextLabel: '20% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
-    return { seconds: 46800 - totalSecs, nextLabel: '20% Afternoon' }
+    return { seconds: 46800 - totalSecs, nextLabel: '15% Afternoon' }
   }
   if (mins < 885) {
     // Afternoon → EOD at 2:45 PM (885 min = 53100 sec)
@@ -116,16 +116,15 @@ export function secondsUntilNextTier(ctDate?: Date, bot?: string): { seconds: nu
 /** Format a close_reason string for display. Pass bot to get correct PT% for INFERNO. */
 export function formatCloseReason(reason: string, bot?: string): { text: string; color: string } {
   const isInferno = bot === 'inferno'
-  // FLAME/SPARK: 50/30/20 (Commit O, Apr 2026 — loosened from 30/20/15).
-  // INFERNO: 50/30/10 kept unchanged (its displayed label was already
-  // pre-existing; actual scanner behavior is 20/30/50 reversed — a display
-  // inconsistency that predates this change, not fixed here per scope).
+  // FLAME/SPARK: 30/20/15 (reverted from 50/30/20 — see scanner.ts).
+  // INFERNO: 50/30/10 displayed label kept; actual scanner behavior is
+  // 20/30/50 reversed — a display inconsistency that predates this change.
   if (reason === 'profit_target_morning')
-    return { text: `Profit Target (Morning 50%)`, color: 'text-emerald-400' }
+    return { text: `Profit Target (Morning ${isInferno ? '50' : '30'}%)`, color: 'text-emerald-400' }
   if (reason === 'profit_target_midday')
-    return { text: `Profit Target (Midday 30%)`, color: 'text-yellow-400' }
+    return { text: `Profit Target (Midday ${isInferno ? '30' : '20'}%)`, color: 'text-yellow-400' }
   if (reason === 'profit_target_afternoon')
-    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '20'}%)`, color: 'text-orange-400' }
+    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '15'}%)`, color: 'text-orange-400' }
   if (reason === 'profit_target')
     return { text: 'Profit Target', color: 'text-emerald-400' }
   if (reason === 'stop_loss')
