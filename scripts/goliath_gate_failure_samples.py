@@ -75,7 +75,6 @@ def _structure(*, sp_oi=500, lp_oi=500, lc_oi=500,
 def _good_inputs(letf: str, underlying: str, **overrides) -> GateInputs:
     base = dict(
         letf_ticker=letf, underlying_ticker=underlying,
-        spy_net_gex=2.0e9,
         underlying_net_gex=1.0e8,
         underlying_strikes=[
             GammaStrike(190.0, 1.0), GammaStrike(191.0, 8.0),
@@ -128,8 +127,6 @@ def _row(scenario: str, inputs: GateInputs) -> dict:
 
 def main() -> int:
     scenarios = [
-        ("G01_SPY_EXTREME_NEGATIVE",
-            _good_inputs("MSTU", "MSTR", spy_net_gex=-5.0e9)),
         ("G02_TSLA_UNDERLYING_NEGATIVE",
             _good_inputs("TSLL", "TSLA", underlying_net_gex=-1.0e9)),
         ("G04_NVDA_EARNINGS_IN_3_DAYS",

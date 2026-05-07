@@ -76,7 +76,7 @@ def _good_chain():
 
 def _good_snapshot() -> MarketSnapshot:
     return MarketSnapshot(
-        spy_net_gex=2.0e9, underlying_net_gex=1.0e8,
+        underlying_net_gex=1.0e8,
         underlying_strikes=[
             GammaStrike(190.0, 1.0), GammaStrike(191.0, 8.0),
             GammaStrike(195.0, 1.0), GammaStrike(200.0, 1.0),

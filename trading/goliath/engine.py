@@ -41,7 +41,6 @@ _DEFAULT_DTE_YEARS = 7.0 / 365.0
 class MarketSnapshot:
     """Inputs the engine needs to evaluate one entry."""
 
-    spy_net_gex: float
     underlying_net_gex: float
     underlying_strikes: Sequence[GammaStrike]
     underlying_spot: float
@@ -113,7 +112,6 @@ class GoliathEngine:
         gate_inputs = GateInputs(
             letf_ticker=instance.letf_ticker,
             underlying_ticker=instance.underlying_ticker,
-            spy_net_gex=snapshot.spy_net_gex,
             underlying_net_gex=snapshot.underlying_net_gex,
             underlying_strikes=snapshot.underlying_strikes,
             underlying_spot=snapshot.underlying_spot,

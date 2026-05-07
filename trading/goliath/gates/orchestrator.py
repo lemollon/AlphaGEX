@@ -1,9 +1,14 @@
-"""GOLIATH gate orchestrator -- runs G01..G10 in order, persists failures.
+"""GOLIATH gate orchestrator -- runs G02..G10 in order, persists failures.
 
-Master spec section 2: all 10 gates must pass. The orchestrator stops
-on the first non-PASS result, logs a row to ``goliath_gate_failures``
-(migration 028), and returns the chain so the caller can decide what
-to do (typically: skip the trade and move on).
+G01 (SPY extreme-negative gamma macro filter) was removed 2026-05-07: the
+v0.2 placeholder threshold (-3e9) was uncalibrated and rejected nearly
+every trading day. The strategy now relies on G02 (per-LETF underlying
+gamma) for regime context. Master spec section 2 originally specified 10
+gates; G02..G10 remains the gate set.
+
+The orchestrator stops on the first non-PASS result, logs a row to
+``goliath_gate_failures`` (migration 028), and returns the chain so the
+caller can decide what to do (typically: skip the trade and move on).
 
 Public API:
     orchestrate_entry(inputs: GateInputs) -> EntryDecision
@@ -25,7 +30,6 @@ from trading.goliath.strike_mapping.engine import TradeStructure
 from trading.goliath.strike_mapping.wall_finder import GammaStrike
 
 from . import (
-    g01_spy_gex,
     g02_underlying_gex,
     g03_wall_present,
     g04_earnings_window,
@@ -43,11 +47,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GateInputs:
-    """All data needed to evaluate gates G01-G10."""
+    """All data needed to evaluate gates G02-G10."""
 
     letf_ticker: str
     underlying_ticker: str
-    spy_net_gex: float
     underlying_net_gex: float
     underlying_strikes: Sequence[GammaStrike]
     underlying_spot: float
@@ -95,16 +98,14 @@ def _structure_unavailable(gate_id: str) -> GateResult:
 
 
 def _eval_chain(inputs: GateInputs) -> list[GateResult]:
-    """Run gates G01-G10 in order, stopping at the first non-PASS."""
+    """Run gates G02-G10 in order, stopping at the first non-PASS."""
     chain: list[GateResult] = []
 
     def _step(result: GateResult) -> bool:
         chain.append(result)
         return result.passed
 
-    # G01-G05: pre-structure regime / data gates
-    if not _step(g01_spy_gex.evaluate(inputs.spy_net_gex)):
-        return chain
+    # G02-G05: pre-structure regime / data gates
     if not _step(g02_underlying_gex.evaluate(inputs.underlying_ticker, inputs.underlying_net_gex)):
         return chain
     if not _step(g03_wall_present.evaluate(inputs.underlying_strikes, inputs.underlying_spot, inputs.config)):
