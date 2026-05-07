@@ -173,12 +173,6 @@ export default function Home() {
         }}>
           &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
         </p>
-        <a
-          href="/landing/index.html"
-          className="inline-flex items-center gap-2 mt-5 px-4 py-2 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 text-xs font-bold tracking-[0.15em] uppercase hover:bg-amber-500/20 hover:border-amber-500/60 transition"
-        >
-          Preview landing page designs <span aria-hidden>→</span>
-        </a>
       </div>
 
       {/* Launch Countdown */}
