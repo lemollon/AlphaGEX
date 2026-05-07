@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
-import AppShell from '@/components/AppShell'
+import ClientNav from '@/components/ClientNav'
 
 export const metadata: Metadata = {
   title: 'IronForge',
@@ -16,7 +16,8 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="font-sans antialiased min-h-screen">
-        <AppShell>{children}</AppShell>
+        <ClientNav />
+        <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
       </body>
     </html>
   )
