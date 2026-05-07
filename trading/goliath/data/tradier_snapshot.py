@@ -12,7 +12,7 @@ Composes a MarketSnapshot from three sources:
 
 Each fetch is wrapped in try/except so a single source failure doesn't
 abort the snapshot. Failed fields default to safe values that downstream
-gates will reject (e.g. spy_net_gex=0 fails G01 if SPY GEX is unreachable).
+gates will reject (e.g. underlying_net_gex=0 fails G02 if TV is unreachable).
 
 Best-effort by design: the runner skips the instance if the snapshot
 fetcher raises or returns None. Phase 7 monitoring tracks failure rates
@@ -43,7 +43,7 @@ def _safe_get_tv_gex(symbol: str) -> tuple[float, list[GammaStrike]]:
     falls back to computing per-strike gamma directly from the Tradier
     options chain (same approach as backend/api/routes/gex_routes.py uses
     when TradingVolatilityAPI is unavailable). Returns (0.0, []) only when
-    both sources are unavailable; downstream G01/G02/G03 then fail closed.
+    both sources are unavailable; downstream G02/G03 then fail closed.
     """
     net_gex, strikes = _try_tv_gex(symbol)
     if strikes:
@@ -307,12 +307,10 @@ def _safe_tv_iv_rank(letf_ticker: str) -> Optional[float]:
 
 def build_market_snapshot(
     instance: GoliathInstance,
-    spy_net_gex_override: Optional[float] = None,
 ) -> Optional[MarketSnapshot]:
     """Build a MarketSnapshot for the given instance using live data sources.
 
     Composes:
-        SPY GEX                 -- TV
         underlying GEX + walls  -- TV
         underlying spot + MA    -- yfinance
         underlying realized vol -- yfinance (30d)
@@ -323,18 +321,9 @@ def build_market_snapshot(
     Returns None ONLY if the LETF chain is empty (no options data -> no
     structure can be built). Other failures degrade gracefully:
     upstream gates fail closed on missing data, which is what we want.
-
-    spy_net_gex_override lets the runner fetch SPY GEX once per cycle and
-    reuse across all 5 instances (avoids 5 TV calls for the same number).
     """
     underlying = instance.underlying_ticker
     letf = instance.letf_ticker
-
-    # SPY GEX (G01)
-    if spy_net_gex_override is not None:
-        spy_net_gex = spy_net_gex_override
-    else:
-        spy_net_gex, _ = _safe_get_tv_gex("SPY")
 
     # Underlying GEX (G02 + G03 walls)
     underlying_net_gex, underlying_strikes = _safe_get_tv_gex(underlying)
@@ -353,7 +342,6 @@ def build_market_snapshot(
     iv_rank = _safe_tv_iv_rank(letf)
 
     return MarketSnapshot(
-        spy_net_gex=spy_net_gex,
         underlying_net_gex=underlying_net_gex,
         underlying_strikes=list(underlying_strikes),
         underlying_spot=underlying_spot,

@@ -1,7 +1,10 @@
-"""GOLIATH entry gates G01-G10 (master spec section 2).
+"""GOLIATH entry gates G02-G10 (originally G01-G10 per master spec section 2).
+
+G01 (spy_gex SPY-extreme-negative-gamma macro filter) was removed
+2026-05-07 -- the placeholder threshold was uncalibrated and rejected
+nearly every trading day.
 
 Gate roster (run in order; first non-PASS stops the chain):
-    G01 spy_gex                  -- SPY GEX not in extreme negative regime
     G02 underlying_gex           -- Per-LETF underlying GEX regime check
     G03 wall_present             -- Underlying has identifiable positive
                                     gamma wall below spot (delegates to

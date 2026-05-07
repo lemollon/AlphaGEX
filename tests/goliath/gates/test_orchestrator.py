@@ -1,8 +1,9 @@
 """Integration tests for trading.goliath.gates.orchestrator.
 
-Verify the full G01..G10 chain runs in order, stops at first non-PASS,
+Verify the G02..G10 chain runs in order, stops at first non-PASS,
 populates gates_passed_before_failure correctly, and that the
 EntryDecision carries the structure only when every gate passes.
+G01 was removed 2026-05-07.
 
 The DB persist path is not exercised here -- we verify it is NOT
 called when DATABASE_URL is unset (best-effort by design).
@@ -83,7 +84,6 @@ _GOOD_STRIKES = [
 def _good_inputs(**overrides) -> GateInputs:
     base = dict(
         letf_ticker="TSLL", underlying_ticker="TSLA",
-        spy_net_gex=2.0e9,
         underlying_net_gex=1.0e8,
         underlying_strikes=_GOOD_STRIKES,
         underlying_spot=200.0,
@@ -105,38 +105,32 @@ class HappyPath(unittest.TestCase):
         self.assertIsInstance(decision, EntryDecision)
         self.assertIsNotNone(decision.structure)
         self.assertTrue(decision.passed)
-        self.assertEqual(len(decision.chain), 10)
+        self.assertEqual(len(decision.chain), 9)
         self.assertEqual([r.gate for r in decision.chain],
-                         ["G01", "G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10"])
+                         ["G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10"])
         self.assertIsNone(decision.first_failure)
 
 
 class FirstFailureStopsChain(unittest.TestCase):
-    def test_g01_failure_stops_at_g01(self):
-        decision = orchestrate_entry(_good_inputs(spy_net_gex=-5.0e9))
-        self.assertIsNone(decision.structure)
-        self.assertEqual(len(decision.chain), 1)
-        self.assertEqual(decision.first_failure.gate, "G01")
-
     def test_g05_insufficient_history_stops_chain(self):
         decision = orchestrate_entry(_good_inputs(iv_rank=None))
         self.assertEqual(decision.first_failure.gate, "G05")
         self.assertEqual(decision.first_failure.outcome.value, "INSUFFICIENT_HISTORY")
-        # G01-G05 evaluated; chain length 5.
-        self.assertEqual(len(decision.chain), 5)
+        # G02-G05 evaluated; chain length 4.
+        self.assertEqual(len(decision.chain), 4)
 
     def test_g06_failure_after_pre_structure_pass(self):
         decision = orchestrate_entry(_good_inputs(attempted_structure=_structure(sp_oi=50)))
         self.assertEqual(decision.first_failure.gate, "G06")
         passed = [r.gate for r in decision.chain if r.passed]
-        self.assertEqual(passed, ["G01", "G02", "G03", "G04", "G05"])
+        self.assertEqual(passed, ["G02", "G03", "G04", "G05"])
 
     def test_g10_failure_at_position_cap(self):
         decision = orchestrate_entry(_good_inputs(open_position_count=3))
         self.assertEqual(decision.first_failure.gate, "G10")
-        # All 9 prior gates passed.
+        # All 8 prior gates passed.
         passed = [r.gate for r in decision.chain if r.passed]
-        self.assertEqual(len(passed), 9)
+        self.assertEqual(len(passed), 8)
 
 
 class StructureUnavailable(unittest.TestCase):
@@ -152,9 +146,9 @@ class PersistenceIsBestEffort(unittest.TestCase):
         # Force the import inside _persist_failure to fail; orchestrator
         # must still return a clean EntryDecision.
         with patch.dict(os.environ, {"DATABASE_URL": ""}, clear=False):
-            decision = orchestrate_entry(_good_inputs(spy_net_gex=-5.0e9))
+            decision = orchestrate_entry(_good_inputs(iv_rank=None))
         self.assertIsNone(decision.structure)
-        self.assertEqual(decision.first_failure.gate, "G01")
+        self.assertEqual(decision.first_failure.gate, "G05")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,6 @@ def _good_chain() -> dict:
 
 def _good_snapshot() -> MarketSnapshot:
     return MarketSnapshot(
-        spy_net_gex=2.0e9,
         underlying_net_gex=1.0e8,
         underlying_strikes=[
             GammaStrike(190.0, 1.0), GammaStrike(191.0, 8.0),
@@ -77,7 +76,7 @@ class EvaluateEntryHappyPath(unittest.TestCase):
         self.assertIsNotNone(decision.structure)
         self.assertGreater(decision.contracts_to_trade, 0)
         self.assertTrue(decision.approved)
-        self.assertEqual(len(decision.gate_chain), 10)
+        self.assertEqual(len(decision.gate_chain), 9)
 
     def test_sizing_picks_binding_constraint(self):
         engine = GoliathEngine()
@@ -99,18 +98,6 @@ class EvaluateEntryGateFailures(unittest.TestCase):
 
     def tearDown(self):
         self._patch.stop()
-
-    def test_g01_extreme_negative_blocks_entry(self):
-        engine = GoliathEngine()
-        inst = GoliathInstance(config=get("GOLIATH-TSLL"))
-        snap = _good_snapshot()
-        snap = MarketSnapshot(**{**snap.__dict__, "spy_net_gex": -5.0e9})
-        decision = engine.evaluate_entry(inst, snap, _empty_platform(), now=_TODAY)
-        self.assertIsNone(decision.structure)
-        self.assertEqual(decision.contracts_to_trade, 0)
-        self.assertFalse(decision.approved)
-        # Chain stops at G01.
-        self.assertEqual(decision.gate_chain[-1].gate, "G01")
 
     def test_g05_cold_start_blocks_entry(self):
         engine = GoliathEngine()

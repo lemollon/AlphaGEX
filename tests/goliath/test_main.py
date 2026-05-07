@@ -38,7 +38,7 @@ def _good_chain():
 
 def _good_snapshot(_inst):
     return MarketSnapshot(
-        spy_net_gex=2.0e9, underlying_net_gex=1.0e8,
+        underlying_net_gex=1.0e8,
         underlying_strikes=[
             GammaStrike(190.0, 1.0), GammaStrike(191.0, 8.0),
             GammaStrike(195.0, 1.0), GammaStrike(200.0, 1.0),
@@ -53,11 +53,6 @@ def _good_snapshot(_inst):
 
 def _empty_platform(_instances):
     return PlatformContext(open_position_count=0, open_dollars_at_risk=0.0)
-
-
-def _g01_fail_snapshot(_inst):
-    snap = _good_snapshot(_inst)
-    return MarketSnapshot(**{**snap.__dict__, "spy_net_gex": -5.0e9})
 
 
 class EntryCycleHappyPath(unittest.TestCase):
@@ -170,26 +165,6 @@ class EntryCycleSkips(unittest.TestCase):
         self.assertEqual(engine.evaluate_entry.call_count, 5)
         self.assertEqual(len(result.skips), 5)
         self.assertTrue(all("cycle_error" in s for s in result.skips))
-
-
-class EntryCycleGateBlocks(unittest.TestCase):
-    def setUp(self):
-        self._kill_patch = patch("trading.goliath.instance.is_killed", return_value=False)
-        self._kill_patch.start()
-
-    def tearDown(self):
-        self._kill_patch.stop()
-
-    def test_g01_extreme_negative_blocks_all_entries(self):
-        broker = MagicMock()
-        runner = Runner(
-            snapshot_fetcher=_g01_fail_snapshot,
-            platform_fetcher=_empty_platform,
-            broker_executor=broker,
-            dry_run=True,
-        )
-        result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.entries_approved, 0)
 
 
 class ManagementCycle(unittest.TestCase):

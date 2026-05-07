@@ -5,7 +5,8 @@ alphagex-trader. This module is the integration point -- scheduler/
 trader_scheduler.py calls add_goliath_jobs(scheduler) once during
 service startup, and these two jobs handle all GOLIATH operation:
 
-  Entry cycle      Monday 10:30 AM ET (per spec section 1.7)
+  Entry cycle      Mon-Fri 10:30 AM CT (per 2026-05-07 schedule change;
+                   was Monday 10:30 ET per original spec section 1.7)
   Management cycle Every 15 min during market hours, Mon-Fri
 
 Both jobs invoke the Phase 6 Runner with the Phase-α Tradier
@@ -83,7 +84,7 @@ def _is_market_hours_et() -> bool:
 
 
 def goliath_entry_job() -> None:
-    """Monday 10:30 AM ET entry cycle. Per spec section 1.7."""
+    """Mon-Fri 10:30 AM CT entry cycle (2026-05-07 schedule change)."""
     try:
         runner = _get_runner()
         if runner is None:
@@ -139,17 +140,17 @@ def add_goliath_jobs(scheduler) -> bool:
         return False
 
     try:
-        # Entry: Monday 10:30 AM ET.
+        # Entry: Mon-Fri 10:30 AM CT.
         scheduler.add_job(
             goliath_entry_job,
             trigger=CronTrigger(
-                day_of_week="mon",
+                day_of_week="mon-fri",
                 hour=10,
                 minute=30,
-                timezone="America/New_York",
+                timezone="America/Chicago",
             ),
             id="goliath_entry",
-            name="GOLIATH - Monday 10:30 ET entry cycle",
+            name="GOLIATH - Mon-Fri 10:30 CT entry cycle",
             replace_existing=True,
         )
         # Management: every 15 min during market hours, Mon-Fri.
@@ -160,7 +161,7 @@ def add_goliath_jobs(scheduler) -> bool:
             name="GOLIATH - 15-min management cycle (market hours only)",
             replace_existing=True,
         )
-        logger.info("✅ GOLIATH jobs scheduled (entry: Mon 10:30 ET, management: 15-min)")
+        logger.info("✅ GOLIATH jobs scheduled (entry: Mon-Fri 10:30 CT, management: 15-min)")
         return True
     except Exception as exc:  # noqa: BLE001
         logger.exception("[goliath_scheduler] add_job failed: %r", exc)
