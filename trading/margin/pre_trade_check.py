@@ -195,16 +195,25 @@ def current_margin_usage_pct(
         if not open_positions or account_equity <= 0:
             return 0.0
 
+        # FCM monthly futures (1000SHIB-FUT, LINK-FUT, LTC-FUT, BCH-FUT) record
+        # `quantity` as raw contract count and store the underlying-unit price.
+        # MarginCalculator.calculate_perpetual_margin computes notional as
+        # entry_price * quantity, so without scaling by contract_size the
+        # notional is off by 10,000x (SHIB) / 100x (LINK) / 50x (LTC) / 25x (BCH)
+        # and the gate never blocks. Perps don't set contract_size — default 1.
+        contract_size = float(spec.get("contract_size", 1) or 1)
+
         position_margins = []
         for pos in open_positions:
             pos_price = current_price or pos.get("entry_price", 0)
             if not pos_price:
                 continue
             leverage = pos.get("leverage_at_entry") or spec.get("default_leverage", 10)
+            effective_quantity = float(pos.get("quantity", 0) or 0) * contract_size
             result = MarginCalculator.calculate_perpetual_margin(
                 entry_price=pos["entry_price"],
                 current_price=pos_price,
-                quantity=pos.get("quantity", 0),
+                quantity=effective_quantity,
                 side=pos.get("side", "long"),
                 leverage=leverage,
                 margin_mode="isolated",
