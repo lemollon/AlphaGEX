@@ -6,13 +6,21 @@ import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/p
 /**
  * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
  *
- * Zones (CT) — FLAME / INFERNO:
- *   Morning  50%  8:30 – 10:30
- *   Midday   30%  10:30 – 1:00
- *   PM       20%  1:00 – 2:45
+ * Zones (CT) — FLAME / SPARK:
+ *   Morning  30%  8:30 – 10:30 (FLAME) or 8:30 – 12:00 (SPARK)
+ *   Midday   20%  → 1:00
+ *   PM       15%  1:00 – 2:45
  *   EOD            2:45 – 3:00
  *
- * SPARK extends MORNING to 12:00 PM (mirrors scanner.ts).
+ * Zones (CT) — INFERNO:
+ *   Morning  50%
+ *   Midday   30%
+ *   PM       10%
+ *   EOD
+ *
+ * Reverted from 50/30/20 to 30/20/15 for FLAME/SPARK on 2026-05-07
+ * (commit f249c4ec). pt-tiers.ts is the source of truth for the
+ * percentages — keep this component in sync with it.
  */
 
 const MARKET_OPEN = 510     // 8:30 AM
@@ -32,6 +40,13 @@ function widthPct(startMin: number, endMin: number): string {
 export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' }) {
   const MIDDAY_START = morningEndMinutes(bot) // SPARK: 720 (12:00 PM); else 630 (10:30 AM)
   const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
+
+  // Tier percentages — must mirror lib/pt-tiers.ts.
+  // INFERNO: 50/30/10. FLAME/SPARK: 30/20/15 (reverted from 50/30/20 on 2026-05-07).
+  const isInferno = bot === 'inferno'
+  const morningPct = isInferno ? '50%' : '30%'
+  const middayPct = isInferno ? '30%' : '20%'
+  const pmPct = isInferno ? '10%' : '15%'
 
   // Initialize with null to avoid hydration mismatch (server has no CT clock)
   const [ctMins, setCtMins] = useState<number | null>(null)
@@ -74,19 +89,19 @@ export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno
           className="absolute text-emerald-400"
           style={{ left: pct(MARKET_OPEN), width: widthPct(MARKET_OPEN, MIDDAY_START), textAlign: 'center', display: 'inline-block' }}
         >
-          Morning 50%
+          Morning {morningPct}
         </span>
         <span
           className="absolute text-yellow-400"
           style={{ left: pct(MIDDAY_START), width: widthPct(MIDDAY_START, AFTERNOON_START), textAlign: 'center', display: 'inline-block' }}
         >
-          Midday 30%
+          Midday {middayPct}
         </span>
         <span
           className="absolute text-orange-400"
           style={{ left: pct(AFTERNOON_START), width: widthPct(AFTERNOON_START, EOD_START), textAlign: 'center', display: 'inline-block' }}
         >
-          PM 20%
+          PM {pmPct}
         </span>
         <span
           className="absolute text-red-400"
