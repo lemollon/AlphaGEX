@@ -5,11 +5,10 @@
  * most recent market-risk brief. Bot-aware so each bot dashboard reads its
  * own {bot}_market_briefs table.
  *
- * Controls:
- *   - "Regenerate" button → POST /api/{bot}/briefs/generate?type=intraday
- *     (costs ~$0.03 on Claude; wrapped in a confirm to avoid spam)
+ * Read-only. Briefs auto-generate hourly during market hours (8:30 AM –
+ * 3:30 PM CT, weekdays) for FLAME / SPARK / INFERNO via the scanner cron
+ * loop — see scanner.ts maybeGenerateHourlyBrief().
  */
-import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 
@@ -112,28 +111,6 @@ export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inf
         },
       }
     : (legacyData ?? { brief: null })
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError] = useState<string | null>(null)
-
-  const handleGenerate = async () => {
-    if (!confirm('Generate a new intraday brief now? (~$0.03 Claude API call)')) return
-    setGenerating(true)
-    setGenError(null)
-    try {
-      const resp = await fetch(`/api/${bot}/briefs/generate?type=intraday`, { method: 'POST' })
-      const json = await resp.json()
-      if (!resp.ok) {
-        setGenError(json.error || `HTTP ${resp.status}`)
-      } else {
-        // Force SWR to refetch /latest now
-        await mutate()
-      }
-    } catch (e) {
-      setGenError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setGenerating(false)
-    }
-  }
 
   if (isLoading) {
     return (
@@ -173,29 +150,13 @@ export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inf
             </>
           )}
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className="text-[11px] font-medium px-2.5 py-1 rounded-md border border-blue-500/40 bg-blue-500/10 text-blue-300 hover:bg-blue-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title={`POST /api/${bot}/briefs/generate?type=intraday (calls Claude, ~$0.03)`}
-          >
-            {generating ? 'Generating…' : 'Regenerate'}
-          </button>
-        </div>
       </div>
-
-      {genError && (
-        <div className="px-4 py-2 bg-red-500/10 border-b border-red-500/30 text-red-300 text-xs">
-          Generate failed: {genError}
-        </div>
-      )}
 
       {!brief ? (
         <div className="p-6 text-center">
-          <p className="text-forge-muted text-sm mb-3">No briefs yet. Click "Regenerate" to create the first one.</p>
-          <p className="text-[10px] text-forge-muted">
-            Briefs cost ~$0.03 each on the Claude API. Auto-scheduling at 7:30 AM / hourly 9-2 / 3:15 PM CT will ship in Q2.
+          <p className="text-forge-muted text-sm">
+            No briefs yet today. Auto-generates hourly during market hours
+            (8:30 AM – 3:30 PM CT, weekdays).
           </p>
         </div>
       ) : (

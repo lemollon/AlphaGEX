@@ -4025,18 +4025,20 @@ async function dailyHypoEodComputeForBot(bot: string, ct: Date): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
-/*  SPARK hourly market brief auto-generation                          */
+/*  Hourly market brief auto-generation (FLAME, SPARK, INFERNO)        */
 /*  (Q2 hook — was manual via Regenerate button only)                  */
 /* ------------------------------------------------------------------ */
 
-// Per-(date,hour) latch so a brief generates at most once per hour bucket
+// Per-(bot,date,hour) latch so a brief generates at most once per hour bucket
 // per CT trading day. In-memory cache backed by a DB cross-check on cold
 // start so a webapp restart mid-day doesn't re-fire briefs already stored.
 const _lastBriefHourFired: { [key: string]: boolean } = {}
 
 /**
- * Generate a fresh SPARK market brief at most once per hour bucket during
- * the trading window (8:30 AM – 3:30 PM CT, weekdays).
+ * Generate a fresh market brief at most once per hour bucket during
+ * the trading window (8:30 AM – 3:30 PM CT, weekdays). One brief per
+ * bot per hour: spark, flame, inferno each get their own row in their
+ * own *_market_briefs table.
  *
  * Brief type by hour bucket:
  *   - 8 (8:30–8:59 AM CT)             → 'morning'
@@ -4044,11 +4046,11 @@ const _lastBriefHourFired: { [key: string]: boolean } = {}
  *   - 15 (3:00–3:30 PM CT)            → 'eod_debrief'
  *
  * Each call to generateBrief() costs ~$0.02–0.05 against the Claude API.
- * At ~7 fires/day this is ~$0.20/day max. Failures (missing CLAUDE_API_KEY,
- * upstream 5xx, parse error) are logged and swallowed — the scan loop never
- * breaks on a brief failure.
+ * At ~7 fires/day per bot × 3 bots = ~$0.60/day max. Failures (missing
+ * CLAUDE_API_KEY, upstream 5xx, parse error) are logged and swallowed —
+ * the scan loop never breaks on a brief failure.
  */
-async function maybeGenerateHourlyBriefForSpark(ct: Date): Promise<void> {
+async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno', ct: Date): Promise<void> {
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return
 
@@ -4057,14 +4059,16 @@ async function maybeGenerateHourlyBriefForSpark(ct: Date): Promise<void> {
 
   const todayCt = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
   const hourBucket = ct.getHours()
-  const cacheKey = `spark:${todayCt}:${hourBucket}`
+  const cacheKey = `${bot}:${todayCt}:${hourBucket}`
   if (_lastBriefHourFired[cacheKey]) return
 
   // Cross-check the DB so a webapp restart doesn't re-fire a bucket that
   // already has a brief stored. brief_time is TIMESTAMPTZ; compare in CT.
+  // Table name is bot-scoped — bot is constrained to the union above so
+  // string interpolation is safe (no SQL injection surface).
   try {
     const rows = await query(
-      `SELECT 1 FROM spark_market_briefs
+      `SELECT 1 FROM ${bot}_market_briefs
         WHERE brief_date = $1
           AND EXTRACT(HOUR FROM brief_time AT TIME ZONE 'America/Chicago') = $2
         LIMIT 1`,
@@ -4076,7 +4080,7 @@ async function maybeGenerateHourlyBriefForSpark(ct: Date): Promise<void> {
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] SPARK brief: DB lookup failed (skip cycle): ${msg}`)
+    console.warn(`[scanner] ${bot.toUpperCase()} brief: DB lookup failed (skip cycle): ${msg}`)
     return
   }
 
@@ -4087,14 +4091,14 @@ async function maybeGenerateHourlyBriefForSpark(ct: Date): Promise<void> {
 
   try {
     const { generateBrief } = await import('./market-brief')
-    const result = await generateBrief('spark', briefType)
+    const result = await generateBrief(bot, briefType)
     _lastBriefHourFired[cacheKey] = true
     console.log(
-      `[scanner] SPARK brief auto-generated (type=${briefType}, hour=${hourBucket}, id=${result.id}, model=${result.model})`,
+      `[scanner] ${bot.toUpperCase()} brief auto-generated (type=${briefType}, hour=${hourBucket}, id=${result.id}, model=${result.model})`,
     )
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] SPARK brief auto-gen failed (type=${briefType}, non-fatal): ${msg}`)
+    console.warn(`[scanner] ${bot.toUpperCase()} brief auto-gen failed (type=${briefType}, non-fatal): ${msg}`)
   }
 }
 
@@ -5153,13 +5157,16 @@ async function runAllScans(): Promise<void> {
     }
   }
 
-  // SPARK hourly market brief auto-generation. Fires at most once per hour
-  // bucket during 8:30 AM – 3:30 PM CT on weekdays. See helper for details.
-  try {
-    await maybeGenerateHourlyBriefForSpark(ct)
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn(`[scanner] SPARK brief auto-gen wrapper error (non-fatal): ${msg}`)
+  // Hourly market brief auto-generation for all three bots. Fires at most
+  // once per hour bucket per bot during 8:30 AM – 3:30 PM CT on weekdays.
+  // See helper for details. Each bot has its own *_market_briefs table.
+  for (const briefBot of ['flame', 'spark', 'inferno'] as const) {
+    try {
+      await maybeGenerateHourlyBrief(briefBot, ct)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] ${briefBot.toUpperCase()} brief auto-gen wrapper error (non-fatal): ${msg}`)
+    }
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1)
