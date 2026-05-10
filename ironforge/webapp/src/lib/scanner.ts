@@ -2458,6 +2458,29 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     return tryOpenFlamePutSpread(bot, spot, vix)
   }
 
+  // INFERNO post-first-loss cooldown (operator policy 2026-05-10):
+  // After the first losing close of the day, pause new entries for 30 min
+  // to break out of choppy stop-out streaks. Per-trade SL is bounded but
+  // unlimited fires on chop days summed to -$1.2K on 5/7 and -$0.9K on 5/4.
+  // Only INFERNO has unlimited daily trades, so only INFERNO gets this gate.
+  if (bot.name === 'inferno') {
+    const cooldownRows = await query<{ first_loss_ct: string | null; mins_since: number | null }>(
+      `SELECT
+         to_char(MIN(close_time) AT TIME ZONE 'America/Chicago', 'HH24:MI') AS first_loss_ct,
+         EXTRACT(EPOCH FROM (NOW() - MIN(close_time))) / 60.0 AS mins_since
+       FROM inferno_positions
+       WHERE realized_pnl < 0
+         AND status IN ('closed', 'expired')
+         AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+    )
+    const firstLossCt = cooldownRows[0]?.first_loss_ct
+    const minsSince = cooldownRows[0]?.mins_since != null ? Number(cooldownRows[0].mins_since) : null
+    if (firstLossCt && minsSince != null && minsSince < 30) {
+      const minsLeft = (30 - minsSince).toFixed(0)
+      return `skip:cooldown_after_first_loss(first_loss=${firstLossCt}_CT,${minsLeft}m_left)`
+    }
+  }
+
   const botCfg = cfg(bot)
 
   // VIX filter
