@@ -18,7 +18,9 @@ const botGlow: Record<string, string> = {
 /** Bots with trading accounts get a green dot; paper-only get nothing */
 const ACCOUNT_BOTS = new Set(['FLAME'])
 
-const links = [
+type NavLink = { href: string; label: string; className?: string; external?: boolean }
+
+const links: NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
@@ -27,6 +29,7 @@ const links = [
   { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-400 hover:text-gray-200' },
+  { href: '/forge', label: 'Forge', className: 'text-orange-400 hover:text-orange-300', external: true },
 ]
 
 export default function Nav() {
@@ -65,20 +68,29 @@ export default function Nav() {
             const isActive = pathname === link.href
             const icon = botIcons[link.label]
             const glow = botGlow[link.label] || ''
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`text-sm font-medium transition-colors ${glow} ${
-                  isActive
-                    ? 'text-white underline underline-offset-4 decoration-amber-500'
-                    : link.className || 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
+            const className = `text-sm font-medium transition-colors ${glow} ${
+              isActive
+                ? 'text-white underline underline-offset-4 decoration-amber-500'
+                : link.className || 'text-gray-400 hover:text-gray-200'
+            }`
+            const content = (
+              <>
                 {icon}{link.label}
                 {ACCOUNT_BOTS.has(link.label) && (
                   <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 ml-1 align-[1px]" title="Account Trading" />
                 )}
+              </>
+            )
+            if (link.external) {
+              return (
+                <a key={link.href} href={link.href} className={className}>
+                  {content}
+                </a>
+              )
+            }
+            return (
+              <Link key={link.href} href={link.href} className={className}>
+                {content}
               </Link>
             )
           })}
