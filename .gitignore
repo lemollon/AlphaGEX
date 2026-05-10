@@ -92,3 +92,8 @@ data/circuit_breaker_state.json
 
 # Superpowers brainstorming session artifacts (HTML mockups, server state)
 .superpowers/
+
+# touch-pin per-trade CSV outputs (regenerable)
+backtest/touch_pin/output/*.csv
+backtest/touch_pin/output/*.log
+!backtest/touch_pin/output/.gitkeep
