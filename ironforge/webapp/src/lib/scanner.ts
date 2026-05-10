@@ -489,8 +489,25 @@ const _lastSandboxCleanupDate: Record<string, string | null> = { flame: null, sp
 /* ------------------------------------------------------------------ */
 
 function getCentralTime(): Date {
-  const str = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })
-  return new Date(str)
+  // Avoid round-tripping through `toLocaleString('en-US', { timeZone })` and
+  // `new Date(str)` — V8/ICU sometimes formats the hour as "24:..." (rolling
+  // forward into the next day) instead of "12:... AM", which made Friday
+  // 2026-05-09 misclassify as Saturday and skipped every scan that day.
+  const now = new Date()
+  const parts: Record<string, string> = {}
+  for (const p of new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(now)) {
+    parts[p.type] = p.value
+  }
+  const hour = parts.hour === '24' ? '00' : parts.hour
+  return new Date(Date.UTC(
+    +parts.year, +parts.month - 1, +parts.day,
+    +hour, +parts.minute, +parts.second,
+  ))
 }
 
 function ctHHMM(ct: Date): number {
