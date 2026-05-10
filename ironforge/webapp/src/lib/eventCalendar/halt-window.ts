@@ -115,6 +115,13 @@ export function computeNTradingDaysPriorAt0830CT(
 /** Market open in CT — bots only trade RTH (08:30–15:00 CT). */
 const MARKET_OPEN_CT = '08:30'
 
+/**
+ * Minutes after market open before bots resume trading on a pre-market-event
+ * day. Operator policy 2026-05-10: trades fire 1 hour after open (was 0).
+ * Lets the open-auction whipsaw clear before the first IC entry.
+ */
+const PRE_MARKET_RESUME_DELAY_MIN = 60
+
 /** Convert HH:MM (24h) into minutes-from-midnight. */
 function hhmmToMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)
@@ -148,7 +155,10 @@ export function computeDayOfNewsHaltWindow(
   const eventMin = hhmmToMinutes(eventTimeCt)
   const openMin = hhmmToMinutes(MARKET_OPEN_CT)
   const haltEnd = eventMin < openMin
-    ? ctWallToUtc(eventDate, MARKET_OPEN_CT)
+    ? new Date(
+        ctWallToUtc(eventDate, MARKET_OPEN_CT).getTime() +
+          PRE_MARKET_RESUME_DELAY_MIN * 60000,
+      )
     : computeEventDayAt(eventDate, eventTimeCt, resumeOffsetMin)
   return { haltStart, haltEnd }
 }
