@@ -81,6 +81,25 @@ def bs_gamma(
     return _norm_pdf(d1) / (spot * sigma * sqrt_t)
 
 
+def bs_charm(
+    spot: float,
+    strike: float,
+    t_years: float,
+    sigma: float,
+    r: float = DEFAULT_R,
+) -> float:
+    """∂Δ/∂T (per year). Same value for calls and puts under no dividends.
+
+    Returns 0 at/past expiry or when sigma is non-positive (undefined region).
+    Sign convention: positive charm means delta increases as time passes.
+    """
+    if t_years <= 0 or sigma <= 0 or spot <= 0:
+        return 0.0
+    sqrt_t = math.sqrt(t_years)
+    d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * t_years) / (sigma * sqrt_t)
+    return _norm_pdf(d1) * ((r + 0.5 * sigma * sigma) / (sigma * sqrt_t) - d1 / (2.0 * t_years))
+
+
 def implied_vol(
     market_price: float,
     spot: float,
