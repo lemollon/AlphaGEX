@@ -18,11 +18,14 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
   try {
+    // Bot dashboards (FLAME / SPARK / INFERNO) show INTRADAY briefs only.
+    // EOD debriefs surface on /briefings instead — operator policy 2026-05-10.
     const rows = await dbQuery(
       `SELECT id, brief_date, brief_time, brief_type,
               risk_score, summary, factors_json,
               spy_price, vix, vix3m, term_structure, model
        FROM ${botTable(bot, 'market_briefs')}
+       WHERE brief_type IN ('morning', 'intraday')
        ORDER BY brief_time DESC
        LIMIT 1`,
     )
