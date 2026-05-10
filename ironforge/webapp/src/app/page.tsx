@@ -148,6 +148,26 @@ const exitRules = [
 export default function Home() {
   return (
     <div className="space-y-10">
+      {/* Forge waitlist banner */}
+      <div
+        style={{
+          background: '#ff6b35',
+          color: '#1a0a02',
+          padding: '10px',
+          textAlign: 'center',
+          fontFamily: 'monospace',
+          borderRadius: '6px',
+        }}
+      >
+        Early access to the new IronForge &rarr;{' '}
+        <a
+          href="/forge"
+          style={{ color: '#1a0a02', fontWeight: 600, textDecoration: 'underline' }}
+        >
+          join the waitlist
+        </a>
+      </div>
+
       {/* Hero */}
       <div className="text-center mt-2">
         <h1 className="text-5xl font-extrabold tracking-tight mb-2 glow-amber">
