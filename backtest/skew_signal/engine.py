@@ -9,7 +9,7 @@ from typing import List, Optional
 
 import psycopg2
 
-from backtest.skew_signal.loader import load_chain_at_minute
+from backtest.skew_signal.loader import load_day_chain
 from backtest.skew_signal.features import (
     MinuteFeatures, compute_charm_aggregate, compute_skew,
     estimate_spot, magnet_imbalance_proxy, solve_chain_iv,
@@ -139,10 +139,15 @@ def run_one_day(
     vix_prior = vix_close_prior_day(db_url_orat, trade_date)
     regime = regime_label_at_open(db_url_main, trade_date)
 
+    # Single fat query for the entire day's bars (was 266 round-trips per day).
+    day_chain = load_day_chain(db_url_main, trade_date, expiration_date)
+    if not day_chain:
+        return []
+
     skew_history: deque = deque(maxlen=SKEW_LOOKBACK_MINUTES + 1)
 
     for minute in range(SCAN_START_MINUTE, SCAN_END_MINUTE + 1):
-        chain = load_chain_at_minute(db_url_main, trade_date, expiration_date, minute)
+        chain = day_chain.get(minute)
         if chain is None or len(chain) < 5:
             skew_history.append(None)
             continue
