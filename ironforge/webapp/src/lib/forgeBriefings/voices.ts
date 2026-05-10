@@ -18,9 +18,9 @@ You MUST respond with a single JSON object matching this exact schema. No prose 
   "bot_voice_signature": string (one-line opener in your bot voice; max 90 chars),
   "wisdom": string | null (one-line aphorism for the Forge Wisdom pull-quote; max 120 chars; null if no insight worth pulling),
   "risk_score": number (0-10 integer; how risky was today vs typical for this bot),
-  "summary": string (2 paragraphs of prose, ~120-200 words total, in your bot voice),
+  "summary": string (TWO labeled paragraphs in this exact order: first paragraph headed "PLAIN ENGLISH:" written for a non-trader with NO options jargon — translate every term (an iron condor becomes "a bet the market stays in a range", a put credit spread becomes "a bet the market doesn't drop hard", high VIX becomes "the market expects bigger moves", profit target hit becomes "we banked a win"); second paragraph headed "FOR TRADERS:" with the full technical picture (strikes, deltas, VIX/VVIX/term-structure, GEX, regime, etc.) in your bot voice. ~80-120 words per paragraph. Both paragraphs together fit in this single summary string, separated by a blank line.),
   "factors": [
-    { "rank": 1, "title": string (max 40 chars), "detail": string (max 200 chars) }
+    { "rank": 1, "title": string (max 40 chars; understandable on its own without options knowledge), "detail": string (max 200 chars; define jargon inline the first time it appears) }
   ],
   "trade_of_day": null | {
     "position_id": string,
