@@ -97,3 +97,8 @@ data/circuit_breaker_state.json
 backtest/touch_pin/output/*.csv
 backtest/touch_pin/output/*.log
 !backtest/touch_pin/output/.gitkeep
+
+# skew_signal per-trade CSV outputs (regenerable)
+backtest/skew_signal/output/*.csv
+backtest/skew_signal/output/*.log
+!backtest/skew_signal/output/.gitkeep
