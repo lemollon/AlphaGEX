@@ -49,6 +49,8 @@ def replay_day(
     eod_h, eod_m = (int(x) for x in config.eod_time_ct.split(":"))
     eod_minute = (eod_h - 8) * 60 + (eod_m - 30)
 
+    last_exit_minute = -1  # enforce "one open position at a time" (mirrors trader.run_cycle)
+
     for snap in snapshots:
         buffer.add(snap)
         entry_minute = _minutes_since_open_ct(snap.snapshot_at)
@@ -56,6 +58,9 @@ def replay_day(
             continue
         if entry_minute >= eod_minute:
             break
+        if entry_minute < last_exit_minute:
+            # A position is still "open" from a previous fire — skip this snap
+            continue
         action = dispatch(snap, state=state, buffer=buffer, config=config)
         if action is None:
             continue
@@ -97,6 +102,7 @@ def replay_day(
             realized_pct=sim.realized_pct,
         ))
         state = _mark_fired(state, action.setup)
+        last_exit_minute = sim.exit_minute + 1  # next entry must be after exit
 
     return outcomes
 
