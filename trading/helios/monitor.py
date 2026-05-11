@@ -1,4 +1,4 @@
-"""HELIOS position monitor — polls Tradier every 15s, closes on PT/SL/EOD.
+"""JOSHUA position monitor — polls Tradier every poll_seconds, closes on PT/SL/TIME_STOP.
 
 Mirrors the SPARK monitor pattern but scoped to one bot, one position.
 Runs forever in the alphagex-trader worker. Each cycle:
@@ -17,26 +17,26 @@ from typing import Optional
 
 from trading.helios.db import HeliosDatabase
 from trading.helios.executor import close_paper
-from trading.helios.models import HeliosConfig
+from trading.helios.models import JoshuaConfig
 from trading.helios.strategy import decide_exit
 
 logger = logging.getLogger(__name__)
 
-CT_OFFSET = dt.timedelta(hours=-5)  # CDT (DST). For CST use -6.
-                                     # Acceptable approximation since EOD check
-                                     # only cares about HH:MM in CT.
+CT_OFFSET = dt.timedelta(hours=-5)  # CDT/CST approximation; only HH:MM matters for TIME_STOP.
 
 
 class HeliosMonitor:
-    def __init__(self, db: HeliosDatabase, tradier, config: HeliosConfig):
+    def __init__(self, db: HeliosDatabase, tradier, config: JoshuaConfig):
         self.db = db
-        self.tradier = tradier  # injectable for tests; live wiring uses TradierClient
+        self.tradier = tradier
         self.config = config
+        self._streak: int = 0
 
     def run_one_cycle(self) -> Optional[float]:
         """Returns realized PnL if a position was closed, else None."""
         pos = self.db.get_open_position()
         if pos is None:
+            self._streak = 0
             return None
 
         long_sym = pos["long_symbol"]
@@ -45,6 +45,7 @@ class HeliosMonitor:
             quotes = self.tradier.get_option_quotes_batch([long_sym, short_sym])
         except Exception as e:
             logger.warning("HELIOS monitor: quote fetch failed: %s", e)
+            self._streak += 1
             return None
 
         long_q = quotes.get(long_sym)
@@ -52,6 +53,7 @@ class HeliosMonitor:
         if long_q is None or short_q is None:
             logger.warning("HELIOS monitor: QUOTE_UNAVAILABLE long=%s short=%s",
                            bool(long_q), bool(short_q))
+            self._streak += 1
             return None
 
         try:
@@ -60,24 +62,19 @@ class HeliosMonitor:
         except (KeyError, TypeError, ValueError):
             logger.warning("HELIOS monitor: bid/ask parse failed long=%r short=%r",
                            long_q, short_q)
+            self._streak += 1
             return None
 
+        self._streak = 0
         mark_to_close = long_bid - short_ask
-
-        open_time = pos["open_time"]
-        if open_time.tzinfo is None:
-            open_time = open_time.replace(tzinfo=dt.timezone.utc)
         now_utc = dt.datetime.now(dt.timezone.utc)
-        minutes_in = max(0, int((now_utc - open_time).total_seconds() // 60))
-
-        # Convert to "now in CT" purely for the EOD check
         now_ct = now_utc + CT_OFFSET
 
         decision = decide_exit(
             debit=float(pos["debit"]),
             mark_to_close=mark_to_close,
-            minutes_since_entry=minutes_in,
             now_ct=now_ct,
+            quotes_unavail_streak=self._streak,
             config=self.config,
         )
 
@@ -91,24 +88,22 @@ class HeliosMonitor:
             exit_reason=decision.reason.value,
         )
         logger.info(
-            "HELIOS exit: id=%s reason=%s mtc=%.4f debit=%.4f minutes=%d pnl=%.2f",
-            pos["id"], decision.reason.value, mark_to_close, float(pos["debit"]),
-            minutes_in, realized_pnl,
+            "HELIOS exit: id=%s reason=%s mtc=%.4f debit=%.4f pnl=%.2f",
+            pos["id"], decision.reason.value, mark_to_close, float(pos["debit"]), realized_pnl,
         )
         self.db.log("INFO", "exit", {
             "position_id": pos["id"],
             "reason": decision.reason.value,
             "mark_to_close": mark_to_close,
-            "minutes_since_entry": minutes_in,
             "realized_pnl": realized_pnl,
         })
         return realized_pnl
 
     def run_forever(self) -> None:
-        logger.info("HELIOS monitor starting; poll=%ds", self.config.monitor_poll_seconds)
+        logger.info("HELIOS monitor starting; poll=%ds", self.config.poll_seconds)
         while True:
             try:
                 self.run_one_cycle()
             except Exception:
                 logger.exception("HELIOS monitor: cycle error")
-            time.sleep(self.config.monitor_poll_seconds)
+            time.sleep(self.config.poll_seconds)

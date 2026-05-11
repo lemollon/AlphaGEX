@@ -1,25 +1,20 @@
-"""Pure exit decision tree. No I/O.
+"""JOSHUA exit decision tree. Pure function. No I/O.
 
 Order of precedence at every check:
   1. PT (always armed)
-  2. SL (only if minutes_since_entry >= grace)
-  3. EOD (only if now_ct >= eod_close_time_ct)
+  2. SL (always armed — no grace period; 1DTE noise is the noise)
+  3. TIME_STOP (now_ct >= eod_time_ct)
+  4. DATA_FAILURE (quotes_unavail_streak >= max)
+
+No trailing stop. Phase 2 showed it killed winners on 1DTE.
 """
 from __future__ import annotations
 
 import datetime as dt
 from dataclasses import dataclass
-from enum import Enum
 from typing import Optional
 
-from trading.helios.models import HeliosConfig
-
-
-class ExitReason(str, Enum):
-    PT = "PT"
-    PT_GRACE = "PT_GRACE"
-    SL = "SL"
-    EOD = "EOD"
+from trading.helios.models import ExitReason, JoshuaConfig
 
 
 @dataclass(frozen=True)
@@ -32,22 +27,23 @@ def decide_exit(
     *,
     debit: float,
     mark_to_close: float,
-    minutes_since_entry: int,
     now_ct: dt.datetime,
-    config: HeliosConfig,
+    quotes_unavail_streak: int,
+    config: JoshuaConfig,
 ) -> ExitDecision:
-    pt_threshold = debit * (1.0 + config.profit_target_pct / 100.0)
-    sl_threshold = debit * (1.0 - config.stop_loss_pct / 100.0)
-    in_grace = minutes_since_entry < config.stop_loss_grace_minutes
+    pnl_pct = (mark_to_close / debit - 1.0) * 100.0 if debit > 0 else 0.0
 
-    if mark_to_close >= pt_threshold:
-        return ExitDecision(True, ExitReason.PT_GRACE if in_grace else ExitReason.PT)
+    if pnl_pct >= config.profit_target_pct:
+        return ExitDecision(True, ExitReason.PT)
 
-    if not in_grace and mark_to_close <= sl_threshold:
+    if pnl_pct <= -config.stop_loss_pct:
         return ExitDecision(True, ExitReason.SL)
 
-    eod_h, eod_m = (int(x) for x in config.eod_close_time_ct.split(":"))
+    eod_h, eod_m = (int(x) for x in config.eod_time_ct.split(":"))
     if now_ct.hour > eod_h or (now_ct.hour == eod_h and now_ct.minute >= eod_m):
-        return ExitDecision(True, ExitReason.EOD)
+        return ExitDecision(True, ExitReason.TIME_STOP)
+
+    if quotes_unavail_streak >= config.quotes_unavailable_max_cycles:
+        return ExitDecision(True, ExitReason.DATA_FAILURE)
 
     return ExitDecision(False, None)
