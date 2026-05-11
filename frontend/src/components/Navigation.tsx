@@ -70,6 +70,7 @@ const navItems = [
   { href: '/fortress', label: `${BOT_DISPLAY_NAMES.FORTRESS} (SPY Iron Condor)`, icon: Sword, category: 'Live Trading' },
   { href: '/faith', label: `${BOT_DISPLAY_NAMES.FAITH} (2DTE Paper IC)`, icon: Sword, category: 'Live Trading' },
   { href: '/grace', label: `${BOT_DISPLAY_NAMES.GRACE} (1DTE Paper IC)`, icon: Heart, category: 'Live Trading' },
+  { href: '/joshua', label: `${BOT_DISPLAY_NAMES.HELIOS} (1DTE Directional)`, icon: Target, category: 'Live Trading' },
   { href: '/faith/compare', label: 'FAITH vs GRACE Compare', icon: BarChart3, category: 'Live Trading' },
   { href: '/solomon', label: `${BOT_DISPLAY_NAMES.SOLOMON} (Directional Spreads)`, icon: Target, category: 'Live Trading' },
   { href: '/gideon', label: `${BOT_DISPLAY_NAMES.GIDEON} (Aggressive Directional)`, icon: Flame, category: 'Live Trading' },
