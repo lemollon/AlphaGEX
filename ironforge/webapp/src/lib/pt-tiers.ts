@@ -19,7 +19,7 @@
  * the UI tier helpers below treat it like FLAME for display purposes.
  */
 
-export type Bot = 'flame' | 'spark' | 'inferno'
+export type Bot = 'flame' | 'spark' | 'inferno' | 'blaze'
 
 export interface PTTier {
   pct: number

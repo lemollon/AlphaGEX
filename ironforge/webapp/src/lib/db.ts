@@ -26,6 +26,7 @@ const DB_PREFIX: Record<string, string> = {
   flame: 'flame',
   spark: 'spark',
   inferno: 'inferno',
+  blaze: 'blaze',
 }
 
 /** Map display names to heartbeat bot_name values in bot_heartbeats table. */
@@ -33,6 +34,7 @@ const HEARTBEAT_MAP: Record<string, string> = {
   flame: 'FLAME',
   spark: 'SPARK',
   inferno: 'INFERNO',
+  blaze: 'BLAZE',
 }
 
 /**
@@ -62,6 +64,7 @@ export function dteMode(bot: string): string | null {
   if (bot === 'flame') return '2DTE'
   if (bot === 'spark') return '1DTE'
   if (bot === 'inferno') return '0DTE'
+  if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   return null
 }
 
@@ -189,7 +192,7 @@ CREATE TABLE IF NOT EXISTS forge_briefings_meta (
   retry_count         INT DEFAULT 0,
   PRIMARY KEY (bot, brief_type)
 );
-` + ['flame', 'spark', 'inferno'].map(bot => `
+` + ['flame', 'spark', 'inferno', 'blaze'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   starting_capital NUMERIC(12,2) NOT NULL,
@@ -445,7 +448,7 @@ async function ensureTables(): Promise<void> {
     await client.query(INIT_DDL)
 
     // Add missing columns to existing positions tables (safe to run repeatedly)
-    for (const bot of ['flame', 'spark', 'inferno']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze']) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
                           'kelly_raw NUMERIC(8,4)', 'kelly_half NUMERIC(8,4)', 'kelly_size_pct NUMERIC(6,4)']) {
         try {
@@ -509,7 +512,7 @@ async function ensureTables(): Promise<void> {
     // deployed backend, so the migration must also run here. Without these
     // columns the scanner throws `column "trailing_min_cost" does not exist`
     // every cycle and the equity snapshot writer never runs.
-    for (const bot of ['flame', 'spark', 'inferno']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze']) {
       for (const col of ['trailing_min_cost NUMERIC(8, 4)', 'trailing_pt_fired_at_ms BIGINT']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
@@ -562,7 +565,7 @@ async function ensureTables(): Promise<void> {
     // ~40-day option timesales window. Originally SPARK-only; extended to
     // FLAME and INFERNO so the same Hypo column / dual equity line ships
     // for all three bots.
-    for (const bot of ['flame', 'spark', 'inferno']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze']) {
       for (const col of [
         'hypothetical_eod_pnl NUMERIC(12,2)',
         'hypothetical_eod_spot NUMERIC(10,4)',
@@ -628,7 +631,7 @@ async function ensureTables(): Promise<void> {
     // Old rows were backfilled with account_type='sandbox' DEFAULT (see the
     // ALTER ADD COLUMN above) so v2's (trade_date, person) uniqueness implies
     // v3's uniqueness — the swap is safe on already-populated tables.
-    for (const bot of ['flame', 'spark', 'inferno']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze']) {
       try {
         // Drop the original v1 constraint if it lingers from a very old
         // deployment.
@@ -660,7 +663,7 @@ async function ensureTables(): Promise<void> {
 
     // Dedup paper accounts — race condition during concurrent ensureTables() can create duplicates.
     // Keep only the highest-ID active sandbox account per bot/dte; deactivate the rest.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE']] as const) {
       try {
         await client.query(
           `UPDATE ${bot}_paper_account SET is_active = FALSE
@@ -673,7 +676,7 @@ async function ensureTables(): Promise<void> {
     }
 
     // Seed paper accounts if empty — atomic INSERT ... WHERE NOT EXISTS to prevent race condition duplicates
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE']] as const) {
       await client.query(
         `INSERT INTO ${bot}_paper_account
           (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
@@ -771,6 +774,7 @@ async function ensureTables(): Promise<void> {
       ['flame', '2DTE', 3, 1],
       ['spark', '1DTE', 3, 1],
       ['inferno', '0DTE', 0, 0],  // 0 = disabled/unlimited
+      ['blaze', '1DTE', 0, 0],    // BLAZE: directional debit verticals, no PDT cap, up to 3/setup/day
     ] as const) {
       const pdtRes = await client.query(
         `SELECT id FROM ${bot}_pdt_config WHERE bot_name = $1 LIMIT 1`,
@@ -1001,10 +1005,10 @@ export function escapeSql(val: string): string {
   return val.replace(/'/g, "''")
 }
 
-/** Validate bot name parameter — only flame, spark, or inferno allowed. */
+/** Validate bot name parameter — flame, spark, inferno, or blaze allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark' && b !== 'inferno') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze') return null
   return b
 }
 

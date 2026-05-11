@@ -7,12 +7,14 @@ const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   INFERNO: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  BLAZE: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
 }
 
 const botGlow: Record<string, string> = {
   FLAME: 'glow-flame',
   SPARK: 'glow-spark',
   INFERNO: 'glow-inferno',
+  BLAZE: 'glow-inferno',
 }
 
 /** Bots with trading accounts get a green dot; paper-only get nothing */
@@ -25,6 +27,7 @@ const links: NavLink[] = [
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
   { href: '/inferno', label: 'INFERNO', className: 'text-red-400 hover:text-red-300' },
+  { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
   { href: '/compare', label: 'Compare' },
   { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },

@@ -37,7 +37,7 @@ function widthPct(startMin: number, endMin: number): string {
   return `${((endMin - startMin) / TOTAL) * 100}%`
 }
 
-export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' }) {
+export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' | 'blaze' }) {
   const MIDDAY_START = morningEndMinutes(bot) // SPARK: 720 (12:00 PM); else 630 (10:30 AM)
   const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
 

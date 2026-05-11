@@ -20,12 +20,14 @@ const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
   INFERNO: <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
+  BLAZE: <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block mr-1.5 align-[-3px]" />,
 }
 
 const botGlow: Record<string, string> = {
   FLAME: 'glow-flame',
   SPARK: 'glow-spark',
   INFERNO: 'glow-inferno',
+  BLAZE: 'glow-inferno',
 }
 
 /* ── Strategy Configuration (from BotConfig) ───────────────────────── */
@@ -112,6 +114,19 @@ const bots = [
     btn: 'border-red-500/60 text-red-400 hover:bg-red-500/10',
     glow: 'shadow-red-500/5',
     badge: 'bg-red-500/15 text-red-400',
+    mode: 'PAPER ONLY' as const,
+    modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
+  },
+  {
+    name: 'BLAZE',
+    href: '/blaze',
+    dte: '1DTE',
+    desc: '1DTE directional debit verticals driven by live GEX structure. Wall-fade, wall-break, and flip-cross setups — up to 3 trades per setup per day.',
+    border: 'border-orange-500/30 hover:border-orange-400/60',
+    heading: 'text-orange-400',
+    btn: 'border-orange-500/60 text-orange-400 hover:bg-orange-500/10',
+    glow: 'shadow-orange-500/5',
+    badge: 'bg-orange-500/15 text-orange-400',
     mode: 'PAPER ONLY' as const,
     modeCls: 'bg-gray-500/15 text-gray-400 border-gray-600/30',
   },
