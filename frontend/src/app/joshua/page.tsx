@@ -1056,7 +1056,7 @@ export default function JoshuaPage() {
                     </div>
                     <div className="bg-gray-800/50 rounded-lg p-4">
                       <span className="text-gray-500 text-sm block">Trading Window</span>
-                      <span className="text-xl font-bold text-white">{status?.trading_window ?? '08:30-14:30 CT'}</span>
+                      <span className="text-xl font-bold text-white">{status?.trading_window ?? '08:30-15:55 CT'}</span>
                     </div>
                     <div className="bg-gray-800/50 rounded-lg p-4">
                       <span className="text-gray-500 text-sm block">Starting Capital</span>
