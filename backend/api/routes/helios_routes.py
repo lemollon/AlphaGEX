@@ -189,11 +189,12 @@ async def get_status():
         unrealized = _unrealized_pnl_for(open_pos) if open_pos else 0.0
         heartbeat = _last_heartbeat()
         now_ct = _now_ct()
-        # Trading window 8:30 - 14:30 CT, weekdays
+        # Trading window 8:30 - 15:55 CT weekdays — matches trader._is_market_hours
+        # (entry stops 5 min before EOD TIME_STOP at 15:55 CT)
         is_weekday = now_ct.weekday() < 5
         start_t = now_ct.replace(hour=8, minute=30, second=0, microsecond=0)
-        end_t = now_ct.replace(hour=14, minute=30, second=0, microsecond=0)
-        in_window = is_weekday and start_t <= now_ct <= end_t
+        end_t = now_ct.replace(hour=15, minute=55, second=0, microsecond=0)
+        in_window = is_weekday and start_t <= now_ct < end_t
 
         return {
             "success": True,
@@ -211,7 +212,7 @@ async def get_status():
                 "open_positions": 1 if open_pos else 0,
                 "trades_today": db.count_trades_today(),
                 "in_trading_window": in_window,
-                "trading_window": "08:30-14:30 CT",
+                "trading_window": "08:30-15:55 CT",
                 "current_time": now_ct.strftime("%Y-%m-%d %H:%M:%S CT"),
                 "heartbeat": heartbeat,
             },
