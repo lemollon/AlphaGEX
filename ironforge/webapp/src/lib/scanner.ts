@@ -5184,6 +5184,16 @@ async function runAllScans(): Promise<void> {
     ),
   )
 
+  // BLAZE — 1DTE directional bot off /api/gex/SPY. Runs in its own code path
+  // (different shape than IC bots). Gated internally by helios_config-style flag.
+  try {
+    const { scanBlaze } = await import('./blaze/scanner')
+    await scanBlaze(ct)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] BLAZE fatal error: ${msg}`)
+  }
+
   // Save production account equity snapshots every cycle (same as paper snapshots).
   // This gives production accounts their own equity curve based on real Tradier balances.
   // Gate by isMarketOpen(ct) — runAllScans() runs until 3:10 PM CT to allow the EOD safety
