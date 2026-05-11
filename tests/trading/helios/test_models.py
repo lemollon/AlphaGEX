@@ -84,3 +84,13 @@ def test_joshua_config_defaults():
     assert cfg.wall_break_em_threshold == 0.20
     assert cfg.flip_hysteresis_pct == 0.0015
     assert cfg.flip_buffer_minutes == 5
+    assert cfg.max_trades_per_setup_per_day == 3
+
+
+def test_daily_state_count_and_cap():
+    state = DailyState(trade_date=dt.date(2026, 5, 11), wall_fade_count=2)
+    assert state.count_for(SetupType.WALL_FADE) == 2
+    assert state.count_for(SetupType.WALL_BREAK) == 0
+    assert state.is_capped(SetupType.WALL_FADE, max_per_day=3) is False
+    assert state.is_capped(SetupType.WALL_FADE, max_per_day=2) is True
+    assert state.is_capped(SetupType.WALL_BREAK, max_per_day=1) is False

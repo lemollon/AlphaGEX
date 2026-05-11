@@ -83,13 +83,27 @@ class DailyState:
     wall_break_fired: bool = False
     flip_cross_fired: bool = False
     last_signal_minute: Optional[int] = None
+    wall_fade_count: int = 0
+    wall_break_count: int = 0
+    flip_cross_count: int = 0
 
     def is_fired(self, setup: SetupType) -> bool:
+        """Legacy boolean check. Use count_for() + max-cap comparison for V2 dispatcher."""
         return {
             SetupType.WALL_FADE: self.wall_fade_fired,
             SetupType.WALL_BREAK: self.wall_break_fired,
             SetupType.FLIP_CROSS: self.flip_cross_fired,
         }[setup]
+
+    def count_for(self, setup: SetupType) -> int:
+        return {
+            SetupType.WALL_FADE: self.wall_fade_count,
+            SetupType.WALL_BREAK: self.wall_break_count,
+            SetupType.FLIP_CROSS: self.flip_cross_count,
+        }[setup]
+
+    def is_capped(self, setup: SetupType, *, max_per_day: int) -> bool:
+        return self.count_for(setup) >= max_per_day
 
 
 @dataclass(frozen=True)
@@ -108,3 +122,4 @@ class JoshuaConfig:
     flip_hysteresis_pct: float = 0.0015
     flip_buffer_minutes: int = 5
     quotes_unavailable_max_cycles: int = 10
+    max_trades_per_setup_per_day: int = 3

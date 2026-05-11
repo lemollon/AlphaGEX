@@ -26,12 +26,25 @@ def test_dispatch_returns_none_when_no_setup_qualifies():
     assert action is None
 
 
-def test_dispatch_skips_setups_already_fired_today():
+def test_dispatch_skips_setups_at_or_above_cap():
     snap = _snap(spot=500.0, call_wall=501.0, regime="HIGH_POSITIVE", sigma_1d_band_width=5.0)
-    state = DailyState(trade_date=dt.date(2026, 5, 11), wall_fade_fired=True)
+    # Setup has fired exactly the default cap (3) — should now be skipped
+    state = DailyState(trade_date=dt.date(2026, 5, 11),
+                      wall_fade_fired=True, wall_fade_count=3)
     buf = FlipBuffer()
     action = dispatch(snap, state=state, buffer=buf, config=JoshuaConfig())
     assert action is None
+
+
+def test_dispatch_fires_when_below_cap():
+    snap = _snap(spot=500.0, call_wall=501.0, regime="HIGH_POSITIVE", sigma_1d_band_width=5.0)
+    # Setup has fired twice (still under default cap of 3) — should fire again
+    state = DailyState(trade_date=dt.date(2026, 5, 11),
+                      wall_fade_fired=True, wall_fade_count=2)
+    buf = FlipBuffer()
+    action = dispatch(snap, state=state, buffer=buf, config=JoshuaConfig())
+    assert action is not None
+    assert action.setup == SetupType.WALL_FADE
 
 
 def test_dispatch_prefers_flip_cross_when_multiple_qualify():

@@ -7,8 +7,8 @@ Order of dispatch:
   2. wall_break — negative-gamma momentum
   3. wall_fade  — positive-gamma mean-reversion
 
-A setup is skipped if it's already fired today (per DailyState). The
-first unfired qualifying setup wins.
+A setup is skipped once its daily count reaches `max_trades_per_setup_per_day`.
+The first uncapped qualifying setup wins.
 """
 from __future__ import annotations
 
@@ -27,17 +27,19 @@ def dispatch(
     buffer: "flip_cross.FlipBuffer",
     config: JoshuaConfig,
 ) -> Optional[SetupAction]:
-    if not state.is_fired(SetupType.FLIP_CROSS):
+    cap = config.max_trades_per_setup_per_day
+
+    if not state.is_capped(SetupType.FLIP_CROSS, max_per_day=cap):
         action = flip_cross.evaluate(snapshot, buffer=buffer, config=config)
         if action is not None:
             return action
 
-    if not state.is_fired(SetupType.WALL_BREAK):
+    if not state.is_capped(SetupType.WALL_BREAK, max_per_day=cap):
         action = wall_break.evaluate(snapshot, config=config)
         if action is not None:
             return action
 
-    if not state.is_fired(SetupType.WALL_FADE):
+    if not state.is_capped(SetupType.WALL_FADE, max_per_day=cap):
         action = wall_fade.evaluate(snapshot, config=config)
         if action is not None:
             return action

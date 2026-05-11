@@ -114,4 +114,7 @@ def _mark_fired(state: DailyState, setup: SetupType) -> DailyState:
         wall_break_fired=state.wall_break_fired or setup == SetupType.WALL_BREAK,
         flip_cross_fired=state.flip_cross_fired or setup == SetupType.FLIP_CROSS,
         last_signal_minute=state.last_signal_minute,
+        wall_fade_count=state.wall_fade_count + (1 if setup == SetupType.WALL_FADE else 0),
+        wall_break_count=state.wall_break_count + (1 if setup == SetupType.WALL_BREAK else 0),
+        flip_cross_count=state.flip_cross_count + (1 if setup == SetupType.FLIP_CROSS else 0),
     )

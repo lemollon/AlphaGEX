@@ -37,6 +37,7 @@ def test_upsert_daily_state_sets_setup_fired():
     db.upsert_daily_state(today, fired=SetupType.WALL_FADE, signal_minute=120)
     state = db.load_daily_state(today)
     assert state.wall_fade_fired is True
+    assert state.wall_fade_count == 1
     assert state.wall_break_fired is False
     assert state.last_signal_minute == 120
 
@@ -49,3 +50,14 @@ def test_upsert_daily_state_idempotent_multi_setup():
     assert state.wall_fade_fired is True
     assert state.flip_cross_fired is True
     assert state.last_signal_minute == 200
+
+
+def test_upsert_daily_state_bumps_count_per_setup():
+    db, today = _fresh_db()
+    db.upsert_daily_state(today, fired=SetupType.WALL_FADE, signal_minute=30)
+    db.upsert_daily_state(today, fired=SetupType.WALL_FADE, signal_minute=90)
+    db.upsert_daily_state(today, fired=SetupType.WALL_FADE, signal_minute=180)
+    state = db.load_daily_state(today)
+    assert state.wall_fade_count == 3
+    assert state.flip_cross_count == 0
+    assert state.last_signal_minute == 180
