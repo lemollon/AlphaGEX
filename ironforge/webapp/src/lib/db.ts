@@ -435,6 +435,15 @@ CREATE TABLE IF NOT EXISTS vix_snapshots (
   spy_price NUMERIC(10,4)
 );
 CREATE INDEX IF NOT EXISTS idx_vix_snapshots_ts ON vix_snapshots(ts DESC);
+CREATE TABLE IF NOT EXISTS blaze_daily_state (
+  trade_date         DATE         PRIMARY KEY,
+  wall_fade_count    INTEGER      NOT NULL DEFAULT 0,
+  wall_break_count   INTEGER      NOT NULL DEFAULT 0,
+  flip_cross_count   INTEGER      NOT NULL DEFAULT 0,
+  last_signal_minute INTEGER,
+  updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_blaze_daily_state_date ON blaze_daily_state(trade_date DESC);
 `
 
 /**
@@ -460,6 +469,24 @@ async function ensureTables(): Promise<void> {
         try {
           await client.query(`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS person TEXT`)
         } catch { /* column already exists or table doesn't exist yet */ }
+      }
+      // BLAZE-only: directional debit-vertical columns (additive over the IC schema).
+      if (bot === 'blaze') {
+        for (const col of [
+          'setup_type TEXT',           // 'wall_fade' | 'wall_break' | 'flip_cross'
+          'direction TEXT',            // 'call' | 'put'
+          'long_strike NUMERIC(10,2)', // ATM
+          'short_strike NUMERIC(10,2)', // ATM +/- spread_width
+          'debit NUMERIC(10,4)',       // entry debit per share
+          'contracts INTEGER',
+          'long_symbol TEXT',
+          'short_symbol TEXT',
+          'exit_reason TEXT',
+        ]) {
+          try {
+            await client.query(`ALTER TABLE blaze_positions ADD COLUMN IF NOT EXISTS ${col}`)
+          } catch { /* idempotent */ }
+        }
       }
       // Add account_type column for production vs sandbox position tracking
       for (const tbl of [`${bot}_positions`, `${bot}_paper_account`, `${bot}_equity_snapshots`, `${bot}_daily_perf`, `${bot}_pdt_log`, `${bot}_signals`, `${bot}_logs`]) {

@@ -1,0 +1,95 @@
+/**
+ * BLAZE — GEX feed client. Fetches https://alphagex-api.onrender.com/api/gex/SPY
+ * and emits a GexSnapshot. Mirrors trading/helios/gex_client.py.
+ */
+import { GexSnapshot } from './types'
+
+const ALPHAGEX_BASE = process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com'
+const TRADING_DAYS_PER_YEAR = 252.0
+const SQRT_INV_TRADING_DAYS = Math.sqrt(1.0 / TRADING_DAYS_PER_YEAR)
+
+export class GexStaleError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GexStaleError'
+  }
+}
+
+export class GexFetchError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'GexFetchError'
+  }
+}
+
+function regimeFromNetGex(netGex: number): string {
+  if (netGex <= -3e9) return 'EXTREME_NEGATIVE'
+  if (netGex <= -2e9) return 'HIGH_NEGATIVE'
+  if (netGex <= -1e9) return 'MODERATE_NEGATIVE'
+  if (netGex >= 3e9) return 'EXTREME_POSITIVE'
+  if (netGex >= 2e9) return 'HIGH_POSITIVE'
+  if (netGex >= 1e9) return 'MODERATE_POSITIVE'
+  return 'NEUTRAL'
+}
+
+async function fetchWithRetry(url: string, timeoutMs: number = 5000): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const resp = await fetch(url, { signal: controller.signal })
+    if (!resp.ok) throw new GexFetchError(`HTTP ${resp.status}`)
+    return resp
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+export async function fetchGexSnapshot(
+  symbol: string = 'SPY',
+  staleMaxSeconds: number = 90,
+): Promise<GexSnapshot> {
+  const url = `${ALPHAGEX_BASE.replace(/\/$/, '')}/api/gex/${symbol}`
+  let resp: Response
+  try {
+    resp = await fetchWithRetry(url)
+  } catch (err1) {
+    // single retry with 1s backoff
+    await new Promise(r => setTimeout(r, 1000))
+    resp = await fetchWithRetry(url)
+  }
+
+  const payload = await resp.json()
+  const data = payload?.data || {}
+  if (!data || payload?.error) {
+    throw new GexFetchError(`gex_client: ${payload?.error || 'empty data'}`)
+  }
+
+  const tsRaw = data.timestamp
+  const snapshotAt = tsRaw ? new Date(tsRaw) : new Date()
+  const ageSec = (Date.now() - snapshotAt.getTime()) / 1000
+  if (ageSec > staleMaxSeconds) {
+    throw new GexStaleError(`gex snapshot age=${ageSec.toFixed(1)}s > ${staleMaxSeconds}s`)
+  }
+
+  const spot = Number(data.spot_price) || 0
+  const vix = Number(data.vix) || 0
+  const sigma1d = spot > 0 && vix > 0
+    ? spot * (vix / 100.0) * SQRT_INV_TRADING_DAYS
+    : 0
+
+  const netGex = Number(data.net_gex) || 0
+  const regime = String(data.regime || regimeFromNetGex(netGex))
+
+  return {
+    symbol: String(data.symbol || symbol),
+    spot,
+    net_gex: netGex,
+    flip_point: Number(data.flip_point) || Number(data.gamma_flip) || 0,
+    call_wall: Number(data.call_wall) || 0,
+    put_wall: Number(data.put_wall) || 0,
+    vix,
+    regime,
+    sigma_1d_band_width: sigma1d,
+    snapshot_at: snapshotAt,
+  }
+}
