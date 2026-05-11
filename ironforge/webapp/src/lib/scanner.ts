@@ -4091,6 +4091,13 @@ const _lastBriefHourFired: { [key: string]: boolean } = {}
  * the scan loop never breaks on a brief failure.
  */
 async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno', ct: Date): Promise<void> {
+  // Brief cadence policy 2026-05-11 (operator): no more hourly briefs. Three
+  // triggers per bot per day, max:
+  //   1. POST-OPEN (type=morning) — fires once after the day's first position
+  //      opens; gated on existence of an open_time today in {bot}_positions.
+  //   2. MIDDAY (type=intraday) — fires once in the 11:55-12:05 CT window.
+  //   3. EOD (type=eod_debrief) — fires once in the 15:00-15:30 CT window.
+  // Cuts brief volume from 8/day to ≤3/day → ~60% Anthropic API savings.
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return
 
@@ -4098,21 +4105,40 @@ async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno', ct: 
   if (hhmm < 830 || hhmm >= 1530) return
 
   const todayCt = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
-  const hourBucket = ct.getHours()
-  const cacheKey = `${bot}:${todayCt}:${hourBucket}`
+
+  // Decide which brief type (if any) is due NOW
+  let briefType: 'morning' | 'intraday' | 'eod_debrief' | null = null
+  if (hhmm >= 1500 && hhmm < 1530) {
+    briefType = 'eod_debrief'
+  } else if (hhmm >= 1155 && hhmm < 1205) {
+    briefType = 'intraday'  // midday window
+  } else {
+    // Post-open brief — only if a position has opened today and morning brief
+    // hasn't fired yet. Cheap existence check via index.
+    try {
+      const posRows = await query(
+        `SELECT 1 FROM ${bot}_positions
+          WHERE (open_time AT TIME ZONE 'America/Chicago')::date = $1::date
+          LIMIT 1`,
+        [todayCt],
+      )
+      if (posRows.length > 0) briefType = 'morning'
+    } catch { /* fail-open: don't block scan on a DB hiccup */ }
+  }
+  if (briefType === null) return
+
+  const cacheKey = `${bot}:${todayCt}:${briefType}`
   if (_lastBriefHourFired[cacheKey]) return
 
-  // Cross-check the DB so a webapp restart doesn't re-fire a bucket that
-  // already has a brief stored. brief_time is TIMESTAMPTZ; compare in CT.
-  // Table name is bot-scoped — bot is constrained to the union above so
-  // string interpolation is safe (no SQL injection surface).
+  // DB cross-check: a webapp restart shouldn't re-fire a type that already has
+  // a brief stored today. Table name is bot-scoped — bot is in the function
+  // signature's literal union, so string interpolation is safe.
   try {
     const rows = await query(
       `SELECT 1 FROM ${bot}_market_briefs
-        WHERE brief_date = $1
-          AND EXTRACT(HOUR FROM brief_time AT TIME ZONE 'America/Chicago') = $2
+        WHERE brief_date = $1 AND brief_type = $2
         LIMIT 1`,
-      [todayCt, hourBucket],
+      [todayCt, briefType],
     )
     if (rows.length > 0) {
       _lastBriefHourFired[cacheKey] = true
@@ -4124,17 +4150,12 @@ async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno', ct: 
     return
   }
 
-  const briefType: 'morning' | 'intraday' | 'eod_debrief' =
-    hhmm >= 1500 ? 'eod_debrief' :
-    hhmm < 900 ? 'morning' :
-    'intraday'
-
   try {
     const { generateBrief } = await import('./market-brief')
     const result = await generateBrief(bot, briefType)
     _lastBriefHourFired[cacheKey] = true
     console.log(
-      `[scanner] ${bot.toUpperCase()} brief auto-generated (type=${briefType}, hour=${hourBucket}, id=${result.id}, model=${result.model})`,
+      `[scanner] ${bot.toUpperCase()} brief auto-generated (type=${briefType}, id=${result.id}, model=${result.model})`,
     )
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
