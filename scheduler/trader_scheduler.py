@@ -346,6 +346,19 @@ except ImportError:
     GraceTrader = None
     print("Warning: GRACE not available. 1DTE paper IC trading will be disabled.")
 
+# Import HELIOS / JOSHUA (1DTE directional bot driven by /api/gex/SPY)
+try:
+    from trading.helios.db import HeliosDatabase
+    from trading.helios.models import JoshuaConfig as HeliosJoshuaConfig
+    from trading.helios.trader import HeliosTrader
+    HELIOS_AVAILABLE = True
+except ImportError as _e:
+    HELIOS_AVAILABLE = False
+    HeliosDatabase = None
+    HeliosJoshuaConfig = None
+    HeliosTrader = None
+    print(f"Warning: HELIOS (JOSHUA) not available: {_e}")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -779,6 +792,21 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"GRACE initialization failed: {e}")
                 self.grace_trader = None
+
+        # HELIOS / JOSHUA - 1DTE directional bot off /api/gex/SPY (3-setup stack)
+        # Gated by helios_config.enabled — defaults to off; operator toggles to enable.
+        self.helios_trader = None
+        if HELIOS_AVAILABLE:
+            try:
+                # Lazy-construct on each cycle: depends on shared Tradier client.
+                # Here we just instantiate the DB layer for the enabled-check.
+                self.helios_db = HeliosDatabase()
+                logger.info(f"✅ HELIOS (JOSHUA) ready (1DTE directional, gated by helios_config.enabled)")
+            except Exception as e:
+                logger.warning(f"HELIOS initialization failed: {e}")
+                self.helios_db = None
+        else:
+            self.helios_db = None
 
         # IronForge FLAME (2DTE) and SPARK (1DTE) Paper Iron Condors
         self.flame_trader = None
@@ -2841,6 +2869,63 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in GRACE EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
+
+    # ========================================================================
+    # HELIOS / JOSHUA - 1DTE directional bot off /api/gex/SPY
+    # Gated by helios_config.enabled in postgres. Paper-only (helios_paper_account).
+    # ========================================================================
+
+    def _helios_enabled(self) -> bool:
+        if self.helios_db is None:
+            return False
+        try:
+            with self.helios_db._connect() as conn:
+                with conn.cursor() as c:
+                    c.execute("SELECT value FROM helios_config WHERE key = 'enabled'")
+                    row = c.fetchone()
+                    if not row:
+                        return False
+                    val = row[0]
+                    if isinstance(val, bool):
+                        return val
+                    if isinstance(val, str):
+                        return val.lower() == "true"
+                    return bool(val)
+        except Exception as e:
+            logger.warning(f"HELIOS enabled-check failed: {e}")
+            return False
+
+    def scheduled_helios_logic(self):
+        """JOSHUA / HELIOS 1DTE directional bot — runs every 60s during market hours.
+
+        Gated on helios_config.enabled. Each cycle pulls /api/gex/SPY, dispatches
+        the setup stack (flip_cross > wall_break > wall_fade), and opens a 1DTE
+        debit vertical via the existing executor.
+        """
+        if not HELIOS_AVAILABLE or self.helios_db is None:
+            self._save_heartbeat('HELIOS', 'UNAVAILABLE')
+            return
+        if not self._helios_enabled():
+            return  # Silent skip when disabled — no log spam
+
+        now = datetime.now(CENTRAL_TZ)
+        try:
+            # Shared tradier client — same one FORTRESS/SPARK use
+            tradier = getattr(self, 'tradier_client', None)
+            if tradier is None:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                tradier = TradierDataFetcher()
+            trader = HeliosTrader(
+                db=self.helios_db,
+                tradier=tradier,
+                config=HeliosJoshuaConfig(),
+            )
+            trader.run_cycle()
+            self._save_heartbeat('HELIOS', 'SCAN_COMPLETE')
+        except Exception as e:
+            logger.error(f"ERROR in HELIOS: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('HELIOS', 'ERROR', {'error': str(e)})
 
     # ========================================================================
     # IronForge FLAME - 2DTE Paper Iron Condor (SPY)
@@ -6546,6 +6631,26 @@ class AutonomousTraderScheduler:
             logger.info("✅ GRACE EOD job scheduled (3:50 PM CT daily)")
         else:
             logger.warning("⚠️ GRACE not available - 1DTE paper IC comparison disabled")
+
+        # =================================================================
+        # HELIOS / JOSHUA JOB: 1DTE Directional bot off /api/gex/SPY
+        # Runs every 60 seconds; internal market-hours + enabled-flag gates
+        # =================================================================
+        if HELIOS_AVAILABLE and self.helios_db is not None:
+            self.scheduler.add_job(
+                self.scheduled_helios_logic,
+                trigger=IntervalTrigger(
+                    seconds=60,
+                    timezone='America/Chicago'
+                ),
+                id='helios_trading',
+                name='HELIOS (JOSHUA) - 1DTE Directional GEX Bot (60s)',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✅ HELIOS (JOSHUA) job scheduled (every 60s, gated by helios_config.enabled)")
+        else:
+            logger.warning("⚠️ HELIOS (JOSHUA) not available - 1DTE directional bot disabled")
 
         # =================================================================
         # IronForge FLAME JOB: 2DTE Paper Iron Condor - every 5 min
