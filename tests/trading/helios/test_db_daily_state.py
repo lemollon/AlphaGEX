@@ -14,13 +14,14 @@ pytestmark = pytest.mark.skipif(
 
 
 def _fresh_db():
+    """Use a sentinel far-past date so tests can never pollute live trading days."""
     db = HeliosDatabase()
-    today = dt.date.today()
+    sentinel = dt.date(1999, 1, 1)
     with db._connect() as conn:
         with conn.cursor() as c:
-            c.execute("DELETE FROM helios_daily_state WHERE trade_date = %s", (today,))
+            c.execute("DELETE FROM helios_daily_state WHERE trade_date = %s", (sentinel,))
         conn.commit()
-    return db, today
+    return db, sentinel
 
 
 def test_load_daily_state_missing_returns_blank_state():

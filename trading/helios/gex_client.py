@@ -114,3 +114,68 @@ def _parse_iso_utc(s: str) -> dt.datetime:
     if t.tzinfo is None:
         t = t.replace(tzinfo=dt.timezone.utc)
     return t
+
+
+class LocalGexClient:
+    """In-process GEX client — calls backend.api.routes.gex_routes directly.
+
+    Use this in the alphagex-trader worker, which doesn't have a local
+    FastAPI server. The worker can call the same code path the HTTP endpoint
+    uses, without going over the network.
+    """
+
+    def __init__(self, *, stale_max_seconds: int = 90):
+        self.stale_max_seconds = stale_max_seconds
+
+    def get_spy(self, *, now: Optional[dt.datetime] = None) -> GexSnapshot:
+        from backend.api.routes.gex_routes import get_gex_data_with_fallback
+        data = get_gex_data_with_fallback("SPY") or {}
+        if "error" in data:
+            raise RuntimeError(f"gex_client local: {data['error']}")
+
+        net_gex = float(data.get("net_gex") or 0.0)
+        spot = float(data.get("spot_price") or 0.0)
+        vix = float(data.get("vix") or 0.0)
+        flip = float(data.get("flip_point") or data.get("gamma_flip") or 0.0)
+        sigma_1d = (
+            spot * (vix / 100.0) * SQRT_INV_TRADING_DAYS
+            if spot > 0 and vix > 0 else 0.0
+        )
+
+        # Derive regime from net_gex magnitude (mirrors gex_routes.py:298+)
+        if net_gex <= -3e9:
+            regime = "EXTREME_NEGATIVE"
+        elif net_gex <= -2e9:
+            regime = "HIGH_NEGATIVE"
+        elif net_gex <= -1e9:
+            regime = "MODERATE_NEGATIVE"
+        elif net_gex >= 3e9:
+            regime = "EXTREME_POSITIVE"
+        elif net_gex >= 2e9:
+            regime = "HIGH_POSITIVE"
+        elif net_gex >= 1e9:
+            regime = "MODERATE_POSITIVE"
+        else:
+            regime = "NEUTRAL"
+
+        return GexSnapshot(
+            symbol="SPY",
+            spot=spot,
+            net_gex=net_gex,
+            flip_point=flip,
+            call_wall=float(data.get("call_wall") or 0.0),
+            put_wall=float(data.get("put_wall") or 0.0),
+            vix=vix,
+            regime=data.get("regime") or regime,
+            sigma_1d_band_width=sigma_1d,
+            snapshot_at=now or dt.datetime.now(dt.timezone.utc),
+        )
+
+
+def make_gex_client(*, stale_max_seconds: int = 90):
+    """Factory: return LocalGexClient unless ALPHAGEX_API_BASE is set (then HTTP)."""
+    import os
+    base = os.environ.get("ALPHAGEX_API_BASE")
+    if base:
+        return GexClient(base_url=base, stale_max_seconds=stale_max_seconds)
+    return LocalGexClient(stale_max_seconds=stale_max_seconds)
