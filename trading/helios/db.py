@@ -357,19 +357,50 @@ class HeliosDatabase:
     # =========================================================================
 
     def load_daily_state(self, trade_date):
-        """Return the daily state for trade_date. Blank state if no row."""
+        """Return the daily state for trade_date. Blank state if no row.
+
+        Reads the per-setup count columns (added in the 2026-05-11-counts
+        migration). Falls back to booleans if the count columns aren't yet
+        present (migration not yet applied).
+        """
         from .models import DailyState
         with self._connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
-                c.execute(
-                    """
-                    SELECT trade_date, wall_fade_fired, wall_break_fired,
-                           flip_cross_fired, last_signal_minute
-                    FROM helios_daily_state
-                    WHERE trade_date = %s
-                    """,
-                    (trade_date,),
-                )
+                try:
+                    c.execute(
+                        """
+                        SELECT trade_date, wall_fade_fired, wall_break_fired,
+                               flip_cross_fired, last_signal_minute,
+                               wall_fade_count, wall_break_count, flip_cross_count
+                        FROM helios_daily_state
+                        WHERE trade_date = %s
+                        """,
+                        (trade_date,),
+                    )
+                except psycopg2.errors.UndefinedColumn:
+                    conn.rollback()
+                    c.execute(
+                        """
+                        SELECT trade_date, wall_fade_fired, wall_break_fired,
+                               flip_cross_fired, last_signal_minute
+                        FROM helios_daily_state
+                        WHERE trade_date = %s
+                        """,
+                        (trade_date,),
+                    )
+                    row = c.fetchone()
+                    if row is None:
+                        return DailyState(trade_date=trade_date)
+                    return DailyState(
+                        trade_date=row["trade_date"],
+                        wall_fade_fired=row["wall_fade_fired"],
+                        wall_break_fired=row["wall_break_fired"],
+                        flip_cross_fired=row["flip_cross_fired"],
+                        last_signal_minute=row["last_signal_minute"],
+                        wall_fade_count=int(row["wall_fade_fired"]),
+                        wall_break_count=int(row["wall_break_fired"]),
+                        flip_cross_count=int(row["flip_cross_fired"]),
+                    )
                 row = c.fetchone()
                 if row is None:
                     return DailyState(trade_date=trade_date)
@@ -379,32 +410,51 @@ class HeliosDatabase:
                     wall_break_fired=row["wall_break_fired"],
                     flip_cross_fired=row["flip_cross_fired"],
                     last_signal_minute=row["last_signal_minute"],
+                    wall_fade_count=row["wall_fade_count"] or 0,
+                    wall_break_count=row["wall_break_count"] or 0,
+                    flip_cross_count=row["flip_cross_count"] or 0,
                 )
 
     def upsert_daily_state(self, trade_date, *, fired, signal_minute: Optional[int] = None) -> None:
-        """Set `<setup>_fired = TRUE` for the given setup. Upserts the row.
+        """Bump the per-setup fire count. Sets the legacy `_fired` boolean too.
 
-        `fired` is a SetupType (or its string value). `signal_minute` is
-        optional minutes-since-open.
+        `fired` is a SetupType (or its string value). Upserts the row and
+        increments `<setup>_count` by 1.
         """
         column_map = {
-            "wall_fade": "wall_fade_fired",
-            "wall_break": "wall_break_fired",
-            "flip_cross": "flip_cross_fired",
+            "wall_fade": ("wall_fade_fired", "wall_fade_count"),
+            "wall_break": ("wall_break_fired", "wall_break_count"),
+            "flip_cross": ("flip_cross_fired", "flip_cross_count"),
         }
         key = fired.value if hasattr(fired, "value") else fired
-        col = column_map[key]
+        bool_col, count_col = column_map[key]
         with self._connect() as conn:
             with conn.cursor() as c:
-                c.execute(
-                    f"""
-                    INSERT INTO helios_daily_state (trade_date, {col}, last_signal_minute)
-                    VALUES (%s, TRUE, %s)
-                    ON CONFLICT (trade_date)
-                    DO UPDATE SET
-                        {col} = TRUE,
-                        last_signal_minute = COALESCE(EXCLUDED.last_signal_minute, helios_daily_state.last_signal_minute),
-                        updated_at = NOW()
-                    """,
-                    (trade_date, signal_minute),
-                )
+                try:
+                    c.execute(
+                        f"""
+                        INSERT INTO helios_daily_state (trade_date, {bool_col}, {count_col}, last_signal_minute)
+                        VALUES (%s, TRUE, 1, %s)
+                        ON CONFLICT (trade_date)
+                        DO UPDATE SET
+                            {bool_col} = TRUE,
+                            {count_col} = helios_daily_state.{count_col} + 1,
+                            last_signal_minute = COALESCE(EXCLUDED.last_signal_minute, helios_daily_state.last_signal_minute),
+                            updated_at = NOW()
+                        """,
+                        (trade_date, signal_minute),
+                    )
+                except psycopg2.errors.UndefinedColumn:
+                    conn.rollback()
+                    c.execute(
+                        f"""
+                        INSERT INTO helios_daily_state (trade_date, {bool_col}, last_signal_minute)
+                        VALUES (%s, TRUE, %s)
+                        ON CONFLICT (trade_date)
+                        DO UPDATE SET
+                            {bool_col} = TRUE,
+                            last_signal_minute = COALESCE(EXCLUDED.last_signal_minute, helios_daily_state.last_signal_minute),
+                            updated_at = NOW()
+                        """,
+                        (trade_date, signal_minute),
+                    )
