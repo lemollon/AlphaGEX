@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -60,3 +61,50 @@ class HeliosTradeSignal:
     @classmethod
     def skip(cls, reason: SkipReason, detail: str = "") -> "HeliosTradeSignal":
         return cls(action="SKIP", skip_reason=reason, detail=detail)
+
+
+class SetupType(str, Enum):
+    WALL_FADE = "wall_fade"
+    WALL_BREAK = "wall_break"
+    FLIP_CROSS = "flip_cross"
+
+
+class ExitReason(str, Enum):
+    PT = "PT"
+    SL = "SL"
+    TIME_STOP = "TIME_STOP"
+    DATA_FAILURE = "DATA_FAILURE"
+
+
+@dataclass(frozen=True)
+class DailyState:
+    trade_date: dt.date
+    wall_fade_fired: bool = False
+    wall_break_fired: bool = False
+    flip_cross_fired: bool = False
+    last_signal_minute: Optional[int] = None
+
+    def is_fired(self, setup: SetupType) -> bool:
+        return {
+            SetupType.WALL_FADE: self.wall_fade_fired,
+            SetupType.WALL_BREAK: self.wall_break_fired,
+            SetupType.FLIP_CROSS: self.flip_cross_fired,
+        }[setup]
+
+
+@dataclass(frozen=True)
+class JoshuaConfig:
+    ticker: str = "SPY"
+    spread_width: int = 1
+    profit_target_pct: float = 20.0
+    stop_loss_pct: float = 30.0
+    eod_time_ct: str = "15:55"
+    risk_per_trade_pct: float = 0.20
+    buying_power_usage_pct: float = 0.85
+    gex_stale_max_seconds: int = 90
+    poll_seconds: int = 60
+    wall_fade_em_threshold: float = 0.30
+    wall_break_em_threshold: float = 0.20
+    flip_hysteresis_pct: float = 0.0015
+    flip_buffer_minutes: int = 5
+    quotes_unavailable_max_cycles: int = 10

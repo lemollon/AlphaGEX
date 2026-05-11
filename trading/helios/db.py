@@ -351,3 +351,60 @@ class HeliosDatabase:
         except Exception as e:
             # Never fail callers because of a logging hiccup.
             logger.debug("HELIOS log() suppressed exception: %s", e)
+
+    # =========================================================================
+    # READS / WRITES — daily setup state (JOSHUA)
+    # =========================================================================
+
+    def load_daily_state(self, trade_date):
+        """Return the daily state for trade_date. Blank state if no row."""
+        from .models import DailyState
+        with self._connect() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+                c.execute(
+                    """
+                    SELECT trade_date, wall_fade_fired, wall_break_fired,
+                           flip_cross_fired, last_signal_minute
+                    FROM helios_daily_state
+                    WHERE trade_date = %s
+                    """,
+                    (trade_date,),
+                )
+                row = c.fetchone()
+                if row is None:
+                    return DailyState(trade_date=trade_date)
+                return DailyState(
+                    trade_date=row["trade_date"],
+                    wall_fade_fired=row["wall_fade_fired"],
+                    wall_break_fired=row["wall_break_fired"],
+                    flip_cross_fired=row["flip_cross_fired"],
+                    last_signal_minute=row["last_signal_minute"],
+                )
+
+    def upsert_daily_state(self, trade_date, *, fired, signal_minute: Optional[int] = None) -> None:
+        """Set `<setup>_fired = TRUE` for the given setup. Upserts the row.
+
+        `fired` is a SetupType (or its string value). `signal_minute` is
+        optional minutes-since-open.
+        """
+        column_map = {
+            "wall_fade": "wall_fade_fired",
+            "wall_break": "wall_break_fired",
+            "flip_cross": "flip_cross_fired",
+        }
+        key = fired.value if hasattr(fired, "value") else fired
+        col = column_map[key]
+        with self._connect() as conn:
+            with conn.cursor() as c:
+                c.execute(
+                    f"""
+                    INSERT INTO helios_daily_state (trade_date, {col}, last_signal_minute)
+                    VALUES (%s, TRUE, %s)
+                    ON CONFLICT (trade_date)
+                    DO UPDATE SET
+                        {col} = TRUE,
+                        last_signal_minute = COALESCE(EXCLUDED.last_signal_minute, helios_daily_state.last_signal_minute),
+                        updated_at = NOW()
+                    """,
+                    (trade_date, signal_minute),
+                )
