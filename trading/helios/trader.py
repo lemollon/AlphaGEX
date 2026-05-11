@@ -14,7 +14,7 @@ from typing import Optional
 
 from trading.helios.db import HeliosDatabase
 from trading.helios.executor import open_paper
-from trading.helios.gex_client import GexClient, GexStaleError, GexSnapshot
+from trading.helios.gex_client import GexClient, GexStaleError, GexSnapshot, make_gex_client
 from trading.helios.models import HeliosConfig, JoshuaConfig, SetupType, SpreadType
 from trading.helios.setups.base import SetupAction
 from trading.helios.setups.flip_cross import FlipBuffer
@@ -36,8 +36,7 @@ class HeliosTrader:
         self.db = db
         self.tradier = tradier
         self.config = config
-        self.gex_client = gex_client or GexClient(
-            base_url=os.environ.get("ALPHAGEX_API_BASE", "http://localhost:8000"),
+        self.gex_client = gex_client or make_gex_client(
             stale_max_seconds=config.gex_stale_max_seconds,
         )
         self._flip_buffer = FlipBuffer(max_minutes=config.flip_buffer_minutes)
