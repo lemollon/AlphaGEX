@@ -60,6 +60,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // HELIOS → JOSHUA (1DTE Directional - Crossing into the Promised Land)
+  // ─────────────────────────────────────────────────────────────────────────────
+  HELIOS: {
+    displayName: 'JOSHUA',
+    verse: '"Be strong and courageous. Do not be afraid; do not be discouraged, for the LORD your God will be with you wherever you go."',
+    reference: 'Joshua 1:9',
+    why: 'JOSHUA is the 1DTE directional bot that consumes live GEX structure (call walls, put walls, flip point) and trades a 3-setup stack — wall-fade in positive gamma, wall-break in negative gamma, flip-cross on regime transitions. Like Joshua leading Israel across the Jordan, this bot takes decisive directional action when the market structure is clear.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // ATHENA → SOLOMON (Directional Spreads - Wisdom, Strategic Decisions)
   // ─────────────────────────────────────────────────────────────────────────────
   ATHENA: {
@@ -366,6 +376,7 @@ export const BOT_DISPLAY_NAMES = {
   FORTRESS: BOT_SCRIPTURES.ARES.displayName,
   FAITH: BOT_SCRIPTURES.FAITH.displayName,
   GRACE: BOT_SCRIPTURES.GRACE.displayName,
+  HELIOS: BOT_SCRIPTURES.HELIOS.displayName,
   SOLOMON: BOT_SCRIPTURES.ATHENA.displayName,
   GIDEON: BOT_SCRIPTURES.ICARUS.displayName,
   ANCHOR: BOT_SCRIPTURES.PEGASUS.displayName,
