@@ -118,7 +118,7 @@ export default function PdtTabContent({
   botStatus,
   onPdtUpdate,
 }: {
-  bot: 'flame' | 'spark' | 'inferno'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
   pdtData: PdtStatus | null
   botStatus?: BotStatus | null
   onPdtUpdate?: () => void

@@ -97,9 +97,9 @@ export default function StatusCard({
   viewMode,
 }: {
   data: StatusData
-  accent: 'amber' | 'blue' | 'red'
+  accent: 'amber' | 'blue' | 'red' | 'orange'
   config?: ConfigData | null
-  bot: 'flame' | 'spark' | 'inferno'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
   liveUnrealizedPnl?: number | null
   liveUnrealizedPct?: number | null
   pendingOrderCount?: number

@@ -107,8 +107,8 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark' | 'inferno'
-  accent: 'amber' | 'blue' | 'red'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
+  accent: 'amber' | 'blue' | 'red' | 'orange'
 }) {
   const hasAccounts = ACCOUNT_BOTS.has(bot)
   const [tab, setTab] = useState<Tab>('Equity Curve')
@@ -333,6 +333,7 @@ export default function BotDashboard({
   const accentActive =
     accent === 'amber' ? 'border-amber-400 text-amber-400'
     : accent === 'red' ? 'border-red-400 text-red-400'
+    : accent === 'orange' ? 'border-orange-400 text-orange-400'
     : 'border-blue-400 text-blue-400'
 
   return (
@@ -341,7 +342,7 @@ export default function BotDashboard({
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1
-            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : 'text-blue-400'}`}
+            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : 'text-blue-400'}`}
           >
             {bot.toUpperCase()}
           </h1>
@@ -521,7 +522,7 @@ export default function BotDashboard({
                 data={equity?.curve || []}
                 intradayData={intraday?.snapshots}
                 startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'}
+                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : '#3b82f6'}
                 title={`${bot.toUpperCase()} Equity Curve`}
                 liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
                 period={equityPeriod}
@@ -647,10 +648,10 @@ function BrokerEquityTab({
   person: string
   period: string
   onPeriodChange: (p: 'intraday' | '1d' | '1w' | '1m' | '3m' | 'all') => void
-  accent: 'amber' | 'blue' | 'red'
+  accent: 'amber' | 'blue' | 'red' | 'orange'
 }) {
   const points = data?.mode === 'intraday' ? data?.snapshots : data?.curve
-  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : '#3b82f6'
+  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : '#3b82f6'
 
   if (!data) return <TabLoading />
 
