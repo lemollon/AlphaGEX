@@ -352,10 +352,11 @@ export default function StatusCard({
             : data.is_active ? 'ACTIVE' : 'INACTIVE'}
         </span>
 
-        {/* PT tier badge — IC bots only. BLAZE is a directional vertical
-            with setup-driven exits (PT/SL/TIME_STOP), not the time-of-day
-            tier system. */}
-        {bot !== 'blaze' && (
+        {/* PT tier badge — only bots that actually use the time-of-day tier
+            system. BLAZE has setup-driven exits (PT/SL/TIME_STOP) and INFERNO
+            holds to EOD (no intraday PT) — the tier badge would be misleading
+            for both. */}
+        {bot !== 'blaze' && bot !== 'inferno' && (
           ptState?.open ? (
             <span
               className={`text-xs font-medium px-2 py-0.5 rounded ${ptState.tier.bgColor} ${ptState.tier.color}`}
@@ -403,8 +404,9 @@ export default function StatusCard({
         )}
       </div>
 
-      {/* PT next-tier countdown — IC bots only (BLAZE has no tiers). */}
-      {bot !== 'blaze' && ptState?.open && ptState.next && (
+      {/* PT next-tier countdown — only for bots that use the tier system
+          (BLAZE has no tiers, INFERNO holds to EOD). */}
+      {bot !== 'blaze' && bot !== 'inferno' && ptState?.open && ptState.next && (
         <p className="text-[11px] text-forge-muted mb-3 -mt-2">
           {ptState.next.seconds > 0
             ? `PT drops to ${ptState.next.nextLabel} in ${formatCountdown(ptState.next.seconds)}`
