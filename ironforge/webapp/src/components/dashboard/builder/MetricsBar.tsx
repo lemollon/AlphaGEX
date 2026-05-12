@@ -16,6 +16,19 @@ interface MetricsBarProps {
   metrics?: {
     net_credit: number | null
     max_profit: number | null
+    /** Theoretical wing-breach loss if held to expiry without SL firing.
+     * Kept as a tail callout only — NOT the headline number for same-day
+     * exit bots. */
+    max_loss_at_expiry?: number | null
+    /** Realistic SL-bounded max loss: when the stop fires at sl_mult ×
+     * credit, dollar loss = (sl_mult − 1) × credit_dollars. This is what
+     * the user actually risks per trade under normal conditions. */
+    max_loss_at_sl?: number | null
+    /** Stop-loss multiplier (sl_mult) used to compute max_loss_at_sl.
+     * Surfaced so the UI tooltip can explain "Stop at 2.0× credit". */
+    sl_mult?: number | null
+    /** Legacy alias for max_loss_at_expiry — keep until all consumers
+     * migrate to the explicit fields. */
     max_loss: number | null
     breakeven_low: number | null
     breakeven_high: number | null
@@ -56,11 +69,23 @@ function thetaColor(v: number | null | undefined): string {
   return v >= 0 ? 'text-emerald-400' : 'text-red-400'
 }
 
-function MetricCell({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+function MetricCell({ label, value, valueClass, tooltip, footnote }: {
+  label: string
+  value: string
+  valueClass?: string
+  tooltip?: string
+  footnote?: string
+}) {
   return (
-    <div className="flex-1 flex flex-col gap-1 px-3 py-2 rounded-lg border border-forge-border/40 bg-forge-card/60 min-w-[110px]">
+    <div
+      className="flex-1 flex flex-col gap-1 px-3 py-2 rounded-lg border border-forge-border/40 bg-forge-card/60 min-w-[110px]"
+      title={tooltip}
+    >
       <span className="text-[10px] uppercase tracking-wider text-forge-muted">{label}</span>
       <span className={`font-semibold text-sm font-mono ${valueClass ?? 'text-white'}`}>{value}</span>
+      {footnote && (
+        <span className="text-[9px] text-forge-muted leading-tight mt-0.5">{footnote}</span>
+      )}
     </div>
   )
 }
@@ -111,7 +136,34 @@ export default function MetricsBar({ metrics, legs }: MetricsBarProps) {
              do. The PayoffTable's "Same-Day Exits" section shows the real
              intraday exit targets (Morning/Midday/PM PT tiers). */}
         <MetricCell label="Max Profit @ Exp" value={fmtMoney0(m.max_profit)} valueClass="text-emerald-400 text-base" />
-        <MetricCell label="Max Loss" value={fmtMoney0(m.max_loss)} valueClass="text-red-400 text-base" />
+        {/* Headline "Max Loss" — the realistic SL-bounded number, NOT the
+            wing-breach theoretical. For SPARK/FLAME with sl=2.0× this equals
+            +Max Profit (1:1 R:R). For INFERNO with sl≈10× it is ~9× Max Profit
+            (the HOLD_TO_EOD asymmetry). The wing-breach figure moves to a
+            tooltip + footnote so operators see it without it being alarming
+            as the headline. Falls back to max_loss when sl_mult is unknown
+            (no config row yet, cold-start case). */}
+        {(() => {
+          const slBound = (m.max_loss_at_sl ?? null)
+          const tail = (m.max_loss_at_expiry ?? m.max_loss ?? null)
+          const slMult = m.sl_mult ?? null
+          if (slBound != null) {
+            const slLabel = slMult != null ? `${slMult.toFixed(1)}× credit` : 'stop'
+            const tailStr = tail != null ? fmtMoney0(tail) : '—'
+            return (
+              <MetricCell
+                label="Max Loss"
+                value={fmtMoney0(slBound)}
+                valueClass="text-red-400 text-base"
+                tooltip={`Bounded by the bot's stop-loss trigger at ${slLabel}. If the wing fully breaches and the stop fails to fire (gap, quote outage, scanner down), the theoretical max held to expiry is ${tailStr}.`}
+                footnote={tail != null ? `tail (held to exp): ${tailStr}` : undefined}
+              />
+            )
+          }
+          // No config — fall back to the legacy wing-breach value with the
+          // old label so we never silently show a misleading "Max Loss" of $0.
+          return <MetricCell label="Max Loss @ Exp" value={fmtMoney0(tail)} valueClass="text-red-400 text-base" />
+        })()}
         <MetricCell label="POP (heuristic)" value={fmtPct(m.pop_heuristic)} valueClass="text-amber-400 text-base" />
         <MetricCell label="Breakevens" value={beStr} valueClass="text-white" />
         <MetricCell label="Implied Vol (avg)" value={fmtPct(avgIv)} />
