@@ -64,11 +64,20 @@ export async function fetchGexSnapshot(
     throw new GexFetchError(`gex_client: ${payload?.error || 'empty data'}`)
   }
 
-  const tsRaw = data.timestamp
+  // Freshness check — prefer `data_date` (the UPSTREAM TradingVolatility
+  // snapshot time) over `timestamp` (the alphagex-api response wrap time).
+  // alphagex sets `timestamp` to `now()` when it packages the response, so
+  // it always looks fresh even when the upstream feed is frozen. Observed
+  // 2026-05-12: TV stuck on the 8:37 CT open-time print all session while
+  // alphagex-api kept attaching a current `timestamp` to every call.
+  const tsRaw = data.data_date || data.timestamp
   const snapshotAt = tsRaw ? new Date(tsRaw) : new Date()
   const ageSec = (Date.now() - snapshotAt.getTime()) / 1000
   if (ageSec > staleMaxSeconds) {
-    throw new GexStaleError(`gex snapshot age=${ageSec.toFixed(1)}s > ${staleMaxSeconds}s`)
+    const src = data.data_source || (data.data_date ? 'upstream' : 'unknown')
+    throw new GexStaleError(
+      `gex snapshot age=${ageSec.toFixed(1)}s > ${staleMaxSeconds}s (source=${src})`,
+    )
   }
 
   const spot = Number(data.spot_price) || 0

@@ -238,18 +238,56 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
         data = api.get_net_gamma(symbol)
 
         if data and 'error' not in data:
-            data['data_source'] = 'live_api'
-            data['is_cached'] = False
-            # Store data for ML/AI analysis
-            if DATA_COLLECTOR_AVAILABLE:
+            # Freshness gate: TradingVolatility's `data_date` field is the
+            # ACTUAL snapshot time from their pipeline. We previously
+            # blindly trusted whatever they returned, which caused BLAZE
+            # (and any other downstream consumer) to silently trade on
+            # 8:37-AM-CT data all session when TV's feed got stuck on the
+            # open-time print (observed 2026-05-12). If the snapshot is
+            # older than TV_MAX_AGE_MIN, treat it as a failed fallback
+            # and let the Tradier-calc path run.
+            TV_MAX_AGE_MIN = 10
+            is_stale = False
+            data_date_raw = data.get('data_date')
+            if data_date_raw:
                 try:
-                    DataCollector.store_gex(data, source='tradingvolatility')
+                    from datetime import timezone as _tz
+                    if isinstance(data_date_raw, str):
+                        snap = datetime.fromisoformat(data_date_raw.rstrip('Z'))
+                        if snap.tzinfo is None:
+                            snap = snap.replace(tzinfo=_tz.utc)
+                    else:
+                        snap = data_date_raw
+                    age_min = (datetime.now(_tz.utc) - snap).total_seconds() / 60
+                    if age_min > TV_MAX_AGE_MIN:
+                        logger.warning(
+                            f"TradingVolatility {symbol} stale "
+                            f"({age_min:.0f}min old, threshold={TV_MAX_AGE_MIN}min) — "
+                            "falling through to Tradier calculation"
+                        )
+                        errors.append(
+                            f"TradingVolatilityAPI: stale data ({age_min:.0f}min old)"
+                        )
+                        is_stale = True
                 except Exception as e:
-                    logger.warning(f"Failed to store GEX data: {e}")
-            # Cache the response
-            if CACHE_AVAILABLE:
-                response_cache.set(f"gex_data_{symbol}", data, APIResponseCache.TTL_GEX)
-            return data
+                    logger.warning(
+                        f"TV freshness check failed for {symbol}: {e} — "
+                        "accepting data anyway"
+                    )
+
+            if not is_stale:
+                data['data_source'] = 'live_api'
+                data['is_cached'] = False
+                # Store data for ML/AI analysis
+                if DATA_COLLECTOR_AVAILABLE:
+                    try:
+                        DataCollector.store_gex(data, source='tradingvolatility')
+                    except Exception as e:
+                        logger.warning(f"Failed to store GEX data: {e}")
+                # Cache the response
+                if CACHE_AVAILABLE:
+                    response_cache.set(f"gex_data_{symbol}", data, APIResponseCache.TTL_GEX)
+                return data
         else:
             error_msg = data.get('error', 'Unknown error') if data else 'No data returned'
             errors.append(f"TradingVolatilityAPI: {error_msg}")
