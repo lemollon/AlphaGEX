@@ -183,6 +183,25 @@ export async function GET(
       }
     }
 
+    // Bot config — load stop_loss_pct for the matched account_type so we can
+    // compute the realistic SL-bounded max loss alongside the theoretical
+    // wing-breach max_loss. Loaded scoped to the position's account_type
+    // (production rows can have different sl_mult than sandbox).
+    const cfgScope = r.account_type === 'production' ? 'production' : 'sandbox'
+    let slMult: number | null = null
+    try {
+      const cfgRows = await dbQuery(
+        `SELECT stop_loss_pct
+         FROM ${botTable(bot, 'config')}
+         WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
+           ${dteFilter}
+         ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
+         LIMIT 1`,
+      )
+      const slPct = num(cfgRows[0]?.stop_loss_pct)
+      if (slPct > 0) slMult = slPct / 100
+    } catch { /* no config row — leave slMult null and let UI fall back */ }
+
     // Payoff math is pure — works identically for open or closed positions.
     // FLAME uses the 2-leg put-credit-spread payoff (credit = put-side only);
     // SPARK/INFERNO keep the 4-leg IC payoff (credit = total credit).
@@ -298,6 +317,23 @@ export async function GET(
       metrics: {
         net_credit: Math.round(effectiveEntryCredit * 100 * contracts * 100) / 100,
         max_profit: payoff.max_profit,
+        // Theoretical max if the wing fully breaches at expiration AND the
+        // stop fails to fire. Kept for the tooltip/tail callout — NOT the
+        // headline figure for same-day exit bots.
+        max_loss_at_expiry: payoff.max_loss,
+        // Realistic SL-bounded max loss: when the stop fires at sl_mult ×
+        // credit, the loss in dollars = (sl_mult − 1) × credit_dollars.
+        // For SPARK/FLAME (sl=2.0×) this equals net_credit (1:1 R:R).
+        // For INFERNO (sl≈10×) this is ~9× net_credit (the HOLD_TO_EOD tradeoff).
+        // Null when no config row exists yet (cold start) — UI falls back
+        // to showing only max_loss_at_expiry in that case.
+        max_loss_at_sl: slMult != null
+          ? Math.round((slMult - 1) * effectiveEntryCredit * 100 * contracts * -100) / 100
+          : null,
+        sl_mult: slMult,
+        // Legacy field kept for backward compat with any older clients —
+        // alias of max_loss_at_expiry. New UI should read the explicit
+        // max_loss_at_sl / max_loss_at_expiry fields instead.
         max_loss: payoff.max_loss,
         breakeven_low: payoff.breakeven_low,
         breakeven_high: payoff.breakeven_high,
