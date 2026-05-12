@@ -461,9 +461,13 @@ export async function GET(
       : hbStatus === 'active' ? 'scanning'
       : 'unknown'
 
-    const dteNum = bot === 'flame' ? 2 : bot === 'spark' ? 1 : 0
+    const dteNum = bot === 'flame' ? 2 : bot === 'spark' || bot === 'blaze' ? 1 : 0
     const tradeMode = bot === PRODUCTION_BOT ? 'Live' : 'Paper'
-    const strategyName = bot === 'flame' ? 'Put Credit Spread' : 'Iron Condor'
+    const strategyName = bot === 'flame'
+      ? 'Put Credit Spread'
+      : bot === 'blaze'
+        ? 'Directional Spread'
+        : 'Iron Condor'
     const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
 
     return NextResponse.json({

@@ -63,7 +63,7 @@ function TabLoading() {
 const ALL_TABS = ['Equity Curve', 'IC Chart', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile', 'Market Pulse'] as const
 type Tab = (typeof ALL_TABS)[number]
 
-/** Only SPARK has sandbox/production accounts. FLAME and INFERNO are paper-only. */
+/** Only SPARK has sandbox/production accounts. FLAME, INFERNO, BLAZE are paper-only. */
 const ACCOUNT_BOTS = new Set(['spark'])
 
 /** Tabs that only make sense for bots with broker accounts */
@@ -347,7 +347,11 @@ export default function BotDashboard({
             {bot.toUpperCase()}
           </h1>
           <span className="text-forge-muted">
-            {bot === 'flame' ? '2DTE Put Credit Spread' : `${bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor`}
+            {bot === 'flame'
+              ? '2DTE Put Credit Spread'
+              : bot === 'blaze'
+                ? '1DTE Directional Spread'
+                : `${bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor`}
           </span>
         </div>
         {hasAccounts ? (

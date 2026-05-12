@@ -290,7 +290,7 @@ export default function StatusCard({
             <p className="text-sm text-gray-300 mb-5">
               {data.is_active
                 ? `Disabling ${data.bot_name} will stop it from scanning and opening new trades. Existing positions will NOT be closed.`
-                : `Enable ${data.bot_name} to resume scanning for Iron Condor opportunities.`}
+                : `Enable ${data.bot_name} to resume scanning for trade opportunities.`}
             </p>
             <div className="flex gap-3 justify-end">
               <button
