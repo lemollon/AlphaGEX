@@ -352,17 +352,21 @@ export default function StatusCard({
             : data.is_active ? 'ACTIVE' : 'INACTIVE'}
         </span>
 
-        {/* PT tier badge */}
-        {ptState?.open ? (
-          <span
-            className={`text-xs font-medium px-2 py-0.5 rounded ${ptState.tier.bgColor} ${ptState.tier.color}`}
-          >
-            PT {Math.round(ptState.tier.pct * 100)}% {ptState.tier.label}
-          </span>
-        ) : (
-          <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-600/20 text-gray-500">
-            PT — Closed
-          </span>
+        {/* PT tier badge — IC bots only. BLAZE is a directional vertical
+            with setup-driven exits (PT/SL/TIME_STOP), not the time-of-day
+            tier system. */}
+        {bot !== 'blaze' && (
+          ptState?.open ? (
+            <span
+              className={`text-xs font-medium px-2 py-0.5 rounded ${ptState.tier.bgColor} ${ptState.tier.color}`}
+            >
+              PT {Math.round(ptState.tier.pct * 100)}% {ptState.tier.label}
+            </span>
+          ) : (
+            <span className="text-xs font-medium px-2 py-0.5 rounded bg-gray-600/20 text-gray-500">
+              PT — Closed
+            </span>
+          )
         )}
 
         {/* Toggle bot active */}
@@ -399,8 +403,8 @@ export default function StatusCard({
         )}
       </div>
 
-      {/* PT next-tier countdown (small text below header) */}
-      {ptState?.open && ptState.next && (
+      {/* PT next-tier countdown — IC bots only (BLAZE has no tiers). */}
+      {bot !== 'blaze' && ptState?.open && ptState.next && (
         <p className="text-[11px] text-forge-muted mb-3 -mt-2">
           {ptState.next.seconds > 0
             ? `PT drops to ${ptState.next.nextLabel} in ${formatCountdown(ptState.next.seconds)}`
