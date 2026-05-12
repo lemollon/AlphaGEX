@@ -124,7 +124,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // (lower SD) to reach acceptable credit or skips the day entirely.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.5, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -557,9 +557,12 @@ function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
  *   Extended MORNING window keeps the close limit aggressive (30% of credit)
  *   for longer to avoid stuck unfilled limits when the tier slides down.
  * FLAME   (base=0.30):       MORNING 30% (until 10:30 AM CT) → MIDDAY 20% → AFTERNOON 15%
- * INFERNO (0DTE):            MORNING 20% → MIDDAY 30% → AFTERNOON 50%
+ * INFERNO (0DTE):            MORNING 20% → MIDDAY 40% → AFTERNOON 65%
  *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
- *   let theta work in afternoon (decay accelerates into close).
+ *   let theta work in afternoon (decay accelerates into close). MIDDAY/AFTERNOON
+ *   raised 2026-05-12 — historical hypo-vs-actual showed 98.6% of ICs would
+ *   have expired worthless if held to 2:59 PM CT; tighter PT tiers were
+ *   capturing only 30-50% of credit on trades that ended at full max profit.
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
@@ -573,10 +576,10 @@ function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [num
     if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
-    if (isInferno) return [0.30, 'MIDDAY']
+    if (isInferno) return [0.40, 'MIDDAY']
     return [Math.max(0.10, basePt - 0.10), 'MIDDAY']
   } else {
-    if (isInferno) return [0.50, 'AFTERNOON']
+    if (isInferno) return [0.65, 'AFTERNOON']
     return [Math.max(0.10, basePt - 0.15), 'AFTERNOON']
   }
 }
