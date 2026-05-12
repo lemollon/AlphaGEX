@@ -138,7 +138,7 @@ export async function insertBlazePosition(input: InsertPositionInput): Promise<n
        position_id, ticker, expiration,
        put_short_strike, put_long_strike, put_credit,
        call_short_strike, call_long_strike, call_credit,
-       spot_at_entry, total_credit, collateral_required,
+       underlying_at_entry, total_credit, collateral_required,
        setup_type, direction, long_strike, short_strike,
        long_symbol, short_symbol, debit, contracts,
        status, open_time, open_date, account_type, person, dte_mode
