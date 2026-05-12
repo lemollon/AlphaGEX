@@ -344,3 +344,170 @@ class TestStaticEndpoints:
         assert data["global"]["account_capital"] == 5000.0
         assert data["instance_defaults"]["realized_vol_window_days"] == 20
         assert len(data["instances"]) == 5
+
+
+# ---- /weekly-summary -----------------------------------------------------
+
+class TestWeeklySummary:
+    """The endpoint fires 4 sequential _safe_query calls in this order:
+        1. entry events   (instance, event_type, count) rows
+        2. closed exits   (instance_name, close_trigger_id, realized_pnl) rows
+        3. gate failures  (letf_ticker, failed_gate, failure_reason, timestamp) rows
+        4. open positions (instance_name, count) rows
+    """
+
+    def test_empty_db_returns_zeroed_skeleton(self, client):
+        with patch.object(goliath_routes, "_safe_query", return_value=[]):
+            r = client.get("/api/goliath/weekly-summary")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["window_days"] == 7
+        assert data["entries"]["attempts"] == 0
+        assert data["entries"]["filled"] == 0
+        assert data["entries"]["fill_rate"] is None
+        assert data["exits"]["closed"] == 0
+        assert data["exits"]["total_pnl"] == 0.0
+        assert data["exits"]["win_rate"] is None
+        assert data["gate_failures"]["total"] == 0
+        assert data["gate_failures"]["top_blocker"] is None
+        assert data["open_positions"]["total"] == 0
+        assert data["open_positions"]["platform_cap"] == 3
+        # All 5 instances pre-populated in entries.by_instance and open_positions.
+        assert set(data["entries"]["by_instance"].keys()) == {
+            "GOLIATH-MSTU", "GOLIATH-TSLL", "GOLIATH-NVDL",
+            "GOLIATH-CONL", "GOLIATH-AMDL",
+        }
+        for bucket in data["entries"]["by_instance"].values():
+            assert bucket == {"attempts": 0, "filled": 0, "blocked": 0}
+
+    def test_window_days_param_clamps_to_query_range(self, client):
+        with patch.object(goliath_routes, "_safe_query", return_value=[]):
+            r = client.get("/api/goliath/weekly-summary?days=14")
+        assert r.status_code == 200
+        assert r.json()["window_days"] == 14
+
+    def test_window_days_rejects_out_of_range(self, client):
+        with patch.object(goliath_routes, "_safe_query", return_value=[]):
+            r = client.get("/api/goliath/weekly-summary?days=0")
+        assert r.status_code == 422
+        with patch.object(goliath_routes, "_safe_query", return_value=[]):
+            r = client.get("/api/goliath/weekly-summary?days=91")
+        assert r.status_code == 422
+
+    def test_full_response_with_all_four_sources_populated(self, client):
+        entry_rows = [
+            ("GOLIATH-MSTU", "ENTRY_EVAL", 5),
+            ("GOLIATH-MSTU", "ENTRY_FILLED", 1),
+            ("GOLIATH-NVDL", "ENTRY_EVAL", 5),
+            ("GOLIATH-NVDL", "ENTRY_FILLED", 2),
+            ("GOLIATH-TSLL", "ENTRY_EVAL", 5),
+            # TSLL has no fills.
+        ]
+        exit_rows = [
+            ("GOLIATH-MSTU", "T1", 50.0),
+            ("GOLIATH-MSTU", "T1", 30.0),
+            ("GOLIATH-NVDL", "T3", 10.0),
+            ("GOLIATH-NVDL", "T7", -20.0),
+        ]
+        ts = datetime(2026, 5, 12, 14, 30, tzinfo=timezone.utc)
+        gate_failure_rows = [
+            ("MSTU", "G05", "MSTU IV rank unavailable; cold-start", ts),
+            ("MSTU", "G05", "MSTU IV rank unavailable; cold-start", ts),
+            ("TSLL", "G05", "TSLL IV rank unavailable; cold-start", ts),
+            ("CONL", "G06", "OI below 200: short_put@10 OI=42", ts),
+            ("AMDL", "G03", "No wall meeting 2.0x median below spot", ts),
+        ]
+        open_rows = [
+            ("GOLIATH-MSTU", 1),
+            ("GOLIATH-NVDL", 1),
+        ]
+        with patch.object(
+            goliath_routes, "_safe_query",
+            side_effect=[entry_rows, exit_rows, gate_failure_rows, open_rows],
+        ):
+            r = client.get("/api/goliath/weekly-summary?days=7")
+
+        data = r.json()
+        # Entries aggregates.
+        assert data["entries"]["attempts"] == 15  # 5 + 5 + 5
+        assert data["entries"]["filled"] == 3     # 1 + 2
+        assert data["entries"]["blocked"] == 12   # 15 - 3
+        assert data["entries"]["fill_rate"] == pytest.approx(3 / 15)
+        assert data["entries"]["by_instance"]["GOLIATH-MSTU"] == {
+            "attempts": 5, "filled": 1, "blocked": 4,
+        }
+        assert data["entries"]["by_instance"]["GOLIATH-TSLL"] == {
+            "attempts": 5, "filled": 0, "blocked": 5,
+        }
+        # CONL had no entry activity — bucket remains zeroed.
+        assert data["entries"]["by_instance"]["GOLIATH-CONL"] == {
+            "attempts": 0, "filled": 0, "blocked": 0,
+        }
+
+        # Exits aggregates.
+        assert data["exits"]["closed"] == 4
+        assert data["exits"]["total_pnl"] == pytest.approx(70.0)
+        assert data["exits"]["wins"] == 3
+        assert data["exits"]["losses"] == 1
+        assert data["exits"]["win_rate"] == pytest.approx(3 / 4)
+        assert data["exits"]["by_trigger"]["T1"]["count"] == 2
+        assert data["exits"]["by_trigger"]["T1"]["total_pnl"] == pytest.approx(80.0)
+        assert data["exits"]["by_trigger"]["T1"]["avg_pnl"] == pytest.approx(40.0)
+        assert data["exits"]["by_trigger"]["T7"]["total_pnl"] == pytest.approx(-20.0)
+        assert data["exits"]["by_trigger"]["T7"]["losses"] == 1
+
+        # Gate failure histogram.
+        assert data["gate_failures"]["total"] == 5
+        assert data["gate_failures"]["top_blocker"] == "G05"
+        assert data["gate_failures"]["by_gate"] == {"G05": 3, "G06": 1, "G03": 1}
+        # Per-instance: LETF tickers mapped to instance names.
+        assert data["gate_failures"]["by_instance_x_gate"]["GOLIATH-MSTU"]["G05"] == 2
+        assert data["gate_failures"]["by_instance_x_gate"]["GOLIATH-TSLL"]["G05"] == 1
+        assert data["gate_failures"]["by_instance_x_gate"]["GOLIATH-CONL"]["G06"] == 1
+        assert "cold-start" in data["gate_failures"]["sample_reasons"]["G05"]
+
+        # Open positions.
+        assert data["open_positions"]["total"] == 2
+        assert data["open_positions"]["by_instance"]["GOLIATH-MSTU"] == 1
+        assert data["open_positions"]["by_instance"]["GOLIATH-CONL"] == 0
+
+    def test_unknown_letf_in_gate_failure_does_not_crash(self, client):
+        """Defensive: gate failure with unrecognized letf_ticker is bucketed
+        under UNKNOWN-* rather than raising or being dropped silently."""
+        ts = datetime(2026, 5, 12, 14, 30, tzinfo=timezone.utc)
+        with patch.object(
+            goliath_routes, "_safe_query",
+            side_effect=[
+                [],  # entries
+                [],  # exits
+                [("UNKNOWN_TICKER", "G05", "bogus", ts)],  # gate failures
+                [],  # open
+            ],
+        ):
+            r = client.get("/api/goliath/weekly-summary")
+        data = r.json()
+        assert data["gate_failures"]["total"] == 1
+        assert data["gate_failures"]["by_gate"]["G05"] == 1
+        # Unknown LETF gets surfaced explicitly rather than silently dropped.
+        keys = list(data["gate_failures"]["by_instance_x_gate"].keys())
+        assert any(k.startswith("UNKNOWN-") for k in keys)
+
+    def test_null_realized_pnl_treated_as_zero(self, client):
+        """Defensive: a closed position with NULL realized_pnl should count
+        as a scratch (neither win nor loss), per common-mistakes #6."""
+        with patch.object(
+            goliath_routes, "_safe_query",
+            side_effect=[
+                [],  # entries
+                [("GOLIATH-MSTU", "T1", None)],  # exits — null pnl
+                [],  # gate failures
+                [],  # open
+            ],
+        ):
+            r = client.get("/api/goliath/weekly-summary")
+        data = r.json()
+        assert data["exits"]["closed"] == 1
+        assert data["exits"]["total_pnl"] == 0.0
+        assert data["exits"]["wins"] == 0
+        assert data["exits"]["losses"] == 0
+        assert data["exits"]["win_rate"] is None
