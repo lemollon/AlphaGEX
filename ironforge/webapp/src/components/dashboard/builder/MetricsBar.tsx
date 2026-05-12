@@ -155,8 +155,14 @@ export default function MetricsBar({ metrics, legs }: MetricsBarProps) {
                 label="Max Loss"
                 value={fmtMoney0(slBound)}
                 valueClass="text-red-400 text-base"
-                tooltip={`Bounded by the bot's stop-loss trigger at ${slLabel}. If the wing fully breaches and the stop fails to fire (gap, quote outage, scanner down), the theoretical max held to expiry is ${tailStr}.`}
-                footnote={tail != null ? `tail (held to exp): ${tailStr}` : undefined}
+                tooltip={
+                  `Triggered when cost-to-close reaches ${slLabel}. Actual fills slip ` +
+                  `past the trigger by a few cents per share due to bid/ask spread on ` +
+                  `the closing order — realized losses commonly run 10–50% above this ` +
+                  `figure depending on chain liquidity. If the stop fails to fire (gap, ` +
+                  `quote outage, scanner down), the theoretical max held to expiry is ${tailStr}.`
+                }
+                footnote={tail != null ? `expected slippage: 10–50% over • tail: ${tailStr}` : undefined}
               />
             )
           }
