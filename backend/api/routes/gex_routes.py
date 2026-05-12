@@ -238,17 +238,22 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
         data = api.get_net_gamma(symbol)
 
         if data and 'error' not in data:
-            # Freshness gate: TradingVolatility's `data_date` field is the
-            # ACTUAL snapshot time from their pipeline. We previously
-            # blindly trusted whatever they returned, which caused BLAZE
-            # (and any other downstream consumer) to silently trade on
-            # 8:37-AM-CT data all session when TV's feed got stuck on the
-            # open-time print (observed 2026-05-12). If the snapshot is
-            # older than TV_MAX_AGE_MIN, treat it as a failed fallback
-            # and let the Tradier-calc path run.
+            # Freshness gate: TradingVolatility returns the actual snapshot
+            # time in `collection_date` (see core_classes_and_engines.py:1775;
+            # the route handler at line 375 later RENAMES this to `data_date`
+            # in the JSON response, but inside the dict here it's still
+            # `collection_date`). We previously blindly trusted whatever they
+            # returned, which caused BLAZE (and any other downstream consumer)
+            # to silently trade on 8:37-AM-CT data all session when TV's feed
+            # got stuck on the open-time print (observed 2026-05-12). If the
+            # snapshot is older than TV_MAX_AGE_MIN, treat it as a failed
+            # fallback and let the Tradier-calc path run.
             TV_MAX_AGE_MIN = 10
             is_stale = False
-            data_date_raw = data.get('data_date')
+            # Check the actual TV field (`collection_date`) first; keep
+            # `data_date` as a defensive fallback in case TV's field name
+            # ever changes.
+            data_date_raw = data.get('collection_date') or data.get('data_date')
             if data_date_raw:
                 try:
                     from datetime import timezone as _tz
