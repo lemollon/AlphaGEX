@@ -581,6 +581,10 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
     accounts: [],  // Paper-only — no sandbox orders
     bpShare:  {},
   },
+  blaze: {
+    accounts: [],  // Paper-only — 1DTE directional verticals, no broker orders
+    bpShare:  {},
+  },
 }
 
 /**
