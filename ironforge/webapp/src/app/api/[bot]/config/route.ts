@@ -23,7 +23,7 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   },
   inferno: {
     sd_multiplier: 1.0, spread_width: 5.0, min_credit: 0.05,
-    profit_target_pct: 50.0, stop_loss_pct: 250.0, vix_skip: 32.0,
+    profit_target_pct: 100.0, stop_loss_pct: 1000.0, vix_skip: 32.0,
     max_contracts: 0, max_trades_per_day: 0, buying_power_usage_pct: 0.85,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:30', eod_cutoff_et: '15:45',

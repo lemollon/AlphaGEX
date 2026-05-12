@@ -124,7 +124,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // (lower SD) to reach acceptable credit or skips the day entirely.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
   spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  inferno: { sd: 1.0, pt_pct: 0.50, sl_mult: 2.5, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -557,29 +557,29 @@ function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
  *   Extended MORNING window keeps the close limit aggressive (30% of credit)
  *   for longer to avoid stuck unfilled limits when the tier slides down.
  * FLAME   (base=0.30):       MORNING 30% (until 10:30 AM CT) → MIDDAY 20% → AFTERNOON 15%
- * INFERNO (0DTE):            MORNING 20% → MIDDAY 40% → AFTERNOON 65%
- *   Reversed for 0DTE: exit quickly in morning (direction uncertain, IV high),
- *   let theta work in afternoon (decay accelerates into close). MIDDAY/AFTERNOON
- *   raised 2026-05-12 — historical hypo-vs-actual showed 98.6% of ICs would
- *   have expired worthless if held to 2:59 PM CT; tighter PT tiers were
- *   capturing only 30-50% of credit on trades that ended at full max profit.
+ * INFERNO (0DTE):            HOLD_TO_EOD — no intraday PT.
+ *   Tier function removed for INFERNO on 2026-05-12 (second iteration).
+ *   Historical hypo-vs-actual showed 98.6% of ICs would expire worthless
+ *   if held to 2:59 PM CT; any tiered PT exit clipped that upside. Returns
+ *   ptFraction=1.0 which yields profitTargetPrice=0; downstream PT trigger
+ *   guard (`ptFraction < 1.0`) skips the PT branch entirely for INFERNO.
+ *   EOD cutoff at 14:50 CT becomes the primary exit; stop loss (sl_mult=10x)
+ *   is a wing-breach backstop only.
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
+  if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
+
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
-  const isInferno = botName === 'inferno'
   const isSpark = botName === 'spark'
 
   // SPARK: MORNING extends to 12:00 PM CT (720 min). All others use 10:30 AM CT (630 min).
   const morningEnd = isSpark ? 720 : 630
 
   if (timeMinutes < morningEnd) {
-    if (isInferno) return [0.20, 'MORNING']
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
-    if (isInferno) return [0.40, 'MIDDAY']
     return [Math.max(0.10, basePt - 0.10), 'MIDDAY']
   } else {
-    if (isInferno) return [0.65, 'AFTERNOON']
     return [Math.max(0.10, basePt - 0.15), 'AFTERNOON']
   }
 }
@@ -1704,7 +1704,10 @@ async function monitorSinglePosition(
   // production: 9 sequential limits exhausted from 13:08–14:00 ET, eventually
   // killed at break-even). Crossing the ask by 1¢ trades off worst-case fill
   // price (still ≤ floor) for actual execution.
-  if (costToCloseLast <= profitTargetPrice) {
+  // INFERNO uses HOLD_TO_EOD (ptFraction=1.0) — skip the PT branch entirely
+  // so we don't try to place a $0 limit when cost-to-close approaches zero
+  // late in the day. EOD cutoff at 14:50 CT handles the close.
+  if (ptFraction < 1.0 && costToCloseLast <= profitTargetPrice) {
     // Commit R1: DB-level trigger log so we can definitively confirm PT
     // fired (or didn't) on the next premature-close investigation.
     try {
