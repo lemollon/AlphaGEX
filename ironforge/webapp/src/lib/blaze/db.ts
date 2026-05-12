@@ -133,12 +133,21 @@ export async function insertBlazePosition(input: InsertPositionInput): Promise<n
   const putShort = isCall ? 0 : input.short_strike
   const putLong = isCall ? 0 : input.long_strike
 
+  // Debit vertical economics (NOT NULL columns inherited from IC schema):
+  //   spread_width = strike distance between the two legs (always positive)
+  //   max_loss     = full debit paid (per-share × 100 × contracts)
+  //   max_profit   = spread payout if both legs ITM at expiry − debit paid
+  const spreadWidth = Math.abs(input.long_strike - input.short_strike)
+  const maxLoss = Math.round(input.debit * 100 * input.contracts * 100) / 100
+  const maxProfit = Math.round((spreadWidth - input.debit) * 100 * input.contracts * 100) / 100
+
   const res = await query(
     `INSERT INTO blaze_positions (
        position_id, ticker, expiration,
        put_short_strike, put_long_strike, put_credit,
        call_short_strike, call_long_strike, call_credit,
        underlying_at_entry, total_credit, collateral_required,
+       spread_width, max_loss, max_profit,
        setup_type, direction, long_strike, short_strike,
        long_symbol, short_symbol, debit, contracts,
        status, open_time, open_date, account_type, person, dte_mode
@@ -147,8 +156,9 @@ export async function insertBlazePosition(input: InsertPositionInput): Promise<n
        $3, $4, 0,
        $5, $6, 0,
        $7, 0, 0,
-       $8, $9, $10, $11,
-       $12, $13, $14, $15,
+       $8, $9, $10,
+       $11, $12, $13, $14,
+       $15, $16, $17, $18,
        'open', NOW(), (NOW() AT TIME ZONE 'America/Chicago')::date, 'sandbox', 'User', '1DTE'
      )
      RETURNING id`,
@@ -157,6 +167,7 @@ export async function insertBlazePosition(input: InsertPositionInput): Promise<n
       putShort, putLong,
       callShort, callLong,
       input.spot_at_entry,
+      spreadWidth, maxLoss, maxProfit,
       input.setup_type, input.direction, input.long_strike, input.short_strike,
       input.long_symbol, input.short_symbol, input.debit, input.contracts,
     ],
