@@ -859,7 +859,11 @@ export default function StatusCard({
             </span>
           )}
 
-          <span className="text-xs font-mono text-gray-400">PT {config.profit_target_pct ?? 30}%</span>
+          <span className="text-xs font-mono text-gray-400">
+            {bot === 'inferno'
+              ? 'PT HOLD_TO_EOD'
+              : `PT ${config.profit_target_pct ?? 30}%`}
+          </span>
           <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
           <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
           <span className="text-xs font-mono text-gray-400">max {config.max_contracts === 0 ? '∞' : (config.max_contracts ?? 10)}x</span>
