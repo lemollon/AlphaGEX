@@ -147,6 +147,50 @@ async function runEntryCycle(): Promise<void> {
   }
 }
 
+/**
+ * Compute live unrealized P&L for open BLAZE positions and write an equity
+ * snapshot so the dashboard chart has data. Runs every scan cycle.
+ *
+ * Mirrors the IC scanner's snapshot pattern (scanner.ts:3454) but with
+ * vertical-spread MTM math (long_bid - short_ask, capped to spread width).
+ */
+async function writeEquitySnapshot(): Promise<void> {
+  try {
+    const acctRows = await query<{ current_balance: number | string; cumulative_pnl: number | string }>(
+      `SELECT current_balance, cumulative_pnl FROM blaze_paper_account
+       WHERE is_active = TRUE LIMIT 1`,
+    )
+    if (!acctRows.length) return
+    const balance = Number(acctRows[0].current_balance) || 0
+    const realizedPnl = Number(acctRows[0].cumulative_pnl) || 0
+
+    const open = await getOpenBlazePositions()
+    let unrealizedPnl = 0
+    for (const pos of open) {
+      try {
+        const [longQ, shortQ] = await Promise.all([
+          getOptionQuote(pos.long_symbol),
+          getOptionQuote(pos.short_symbol),
+        ])
+        if (!longQ || !shortQ) continue
+        const spreadWidth = Math.abs(pos.short_strike - pos.long_strike)
+        const closeValue = Math.min(Math.max(0, longQ.bid - shortQ.ask), spreadWidth)
+        unrealizedPnl += (closeValue - pos.debit) * 100 * pos.contracts
+      } catch { /* skip leg on quote failure */ }
+    }
+
+    await query(
+      `INSERT INTO blaze_equity_snapshots
+        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, account_type)
+       VALUES ($1, $2, $3, $4, 'scan', '1DTE', 'sandbox')`,
+      [balance, realizedPnl, Math.round(unrealizedPnl * 100) / 100, open.length],
+    )
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] BLAZE snapshot write failed: ${msg}`)
+  }
+}
+
 /** Main scan entry. Called once per IronForge tick from scanner.ts.runAllScans. */
 export async function scanBlaze(_ct?: Date): Promise<void> {
   const ct = _ct || ctNow()
@@ -158,6 +202,10 @@ export async function scanBlaze(_ct?: Date): Promise<void> {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn(`[scanner] BLAZE monitor error: ${msg}`)
   }
+
+  // Write equity snapshot every cycle (mirrors FLAME/SPARK/INFERNO; required for dashboard chart).
+  // Outside market hours, snapshot still records balance + realized P&L so the curve doesn't gap.
+  await writeEquitySnapshot()
 
   if (!isMarketHours(ct)) return
   if (!(await isBlazeEnabled())) return  // operator-gated kill switch

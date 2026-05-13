@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl } from '@/lib/tradier'
+import {
+  getIcMarkToMarket,
+  isConfigured,
+  calculateIcUnrealizedPnl,
+  getVerticalMarkToMarket,
+  calculateVerticalUnrealizedPnl,
+} from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,13 +26,17 @@ export async function GET(
   const accountTypeFilter = accountTypeParam ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'` : ''
 
   try {
+    const directionalCols = bot === 'blaze'
+      ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol`
+      : ''
+
     const positionRows = await dbQuery(
       `SELECT position_id, ticker, expiration,
              put_short_strike, put_long_strike, put_credit,
              call_short_strike, call_long_strike, call_credit,
              contracts, spread_width, total_credit, max_loss, max_profit,
              underlying_at_entry, vix_at_entry, collateral_required,
-             wings_adjusted, open_time, sandbox_order_id
+             wings_adjusted, open_time, sandbox_order_id${directionalCols}
       FROM ${botTable(bot, 'positions')}
       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY open_time DESC`,
@@ -41,7 +51,7 @@ export async function GET(
                 contracts, spread_width, total_credit, max_loss, max_profit,
                 underlying_at_entry, vix_at_entry, collateral_required,
                 close_price, close_reason, realized_pnl,
-                open_time, close_time, wings_adjusted, sandbox_order_id
+                open_time, close_time, wings_adjusted, sandbox_order_id${directionalCols}
          FROM ${botTable(bot, 'positions')}
          WHERE status IN ('closed', 'expired') ${dteFilter}
            AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date
@@ -53,10 +63,18 @@ export async function GET(
         const closeP = num(r.close_price)
         const pnl = num(r.realized_pnl)
         const collateral = num(r.collateral_required)
-        // Position-level return: P&L as % of credit received
-        const returnOnCredit = credit > 0 ? Math.round((pnl / (credit * 100 * int(r.contracts))) * 10000) / 100 : 0
-        // Return on collateral (risk-adjusted)
-        const returnOnCollateral = collateral > 0 ? Math.round((pnl / collateral) * 10000) / 100 : 0
+        const debit = num(r.debit)
+        const contracts = int(r.contracts)
+        // Position-level return: for IC bots use credit-based; for BLAZE use debit-based
+        const returnOnCredit = bot === 'blaze' && debit > 0
+          ? Math.round((pnl / (debit * 100 * contracts)) * 10000) / 100
+          : credit > 0
+            ? Math.round((pnl / (credit * 100 * contracts)) * 10000) / 100
+            : 0
+        const capitalAtRisk = bot === 'blaze' && debit > 0
+          ? debit * 100 * contracts
+          : collateral
+        const returnOnCollateral = capitalAtRisk > 0 ? Math.round((pnl / capitalAtRisk) * 10000) / 100 : 0
         return {
           position_id: r.position_id,
           ticker: r.ticker || 'SPY',
@@ -65,7 +83,7 @@ export async function GET(
           put_long_strike: num(r.put_long_strike),
           call_short_strike: num(r.call_short_strike),
           call_long_strike: num(r.call_long_strike),
-          contracts: int(r.contracts),
+          contracts,
           spread_width: num(r.spread_width),
           total_credit: credit,
           collateral_required: collateral,
@@ -80,6 +98,15 @@ export async function GET(
           close_time: r.close_time || null,
           wings_adjusted: r.wings_adjusted === true || r.wings_adjusted === 'true',
           sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
+          ...(bot === 'blaze' ? {
+            setup_type: r.setup_type || null,
+            direction: r.direction || null,
+            long_strike: num(r.long_strike),
+            short_strike: num(r.short_strike),
+            debit,
+            long_symbol: r.long_symbol || null,
+            short_symbol: r.short_symbol || null,
+          } : {}),
         }
       })
 
@@ -112,8 +139,20 @@ export async function GET(
         const ticker = r.ticker || 'SPY'
         const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
-        const profitTargetPrice = Math.round(entryCredit * 0.7 * 10000) / 10000
-        const stopLossPrice = Math.round(entryCredit * 2.0 * 10000) / 10000
+        // BLAZE: directional vertical debit spread (long_symbol/short_symbol/debit).
+        // Use vertical MTM math: value_to_close - entry_debit, capped to spread_width.
+        const isVertical = bot === 'blaze' && r.long_symbol && r.short_symbol
+        const entryDebit = num(r.debit)
+        const verticalSpreadWidth = isVertical
+          ? Math.abs(num(r.short_strike) - num(r.long_strike))
+          : 0
+
+        const profitTargetPrice = isVertical
+          ? Math.round(entryDebit * 1.5 * 10000) / 10000  // BLAZE PT 50% = close at 1.5× debit
+          : Math.round(entryCredit * 0.7 * 10000) / 10000
+        const stopLossPrice = isVertical
+          ? Math.round(entryDebit * 0.5 * 10000) / 10000  // BLAZE SL 50% = close at 0.5× debit
+          : Math.round(entryCredit * 2.0 * 10000) / 10000
 
         let mtm: number | null = null
         let unrealizedPnl: number | null = null
@@ -124,27 +163,51 @@ export async function GET(
 
         if (isConfigured()) {
           try {
-            const mtmResult = await getIcMarkToMarket(
-              ticker, expiration, ps, pl, cs, cl, entryCredit,
-            )
-            if (mtmResult) {
-              anyLiveQuoteSucceeded = true
-              mtm = mtmResult.cost_to_close
-              spotPrice = mtmResult.spot_price
-              quoteAgeSeconds = mtmResult.quote_age_seconds
-              apiSource = mtmResult.api_source
-              const spreadWidth = num(r.spread_width) || (ps - pl)
-              // Use last trade prices for P&L display — matches Tradier's portfolio
-              // Gain/Loss which uses last trade prices, not bid/ask midpoint.
-              const mtmLast = mtmResult.cost_to_close_last
-              unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
-              unrealizedPnlPct =
-                entryCredit > 0
-                  ? Math.round(((entryCredit - Math.min(Math.max(0, mtmLast), spreadWidth)) / entryCredit) * 10000) / 100
+            if (isVertical) {
+              const vResult = await getVerticalMarkToMarket(
+                String(r.long_symbol),
+                String(r.short_symbol),
+                verticalSpreadWidth,
+                ticker,
+              )
+              if (vResult) {
+                anyLiveQuoteSucceeded = true
+                mtm = vResult.value_to_close
+                spotPrice = vResult.spot_price
+                quoteAgeSeconds = vResult.quote_age_seconds
+                apiSource = vResult.api_source
+                const valueLast = vResult.value_to_close_last
+                unrealizedPnl = calculateVerticalUnrealizedPnl(
+                  entryDebit, valueLast, contracts, verticalSpreadWidth,
+                )
+                unrealizedPnlPct = entryDebit > 0
+                  ? Math.round(((valueLast - entryDebit) / entryDebit) * 10000) / 100
                   : 0
-              // PT/SL proximity uses bid/ask (worst-case) since these trigger actual closes
-              distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
-              distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
+                // For a vertical, "current value" is what we'd receive on close.
+                // PT trips when value rises above 1.5× debit; SL when below 0.5×.
+                distanceToPt = Math.round((profitTargetPrice - mtm) * 10000) / 10000
+                distanceToSl = Math.round((mtm - stopLossPrice) * 10000) / 10000
+              }
+            } else {
+              const mtmResult = await getIcMarkToMarket(
+                ticker, expiration, ps, pl, cs, cl, entryCredit,
+              )
+              if (mtmResult) {
+                anyLiveQuoteSucceeded = true
+                mtm = mtmResult.cost_to_close
+                spotPrice = mtmResult.spot_price
+                quoteAgeSeconds = mtmResult.quote_age_seconds
+                apiSource = mtmResult.api_source
+                const spreadWidth = num(r.spread_width) || (ps - pl)
+                const mtmLast = mtmResult.cost_to_close_last
+                unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
+                unrealizedPnlPct =
+                  entryCredit > 0
+                    ? Math.round(((entryCredit - Math.min(Math.max(0, mtmLast), spreadWidth)) / entryCredit) * 10000) / 100
+                    : 0
+                distanceToPt = Math.round((mtm - profitTargetPrice) * 10000) / 10000
+                distanceToSl = Math.round((stopLossPrice - mtm) * 10000) / 10000
+              }
             }
           } catch (err: unknown) {
             console.error(`[${bot}] position-monitor: MTM fetch failed for ${r.position_id}:`, err instanceof Error ? err.message : err)
@@ -178,6 +241,16 @@ export async function GET(
           distance_to_pt: distanceToPt,
           distance_to_sl: distanceToSl,
           sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
+          ...(isVertical ? {
+            setup_type: r.setup_type || null,
+            direction: r.direction || null,
+            long_strike: num(r.long_strike),
+            short_strike: num(r.short_strike),
+            debit: entryDebit,
+            long_symbol: r.long_symbol,
+            short_symbol: r.short_symbol,
+            current_value: mtm,  // alias for clarity on directional
+          } : {}),
         }
       }),
     )

@@ -15,6 +15,12 @@ interface Trade {
   close_reason: string
   realized_pnl: number
   close_time: string
+  // BLAZE directional fields
+  setup_type?: string | null
+  direction?: 'call' | 'put' | string | null
+  long_strike?: number
+  short_strike?: number
+  debit?: number
   // Tradier sandbox order IDs (FLAME only)
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
   // Counterfactual P&L if held to 2:59 PM CT instead of exiting via PT
@@ -59,7 +65,7 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             <th className="text-left p-3">Closed</th>
             <th className="text-left p-3">Strikes</th>
             <th className="text-right p-3">Qty</th>
-            <th className="text-right p-3">Credit</th>
+            <th className="text-right p-3" title="Credit (IC) or Debit (BLAZE) paid/received at open">Entry</th>
             <th className="text-right p-3">Close $</th>
             <th className="text-right p-3">P&L</th>
             {showHypo && (
@@ -97,7 +103,11 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{formatCT(trade.close_time)}</td>
                 <td className="p-3 font-mono">
-                  <div>{trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C</div>
+                  <div>
+                    {trade.direction && trade.long_strike != null && trade.short_strike != null && trade.long_strike > 0
+                      ? `${trade.long_strike}/${trade.short_strike}${trade.direction === 'call' ? 'C' : 'P'} ${trade.direction === 'call' ? '(Call DR)' : '(Put DR)'}`
+                      : `${trade.put_long_strike}/${trade.put_short_strike}P-${trade.call_short_strike}/${trade.call_long_strike}C`}
+                  </div>
                   {hasSandbox && (
                     <div className="flex gap-2 mt-1">
                       {Object.entries(trade.sandbox_order_ids!).map(([name, val]) => {
@@ -118,7 +128,11 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
                   )}
                 </td>
                 <td className="p-3 text-right">x{trade.contracts}</td>
-                <td className="p-3 text-right">${trade.total_credit.toFixed(2)}</td>
+                <td className="p-3 text-right">
+                  {trade.direction && (trade.debit ?? 0) > 0
+                    ? `−$${(trade.debit ?? 0).toFixed(2)}`
+                    : `$${trade.total_credit.toFixed(2)}`}
+                </td>
                 <td className="p-3 text-right">${trade.close_price.toFixed(4)}</td>
                 <td className={`p-3 text-right font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
