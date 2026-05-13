@@ -25,6 +25,10 @@ export async function GET(
   const offset = Math.max(0, int(url.searchParams.get('offset')) || 0)
 
   try {
+    const tradesDirectionalCols = bot === 'blaze'
+      ? `, setup_type, direction, long_strike, short_strike, debit, exit_reason`
+      : ''
+
     const rows = await dbQuery(
       `SELECT
         position_id, ticker, expiration,
@@ -35,7 +39,7 @@ export async function GET(
         open_time, close_time,
         underlying_at_entry, vix_at_entry,
         wings_adjusted, sandbox_order_id,
-        hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at
+        hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at${tradesDirectionalCols}
       FROM ${botTable(bot, 'positions')}
       WHERE status IN ('closed', 'expired') ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY close_time DESC
@@ -67,6 +71,14 @@ export async function GET(
       hypothetical_eod_pnl: r.hypothetical_eod_pnl == null ? null : num(r.hypothetical_eod_pnl),
       hypothetical_eod_spot: r.hypothetical_eod_spot == null ? null : num(r.hypothetical_eod_spot),
       hypothetical_eod_computed_at: r.hypothetical_eod_computed_at || null,
+      ...(bot === 'blaze' ? {
+        setup_type: r.setup_type || null,
+        direction: r.direction || null,
+        long_strike: num(r.long_strike),
+        short_strike: num(r.short_strike),
+        debit: num(r.debit),
+        exit_reason: r.exit_reason || null,
+      } : {}),
     }))
 
     return NextResponse.json({ trades })

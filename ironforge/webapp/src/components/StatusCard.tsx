@@ -636,8 +636,13 @@ export default function StatusCard({
           <p className="font-medium">{account.total_trades}</p>
         </div>
         <div>
-          <p className="text-xs text-forge-muted">Collateral</p>
-          <p className="font-medium">
+          <p className="text-xs text-forge-muted">
+            {bot === 'blaze' ? 'Capital at Risk' : 'Collateral'}
+          </p>
+          <p
+            className="font-medium"
+            title={bot === 'blaze' ? 'BLAZE pays debit upfront — debit × contracts × 100 is the max loss / capital tied up.' : 'Collateral posted for open IC spreads.'}
+          >
             ${account.collateral_in_use.toLocaleString(undefined, { minimumFractionDigits: 0 })}
           </p>
         </div>

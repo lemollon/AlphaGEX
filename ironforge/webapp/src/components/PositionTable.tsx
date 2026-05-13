@@ -38,6 +38,14 @@ interface Position {
   stop_loss_price?: number
   distance_to_pt?: number | null
   distance_to_sl?: number | null
+  // BLAZE directional fields (vertical debit spread)
+  setup_type?: string | null
+  direction?: 'call' | 'put' | string | null
+  long_strike?: number
+  short_strike?: number
+  debit?: number
+  long_symbol?: string | null
+  short_symbol?: string | null
   // Tradier sandbox order IDs (FLAME only)
   // New format: {"User": {"order_id": "123", "contracts": 85}}
   // Legacy format: {"User": "123"}
@@ -66,7 +74,36 @@ interface ClosedTrade {
   open_time: string | null
   close_time: string | null
   wings_adjusted: boolean
+  // BLAZE directional fields
+  setup_type?: string | null
+  direction?: 'call' | 'put' | string | null
+  long_strike?: number
+  short_strike?: number
+  debit?: number
   sandbox_order_ids?: Record<string, string | { order_id: string; contracts: number }> | null
+}
+
+/**
+ * Render leg description for the Strikes cell.
+ *
+ * IC bots (FLAME/SPARK/INFERNO):  "737/738P-742/743C"
+ * BLAZE vertical debit spread:    "737/738 Call DR" (long_strike/short_strike + direction)
+ */
+function renderStrikes(p: {
+  put_long_strike?: number
+  put_short_strike?: number
+  call_short_strike?: number
+  call_long_strike?: number
+  direction?: string | null
+  long_strike?: number
+  short_strike?: number
+}): string {
+  if (p.direction && p.long_strike != null && p.short_strike != null && p.long_strike > 0) {
+    const letter = p.direction === 'call' ? 'C' : p.direction === 'put' ? 'P' : '?'
+    const label = p.direction === 'call' ? 'Call' : p.direction === 'put' ? 'Put' : ''
+    return `${p.long_strike}/${p.short_strike}${letter} (${label} DR)`
+  }
+  return `${p.put_long_strike}/${p.put_short_strike}P-${p.call_short_strike}/${p.call_long_strike}C`
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -313,22 +350,35 @@ function PositionCard({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         <div>
           <p className="text-xs text-forge-muted">Strikes</p>
-          <p className="font-mono">
-            {pos.put_long_strike}/{pos.put_short_strike}P-{pos.call_short_strike}/{pos.call_long_strike}C
-          </p>
+          <p className="font-mono">{renderStrikes(pos)}</p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Qty</p>
           <p className="font-mono">x{pos.contracts}</p>
         </div>
-        <div>
-          <p className="text-xs text-forge-muted">Entry Credit</p>
-          <p className="font-mono text-emerald-400">${pos.total_credit.toFixed(2)}</p>
-        </div>
-        <div>
-          <p className="text-xs text-forge-muted">Collateral</p>
-          <p className="font-mono">${pos.collateral_required.toFixed(0)}</p>
-        </div>
+        {pos.direction && pos.debit != null && pos.debit > 0 ? (
+          <>
+            <div>
+              <p className="text-xs text-forge-muted">Entry Debit</p>
+              <p className="font-mono text-red-300">${pos.debit.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-forge-muted">Capital at Risk</p>
+              <p className="font-mono">${Math.round(pos.debit * pos.contracts * 100).toLocaleString()}</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <p className="text-xs text-forge-muted">Entry Credit</p>
+              <p className="font-mono text-emerald-400">${pos.total_credit.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-forge-muted">Collateral</p>
+              <p className="font-mono">${pos.collateral_required.toFixed(0)}</p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Live monitoring row */}
@@ -495,46 +545,80 @@ function ClosedTradeCard({ trade, bot }: { trade: ClosedTrade; bot: string }) {
 
       {/* Position return metrics — THIS is what you want to see */}
       <div className="grid grid-cols-3 gap-4 bg-forge-bg/50 rounded-lg p-3">
-        <div>
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">IC Return</p>
-          <p className={`text-xl font-bold font-mono ${pnlColor}`}>
-            {trade.return_on_credit_pct >= 0 ? '+' : ''}{trade.return_on_credit_pct.toFixed(1)}%
-          </p>
-          <p className="text-[10px] text-forge-muted">of credit received</p>
-        </div>
-        <div>
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Return on Risk</p>
-          <p className={`text-xl font-bold font-mono ${pnlColor}`}>
-            {trade.return_on_collateral_pct >= 0 ? '+' : ''}{trade.return_on_collateral_pct.toFixed(1)}%
-          </p>
-          <p className="text-[10px] text-forge-muted">of collateral</p>
-        </div>
-        <div>
-          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Credit → Close</p>
-          <p className="text-sm font-mono text-gray-200">
-            ${trade.total_credit.toFixed(4)} → ${trade.close_price.toFixed(4)}
-          </p>
-          <p className="text-[10px] text-forge-muted">
-            kept ${trade.total_credit > 0 ? Math.round(((trade.total_credit - trade.close_price) / trade.total_credit) * 100) : 0}% of premium
-          </p>
-        </div>
+        {trade.direction && (trade.debit ?? 0) > 0 ? (
+          <>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">Return</p>
+              <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+                {trade.return_on_credit_pct >= 0 ? '+' : ''}{trade.return_on_credit_pct.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-forge-muted">of debit paid</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">Return on Risk</p>
+              <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+                {trade.return_on_collateral_pct >= 0 ? '+' : ''}{trade.return_on_collateral_pct.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-forge-muted">of capital risked</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">Debit → Close</p>
+              <p className="text-sm font-mono text-gray-200">
+                ${(trade.debit ?? 0).toFixed(4)} → ${trade.close_price.toFixed(4)}
+              </p>
+              <p className="text-[10px] text-forge-muted">
+                {trade.close_price > (trade.debit ?? 0) ? 'closed above entry' : 'closed below entry'}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">IC Return</p>
+              <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+                {trade.return_on_credit_pct >= 0 ? '+' : ''}{trade.return_on_credit_pct.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-forge-muted">of credit received</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">Return on Risk</p>
+              <p className={`text-xl font-bold font-mono ${pnlColor}`}>
+                {trade.return_on_collateral_pct >= 0 ? '+' : ''}{trade.return_on_collateral_pct.toFixed(1)}%
+              </p>
+              <p className="text-[10px] text-forge-muted">of collateral</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-forge-muted uppercase tracking-wider">Credit → Close</p>
+              <p className="text-sm font-mono text-gray-200">
+                ${trade.total_credit.toFixed(4)} → ${trade.close_price.toFixed(4)}
+              </p>
+              <p className="text-[10px] text-forge-muted">
+                kept ${trade.total_credit > 0 ? Math.round(((trade.total_credit - trade.close_price) / trade.total_credit) * 100) : 0}% of premium
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Strikes and details */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-sm">
         <div>
           <p className="text-xs text-forge-muted">Strikes</p>
-          <p className="font-mono text-sm">
-            {trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C
-          </p>
+          <p className="font-mono text-sm">{renderStrikes(trade)}</p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Qty</p>
           <p className="font-mono">x{trade.contracts}</p>
         </div>
         <div>
-          <p className="text-xs text-forge-muted">Collateral</p>
-          <p className="font-mono">${trade.collateral_required.toFixed(0)}</p>
+          <p className="text-xs text-forge-muted">
+            {trade.direction && (trade.debit ?? 0) > 0 ? 'Capital at Risk' : 'Collateral'}
+          </p>
+          <p className="font-mono">
+            ${trade.direction && (trade.debit ?? 0) > 0
+              ? Math.round((trade.debit ?? 0) * trade.contracts * 100).toLocaleString()
+              : trade.collateral_required.toFixed(0)}
+          </p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Opened</p>

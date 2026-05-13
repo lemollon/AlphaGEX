@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,12 +73,20 @@ export async function GET(
        ORDER BY close_time ASC`,
     )
 
-    // Actual collateral from open positions (not stale paper_account value)
-    const liveCollateralQuery = dbQuery(
-      `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
-       FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
-    )
+    // Actual collateral from open positions (not stale paper_account value).
+    // BLAZE: debit spreads pay the debit upfront — capital at risk = debit × contracts × 100.
+    // Use that as "collateral" so buying-power math (balance - collateral) is correct.
+    const liveCollateralQuery = bot === 'blaze'
+      ? dbQuery(
+          `SELECT COALESCE(SUM(debit * contracts * 100), 0) as actual_collateral
+           FROM ${botTable(bot, 'positions')}
+           WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
+        )
+      : dbQuery(
+          `SELECT COALESCE(SUM(collateral_required), 0) as actual_collateral
+           FROM ${botTable(bot, 'positions')}
+           WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
+        )
 
     const hbName = heartbeatName(bot)
     const heartbeatQuery = dbQuery(
@@ -110,11 +118,15 @@ export async function GET(
        ORDER BY log_time DESC LIMIT 1`,
     )
 
+    const statusDirectionalCols = bot === 'blaze'
+      ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol`
+      : ''
+
     const openPositionsQuery = dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
-              contracts, total_credit, spread_width
+              contracts, total_credit, spread_width${statusDirectionalCols}
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
     )
@@ -346,6 +358,23 @@ export async function GET(
       const mtmResults = await Promise.all(
         openPositionRows.map(async (pos) => {
           try {
+            const contracts = int(pos.contracts)
+            // BLAZE: vertical debit spread path
+            if (bot === 'blaze' && pos.long_symbol && pos.short_symbol) {
+              const entryDebit = num(pos.debit)
+              const verticalWidth = Math.abs(num(pos.short_strike) - num(pos.long_strike))
+              const vResult = await getVerticalMarkToMarket(
+                String(pos.long_symbol),
+                String(pos.short_symbol),
+                verticalWidth,
+                pos.ticker || 'SPY',
+              )
+              if (!vResult) return null
+              anyMtmSucceeded = true
+              return calculateVerticalUnrealizedPnl(
+                entryDebit, vResult.value_to_close_last, contracts, verticalWidth,
+              )
+            }
             const entryCredit = num(pos.total_credit)
             const mtm = await getIcMarkToMarket(
               pos.ticker || 'SPY',
@@ -358,7 +387,6 @@ export async function GET(
             )
             if (!mtm) return null
             anyMtmSucceeded = true
-            const contracts = int(pos.contracts)
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
             // Use last trade prices — matches Tradier portfolio Gain/Loss calculation
             return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close_last, contracts, spreadWidth)

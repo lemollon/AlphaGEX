@@ -462,6 +462,127 @@ export function calculateIcUnrealizedPnl(
   return Math.round((entryCredit - cappedCost) * 100 * contracts * 100) / 100
 }
 
+/**
+ * Result of a vertical debit-spread MTM lookup. Mirrors the shape of
+ * IcMtmResult but for a 2-leg vertical (used by BLAZE).
+ *
+ * For a long debit vertical (bull-call or bear-put):
+ *   value_to_close = long_bid - short_ask   (received when closing)
+ *   P&L per contract = value_to_close - entry_debit
+ *   value_to_close is bounded to [0, spread_width].
+ */
+export interface VerticalMtmResult {
+  value_to_close: number       // worst-case bid/ask — for SL/PT triggers
+  value_to_close_mid: number   // mid-mid — for P&L display
+  value_to_close_last: number  // last-trade — matches Tradier portfolio
+  long_bid: number
+  short_ask: number
+  spot_price: number | null
+  quote_age_seconds?: number
+  api_source?: string
+}
+
+/**
+ * Get current value-to-close for a vertical debit spread by quoting both
+ * legs in a single batch API call. Used by BLAZE (directional 1DTE).
+ *
+ * Returns null when either leg quote is missing.
+ */
+export async function getVerticalMarkToMarket(
+  longSymbol: string,
+  shortSymbol: string,
+  spreadWidth: number,
+  underlying?: string,
+): Promise<VerticalMtmResult | null> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return null
+
+  const symbolList = underlying
+    ? [longSymbol, shortSymbol, underlying].join(',')
+    : [longSymbol, shortSymbol].join(',')
+  const data = await tradierGet('/markets/quotes', { symbols: symbolList })
+  if (!data) return null
+
+  let quotes = data.quotes?.quote
+  if (!quotes) return null
+  if (!Array.isArray(quotes)) quotes = [quotes]
+
+  const bySymbol: Record<string, any> = {}
+  for (const q of quotes) {
+    if (q?.symbol) bySymbol[q.symbol] = q
+  }
+
+  const lRaw = bySymbol[longSymbol]
+  const sRaw = bySymbol[shortSymbol]
+  const spotRaw = underlying ? bySymbol[underlying] : null
+  if (!lRaw || !sRaw) return null
+  if (lRaw.bid == null || sRaw.bid == null) return null
+
+  if (data.quotes?.unmatched_symbols) {
+    const unmatched = data.quotes.unmatched_symbols
+    const unmatchedStr = typeof unmatched === 'string' ? unmatched : JSON.stringify(unmatched)
+    if ([longSymbol, shortSymbol].some(s => unmatchedStr.includes(s))) return null
+  }
+
+  const parse = (v: any) => parseFloat(v || '0')
+  const lQ = { bid: parse(lRaw.bid), ask: parse(lRaw.ask), last: parse(lRaw.last) }
+  const sQ = { bid: parse(sRaw.bid), ask: parse(sRaw.ask), last: parse(sRaw.last) }
+  const lMid = (lQ.bid + lQ.ask) / 2
+  const sMid = (sQ.bid + sQ.ask) / 2
+
+  // Closing a long debit vertical: sell long at bid, buy short at ask.
+  // Capped to [0, spread_width] — the theoretical bounds at any time.
+  const cap = (v: number) => Math.min(Math.max(0, v), spreadWidth)
+  const vToClose = cap(lQ.bid - sQ.ask)
+  const vToCloseMid = cap(lMid - sMid)
+  const lLast = lQ.last > 0 ? lQ.last : lMid
+  const sLast = sQ.last > 0 ? sQ.last : sMid
+  const vToCloseLast = cap(lLast - sLast)
+
+  let quoteAgeSeconds: number | undefined
+  try {
+    const now = Date.now()
+    const timestamps: number[] = []
+    for (const raw of [lRaw, sRaw, spotRaw]) {
+      if (!raw) continue
+      for (const field of ['bid_date', 'ask_date', 'trade_date']) {
+        const v = raw[field]
+        if (!v) continue
+        const ts = typeof v === 'number' ? v : new Date(v).getTime()
+        if (ts > 0 && ts < now + 86400000) timestamps.push(ts)
+      }
+    }
+    if (timestamps.length > 0) {
+      quoteAgeSeconds = Math.round((now - Math.max(...timestamps)) / 1000)
+    }
+  } catch { /* non-fatal */ }
+
+  return {
+    value_to_close: Math.round(vToClose * 10000) / 10000,
+    value_to_close_mid: Math.round(vToCloseMid * 10000) / 10000,
+    value_to_close_last: Math.round(vToCloseLast * 10000) / 10000,
+    long_bid: lQ.bid,
+    short_ask: sQ.ask,
+    spot_price: spotRaw ? parse(spotRaw.last) : null,
+    quote_age_seconds: quoteAgeSeconds,
+    api_source: TRADIER_BASE_URL,
+  }
+}
+
+/**
+ * Unrealized P&L for a long vertical debit spread.
+ *   P&L = (value_to_close - entry_debit) × 100 × contracts
+ */
+export function calculateVerticalUnrealizedPnl(
+  entryDebit: number,
+  valueToClose: number,
+  contracts: number,
+  spreadWidth: number,
+): number {
+  const cappedValue = Math.min(Math.max(0, valueToClose), spreadWidth)
+  return Math.round((cappedValue - entryDebit) * 100 * contracts * 100) / 100
+}
+
 /** Get available option expirations for a symbol. */
 export async function getOptionExpirations(
   symbol: string,

@@ -21,6 +21,12 @@ export async function GET(
     : ''
 
   try {
+    // BLAZE (directional verticals) needs setup_type/direction/long_strike/short_strike/debit/symbols.
+    // IC bots have these columns NULL — using COALESCE-friendly SELECT keeps the IC query intact.
+    const directionalCols = bot === 'blaze'
+      ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol, exit_reason`
+      : ''
+
     const rows = await dbQuery(
       `SELECT
         position_id, ticker, expiration,
@@ -29,7 +35,7 @@ export async function GET(
         contracts, spread_width, total_credit, max_loss, max_profit,
         underlying_at_entry, vix_at_entry, collateral_required,
         oracle_win_probability, oracle_advice,
-        wings_adjusted, status, open_time
+        wings_adjusted, status, open_time${directionalCols}
       FROM ${botTable(bot, 'positions')}
       WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY open_time DESC`,
@@ -57,6 +63,16 @@ export async function GET(
       oracle_advice: r.oracle_advice,
       wings_adjusted: r.wings_adjusted === true || r.wings_adjusted === 'true',
       open_time: r.open_time || null,
+      ...(bot === 'blaze' ? {
+        setup_type: r.setup_type || null,
+        direction: r.direction || null,
+        long_strike: num(r.long_strike),
+        short_strike: num(r.short_strike),
+        debit: num(r.debit),
+        long_symbol: r.long_symbol || null,
+        short_symbol: r.short_symbol || null,
+        exit_reason: r.exit_reason || null,
+      } : {}),
     }))
 
     return NextResponse.json({ positions })

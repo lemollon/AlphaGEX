@@ -7,6 +7,8 @@ import {
   getLoadedSandboxAccountsAsync,
   getAccountIdForKey,
   getTradierBalanceDetail,
+  getVerticalMarkToMarket,
+  calculateVerticalUnrealizedPnl,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -59,7 +61,9 @@ export async function GET(
         `SELECT position_id, ticker, expiration,
                 put_short_strike, put_long_strike,
                 call_short_strike, call_long_strike,
-                contracts, total_credit, spread_width
+                contracts, total_credit, spread_width${
+                  bot === 'blaze' ? ', long_symbol, short_symbol, long_strike, short_strike, debit' : ''
+                }
          FROM ${botTable(bot, 'positions')}
          WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}`,
       ),
@@ -125,6 +129,21 @@ export async function GET(
       const mtmResults = await Promise.all(
         openPositions.map(async (pos) => {
           try {
+            const contracts = int(pos.contracts)
+            if (bot === 'blaze' && pos.long_symbol && pos.short_symbol) {
+              const entryDebit = num(pos.debit)
+              const verticalWidth = Math.abs(num(pos.short_strike) - num(pos.long_strike))
+              const vResult = await getVerticalMarkToMarket(
+                String(pos.long_symbol),
+                String(pos.short_symbol),
+                verticalWidth,
+                pos.ticker || 'SPY',
+              )
+              if (!vResult) return 0
+              return calculateVerticalUnrealizedPnl(
+                entryDebit, vResult.value_to_close, contracts, verticalWidth,
+              )
+            }
             const entryCredit = num(pos.total_credit)
             const mtm = await getIcMarkToMarket(
               pos.ticker || 'SPY',
@@ -136,7 +155,6 @@ export async function GET(
               entryCredit,
             )
             if (!mtm) return 0
-            const contracts = int(pos.contracts)
             const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
             return calculateIcUnrealizedPnl(entryCredit, mtm.cost_to_close, contracts, spreadWidth)
           } catch {
