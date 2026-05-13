@@ -12,11 +12,9 @@ import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/p
  *   PM       15%  1:00 – 2:45
  *   EOD            2:45 – 3:00
  *
- * Zones (CT) — INFERNO:
- *   Morning  50%
- *   Midday   30%
- *   PM       10%
- *   EOD
+ * INFERNO and BLAZE do NOT use tier-based exits and the timeline is
+ * suppressed for them (return null). INFERNO is HOLD_TO_EOD only after
+ * PR #2289; BLAZE is a directional spread with a single fixed PT/SL.
  *
  * Reverted from 50/30/20 to 30/20/15 for FLAME/SPARK on 2026-05-07
  * (commit f249c4ec). pt-tiers.ts is the source of truth for the
@@ -38,15 +36,18 @@ function widthPct(startMin: number, endMin: number): string {
 }
 
 export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' | 'blaze' }) {
+  // INFERNO (HOLD_TO_EOD after PR #2289) and BLAZE (directional, single
+  // fixed PT/SL) don't use tier-based exits — suppress the strip entirely.
+  if (bot === 'inferno' || bot === 'blaze') return null
+
   const MIDDAY_START = morningEndMinutes(bot) // SPARK: 720 (12:00 PM); else 630 (10:30 AM)
   const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
 
   // Tier percentages — must mirror lib/pt-tiers.ts.
-  // INFERNO: 50/30/10. FLAME/SPARK: 30/20/15 (reverted from 50/30/20 on 2026-05-07).
-  const isInferno = bot === 'inferno'
-  const morningPct = isInferno ? '50%' : '30%'
-  const middayPct = isInferno ? '30%' : '20%'
-  const pmPct = isInferno ? '10%' : '15%'
+  // FLAME/SPARK: 30/20/15 (reverted from 50/30/20 on 2026-05-07).
+  const morningPct = '30%'
+  const middayPct = '20%'
+  const pmPct = '15%'
 
   // Initialize with null to avoid hydration mismatch (server has no CT clock)
   const [ctMins, setCtMins] = useState<number | null>(null)
