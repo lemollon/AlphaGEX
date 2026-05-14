@@ -49,6 +49,25 @@ interface CandleChartProps {
     /** Side to anchor the label. Default 'left'. */
     side?: 'left' | 'right'
   }>
+  /**
+   * Time-varying overlay polylines. Each series is drawn as a connected
+   * line through (time, price) points, aligned to the candle x-axis via
+   * timestamp interpolation. Used by BLAZE Phase 2 to show how the GEX
+   * walls / flip moved through the day rather than a single static line.
+   *
+   * Points outside the candle time window are clipped. Series with < 2
+   * in-range points render nothing.
+   */
+  gexTimeSeries?: Array<{
+    label: string
+    color: string
+    dash?: string
+    /** 0-1, default 0.9 */
+    opacity?: number
+    /** SVG stroke-width, default 1.5 */
+    strokeWidth?: number
+    points: Array<{ time: string; price: number }>
+  }>
 }
 
 const CHART_LEFT_MARGIN = 50
@@ -67,6 +86,7 @@ export default function CandleChart({
   fetchError,
   candleSpacing = DEFAULT_CANDLE_SPACING,
   gexLines,
+  gexTimeSeries,
 }: CandleChartProps) {
   const barWidth = Math.max(2, Math.round(candleSpacing * 0.67))
 
@@ -121,7 +141,38 @@ export default function CandleChart({
       priceTicks.push({ price: p, y: pToY(p) })
     }
 
-    return { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX }
+    // Time-to-x lookup for gexTimeSeries: returns the x coordinate of a
+    // given ISO/Date timestamp interpolated between adjacent candles.
+    // Returns null if the timestamp falls outside the rendered candle range.
+    const candleTimes = visibleCandles.map((c) => {
+      const t = new Date(c.time).getTime()
+      return Number.isFinite(t) ? t : null
+    })
+    const timeToX = (iso: string): number | null => {
+      const t = new Date(iso).getTime()
+      if (!Number.isFinite(t)) return null
+      // Before first candle → clip to first candle x
+      const first = candleTimes[0]
+      const last = candleTimes[candleTimes.length - 1]
+      if (first == null || last == null) return null
+      if (t <= first) return CHART_LEFT_MARGIN
+      if (t >= last) return CHART_LEFT_MARGIN + (candleTimes.length - 1) * candleSpacing
+      // Binary search for the candle index where candleTimes[i] <= t < candleTimes[i+1]
+      let lo = 0, hi = candleTimes.length - 1
+      while (lo < hi - 1) {
+        const mid = (lo + hi) >> 1
+        const m = candleTimes[mid]
+        if (m == null) { lo = mid; continue }
+        if (m <= t) lo = mid; else hi = mid
+      }
+      const tLo = candleTimes[lo]
+      const tHi = candleTimes[hi]
+      if (tLo == null || tHi == null || tHi === tLo) return CHART_LEFT_MARGIN + lo * candleSpacing
+      const frac = (t - tLo) / (tHi - tLo)
+      return CHART_LEFT_MARGIN + (lo + frac) * candleSpacing
+    }
+
+    return { bars, svgWidth, plotH, pToY, dateLabels, priceTicks, lastCandleX, timeToX }
   }, [candles, minPrice, maxPrice, height, candleSpacing, barWidth])
 
   if (!chartData) {
@@ -139,7 +190,38 @@ export default function CandleChart({
     )
   }
 
-  const { bars, svgWidth, pToY, dateLabels, priceTicks, lastCandleX } = chartData
+  const { bars, svgWidth, pToY, dateLabels, priceTicks, lastCandleX, timeToX } = chartData
+
+  // Compose polyline points for each gexTimeSeries entry. Points outside
+  // the rendered candle window are clipped (timeToX returns null), and
+  // their adjacent in-range neighbors stitch the line across the gap.
+  const polylines: Array<{ pts: string; color: string; dash: string; opacity: number; strokeWidth: number; label: string; lastX: number; lastY: number; lastPrice: number }> = []
+  if (gexTimeSeries && gexTimeSeries.length > 0) {
+    for (const series of gexTimeSeries) {
+      const coords: Array<{ x: number; y: number; price: number }> = []
+      for (const p of series.points) {
+        if (!Number.isFinite(p.price)) continue
+        if (p.price < minPrice || p.price > maxPrice) continue
+        const x = timeToX(p.time)
+        if (x == null) continue
+        coords.push({ x, y: pToY(p.price), price: p.price })
+      }
+      if (coords.length < 2) continue
+      const pts = coords.map(c => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(' ')
+      const tail = coords[coords.length - 1]
+      polylines.push({
+        pts,
+        color: series.color,
+        dash: series.dash ?? '0',
+        opacity: series.opacity ?? 0.9,
+        strokeWidth: series.strokeWidth ?? 1.5,
+        label: series.label,
+        lastX: tail.x,
+        lastY: tail.y,
+        lastPrice: tail.price,
+      })
+    }
+  }
 
   // Strike overlay lines — ported verbatim
   const strikeLines: Array<{ y: number; color: string; dash: string; label: string }> = []
@@ -172,6 +254,24 @@ export default function CandleChart({
             <text x={CHART_LEFT_MARGIN - 6} y={t.y + 3} textAnchor="end" fill="#555" fontSize="9" fontFamily="monospace">
               ${t.price}
             </text>
+          </g>
+        ))}
+
+        {/* GEX time-series polylines (BLAZE Phase 2). Drawn below strike
+            lines and gexLines so the static "now" line + IC strikes win the
+            z-order if they coincide with the polyline tail. */}
+        {polylines.map((p, i) => (
+          <g key={`gex-series-${i}`}>
+            <polyline
+              points={p.pts}
+              fill="none"
+              stroke={p.color}
+              strokeWidth={p.strokeWidth}
+              strokeDasharray={p.dash}
+              opacity={p.opacity}
+            />
+            {/* Right-edge "now" marker — small dot + label at the tail */}
+            <circle cx={p.lastX} cy={p.lastY} r={2.5} fill={p.color} opacity={Math.max(0.9, p.opacity)} />
           </g>
         ))}
 
