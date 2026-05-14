@@ -59,6 +59,17 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
+      {showHypo && (
+        <div className="border-b border-forge-border bg-forge-bg/40 px-4 py-2 text-[11px] leading-relaxed text-forge-muted">
+          <span className="text-amber-400 font-medium">How to read the hypo columns:</span>{' '}
+          <strong className="text-gray-300">Hypo @ 2:59</strong> is the P&L this trade <em>would have had</em> if held to 2:59 PM
+          (a counterfactual outcome — <em>not</em> added to the actual P&L).{' '}
+          <strong className="text-gray-300">Δ = Hypo − P&L</strong> is the gap between the two outcomes.{' '}
+          <span className="text-red-300">Positive Δ (red)</span> = money left on the table by exiting early;{' '}
+          <span className="text-emerald-300">negative Δ (green)</span> = early exit beat the hold.{' '}
+          Example: P&L −$54 + Hypo +$30 → Δ = 30 − (−54) = <strong>+$84</strong> (held would have been $84 better).
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-forge-border text-forge-muted text-xs">
@@ -67,15 +78,15 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             <th className="text-right p-3">Qty</th>
             <th className="text-right p-3" title="Credit (IC) or Debit (BLAZE) paid/received at open">Entry</th>
             <th className="text-right p-3">Close $</th>
-            <th className="text-right p-3">P&L</th>
+            <th className="text-right p-3">P&L<div className="text-[10px] font-normal normal-case text-forge-muted">actual</div></th>
             {showHypo && (
               <th className="text-right p-3" title="Counterfactual: P&L if the bot had held to 2:59 PM CT instead of exiting via PT tier">
-                Hypo @ 2:59
+                Hypo @ 2:59<div className="text-[10px] font-normal normal-case text-forge-muted">if held</div>
               </th>
             )}
             {showHypo && (
-              <th className="text-right p-3" title="Hypothetical − Actual. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold">
-                Δ vs Hypo
+              <th className="text-right p-3" title="Hypo − P&L. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold">
+                Δ vs Hypo<div className="text-[10px] font-normal normal-case text-forge-muted">Hypo − P&L</div>
               </th>
             )}
             <th className="text-left p-3">Reason</th>
