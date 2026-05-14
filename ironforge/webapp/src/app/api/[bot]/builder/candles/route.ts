@@ -64,7 +64,22 @@ export async function GET(
     // live candle of the most recent session, which is what the operator
     // asked for ("outside of market hours it should stick to results of
     // last live day").
-    const candles = await getTimesales(symbol, bars, 'open', interval)
+    let candles = await getTimesales(symbol, bars, 'open', interval)
+
+    // Resilience for early-open Tradier intraday delay: in the first
+    // 10-15 min of the cash session, Tradier sometimes returns an empty
+    // series for the default 3-day window even though yesterday's RTH
+    // bars exist. Retry once with an explicit 14-day window so the chart
+    // shows the last live session instead of flashing
+    // "No candle data available."
+    if (candles.length === 0) {
+      const start = new Date(Date.now() - 14 * 24 * 3600 * 1000)
+        .toISOString()
+        .replace('T', ' ')
+        .slice(0, 16)
+      candles = await getTimesales(symbol, bars, 'open', interval, start)
+    }
+
     return NextResponse.json({
       symbol,
       interval,

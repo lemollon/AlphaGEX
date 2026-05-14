@@ -74,7 +74,7 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
               </th>
             )}
             {showHypo && (
-              <th className="text-right p-3" title="Actual P&L − Hypothetical. Positive = early exit beat the late-day hold; negative = left money on the table">
+              <th className="text-right p-3" title="Hypothetical − Actual. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold">
                 Δ vs Hypo
               </th>
             )}
@@ -88,17 +88,17 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             const reason = formatCloseReason(trade.close_reason, bot)
             const hypo = trade.hypothetical_eod_pnl
             const hypoAvailable = hypo != null && Number.isFinite(hypo)
-            const delta = hypoAvailable ? trade.realized_pnl - hypo! : null
-            // Color: green if early exit beat hypothetical (delta > 0),
-            // amber if within ±$5 (≈ noise), red if hypothetical beat
-            // actual (we left money on the table by exiting early).
+            // Δ = hypo − actual: positive = money left on the table by
+            // exiting early (RED, bad); negative = early exit beat
+            // hypothetical (GREEN, good); within ±$5 = noise (AMBER).
+            const delta = hypoAvailable ? hypo! - trade.realized_pnl : null
             const deltaColor = delta == null
               ? 'text-forge-muted'
               : Math.abs(delta) < 5
                 ? 'text-amber-400'
                 : delta > 0
-                  ? 'text-emerald-400'
-                  : 'text-red-400'
+                  ? 'text-red-400'
+                  : 'text-emerald-400'
             return (
               <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{formatCT(trade.close_time)}</td>

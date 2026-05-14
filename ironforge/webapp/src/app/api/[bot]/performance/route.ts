@@ -102,7 +102,9 @@ export async function GET(
         hypoBlock = {
           hypo_total: Math.round(hypoTotal * 100) / 100,
           actual_pnl_compared: Math.round(actualMatched * 100) / 100,
-          delta: Math.round((actualMatched - hypoTotal) * 100) / 100,
+          // Δ = hypo − actual. Positive = money left on the table by
+          // exiting early; negative = early exit beat the late-day hold.
+          delta: Math.round((hypoTotal - actualMatched) * 100) / 100,
           matched_trades: matched,
         }
       } catch { /* hypothetical_eod_pnl column may not exist on a brand-new deploy */ }
