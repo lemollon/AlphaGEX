@@ -1761,28 +1761,37 @@ export async function getTimesales(
   minutes: number = 10,
   session: 'open' | 'all' = 'open',
   interval: '1min' | '5min' | '15min' = '1min',
+  startOverride?: string,
+  endOverride?: string,
 ): Promise<Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>> {
   await ensureQuoteApiKey()
   if (!_tradierApiKey) return []
 
-  // Explicit `start` spans the last 3 calendar days (covers weekends).
+  // Default `start` spans the last 3 calendar days (covers weekends).
   // Without this, Tradier's default timesales window is "today only", which
   // means the chart goes blank between market close and the next open.
   // Combined with session_filter='open' + slice(-N), this gives us the last
   // N RTH bars across whatever sessions are available — so overnight we
   // keep showing the previous session's candles until the next open's
   // bars start streaming in.
-  const start = new Date(Date.now() - 3 * 24 * 3600 * 1000)
+  //
+  // `startOverride` / `endOverride` (YYYY-MM-DD HH:mm) target a historical
+  // window — used by hypo-eod backfill to fetch the 14:59 CT bar for trades
+  // older than 3 days, which are otherwise outside the default window and
+  // would always fall back to spot intrinsic (or worse, return zero bars).
+  const start = startOverride ?? new Date(Date.now() - 3 * 24 * 3600 * 1000)
     .toISOString()
     .replace('T', ' ')
     .slice(0, 16)
 
-  const data = await tradierGet('/markets/timesales', {
+  const params: Record<string, string> = {
     symbol,
     interval,
     session_filter: session,
     start,
-  })
+  }
+  if (endOverride) params.end = endOverride
+  const data = await tradierGet('/markets/timesales', params)
   if (!data) return []
 
   let series = data.series?.data
