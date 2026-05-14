@@ -114,6 +114,26 @@ function fmtDistance(spot: number, level: number): string {
   return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% away`
 }
 
+/**
+ * Centered rolling median over a window of N values. Suppresses
+ * single-snapshot flickers from the TradingVolatility GEX feed (e.g.,
+ * a partial OI snapshot that returns net_gex 1.88e+09 between two
+ * 1.18e+11 readings) without dropping the raw data series. Edges fall
+ * back to whatever window is available.
+ */
+function rollingMedian(values: number[], window: number): number[] {
+  if (window < 2 || values.length === 0) return values.slice()
+  const half = Math.floor(window / 2)
+  return values.map((_, i) => {
+    const start = Math.max(0, i - half)
+    const end = Math.min(values.length, i + half + 1)
+    const slice = values.slice(start, end).filter(v => Number.isFinite(v) && v > 0)
+    if (slice.length === 0) return values[i]
+    const sorted = [...slice].sort((a, b) => a - b)
+    return sorted[Math.floor(sorted.length / 2)]
+  })
+}
+
 function ratingColor(rating: string): string {
   if (rating.includes('BULLISH') && !rating.includes('CAUTIOUS')) return 'text-emerald-400'
   if (rating === 'CAUTIOUS_BULLISH') return 'text-emerald-300/80'
@@ -246,30 +266,71 @@ export default function BlazeDirectionalChart() {
 
   // Phase 2: time-varying overlay polylines for walls + flip. Falls back to
   // Phase 1 static full-width lines when there's not enough history yet.
+  //
+  // Each level draws TWO polylines:
+  //   - raw (faint, ~0.25 opacity, thin): preserves the actual snapshot
+  //     values so single-cycle flickers are still visible to the operator
+  //     who wants to audit feed quality
+  //   - smoothed (bright, ~0.95 opacity, thicker): 5-snapshot centered
+  //     rolling median that suppresses partial-OI-snapshot flickers so the
+  //     real positioning shifts dominate the visual
+  const SMOOTH_WINDOW = 5
   const gexTimeSeries = useMemo(() => {
     if (!hasHistory) return []
+    const callRaw = history.map(h => h.call_wall)
+    const putRaw = history.map(h => h.put_wall)
+    const flipRaw = history.map(h => h.flip_point)
+    const callSmoothed = rollingMedian(callRaw, SMOOTH_WINDOW)
+    const putSmoothed = rollingMedian(putRaw, SMOOTH_WINDOW)
+    const flipSmoothed = rollingMedian(flipRaw, SMOOTH_WINDOW)
+    const mkPoints = (vals: number[]) =>
+      history.map((h, i) => ({ time: h.time, price: vals[i] })).filter(p => p.price > 0)
     return [
+      // Raw (faint) — under the smoothed line
+      {
+        label: 'Call Wall (raw)',
+        color: '#22d3ee',
+        strokeWidth: 1,
+        opacity: 0.25,
+        points: mkPoints(callRaw),
+      },
+      {
+        label: 'Put Wall (raw)',
+        color: '#c084fc',
+        strokeWidth: 1,
+        opacity: 0.25,
+        points: mkPoints(putRaw),
+      },
+      {
+        label: 'Flip (raw)',
+        color: '#facc15',
+        strokeWidth: 1,
+        dash: '2,2',
+        opacity: 0.3,
+        points: mkPoints(flipRaw),
+      },
+      // Smoothed (5-snapshot median) — the dominant visual
       {
         label: 'Call Wall',
         color: '#22d3ee',
-        strokeWidth: 1.75,
-        opacity: 0.9,
-        points: history.map(h => ({ time: h.time, price: h.call_wall })).filter(p => p.price > 0),
+        strokeWidth: 2,
+        opacity: 0.95,
+        points: mkPoints(callSmoothed),
       },
       {
         label: 'Put Wall',
         color: '#c084fc',
-        strokeWidth: 1.75,
-        opacity: 0.9,
-        points: history.map(h => ({ time: h.time, price: h.put_wall })).filter(p => p.price > 0),
+        strokeWidth: 2,
+        opacity: 0.95,
+        points: mkPoints(putSmoothed),
       },
       {
         label: 'Flip',
         color: '#facc15',
-        strokeWidth: 1.75,
+        strokeWidth: 2,
         dash: '4,3',
-        opacity: 0.95,
-        points: history.map(h => ({ time: h.time, price: h.flip_point })).filter(p => p.price > 0),
+        opacity: 1,
+        points: mkPoints(flipSmoothed),
       },
     ]
   }, [history, hasHistory])
@@ -419,7 +480,9 @@ export default function BlazeDirectionalChart() {
             <span className="inline-block w-3 h-2 bg-gray-400/60" /> ±1σ
           </span>
           <span className="text-forge-muted">
-            {hasHistory ? `${history.length} GEX snapshots` : 'GEX history accumulating…'}
+            {hasHistory
+              ? `${history.length} GEX snapshots · bold = 5-snap median, faint = raw (shows feed flickers)`
+              : 'GEX history accumulating…'}
           </span>
           <span className="ml-auto">
             {candlesData?.candles?.length ?? 0} bars · {new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })}
