@@ -54,27 +54,33 @@ export async function runMonitorCycle(): Promise<void> {
   const ct = ctNow()
 
   for (const pos of positions) {
-    let longBid: number | null = null
-    let shortAsk: number | null = null
+    // Use mid prices (matches the dashboard's value_to_close_last/mid display)
+    // instead of `long_bid - short_ask` (worst-case bid/ask). The bid-ask gap
+    // on a near-ATM 1DTE option is $0.05-$0.10, so the worst-case
+    // calc was systematically below the displayed P&L — the bot kept
+    // "missing" PT exits because its internal calc said 18% while the
+    // dashboard read 29%. Mid-mid aligns trigger and display.
+    let longMid: number | null = null
+    let shortMid: number | null = null
     try {
       const [longQ, shortQ] = await Promise.all([
         getOptionQuote(pos.long_symbol),
         getOptionQuote(pos.short_symbol),
       ])
       if (longQ && shortQ) {
-        longBid = longQ.bid
-        shortAsk = shortQ.ask
+        longMid = (longQ.bid + longQ.ask) / 2
+        shortMid = (shortQ.bid + shortQ.ask) / 2
       }
     } catch {
       // fall through to streak handling
     }
-    if (longBid == null || shortAsk == null) {
+    if (longMid == null || shortMid == null) {
       _streakByPos[pos.id] = (_streakByPos[pos.id] || 0) + 1
       continue
     }
     _streakByPos[pos.id] = 0
 
-    const markToClose = longBid - shortAsk
+    const markToClose = longMid - shortMid
     const decision = decideExit({
       debit: pos.debit,
       mark_to_close: markToClose,
