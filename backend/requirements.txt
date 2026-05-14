@@ -21,7 +21,7 @@ passlib[bcrypt]>=1.7.4
 python-dotenv>=1.0.0
 
 # WebSocket
-websockets>=12.0
+websockets>=12.0,<14.0  # <14 pin: uvicorn's websockets_impl imports `websockets.legacy.server` which was removed in v14.0
 
 # HTTP Client (for external APIs)
 httpx>=0.27.0
