@@ -32,6 +32,23 @@ interface CandleChartProps {
   spotPrice?: number | null
   fetchError?: string | null
   candleSpacing?: number
+  /**
+   * Named horizontal lines layered above strike lines. Used by BLAZE's
+   * Directional Chart to overlay GEX context (call wall, put wall, flip,
+   * ±1σ ribbon) — the existing `strikes` prop only handles IC long/short
+   * legs with hardcoded green/red colors.
+   */
+  gexLines?: Array<{
+    price: number
+    color: string
+    label: string
+    /** SVG stroke-dasharray. Empty string = solid. Default '6,3'. */
+    dash?: string
+    /** 0-1, default 0.85 */
+    opacity?: number
+    /** Side to anchor the label. Default 'left'. */
+    side?: 'left' | 'right'
+  }>
 }
 
 const CHART_LEFT_MARGIN = 50
@@ -49,6 +66,7 @@ export default function CandleChart({
   spotPrice,
   fetchError,
   candleSpacing = DEFAULT_CANDLE_SPACING,
+  gexLines,
 }: CandleChartProps) {
   const barWidth = Math.max(2, Math.round(candleSpacing * 0.67))
 
@@ -166,6 +184,46 @@ export default function CandleChart({
             </text>
           </g>
         ))}
+
+        {/* GEX overlay lines (BLAZE Directional Chart) — call wall, put wall,
+            flip point, ±1σ ribbon. Drawn above strike lines so they win the
+            z-order if a strike happens to coincide with a wall. */}
+        {gexLines?.map((g, i) => {
+          if (!Number.isFinite(g.price) || g.price < minPrice || g.price > maxPrice) return null
+          const y = pToY(g.price)
+          const opacity = g.opacity ?? 0.85
+          const dash = g.dash ?? '6,3'
+          const side = g.side ?? 'left'
+          return (
+            <g key={`gex-${i}`}>
+              <line
+                x1={CHART_LEFT_MARGIN}
+                y1={y}
+                x2={svgWidth - CHART_RIGHT_MARGIN}
+                y2={y}
+                stroke={g.color}
+                strokeWidth="1.5"
+                strokeDasharray={dash}
+                opacity={opacity}
+              />
+              {side === 'left' ? (
+                <rect x={CHART_LEFT_MARGIN + 4} y={y - 13} rx={2} ry={2}
+                  width={g.label.length * 6 + 8} height={12} fill={g.color} opacity="0.18" />
+              ) : null}
+              <text
+                x={side === 'right' ? svgWidth - CHART_RIGHT_MARGIN - 6 : CHART_LEFT_MARGIN + 8}
+                y={y - 4}
+                fill={g.color}
+                fontSize="10"
+                fontWeight="700"
+                fontFamily="monospace"
+                textAnchor={side === 'right' ? 'end' : 'start'}
+              >
+                {g.label}
+              </text>
+            </g>
+          )
+        })}
 
         {/* Volume bars */}
         {bars.map((b, i) => (

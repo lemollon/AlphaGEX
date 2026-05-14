@@ -19,6 +19,7 @@ import PdtTabContent from './PdtTabContent'
 import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
+import BlazeDirectionalChart from './BlazeDirectionalChart'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -82,6 +83,7 @@ const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {}
  */
 const TAB_LABEL_OVERRIDES: Record<string, Partial<Record<Tab, string>>> = {
   flame: { 'IC Chart': 'Spread Chart' },
+  blaze: { 'IC Chart': 'Directional Chart' },
 }
 
 /** Reserved for future per-bot tab gating. Empty for now — Market Pulse
@@ -539,11 +541,19 @@ export default function BotDashboard({
           </ComponentErrorBoundary>
         )}
         {tab === 'IC Chart' && (
-          <ComponentErrorBoundary fallback={bot === 'flame' ? 'Spread Chart tab error' : 'IC Chart tab error'}>
-            <BuilderTab
-              bot={bot}
-              accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
-            />
+          <ComponentErrorBoundary fallback={
+            bot === 'flame' ? 'Spread Chart tab error'
+              : bot === 'blaze' ? 'Directional Chart tab error'
+              : 'IC Chart tab error'
+          }>
+            {bot === 'blaze' ? (
+              <BlazeDirectionalChart />
+            ) : (
+              <BuilderTab
+                bot={bot}
+                accountType={hasAccounts && viewMode === 'live' ? 'production' : 'sandbox'}
+              />
+            )}
           </ComponentErrorBoundary>
         )}
         {tab === 'Production' && hasAccounts && (
