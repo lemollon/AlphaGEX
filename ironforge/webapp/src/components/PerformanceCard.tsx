@@ -87,8 +87,8 @@ export default function PerformanceCard({
 
       {/* SPARK-only counterfactual block: how would the bot have done if it
           had held every trade until 2:59 PM CT instead of exiting early via
-          PT tier? Positive Δ = early exits beat the late-day hold (PT
-          discipline paid off). Negative Δ = we left money on the table. */}
+          PT tier? Δ = hypo − actual. Positive Δ = we left money on the table
+          by exiting early. Negative Δ = early exits beat the late-day hold. */}
       {data.hypothetical_eod && data.hypothetical_eod.matched_trades > 0 && (
         <div className="grid grid-cols-3 gap-4 text-sm border-t border-forge-border mt-3 pt-3">
           <div>
@@ -106,11 +106,11 @@ export default function PerformanceCard({
           <div>
             <p
               className="text-xs text-forge-muted"
-              title="Actual − Hypothetical. Positive = PT exits beat the late-day hold."
+              title="Hypothetical − Actual. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold."
             >
-              Δ (Actual − Hypo)
+              Δ (Hypo − Actual)
             </p>
-            <p className={`font-medium ${data.hypothetical_eod.delta >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            <p className={`font-medium ${data.hypothetical_eod.delta > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
               {data.hypothetical_eod.delta >= 0 ? '+' : ''}${data.hypothetical_eod.delta.toFixed(2)}
             </p>
             <p className="text-[10px] text-forge-muted mt-0.5">

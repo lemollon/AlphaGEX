@@ -136,12 +136,14 @@ export async function GET(
       trades_with_hypo: atTrades,
       actual_pnl_total: round2(actualTotal),
       hypo_pnl_total: round2(hypoTotal),
-      delta: round2(actualTotal - hypoTotal),
+      // Δ = hypo − actual. Positive = money left on the table by early
+      // exit; negative = early exit beat the late-day hold.
+      delta: round2(hypoTotal - actualTotal),
       actual_win_rate: atTrades > 0 ? round1((actualWins / atTrades) * 100) : 0,
       hypo_win_rate: atTrades > 0 ? round1((hypoWins / atTrades) * 100) : 0,
       actual_avg_per_trade: atTrades > 0 ? round2(actualTotal / atTrades) : 0,
       hypo_avg_per_trade: atTrades > 0 ? round2(hypoTotal / atTrades) : 0,
-      delta_avg_per_trade: atTrades > 0 ? round2((actualTotal - hypoTotal) / atTrades) : 0,
+      delta_avg_per_trade: atTrades > 0 ? round2((hypoTotal - actualTotal) / atTrades) : 0,
     }
 
     /* ---------- By close_reason (which PT tier wins or loses?) ---------- */
@@ -166,8 +168,8 @@ export async function GET(
         trades,
         actual_pnl_total: round2(actual),
         hypo_pnl_total: round2(hypo),
-        delta: round2(actual - hypo),
-        delta_avg_per_trade: trades > 0 ? round2((actual - hypo) / trades) : 0,
+        delta: round2(hypo - actual),
+        delta_avg_per_trade: trades > 0 ? round2((hypo - actual) / trades) : 0,
         actual_avg_per_trade: trades > 0 ? round2(actual / trades) : 0,
         hypo_avg_per_trade: trades > 0 ? round2(hypo / trades) : 0,
       }
@@ -196,7 +198,7 @@ export async function GET(
         trades,
         actual_pnl_total: round2(actual),
         hypo_pnl_total: round2(hypo),
-        delta: round2(actual - hypo),
+        delta: round2(hypo - actual),
       }
     })
 
@@ -209,7 +211,7 @@ export async function GET(
       by_close_reason: byCloseReason,
       by_month: byMonth,
       legend: {
-        delta: 'Actual − Hypothetical. Positive = PT tier exit beat 2:59 PM hold; negative = left money on the table by exiting early.',
+        delta: 'Hypothetical − Actual. Positive = money left on the table by exiting early; negative = PT tier exit beat the 2:59 PM hold.',
         coverage: 'Hypothetical P&L is only available for trades closed within Tradier\'s ~40-day option timesales window.',
       },
     })
