@@ -8,14 +8,24 @@ import { closeBlazePosition, getOpenBlazePositions, insertSignalActivity, loadDa
 import { decideExit } from './exit'
 import { openVertical } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
-import { dispatch, FlipBuffer } from './setups'
-import { DEFAULT_BLAZE_CONFIG } from './types'
+import { dispatch, evaluateFlipCross, evaluateWallBreak, evaluateWallFade, FlipBuffer } from './setups'
+import { DEFAULT_BLAZE_CONFIG, Direction, GexSnapshot, SetupType } from './types'
 
 // Module-level rolling buffer; persists across scanner ticks while process is alive.
 const FLIP_BUFFER = new FlipBuffer(DEFAULT_BLAZE_CONFIG.flip_buffer_minutes)
 
 // Tracks consecutive quote-fetch failures per position (cleared on success).
 const _streakByPos: Record<number, number> = {}
+
+// Signal-reset re-entry gate: blocks re-opening the same (setup,direction)
+// until BOTH (a) the trigger has been observed FALSE on a later tick, and
+// (b) a 15-min cooldown has elapsed. Without this gate the bot re-enters
+// identical trades a second after a close because evaluateWallFade is a
+// state check ("call_wall within 0.30 sigma overhead") that persists for
+// hours when SPY pins near a wall — there's no "fresh trigger" requirement.
+const RE_ENTRY_MIN_COOLDOWN_MS = 15 * 60_000
+const _closedAtByKey: Map<string, number> = new Map()
+const _triggerOffSeenByKey: Map<string, boolean> = new Map()
 
 function ctNow(): Date {
   const s = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })
@@ -97,11 +107,43 @@ export async function runMonitorCycle(): Promise<void> {
       realized_pnl,
     })
     delete _streakByPos[pos.id]
+    // Arm signal-reset gate for this (setup,direction) so the entry cycle
+    // can't immediately re-enter the same trade.
+    const gateKey = `${pos.setup_type}_${pos.direction}`
+    _closedAtByKey.set(gateKey, Date.now())
+    _triggerOffSeenByKey.set(gateKey, false)
     await insertSignalActivity({
       outcome: 'TRADE',
       detail: `close ${pos.setup_type} ${pos.direction} ${decision.reason} pnl=${realized_pnl.toFixed(2)}`,
     })
   }
+}
+
+/**
+ * Mark the gate's "trigger has been observed FALSE since the last close"
+ * flag for each armed (setup,direction). Called every entry tick before
+ * dispatch — checks whether the just-closed setup-direction's trigger is
+ * STILL firing on the current snap. If not, the gate can release once the
+ * 15-min cooldown elapses.
+ */
+function refreshTriggerOffSeen(snap: GexSnapshot, config: typeof DEFAULT_BLAZE_CONFIG): void {
+  if (_triggerOffSeenByKey.size === 0) return
+  _triggerOffSeenByKey.forEach((alreadyOff, key) => {
+    if (alreadyOff) return
+    const [setup, direction] = key.split('_') as [SetupType, Direction]
+    let stillFiring = false
+    if (setup === 'wall_fade') {
+      const a = evaluateWallFade(snap, config)
+      stillFiring = a !== null && a.direction === direction
+    } else if (setup === 'wall_break') {
+      const a = evaluateWallBreak(snap, config)
+      stillFiring = a !== null && a.direction === direction
+    } else if (setup === 'flip_cross') {
+      const a = evaluateFlipCross(snap, FLIP_BUFFER, config)
+      stillFiring = a !== null && a.direction === direction
+    }
+    if (!stillFiring) _triggerOffSeenByKey.set(key, true)
+  })
 }
 
 async function runEntryCycle(): Promise<void> {
@@ -126,6 +168,10 @@ async function runEntryCycle(): Promise<void> {
   }
 
   FLIP_BUFFER.add(snap)
+  // Refresh the signal-reset gate BEFORE dispatch so that even if dispatch
+  // would have picked the same setup-direction we just closed, we'll have
+  // already noted whether the trigger went off between then and now.
+  refreshTriggerOffSeen(snap, DEFAULT_BLAZE_CONFIG)
   const state = await loadDailyState()
   const action = dispatch(snap, state, FLIP_BUFFER, DEFAULT_BLAZE_CONFIG)
   if (!action) {
@@ -134,6 +180,29 @@ async function runEntryCycle(): Promise<void> {
       detail: `regime=${snap.regime} spot=${snap.spot.toFixed(2)} cw=${snap.call_wall} pw=${snap.put_wall}`,
     })
     return
+  }
+
+  // Signal-reset gate: block re-entering the same (setup,direction) until
+  // the trigger has been observed FALSE since last close AND the 15-min
+  // cooldown has elapsed. Prevents the "close PT then re-open identical
+  // trade in the same scan tick" pattern that drove 5/13's back-to-back
+  // SL losses on wall_fade puts (-$560, -$574).
+  const gateKey = `${action.setup}_${action.direction}`
+  const closedAt = _closedAtByKey.get(gateKey)
+  if (closedAt !== undefined) {
+    const elapsedMs = Date.now() - closedAt
+    const triggerReset = _triggerOffSeenByKey.get(gateKey) === true
+    if (elapsedMs < RE_ENTRY_MIN_COOLDOWN_MS || !triggerReset) {
+      const elapsedMin = Math.floor(elapsedMs / 60_000)
+      await insertSignalActivity({
+        outcome: 'SKIP',
+        detail: `signal_unchanged_since_${gateKey} elapsed=${elapsedMin}min reset=${triggerReset}`,
+      })
+      return
+    }
+    // Gate cleared — release it so we don't re-evaluate on every future tick.
+    _closedAtByKey.delete(gateKey)
+    _triggerOffSeenByKey.delete(gateKey)
   }
 
   try {
