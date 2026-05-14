@@ -147,11 +147,16 @@ export async function GET(
           ? Math.abs(num(r.short_strike) - num(r.long_strike))
           : 0
 
+        // BLAZE PT/SL must match DEFAULT_BLAZE_CONFIG in lib/blaze/types.ts —
+        // these were drifted to 50%/50% before, but the actual exit code
+        // (lib/blaze/exit.ts) fires at +20% / −30%. The mismatch made the
+        // dashboard show PT $1.08 when the bot was actually exiting at $0.864
+        // ("PT trigger not fast enough" perception bug).
         const profitTargetPrice = isVertical
-          ? Math.round(entryDebit * 1.5 * 10000) / 10000  // BLAZE PT 50% = close at 1.5× debit
+          ? Math.round(entryDebit * 1.20 * 10000) / 10000  // BLAZE PT +20% → debit × 1.20
           : Math.round(entryCredit * 0.7 * 10000) / 10000
         const stopLossPrice = isVertical
-          ? Math.round(entryDebit * 0.5 * 10000) / 10000  // BLAZE SL 50% = close at 0.5× debit
+          ? Math.round(entryDebit * 0.70 * 10000) / 10000  // BLAZE SL −30% → debit × 0.70
           : Math.round(entryCredit * 2.0 * 10000) / 10000
 
         let mtm: number | null = null
