@@ -65,39 +65,48 @@ export function ctDateString(d: Date): string {
 
 /**
  * Find the bar in `series` whose timestamp matches 14:59 CT on `closeDate`.
- * Tradier timestamps are unambiguous UTC ISO (post-Commit I), so we compare
- * against the UTC instant equivalent of 14:59 CT.
+ * If no exact-minute bar exists, take the closest bar within ±2 minutes
+ * (14:57..15:01 CT). Returns null if even that window is empty.
  *
- * Returns the bar's close price, or null if no bar within ±2 minutes was found.
+ * Why no "last bar of session" fallback: when an illiquid option leg stops
+ * trading hours before 2:59 PM (common for far-OTM wings after a big move),
+ * a "last bar of session" can be 10:00 AM. Mixing morning-stale prices for
+ * one leg with afternoon prices for another violates the no-arbitrage
+ * relationship `short_strike_price ≥ long_strike_price` and yields negative
+ * cost-to-close (hypothetical P&L > max profit, which is impossible).
+ * Returning null forces the caller into the same-day spot-intrinsic path,
+ * which is internally consistent across all 4 legs.
  */
 function findBarAt259CT(
   series: Array<{ time: string; open: number; high: number; low: number; close: number }>,
   closeDate: string,
 ): number | null {
   // 14:59 CT = 19:59 UTC during DST (Mar–Nov) or 20:59 UTC standard time.
-  // Easiest check: build the target instant via toLocaleString and look up
-  // the bar whose CT-formatted time matches "14:59" on closeDate.
+  // Score bars by absolute minute-of-day distance to 14:59 CT within a
+  // ±2-min window and return the closest. Ties go to whichever bar appears
+  // first in the series (Tradier returns chronological order).
+  const targetMins = 14 * 60 + 59
+  let bestClose: number | null = null
+  let bestDist = Number.POSITIVE_INFINITY
   for (const b of series) {
     if (!b.time) continue
     const d = new Date(b.time)
     if (Number.isNaN(d.getTime())) continue
-    const dateCt = ctDateString(d)
-    if (dateCt !== closeDate) continue
+    if (ctDateString(d) !== closeDate) continue
     const hhmm = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/Chicago',
       hour: '2-digit', minute: '2-digit', hour12: false,
     }).format(d)
-    if (hhmm === '14:59') return b.close
+    const m = /^(\d{2}):(\d{2})$/.exec(hhmm)
+    if (!m) continue
+    const bin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10)
+    const dist = Math.abs(bin - targetMins)
+    if (dist <= 2 && dist < bestDist) {
+      bestDist = dist
+      bestClose = b.close
+    }
   }
-  // Fallback: closest bar within the closeDate window (last bar of session)
-  let lastClose: number | null = null
-  for (const b of series) {
-    if (!b.time) continue
-    const d = new Date(b.time)
-    if (Number.isNaN(d.getTime())) continue
-    if (ctDateString(d) === closeDate) lastClose = b.close
-  }
-  return lastClose
+  return bestClose
 }
 
 /**

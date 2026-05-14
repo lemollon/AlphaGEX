@@ -15,12 +15,15 @@
  *   successful computes write `computed_at = NOW()`. Rows past 40 days
  *   simply fall out of the window (Tradier no longer has the bars).
  *
- * GET  /api/{bot}/backfill-hypo-eod
+ * GET  /api/{bot}/backfill-hypo-eod[?force=true]
  *   Dry-run: lists candidates and which ones look recoverable. Safe.
+ *   With `force=true`: also includes rows that already have non-NULL hypo —
+ *   use after a math-correctness fix to recompute every row in the window.
  *
- * POST /api/{bot}/backfill-hypo-eod?confirm=true
+ * POST /api/{bot}/backfill-hypo-eod?confirm=true[&force=true]
  *   Applies. Writes a HYPO_EOD_BACKFILL audit log. Failures (Tradier had
- *   no leg quotes) leave the row NULL so a future call can retry.
+ *   no leg quotes) leave the row NULL so a future call can retry. With
+ *   `force=true`, successful computes overwrite any prior hypo.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, num, int, validateBot, botTable, dteMode } from '@/lib/db'
@@ -43,7 +46,7 @@ interface CandidateRow {
   vix_at_entry: number | null
 }
 
-async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
+async function gatherCandidates(bot: string, force: boolean): Promise<CandidateRow[]> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
   // Pick up any closed/expired row in the last 40 days (Tradier's option
@@ -52,6 +55,12 @@ async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
   // stamp `computed_at = NOW()` even when Tradier returned no data,
   // permanently locking the row out of retry. The new scanner only stamps
   // on success, and so does this route — see the POST handler below.
+  //
+  // `force=true` drops the IS NULL filter so a math-correctness fix can
+  // overwrite previously-stored bad values. Only successful recomputes
+  // overwrite (see POST below); rows that fail to compute on retry keep
+  // whatever was already there.
+  const nullFilter = force ? '' : 'AND hypothetical_eod_pnl IS NULL'
   const rows = await dbQuery(
     `SELECT position_id, ticker, expiration,
             put_short_strike, put_long_strike,
@@ -61,7 +70,7 @@ async function gatherCandidates(bot: string): Promise<CandidateRow[]> {
      WHERE status IN ('closed', 'expired')
        ${dteFilter}
        AND realized_pnl IS NOT NULL
-       AND hypothetical_eod_pnl IS NULL
+       ${nullFilter}
        AND close_time >= NOW() - INTERVAL '40 days'
      ORDER BY close_time DESC`,
   )
@@ -94,11 +103,13 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
+  const force = _req.nextUrl.searchParams.get('force') === 'true'
   try {
-    const candidates = await gatherCandidates(bot)
+    const candidates = await gatherCandidates(bot, force)
     return NextResponse.json({
       bot,
       dry_run: true,
+      force,
       candidates: candidates.length,
       sample: candidates.slice(0, 5).map((c) => ({
         position_id: c.position_id,
@@ -107,7 +118,7 @@ export async function GET(
         credit: c.total_credit,
       })),
       instructions: candidates.length > 0
-        ? `POST /api/${bot}/backfill-hypo-eod?confirm=true to compute & store.`
+        ? `POST /api/${bot}/backfill-hypo-eod?confirm=true${force ? '&force=true' : ''} to compute & store.`
         : 'Nothing to backfill (or all candidates are outside Tradier 40-day window).',
     })
   } catch (err: unknown) {
@@ -130,8 +141,9 @@ export async function POST(
     )
   }
 
+  const force = req.nextUrl.searchParams.get('force') === 'true'
   try {
-    const candidates = await gatherCandidates(bot)
+    const candidates = await gatherCandidates(bot, force)
     const positionsTable = botTable(bot, 'positions')
     const logsTable = botTable(bot, 'logs')
     const dte = dteMode(bot) ?? 'unknown'
@@ -181,8 +193,8 @@ export async function POST(
          VALUES ($1, $2, $3, $4)`,
         [
           'HYPO_EOD_BACKFILL',
-          `Backfilled ${computed}/${candidates.length} hypothetical 2:59 PM P&L rows`,
-          JSON.stringify({ candidates: candidates.length, computed, skipped, failures: failures.slice(0, 10) }),
+          `Backfilled ${computed}/${candidates.length} hypothetical 2:59 PM P&L rows${force ? ' (force=true, overwrote existing)' : ''}`,
+          JSON.stringify({ candidates: candidates.length, computed, skipped, force, failures: failures.slice(0, 10) }),
           dte,
         ],
       )
