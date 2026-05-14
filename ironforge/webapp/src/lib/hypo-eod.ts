@@ -126,12 +126,19 @@ export async function computeHypoEodFor(pos: PositionMeta): Promise<HypoEodResul
   // Pull a generous window so we definitely cover the 14:59 bar even on
   // edge timezone days. session='all' here in case Tradier classifies the
   // late-session bar inconsistently — we filter by CT clock anyway.
+  //
+  // Override Tradier's default 3-day `start` window with the trade's own
+  // close_date (±1 day) so historical backfills can fetch bars for trades
+  // older than 3 days. Without this, getTimesales returns recent bars that
+  // don't match close_date and the function returns leg_quotes_missing.
+  const tradierStart = `${pos.close_date} 08:00`
+  const tradierEnd = `${pos.close_date} 16:00`
   const [psBars, plBars, csBars, clBars, spyBars] = await Promise.all([
-    getTimesales(occPs, 390, 'all', '1min').catch(() => []),
-    getTimesales(occPl, 390, 'all', '1min').catch(() => []),
-    getTimesales(occCs, 390, 'all', '1min').catch(() => []),
-    getTimesales(occCl, 390, 'all', '1min').catch(() => []),
-    getTimesales(pos.ticker, 390, 'all', '1min').catch(() => []),
+    getTimesales(occPs, 390, 'all', '1min', tradierStart, tradierEnd).catch(() => []),
+    getTimesales(occPl, 390, 'all', '1min', tradierStart, tradierEnd).catch(() => []),
+    getTimesales(occCs, 390, 'all', '1min', tradierStart, tradierEnd).catch(() => []),
+    getTimesales(occCl, 390, 'all', '1min', tradierStart, tradierEnd).catch(() => []),
+    getTimesales(pos.ticker, 390, 'all', '1min', tradierStart, tradierEnd).catch(() => []),
   ])
 
   const psPx = findBarAt259CT(psBars, pos.close_date)
