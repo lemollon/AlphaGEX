@@ -148,6 +148,81 @@ async function runEntryCycle(): Promise<void> {
 }
 
 /**
+ * Lazy DDL — runs once at first scan. Creates the gex-history table
+ * (Phase 2) if it doesn't exist. Mirrors the auto-create-tables-on-first-use
+ * pattern from common-mistakes.md so a fresh deploy doesn't 500 on missing
+ * tables.
+ */
+let _gexHistoryEnsured = false
+async function ensureGexHistoryTable(): Promise<void> {
+  if (_gexHistoryEnsured) return
+  try {
+    await query(
+      `CREATE TABLE IF NOT EXISTS blaze_gex_history (
+         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+         snapshot_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         spot_price NUMERIC(10, 2),
+         vix NUMERIC(6, 2),
+         net_gex NUMERIC(18, 2),
+         call_wall NUMERIC(10, 2),
+         put_wall NUMERIC(10, 2),
+         flip_point NUMERIC(10, 2),
+         regime TEXT,
+         sigma_1d_band NUMERIC(10, 4)
+       )`,
+    )
+    await query(
+      `CREATE INDEX IF NOT EXISTS idx_blaze_gex_history_time
+         ON blaze_gex_history (snapshot_time DESC)`,
+    )
+    _gexHistoryEnsured = true
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] BLAZE gex_history table ensure failed: ${msg}`)
+  }
+}
+
+/**
+ * Write a row to blaze_gex_history so the DirectionalChart can draw
+ * time-varying wall/flip overlays. Fetches a fresh snapshot reusing the
+ * same gex-client the entry cycle uses (no extra TV/alphagex calls — the
+ * entry cycle already fetched one earlier this minute, but the scanner
+ * runs every minute regardless of entry-window state, and the snapshot
+ * captures the after-hours / outside-window state too).
+ *
+ * Tolerates stale GEX (passes a generous 600s staleness gate) since this
+ * is for visualization, not trade entry. Skips silently on fetch failure.
+ */
+async function writeGexHistory(): Promise<void> {
+  await ensureGexHistoryTable()
+  if (!_gexHistoryEnsured) return
+  try {
+    const snap = await fetchGexSnapshot('SPY', 600)
+    await query(
+      `INSERT INTO blaze_gex_history
+        (spot_price, vix, net_gex, call_wall, put_wall, flip_point, regime, sigma_1d_band)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        snap.spot,
+        snap.vix,
+        snap.net_gex,
+        snap.call_wall,
+        snap.put_wall,
+        snap.flip_point,
+        snap.regime,
+        snap.sigma_1d_band_width,
+      ],
+    )
+  } catch (err) {
+    // Stale or fetch failure is fine — we just skip this cycle's history row.
+    // Bot trading is unaffected (entry cycle has its own staleness gate).
+    if (err instanceof GexStaleError) return
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] BLAZE gex_history write skipped: ${msg}`)
+  }
+}
+
+/**
  * Compute live unrealized P&L for open BLAZE positions and write an equity
  * snapshot so the dashboard chart has data. Runs every scan cycle.
  *
@@ -206,6 +281,11 @@ export async function scanBlaze(_ct?: Date): Promise<void> {
   // Write equity snapshot every cycle (mirrors FLAME/SPARK/INFERNO; required for dashboard chart).
   // Outside market hours, snapshot still records balance + realized P&L so the curve doesn't gap.
   await writeEquitySnapshot()
+
+  // Phase 2: capture GEX snapshot so DirectionalChart can render time-varying
+  // wall/flip overlays. Independent of equity snapshot — runs every cycle
+  // regardless of market hours so we have a continuous history for chart playback.
+  await writeGexHistory()
 
   if (!isMarketHours(ct)) return
   if (!(await isBlazeEnabled())) return  // operator-gated kill switch

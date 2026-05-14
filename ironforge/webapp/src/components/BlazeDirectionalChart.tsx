@@ -32,6 +32,7 @@ import { computePriceRange, type Candle } from '@/lib/price-scale'
 
 const CANDLES_REFRESH = 60_000
 const GEX_REFRESH = 30_000
+const GEX_HISTORY_REFRESH = 60_000
 const POSITIONS_REFRESH = 15_000
 const TRADES_REFRESH = 60_000
 
@@ -69,6 +70,17 @@ interface BlazePosition {
   contracts: number
   setup_type?: string | null
   underlying_at_entry: number
+}
+
+interface GexHistoryPoint {
+  time: string
+  spot: number
+  vix: number
+  net_gex: number
+  call_wall: number
+  put_wall: number
+  flip_point: number
+  regime: string
 }
 
 interface BlazeTrade {
@@ -169,6 +181,12 @@ export default function BlazeDirectionalChart() {
     { refreshInterval: TRADES_REFRESH },
   )
 
+  const { data: gexHistory } = useSWR<{ snapshots: GexHistoryPoint[] }>(
+    `/api/blaze/gex-history`,
+    fetcher,
+    { refreshInterval: GEX_HISTORY_REFRESH },
+  )
+
   const candles = candlesData?.candles ?? []
   const openPositions = posData?.positions ?? []
   const todaysTrades = useMemo(() => {
@@ -223,16 +241,54 @@ export default function BlazeDirectionalChart() {
     return base
   }, [candles, strikes, gex, sigmaPlus, sigmaMinus])
 
+  const history = gexHistory?.snapshots ?? []
+  const hasHistory = history.length >= 2
+
+  // Phase 2: time-varying overlay polylines for walls + flip. Falls back to
+  // Phase 1 static full-width lines when there's not enough history yet.
+  const gexTimeSeries = useMemo(() => {
+    if (!hasHistory) return []
+    return [
+      {
+        label: 'Call Wall',
+        color: '#22d3ee',
+        strokeWidth: 1.75,
+        opacity: 0.9,
+        points: history.map(h => ({ time: h.time, price: h.call_wall })).filter(p => p.price > 0),
+      },
+      {
+        label: 'Put Wall',
+        color: '#c084fc',
+        strokeWidth: 1.75,
+        opacity: 0.9,
+        points: history.map(h => ({ time: h.time, price: h.put_wall })).filter(p => p.price > 0),
+      },
+      {
+        label: 'Flip',
+        color: '#facc15',
+        strokeWidth: 1.75,
+        dash: '4,3',
+        opacity: 0.95,
+        points: history.map(h => ({ time: h.time, price: h.flip_point })).filter(p => p.price > 0),
+      },
+    ]
+  }, [history, hasHistory])
+
   const gexLines = useMemo(() => {
     if (!gex) return []
     const lines: Array<{ price: number; color: string; label: string; dash?: string; opacity?: number; side?: 'left' | 'right' }> = []
-    if (gex.call_wall) lines.push({ price: gex.call_wall, color: '#22d3ee', label: `CALL WALL $${gex.call_wall.toFixed(0)}`, dash: '4,4' })
-    if (gex.put_wall) lines.push({ price: gex.put_wall, color: '#c084fc', label: `PUT WALL $${gex.put_wall.toFixed(0)}`, dash: '4,4' })
-    if (gex.flip_point) lines.push({ price: gex.flip_point, color: '#facc15', label: `FLIP $${gex.flip_point.toFixed(0)}`, dash: '8,3', opacity: 0.9 })
+    // When history is available, draw the static walls/flip only as a faint
+    // "now" reference (right-edge label, very low opacity) so they don't
+    // compete with the polyline overlay. Without history, draw them solid
+    // (Phase 1 behavior).
+    const hasH = hasHistory
+    if (gex.call_wall) lines.push({ price: gex.call_wall, color: '#22d3ee', label: `CALL WALL $${gex.call_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
+    if (gex.put_wall) lines.push({ price: gex.put_wall, color: '#c084fc', label: `PUT WALL $${gex.put_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
+    if (gex.flip_point) lines.push({ price: gex.flip_point, color: '#facc15', label: `FLIP $${gex.flip_point.toFixed(0)}`, dash: '8,3', opacity: hasH ? 0.25 : 0.9, side: hasH ? 'right' : 'left' })
     if (sigmaPlus) lines.push({ price: sigmaPlus, color: '#9ca3af', label: `+1σ`, dash: '1,3', opacity: 0.55, side: 'right' })
     if (sigmaMinus) lines.push({ price: sigmaMinus, color: '#9ca3af', label: `−1σ`, dash: '1,3', opacity: 0.55, side: 'right' })
     return lines
-  }, [gex, sigmaPlus, sigmaMinus])
+  }, [gex, sigmaPlus, sigmaMinus, hasHistory])
 
   /* -------- Render: error/loading guards -------- */
 
@@ -341,6 +397,7 @@ export default function BlazeDirectionalChart() {
           spotPrice={gex.spot_price}
           fetchError={candlesErr?.message ?? candlesData?.error ?? null}
           gexLines={gexLines}
+          gexTimeSeries={gexTimeSeries}
         />
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 text-[10px] text-forge-muted border-t border-forge-border">
           <span className="inline-flex items-center gap-1">
@@ -360,6 +417,9 @@ export default function BlazeDirectionalChart() {
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="inline-block w-3 h-2 bg-gray-400/60" /> ±1σ
+          </span>
+          <span className="text-forge-muted">
+            {hasHistory ? `${history.length} GEX snapshots` : 'GEX history accumulating…'}
           </span>
           <span className="ml-auto">
             {candlesData?.candles?.length ?? 0} bars · {new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })}
