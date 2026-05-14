@@ -4978,6 +4978,44 @@ function safeRunAllScans(): void {
     })
 }
 
+/* ------------------------------------------------------------------ */
+/*  BLAZE fast monitor — PT/SL trigger at 15s instead of 60s            */
+/* ------------------------------------------------------------------ */
+
+const BLAZE_FAST_MONITOR_INTERVAL_MS = 15 * 1000 // 15s
+let _blazeFastMonitorIntervalId: ReturnType<typeof setInterval> | null = null
+let _blazeFastMonitorRunning = false
+
+/**
+ * BLAZE PT was firing too slow at 60s ticks — for a 1DTE vertical debit
+ * spread that can spike past PT and retreat in seconds, missing the exit
+ * is real money. This polls just the monitor cycle (PT/SL/TIME_STOP/
+ * DATA_FAILURE) every 15s. Skips if the main 60s scan is mid-tick or if
+ * a previous fast tick is still running, so we never race the entry
+ * cycle's monitor pass.
+ */
+function safeBlazeFastMonitor(): void {
+  if (_running || _blazeFastMonitorRunning) return
+  // Only inside market hours — outside, the main 60s tick is enough for
+  // TIME_STOP and after-hours position cleanup.
+  const ct = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+  )
+  const dow = ct.getDay()
+  if (dow === 0 || dow === 6) return
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+  if (hhmm < 830 || hhmm > 1555) return
+
+  _blazeFastMonitorRunning = true
+  import('./blaze/scanner')
+    .then(({ runMonitorCycle }) => runMonitorCycle())
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] BLAZE fast monitor error: ${msg}`)
+    })
+    .finally(() => { _blazeFastMonitorRunning = false })
+}
+
 export function startScanner(): void {
   if (_started) return
   _started = true
@@ -4989,8 +5027,10 @@ export function startScanner(): void {
 
   // Persistent interval
   _intervalId = setInterval(safeRunAllScans, SCAN_INTERVAL_MS)
+  _blazeFastMonitorIntervalId = setInterval(safeBlazeFastMonitor, BLAZE_FAST_MONITOR_INTERVAL_MS)
 
   console.log('[scanner] setInterval registered, id:', _intervalId)
+  console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */

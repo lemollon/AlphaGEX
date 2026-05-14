@@ -48,7 +48,7 @@ async function isBlazeEnabled(): Promise<boolean> {
   }
 }
 
-async function runMonitorCycle(): Promise<void> {
+export async function runMonitorCycle(): Promise<void> {
   const positions = await getOpenBlazePositions()
   if (!positions.length) return
   const ct = ctNow()
