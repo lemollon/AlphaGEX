@@ -35,7 +35,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD' | 'MSTU-USD'
+type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
 
 interface WinTrackerData {
   ticker: string
@@ -77,7 +77,7 @@ interface TickerSummary {
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD']
+const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
 
 const TICKER_META: Record<string, { symbol: string; label: string; colorClass: string; hexColor: string; bgActive: string; borderActive: string; textActive: string; bgCard: string; borderCard: string }> = {
   'ALL':      { symbol: 'ALL',  label: 'All Coins',  colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
@@ -86,7 +86,6 @@ const TICKER_META: Record<string, { symbol: string; label: string; colorClass: s
   'XRP-USD':  { symbol: 'XRP',  label: 'Ripple',     colorClass: 'blue',   hexColor: '#3B82F6', bgActive: 'bg-blue-600',   borderActive: 'border-blue-500',   textActive: 'text-blue-400',   bgCard: 'bg-blue-950/30',   borderCard: 'border-blue-700/40' },
   'SHIB-USD': { symbol: 'SHIB', label: 'Shiba Inu',  colorClass: 'orange', hexColor: '#F97316', bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400', bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
   'DOGE-USD': { symbol: 'DOGE', label: 'Dogecoin',   colorClass: 'yellow', hexColor: '#EAB308', bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
-  'MSTU-USD': { symbol: 'MSTU', label: '2X MSTR ETF', colorClass: 'purple', hexColor: '#A855F7', bgActive: 'bg-purple-600', borderActive: 'border-purple-500', textActive: 'text-purple-400', bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
 }
 
 const SECTION_TABS = [
@@ -503,7 +502,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
 
       {/* Per-coin summary cards (with sparklines) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const).map((ticker) => (
+        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
       </div>
@@ -1932,7 +1931,7 @@ function BayesianTrackerDetail({ tracker, color, ev }: { tracker: WinTrackerData
 
 function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> | undefined }) {
   if (!tickers) return null
-  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const
+  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
   return (
     <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
       {coins.map(ticker => {
