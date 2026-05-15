@@ -82,6 +82,7 @@ python-dotenv>=1.0.0
 # Background Jobs
 # ============================================================================
 apscheduler>=3.10.4
+schedule>=1.2.0  # used by data/automated_data_collector.py
 
 # ============================================================================
 # Utilities
