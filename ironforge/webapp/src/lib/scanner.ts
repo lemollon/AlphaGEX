@@ -1151,7 +1151,14 @@ async function monitorSinglePosition(
             const repriceCountAtTier = typeof pendingInfo._slippage_reprice_count === 'number'
               ? pendingInfo._slippage_reprice_count
               : 0
-            const useAggressiveCross = repriceCountAtTier >= 1
+            // 2026-05-15: skip mid_relax entirely — always cross the ask on reprice.
+            // The mid_relax step (originally reprice #0, ask_cross from #1+) never
+            // crossed bid/ask on thin 1DTE chains, so reprices kept missing fills
+            // for one full scanner tick before going aggressive. Now every reprice
+            // crosses the ask immediately. Tier-floor cap (currentTierTarget) is
+            // preserved below, so we still never fill worse than tier minimum.
+            const useAggressiveCross = true
+            void repriceCountAtTier // kept for logging only
             const CROSS_ASK_OFFSET_REPRICE = 0.01
             const relaxTarget = useAggressiveCross
               ? mtmForGuard!.cost_to_close + CROSS_ASK_OFFSET_REPRICE
