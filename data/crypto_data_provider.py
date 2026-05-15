@@ -992,7 +992,11 @@ class CryptoDataProvider:
                         shorts_above, key=lambda x: x.short_liquidation_usd
                     ).price_level
 
-        if self._deribit:
+        # Only query Deribit options for currencies Deribit actually lists.
+        # Calling get_options_chain_data on unsupported symbols (XRP, DOGE,
+        # SHIB, AVAX, LINK, LTC, BCH) returns HTTP 400 and spams logs; the
+        # synthetic fallback below handles those coins instead.
+        if self._deribit and symbol.upper() in self._DERIBIT_SUPPORTED:
             oi_levels = self._deribit.get_options_chain_data(symbol)
             if oi_levels:
                 snapshot.oi_levels = oi_levels
@@ -1048,8 +1052,8 @@ class CryptoDataProvider:
         return None
 
     def get_options_oi(self, symbol: str = "ETH") -> List[OpenInterestLevel]:
-        """Get per-strike OI from Deribit."""
-        if self._deribit:
+        """Get per-strike OI from Deribit. Returns [] for currencies Deribit doesn't list."""
+        if self._deribit and symbol.upper() in self._DERIBIT_SUPPORTED:
             return self._deribit.get_options_chain_data(symbol)
         return []
 
