@@ -904,20 +904,19 @@ async function ensureTables(): Promise<void> {
       )
     } catch { /* table or constraint may not be ready yet */ }
 
-    // Normalize pre-existing production rows to the live-risk knobs. This is
-    // a one-time correction for deploys where the production row was seeded
-    // before the Commit-A sizing parity change landed (it would have inherited
-    // the sandbox bp_pct=0.85, producing the double-dip bug). Safe to re-run:
-    // operator edits via PUT /api/spark/config?account_type=production can
-    // re-override afterward. Only touches rows that STILL have the buggy 0.85
-    // value, so a legitimate operator setting (e.g. 0.20) is preserved.
+    // Normalize pre-existing production rows that still carry the buggy
+    // sandbox-inherited bp_pct=0.85 (pre-Commit-A double-dip bug). Threshold
+    // is > 0.80 so it ONLY catches the original 0.85 value; any legitimate
+    // operator setting up to and including 0.80 is preserved across restarts.
+    // Earlier threshold was > 0.25, which silently reverted operator settings
+    // like 0.50 every cold-start — fixed 2026-05-15.
     try {
       await client.query(
         `UPDATE spark_config
            SET buying_power_usage_pct = 0.15, updated_at = NOW()
          WHERE account_type = 'production'
            AND dte_mode = '1DTE'
-           AND buying_power_usage_pct > 0.25`,
+           AND buying_power_usage_pct > 0.80`,
       )
       await client.query(
         `UPDATE spark_config
