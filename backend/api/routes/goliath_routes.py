@@ -15,6 +15,8 @@ Endpoints (mirroring fortress_routes.py / solomon_routes.py shape):
     GET  /api/goliath/gate-failures          recent gate failures
     GET  /api/goliath/scan-activity          recent entry/management cycle events
     GET  /api/goliath/logs                   activity log feed
+    GET  /api/goliath/weekly-summary         one-shot calibration view (entries,
+                                             exits, gate-failure histogram, open book)
     GET  /api/goliath/calibration            current calibration values + tags
     GET  /api/goliath/kill-state             active kills
     GET  /api/goliath/config                 current GoliathConfig defaults
@@ -568,6 +570,179 @@ def goliath_logs(
             "position_id": r[4], "data": data,
         })
     return {"entries": entries, "count": len(entries)}
+
+
+# ---- Weekly calibration summary ------------------------------------------
+
+# Map LETF ticker -> instance name so gate-failure rows (which key on
+# letf_ticker) can be folded into the per-instance breakdown.
+_LETF_TO_INSTANCE = {cfg["letf_ticker"]: cfg["name"] for cfg in _INSTANCES}
+
+
+def _empty_instance_entry_bucket() -> dict[str, int]:
+    return {"attempts": 0, "filled": 0, "blocked": 0}
+
+
+def _empty_instance_gate_bucket() -> dict[str, int]:
+    return {}
+
+
+@router.get("/weekly-summary")
+def goliath_weekly_summary(
+    days: int = Query(7, ge=1, le=90,
+                      description="Rolling lookback window (default 7 days)"),
+) -> dict[str, Any]:
+    """One-shot calibration view: entries, exits, gate-failure histogram, open book.
+
+    Designed for weekly tuning: tells you (a) did the bot fire enough, (b) what
+    closed and at what P&L, (c) which gates are blocking attempts, (d) what's
+    open right now. All four sub-queries are scoped to the same rolling window.
+
+    Window is N days back from "now" in UTC. Open-positions snapshot is current
+    (not window-bound) since you always want to know what's live.
+    """
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=days)
+
+    # --- Entries: attempts vs fills from audit log -------------------------
+    entry_rows = _safe_query(
+        "SELECT instance, event_type, COUNT(*) FROM goliath_trade_audit "
+        "WHERE timestamp >= %s AND event_type IN ('ENTRY_EVAL', 'ENTRY_FILLED') "
+        "GROUP BY instance, event_type",
+        (cutoff,),
+    )
+    entries_by_instance: dict[str, dict[str, int]] = {
+        cfg["name"]: _empty_instance_entry_bucket() for cfg in _INSTANCES
+    }
+    for instance, event_type, count in entry_rows:
+        bucket = entries_by_instance.setdefault(
+            instance, _empty_instance_entry_bucket()
+        )
+        c = int(count) if count is not None else 0
+        if event_type == "ENTRY_EVAL":
+            bucket["attempts"] = c
+        elif event_type == "ENTRY_FILLED":
+            bucket["filled"] = c
+    for bucket in entries_by_instance.values():
+        bucket["blocked"] = max(0, bucket["attempts"] - bucket["filled"])
+
+    platform_attempts = sum(b["attempts"] for b in entries_by_instance.values())
+    platform_filled = sum(b["filled"] for b in entries_by_instance.values())
+    platform_blocked = max(0, platform_attempts - platform_filled)
+    fill_rate = (
+        platform_filled / platform_attempts if platform_attempts else None
+    )
+
+    # --- Exits: closed positions with P&L breakdown by trigger -------------
+    exit_rows = _safe_query(
+        "SELECT instance_name, close_trigger_id, realized_pnl "
+        "FROM goliath_paper_positions "
+        "WHERE state = 'CLOSED' AND closed_at >= %s",
+        (cutoff,),
+    )
+    by_trigger: dict[str, dict[str, Any]] = {}
+    closed_count = 0
+    total_pnl = 0.0
+    wins = 0
+    losses = 0
+    for instance_name, trigger_id, realized_pnl in exit_rows:
+        closed_count += 1
+        pnl = float(realized_pnl) if realized_pnl is not None else 0.0
+        total_pnl += pnl
+        if pnl > 0:
+            wins += 1
+        elif pnl < 0:
+            losses += 1
+        trig_key = trigger_id or "UNKNOWN"
+        bucket = by_trigger.setdefault(
+            trig_key, {"count": 0, "total_pnl": 0.0, "wins": 0, "losses": 0}
+        )
+        bucket["count"] += 1
+        bucket["total_pnl"] += pnl
+        if pnl > 0:
+            bucket["wins"] += 1
+        elif pnl < 0:
+            bucket["losses"] += 1
+    for bucket in by_trigger.values():
+        bucket["avg_pnl"] = bucket["total_pnl"] / bucket["count"] if bucket["count"] else 0.0
+    decided = wins + losses
+    win_rate = wins / decided if decided else None
+    avg_pnl_per_trade = total_pnl / closed_count if closed_count else 0.0
+
+    # --- Gate failures: histogram by gate + per-instance breakdown ----------
+    gf_rows = _safe_query(
+        "SELECT letf_ticker, failed_gate, failure_reason, timestamp "
+        "FROM goliath_gate_failures WHERE timestamp >= %s "
+        "ORDER BY timestamp DESC",
+        (cutoff,),
+    )
+    by_gate: dict[str, int] = {}
+    by_instance_x_gate: dict[str, dict[str, int]] = {
+        cfg["name"]: _empty_instance_gate_bucket() for cfg in _INSTANCES
+    }
+    sample_reasons: dict[str, str] = {}
+    for letf_ticker, failed_gate, failure_reason, _ts in gf_rows:
+        if not failed_gate:
+            continue
+        by_gate[failed_gate] = by_gate.get(failed_gate, 0) + 1
+        instance_name = _LETF_TO_INSTANCE.get(
+            (letf_ticker or "").upper(), f"UNKNOWN-{letf_ticker}"
+        )
+        inst_bucket = by_instance_x_gate.setdefault(instance_name, {})
+        inst_bucket[failed_gate] = inst_bucket.get(failed_gate, 0) + 1
+        # First-seen reason wins (rows are DESC, so this is the most recent).
+        if failed_gate not in sample_reasons and failure_reason:
+            sample_reasons[failed_gate] = failure_reason
+
+    top_blocker = max(by_gate.items(), key=lambda kv: kv[1])[0] if by_gate else None
+    gate_failures_total = sum(by_gate.values())
+
+    # --- Open positions: current snapshot (not window-bound) ----------------
+    open_rows = _safe_query(
+        "SELECT instance_name, COUNT(*) FROM goliath_paper_positions "
+        "WHERE state IN ('OPEN', 'MANAGING', 'CLOSING') "
+        "GROUP BY instance_name"
+    )
+    open_by_instance = {
+        cfg["name"]: 0 for cfg in _INSTANCES
+    }
+    for name, count in open_rows:
+        open_by_instance[name] = int(count) if count is not None else 0
+    open_total = sum(open_by_instance.values())
+
+    return {
+        "window_days": days,
+        "window_start_utc": cutoff.isoformat(),
+        "window_end_utc": now.isoformat(),
+        "entries": {
+            "attempts": platform_attempts,
+            "filled": platform_filled,
+            "blocked": platform_blocked,
+            "fill_rate": fill_rate,
+            "by_instance": entries_by_instance,
+        },
+        "exits": {
+            "closed": closed_count,
+            "total_pnl": total_pnl,
+            "avg_pnl_per_trade": avg_pnl_per_trade,
+            "win_rate": win_rate,
+            "wins": wins,
+            "losses": losses,
+            "by_trigger": by_trigger,
+        },
+        "gate_failures": {
+            "total": gate_failures_total,
+            "top_blocker": top_blocker,
+            "by_gate": by_gate,
+            "by_instance_x_gate": by_instance_x_gate,
+            "sample_reasons": sample_reasons,
+        },
+        "open_positions": {
+            "total": open_total,
+            "platform_cap": 3,
+            "by_instance": open_by_instance,
+        },
+    }
 
 
 # ---- Config / calibration / kill-state -----------------------------------
