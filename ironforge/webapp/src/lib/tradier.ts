@@ -1190,7 +1190,13 @@ async function getOrderFillPrice(
   //
   // maxPollMs: 0 = no cap (poll forever until fill or terminal status).
   // Default 90s for opens. Pass 0 for close orders where we MUST get the fill.
-  // Backoff: 1s for first 10 polls, 2s for 10-20, 3s after that.
+  // Backoff (2026-05-15 tightened from 1s/2s/3s to 250ms/1s/2s/3s):
+  //   First 5 polls: 250ms — catches fast sandbox fills inside ~500ms of submit
+  //   Polls 6-15:    1000ms — standard cadence
+  //   Polls 16-25:   2000ms
+  //   Polls 26+:     3000ms
+  // Trade-off: a few extra Tradier API calls per order (5 vs 1 in the first
+  // second) in exchange for cutting fill-detection latency by ~750ms.
   const startMs = Date.now()
   const MAX_POLL_MS = maxPollMs
   let attempt = 0
@@ -1198,7 +1204,7 @@ async function getOrderFillPrice(
 
   while (MAX_POLL_MS === 0 || Date.now() - startMs < MAX_POLL_MS) {
     attempt++
-    const delay = attempt <= 10 ? 1000 : attempt <= 20 ? 2000 : 3000
+    const delay = attempt <= 5 ? 250 : attempt <= 15 ? 1000 : attempt <= 25 ? 2000 : 3000
 
     const data = await sandboxGet(
       `/accounts/${accountId}/orders/${orderId}`,
