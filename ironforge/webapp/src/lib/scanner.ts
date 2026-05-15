@@ -4994,15 +4994,21 @@ function safeRunAllScans(): void {
       return
     }
   }
-  // Defer the heavyweight 60s tick if a fast monitor is mid-cycle. Both fast
-  // monitors are bounded by a single monitorPosition() / runMonitorCycle()
-  // call (typically <5s each), so this can at worst delay the main tick by
-  // one fast-monitor window — far cheaper than racing monitorSinglePosition
-  // against itself on the same position row (duplicate cancels/reprices).
-  if (_blazeFastMonitorRunning || _sparkFastMonitorRunning || _infernoFastMonitorRunning) {
-    console.log('[scanner] fast monitor mid-tick, deferring main scan')
-    return
-  }
+  // NOTE: we intentionally do NOT gate the main scan on fast-monitor flags.
+  // An earlier version did, but a stuck fast monitor (e.g., a hung Tradier
+  // quote inside monitorPosition's Promise.allSettled — which never
+  // settles if any leg hangs) would set its `_running` flag permanently,
+  // starving the 60s main tick indefinitely. We saw exactly this in
+  // production on 2026-05-15: main scan ran fine through 14:39 CT, then
+  // hung-flag starvation kicked in at 14:40 and the bots stopped taking
+  // entries / saving equity snapshots / heartbeats for 25+ min.
+  //
+  // The original BLAZE pattern (main scan ignores fast-monitor flags;
+  // fast monitor checks _running) has been stable. The theoretical race
+  // (both call monitorSinglePosition on the same row → duplicate reprice)
+  // is mitigated at the DB level: monitorSinglePosition reads pending
+  // order state before deciding to cancel/reprice, so a second concurrent
+  // call sees the in-flight pending row and exits the reprice branch.
   _running = true
   _scanStartedAt = Date.now()
   runAllScans()
@@ -5091,7 +5097,16 @@ function safeSparkFastMonitor(): void {
   if (!sparkBot) return
 
   _sparkFastMonitorRunning = true
-  monitorPosition(sparkBot, ct)
+  // Guard against hung Tradier quotes — monitorPosition uses Promise.allSettled
+  // over leg-quote fetches and will never resolve if any leg hangs. Without
+  // this timeout, _sparkFastMonitorRunning would stay true forever and
+  // (when combined with a flag-gate on the main scan) starve the 60s tick.
+  Promise.race([
+    monitorPosition(sparkBot, ct),
+    new Promise<{ status: string; unrealizedPnl: number }>((_, reject) =>
+      setTimeout(() => reject(new Error('SPARK fast monitor timeout (45s)')), 45_000),
+    ),
+  ])
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] SPARK fast monitor error: ${msg}`)
@@ -5136,7 +5151,14 @@ function safeInfernoFastMonitor(): void {
   if (!infernoBot) return
 
   _infernoFastMonitorRunning = true
-  monitorPosition(infernoBot, ct)
+  // Same hung-quote guard as SPARK. INFERNO's multi-position fan-out makes
+  // this more likely (more legs = more chances of a hang).
+  Promise.race([
+    monitorPosition(infernoBot, ct),
+    new Promise<{ status: string; unrealizedPnl: number }>((_, reject) =>
+      setTimeout(() => reject(new Error('INFERNO fast monitor timeout (45s)')), 45_000),
+    ),
+  ])
     .catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] INFERNO fast monitor error: ${msg}`)
