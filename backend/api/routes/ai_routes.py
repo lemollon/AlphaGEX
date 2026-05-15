@@ -481,7 +481,7 @@ Maintain COUNSELOR personality - professional, helpful, and address {USER_NAME} 
         client = anthropic.Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",  # Always use latest Sonnet 4.5
+            model="claude-haiku-4-5-20251001",  # Always use latest Sonnet 4.5
             max_tokens=1500,
             messages=[
                 {
@@ -759,7 +759,7 @@ Guidelines:
         client = anthropic.Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1500,
             messages=[
                 {
@@ -1319,7 +1319,7 @@ No emojis. Format with clear sections."""
         if api_key:
             client = anthropic.Anthropic(api_key=api_key)
             message = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=1500,
                 messages=[{"role": "user", "content": briefing_prompt}]
             )
@@ -1907,7 +1907,7 @@ Address the user as "{USER_NAME}". Be helpful, witty, and professional."""
         # Call Claude
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1500,
             system=system_prompt,
             messages=messages
@@ -2286,7 +2286,7 @@ IMPORTANT RULES:
 
             # Call Claude with tools
             response = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=2000,
                 system=system_prompt,
                 tools=COUNSELOR_CLAUDE_TOOLS,
@@ -2448,7 +2448,7 @@ You have access to real-time tools. When the user asks about market data, positi
             max_iterations = 5
             for iteration in range(max_iterations):
                 response = client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
+                    model="claude-haiku-4-5-20251001",
                     max_tokens=2000,
                     system=system_prompt,
                     tools=COUNSELOR_CLAUDE_TOOLS,
@@ -2700,7 +2700,7 @@ Use COUNSELOR personality - professional, helpful, occasional dry wit. Address {
 
             client = anthropic.Anthropic(api_key=api_key)
             message = client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=1000,
                 messages=[{"role": "user", "content": explain_prompt}]
             )

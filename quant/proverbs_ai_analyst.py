@@ -105,9 +105,9 @@ class ProverbsAIAnalyst:
             logger.debug(f"[PROVERBS AI]   Max tokens: {max_tokens}")
 
             response = self.client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=max_tokens,
-                system=system_prompt,
+                model="claude-haiku-4-5-20251001",
+                max_tokens=min(max_tokens, 800),
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
                 messages=[{"role": "user", "content": user_prompt}]
             )
 

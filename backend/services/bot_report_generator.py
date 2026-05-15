@@ -705,6 +705,10 @@ def analyze_trade_with_claude(
     Returns:
         Analysis dict from Claude
     """
+    # LLM analysis disabled 2026-05-15 (cost reduction). Always use rule-based fallback.
+    return _fallback_trade_analysis(trade, ticks)
+
+    # noinspection PyUnreachableCode
     if not CLAUDE_AVAILABLE:
         return _fallback_trade_analysis(trade, ticks)
 
@@ -900,6 +904,10 @@ def generate_daily_summary_with_claude(
             "_output_tokens": 0
         }
 
+    # LLM analysis disabled 2026-05-15 (cost reduction). Always use rule-based fallback.
+    return _fallback_daily_summary(trades, trade_analyses)
+
+    # noinspection PyUnreachableCode
     if not CLAUDE_AVAILABLE:
         return _fallback_daily_summary(trades, trade_analyses)
 
