@@ -50,6 +50,7 @@ scipy>=1.11.0
 
 # Background Jobs (for auto trader scheduler)
 apscheduler>=3.10.4
+schedule>=1.2.0  # used by data/automated_data_collector.py
 
 # Redis (optional - for WebSocket scaling)
 redis>=5.0.1
