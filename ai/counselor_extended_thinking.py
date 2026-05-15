@@ -103,18 +103,15 @@ Provide your analysis with:
         start_time = time.time()
 
         # Use Extended Thinking with configurable model
-        model = os.getenv("COUNSELOR_EXTENDED_THINKING_MODEL", DEFAULT_EXTENDED_THINKING_MODEL)
+        # Default downgraded to Haiku 4.5 (2026-05-15) for cost reduction. Override via env var if Sonnet needed.
+        model = os.getenv("COUNSELOR_EXTENDED_THINKING_MODEL", "claude-haiku-4-5-20251001")
         response = client.messages.create(
             model=model,
-            max_tokens=8000,
-            thinking={
-                "type": "enabled",
-                "budget_tokens": max(1024, thinking_budget)
-            },
+            max_tokens=2000,
             messages=[
                 {"role": "user", "content": full_prompt}
             ],
-            system=system_prompt
+            system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         )
 
         duration_ms = int((time.time() - start_time) * 1000)

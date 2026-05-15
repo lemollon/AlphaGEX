@@ -95,14 +95,29 @@ def generate_scan_explanation(context: ScanContext) -> Dict[str, str]:
         # Fallback to rule-based explanation if no API key
         return _generate_fallback_explanation(context)
 
+    # Cost-reduction gates (added 2026-05-15):
+    # - Only call Claude for actual TRADED decisions (skip NO_TRADE / SKIP / errors)
+    # - Skip on weekends (markets closed)
+    if context.decision_type != DecisionType.TRADED:
+        return _generate_fallback_explanation(context)
+
+    from datetime import datetime
+    try:
+        import pytz
+        _now_ct = datetime.now(pytz.timezone('America/Chicago'))
+    except ImportError:
+        _now_ct = datetime.now()
+    if _now_ct.weekday() >= 5:
+        return _generate_fallback_explanation(context)
+
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
         prompt = _build_explanation_prompt(context)
 
         response = client.messages.create(
-            model="claude-3-haiku-20240307",  # Fast and cheap for quick explanations
-            max_tokens=500,
+            model="claude-haiku-4-5-20251001",  # Cost-optimized
+            max_tokens=300,
             messages=[
                 {"role": "user", "content": prompt}
             ]

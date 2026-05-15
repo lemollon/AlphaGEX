@@ -394,9 +394,19 @@ async def generate_devotional_with_claude(
     scriptures: List[Dict[str, str]]
 ) -> Dict[str, Any]:
     """
-    Use Claude AI to generate a Bible study and morning prayer
-    based on today's REAL economic/financial news and selected scriptures.
+    Daily Manna LLM generation disabled 2026-05-15 (cost reduction; feature deprecated).
+    Returns a static placeholder. The frontend page/widget still renders but no Claude
+    spend occurs. Remove the dashboard widget separately if a cleaner UI is desired.
     """
+    return {
+        "bible_study": "Daily Manna is currently unavailable.",
+        "morning_prayer": "Lord, guide our steps today as we navigate the markets with wisdom and integrity. Amen.",
+        "reflection_questions": ["How can I honor God with my financial decisions today?"],
+        "key_insight": "Trust in the Lord with all your heart.",
+        "theme": "Divine Guidance"
+    }
+
+    # noinspection PyUnreachableCode
     try:
         import anthropic
 

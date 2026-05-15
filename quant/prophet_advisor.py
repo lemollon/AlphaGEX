@@ -679,7 +679,14 @@ class ProphetClaudeEnhancer:
     3. Identify patterns in training data
     """
 
-    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - latest model
+    CLAUDE_MODEL = "claude-haiku-4-5-20251001"  # Haiku 4.5 - cost-optimized for routine validation
+
+    # Cost-reduction gates (added 2026-05-15):
+    # - Skip Claude when XGBoost is confident: win_prob outside [LOW, HIGH] band
+    # - Skip Claude on weekends (markets closed)
+    # Live trading falls back to raw XGBoost recommendation (recommendation="AGREE")
+    CONFIDENCE_GATE_LOW = 0.55
+    CONFIDENCE_GATE_HIGH = 0.75
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize Claude AI enhancer"""
@@ -780,6 +787,31 @@ class ProphetClaudeEnhancer:
                 recommendation="AGREE"
             )
 
+        # Weekend gate: markets closed Sat/Sun, no need to spend on validation
+        from datetime import datetime
+        import pytz
+        _now_ct = datetime.now(pytz.timezone('America/Chicago'))
+        if _now_ct.weekday() >= 5:
+            return ClaudeAnalysis(
+                analysis="Skipped: weekend (markets closed)",
+                confidence_adjustment=0.0,
+                risk_factors=[],
+                opportunities=[],
+                recommendation="AGREE"
+            )
+
+        # Confidence gate: only spend on Claude validation when XGBoost is uncertain.
+        # Skip on high-confidence WIN (>=HIGH) or high-confidence SKIP (<=LOW).
+        _win_prob = ml_prediction.get('win_probability', 0.68)
+        if _win_prob >= self.CONFIDENCE_GATE_HIGH or _win_prob <= self.CONFIDENCE_GATE_LOW:
+            return ClaudeAnalysis(
+                analysis=f"Skipped: XGBoost confident at {_win_prob:.1%} (gate: {self.CONFIDENCE_GATE_LOW:.0%}-{self.CONFIDENCE_GATE_HIGH:.0%})",
+                confidence_adjustment=0.0,
+                risk_factors=[],
+                opportunities=[],
+                recommendation="AGREE"
+            )
+
         day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
         system_prompt = """You are an expert options trading analyst validating ML predictions for the Prophet system.
@@ -839,11 +871,11 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             start_time = time.time()
             message = self._client.messages.create(
                 model=self.CLAUDE_MODEL,
-                max_tokens=1024,
+                max_tokens=384,
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
-                system=system_prompt
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
             )
             response_time_ms = int((time.time() - start_time) * 1000)
 
@@ -1137,11 +1169,11 @@ Write a clear explanation for the trader."""
         try:
             message = self._client.messages.create(
                 model=self.CLAUDE_MODEL,
-                max_tokens=512,
+                max_tokens=256,
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
-                system=system_prompt
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
             )
 
             # Safe access to Claude response content
@@ -1282,11 +1314,11 @@ RECOMMENDATIONS:
         try:
             message = self._client.messages.create(
                 model=self.CLAUDE_MODEL,
-                max_tokens=1024,
+                max_tokens=512,
                 messages=[
                     {"role": "user", "content": user_prompt}
                 ],
-                system=system_prompt
+                system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
             )
 
             # Safe access to Claude response content
