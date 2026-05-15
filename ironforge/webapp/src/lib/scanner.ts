@@ -4999,7 +4999,7 @@ function safeRunAllScans(): void {
   // call (typically <5s each), so this can at worst delay the main tick by
   // one fast-monitor window — far cheaper than racing monitorSinglePosition
   // against itself on the same position row (duplicate cancels/reprices).
-  if (_blazeFastMonitorRunning || _sparkFastMonitorRunning) {
+  if (_blazeFastMonitorRunning || _sparkFastMonitorRunning || _infernoFastMonitorRunning) {
     console.log('[scanner] fast monitor mid-tick, deferring main scan')
     return
   }
@@ -5099,6 +5099,51 @@ function safeSparkFastMonitor(): void {
     .finally(() => { _sparkFastMonitorRunning = false })
 }
 
+/* ------------------------------------------------------------------ */
+/*  INFERNO fast monitor — PT/SL detection + reprice ladder at 20s      */
+/* ------------------------------------------------------------------ */
+
+const INFERNO_FAST_MONITOR_INTERVAL_MS = 20 * 1000 // 20s
+let _infernoFastMonitorIntervalId: ReturnType<typeof setInterval> | null = null
+let _infernoFastMonitorRunning = false
+
+// INFERNO is 0DTE SPY iron condor (FORTRESS-style) — multi-position,
+// unlimited trades/day. PT tiers per the 5/12 retune (PR #2288):
+// 65/40/65 for MORNING/MIDDAY/AFTERNOON. Same 60s detection lag risk
+// as SPARK, amplified by the multi-position fan-out: when several
+// positions hit PT simultaneously near the close, the 60s tick + serial
+// reprice ladder leaves later positions stranded as the bid/ask moves.
+//
+// Mirrors safeSparkFastMonitor exactly — only monitorPosition for the
+// INFERNO bot, no entry logic, no equity snapshots, no sandbox cleanup.
+// Same 20s cadence as SPARK (same 4-leg quote + reprice path weight).
+function safeInfernoFastMonitor(): void {
+  if (
+    _running ||
+    _blazeFastMonitorRunning ||
+    _sparkFastMonitorRunning ||
+    _infernoFastMonitorRunning
+  ) return
+  const ct = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+  )
+  const dow = ct.getDay()
+  if (dow === 0 || dow === 6) return
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+  if (hhmm < 830 || hhmm > 1555) return
+
+  const infernoBot = BOTS.find(b => b.name === 'inferno')
+  if (!infernoBot) return
+
+  _infernoFastMonitorRunning = true
+  monitorPosition(infernoBot, ct)
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] INFERNO fast monitor error: ${msg}`)
+    })
+    .finally(() => { _infernoFastMonitorRunning = false })
+}
+
 export function startScanner(): void {
   if (_started) return
   _started = true
@@ -5112,10 +5157,12 @@ export function startScanner(): void {
   _intervalId = setInterval(safeRunAllScans, SCAN_INTERVAL_MS)
   _blazeFastMonitorIntervalId = setInterval(safeBlazeFastMonitor, BLAZE_FAST_MONITOR_INTERVAL_MS)
   _sparkFastMonitorIntervalId = setInterval(safeSparkFastMonitor, SPARK_FAST_MONITOR_INTERVAL_MS)
+  _infernoFastMonitorIntervalId = setInterval(safeInfernoFastMonitor, INFERNO_FAST_MONITOR_INTERVAL_MS)
 
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
   console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
+  console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */
