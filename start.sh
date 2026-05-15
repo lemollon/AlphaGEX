@@ -70,9 +70,14 @@ echo ""
 # was the bottleneck behind p99 latency spiking to 35-38s when the 5 perp
 # dashboards each fired multiple sync calls into CoinGlass / Anthropic.
 echo "🚀 Starting FastAPI server on port ${PORT:-8000} with ${WEB_CONCURRENCY:-4} workers..."
+# --ws wsproto: bypass the `websockets` library (uvicorn 0.30+ tries to import
+# `websockets.legacy.server` which is unreliable across websockets package
+# versions — saw recurring ModuleNotFoundError in Render deploys 2026-05-14).
+# wsproto is already installed and is uvicorn's official alternative backend.
 python -m uvicorn backend.main:app \
     --host 0.0.0.0 \
     --port ${PORT:-8000} \
     --workers ${WEB_CONCURRENCY:-4} \
     --log-level info \
-    --access-log
+    --access-log \
+    --ws wsproto
