@@ -4994,6 +4994,15 @@ function safeRunAllScans(): void {
       return
     }
   }
+  // Defer the heavyweight 60s tick if a fast monitor is mid-cycle. Both fast
+  // monitors are bounded by a single monitorPosition() / runMonitorCycle()
+  // call (typically <5s each), so this can at worst delay the main tick by
+  // one fast-monitor window — far cheaper than racing monitorSinglePosition
+  // against itself on the same position row (duplicate cancels/reprices).
+  if (_blazeFastMonitorRunning || _sparkFastMonitorRunning) {
+    console.log('[scanner] fast monitor mid-tick, deferring main scan')
+    return
+  }
   _running = true
   _scanStartedAt = Date.now()
   runAllScans()
@@ -5044,6 +5053,52 @@ function safeBlazeFastMonitor(): void {
     .finally(() => { _blazeFastMonitorRunning = false })
 }
 
+/* ------------------------------------------------------------------ */
+/*  SPARK fast monitor — PT/SL detection + reprice ladder at 20s        */
+/* ------------------------------------------------------------------ */
+
+const SPARK_FAST_MONITOR_INTERVAL_MS = 20 * 1000 // 20s
+let _sparkFastMonitorIntervalId: ReturnType<typeof setInterval> | null = null
+let _sparkFastMonitorRunning = false
+
+// SPARK is 1DTE SPY iron condor with PT=30% of credit. Cost-to-close can
+// dip through PT and retreat inside a 60s window — at the main scanner's
+// 1-min cadence SPARK literally cannot see the print. Worse, the
+// slippage-reprice ladder (PR #2261) advances exactly one step per scan
+// tick, so a missed first-attempt fill costs another full minute before
+// the ladder switches to ask-crossing.
+//
+// This fast loop only calls monitorPosition() for the SPARK bot — no
+// entry signals, no equity snapshots, no sandbox cleanup. Skips when the
+// main 60s scan or any fast monitor is running, so it never double-fires
+// monitorSinglePosition against the same position row.
+//
+// Cadence chosen as 20s (vs BLAZE's 15s): SPARK's monitor fetches 4 leg
+// quotes + may submit a reprice order, materially heavier than BLAZE's
+// 2-leg spread. 20s gives Tradier breathing room while still cutting
+// median detection lag from ~30s (60s/2) to ~10s (20s/2).
+function safeSparkFastMonitor(): void {
+  if (_running || _blazeFastMonitorRunning || _sparkFastMonitorRunning) return
+  const ct = new Date(
+    new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }),
+  )
+  const dow = ct.getDay()
+  if (dow === 0 || dow === 6) return
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+  if (hhmm < 830 || hhmm > 1555) return
+
+  const sparkBot = BOTS.find(b => b.name === 'spark')
+  if (!sparkBot) return
+
+  _sparkFastMonitorRunning = true
+  monitorPosition(sparkBot, ct)
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] SPARK fast monitor error: ${msg}`)
+    })
+    .finally(() => { _sparkFastMonitorRunning = false })
+}
+
 export function startScanner(): void {
   if (_started) return
   _started = true
@@ -5056,9 +5111,11 @@ export function startScanner(): void {
   // Persistent interval
   _intervalId = setInterval(safeRunAllScans, SCAN_INTERVAL_MS)
   _blazeFastMonitorIntervalId = setInterval(safeBlazeFastMonitor, BLAZE_FAST_MONITOR_INTERVAL_MS)
+  _sparkFastMonitorIntervalId = setInterval(safeSparkFastMonitor, SPARK_FAST_MONITOR_INTERVAL_MS)
 
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
+  console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */
