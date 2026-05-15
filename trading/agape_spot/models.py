@@ -1,7 +1,7 @@
 """
 AGAPE-SPOT Models - Multi-ticker 24/7 Coinbase Spot trading.
 
-Supports: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD, MSTU-USD
+Supports: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD
 LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
 P&L = (exit - entry) * quantity (always long).
 """
@@ -138,37 +138,6 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_scans_between_trades": 10,     # 10 min cooldown
         "max_positions": 1,
     },
-    "MSTU-USD": {
-        "symbol": "MSTU",
-        "display_name": "T-Rex 2X Long MSTR ETF",
-        "starting_capital": 1000.0,
-        # live_capital removed — executor reads real Coinbase USD balance at order time
-        "default_quantity": 10.0,           # ~$53 at $5.32
-        "min_order": 0.01,                  # Coinbase supports fractional shares
-        "max_per_trade": 500.0,
-        "min_notional_usd": 1.0,
-        "quantity_decimals": 2,             # Fractional shares to 2 decimals
-        "price_decimals": 2,
-        # MSTU exit params: 2x leveraged ETF — moves fast, wider stops to avoid whipsaws
-        "no_loss_activation_pct": 1.0,      # 2x leverage = big swings, wait for real move
-        "no_loss_trail_distance_pct": 0.75, # Trail 0.75% behind HWM
-        "max_unrealized_loss_pct": 1.5,     # 2x leverage can gap — give room
-        "no_loss_profit_target_pct": 0.0,   # Disabled — let trail manage
-        "max_hold_hours": 6,                # Was 4h — MSTU trends with BTC, needs room to run
-        # Signal quality gates — stock/ETF on Coinbase, no crypto funding data
-        "require_funding_data": False,      # Not a crypto asset — no Deribit funding
-        "allow_base_long": True,            # Allow entry on momentum alone
-        "use_eth_leader": True,             # MSTU tracks MSTR which tracks BTC — ETH/BTC correlated
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 10,     # 10 min spacing — lower liquidity than crypto
-        "max_positions": 2,                 # Conservative — new ticker, let it prove itself
-        # Market hours: MSTU is a US stock ETF — only trades Mon-Fri during market hours
-        "market_hours_only": True,          # Skip scanning outside US equity market hours
-        "market_open_hour": 8,              # 8:30 AM CT (Central Time)
-        "market_open_minute": 30,
-        "market_close_hour": 15,            # 3:00 PM CT
-        "market_close_minute": 0,
-    },
 }
 
 
@@ -209,7 +178,7 @@ class AgapeSpotConfig:
     # Tickers NOT in this list run in paper mode regardless of global mode.
     # ETH-USD and BTC-USD use COINBASE_DEDICATED_API_KEY (shared dedicated account).
     live_tickers: List[str] = field(
-        default_factory=lambda: ["ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD", "MSTU-USD"]
+        default_factory=lambda: ["ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"]
     )
 
     # Risk management (shared)
