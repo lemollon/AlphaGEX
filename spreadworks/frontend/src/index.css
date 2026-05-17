@@ -363,6 +363,88 @@ button:disabled {
   color: #fff;
 }
 
+/* Stat-strip cards — used in Positions header + GEX Profile metrics
+   row. Flat surface, generous padding, big mono value. */
+.sw-stat-card {
+  @apply px-3.5 py-3 rounded-[var(--radius-md)] flex flex-col gap-1;
+  background: var(--color-bg-card);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+.sw-stat-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  color: var(--color-text-primary);
+  line-height: 1.15;
+}
+.sw-stat-sublabel {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  letter-spacing: 0;
+}
+
+/* Chart header row — used for "Intraday 5m · Price + Net Gamma" + view tabs */
+.sw-chart-header {
+  @apply flex items-center gap-3 px-4 py-2.5 border-b border-white/5 font-[var(--font-ui)] text-[13px] flex-wrap;
+  background: var(--color-bg-base);
+}
+
+/* Strike badges for Positions cards — LP / SP / SC / LC */
+.sw-strike-badge {
+  @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-[11px] font-bold uppercase tracking-wider;
+  font-family: var(--font-ui);
+  border: 1px solid transparent;
+}
+.sw-strike-badge--put-long {
+  background: var(--color-sw-green-dim);
+  border-color: rgba(34, 197, 94, 0.25);
+  color: var(--color-sw-green);
+}
+.sw-strike-badge--put-short {
+  background: var(--color-sw-red-dim);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: var(--color-sw-red);
+}
+.sw-strike-badge--call-short {
+  background: var(--color-sw-red-dim);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: var(--color-sw-red);
+}
+.sw-strike-badge--call-long {
+  background: var(--color-sw-green-dim);
+  border-color: rgba(34, 197, 94, 0.25);
+  color: var(--color-sw-green);
+}
+.sw-strike-badge .strike-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Empty position slot — prominent placeholder */
+.sw-empty-card {
+  @apply rounded-[var(--radius-md)] grid place-items-center text-center text-[11px] font-semibold uppercase tracking-wider;
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  color: var(--color-text-muted);
+  min-height: 200px;
+  padding: 16px;
+}
+
+/* Inline chart legend (line-style swatches + labels) */
+.sw-chart-legend {
+  @apply flex items-center gap-4 flex-wrap text-[11px] text-text-tertiary px-4 py-2 border-t border-white/5;
+  background: var(--color-bg-base);
+  font-family: var(--font-ui);
+}
+
 /* Calculate primary button — 44px per brand book */
 .sw-btn-primary-tall {
   @apply px-4 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150 flex items-center justify-center gap-2;
