@@ -10,8 +10,10 @@
 @import "tailwindcss";
 
 @theme {
-  /* Background layers (3-step depth, per brand book) */
-  --color-bg-base: #07090f;
+  /* Background layers (3-step depth, per brand book).
+     bg-base matches the canonical mockup (#050810) — see
+     SpreadWorks Design System/ui_kits/builder/index.html. */
+  --color-bg-base: #050810;
   --color-bg-surface: #0a0e1a;
   --color-bg-elevated: #11151f;
   --color-bg-card: #11151f;
