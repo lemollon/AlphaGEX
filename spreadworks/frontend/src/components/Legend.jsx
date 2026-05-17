@@ -4,7 +4,7 @@ export default function Legend({ interval = '15min', barCount = 80 }) {
     { type: 'swatch', color: '#ef5350', label: 'Bearish' },
     { type: 'line', color: '#22c55e', dash: true, label: 'Long Strike' },
     { type: 'line', color: '#ef4444', dash: true, label: 'Short Strike' },
-    { type: 'line', color: '#ffd600', dash: true, label: 'GEX Flip' },
+    { type: 'line', color: '#eab308', dash: true, label: 'GEX Flip' },
     { type: 'swatch', color: 'rgba(34, 197, 94, 0.25)', label: 'Profit' },
     { type: 'swatch', color: 'rgba(239, 68, 68, 0.25)', label: 'Loss' },
   ];

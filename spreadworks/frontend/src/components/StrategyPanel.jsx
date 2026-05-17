@@ -592,27 +592,27 @@ export default function StrategyPanel({
   };
 
   return (
-    <div className="w-[312px] min-w-[312px] border-r border-white/5 px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-3.5 h-full bg-bg-base">
+    <div className="w-[312px] min-w-[312px] border-r border-white/5 px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-4 h-full bg-bg-base">
 
       {/* Strategy */}
-      <div className="sw-card p-3.5">
+      <div className="sw-sidebar-section">
         <div className="sw-label mb-2.5">Strategy</div>
-        <div className="sw-toggle-group flex-wrap">
-          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'active' : ''}`}
+        <div className="sw-strategy-grid">
+          <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_DIAGONAL)}>Dbl Diagonal</button>
-          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.DOUBLE_CALENDAR ? 'active' : ''}`}
+          <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.DOUBLE_CALENDAR ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}>Dbl Calendar</button>
-          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.IRON_CONDOR ? 'active' : ''}`}
+          <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.IRON_CONDOR ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}>Iron Condor</button>
-          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.BUTTERFLY ? 'active' : ''}`}
+          <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.BUTTERFLY ? 'active' : ''}`}
             onClick={() => setStrategy(STRATEGY_TYPES.BUTTERFLY)}>Butterfly</button>
-          <button className={`sw-toggle-btn ${strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? 'active' : ''}`}
+          <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? 'active' : ''} col-span-2`}
             onClick={() => setStrategy(STRATEGY_TYPES.IRON_BUTTERFLY)}>Iron Fly</button>
         </div>
       </div>
 
       {/* Input Mode */}
-      <div className="sw-card p-3.5">
+      <div className="sw-sidebar-section">
         <div className="sw-label mb-2.5">Input Mode</div>
         <div className="sw-toggle-group">
           <button className={`sw-toggle-btn ${inputMode === INPUT_MODES.LIVE_CHAIN ? 'active' : ''}`}
@@ -713,7 +713,7 @@ export default function StrategyPanel({
       )}
 
       {/* Strike Inputs */}
-      <div className="sw-card p-3.5">
+      <div className="sw-sidebar-section">
         {strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? (
           <>
             <div className="sw-section-divider text-sw-green">
@@ -887,7 +887,7 @@ export default function StrategyPanel({
       {/* Action Buttons */}
       <div className="flex flex-col gap-1.5">
         <button
-          className="sw-btn-primary w-full flex items-center justify-center gap-2"
+          className="sw-btn-primary-tall w-full"
           onClick={handleCalculate}
           disabled={!isFormValid() || calcLoading || loading}
         >
@@ -930,7 +930,7 @@ export default function StrategyPanel({
       </div>
 
       {/* Price Alerts */}
-      <div className="sw-card p-3.5">
+      <div className="sw-sidebar-section">
         <div className="sw-label mb-2.5 flex items-center gap-1.5">
           <Bell size={12} />
           Price Alerts

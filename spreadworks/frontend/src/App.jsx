@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import { Layers, BarChart3, Activity, Clock, Menu, X, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
@@ -73,10 +73,36 @@ function NextPostCountdown() {
 
   if (!text) return null;
   return (
-    <span className="flex items-center gap-1.5 text-text-muted text-[11px] font-medium font-[var(--font-ui)]">
-      <Clock size={12} className="opacity-60" />
+    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-sw-red-dim border border-sw-red/15 text-sw-red font-[var(--font-ui)]">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-sw-red animate-pulse-dot" />
       {text}
-    </span>
+    </div>
+  );
+}
+
+function DatePill() {
+  const [label, setLabel] = useState('');
+  useEffect(() => {
+    const update = () => {
+      const d = new Date();
+      setLabel(
+        d.toLocaleDateString('en-US', {
+          timeZone: 'America/Chicago',
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        })
+      );
+    };
+    update();
+    const iv = setInterval(update, 60_000);
+    return () => clearInterval(iv);
+  }, []);
+  if (!label) return null;
+  return (
+    <div className="flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wide bg-sw-red-dim border border-sw-red/15 text-sw-red font-[var(--font-ui)]">
+      {label}
+    </div>
   );
 }
 
@@ -93,12 +119,12 @@ function NavBar() {
         </span>
       </div>
 
-      {/* Nav Links */}
+      {/* Nav Links — active tab is filled accent per brand book */}
       <div className="flex items-center gap-1.5 h-full">
         <NavLink to="/" end className={({ isActive }) =>
           `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              ? 'text-white bg-accent'
               : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
@@ -108,7 +134,7 @@ function NavBar() {
         <NavLink to="/positions" className={({ isActive }) =>
           `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              ? 'text-white bg-accent'
               : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
@@ -118,7 +144,7 @@ function NavBar() {
         <NavLink to="/gex-profile" className={({ isActive }) =>
           `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              ? 'text-white bg-accent'
               : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
@@ -127,8 +153,9 @@ function NavBar() {
         </NavLink>
       </div>
 
-      <div className="ml-auto flex items-center gap-4">
+      <div className="ml-auto flex items-center gap-2.5">
         <NextPostCountdown />
+        <DatePill />
         <MarketStatusBadge />
       </div>
     </nav>
