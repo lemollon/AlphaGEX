@@ -23,8 +23,10 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      <span className="sw-label">{symbol} {label}</span>
-      <span className="font-semibold text-sm font-[var(--font-mono)]" style={{ color: color || 'var(--color-text-primary)' }}>{value}</span>
+      <span className="sw-label">
+        <span className="text-white mr-0.5 font-bold">{symbol}</span>{label}
+      </span>
+      <span className="font-bold text-[18px] sw-mono tracking-tight" style={{ color: color || 'var(--color-text-primary)' }}>{value}</span>
       {hovered && tooltip && (
         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-md text-[11px] leading-snug text-text-secondary whitespace-nowrap z-10 pointer-events-none animate-fade-in bg-bg-elevated border border-border-default shadow-md">
           {tooltip}
@@ -117,27 +119,27 @@ export default function MetricsBar({ calcResult }) {
               isPct ? 'border-accent bg-accent/15 text-accent' : 'border-white/5 bg-transparent text-text-muted'
             }`} onClick={toggleUnit}>%</button>
           </div>
-          <span className="font-bold text-[15px] font-[var(--font-mono)]" style={{ color: creditColor }}>{creditVal}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight" style={{ color: creditColor }}>{creditVal}</span>
         </div>
         <div className={cellCls(1)} onMouseEnter={() => setHoveredIdx(1)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Max Profit</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-green">{maxProfitStr}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight text-sw-green">{maxProfitStr}</span>
         </div>
         <div className={cellCls(2)} onMouseEnter={() => setHoveredIdx(2)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Max Loss</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-red">{maxLossStr}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight text-sw-red">{maxLossStr}</span>
         </div>
         <div className={cellCls(3)} onMouseEnter={() => setHoveredIdx(3)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Chance of Profit</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-accent">{cop}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight text-accent">{cop}</span>
         </div>
         <div className={cellCls(4)} onMouseEnter={() => setHoveredIdx(4)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Breakevens</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-text-primary">${beLower} &mdash; ${beUpper}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight text-text-primary">${beLower} &mdash; ${beUpper}</span>
         </div>
         <div className={cellCls(5)} onMouseEnter={() => setHoveredIdx(5)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Implied Vol</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-text-primary">{iv}</span>
+          <span className="font-bold text-[18px] sw-mono tracking-tight text-text-primary">{iv}</span>
         </div>
       </div>
       {/* Row 2: Greeks */}
