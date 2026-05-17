@@ -16,16 +16,16 @@ interface MetricsBarProps {
   metrics?: {
     net_credit: number | null
     max_profit: number | null
-    /** Theoretical wing-breach loss if held to expiry without SL firing.
-     * Kept as a tail callout only — NOT the headline number for same-day
-     * exit bots. */
+    /** True max loss: full wing breach at expiration = collateral at risk.
+     * Headline figure — stops can fail (gap, hung scanner, slippage) so
+     * risk display must anchor on the worst case the position can realize. */
     max_loss_at_expiry?: number | null
-    /** Realistic SL-bounded max loss: when the stop fires at sl_mult ×
-     * credit, dollar loss = (sl_mult − 1) × credit_dollars. This is what
-     * the user actually risks per trade under normal conditions. */
-    max_loss_at_sl?: number | null
-    /** Stop-loss multiplier (sl_mult) used to compute max_loss_at_sl.
-     * Surfaced so the UI tooltip can explain "Stop at 2.0× credit". */
+    /** Configured stop-loss target: dollar loss IF the stop fires at
+     * sl_mult × credit. Surfaced as a secondary "where the stop sits"
+     * line — NOT the max-loss headline. */
+    stop_target_loss?: number | null
+    /** Stop-loss multiplier (sl_mult) used to compute stop_target_loss.
+     * Surfaced so the tooltip can explain "Stop at 2.0× credit". */
     sl_mult?: number | null
     /** Legacy alias for max_loss_at_expiry — keep until all consumers
      * migrate to the explicit fields. */
@@ -136,39 +136,35 @@ export default function MetricsBar({ metrics, legs }: MetricsBarProps) {
              do. The PayoffTable's "Same-Day Exits" section shows the real
              intraday exit targets (Morning/Midday/PM PT tiers). */}
         <MetricCell label="Max Profit @ Exp" value={fmtMoney0(m.max_profit)} valueClass="text-emerald-400 text-base" />
-        {/* Headline "Max Loss" — the realistic SL-bounded number, NOT the
-            wing-breach theoretical. For SPARK/FLAME with sl=2.0× this equals
-            +Max Profit (1:1 R:R). For INFERNO with sl≈10× it is ~9× Max Profit
-            (the HOLD_TO_EOD asymmetry). The wing-breach figure moves to a
-            tooltip + footnote so operators see it without it being alarming
-            as the headline. Falls back to max_loss when sl_mult is unknown
-            (no config row yet, cold-start case). */}
+        {/* Headline "Max Loss" — the TRUE wing-breach figure (collateral at
+            risk). Stops can fail (gap moves, hung scanner, slippage 10–50%
+            past trigger) so the headline anchors on the worst case the
+            position can realize. The configured stop-loss target moves to
+            a footnote so operators see where the stop sits without it
+            being mistaken for a hard cap on loss. */}
         {(() => {
-          const slBound = (m.max_loss_at_sl ?? null)
-          const tail = (m.max_loss_at_expiry ?? m.max_loss ?? null)
+          const wingBreach = (m.max_loss_at_expiry ?? m.max_loss ?? null)
+          const stopTarget = (m.stop_target_loss ?? null)
           const slMult = m.sl_mult ?? null
-          if (slBound != null) {
-            const slLabel = slMult != null ? `${slMult.toFixed(1)}× credit` : 'stop'
-            const tailStr = tail != null ? fmtMoney0(tail) : '—'
-            return (
-              <MetricCell
-                label="Max Loss"
-                value={fmtMoney0(slBound)}
-                valueClass="text-red-400 text-base"
-                tooltip={
-                  `Triggered when cost-to-close reaches ${slLabel}. Actual fills slip ` +
-                  `past the trigger by a few cents per share due to bid/ask spread on ` +
-                  `the closing order — realized losses commonly run 10–50% above this ` +
-                  `figure depending on chain liquidity. If the stop fails to fire (gap, ` +
-                  `quote outage, scanner down), the theoretical max held to expiry is ${tailStr}.`
-                }
-                footnote={tail != null ? `expected slippage: 10–50% over • tail: ${tailStr}` : undefined}
-              />
-            )
-          }
-          // No config — fall back to the legacy wing-breach value with the
-          // old label so we never silently show a misleading "Max Loss" of $0.
-          return <MetricCell label="Max Loss @ Exp" value={fmtMoney0(tail)} valueClass="text-red-400 text-base" />
+          const stopLabel = slMult != null ? `${slMult.toFixed(1)}× credit` : 'stop'
+          const stopStr = stopTarget != null ? fmtMoney0(stopTarget) : null
+          return (
+            <MetricCell
+              label="Max Loss"
+              value={fmtMoney0(wingBreach)}
+              valueClass="text-red-400 text-base"
+              tooltip={
+                `Full wing-breach at expiration = collateral at risk. This is the worst ` +
+                `case if the stop fails to fire (gap move, quote outage, scanner down). ` +
+                (stopStr != null
+                  ? `Configured stop fires at ${stopLabel} (≈ ${stopStr}), but actual ` +
+                    `fills slip past the trigger by 10–50% due to bid/ask spread on the ` +
+                    `closing order.`
+                  : `No stop-loss config loaded yet.`)
+              }
+              footnote={stopStr != null ? `stop target: ${stopStr} @ ${stopLabel}` : undefined}
+            />
+          )
         })()}
         <MetricCell label="POP (heuristic)" value={fmtPct(m.pop_heuristic)} valueClass="text-amber-400 text-base" />
         <MetricCell label="Breakevens" value={beStr} valueClass="text-white" />
