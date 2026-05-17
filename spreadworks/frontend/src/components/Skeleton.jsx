@@ -3,15 +3,11 @@
  */
 
 export function Shimmer({ width = 60, height = 14, style: extra }) {
+  // Brand book: flat skeletons, no gradient shimmer (no glassmorphism rule).
   return (
     <span
-      className="inline-block rounded-md animate-shimmer"
-      style={{
-        width,
-        height,
-        background: 'linear-gradient(90deg, rgba(30, 30, 70, 0.3) 0%, rgba(30, 30, 70, 0.5) 50%, rgba(30, 30, 70, 0.3) 100%)',
-        ...extra,
-      }}
+      className="inline-block rounded-md bg-bg-hover animate-pulse-dot"
+      style={{ width, height, ...extra }}
     />
   );
 }
@@ -47,7 +43,7 @@ export function MetricsBarSkeleton() {
 export function CalcOverlay() {
   return (
     <div className="absolute inset-0 flex items-center justify-center z-5"
-      style={{ background: 'rgba(7, 9, 15, 0.85)' }}>
+      style={{ background: 'rgba(5, 8, 16, 0.85)' }}>
       <div className="flex flex-col items-center gap-3.5 px-8 py-6 rounded-md border border-white/5 bg-bg-card">
         <div className="w-8 h-8 rounded-full border-2 border-border-subtle border-t-accent animate-spin-fast" />
         <span className="text-text-secondary text-xs font-semibold">Calculating...</span>
