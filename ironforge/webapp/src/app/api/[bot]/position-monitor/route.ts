@@ -124,6 +124,29 @@ export async function GET(
       })
     }
 
+    // Load sl_mult once for IC bots so the per-position "distance to SL"
+    // tracks the real configured stop. Previously hardcoded to 2.0, which
+    // was wildly wrong for INFERNO (sl≈10×) — the displayed distanceToSl
+    // and stopLossPrice on the dashboard didn't match what the scanner
+    // would actually fire on. BLAZE keeps its own hardcoded debit-based
+    // thresholds (DEFAULT_BLAZE_CONFIG) and ignores this value.
+    let icSlMult = 2.0
+    if (bot !== 'blaze') {
+      try {
+        const cfgScope = accountTypeParam === 'production' ? 'production' : 'sandbox'
+        const cfgRows = await dbQuery(
+          `SELECT stop_loss_pct
+           FROM ${botTable(bot, 'config')}
+           WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
+             ${dteFilter}
+           ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
+           LIMIT 1`,
+        )
+        const slPct = num(cfgRows[0]?.stop_loss_pct)
+        if (slPct > 0) icSlMult = slPct / 100
+      } catch { /* leave icSlMult at the 2.0 fallback */ }
+    }
+
     let anyLiveQuoteSucceeded = false
     let quoteAgeSeconds: number | undefined
     let apiSource: string | undefined
@@ -157,7 +180,7 @@ export async function GET(
           : Math.round(entryCredit * 0.7 * 10000) / 10000
         const stopLossPrice = isVertical
           ? Math.round(entryDebit * 0.70 * 10000) / 10000  // BLAZE SL −30% → debit × 0.70
-          : Math.round(entryCredit * 2.0 * 10000) / 10000
+          : Math.round(entryCredit * icSlMult * 10000) / 10000
 
         let mtm: number | null = null
         let unrealizedPnl: number | null = null

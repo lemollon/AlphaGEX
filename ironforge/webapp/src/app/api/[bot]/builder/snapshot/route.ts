@@ -317,23 +317,21 @@ export async function GET(
       metrics: {
         net_credit: Math.round(effectiveEntryCredit * 100 * contracts * 100) / 100,
         max_profit: payoff.max_profit,
-        // Theoretical max if the wing fully breaches at expiration AND the
-        // stop fails to fire. Kept for the tooltip/tail callout — NOT the
-        // headline figure for same-day exit bots.
+        // True max loss: full wing breach at expiration = collateral at risk.
+        // This is the headline number — stops can fail (gap moves, hung
+        // scanner, slippage 10–50% past trigger) so the operator's risk view
+        // must anchor on the worst case the position can realize.
         max_loss_at_expiry: payoff.max_loss,
-        // Realistic SL-bounded max loss: when the stop fires at sl_mult ×
-        // credit, the loss in dollars = (sl_mult − 1) × credit_dollars.
-        // For SPARK/FLAME (sl=2.0×) this equals net_credit (1:1 R:R).
-        // For INFERNO (sl≈10×) this is ~9× net_credit (the HOLD_TO_EOD tradeoff).
-        // Null when no config row exists yet (cold start) — UI falls back
-        // to showing only max_loss_at_expiry in that case.
-        max_loss_at_sl: slMult != null
+        // Configured stop-loss target: if the stop fires at sl_mult × credit,
+        // dollar loss = (sl_mult − 1) × credit_dollars. NOT a max-loss claim —
+        // surfaced as a secondary "where the stop sits" indicator only.
+        // Null when no config row exists yet (cold start).
+        stop_target_loss: slMult != null
           ? Math.round((slMult - 1) * effectiveEntryCredit * 100 * contracts * -100) / 100
           : null,
         sl_mult: slMult,
-        // Legacy field kept for backward compat with any older clients —
-        // alias of max_loss_at_expiry. New UI should read the explicit
-        // max_loss_at_sl / max_loss_at_expiry fields instead.
+        // Legacy alias of max_loss_at_expiry (wing-breach max). Kept for
+        // backward compat with any older clients.
         max_loss: payoff.max_loss,
         breakeven_low: payoff.breakeven_low,
         breakeven_high: payoff.breakeven_high,
