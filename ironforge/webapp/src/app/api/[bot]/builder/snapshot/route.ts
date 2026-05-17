@@ -34,10 +34,15 @@ import {
   getBatchOptionQuotesWithGreeks,
   getIcMarkToMarket,
   getQuote,
+  getVerticalMarkToMarket,
   isConfigured,
   type LegQuoteWithGreeks,
 } from '@/lib/tradier'
-import { computeIcPayoff, computePutSpreadPayoff } from '@/lib/ic-payoff'
+import {
+  computeIcPayoff,
+  computePutSpreadPayoff,
+  computeVerticalDebitPayoff,
+} from '@/lib/ic-payoff'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,6 +83,13 @@ export async function GET(
     // open positions first (ORDER BY status, then open_time DESC) so an
     // active trade wins over an older closed one. Falls through to the
     // most recent closed/expired if no open position exists.
+    // BLAZE positions store vertical-debit columns (direction, long/short
+    // strikes, debit, OCC leg symbols) alongside the IC schema. Selecting
+    // them conditionally keeps the query valid for non-blaze tables which
+    // don't have these columns.
+    const blazeCols = bot === 'blaze'
+      ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol`
+      : ''
     const rows = await dbQuery(
       `SELECT position_id, ticker, expiration,
               put_short_strike, put_long_strike, put_credit,
@@ -87,7 +99,7 @@ export async function GET(
               open_time, close_time, close_price, close_reason,
               realized_pnl, status,
               COALESCE(account_type, 'sandbox') AS account_type,
-              person
+              person${blazeCols}
        FROM ${botTable(bot, 'positions')}
        WHERE 1=1 ${dteFilter} ${accountTypeFilter}
        ORDER BY
@@ -117,55 +129,111 @@ export async function GET(
     // full entry credit.
     const putCredit = num(r.put_credit) || 0
     const isPutCreditSpread = bot === 'flame'
+    // BLAZE is a 2-leg vertical debit spread (long_strike, short_strike,
+    // debit, direction='call'|'put'). The IC schema's put_*/call_* columns
+    // hold zeros for the unused side per blaze/db.ts insert logic, so the
+    // IC payoff math would compute garbage — branch into a dedicated
+    // vertical-debit code path that uses canonical columns directly.
+    const blazeDirection: 'call' | 'put' | null = bot === 'blaze'
+      ? (r.direction === 'call' || r.direction === 'put' ? r.direction : null)
+      : null
+    const isVerticalDebit = blazeDirection != null
+    const blazeLongStrike = isVerticalDebit ? num(r.long_strike) : 0
+    const blazeShortStrike = isVerticalDebit ? num(r.short_strike) : 0
+    const blazeDebit = isVerticalDebit ? num(r.debit) : 0
     // "Effective" entry credit + spread width: what the payoff, MTM,
     // metrics, and realized-% calcs use. Derived once here and reused
-    // throughout the route so all numbers reconcile.
-    const effectiveEntryCredit = isPutCreditSpread
-      ? (putCredit > 0 ? putCredit : entryCredit)
-      : entryCredit
-    const effectiveSpreadWidth = isPutCreditSpread
-      ? (ps - pl)
-      : (num(r.spread_width) || Math.min(ps - pl, cl - cs))
+    // throughout the route so all numbers reconcile. For BLAZE, we
+    // represent debit as a NEGATIVE credit so MetricsBar's sign-based
+    // "NET CREDIT" / "NET DEBIT" label switches correctly.
+    const effectiveEntryCredit = isVerticalDebit
+      ? -blazeDebit
+      : isPutCreditSpread
+        ? (putCredit > 0 ? putCredit : entryCredit)
+        : entryCredit
+    const effectiveSpreadWidth = isVerticalDebit
+      ? Math.abs(blazeLongStrike - blazeShortStrike)
+      : isPutCreditSpread
+        ? (ps - pl)
+        : (num(r.spread_width) || Math.min(ps - pl, cl - cs))
 
-    const occ = {
-      long_put: buildOccSymbol(ticker, expiration, pl, 'P'),
-      short_put: buildOccSymbol(ticker, expiration, ps, 'P'),
-      short_call: buildOccSymbol(ticker, expiration, cs, 'C'),
-      long_call: buildOccSymbol(ticker, expiration, cl, 'C'),
-    }
+    // BLAZE positions store the OCC leg symbols directly in long_symbol /
+    // short_symbol; IC bots derive them from strikes via buildOccSymbol.
+    const blazeLongSymbol = isVerticalDebit ? String(r.long_symbol || '') : ''
+    const blazeShortSymbol = isVerticalDebit ? String(r.short_symbol || '') : ''
+    const occ = isVerticalDebit
+      ? {
+          long_put: '',
+          short_put: '',
+          short_call: '',
+          long_call: '',
+        }
+      : {
+          long_put: buildOccSymbol(ticker, expiration, pl, 'P'),
+          short_put: buildOccSymbol(ticker, expiration, ps, 'P'),
+          short_call: buildOccSymbol(ticker, expiration, cs, 'C'),
+          long_call: buildOccSymbol(ticker, expiration, cl, 'C'),
+        }
 
     // Live Tradier fetches. For CLOSED positions the legs are gone at the
     // broker, so quote/MTM calls would return zeros or 404 and pollute the
     // display — skip them entirely in that case. We still fetch the
     // underlying (spot) quote because candles + spot remain relevant
     // context regardless of whether the position is open.
-    const [quotesMap, mtm, underlyingQuote] = await Promise.all([
-      isOpen
+    //
+    // BLAZE branches: quotes come from the stored leg symbols, and MTM
+    // uses getVerticalMarkToMarket (returns value_to_close instead of
+    // cost_to_close — debit spreads are bought, not sold).
+    const blazeSymbols = isVerticalDebit && blazeLongSymbol && blazeShortSymbol
+      ? [blazeLongSymbol, blazeShortSymbol]
+      : []
+    const blazeVerticalSpreadWidth = isVerticalDebit
+      ? Math.abs(blazeLongStrike - blazeShortStrike)
+      : 0
+    const [quotesMap, mtm, blazeMtm, underlyingQuote] = await Promise.all([
+      isOpen && !isVerticalDebit
         ? getBatchOptionQuotesWithGreeks(Object.values(occ)).catch(() => ({}))
-        : Promise.resolve({}),
-      isOpen
+        : isOpen && isVerticalDebit && blazeSymbols.length === 2
+          ? getBatchOptionQuotesWithGreeks(blazeSymbols).catch(() => ({}))
+          : Promise.resolve({}),
+      isOpen && !isVerticalDebit
         ? getIcMarkToMarket(ticker, expiration, ps, pl, cs, cl, entryCredit).catch(() => null)
+        : Promise.resolve(null),
+      isOpen && isVerticalDebit && blazeSymbols.length === 2
+        ? getVerticalMarkToMarket(blazeLongSymbol, blazeShortSymbol, blazeVerticalSpreadWidth, ticker).catch(() => null)
         : Promise.resolve(null),
       getQuote(ticker).catch(() => null),
     ]) as [
       Record<string, LegQuoteWithGreeks>,
       Awaited<ReturnType<typeof getIcMarkToMarket>>,
+      Awaited<ReturnType<typeof getVerticalMarkToMarket>>,
       Awaited<ReturnType<typeof getQuote>>,
     ]
 
-    const spotPrice = underlyingQuote?.last ?? mtm?.spot_price ?? num(r.underlying_at_entry)
+    const spotPrice = underlyingQuote?.last
+      ?? mtm?.spot_price
+      ?? blazeMtm?.spot_price
+      ?? num(r.underlying_at_entry)
 
-    const legs: LegOut[] = isPutCreditSpread
+    // Legs: BLAZE returns 2 legs (long + short, both same direction);
+    // FLAME returns 2 put legs; IC bots return all 4.
+    const blazeLegType: 'P' | 'C' = blazeDirection === 'call' ? 'C' : 'P'
+    const legs: LegOut[] = isVerticalDebit
       ? [
-          { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
-          { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
+          { role: blazeLegType === 'C' ? 'long_call' : 'long_put',  strike: blazeLongStrike,  type: blazeLegType, occ_symbol: blazeLongSymbol,  ...emptyQuote() },
+          { role: blazeLegType === 'C' ? 'short_call' : 'short_put', strike: blazeShortStrike, type: blazeLegType, occ_symbol: blazeShortSymbol, ...emptyQuote() },
         ]
-      : [
-          { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
-          { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
-          { role: 'short_call', strike: cs, type: 'C', occ_symbol: occ.short_call, ...emptyQuote() },
-          { role: 'long_call', strike: cl, type: 'C', occ_symbol: occ.long_call, ...emptyQuote() },
-        ]
+      : isPutCreditSpread
+        ? [
+            { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
+            { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
+          ]
+        : [
+            { role: 'long_put', strike: pl, type: 'P', occ_symbol: occ.long_put, ...emptyQuote() },
+            { role: 'short_put', strike: ps, type: 'P', occ_symbol: occ.short_put, ...emptyQuote() },
+            { role: 'short_call', strike: cs, type: 'C', occ_symbol: occ.short_call, ...emptyQuote() },
+            { role: 'long_call', strike: cl, type: 'C', occ_symbol: occ.long_call, ...emptyQuote() },
+          ]
     if (isOpen) {
       for (const leg of legs) {
         const q = quotesMap[leg.occ_symbol]
@@ -203,21 +271,31 @@ export async function GET(
     } catch { /* no config row — leave slMult null and let UI fall back */ }
 
     // Payoff math is pure — works identically for open or closed positions.
+    // BLAZE uses the vertical-debit payoff (direction + long/short + debit);
     // FLAME uses the 2-leg put-credit-spread payoff (credit = put-side only);
     // SPARK/INFERNO keep the 4-leg IC payoff (credit = total credit).
-    const payoff = isPutCreditSpread
-      ? computePutSpreadPayoff(
-          { putLong: pl, putShort: ps },
-          effectiveEntryCredit,
+    const payoff = isVerticalDebit
+      ? computeVerticalDebitPayoff(
+          blazeDirection as 'call' | 'put',
+          blazeLongStrike,
+          blazeShortStrike,
+          blazeDebit,
           contracts,
           spotPrice,
         )
-      : computeIcPayoff(
-          { putLong: pl, putShort: ps, callShort: cs, callLong: cl },
-          effectiveEntryCredit,
-          contracts,
-          spotPrice,
-        )
+      : isPutCreditSpread
+        ? computePutSpreadPayoff(
+            { putLong: pl, putShort: ps },
+            effectiveEntryCredit,
+            contracts,
+            spotPrice,
+          )
+        : computeIcPayoff(
+            { putLong: pl, putShort: ps, callShort: cs, callLong: cl },
+            effectiveEntryCredit,
+            contracts,
+            spotPrice,
+          )
 
     const sign = (role: LegOut['role']) =>
       role === 'long_put' || role === 'long_call' ? 1 : -1
@@ -259,21 +337,37 @@ export async function GET(
     let unrealizedPnl: number | null = null
     let unrealizedPct: number | null = null
     if (isOpen) {
-      // Choose cost-basis source per strategy. For FLAME use the put-spread
-      // MTM derived above; for IC bots keep the existing getIcMarkToMarket
-      // output.
-      const costBasis = isPutCreditSpread
-        ? (putSpreadMtm?.last ?? putSpreadMtm?.mid ?? putSpreadMtm?.bidAsk)
-        : (mtm?.cost_to_close_last ?? mtm?.cost_to_close_mid)
-      if (costBasis != null && Number.isFinite(costBasis)) {
-        unrealizedPnl = Math.round((effectiveEntryCredit - costBasis) * 100 * contracts * 100) / 100
-        if (effectiveEntryCredit > 0) {
-          unrealizedPct = Math.round(((effectiveEntryCredit - costBasis) / effectiveEntryCredit) * 10000) / 100
+      if (isVerticalDebit) {
+        // Vertical debit: P&L = (value_to_close − debit) × 100 × contracts.
+        // We BOUGHT the spread, so closing it is a SELL at value_to_close.
+        const valueLast = blazeMtm?.value_to_close_last ?? blazeMtm?.value_to_close
+        if (valueLast != null && Number.isFinite(valueLast)) {
+          unrealizedPnl = Math.round((valueLast - blazeDebit) * 100 * contracts * 100) / 100
+          if (blazeDebit > 0) {
+            unrealizedPct = Math.round(((valueLast - blazeDebit) / blazeDebit) * 10000) / 100
+          }
+        }
+      } else {
+        // Choose cost-basis source per strategy. For FLAME use the put-spread
+        // MTM derived above; for IC bots keep the existing getIcMarkToMarket
+        // output.
+        const costBasis = isPutCreditSpread
+          ? (putSpreadMtm?.last ?? putSpreadMtm?.mid ?? putSpreadMtm?.bidAsk)
+          : (mtm?.cost_to_close_last ?? mtm?.cost_to_close_mid)
+        if (costBasis != null && Number.isFinite(costBasis)) {
+          unrealizedPnl = Math.round((effectiveEntryCredit - costBasis) * 100 * contracts * 100) / 100
+          if (effectiveEntryCredit > 0) {
+            unrealizedPct = Math.round(((effectiveEntryCredit - costBasis) / effectiveEntryCredit) * 10000) / 100
+          }
         }
       }
     }
 
-    // Closed-position metadata — null when open.
+    // Closed-position metadata — null when open. For BLAZE (debit) the
+    // capital-at-risk denominator is the debit paid (positive value), so
+    // we use |effectiveEntryCredit| to avoid the sign-flip that would
+    // otherwise mis-render a winning trade as a negative percent.
+    const realizedPnlDenom = Math.abs(effectiveEntryCredit) * 100 * contracts
     const closed = !isOpen
       ? {
           status: r.status as string,
@@ -281,25 +375,40 @@ export async function GET(
           close_time: r.close_time ? new Date(r.close_time).toISOString() : null,
           close_reason: r.close_reason || null,
           realized_pnl: r.realized_pnl != null ? num(r.realized_pnl) : null,
-          realized_pnl_pct: (r.realized_pnl != null && effectiveEntryCredit > 0)
-            ? Math.round((num(r.realized_pnl) / (effectiveEntryCredit * 100 * contracts)) * 10000) / 100
+          realized_pnl_pct: (r.realized_pnl != null && realizedPnlDenom > 0)
+            ? Math.round((num(r.realized_pnl) / realizedPnlDenom) * 10000) / 100
             : null,
         }
       : null
 
-    // For the put-credit-spread view (FLAME), call strikes are null'd
-    // so the chart/legs UI naturally renders only the 2 put legs.
+    // BLAZE returns a single directional pair of strikes (long + short);
+    // the unused IC side is null'd so the chart renders only those two
+    // lines. FLAME nulls the call side for the same reason.
+    const respPutLong = isVerticalDebit
+      ? (blazeDirection === 'put' ? blazeLongStrike : null)
+      : pl
+    const respPutShort = isVerticalDebit
+      ? (blazeDirection === 'put' ? blazeShortStrike : null)
+      : ps
+    const respCallShort = isVerticalDebit
+      ? (blazeDirection === 'call' ? blazeShortStrike : null)
+      : (isPutCreditSpread ? null : cs)
+    const respCallLong = isVerticalDebit
+      ? (blazeDirection === 'call' ? blazeLongStrike : null)
+      : (isPutCreditSpread ? null : cl)
     return NextResponse.json({
       tradier_connected: isConfigured(),
-      strategy_type: isPutCreditSpread ? 'put_credit_spread' : 'iron_condor',
+      strategy_type: isVerticalDebit
+        ? `vertical_debit_${blazeDirection}`
+        : isPutCreditSpread ? 'put_credit_spread' : 'iron_condor',
       position: {
         position_id: r.position_id,
         ticker,
         expiration,
-        put_long_strike: pl,
-        put_short_strike: ps,
-        call_short_strike: isPutCreditSpread ? null : cs,
-        call_long_strike: isPutCreditSpread ? null : cl,
+        put_long_strike: respPutLong,
+        put_short_strike: respPutShort,
+        call_short_strike: respCallShort,
+        call_long_strike: respCallLong,
         contracts,
         entry_credit: effectiveEntryCredit,
         spread_width: effectiveSpreadWidth,
@@ -310,6 +419,15 @@ export async function GET(
         person: r.person || null,
         status: r.status as string,
         is_open: isOpen,
+        ...(isVerticalDebit
+          ? {
+              direction: blazeDirection,
+              long_strike: blazeLongStrike,
+              short_strike: blazeShortStrike,
+              debit: blazeDebit,
+              setup_type: r.setup_type || null,
+            }
+          : {}),
       },
       spot_price: spotPrice,
       legs,
@@ -342,15 +460,26 @@ export async function GET(
         net_theta: netTheta,
         net_vega: netVega,
       },
-      mtm: isOpen && mtm
+      mtm: isOpen && isVerticalDebit && blazeMtm
         ? {
-            cost_to_close_last: mtm.cost_to_close_last,
-            cost_to_close_mid: mtm.cost_to_close_mid,
-            cost_to_close: mtm.cost_to_close,
+            // For verticals we report value_to_close (what you'd RECEIVE
+            // closing the SOLD-back debit spread) — semantically the
+            // counterpart to cost_to_close on a credit spread.
+            value_to_close_last: blazeMtm.value_to_close_last,
+            value_to_close_mid: blazeMtm.value_to_close_mid,
+            value_to_close: blazeMtm.value_to_close,
             unrealized_pnl: unrealizedPnl,
             unrealized_pnl_pct: unrealizedPct,
           }
-        : null,
+        : isOpen && mtm
+          ? {
+              cost_to_close_last: mtm.cost_to_close_last,
+              cost_to_close_mid: mtm.cost_to_close_mid,
+              cost_to_close: mtm.cost_to_close,
+              unrealized_pnl: unrealizedPnl,
+              unrealized_pnl_pct: unrealizedPct,
+            }
+          : null,
       closed,
     })
   } catch (err: unknown) {
