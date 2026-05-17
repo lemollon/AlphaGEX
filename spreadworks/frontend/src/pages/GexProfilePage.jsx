@@ -635,15 +635,15 @@ export default function GexProfilePage() {
 
 function MetricCard({ label, value, color, badge, badgeBg, badgeFg, sub }) {
   return (
-    <div className="bg-bg-card border border-border-subtle rounded-[var(--radius-lg)] px-3.5 py-2.5">
-      <div className="text-[10px] font-semibold text-text-muted uppercase tracking-widest mb-1">{label}</div>
-      <div className="flex items-center gap-1.5 text-lg font-bold font-[var(--font-mono)]" style={{ color: color || '#fff' }}>
+    <div className="sw-stat-card">
+      <div className="sw-label">{label}</div>
+      <div className="flex items-center gap-1.5 sw-stat-value" style={{ color: color || 'var(--color-text-primary)' }}>
         {value}
         {badge && (
-          <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold" style={{ background: badgeBg, color: badgeFg }}>{badge}</span>
+          <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold uppercase tracking-wider" style={{ background: badgeBg, color: badgeFg }}>{badge}</span>
         )}
       </div>
-      {sub && <div className="text-[10px] text-text-muted mt-0.5">{sub}</div>}
+      {sub && <div className="sw-stat-sublabel">{sub}</div>}
     </div>
   );
 }
