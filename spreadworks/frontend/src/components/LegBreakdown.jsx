@@ -12,8 +12,7 @@ export default function LegBreakdown({ calcResult }) {
   const tilde = isTheoretical ? '~' : '';
 
   return (
-    <div className="border-t border-border-subtle font-[var(--font-ui)] text-xs"
-      style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+    <div className="border-t border-white/5 bg-bg-base font-[var(--font-ui)] text-xs">
       <button
         className="sw-btn-ghost w-full text-left px-4 py-2 text-[11px] font-semibold tracking-wider text-text-tertiary hover:text-text-secondary flex items-center gap-1.5"
         onClick={() => setOpen(!open)}

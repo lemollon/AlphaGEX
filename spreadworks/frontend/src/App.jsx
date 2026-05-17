@@ -30,7 +30,7 @@ function MarketStatusBadge() {
     }`}>
       <span className={`inline-block w-1.5 h-1.5 rounded-full ${
         isOpen
-          ? 'bg-sw-green animate-pulse-dot shadow-[0_0_6px_rgba(34,197,94,0.5)]'
+          ? 'bg-sw-green animate-pulse-dot'
           : 'bg-sw-red'
       }`} />
       {isOpen ? 'Market Open' : statusText}
@@ -82,18 +82,13 @@ function NextPostCountdown() {
 
 function NavBar() {
   return (
-    <nav className="flex items-center h-[48px] px-5 border-b border-border-subtle shadow-lg font-[var(--font-ui)] text-[13px]"
-      style={{ background: 'linear-gradient(180deg, #0e0e28 0%, #0a0a1e 100%)' }}>
-      {/* Logo */}
-      <div className="flex items-center gap-2 pr-6 mr-4 border-r border-border-subtle/50 h-full">
-        <div className="inline-flex items-center justify-center w-[26px] h-[26px] rounded-md text-xs text-white font-extrabold"
-          style={{
-            background: 'linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%)',
-            boxShadow: '0 3px 12px rgba(68, 138, 255, 0.35)',
-          }}>
+    <nav className="flex items-center h-[56px] px-5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
+      {/* Logo — simple S mark in rounded-square, white wordmark + blue Works */}
+      <div className="flex items-center gap-2.5 pr-6 mr-4 h-full">
+        <div className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-md text-sm text-white font-black bg-accent">
           S
         </div>
-        <span className="font-extrabold text-[15px] text-white tracking-tight">
+        <span className="font-extrabold text-[17px] text-white tracking-tight">
           Spread<span className="text-accent">Works</span>
         </span>
       </div>
@@ -101,30 +96,30 @@ function NavBar() {
       {/* Nav Links */}
       <div className="flex items-center gap-1.5 h-full">
         <NavLink to="/" end className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
+          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
+              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
           <Layers size={13} />
           Builder
         </NavLink>
         <NavLink to="/positions" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
+          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
+              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
           <BarChart3 size={13} />
           Positions
         </NavLink>
         <NavLink to="/gex-profile" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-semibold tracking-wide transition-all duration-200 no-underline rounded-md ${
+          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
-              ? 'text-white bg-accent/15 border border-accent/40'
-              : 'text-text-secondary border border-transparent hover:text-white hover:bg-white/[0.06] hover:border-border-subtle'
+              ? 'text-white bg-bg-card ring-1 ring-white/5'
+              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
           }`
         }>
           <Activity size={13} />
@@ -214,8 +209,7 @@ function BuilderPage() {
       )}
       <div className="flex-1 flex flex-col min-w-0 overflow-auto">
         {/* Chart Header */}
-        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border-subtle font-[var(--font-ui)] text-[13px]"
-          style={{ background: 'linear-gradient(90deg, rgba(12, 12, 34, 0.95) 0%, rgba(10, 10, 26, 0.95) 100%)' }}>
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
           <button
             className="p-1.5 rounded-md text-text-secondary hover:text-white hover:bg-white/[0.06] transition-all duration-150 border border-transparent hover:border-border-subtle"
             onClick={() => setSidebarOpen((v) => !v)}

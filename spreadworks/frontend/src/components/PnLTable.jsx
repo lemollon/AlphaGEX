@@ -81,11 +81,11 @@ export default function PnLTable({ calcResult, viewMode: tableViewMode }) {
             {time_slices.map((ts, ci) => (
               <th key={ci}
                 className={`px-2 py-1.5 bg-bg-surface font-semibold text-[10px] text-center whitespace-nowrap sticky top-0 z-[2] ${
-                  ts.is_expiry ? 'text-accent-bright font-bold' : 'text-text-muted'
+                  ts.is_expiry ? 'text-accent font-bold' : 'text-text-muted'
                 }`}
                 style={{
-                  borderBottom: '1px solid #1a1a2e',
-                  borderRight: ts.is_expiry ? '2px solid rgba(68, 138, 255, 0.4)' : '1px solid #1a1a2e',
+                  borderBottom: '1px solid #1f2937',
+                  borderRight: ts.is_expiry ? '2px solid rgba(59, 130, 246, 0.4)' : '1px solid #1f2937',
                 }}>
                 {ts.label}
               </th>

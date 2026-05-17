@@ -36,23 +36,22 @@ export default function ControlsBar({
     : `${100 - dteSlider}% DTE remaining`;
 
   return (
-    <div className="border-t border-border-subtle px-4 py-2.5 flex flex-col gap-2 font-[var(--font-ui)] text-xs text-text-secondary"
-      style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+    <div className="border-t border-white/5 px-4 py-2.5 flex flex-col gap-2 font-[var(--font-ui)] text-xs text-text-secondary bg-bg-base">
       {/* Row 1 */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-bg-card/50 border border-border-subtle/30">
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-bg-card border border-white/5">
           <span className="sw-label">Date:</span>
-          <span className="text-accent-bright font-semibold text-xs font-[var(--font-mono)] min-w-[50px]">{dteLabel}</span>
+          <span className="text-accent font-semibold text-xs font-[var(--font-mono)] min-w-[50px]">{dteLabel}</span>
           <input type="range" min={0} max={100} defaultValue={dteSlider} onChange={handleDteSlider}
-            className="flex-1 min-w-[80px] max-w-[300px] h-[3px]" />
+            className="flex-1 min-w-[80px] max-w-[300px]" />
         </div>
 
-        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider border transition-all duration-150 ml-auto ${
+        <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold tracking-wider border transition-colors duration-150 ml-auto ${
           isMarketOpen
-            ? 'bg-sw-green-dim border-sw-green/25 text-sw-green shadow-[0_0_12px_rgba(34,197,94,0.1)]'
-            : 'bg-bg-elevated/30 border-border-subtle text-text-tertiary'
+            ? 'bg-sw-green-dim border-sw-green/25 text-sw-green'
+            : 'bg-bg-card border-white/5 text-text-tertiary'
         }`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${isMarketOpen ? 'bg-sw-green animate-pulse-dot shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-text-tertiary'}`} />
+          <span className={`w-1.5 h-1.5 rounded-full ${isMarketOpen ? 'bg-sw-green animate-pulse-dot' : 'bg-text-tertiary'}`} />
           {isMarketOpen ? 'LIVE' : 'CLOSED'}
         </div>
         <span className="text-text-muted text-[11px]">
@@ -73,7 +72,7 @@ export default function ControlsBar({
 
       {/* Row 2 */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-bg-card/50 border border-border-subtle/30">
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-bg-card border border-white/5">
           <span className="sw-label">Range: &plusmn;{rangePct.toFixed(1)}%</span>
           <input type="range" min={10} max={100} value={rangePct * 10}
             onChange={(e) => onRangeChange(Number(e.target.value) / 10)}
@@ -82,9 +81,9 @@ export default function ControlsBar({
         <button className="sw-btn-ghost !px-2 !py-1 flex items-center gap-1 text-text-tertiary hover:text-accent" onClick={onRefreshIv} title="Refresh IV">
           <RefreshCw size={12} />
         </button>
-        <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-bg-card/50 border border-border-subtle/30">
+        <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-bg-card border border-white/5">
           <span className="sw-label">Implied Volatility:</span>
-          <span className="text-accent-bright font-semibold text-xs font-[var(--font-mono)] min-w-[50px]">&times;{ivMultiplier.toFixed(1)}</span>
+          <span className="text-accent font-semibold text-xs font-[var(--font-mono)] min-w-[50px]">&times;{ivMultiplier.toFixed(1)}</span>
           <input type="range" min={10} max={30} value={ivMultiplier * 10}
             onChange={(e) => onIvMultiplierChange(Number(e.target.value) / 10)}
             className="flex-1 min-w-[80px] max-w-[150px] h-[3px]" />

@@ -1,63 +1,70 @@
-/* ── SpreadWorks Design System v3 — Tailwind v4 ── */
+/* ── SpreadWorks Design System — Tailwind v4 ──
+   Source of truth for tokens lives in
+   ../../../SpreadWorks Design System/colors_and_type.css
+   (see README for the full brand book). Values mirrored here so Tailwind
+   classes resolve to the canonical palette.
+*/
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 @import "tailwindcss";
 
 @theme {
-  /* Background layers */
-  --color-bg-base: #050510;
-  --color-bg-surface: #0a0a1a;
-  --color-bg-elevated: #10102a;
-  --color-bg-card: #0d0d22;
-  --color-bg-card-hover: #141435;
-  --color-bg-hover: #1a1a3a;
+  /* Background layers (3-step depth, per brand book) */
+  --color-bg-base: #07090f;
+  --color-bg-surface: #0a0e1a;
+  --color-bg-elevated: #11151f;
+  --color-bg-card: #11151f;
+  --color-bg-card-hover: #1a1f2e;
+  --color-bg-hover: #1a1f2e;
 
-  /* Borders */
-  --color-border-subtle: #1e1e45;
-  --color-border-default: #2a2a55;
-  --color-border-accent: rgba(68, 138, 255, 0.3);
+  /* Borders — subtle, the spec calls for rgba(255,255,255,0.04) on most
+     surfaces and a 1px accent border on active items */
+  --color-border-subtle: #1f2937;
+  --color-border-default: #374151;
+  --color-border-accent: rgba(59, 130, 246, 0.3);
 
-  /* Accent — Electric Blue (trading terminal) */
-  --color-accent: #448aff;
-  --color-accent-glow: rgba(68, 138, 255, 0.2);
-  --color-accent-hover: #5c9aff;
-  --color-accent-bright: #82b1ff;
-  --color-accent-dim: rgba(68, 138, 255, 0.12);
+  /* Accent — Electric Blue, used surgically (primary action + active state) */
+  --color-accent: #3b82f6;
+  --color-accent-glow: rgba(59, 130, 246, 0.2);
+  --color-accent-hover: #2563eb;
+  --color-accent-bright: #60a5fa;
+  --color-accent-dim: rgba(59, 130, 246, 0.12);
 
-  /* Secondary blue */
-  --color-blue: #448aff;
-  --color-blue-bright: #82b1ff;
-  --color-blue-dim: rgba(68, 138, 255, 0.12);
+  /* Aliases — keep so existing utility classes still resolve */
+  --color-blue: #3b82f6;
+  --color-blue-bright: #60a5fa;
+  --color-blue-dim: rgba(59, 130, 246, 0.12);
 
-  /* Semantic */
+  /* Semantic — PUT side = green / CALL side = red is sacred */
   --color-sw-green: #22c55e;
   --color-sw-green-dim: rgba(34, 197, 94, 0.12);
   --color-sw-red: #ef4444;
   --color-sw-red-dim: rgba(239, 68, 68, 0.12);
-  --color-sw-yellow: #ffd600;
-  --color-sw-yellow-dim: rgba(255, 214, 0, 0.1);
-  --color-sw-purple: #a855f7;
-  --color-sw-purple-dim: rgba(168, 85, 247, 0.12);
+  --color-sw-yellow: #eab308;             /* GEX flip — signature visual */
+  --color-sw-yellow-dim: rgba(234, 179, 8, 0.12);
+  --color-sw-purple: #8b5cf6;
+  --color-sw-purple-dim: rgba(139, 92, 246, 0.12);
 
   /* Text */
-  --color-text-primary: #e2e8f0;
-  --color-text-secondary: #94a3b8;
-  --color-text-tertiary: #64748b;
-  --color-text-muted: #475569;
+  --color-text-primary: #f3f4f6;
+  --color-text-secondary: #9ca3af;
+  --color-text-tertiary: #6b7280;
+  --color-text-muted: #4b5563;
 
   /* Typography */
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.04);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.03);
-  --shadow-glow: 0 0 20px rgba(68, 138, 255, 0.15);
-  --shadow-panel: 4px 0 20px rgba(0, 0, 0, 0.5);
+  /* Shadows — Builder uses NO outer shadows (relies on bg contrast).
+     Tokens kept for non-Builder surfaces (modals, dropdowns). */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  --shadow-panel: none;
 
-  /* Radius */
+  /* Radius — 8px default, 6px on small chips, 9999px only on pills */
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -66,9 +73,9 @@
   /* Animations */
   --animate-shimmer: sw-shimmer 1.2s ease-in-out infinite;
   --animate-spin-fast: sw-spin 0.8s linear infinite;
-  --animate-fade-in: sw-fadeIn 0.3s ease;
-  --animate-pulse-dot: sw-pulse 2s ease-in-out infinite;
-  --animate-slide-in: sw-slideIn 0.3s ease;
+  --animate-fade-in: sw-fadeIn 0.2s ease;
+  --animate-pulse-dot: sw-pulse 1.8s ease-in-out infinite;
+  --animate-slide-in: sw-slideIn 0.2s ease;
 }
 
 /* ── Base Styles ── */
@@ -97,72 +104,83 @@ body {
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
 }
 
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.02); }
-::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--color-accent) 0%, var(--color-sw-purple) 100%); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--color-accent-hover); }
+/* ── Scrollbar — flat, subtle, no gradients ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #374151; }
 
 /* ── Form Inputs ── */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
-  background: linear-gradient(90deg, var(--color-border-subtle) 0%, var(--color-border-default) 100%);
-  border-radius: 4px;
+  width: 100%;
+  height: 3px;
+  background: transparent;
   outline: none;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: #1a1f2e;
+  border-radius: 9999px;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-bright) 100%);
+  width: 14px;
+  height: 14px;
+  background: var(--color-accent);
   border-radius: 50%;
   cursor: pointer;
-  box-shadow: 0 0 8px rgba(68, 138, 255, 0.5), 0 0 20px rgba(68, 138, 255, 0.2);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  margin-top: -5.5px;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  transition: box-shadow 0.15s ease;
 }
 input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-  box-shadow: 0 0 12px rgba(68, 138, 255, 0.7), 0 0 30px rgba(68, 138, 255, 0.3);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+}
+input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: #1a1f2e;
+  border-radius: 9999px;
 }
 input[type="range"]::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
-  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-bright) 100%);
+  width: 14px;
+  height: 14px;
+  background: var(--color-accent);
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 8px rgba(68, 138, 255, 0.5);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
 }
 
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { opacity: 0.3; }
 
 input[type="date"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.5) sepia(1) saturate(2) hue-rotate(10deg);
+  filter: invert(0.5) sepia(1) saturate(2) hue-rotate(180deg);
   cursor: pointer;
 }
+input[type="date"] { color-scheme: dark; }
 
 select { cursor: pointer; }
 
-/* ── Focus styles ── */
+/* ── Focus styles — subtle 1px accent border + faint halo ── */
 input:focus, select:focus {
   border-color: var(--color-accent) !important;
-  box-shadow: 0 0 0 3px var(--color-accent-glow), 0 0 20px rgba(68, 138, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
   outline: none;
 }
 
 /* ── Button effects ── */
 button {
-  transition: all 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 button:hover:not(:disabled) {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
 }
 button:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: translateY(1px);
 }
 button:disabled {
   cursor: not-allowed;
@@ -180,58 +198,44 @@ button:disabled {
 }
 
 @keyframes sw-fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes sw-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes sw-glow {
-  0%, 100% { box-shadow: 0 0 8px rgba(68, 138, 255, 0.15); }
-  50% { box-shadow: 0 0 20px rgba(68, 138, 255, 0.3); }
-}
-
-@keyframes sw-borderGlow {
-  0%, 100% { border-color: rgba(68, 138, 255, 0.2); }
-  50% { border-color: rgba(68, 138, 255, 0.5); }
+  50% { opacity: 0.45; }
 }
 
 @keyframes sw-slideIn {
-  from { opacity: 0; transform: translateX(-8px); }
+  from { opacity: 0; transform: translateX(-6px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
 /* ── Reusable Component Classes ── */
 
 .sw-card {
-  @apply bg-bg-card border border-border-subtle rounded-[var(--radius-lg)] transition-all duration-150;
+  @apply bg-bg-card border border-border-subtle rounded-[var(--radius-md)] transition-colors duration-150;
 }
 .sw-card:hover {
-  @apply border-border-default bg-bg-card-hover shadow-lg;
-  transform: translateY(-1px);
+  @apply border-border-default;
 }
 
 .sw-btn-primary {
-  @apply px-4 py-2.5 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-all duration-150;
-  background: linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%);
+  @apply px-4 py-2.5 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150;
+  background: var(--color-accent);
   color: #fff;
-  box-shadow: 0 2px 12px rgba(68, 138, 255, 0.3);
 }
 .sw-btn-primary:hover:not(:disabled) {
-  transform: scale(1.02);
-  box-shadow: 0 4px 16px rgba(68, 138, 255, 0.4);
+  background: var(--color-accent-hover);
 }
 .sw-btn-primary:disabled {
-  opacity: 0.35;
-  box-shadow: none;
+  opacity: 0.4;
 }
 
 .sw-btn-secondary {
-  @apply px-4 py-2 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-all duration-150 bg-transparent;
-  border: 1px solid rgba(68, 138, 255, 0.25);
+  @apply px-4 py-2 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150 bg-transparent;
+  border: 1px solid rgba(59, 130, 246, 0.25);
   color: var(--color-accent);
 }
 .sw-btn-secondary:hover:not(:disabled) {
@@ -239,16 +243,16 @@ button:disabled {
 }
 
 .sw-btn-ghost {
-  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-medium text-sm cursor-pointer transition-all duration-150 bg-transparent border-none;
+  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-medium text-sm cursor-pointer transition-colors duration-150 bg-transparent border-none;
   color: var(--color-text-secondary);
 }
 .sw-btn-ghost:hover:not(:disabled) {
-  background: var(--color-bg-hover);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--color-text-primary);
 }
 
 .sw-btn-danger {
-  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-semibold text-sm cursor-pointer transition-all duration-150;
+  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-semibold text-sm cursor-pointer transition-colors duration-150;
   background: var(--color-sw-red-dim);
   color: var(--color-sw-red);
   border: 1px solid rgba(239, 68, 68, 0.25);
@@ -261,7 +265,7 @@ button:disabled {
   @apply w-full rounded-[var(--radius-sm)] text-sm font-medium;
   padding: 8px 10px;
   border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-hover);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   outline: none;
@@ -272,7 +276,7 @@ button:disabled {
   @apply w-full rounded-[var(--radius-sm)] text-sm font-medium;
   padding: 8px 10px;
   border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-elevated);
+  background: var(--color-bg-hover);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   outline: none;
@@ -282,25 +286,25 @@ button:disabled {
 .sw-label {
   @apply text-[10px] font-semibold uppercase tracking-wider;
   color: var(--color-text-tertiary);
+  letter-spacing: 0.06em;
 }
 
 .sw-toggle-group {
   @apply flex gap-0.5 rounded-[var(--radius-md)] p-0.5;
-  background: rgba(16, 16, 42, 0.8);
-  border: 1px solid rgba(30, 30, 70, 0.6);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
 }
 
 .sw-toggle-btn {
-  @apply flex-1 py-2 px-2 text-center text-[11px] font-medium cursor-pointer transition-all duration-150 rounded-[var(--radius-sm)] border-none;
+  @apply flex-1 py-2 px-2 text-center text-[11px] font-medium cursor-pointer transition-colors duration-150 rounded-[var(--radius-sm)] border-none;
   background: transparent;
   color: var(--color-text-tertiary);
   font-family: var(--font-ui);
 }
 .sw-toggle-btn.active {
-  background: linear-gradient(135deg, var(--color-accent) 0%, #2962ff 100%);
+  background: var(--color-accent);
   color: #fff;
-  font-weight: 700;
-  box-shadow: 0 2px 12px rgba(68, 138, 255, 0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+  font-weight: 600;
 }
 
 .sw-badge {
@@ -309,6 +313,7 @@ button:disabled {
 
 .sw-section-divider {
   @apply flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider mt-1 mb-1.5;
+  letter-spacing: 0.08em;
 }
 .sw-section-divider .line {
   @apply flex-1 h-px;
@@ -317,6 +322,7 @@ button:disabled {
 /* Number values always mono */
 .sw-mono {
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* P&L colors */

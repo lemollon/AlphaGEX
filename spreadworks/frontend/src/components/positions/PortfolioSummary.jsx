@@ -10,7 +10,7 @@ export default function PortfolioSummary({ summary }) {
     <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-3 mb-5">
       <div className="sw-card px-4 py-3 text-center">
         <div className="sw-label mb-2">Slots</div>
-        <div className="text-lg font-bold font-[var(--font-mono)] text-accent-bright">
+        <div className="text-lg font-bold font-[var(--font-mono)] text-accent">
           {summary.slots_used}/{summary.slots_total}
         </div>
       </div>

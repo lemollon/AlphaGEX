@@ -17,8 +17,8 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      className={`flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-lg border transition-all duration-150 relative cursor-default backdrop-blur-sm ${
-        hovered ? 'border-accent/20 bg-bg-card-hover' : 'border-border-subtle/40 bg-bg-card/60'
+      className={`flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 relative cursor-default bg-bg-card ${
+        hovered ? 'border-border-default' : 'border-white/5'
       }`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -26,8 +26,7 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
       <span className="sw-label">{symbol} {label}</span>
       <span className="font-semibold text-sm font-[var(--font-mono)]" style={{ color: color || 'var(--color-text-primary)' }}>{value}</span>
       {hovered && tooltip && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg text-[11px] leading-snug text-text-secondary whitespace-nowrap z-10 pointer-events-none animate-fade-in backdrop-blur-xl"
-          style={{ background: 'rgba(16, 16, 42, 0.95)', border: '1px solid var(--color-border-default)', boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)' }}>
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-md text-[11px] leading-snug text-text-secondary whitespace-nowrap z-10 pointer-events-none animate-fade-in bg-bg-elevated border border-border-default shadow-md">
           {tooltip}
         </div>
       )}
@@ -100,38 +99,37 @@ export default function MetricsBar({ calcResult }) {
   const beUpper = r.upper_breakeven != null ? r.upper_breakeven.toFixed(2) : '--';
   const iv = r.implied_vol != null ? formatPct(r.implied_vol) : '--';
 
-  const cellCls = (idx) => `flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-lg border transition-all duration-150 backdrop-blur-sm ${
-    hoveredIdx === idx ? 'border-accent/20 bg-bg-card-hover' : 'border-border-subtle/40 bg-bg-card/60'
+  const cellCls = (idx) => `flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 bg-bg-card ${
+    hoveredIdx === idx ? 'border-border-default' : 'border-white/5'
   }`;
 
   return (
     <div>
       {/* Row 1: P&L Metrics */}
-      <div className="flex gap-0.5 px-2.5 py-1.5 border-t border-border-subtle font-[var(--font-ui)] text-xs"
-        style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+      <div className="flex gap-0.5 px-2.5 py-1.5 border-t border-white/5 bg-bg-base font-[var(--font-ui)] text-xs">
         <div className={cellCls(0)} onMouseEnter={() => setHoveredIdx(0)} onMouseLeave={() => setHoveredIdx(-1)}>
           <div className="flex items-center gap-1.5">
             <span className="sw-label">{creditLabel}</span>
-            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-all duration-150 border cursor-pointer ${
-              !isPct ? 'border-accent bg-accent/20 text-accent-bright' : 'border-border-subtle/60 bg-transparent text-text-muted'
+            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-colors duration-150 border cursor-pointer ${
+              !isPct ? 'border-accent bg-accent/15 text-accent' : 'border-white/5 bg-transparent text-text-muted'
             }`} onClick={toggleUnit}>$</button>
-            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-all duration-150 border cursor-pointer ${
-              isPct ? 'border-accent bg-accent/20 text-accent-bright' : 'border-border-subtle/60 bg-transparent text-text-muted'
+            <button className={`px-1.5 py-0.5 rounded text-[10px] font-semibold font-[var(--font-mono)] transition-colors duration-150 border cursor-pointer ${
+              isPct ? 'border-accent bg-accent/15 text-accent' : 'border-white/5 bg-transparent text-text-muted'
             }`} onClick={toggleUnit}>%</button>
           </div>
-          <span className="font-bold text-[15px] font-[var(--font-mono)]" style={{ color: creditColor, textShadow: `0 0 12px ${creditColor}33` }}>{creditVal}</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)]" style={{ color: creditColor }}>{creditVal}</span>
         </div>
         <div className={cellCls(1)} onMouseEnter={() => setHoveredIdx(1)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Max Profit</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-green" style={{ textShadow: '0 0 12px rgba(34,197,94,0.3)' }}>{maxProfitStr}</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-green">{maxProfitStr}</span>
         </div>
         <div className={cellCls(2)} onMouseEnter={() => setHoveredIdx(2)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Max Loss</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-red" style={{ textShadow: '0 0 12px rgba(239,68,68,0.3)' }}>{maxLossStr}</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-sw-red">{maxLossStr}</span>
         </div>
         <div className={cellCls(3)} onMouseEnter={() => setHoveredIdx(3)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Chance of Profit</span>
-          <span className="font-bold text-[15px] font-[var(--font-mono)] text-accent-bright" style={{ textShadow: '0 0 12px rgba(245,158,11,0.3)' }}>{cop}</span>
+          <span className="font-bold text-[15px] font-[var(--font-mono)] text-accent">{cop}</span>
         </div>
         <div className={cellCls(4)} onMouseEnter={() => setHoveredIdx(4)} onMouseLeave={() => setHoveredIdx(-1)}>
           <span className="sw-label">Breakevens</span>
@@ -143,8 +141,7 @@ export default function MetricsBar({ calcResult }) {
         </div>
       </div>
       {/* Row 2: Greeks */}
-      <div className="flex gap-0.5 px-2.5 py-1.5 font-[var(--font-ui)] text-xs"
-        style={{ background: 'linear-gradient(180deg, rgba(10, 10, 26, 0.95) 0%, rgba(8, 8, 24, 0.95) 100%)' }}>
+      <div className="flex gap-0.5 px-2.5 py-1.5 bg-bg-base font-[var(--font-ui)] text-xs">
         <GreekCell label="Delta" symbol={'\u0394'} value={formatGreek(g.delta)} color={deltaColor(g.delta)} tooltip={GREEK_TOOLTIPS.delta} />
         <GreekCell label="Gamma" symbol={'\u0393'} value={formatGreek(g.gamma, 5)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.gamma} />
         <GreekCell label="Theta" symbol={'\u0398'} value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'} color={thetaColor(g.theta)} tooltip={GREEK_TOOLTIPS.theta} />
