@@ -88,12 +88,12 @@ export default function PositionCard({ position, onClose, onExpireWorthless, onD
         </div>
       </div>
 
-      {/* Strike Chips */}
+      {/* Strike Chips — uppercase 2-letter label + mono value, per mockup */}
       <div className="flex gap-1.5 mb-2.5 flex-wrap">
-        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-green-dim border border-sw-green/20 text-sw-green">LP {position.long_put}</span>
-        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-red-dim border border-sw-red/20 text-sw-red">SP {position.short_put}</span>
-        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-red-dim border border-sw-red/20 text-sw-red">SC {position.short_call}</span>
-        <span className="text-[11px] px-2.5 py-0.5 rounded-md font-semibold font-[var(--font-mono)] bg-sw-green-dim border border-sw-green/20 text-sw-green">LC {position.long_call}</span>
+        <span className="sw-strike-badge sw-strike-badge--put-long">LP <span className="strike-value">{position.long_put}</span></span>
+        <span className="sw-strike-badge sw-strike-badge--put-short">SP <span className="strike-value">{position.short_put}</span></span>
+        <span className="sw-strike-badge sw-strike-badge--call-short">SC <span className="strike-value">{position.short_call}</span></span>
+        <span className="sw-strike-badge sw-strike-badge--call-long">LC <span className="strike-value">{position.long_call}</span></span>
       </div>
 
       {/* Expirations */}
@@ -327,7 +327,7 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
       {lossFill && <path d={lossFill} fill="rgba(239, 68, 68, 0.10)" />}
 
       {/* P&L line */}
-      <path d={svg.linePath} fill="none" stroke="#448aff" strokeWidth="1.5" />
+      <path d={svg.linePath} fill="none" stroke="#3b82f6" strokeWidth="1.5" />
 
       {/* Spot price */}
       {spotPrice && spotPrice >= svg.minP && spotPrice <= svg.maxP && (

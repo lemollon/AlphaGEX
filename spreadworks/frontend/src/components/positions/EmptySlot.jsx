@@ -1,7 +1,10 @@
 export default function EmptySlot({ number, total }) {
   return (
-    <div className="sw-card border-dashed flex items-center justify-center text-text-muted text-xs font-[var(--font-ui)] font-medium min-h-[120px]">
-      Empty Slot {number}/{total}
+    <div className="sw-empty-card">
+      <div>
+        <div className="text-text-tertiary text-[13px] font-bold">Empty Slot</div>
+        <div className="sw-mono text-text-muted text-[12px] mt-1">{number} / {total}</div>
+      </div>
     </div>
   );
 }
