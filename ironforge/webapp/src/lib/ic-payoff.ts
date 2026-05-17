@@ -247,3 +247,110 @@ export function computeIcPayoff(
     pop_heuristic: Math.round(pop_heuristic * 10000) / 10000,
   }
 }
+
+/**
+ * Vertical Debit Spread — 2-leg directional debit, used by BLAZE
+ * (wall_fade, gap_fill, etc.). The trader BUYS the long leg and SELLS
+ * the short leg in the same direction, paying a net `debit` upfront.
+ *
+ *   CALL debit:  long_strike < short_strike  (BUY low call, SELL high call)
+ *                profit when spot rises through short_strike at expiry.
+ *   PUT debit:   long_strike > short_strike  (BUY high put, SELL low put)
+ *                profit when spot falls through short_strike at expiry.
+ *
+ * Expiration P&L per contract:
+ *   PnL(spot) = max(0, sign*(spot − long_strike))
+ *             − max(0, sign*(spot − short_strike))
+ *             − debit
+ *   where sign = +1 for call debit, −1 for put debit.
+ *
+ *   Max profit = (spread_width − debit) × 100 × contracts   (positive)
+ *   Max loss   = −debit × 100 × contracts                   (negative)
+ *   Breakeven  = long_strike + sign × debit                 (single BE)
+ */
+export type VerticalDebitDirection = 'call' | 'put'
+
+export function verticalDebitPayoffAtPrice(
+  spot: number,
+  direction: VerticalDebitDirection,
+  longStrike: number,
+  shortStrike: number,
+  debit: number,
+): number {
+  if (direction === 'call') {
+    const longIntrinsic = Math.max(0, spot - longStrike)
+    const shortIntrinsic = Math.max(0, spot - shortStrike)
+    return longIntrinsic - shortIntrinsic - debit
+  }
+  // put debit
+  const longIntrinsic = Math.max(0, longStrike - spot)
+  const shortIntrinsic = Math.max(0, shortStrike - spot)
+  return longIntrinsic - shortIntrinsic - debit
+}
+
+export function computeVerticalDebitPayoff(
+  direction: VerticalDebitDirection,
+  longStrike: number,
+  shortStrike: number,
+  debit: number,
+  contracts: number,
+  spot: number,
+  priceRange?: { low: number; high: number },
+): IcPayoffResult {
+  const contractMultiplier = 100 * Math.max(1, contracts)
+  const width = Math.abs(longStrike - shortStrike)
+  const padding = Math.max(width * 2, 4)
+
+  const strikeLow = Math.min(longStrike, shortStrike)
+  const strikeHigh = Math.max(longStrike, shortStrike)
+  const rawLow = Math.min(spot, strikeLow) - padding
+  const rawHigh = Math.max(spot, strikeHigh) + padding
+  const low = priceRange?.low ?? Math.max(0.01, rawLow)
+  const high = priceRange?.high ?? rawHigh
+
+  const kinks = Array.from(new Set([low, strikeLow, strikeHigh, spot, high]))
+    .filter((p) => p >= low && p <= high && Number.isFinite(p))
+    .sort((a, b) => a - b)
+
+  const pnl_curve = kinks.map((price) => ({
+    price: Math.round(price * 100) / 100,
+    pnl: Math.round(
+      verticalDebitPayoffAtPrice(price, direction, longStrike, shortStrike, debit)
+        * contractMultiplier * 100,
+    ) / 100,
+  }))
+
+  const maxProfit = (width - debit) * contractMultiplier
+  const maxLoss = -debit * contractMultiplier  // negative
+  // Single breakeven: long + debit for calls, long − debit for puts.
+  const breakeven = direction === 'call' ? longStrike + debit : longStrike - debit
+
+  // For a vertical debit the "profit zone" is the half-plane past the
+  // breakeven in the directional sense — clamp to chart range so the UI
+  // can draw the green shading without divide-by-zero on widths.
+  const profitZone = direction === 'call'
+    ? { low: breakeven, high }
+    : { low, high: breakeven }
+
+  // PoP heuristic: fraction of the chart range that sits in the profit
+  // half-plane. Mirrors the IC heuristic spirit — rough but non-zero.
+  const totalRange = Math.max(high - low, 1)
+  const profitWidth = direction === 'call'
+    ? Math.max(0, high - breakeven)
+    : Math.max(0, breakeven - low)
+  const popHeuristic = Math.max(0, Math.min(1, profitWidth / totalRange))
+
+  return {
+    pnl_curve,
+    max_profit: Math.round(maxProfit * 100) / 100,
+    // Map the asymmetric "side" fields onto whichever side actually carries
+    // the loss so consumers that read these fields don't see misleading zeros.
+    max_loss_put_side: direction === 'put' ? Math.round(maxLoss * 100) / 100 : 0,
+    max_loss_call_side: direction === 'call' ? Math.round(maxLoss * 100) / 100 : 0,
+    max_loss: Math.round(maxLoss * 100) / 100,
+    breakeven_low: direction === 'call' ? Math.round(breakeven * 100) / 100 : -Infinity,
+    breakeven_high: direction === 'put' ? Math.round(breakeven * 100) / 100 : Infinity,
+    profit_zone: profitZone,
+    pop_heuristic: Math.round(popHeuristic * 10000) / 10000,
+  }
+}
