@@ -124,18 +124,22 @@ export async function GET(
       })
     }
 
-    // Load sl_mult once for IC bots so the per-position "distance to SL"
-    // tracks the real configured stop. Previously hardcoded to 2.0, which
-    // was wildly wrong for INFERNO (sl≈10×) — the displayed distanceToSl
-    // and stopLossPrice on the dashboard didn't match what the scanner
-    // would actually fire on. BLAZE keeps its own hardcoded debit-based
-    // thresholds (DEFAULT_BLAZE_CONFIG) and ignores this value.
+    // Load sl_mult + pt_pct once for IC bots so the per-position "distance
+    // to PT/SL" tracks the real configured thresholds. Previously hardcoded
+    // (sl=2.0, pt=0.30), which was wildly wrong for INFERNO (sl≈10× +
+    // pt=HOLD_TO_EOD/1.0) — the displayed stopLossPrice/profitTargetPrice
+    // and distance indicators didn't match what the scanner would actually
+    // fire on. Note: the scanner uses a sliding PT for SPARK (tiers shift
+    // through the day in getSlidingProfitTarget); this displays the base
+    // PT only, which is an approximation. BLAZE keeps its own hardcoded
+    // debit-based thresholds (DEFAULT_BLAZE_CONFIG) and ignores these.
     let icSlMult = 2.0
+    let icPtPct = 0.30
     if (bot !== 'blaze') {
       try {
         const cfgScope = accountTypeParam === 'production' ? 'production' : 'sandbox'
         const cfgRows = await dbQuery(
-          `SELECT stop_loss_pct
+          `SELECT stop_loss_pct, profit_target_pct
            FROM ${botTable(bot, 'config')}
            WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
              ${dteFilter}
@@ -144,7 +148,9 @@ export async function GET(
         )
         const slPct = num(cfgRows[0]?.stop_loss_pct)
         if (slPct > 0) icSlMult = slPct / 100
-      } catch { /* leave icSlMult at the 2.0 fallback */ }
+        const ptPct = num(cfgRows[0]?.profit_target_pct)
+        if (ptPct > 0) icPtPct = ptPct / 100
+      } catch { /* leave icSlMult/icPtPct at the fallback defaults */ }
     }
 
     let anyLiveQuoteSucceeded = false
@@ -175,9 +181,12 @@ export async function GET(
         // (lib/blaze/exit.ts) fires at +20% / −30%. The mismatch made the
         // dashboard show PT $1.08 when the bot was actually exiting at $0.864
         // ("PT trigger not fast enough" perception bug).
+        // IC PT triggers when cost-to-close drops to (1 - pt_pct) × credit.
+        // SPARK pt=0.30 → 0.70 × credit (30% profit captured); INFERNO
+        // pt=1.0 (HOLD_TO_EOD) → 0 (only triggers at full max profit).
         const profitTargetPrice = isVertical
           ? Math.round(entryDebit * 1.20 * 10000) / 10000  // BLAZE PT +20% → debit × 1.20
-          : Math.round(entryCredit * 0.7 * 10000) / 10000
+          : Math.round(entryCredit * (1 - icPtPct) * 10000) / 10000
         const stopLossPrice = isVertical
           ? Math.round(entryDebit * 0.70 * 10000) / 10000  // BLAZE SL −30% → debit × 0.70
           : Math.round(entryCredit * icSlMult * 10000) / 10000
