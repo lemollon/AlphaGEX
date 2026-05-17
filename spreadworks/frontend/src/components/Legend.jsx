@@ -10,12 +10,11 @@ export default function Legend({ interval = '15min', barCount = 80 }) {
   ];
 
   return (
-    <div className="flex items-center gap-4 px-4 py-2 border-t border-border-subtle font-[var(--font-ui)] text-[11px] text-text-tertiary flex-wrap"
-      style={{ background: 'linear-gradient(180deg, rgba(8, 8, 24, 0.95) 0%, rgba(5, 5, 16, 0.95) 100%)' }}>
+    <div className="flex items-center gap-4 px-4 py-2 border-t border-white/5 bg-bg-base font-[var(--font-ui)] text-[11px] text-text-tertiary flex-wrap">
       {items.map(({ type, color, dash, label }, i) => (
         <span key={i} className="inline-flex items-center gap-1.5">
           {type === 'swatch' ? (
-            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color, boxShadow: `0 0 6px ${color}44` }} />
+            <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
           ) : (
             <span className="inline-block w-[18px] h-0" style={{ borderTop: `2px ${dash ? 'dashed' : 'solid'} ${color}` }} />
           )}

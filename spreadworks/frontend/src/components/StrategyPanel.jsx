@@ -592,8 +592,7 @@ export default function StrategyPanel({
   };
 
   return (
-    <div className="w-[300px] min-w-[300px] border-r border-border-subtle px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-3.5 h-full"
-      style={{ background: 'linear-gradient(180deg, #0c0c22 0%, #080818 100%)', boxShadow: 'var(--shadow-panel)' }}>
+    <div className="w-[312px] min-w-[312px] border-r border-white/5 px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-3.5 h-full bg-bg-base">
 
       {/* Strategy */}
       <div className="sw-card p-3.5">
@@ -685,14 +684,13 @@ export default function StrategyPanel({
       )}
 
       {/* Spot Price */}
-      <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-xl border border-border-subtle"
-        style={{ background: 'linear-gradient(135deg, rgba(16, 16, 42, 0.8) 0%, rgba(13, 13, 35, 0.6) 100%)', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)' }}>
+      <div className="flex items-center gap-2.5 px-3.5 py-3 rounded-md border border-white/5 bg-bg-card">
         <span className="text-text-tertiary text-[11px] font-semibold">Symbol</span>
-        <span className="text-white font-extrabold text-[15px] font-[var(--font-mono)]">{symbol}</span>
+        <span className="text-white font-bold text-[14px] font-[var(--font-mono)]">{symbol}</span>
         <span className="w-1 h-1 rounded-full bg-border-default" />
         <span className="text-text-tertiary text-[11px] font-semibold">Spot</span>
         {spotPrice ? (
-          <span className="text-accent-bright font-bold text-[15px] font-[var(--font-mono)]" style={{ textShadow: '0 0 20px rgba(68, 138, 255, 0.3)' }}>
+          <span className="text-accent font-bold text-[14px] font-[var(--font-mono)]">
             ${spotPrice.toFixed(2)}
           </span>
         ) : (
@@ -700,7 +698,7 @@ export default function StrategyPanel({
             type="number"
             step="0.01"
             placeholder="Enter spot"
-            className="sw-input w-[90px] text-center text-accent-bright font-bold text-[13px]"
+            className="sw-input w-[90px] text-center text-accent font-bold text-[13px]"
             onChange={(e) => {
               const val = parseFloat(e.target.value);
               if (onManualSpotChange && !isNaN(val) && val > 0) onManualSpotChange(val);
