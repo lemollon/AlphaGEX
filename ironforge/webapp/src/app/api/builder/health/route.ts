@@ -154,7 +154,12 @@ async function checkOne(origin: string, bot: BotName): Promise<BotCheck> {
 }
 
 export async function GET(req: NextRequest) {
-  const origin = req.nextUrl.origin
+  // Render's serverless runtime resolves `req.nextUrl.origin` to an
+  // internal address that doesn't loop back via the public router, so
+  // fetch() to that origin fails. RENDER_EXTERNAL_URL is the canonical
+  // public URL for the service (e.g. https://ironforge-899p.onrender.com)
+  // — fall back to req.nextUrl.origin only for local dev where it works.
+  const origin = process.env.RENDER_EXTERNAL_URL || req.nextUrl.origin
   const format = req.nextUrl.searchParams.get('format') || 'json'
   const bots: BotName[] = ['flame', 'spark', 'inferno', 'blaze']
 
