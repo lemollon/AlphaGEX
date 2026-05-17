@@ -330,3 +330,50 @@ button:disabled {
 /* P&L colors */
 .sw-pnl-positive { color: var(--color-sw-green); }
 .sw-pnl-negative { color: var(--color-sw-red); }
+
+/* ── Sidebar — flat sections with subtle separators (per brand book:
+   "Borders extremely subtle — 1px solid rgba(255,255,255,0.04) or
+   completely absent." No card wrappers in Builder sidebar.) ── */
+.sw-sidebar-section {
+  @apply pb-3.5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.sw-sidebar-section:last-child {
+  border-bottom: none;
+}
+
+/* Strategy chips — 2-column grid, bigger surface area (~64px tall)
+   per mockup ui_kits/builder/index.html */
+.sw-strategy-grid {
+  @apply grid grid-cols-2 gap-1.5;
+}
+.sw-strategy-btn {
+  @apply flex items-center justify-center text-center text-[13px] font-semibold cursor-pointer rounded-[var(--radius-md)] border-none px-2 transition-colors duration-150;
+  min-height: 56px;
+  background: var(--color-bg-card);
+  color: var(--color-text-secondary);
+  font-family: var(--font-ui);
+}
+.sw-strategy-btn:hover:not(.active) {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+.sw-strategy-btn.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+/* Calculate primary button — 44px per brand book */
+.sw-btn-primary-tall {
+  @apply px-4 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150 flex items-center justify-center gap-2;
+  height: 44px;
+  background: var(--color-accent);
+  color: #fff;
+}
+.sw-btn-primary-tall:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+.sw-btn-primary-tall:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
