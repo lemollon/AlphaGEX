@@ -256,6 +256,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_positions (
   close_price NUMERIC(10,4),
   close_reason TEXT,
   realized_pnl NUMERIC(10,2),
+  max_premium_seen NUMERIC(10,4),
   dte_mode TEXT DEFAULT '2DTE',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -603,6 +604,18 @@ async function ensureTables(): Promise<void> {
         } catch { /* column already exists or table doesn't exist yet */ }
       }
     }
+
+    // SL-tuning instrumentation (5/18/2026). Records the running max of
+    // cost-to-close (worst-case ask) seen during a position's life. Lets
+    // SPARK SL=50 vs SL=30 (and any tighter setting) be replayed off the
+    // production trade log without intraday MTM history. NULL on legacy
+    // rows; scanner.maxPremiumUpdate() fills it forward starting this
+    // deploy. SPARK-only because that's the bot the analysis is for.
+    try {
+      await client.query(
+        `ALTER TABLE spark_positions ADD COLUMN IF NOT EXISTS max_premium_seen NUMERIC(10,4)`,
+      )
+    } catch { /* column already exists or table doesn't exist yet */ }
 
     // Per-bot market_briefs tables. Originally `spark_market_briefs`;
     // FLAME and INFERNO get their own tables so each bot's Market-Risk

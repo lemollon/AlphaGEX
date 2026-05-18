@@ -474,6 +474,28 @@ async function trailingDbUpdateMin(
   } catch { /* best-effort — next cycle will retry */ }
 }
 
+/**
+ * SPARK-only: persist the running max of cost_to_close (worst-case ask)
+ * seen during a position's life. Lets SL-tightness counterfactuals
+ * (SL=50 vs SL=30 etc.) be replayed off the trade log without keeping a
+ * full intraday MTM history. No-op for non-SPARK bots.
+ */
+async function maxPremiumUpdate(
+  bot: BotDef, pid: string, costToClose: number,
+): Promise<void> {
+  if (bot.name !== 'spark') return
+  if (!Number.isFinite(costToClose)) return
+  try {
+    await query(
+      `UPDATE ${botTable(bot.name, 'positions')}
+       SET max_premium_seen = $1, updated_at = NOW()
+       WHERE position_id = $2 AND status = 'open' AND dte_mode = $3
+         AND (max_premium_seen IS NULL OR max_premium_seen < $1)`,
+      [costToClose, pid, bot.dte],
+    )
+  } catch { /* best-effort — next cycle will retry */ }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Sandbox health state (Fix 8)                                       */
 /* ------------------------------------------------------------------ */
@@ -1708,6 +1730,11 @@ async function monitorSinglePosition(
   const costToClose = mtm.cost_to_close        // bid/ask worst-case — for stop loss
   const costToCloseMid = mtm.cost_to_close_mid // mark (mid) — fallback reference
   const costToCloseLast = mtm.cost_to_close_last // last trade prices — matches Tradier portfolio
+
+  // SPARK-only: record running max of cost_to_close so future SL-tuning
+  // analysis can replay any threshold against the actual trade log.
+  // Best-effort; helper no-ops for non-SPARK bots.
+  void maxPremiumUpdate(bot, pid, costToClose)
 
   // Log when quotes have validation issues (wide spreads on wings)
   if (mtm.validation_issues?.length) {
