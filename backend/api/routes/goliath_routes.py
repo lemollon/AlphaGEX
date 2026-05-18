@@ -44,20 +44,21 @@ router = APIRouter(prefix="/api/goliath", tags=["GOLIATH"])
 # Static instance list -- mirrors trading.goliath.configs.GOLIATH_INSTANCES
 # but kept inline so this route module doesn't depend on the trading
 # package being importable from the API service.
+# 2026-05-18: capital ramp -- caps scaled 5x to match global_config.py.
 _INSTANCES = [
     {"name": "GOLIATH-MSTU", "letf_ticker": "MSTU", "underlying_ticker": "MSTR",
-     "allocation_cap": 200.0, "paper_only": True},
+     "allocation_cap": 1000.0, "paper_only": True},
     {"name": "GOLIATH-TSLL", "letf_ticker": "TSLL", "underlying_ticker": "TSLA",
-     "allocation_cap": 200.0, "paper_only": True},
+     "allocation_cap": 1000.0, "paper_only": True},
     {"name": "GOLIATH-NVDL", "letf_ticker": "NVDL", "underlying_ticker": "NVDA",
-     "allocation_cap": 200.0, "paper_only": True},
+     "allocation_cap": 1000.0, "paper_only": True},
     {"name": "GOLIATH-CONL", "letf_ticker": "CONL", "underlying_ticker": "COIN",
-     "allocation_cap": 150.0, "paper_only": True},
+     "allocation_cap": 750.0, "paper_only": True},
     {"name": "GOLIATH-AMDL", "letf_ticker": "AMDL", "underlying_ticker": "AMD",
-     "allocation_cap": 150.0, "paper_only": True},
+     "allocation_cap": 750.0, "paper_only": True},
 ]
-_PLATFORM_CAP = 750.0
-_ACCOUNT_CAPITAL = 5000.0
+_PLATFORM_CAP = 5000.0
+_ACCOUNT_CAPITAL = 25000.0
 
 
 def _safe_query(sql: str, params: tuple = ()) -> list[tuple]:

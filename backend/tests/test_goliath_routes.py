@@ -41,8 +41,8 @@ class TestStatus:
         assert data["instance_count"] == 5
         assert len(data["instances"]) == 5
         assert data["platform_killed"] is False
-        assert data["platform_cap"] == 750.0
-        assert data["account_capital"] == 5000.0
+        assert data["platform_cap"] == 5000.0
+        assert data["account_capital"] == 25000.0
         # Every instance has the standard keys, even with no DB data.
         for inst in data["instances"]:
             assert "name" in inst and "letf_ticker" in inst
@@ -341,6 +341,6 @@ class TestStaticEndpoints:
         r = client.get("/api/goliath/config")
         data = r.json()
         assert data["global"]["paper_only"] is True
-        assert data["global"]["account_capital"] == 5000.0
+        assert data["global"]["account_capital"] == 25000.0
         assert data["instance_defaults"]["realized_vol_window_days"] == 20
         assert len(data["instances"]) == 5

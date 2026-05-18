@@ -17,11 +17,11 @@ from trading.goliath.configs import (  # noqa: E402
 
 
 class GlobalConfig(unittest.TestCase):
-    def test_account_capital_5k(self):
-        self.assertEqual(GLOBAL.account_capital, 5000.0)
+    def test_account_capital_25k(self):
+        self.assertEqual(GLOBAL.account_capital, 25000.0)
 
-    def test_platform_cap_750(self):
-        self.assertEqual(GLOBAL.platform_cap, 750.0)
+    def test_platform_cap_5k(self):
+        self.assertEqual(GLOBAL.platform_cap, 5000.0)
 
     def test_max_concurrent_3(self):
         self.assertEqual(GLOBAL.max_concurrent_positions, 3)
@@ -47,11 +47,12 @@ class InstanceRegistry(unittest.TestCase):
 
     def test_allocation_caps_per_spec(self):
         caps = {cfg.letf_ticker: cfg.allocation_cap for cfg in all_instances()}
-        self.assertEqual(caps["MSTU"], 200.0)
-        self.assertEqual(caps["TSLL"], 200.0)
-        self.assertEqual(caps["NVDL"], 200.0)
-        self.assertEqual(caps["CONL"], 150.0)
-        self.assertEqual(caps["AMDL"], 150.0)
+        # 2026-05-18: scaled 5x with global capital ramp.
+        self.assertEqual(caps["MSTU"], 1000.0)
+        self.assertEqual(caps["TSLL"], 1000.0)
+        self.assertEqual(caps["NVDL"], 1000.0)
+        self.assertEqual(caps["CONL"], 750.0)
+        self.assertEqual(caps["AMDL"], 750.0)
 
     def test_all_paper_only(self):
         for cfg in all_instances():
