@@ -49,6 +49,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db, SessionLocal
 from .models import Position, DailyMark, QuoteCache, CandleCache, GexCache, ChainCache
+from . import brand
 
 logger = logging.getLogger("spreadworks")
 
@@ -2461,23 +2462,22 @@ def _discord_post_closed(pos: Position):
     days_held = (pos.close_date - pos.entry_date).days if pos.close_date and pos.entry_date else 0
     pct_of_max = round(pnl / abs(pos.max_profit) * 100, 1) if pos.max_profit else 0
 
-    if pnl >= 0:
-        color = 0x00E676
-        footer_msg = "Well done. Protect the gains."
-    else:
-        color = 0xFF1744
-        footer_msg = "Cut clean. Next setup is coming. Stay the course."
+    color = brand.pnl_color(pnl)
+    footer_msg = "Well done. Protect the gains." if pnl >= 0 else "Cut clean. Next setup is coming. Stay the course."
+
+    entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
+    exit_dollars = (pos.close_price or 0) * 100 * pos.contracts
 
     embed = {
-        "title": f"\u2705 POSITION CLOSED \u00b7 {pos.symbol} {strat_label}",
+        "title": brand.title("POSITION CLOSED", pos.symbol, strat_label),
         "color": color,
         "fields": [
-            {"name": "Entry", "value": f"{'+'if pos.strategy in CREDIT_STRATEGIES else '-'}${pos.entry_credit:,.2f}", "inline": True},
-            {"name": "Exit", "value": f"-${(pos.close_price or 0) * 100 * pos.contracts:,.2f}", "inline": True},
-            {"name": "Realized P&L", "value": f"${pnl:+,.2f} ({pct_of_max:+.1f}% of max profit)", "inline": False},
-            {"name": "Held", "value": f"{days_held} days \u00b7 {pos.entry_date} \u2192 {pos.close_date}", "inline": False},
+            brand.field("Entry", brand.mono(f"{entry_sign}${pos.entry_credit:,.2f}")),
+            brand.field("Exit", brand.mono(f"-${exit_dollars:,.2f}")),
+            brand.field("Realized P&L", f"{brand.mono(f'${pnl:+,.2f}')} ({pct_of_max:+.1f}% of max profit)", inline=False),
+            brand.field("Held", f"{brand.mono(f'{days_held} days')} \u00b7 {pos.entry_date} \u2192 {pos.close_date}", inline=False),
         ],
-        "footer": {"text": footer_msg},
+        "footer": brand.footer(footer_msg),
         "timestamp": _now_ct().isoformat(),
     }
     _send_discord_embed(embed)
@@ -2513,10 +2513,10 @@ async def discord_test():
 
     import requests as req
     embed = {
-        "title": "SpreadWorks — Webhook Test",
+        "title": brand.title("SpreadWorks", "Webhook Test"),
         "description": "If you see this, the webhook is working.",
-        "color": 0x3B82F6,
-        "footer": {"text": "SpreadWorks · Test Ping"},
+        "color": brand.ACCENT,
+        "footer": brand.footer("SpreadWorks", "Test Ping"),
         "timestamp": _now_ct().isoformat(),
     }
     try:
@@ -2573,24 +2573,25 @@ async def discord_test_daily():
     results = {}
     now = get_central_now()
 
-    def _impact_color(impact: str) -> int:
-        return {"HIGH": 0xFF1744, "MEDIUM": 0xFFD600, "LOW": 0x448AFF}.get(impact, 0x448AFF)
+    # Impact-color now centralized in brand.py
 
     def _rotation_index(items, offset=0) -> int:
         day_of_year = now.timetuple().tm_yday
         return (day_of_year + offset) % len(items)
 
+    date_str = now.strftime('%A, %B %d, %Y')
+
     # 1) Market Open — Bible verse + tip
     verse = VERSES[_rotation_index(VERSES)]
     tip = TIPS[_rotation_index(TIPS, offset=37)]
     embed_open = {
-        "title": "\U0001f305 MARKET OPENS IN 30 MINUTES",
-        "color": 0x00E676,
+        "title": brand.title("MARKET OPENS IN 30 MINUTES"),
+        "color": brand.SUCCESS,
         "fields": [
-            {"name": f"\U0001f4d6 {verse['reference']}", "value": f"*\"{verse['text']}\"*", "inline": False},
-            {"name": "\U0001f4ca SPREAD TRADER TIP", "value": tip, "inline": False},
+            brand.field(verse["reference"], f"*\"{verse['text']}\"*", inline=False),
+            brand.field("Spread Trader Tip", tip, inline=False),
         ],
-        "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Good luck today. Trade with discipline."},
+        "footer": brand.footer("SpreadWorks", date_str, "Good luck today. Trade with discipline."),
         "timestamp": now.isoformat(),
     }
     results["market_open"] = _send_discord_embed(embed_open)
@@ -2603,13 +2604,13 @@ async def discord_test_daily():
         for event in todays_events:
             event_time = format_event_time(event["datetime"])
             embed_econ = {
-                "title": "\u26a1 ECONOMIC EVENT TODAY",
-                "color": _impact_color(event["impact"]),
+                "title": brand.title("ECONOMIC EVENT TODAY"),
+                "color": brand.impact_color(event["impact"]),
                 "fields": [
-                    {"name": f"\U0001f4c5 {event['name']}", "value": f"**{event_time}**\n{event['description']}", "inline": False},
-                    {"name": f"Impact: **{event['impact']}**", "value": "\U0001f4a1 Consider closing or hedging positions before this event.", "inline": False},
+                    brand.field(event["name"], f"**{event_time}**\n{event['description']}", inline=False),
+                    brand.field(f"Impact \u00b7 {event['impact']}", "Consider closing or hedging positions before this event.", inline=False),
                 ],
-                "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                "footer": brand.footer("SpreadWorks", date_str),
                 "timestamp": now.isoformat(),
             }
             _send_discord_embed(embed_econ)
@@ -2621,16 +2622,16 @@ async def discord_test_daily():
             for event in upcoming:
                 countdown = format_countdown(event["datetime"])
                 event_time = format_event_time(event["datetime"])
-                fields.append({
-                    "name": f"\U0001f4c5 {event['name']}",
-                    "value": f"\U0001f4c6 {event['datetime'].strftime('%A, %b %-d')} at {event_time}\n\u23f3 **{countdown}**\nImpact: **{event['impact']}**",
-                    "inline": False,
-                })
+                fields.append(brand.field(
+                    event["name"],
+                    f"{event['datetime'].strftime('%A, %b %-d')} at {event_time}\n**{countdown}**\nImpact \u00b7 **{event['impact']}**",
+                    inline=False,
+                ))
             embed_econ = {
-                "title": "\U0001f4c5 NEXT MAJOR ECONOMIC EVENTS",
-                "color": _impact_color(upcoming[0]["impact"]),
+                "title": brand.title("NEXT MAJOR ECONOMIC EVENTS"),
+                "color": brand.impact_color(upcoming[0]["impact"]),
                 "fields": fields,
-                "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')}"},
+                "footer": brand.footer("SpreadWorks", date_str),
                 "timestamp": now.isoformat(),
             }
             results["economic"] = _send_discord_embed(embed_econ)
@@ -2641,13 +2642,21 @@ async def discord_test_daily():
     # 3) Market Close — reflection
     close_msg = CLOSE_MESSAGES[_rotation_index(CLOSE_MESSAGES, offset=71)]
     embed_close = {
-        "title": "\U0001f514 MARKET CLOSED",
-        "color": 0x448AFF,
+        "title": brand.title("MARKET CLOSED"),
+        "color": brand.ACCENT,
         "fields": [
-            {"name": "\U0001f4ad Closing Thought", "value": close_msg, "inline": False},
-            {"name": "\U0001f4cb End of Day Checklist", "value": "\u2022 Review your positions and open orders\n\u2022 Log your trades in your journal\n\u2022 Check tomorrow's economic calendar\n\u2022 Set alerts for key levels\n\u2022 Rest well \u2014 tomorrow is a new day", "inline": False},
+            brand.field("Closing Thought", close_msg, inline=False),
+            brand.field(
+                "End of Day Checklist",
+                "\u2022 Review your positions and open orders\n"
+                "\u2022 Log your trades in your journal\n"
+                "\u2022 Check tomorrow's economic calendar\n"
+                "\u2022 Set alerts for key levels\n"
+                "\u2022 Rest well \u2014 tomorrow is a new day",
+                inline=False,
+            ),
         ],
-        "footer": {"text": f"SpreadWorks \u2022 {now.strftime('%A, %B %d, %Y')} \u2022 Rest up. Trade tomorrow."},
+        "footer": brand.footer("SpreadWorks", date_str, "Rest up. Trade tomorrow."),
         "timestamp": now.isoformat(),
     }
     results["market_close"] = _send_discord_embed(embed_close)
@@ -2663,43 +2672,47 @@ async def discord_push_spread(body: DiscordPushSpread):
 
     strat_label = STRATEGY_LABELS.get(body.strategy, body.strategy or "Spread")
     is_credit = body.net_credit is not None and body.net_credit > 0
-    color = 0x00E676 if is_credit else 0xFF1744
+    color = brand.SUCCESS if is_credit else brand.DANGER
 
     legs = body.legs
     legs_str = (
-        f"LP {legs.get('long_put', '?')} / SP {legs.get('short_put', '?')} / "
-        f"SC {legs.get('short_call', '?')} / LC {legs.get('long_call', '?')}"
+        f"`LP {legs.get('long_put', '?')}` / `SP {legs.get('short_put', '?')}` / "
+        f"`SC {legs.get('short_call', '?')}` / `LC {legs.get('long_call', '?')}`"
     )
 
-    be_str = " / ".join(f"${b:.2f}" for b in body.breakevens) if body.breakevens else "--"
-    iv_str = f"{body.implied_vol:.1f}%" if body.implied_vol else "--"
-    cop_str = f"{body.chance_of_profit:.1f}%" if body.chance_of_profit else "--"
-    credit_str = f"+${body.net_credit:,.0f}" if body.net_credit and body.net_credit > 0 else f"-${abs(body.net_credit or 0):,.0f}"
+    be_str = " / ".join(brand.dollar(b) for b in body.breakevens) if body.breakevens else "--"
+    iv_str = brand.pct(body.implied_vol) if body.implied_vol else "--"
+    cop_str = brand.pct(body.chance_of_profit) if body.chance_of_profit else "--"
+    credit_str = brand.signed_dollar(body.net_credit, decimals=0)
     pricing_note = " (theoretical)" if body.pricing_mode == "black_scholes" else ""
+    credit_label = "Net Credit" if is_credit else "Net Debit"
 
     footer_source = "GEX Suggest" if body.gex_suggestion else "Manual"
 
     fields = [
-        {"name": "Legs", "value": legs_str, "inline": False},
-        {"name": "Short Exp", "value": body.short_exp or "--", "inline": True},
-        {"name": "Long Exp", "value": body.long_exp or "--", "inline": True},
-        {"name": "Net Credit", "value": f"{credit_str}{pricing_note}", "inline": True},
-        {"name": "Max Profit", "value": f"${body.max_profit:,.0f}" if body.max_profit else "--", "inline": True},
-        {"name": "Max Loss", "value": f"${body.max_loss:,.0f}" if body.max_loss else "--", "inline": True},
-        {"name": "COP", "value": cop_str, "inline": True},
-        {"name": "Breakevens", "value": be_str, "inline": True},
-        {"name": "IV", "value": iv_str, "inline": True},
-        {"name": "Contracts", "value": str(body.contracts), "inline": True},
+        brand.field("Legs", legs_str, inline=False),
+        brand.field("Short Exp", brand.mono(body.short_exp) if body.short_exp else "--"),
+        brand.field("Long Exp", brand.mono(body.long_exp) if body.long_exp else "--"),
+        brand.field(credit_label, f"{credit_str}{pricing_note}"),
+        brand.field("Max Profit", brand.dollar(body.max_profit, decimals=0)),
+        brand.field("Max Loss", brand.dollar(body.max_loss, decimals=0)),
+        brand.field("Chance of Profit", cop_str),
+        brand.field("Breakevens", be_str),
+        brand.field("Implied Vol", iv_str),
+        brand.field("Contracts", brand.mono(body.contracts)),
     ]
 
     if body.gex_suggestion:
-        fields.append({"name": "GEX Signal", "value": body.gex_suggestion[:1024], "inline": False})
+        fields.append(brand.field("GEX Signal", body.gex_suggestion[:1024], inline=False))
 
+    title_parts = [body.symbol, strat_label]
+    if body.spot:
+        title_parts.append(f"Spot ${body.spot:,.2f}")
     embed = {
-        "title": f"\U0001f4ca {body.symbol} {strat_label} \u00b7 Spot ${body.spot:,.2f}" if body.spot else f"\U0001f4ca {body.symbol} {strat_label}",
+        "title": brand.title(*title_parts),
         "color": color,
         "fields": fields,
-        "footer": {"text": f"SpreadWorks \u00b7 {footer_source}"},
+        "footer": brand.footer("SpreadWorks", footer_source),
         "timestamp": _now_ct().isoformat(),
     }
 
@@ -3062,20 +3075,20 @@ def _gex_header_embed_fields(header: dict, levels: dict) -> list[dict]:
     pw = levels.get("put_wall")
 
     fields = [
-        {"name": "Price", "value": f"${price:,.2f}", "inline": True},
-        {"name": "Net GEX", "value": _format_gex(net_gex), "inline": True},
-        {"name": "Gamma Regime", "value": gamma_form, "inline": True},
-        {"name": "Rating", "value": rating, "inline": True},
+        brand.field("Price", brand.dollar(price)),
+        brand.field("Net GEX", brand.mono(_format_gex(net_gex))),
+        brand.field("Gamma Regime", brand.mono(gamma_form)),
+        brand.field("Rating", brand.mono(rating)),
     ]
     if flip:
         dist = ((price - flip) / price * 100) if price else 0
-        fields.append({"name": "Flip Point", "value": f"${flip:,.2f} ({dist:+.1f}%)", "inline": True})
+        fields.append(brand.field("Flip Point", f"{brand.dollar(flip)} ({dist:+.1f}%)"))
     if cw:
         dist = ((cw - price) / price * 100) if price else 0
-        fields.append({"name": "Call Wall", "value": f"${cw:,.2f} (+{dist:.1f}%)", "inline": True})
+        fields.append(brand.field("Call Wall", f"{brand.dollar(cw)} (+{dist:.1f}%)"))
     if pw:
         dist = ((price - pw) / price * 100) if price else 0
-        fields.append({"name": "Put Wall", "value": f"${pw:,.2f} (-{dist:.1f}%)", "inline": True})
+        fields.append(brand.field("Put Wall", f"{brand.dollar(pw)} (-{dist:.1f}%)"))
     return fields
 
 
@@ -3094,12 +3107,12 @@ async def discord_push_gex_net(request: Request, symbol: str = "SPY"):
     chart_bytes = _generate_net_gex_chart(strikes, header, levels)
 
     net_gex = header.get("net_gex", 0)
-    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    color = brand.pnl_color(net_gex)
     embed = {
-        "title": f"\U0001f4ca {symbol} Net GEX by Strike · ${header.get('price', 0):,.2f}",
+        "title": brand.title(symbol, "Net GEX by Strike", f"${header.get('price', 0):,.2f}"),
         "color": color,
         "fields": _gex_header_embed_fields(header, levels),
-        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "footer": brand.footer("SpreadWorks", "GEX Profile", gex_data.get("expiration", "")),
         "timestamp": _now_ct().isoformat(),
     }
 
@@ -3124,12 +3137,12 @@ async def discord_push_gex_callput(request: Request, symbol: str = "SPY"):
     chart_bytes = _generate_callput_gex_chart(strikes, header, levels)
 
     net_gex = header.get("net_gex", 0)
-    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    color = brand.pnl_color(net_gex)
     embed = {
-        "title": f"\U0001f4ca {symbol} Call vs Put GEX · ${header.get('price', 0):,.2f}",
+        "title": brand.title(symbol, "Call vs Put GEX", f"${header.get('price', 0):,.2f}"),
         "color": color,
         "fields": _gex_header_embed_fields(header, levels),
-        "footer": {"text": f"SpreadWorks · GEX Profile · {gex_data.get('expiration', '')}"},
+        "footer": brand.footer("SpreadWorks", "GEX Profile", gex_data.get("expiration", "")),
         "timestamp": _now_ct().isoformat(),
     }
 
@@ -3155,16 +3168,16 @@ async def discord_push_gex_intraday(request: Request, symbol: str = "SPY"):
     chart_bytes = _generate_intraday_gex_chart(bars, ticks, header, levels)
 
     net_gex = header.get("net_gex", 0)
-    color = 0x22C55E if net_gex >= 0 else 0xFF1744
+    color = brand.pnl_color(net_gex)
 
     fields = _gex_header_embed_fields(header, levels)
-    fields.append({"name": "Candles", "value": f"{len(bars)} bars", "inline": True})
+    fields.append(brand.field("Candles", brand.mono(f"{len(bars)} bars")))
 
     embed = {
-        "title": f"\U0001f4ca {symbol} Intraday 5m · ${header.get('price', 0):,.2f}",
+        "title": brand.title(symbol, "Intraday 5m", f"${header.get('price', 0):,.2f}"),
         "color": color,
         "fields": fields,
-        "footer": {"text": "SpreadWorks · GEX Profile · Intraday"},
+        "footer": brand.footer("SpreadWorks", "GEX Profile", "Intraday"),
         "timestamp": _now_ct().isoformat(),
     }
 
@@ -3203,16 +3216,15 @@ async def discord_post_open(db: Session = Depends(get_db)):
 
     positions_text = "\n\n".join(lines)
 
-    premium_sign = "+" if net_premium >= 0 else "-"
     embed = {
-        "title": f"\U0001f4cb TODAY'S OPEN SPREADS \u00b7 {today_str}",
-        "color": 0x448AFF,
+        "title": brand.title("TODAY'S OPEN SPREADS", today_str),
+        "color": brand.ACCENT,
         "description": positions_text,
         "fields": [
-            {"name": "Net Premium", "value": f"{premium_sign}${abs(net_premium):,.2f}", "inline": True},
-            {"name": "Positions", "value": f"{len(open_positions)} active", "inline": True},
+            brand.field("Net Premium", brand.signed_dollar(net_premium)),
+            brand.field("Positions", brand.mono(f"{len(open_positions)} active")),
         ],
-        "footer": {"text": "Trade with discipline \U0001f64f"},
+        "footer": brand.footer("SpreadWorks", "Trade with discipline"),
         "timestamp": _now_ct().isoformat(),
     }
 
@@ -3327,31 +3339,23 @@ async def discord_post_eod(request: Request, db: Session = Depends(get_db)):
 
     positions_text = "\n\n".join(lines)
 
-    pnl_color = 0x00E676 if total_unrealized >= 0 else 0xFF1744
-
     embed = {
-        "title": f"\U0001f514 END OF DAY UPDATE \u00b7 {today_str}",
-        "color": pnl_color,
+        "title": brand.title("END OF DAY UPDATE", today_str),
+        "color": brand.pnl_color(total_unrealized),
         "description": positions_text,
         "fields": [
-            {"name": "\u2501" * 20, "value": "\u200b", "inline": False},
-            {
-                "name": "Portfolio P&L Today",
-                "value": f"{'+'if total_unrealized >= 0 else ''}${total_unrealized:,.2f} ({pnl_pct:+.1f}% of net premium)",
-                "inline": True,
-            },
-            {"name": "Open", "value": str(len(open_positions)), "inline": True},
-            {"name": "Closed Today", "value": str(closed_today), "inline": True},
+            brand.field(
+                "Portfolio P&L Today",
+                f"{brand.signed_dollar(total_unrealized)} ({pnl_pct:+.1f}% of net premium)",
+            ),
+            brand.field("Open", brand.mono(len(open_positions))),
+            brand.field("Closed Today", brand.mono(closed_today)),
         ],
-        "footer": {"text": "SpreadWorks \u2022 End of Day"},
+        "footer": brand.footer("SpreadWorks", "End of Day"),
         "timestamp": _now_ct().isoformat(),
     }
     if commentary:
-        embed["fields"].append({
-            "name": "\U0001f916 AI RECAP",
-            "value": commentary[:1024],  # Discord field limit
-            "inline": False,
-        })
+        embed["fields"].append(brand.field("AI Recap", commentary[:1024], inline=False))
 
     ok = _send_discord_embed(embed)
     return {
@@ -3429,73 +3433,45 @@ async def discord_push_position(
         if pos.max_profit and pos.max_profit != 0:
             pnl_pct = round(pnl_val / abs(pos.max_profit) * 100, 1)
 
-    color = 0x00E676 if pnl_val >= 0 else 0xFF1744
-    status_emoji = "\U0001f7e2" if is_open else "\U0001f534"
-    pnl_sign = "+" if pnl_val >= 0 else ""
+    color = brand.pnl_color(pnl_val)
 
     fields = [
-        {
-            "name": "Strikes",
-            "value": f"LP `{pos.long_put}` \u00b7 SP `{pos.short_put}` \u00b7 SC `{pos.short_call}` \u00b7 LC `{pos.long_call}`",
-            "inline": False,
-        },
-        {
-            "name": "Short Exp",
-            "value": str(pos.short_exp) if pos.short_exp else "--",
-            "inline": True,
-        },
+        brand.field(
+            "Strikes",
+            f"LP {brand.mono(pos.long_put)} \u00b7 SP {brand.mono(pos.short_put)} \u00b7 "
+            f"SC {brand.mono(pos.short_call)} \u00b7 LC {brand.mono(pos.long_call)}",
+            inline=False,
+        ),
+        brand.field("Short Exp", brand.mono(pos.short_exp) if pos.short_exp else "--"),
     ]
     if pos.long_exp:
-        fields.append({
-            "name": "Long Exp",
-            "value": str(pos.long_exp),
-            "inline": True,
-        })
+        fields.append(brand.field("Long Exp", brand.mono(pos.long_exp)))
     if dte is not None:
-        fields.append({"name": "DTE", "value": str(dte), "inline": True})
+        fields.append(brand.field("DTE", brand.mono(dte)))
 
     entry_sign = "+" if pos.strategy in CREDIT_STRATEGIES else "-"
-    fields.append({
-        "name": "Entry Credit" if pos.strategy in CREDIT_STRATEGIES else "Entry Debit",
-        "value": f"{entry_sign}${pos.entry_credit:,.2f}",
-        "inline": True,
-    })
+    entry_label = "Entry Credit" if pos.strategy in CREDIT_STRATEGIES else "Entry Debit"
+    fields.append(brand.field(entry_label, brand.mono(f"{entry_sign}${pos.entry_credit:,.2f}")))
     if current_value is not None:
-        fields.append({
-            "name": "Current Value",
-            "value": f"${current_value:,.4f}",
-            "inline": True,
-        })
-    fields.append({
-        "name": pnl_label,
-        "value": f"{pnl_sign}${pnl_val:,.2f} ({pnl_sign}{pnl_pct:.1f}%)",
-        "inline": True,
-    })
+        fields.append(brand.field("Current Value", brand.dollar(current_value, decimals=4)))
+    fields.append(brand.field(
+        pnl_label,
+        f"{brand.signed_dollar(pnl_val)} ({pnl_pct:+.1f}%)",
+    ))
     if pos.max_profit is not None:
-        fields.append({
-            "name": "Max Profit",
-            "value": f"${pos.max_profit:,.2f}",
-            "inline": True,
-        })
+        fields.append(brand.field("Max Profit", brand.dollar(pos.max_profit)))
     if pos.max_loss is not None:
-        fields.append({
-            "name": "Max Loss",
-            "value": f"${pos.max_loss:,.2f}",
-            "inline": True,
-        })
-    fields.append({
-        "name": "Contracts",
-        "value": str(pos.contracts),
-        "inline": True,
-    })
+        fields.append(brand.field("Max Loss", brand.dollar(pos.max_loss)))
+    fields.append(brand.field("Contracts", brand.mono(pos.contracts)))
 
     title_label = pos.label or f"#{pos.id}"
     chart_title = f"{pos.symbol} {strat_label} \u00b7 {title_label}"
+    status_label = "OPEN" if is_open else "CLOSED"
     embed = {
-        "title": f"{status_emoji} {chart_title}",
+        "title": brand.title(status_label, chart_title),
         "color": color,
         "fields": fields,
-        "footer": {"text": f"SpreadWorks \u00b7 Opened {pos.entry_date}"},
+        "footer": brand.footer("SpreadWorks", f"Opened {pos.entry_date}"),
         "timestamp": _now_ct().isoformat(),
     }
 
