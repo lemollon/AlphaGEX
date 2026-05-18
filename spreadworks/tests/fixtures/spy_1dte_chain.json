@@ -1,0 +1,15 @@
+{
+  "spot": 500.0,
+  "vix": 17.0,
+  "atm_straddle_mid": 5.0,
+  "expiration": "2026-05-21",
+  "iv_atm": 0.16,
+  "options": [
+    {"strike": 495, "type": "put",  "bid": 1.10, "ask": 1.20},
+    {"strike": 496, "type": "put",  "bid": 1.30, "ask": 1.40},
+    {"strike": 500, "type": "put",  "bid": 2.50, "ask": 2.60},
+    {"strike": 500, "type": "call", "bid": 2.50, "ask": 2.60},
+    {"strike": 504, "type": "call", "bid": 1.30, "ask": 1.40},
+    {"strike": 505, "type": "call", "bid": 1.10, "ask": 1.20}
+  ]
+}

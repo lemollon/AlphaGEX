@@ -1,0 +1,247 @@
+"""Per-bot 1-minute scanner orchestration.
+
+A `ChainProvider` is injected so the live scanner uses Tradier (see
+routes.py for the existing chain fetcher), but unit tests can pass fakes.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass
+from datetime import date, datetime, time
+from typing import Any, Protocol
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+
+from .db import bot_table, load_config
+from .executor import (
+    account_equity, list_open_positions, open_position,
+    close_position, compute_mtm, update_mtm,
+)
+from .monitor import decide_exit, pt_pct_for_time_of_day
+from .registry import BOT_REGISTRY, get_bot
+from .strategies.iron_butterfly import build_iron_butterfly_signal
+from .strategies.double_calendar import build_double_calendar_signal
+from .strategies.double_diagonal import build_double_diagonal_signal
+
+logger = logging.getLogger("spreadworks.bots.scanner")
+CT = ZoneInfo("America/Chicago")
+SCAN_TIMEOUT_SEC = 15
+
+
+class ChainProvider(Protocol):
+    def get_chain(self, *, ticker: str, dte: int, today: date) -> dict | None: ...
+    def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float]: ...
+
+
+def _parse_time(s: str) -> time:
+    h, m = s.split(":")
+    return time(int(h), int(m))
+
+
+def _log_scan(engine: Engine, bot: str, *, now: datetime, outcome: str,
+              reason: str | None = None, signal: dict | None = None,
+              position_id: str | None = None) -> None:
+    t = bot_table(bot, "scan_activity")
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {t} (scan_time, outcome, reason, signal_data, position_id) "
+            "VALUES (:t, :o, :r, :s, :p)"
+        ), {"t": now, "o": outcome, "r": reason,
+            "s": json.dumps(signal) if signal else None, "p": position_id})
+
+
+def _write_equity_snapshot(engine: Engine, bot: str, now: datetime) -> None:
+    cfg = load_config(engine, bot)
+    realized_today_q = text(
+        f"SELECT COALESCE(SUM(realized_pnl), 0) AS s "
+        f"FROM {bot_table(bot, 'closed_trades')} "
+        "WHERE DATE(close_time) = DATE(:n)"
+    )
+    cumulative_q = text(
+        f"SELECT COALESCE(SUM(realized_pnl), 0) AS s "
+        f"FROM {bot_table(bot, 'closed_trades')}"
+    )
+    open_q = text(
+        f"SELECT COUNT(*) c, COALESCE(SUM(mtm_pnl), 0) u "
+        f"FROM {bot_table(bot, 'positions')} WHERE status='OPEN'"
+    )
+    with engine.begin() as conn:
+        r_today = float(conn.execute(realized_today_q, {"n": now}).mappings().first()["s"])
+        cumulative = float(conn.execute(cumulative_q).mappings().first()["s"])
+        row = conn.execute(open_q).mappings().first()
+        open_n = int(row["c"]); unrealized = float(row["u"] or 0)
+        equity = float(cfg["starting_capital"]) + cumulative + unrealized
+        conn.execute(text(
+            f"INSERT INTO {bot_table(bot, 'equity_snapshots')} ("
+            "snapshot_time, equity, unrealized_pnl, realized_pnl_today, "
+            "cumulative_pnl, open_positions"
+            ") VALUES (:t, :e, :u, :r, :c, :n)"
+        ), {"t": now, "e": equity, "u": unrealized, "r": r_today,
+            "c": cumulative, "n": open_n})
+
+
+def _within_window(now_ct: datetime, start: str, end: str) -> bool:
+    t = now_ct.timetz().replace(tzinfo=None)
+    return _parse_time(start) <= t < _parse_time(end)
+
+
+def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
+                  config: dict, equity: float, today: date,
+                  ticker: str, front_dte: int, back_dte: int | None):
+    if strategy == "iron_butterfly":
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None: return None, None
+        return build_iron_butterfly_signal(chain=chain, config=config, equity=equity), chain
+    front = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+    back = chain_provider.get_chain(ticker=ticker, dte=back_dte, today=today)
+    if front is None or back is None: return None, None
+    if strategy == "double_calendar":
+        return build_double_calendar_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity
+        ), front
+    if strategy == "double_diagonal":
+        return build_double_diagonal_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity
+        ), front
+    raise ValueError(f"unknown strategy {strategy}")
+
+
+def run_scan_cycle(
+    *, engine: Engine, bot: str, now_ct: datetime,
+    chain_provider: ChainProvider, event_blackout: bool,
+) -> dict[str, Any]:
+    """Execute one scan cycle for `bot`. Returns dict with at least 'outcome' key."""
+    meta = get_bot(bot)
+    cfg = load_config(engine, bot)
+    result: dict[str, Any] = {"outcome": "NO_TRADE", "reason": None}
+
+    try:
+        if not bool(cfg.get("enabled")):
+            result = {"outcome": "BLOCKED_DISABLED"}
+            return result
+
+        opens = list_open_positions(engine, bot)
+        if opens:
+            # Monitor branch — no new trades while one is open.
+            for pos in opens:
+                legs = json.loads(pos["legs"])
+                mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
+                mtm_value, mtm_pnl = compute_mtm(
+                    strategy=pos["strategy"], legs=legs,
+                    entry_price=float(pos["entry_price"]),
+                    contracts=int(pos["contracts"]),
+                    leg_mids=mids,
+                )
+                update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
+
+                pt_target = float(pos["pt_target_pnl"])
+                if pos["strategy"] == "iron_butterfly":
+                    # Re-derive PT target each scan using the time-of-day ladder.
+                    new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
+                    pt_target = new_pt_pct * float(pos["max_profit"])
+
+                front_exp_str = legs[0]["expiration"]  # legs share front expiration order for IBF; for DC/DD the short legs are first
+                # For DC/DD the front expiration is the SHORT side, which we
+                # placed first in legs[] in both strategy modules.
+                front_exp = date.fromisoformat(front_exp_str)
+
+                d = decide_exit(
+                    strategy=pos["strategy"], mtm_pnl=mtm_pnl,
+                    pt_target_pnl=pt_target, sl_target_pnl=float(pos["sl_target_pnl"]),
+                    now_ct=now_ct, front_expiration=front_exp,
+                    eod_close_ct=_parse_time(cfg["eod_close_ct"]),
+                    event_blackout=event_blackout,
+                )
+                if d.should_close:
+                    close_position(engine, bot, pos["position_id"],
+                                   close_value=mtm_value, close_reason=d.reason,
+                                   now=now_ct)
+                    if bool(cfg.get("discord_alerts")):
+                        try:
+                            from . import discord_alerts
+                            entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
+                                else datetime.fromisoformat(str(pos["entry_time"]))
+                            if entry_dt.tzinfo is None:
+                                entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
+                            mins = int((now_ct - entry_dt).total_seconds() // 60)
+                            discord_alerts.post_close(
+                                bot=bot, display=meta["display"], strategy=pos["strategy"],
+                                position_id=pos["position_id"], close_reason=d.reason,
+                                realized_pnl=mtm_pnl,
+                                time_in_trade_min=mins,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[{bot}] discord post_close failed: {e}")
+                    result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
+                              "position_id": pos["position_id"]}
+                else:
+                    result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
+            return result
+
+        # No open positions — try to OPEN
+        if event_blackout:
+            result = {"outcome": "BLOCKED_EVENT"}
+            return result
+        if not _within_window(now_ct, cfg["entry_start_ct"], cfg["entry_end_ct"]):
+            result = {"outcome": "BLOCKED_OUTSIDE_WINDOW"}
+            return result
+
+        equity = account_equity(engine, bot)
+        signal, _chain = _build_signal(
+            bot=bot, strategy=meta["strategy"], chain_provider=chain_provider,
+            config=cfg, equity=equity, today=now_ct.date(),
+            ticker=meta["ticker"], front_dte=meta["front_dte"],
+            back_dte=meta["back_dte"],
+        )
+        if signal is None:
+            result = {"outcome": "NO_TRADE", "reason": "no signal"}
+            return result
+
+        pid = open_position(engine, bot, meta["strategy"], signal, now_ct)
+        if bool(cfg.get("discord_alerts")):
+            try:
+                from . import discord_alerts
+                discord_alerts.post_open(
+                    bot=bot, display=meta["display"], strategy=meta["strategy"],
+                    position_id=pid, legs=signal.legs(),
+                    entry_price=getattr(signal, "credit", None) if hasattr(signal, "credit") else signal.debit,
+                    contracts=signal.contracts,
+                    max_profit=signal.max_profit * signal.contracts,
+                    max_loss=signal.max_loss * signal.contracts,
+                )
+            except Exception as e:
+                logger.warning(f"[{bot}] discord post_open failed: {e}")
+        result = {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
+        return result
+    finally:
+        _log_scan(engine, bot, now=now_ct, outcome=result["outcome"],
+                  reason=result.get("reason"),
+                  position_id=result.get("position_id"))
+        _write_equity_snapshot(engine, bot, now_ct)
+
+
+async def run_scan_cycle_with_timeout(
+    *, engine: Engine, bot: str, now_ct: datetime,
+    chain_provider: ChainProvider, event_blackout: bool,
+) -> dict[str, Any]:
+    """Wrap one bot's scan in a 15s timeout so one slow bot can't starve
+    the others (memory: 5/15 hung-scanner bug)."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(
+                run_scan_cycle,
+                engine=engine, bot=bot, now_ct=now_ct,
+                chain_provider=chain_provider, event_blackout=event_blackout,
+            ),
+            timeout=SCAN_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[{bot}] scan timeout after {SCAN_TIMEOUT_SEC}s")
+        return {"outcome": "BLOCKED_TIMEOUT"}
+    except Exception as e:
+        logger.exception(f"[{bot}] scan exception: {e}")
+        return {"outcome": "BLOCKED_EXCEPTION", "reason": str(e)[:200]}

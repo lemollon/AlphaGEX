@@ -10,6 +10,8 @@ import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
 import PositionsPage from './pages/PositionsPage';
 import GexProfilePage from './pages/GexProfilePage';
+import BotsOverview from './pages/BotsOverview';
+import BotDashboard from './pages/BotDashboard';
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
@@ -150,6 +152,16 @@ function NavBar() {
         }>
           <Activity size={13} />
           GEX Profile
+        </NavLink>
+        <NavLink to="/bots" className={({ isActive }) =>
+          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
+            isActive
+              ? 'text-white bg-accent'
+              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
+          }`
+        }>
+          <BarChart3 size={13} />
+          Bots
         </NavLink>
       </div>
 
@@ -323,6 +335,8 @@ export default function App() {
           <Route path="/" element={<BuilderPage />} />
           <Route path="/positions" element={<PositionsPage />} />
           <Route path="/gex-profile" element={<GexProfilePage />} />
+          <Route path="/bots" element={<BotsOverview />} />
+          <Route path="/bots/:bot" element={<BotDashboard />} />
         </Routes>
       </div>
     </BrowserRouter>

@@ -1,0 +1,23 @@
+{
+  "spot": 500.0,
+  "vix": 17.0,
+  "atm_straddle_mid": 4.0,
+  "expiration": "2026-05-20",
+  "options": [
+    {"strike": 494, "type": "put",  "bid": 0.40, "ask": 0.50},
+    {"strike": 495, "type": "put",  "bid": 0.50, "ask": 0.60},
+    {"strike": 496, "type": "put",  "bid": 0.65, "ask": 0.75},
+    {"strike": 497, "type": "put",  "bid": 0.90, "ask": 1.00},
+    {"strike": 498, "type": "put",  "bid": 1.20, "ask": 1.30},
+    {"strike": 499, "type": "put",  "bid": 1.55, "ask": 1.65},
+    {"strike": 500, "type": "put",  "bid": 2.00, "ask": 2.10},
+    {"strike": 500, "type": "call", "bid": 2.00, "ask": 2.10},
+    {"strike": 501, "type": "call", "bid": 1.55, "ask": 1.65},
+    {"strike": 502, "type": "call", "bid": 1.20, "ask": 1.30},
+    {"strike": 503, "type": "call", "bid": 0.90, "ask": 1.00},
+    {"strike": 504, "type": "call", "bid": 0.65, "ask": 0.75},
+    {"strike": 505, "type": "call", "bid": 0.50, "ask": 0.60},
+    {"strike": 506, "type": "call", "bid": 0.40, "ask": 0.50}
+  ],
+  "gex": {"flip_point": 502.0, "call_wall": 505.0, "put_wall": 496.0}
+}
