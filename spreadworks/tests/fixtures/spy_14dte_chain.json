@@ -5,11 +5,13 @@
   "expiration": "2026-06-03",
   "iv_atm": 0.18,
   "options": [
+    {"strike": 494, "type": "put",  "bid": 3.50, "ask": 3.60},
     {"strike": 495, "type": "put",  "bid": 3.80, "ask": 3.90},
     {"strike": 496, "type": "put",  "bid": 4.10, "ask": 4.20},
     {"strike": 500, "type": "put",  "bid": 6.90, "ask": 7.00},
     {"strike": 500, "type": "call", "bid": 6.90, "ask": 7.00},
     {"strike": 504, "type": "call", "bid": 4.10, "ask": 4.20},
-    {"strike": 505, "type": "call", "bid": 3.80, "ask": 3.90}
+    {"strike": 505, "type": "call", "bid": 3.80, "ask": 3.90},
+    {"strike": 506, "type": "call", "bid": 3.50, "ask": 3.60}
   ]
 }
