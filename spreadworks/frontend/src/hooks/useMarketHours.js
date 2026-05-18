@@ -10,9 +10,13 @@ export function isMarketOpen() {
 export function getMarketStatusText() {
   const et = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const day = et.getDay();
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${dayNames[day]} ${monthNames[et.getMonth()]} ${et.getDate()}`;
+  const mins = et.getHours() * 60 + et.getMinutes();
+  if (day === 0 || day === 6) return 'Weekend';
+  if (mins < 240) return 'Closed';
+  if (mins < 570) return 'Pre-Market';
+  if (mins >= 960 && mins < 1200) return 'After Hours';
+  if (mins >= 1200) return 'Closed';
+  return 'Closed';
 }
 
 /**

@@ -111,7 +111,7 @@ function NavBar() {
   return (
     <nav className="flex items-center h-[56px] px-5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
       {/* Logo — simple S mark in rounded-square, white wordmark + blue Works */}
-      <div className="flex items-center gap-2.5 pr-6 mr-4 h-full">
+      <div className="flex items-center gap-2.5 pr-5 mr-5 h-full border-r border-white/5">
         <div className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-md text-sm text-white font-black bg-accent">
           S
         </div>
@@ -121,7 +121,7 @@ function NavBar() {
       </div>
 
       {/* Nav Links — active tab is filled accent per brand book */}
-      <div className="flex items-center gap-1.5 h-full">
+      <div className="flex items-center gap-1 h-full">
         <NavLink to="/" end className={({ isActive }) =>
           `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
             isActive
@@ -152,6 +152,12 @@ function NavBar() {
           <Activity size={13} />
           GEX Profile
         </NavLink>
+        <div className="mx-2 h-5 w-px bg-white/10" aria-hidden="true" />
+
+        <span className="px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Bots
+        </span>
+
         {[
           { to: '/bots/breeze', label: 'Breeze', Icon: Snowflake },
           { to: '/bots/tide',   label: 'Tide',   Icon: Waves },

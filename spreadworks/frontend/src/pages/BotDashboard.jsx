@@ -75,9 +75,11 @@ function formatEquity(v) {
 function relativeTime(ts) {
   if (!ts) return '—';
   const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (diff < 0) return 'just now';
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
 }
 
 /* ── Equity chart tooltip ────────────────────────────────────────── */
@@ -291,20 +293,20 @@ export default function BotDashboard() {
           <div className="sw-stat-sublabel">TRADES</div>
         </div>
         <div className="sw-stat-card">
-          <div className={`sw-stat-value sw-mono ${winRate != null ? (winRate >= 50 ? 'sw-pnl-positive' : 'sw-pnl-negative') : ''}`}>
-            {winRate != null ? `${winRate.toFixed(1)}%` : '—'}
+          <div className={`sw-stat-value sw-mono ${tradeCount > 0 && winRate != null ? (winRate >= 50 ? 'sw-pnl-positive' : 'sw-pnl-negative') : 'text-text-muted'}`}>
+            {tradeCount > 0 && winRate != null ? `${winRate.toFixed(1)}%` : '—'}
           </div>
           <div className="sw-stat-sublabel">WIN RATE</div>
         </div>
         <div className="sw-stat-card">
-          <div className={`sw-stat-value sw-mono ${totalPnl != null ? (totalPnl >= 0 ? 'sw-pnl-positive' : 'sw-pnl-negative') : ''}`}>
-            {totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}` : '—'}
+          <div className={`sw-stat-value sw-mono ${tradeCount > 0 && totalPnl != null ? (totalPnl >= 0 ? 'sw-pnl-positive' : 'sw-pnl-negative') : 'text-text-muted'}`}>
+            {tradeCount > 0 && totalPnl != null ? `${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}` : '—'}
           </div>
           <div className="sw-stat-sublabel">TOTAL P&L</div>
         </div>
         <div className="sw-stat-card">
           <div className="sw-stat-value sw-mono text-text-secondary">
-            {avgWin != null && avgLoss != null
+            {tradeCount > 0 && avgWin != null && avgLoss != null
               ? `+$${avgWin.toFixed(0)} / -$${Math.abs(avgLoss).toFixed(0)}`
               : '—'}
           </div>
