@@ -1420,6 +1420,60 @@ def _start_scheduler(app: FastAPI):
     global _evening_brief_fn
     _evening_brief_fn = _fire_evening_brief
 
+    # ------------------------------------------------------------------
+    # BOT SCAN JOB
+    # ------------------------------------------------------------------
+
+    async def scan_bots_tick():
+        """Run one scan cycle for each registered bot.
+
+        Only fires during 8:00-14:59 CT, Mon-Fri (cron already gates hours).
+        Each bot is wrapped in a 15s timeout via run_scan_cycle_with_timeout.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from .bots.scanner import run_scan_cycle_with_timeout
+        from .bots.registry import list_bots
+        now_ct = datetime.now(ZoneInfo("America/Chicago"))
+        # Defensive double-check (cron already restricts; guards against misfires)
+        if now_ct.weekday() >= 5:
+            return
+        if not (8 <= now_ct.hour < 15):
+            return
+
+        # Build the live chain provider lazily so we don't crash imports if
+        # Task 11 (LiveTradierChainProvider) isn't deployed yet.
+        try:
+            from .bots.routes_helpers import build_live_chain_provider
+            provider = build_live_chain_provider()
+        except ImportError:
+            logger.warning("[scan_bots] LiveTradierChainProvider not yet available — skipping cycle")
+            return
+
+        # Event blackout — no helper exists yet; default to no blackout.
+        # TODO: wire is_event_blackout_active once economic_events exposes it.
+        blackout = False
+
+        for bot in list_bots():
+            try:
+                res = await run_scan_cycle_with_timeout(
+                    engine=engine, bot=bot, now_ct=now_ct,
+                    chain_provider=provider, event_blackout=blackout,
+                )
+                logger.info(f"[scan_bots:{bot}] {res}")
+            except Exception as e:
+                logger.exception(f"[scan_bots:{bot}] outer exception: {e}")
+
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    scheduler.add_job(
+        scan_bots_tick, "cron",
+        minute="*", hour="8-14",
+        day_of_week="mon-fri",
+        timezone=_ZoneInfo("America/Chicago"),
+        id="scan_bots", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+
     scheduler.start()
     _active_scheduler = scheduler
     logger.info(
@@ -1520,6 +1574,12 @@ async def lifespan(app: FastAPI):
             print("[SpreadWorks] Database tables created/verified")
         except Exception as e:
             print(f"[SpreadWorks] DB table creation failed (non-fatal): {e}")
+        try:
+            from .bots.db import create_bot_tables
+            create_bot_tables(engine)
+            print("[SpreadWorks] Bot tables created/verified")
+        except Exception as e:
+            print(f"[SpreadWorks] Bot table creation failed (non-fatal): {e}")
     else:
         print("[SpreadWorks] DATABASE_URL not set — running without database")
 
