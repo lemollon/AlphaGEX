@@ -32,7 +32,7 @@ _CONFIG_DDL = """
 CREATE TABLE IF NOT EXISTS {t} (
     id                INTEGER PRIMARY KEY,
     starting_capital  NUMERIC(12,2) NOT NULL DEFAULT 10000,
-    enabled           BOOLEAN NOT NULL DEFAULT 0,
+    enabled           BOOLEAN NOT NULL DEFAULT FALSE,
     max_contracts     INTEGER NOT NULL DEFAULT 1,
     bp_pct            NUMERIC(4,3) NOT NULL DEFAULT 0.10,
     sd_mult           NUMERIC(4,2) NOT NULL DEFAULT 1.0,
@@ -43,9 +43,9 @@ CREATE TABLE IF NOT EXISTS {t} (
     entry_start_ct    TEXT NOT NULL DEFAULT '08:35',
     entry_end_ct      TEXT NOT NULL DEFAULT '10:30',
     eod_close_ct      TEXT NOT NULL DEFAULT '14:45',
-    discord_alerts    BOOLEAN NOT NULL DEFAULT 0,
+    discord_alerts    BOOLEAN NOT NULL DEFAULT FALSE,
     delta_skew        INTEGER NOT NULL DEFAULT 0,
-    use_gex_walls     BOOLEAN NOT NULL DEFAULT 0,
+    use_gex_walls     BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
