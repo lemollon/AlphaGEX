@@ -15,7 +15,7 @@ in its UI, but every trade is hand-entered.
 Goal: add 3 automated paper-trading bots to SpreadWorks, each owning one
 non-IC strategy:
 
-- **GUST** — Iron Butterfly, 0DTE
+- **FROST** — Iron Butterfly, 0DTE
 - **TIDE** — Double Calendar, 1DTE front / 14DTE back
 - **DRIFT** — Double Diagonal, 1DTE front / 14DTE back
 
@@ -55,10 +55,10 @@ spreadworks/
       executor.py                  # Open/close/MTM (mid-price, no broker)
       monitor.py                   # PT/SL/EOD logic shared across bots
       registry.py                  # BOT_REGISTRY: name -> display, strategy, config defaults
-      db.py                        # Per-bot table helpers (bot_table('gust', 'positions'))
+      db.py                        # Per-bot table helpers (bot_table('frost', 'positions'))
       strategies/
         __init__.py
-        iron_butterfly.py          # GUST entry
+        iron_butterfly.py          # FROST entry
         double_calendar.py         # TIDE entry
         double_diagonal.py         # DRIFT entry
     routes_bots.py                 # NEW — /api/spreadworks/bots/{bot}/* handlers
@@ -110,7 +110,7 @@ Source of truth: `spreadworks/backend/bots/registry.py`. Frontend mirror in
 
 | Internal | Display | Strategy         | Front DTE | Back DTE | Default PT | Default SL | EOD CT |
 |----------|---------|------------------|-----------|----------|-----------|------------|--------|
-| gust     | GUST    | iron_butterfly   | 0         | —        | 30%       | 200% credit| 14:45  |
+| frost     | FROST    | iron_butterfly   | 0         | —        | 30%       | 200% credit| 14:45  |
 | tide     | TIDE    | double_calendar  | 1         | 14       | 50%       | 100% debit | 14:45* |
 | drift    | DRIFT   | double_diagonal  | 1         | 14       | 50%       | 100% debit | 14:45* |
 
@@ -131,9 +131,9 @@ CREATE TABLE {bot}_config (
   enabled           BOOLEAN NOT NULL DEFAULT false,
   max_contracts     INTEGER NOT NULL DEFAULT 1,
   bp_pct            NUMERIC(4,3) NOT NULL DEFAULT 0.10,  -- buying power % per trade
-  sd_mult           NUMERIC(4,2) NOT NULL DEFAULT 1.0,   -- GUST: wing distance
+  sd_mult           NUMERIC(4,2) NOT NULL DEFAULT 1.0,   -- FROST: wing distance
   front_dte         INTEGER NOT NULL DEFAULT 0,
-  back_dte          INTEGER,                              -- NULL for GUST
+  back_dte          INTEGER,                              -- NULL for FROST
   pt_pct            NUMERIC(5,4) NOT NULL,
   sl_pct            NUMERIC(5,4) NOT NULL,
   entry_start_ct    TIME NOT NULL DEFAULT '08:35',
@@ -141,7 +141,7 @@ CREATE TABLE {bot}_config (
   eod_close_ct      TIME NOT NULL DEFAULT '14:45',
   discord_alerts    BOOLEAN NOT NULL DEFAULT false,
   delta_skew        INTEGER NOT NULL DEFAULT 0,           -- DRIFT only
-  use_gex_walls     BOOLEAN NOT NULL DEFAULT false,       -- GUST only: clip wings to walls
+  use_gex_walls     BOOLEAN NOT NULL DEFAULT false,       -- FROST only: clip wings to walls
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
@@ -156,7 +156,7 @@ IronForge `ensureTables()`). Seed only if row is missing.
 ### 5.2 `{bot}_positions`
 ```sql
 CREATE TABLE {bot}_positions (
-  position_id     TEXT PRIMARY KEY,         -- e.g. 'gust-2026-05-18-001'
+  position_id     TEXT PRIMARY KEY,         -- e.g. 'frost-2026-05-18-001'
   ticker          TEXT NOT NULL DEFAULT 'SPY',
   strategy        TEXT NOT NULL,            -- 'iron_butterfly' | 'double_calendar' | 'double_diagonal'
   legs            JSONB NOT NULL,           -- [{side, type, strike, expiration, contracts, entry_price}, ...]
@@ -226,7 +226,7 @@ Truncate to last 30 days nightly to bound growth.
 
 ## 6. Strategy Entry Logic
 
-### 6.1 GUST — Iron Butterfly, 0DTE SPY
+### 6.1 FROST — Iron Butterfly, 0DTE SPY
 
 **Inputs:** today's 0DTE chain, spot, VIX, optional GEX levels (call_wall, put_wall, flip_point).
 
@@ -254,7 +254,7 @@ Truncate to last 30 days nightly to bound growth.
    - `max_profit = credit × 100` per contract.
    - `max_loss = (wing_width − credit) × 100` per contract.
    - `contracts = min(max_contracts, floor((equity × bp_pct) / max_loss))`.
-5. **Open:** insert into `gust_positions` with
+5. **Open:** insert into `frost_positions` with
    - `pt_target_pnl = pt_pct × max_profit × contracts`
    - `sl_target_pnl = sl_pct × max_profit × contracts` (positive number; compared against −mtm_pnl)
    - `mtm_value` initialized to `credit` (cost to close at entry = credit received).
@@ -305,15 +305,15 @@ Every scan cycle, for each open position:
    (for IBF credit: `mtm_value = short_call_mid + short_put_mid − long_call_mid − long_put_mid` = cost to buy back).
    (for DC/DD debit: `mtm_value = long_back_call_mid + long_back_put_mid − short_front_call_mid − short_front_put_mid` = current credit you'd receive to unwind).
 3. Compute signed P&L:
-   - **Credit strats (GUST):** `mtm_pnl = (entry_price − mtm_value) × contracts × 100` (we received `entry_price` credit; profit when buy-back is cheaper).
+   - **Credit strats (FROST):** `mtm_pnl = (entry_price − mtm_value) × contracts × 100` (we received `entry_price` credit; profit when buy-back is cheaper).
    - **Debit strats (TIDE/DRIFT):** `mtm_pnl = (mtm_value − entry_price) × contracts × 100` (we paid `entry_price` debit; profit when current value is higher).
 4. Update `{bot}_positions.mtm_value`, `mtm_pnl`, `mtm_updated_at`.
 5. Decide:
    - **PT hit?** `mtm_pnl ≥ pt_target_pnl` → close with reason `PT`.
    - **SL hit?** `mtm_pnl ≤ −sl_target_pnl` → close with reason `SL`.
-   - **Time-of-day PT ladder** (GUST only): override `pt_target_pnl` each scan using `pt_pct_morning=0.30`, `pt_pct_midday=0.40`, `pt_pct_afternoon=0.50` based on CT clock. (Ported from IronForge SPARK fix.) TIDE/DRIFT use static `pt_pct`.
+   - **Time-of-day PT ladder** (FROST only): override `pt_target_pnl` each scan using `pt_pct_morning=0.30`, `pt_pct_midday=0.40`, `pt_pct_afternoon=0.50` based on CT clock. (Ported from IronForge SPARK fix.) TIDE/DRIFT use static `pt_pct`.
    - **EOD trigger:**
-     - GUST: if CT now ≥ `eod_close_ct` → close with reason `EOD`.
+     - FROST: if CT now ≥ `eod_close_ct` → close with reason `EOD`.
      - TIDE/DRIFT: if today is the front-leg expiration date AND CT now ≥ `eod_close_ct` → close with reason `EOD`.
    - **Event blackout** for ticker: close with reason `EVENT_HALT`.
 6. On close, write to `{bot}_closed_trades`, update `{bot}_positions.status = 'CLOSED'`,
@@ -434,7 +434,7 @@ The work is complete when:
 3. Each per-bot dashboard renders Equity / Performance / Positions / Trades /
    Logs / Config tabs without errors.
 4. PT, SL, and EOD exit conditions each fire correctly in a test fixture.
-5. `/api/spreadworks/bots/gust/equity-curve/intraday` returns at least 2
+5. `/api/spreadworks/bots/frost/equity-curve/intraday` returns at least 2
    data points within 2 minutes of bot enable.
 6. Force-close API closes an open position and updates `{bot}_closed_trades`.
 7. Disabling a bot stops its scanner from opening new positions but does
