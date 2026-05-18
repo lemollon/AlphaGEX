@@ -16,6 +16,7 @@ import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 import SymbolSelector from './components/SymbolSelector';
+import LivePnlTape from './components/LivePnlTape';
 import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
 import { API_URL } from './lib/api';
 
@@ -176,7 +177,8 @@ function NavBar() {
         ))}
       </div>
 
-      <div className="ml-auto flex items-center gap-2.5">
+      <div className="ml-auto flex items-center gap-3">
+        <LivePnlTape />
         <NextPostCountdown />
         <DatePill />
         <MarketStatusBadge />
