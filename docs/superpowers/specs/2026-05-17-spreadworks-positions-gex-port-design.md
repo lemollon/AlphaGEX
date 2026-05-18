@@ -3,6 +3,7 @@
 **Date:** 2026-05-17
 **Branch:** `claude/positions-gex-mockup-port`
 **Continues:** PR #2334 (Builder port). Same approach, two more pages.
+**Shipped:** PR #2335 (merged 2026-05-17 16:00 UTC).
 
 ## Why
 
