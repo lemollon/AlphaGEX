@@ -25,32 +25,35 @@ class InstanceConfig:
         return self.bot_guard_tag
 
 
-# Per master spec section 5: $200 for higher-IV LETFs, $150 for
+# Original spec section 5: $200 for higher-IV LETFs, $150 for
 # lower-volume LETFs. paper_only=True per Q3/V3-5 deferral.
+# 2026-05-18: allocations scaled 5x ($200 -> $1000, $150 -> $750) to
+# match the global capital ramp (account 5K -> 25K, platform cap
+# 750 -> 5000). Sum 3*$1000 + 2*$750 = $4,500 <= $5,000 platform cap.
 GOLIATH_INSTANCES: dict[str, InstanceConfig] = {
     "GOLIATH-MSTU": InstanceConfig(
         letf_ticker="MSTU", underlying_ticker="MSTR",
-        allocation_cap=200.0, paper_only=True,
+        allocation_cap=1000.0, paper_only=True,
         bot_guard_tag="GOLIATH-MSTU",
     ),
     "GOLIATH-TSLL": InstanceConfig(
         letf_ticker="TSLL", underlying_ticker="TSLA",
-        allocation_cap=200.0, paper_only=True,
+        allocation_cap=1000.0, paper_only=True,
         bot_guard_tag="GOLIATH-TSLL",
     ),
     "GOLIATH-NVDL": InstanceConfig(
         letf_ticker="NVDL", underlying_ticker="NVDA",
-        allocation_cap=200.0, paper_only=True,
+        allocation_cap=1000.0, paper_only=True,
         bot_guard_tag="GOLIATH-NVDL",
     ),
     "GOLIATH-CONL": InstanceConfig(
         letf_ticker="CONL", underlying_ticker="COIN",
-        allocation_cap=150.0, paper_only=True,
+        allocation_cap=750.0, paper_only=True,
         bot_guard_tag="GOLIATH-CONL",
     ),
     "GOLIATH-AMDL": InstanceConfig(
         letf_ticker="AMDL", underlying_ticker="AMD",
-        allocation_cap=150.0, paper_only=True,
+        allocation_cap=750.0, paper_only=True,
         bot_guard_tag="GOLIATH-AMDL",
     ),
 }

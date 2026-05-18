@@ -136,8 +136,39 @@ def _eval_chain(inputs: GateInputs) -> list[GateResult]:
     return chain
 
 
+# 2026-05-18: Leron directive -- bypass all entry gates G02-G10 today.
+# orchestrate_entry returns an all-PASS chain with the attempted structure
+# approved (or an unavailable-structure FAIL if strike mapping produced none,
+# since there's no trade to take in that case). Flip this flag back to False
+# to reinstate gate enforcement.
+BYPASS_ALL_GATES = True
+
+_BYPASSED_GATE_IDS = ("G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10")
+
+
+def _bypassed_chain() -> list[GateResult]:
+    """Synthesize an all-PASS chain when gate enforcement is disabled."""
+    return [
+        GateResult(
+            gate=g,
+            outcome=GateOutcome.PASS,
+            reason="gate bypassed (BYPASS_ALL_GATES=True, 2026-05-18 Leron directive)",
+            context={"bypassed": True},
+        )
+        for g in _BYPASSED_GATE_IDS
+    ]
+
+
 def orchestrate_entry(inputs: GateInputs) -> EntryDecision:
     """Run the gate chain and return EntryDecision (with persisted failure)."""
+    if BYPASS_ALL_GATES:
+        if inputs.attempted_structure is None:
+            # Nothing to trade -- preserve the original "structure unavailable"
+            # signal so callers don't try to execute a None structure.
+            chain = [_structure_unavailable("G06")]
+            return EntryDecision(structure=None, chain=chain)
+        return EntryDecision(structure=inputs.attempted_structure, chain=_bypassed_chain())
+
     chain = _eval_chain(inputs)
     failed = next((r for r in chain if not r.passed), None)
     structure = inputs.attempted_structure if failed is None else None
