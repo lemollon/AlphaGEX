@@ -5,7 +5,7 @@ an `IronButterflySignal` dataclass or `None` if no setup passes the gates.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 MIN_CREDIT = 0.30
@@ -28,7 +28,7 @@ class IronButterflySignal:
     contracts: int
     max_profit: float        # per contract, $
     max_loss: float          # per contract, $
-    wing_width: int
+    wing_width: int          # min(call_wing, put_wing) for collateral math; use long_*_strike for actual shape
     pt_target_pnl: float     # $ total
     sl_target_pnl: float     # $ total
 
