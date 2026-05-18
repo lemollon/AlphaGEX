@@ -8,8 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 BOT_REGISTRY: dict[str, dict[str, Any]] = {
-    "frost": {
-        "display": "FROST",
+    "breeze": {
+        "display": "BREEZE",
         "strategy": "iron_butterfly",
         "ticker": "SPY",
         "front_dte": 0,

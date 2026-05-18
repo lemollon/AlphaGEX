@@ -1,1 +1,1 @@
-"""SpreadWorks automated paper-trading bots (FROST / TIDE / DRIFT)."""
+"""SpreadWorks automated paper-trading bots (BREEZE / TIDE / DRIFT)."""

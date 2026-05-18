@@ -2,11 +2,11 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_three_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"frost", "tide", "drift"}
+    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift"}
 
 
-def test_frost_defaults():
-    b = get_bot("frost")
+def test_breeze_defaults():
+    b = get_bot("breeze")
     assert b["strategy"] == "iron_butterfly"
     assert b["front_dte"] == 0
     assert b["back_dte"] is None
@@ -40,4 +40,4 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["drift", "frost", "tide"]
+    assert sorted(list_bots()) == ["breeze", "drift", "tide"]

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add 3 automated SPY paper-trading bots (FROST=Iron Butterfly 0DTE, TIDE=Double Calendar 1/14DTE, DRIFT=Double Diagonal 1/14DTE) to SpreadWorks, mirroring the IronForge FLAME/SPARK/INFERNO pattern but running in-process inside the existing FastAPI app with simulated mid-price fills.
+**Goal:** Add 3 automated SPY paper-trading bots (BREEZE=Iron Butterfly 0DTE, TIDE=Double Calendar 1/14DTE, DRIFT=Double Diagonal 1/14DTE) to SpreadWorks, mirroring the IronForge FLAME/SPARK/INFERNO pattern but running in-process inside the existing FastAPI app with simulated mid-price fills.
 
 **Architecture:** A new `spreadworks/backend/bots/` module hosts a 1-minute APScheduler job that scans each enabled bot, opens positions in per-bot Postgres tables, and monitors MTM with PT/SL/EOD exits. Frontend gets `/bots` overview + per-bot dashboards under SpreadWorks's existing Vite/React app.
 
@@ -19,7 +19,7 @@
 - `spreadworks/backend/bots/registry.py` — `BOT_REGISTRY` with defaults + display info
 - `spreadworks/backend/bots/db.py` — `bot_table()` helper + `create_bot_tables()` migration
 - `spreadworks/backend/bots/strategies/__init__.py` — package marker
-- `spreadworks/backend/bots/strategies/iron_butterfly.py` — FROST entry logic (pure function)
+- `spreadworks/backend/bots/strategies/iron_butterfly.py` — BREEZE entry logic (pure function)
 - `spreadworks/backend/bots/strategies/double_calendar.py` — TIDE entry logic (pure function)
 - `spreadworks/backend/bots/strategies/double_diagonal.py` — DRIFT entry logic (pure function)
 - `spreadworks/backend/bots/executor.py` — `open_position`, `close_position`, `compute_mtm`
@@ -266,11 +266,11 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_three_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"frost", "tide", "drift"}
+    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift"}
 
 
-def test_frost_defaults():
-    b = get_bot("frost")
+def test_breeze_defaults():
+    b = get_bot("breeze")
     assert b["strategy"] == "iron_butterfly"
     assert b["front_dte"] == 0
     assert b["back_dte"] is None
@@ -304,7 +304,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["drift", "frost", "tide"]
+    assert sorted(list_bots()) == ["drift", "breeze", "tide"]
 ```
 
 - [ ] **Step 2: Run the test, confirm it fails**
@@ -321,7 +321,7 @@ Expected: `ModuleNotFoundError: backend.bots.registry`
 `spreadworks/backend/bots/__init__.py`:
 
 ```python
-"""SpreadWorks automated paper-trading bots (FROST / TIDE / DRIFT)."""
+"""SpreadWorks automated paper-trading bots (BREEZE / TIDE / DRIFT)."""
 ```
 
 `spreadworks/backend/bots/registry.py`:
@@ -337,8 +337,8 @@ from __future__ import annotations
 from typing import Any
 
 BOT_REGISTRY: dict[str, dict[str, Any]] = {
-    "frost": {
-        "display": "FROST",
+    "breeze": {
+        "display": "BREEZE",
         "strategy": "iron_butterfly",
         "ticker": "SPY",
         "front_dte": 0,
@@ -428,7 +428,7 @@ Expected: 6 passed.
 
 ```bash
 git add spreadworks/backend/bots/ spreadworks/tests/test_registry.py
-git commit -m "feat(spreadworks): add BOT_REGISTRY for FROST/TIDE/DRIFT"
+git commit -m "feat(spreadworks): add BOT_REGISTRY for BREEZE/TIDE/DRIFT"
 ```
 
 ---
@@ -448,7 +448,7 @@ from backend.bots.db import bot_table, create_bot_tables
 
 
 def test_bot_table_naming():
-    assert bot_table("frost", "config") == "frost_config"
+    assert bot_table("breeze", "config") == "breeze_config"
     assert bot_table("tide", "positions") == "tide_positions"
     assert bot_table("drift", "scan_activity") == "drift_scan_activity"
 
@@ -464,7 +464,7 @@ def test_create_bot_tables_creates_all_15():
     create_bot_tables(engine)
     insp = inspect(engine)
     names = set(insp.get_table_names())
-    for bot in ["frost", "tide", "drift"]:
+    for bot in ["breeze", "tide", "drift"]:
         for tbl in ["config", "positions", "closed_trades",
                     "equity_snapshots", "scan_activity"]:
             assert f"{bot}_{tbl}" in names, f"missing {bot}_{tbl}"
@@ -474,7 +474,7 @@ def test_create_bot_tables_seeds_config():
     engine = create_engine("sqlite:///:memory:", future=True)
     create_bot_tables(engine)
     with engine.begin() as conn:
-        for bot in ["frost", "tide", "drift"]:
+        for bot in ["breeze", "tide", "drift"]:
             row = conn.execute(
                 text(f"SELECT pt_pct, sl_pct, enabled FROM {bot}_config")
             ).fetchone()
@@ -488,13 +488,13 @@ def test_create_bot_tables_does_not_overwrite_existing_config():
     create_bot_tables(engine)
     with engine.begin() as conn:
         conn.execute(text(
-            "UPDATE frost_config SET pt_pct = 0.99, max_contracts = 99"
+            "UPDATE breeze_config SET pt_pct = 0.99, max_contracts = 99"
         ))
     # Run migration a second time
     create_bot_tables(engine)
     with engine.begin() as conn:
         row = conn.execute(
-            text("SELECT pt_pct, max_contracts FROM frost_config")
+            text("SELECT pt_pct, max_contracts FROM breeze_config")
         ).fetchone()
         assert float(row.pt_pct) == 0.99
         assert row.max_contracts == 99
@@ -513,7 +513,7 @@ Expected: `ModuleNotFoundError: backend.bots.db`
 ```python
 """Per-bot Postgres table helpers + idempotent migration.
 
-Tables created (per bot in {frost, tide, drift}):
+Tables created (per bot in {breeze, tide, drift}):
   {bot}_config            -- single-row config (1 = enabled, NULL/0 = disabled)
   {bot}_positions         -- open positions
   {bot}_closed_trades     -- realized P&L
@@ -734,7 +734,7 @@ git commit -m "feat(spreadworks): per-bot tables + idempotent seed migration"
 
 ---
 
-## Task 4: FROST strategy (Iron Butterfly entry)
+## Task 4: BREEZE strategy (Iron Butterfly entry)
 
 **Files:**
 - Create: `spreadworks/backend/bots/strategies/__init__.py` (empty)
@@ -858,7 +858,7 @@ Expected: import error.
 - [ ] **Step 3: Implement strategy** — `spreadworks/backend/bots/strategies/__init__.py` (empty file) then `spreadworks/backend/bots/strategies/iron_butterfly.py`:
 
 ```python
-"""FROST — Iron Butterfly 0DTE entry signal builder.
+"""BREEZE — Iron Butterfly 0DTE entry signal builder.
 
 Pure function `build_iron_butterfly_signal(chain, config, equity)` returns
 an `IronButterflySignal` dataclass or `None` if no setup passes the gates.
@@ -1013,7 +1013,7 @@ Expected: 7 passed.
 
 ```bash
 git add spreadworks/backend/bots/strategies/ spreadworks/tests/test_iron_butterfly.py
-git commit -m "feat(spreadworks): FROST iron butterfly entry signal"
+git commit -m "feat(spreadworks): BREEZE iron butterfly entry signal"
 ```
 
 ---
@@ -1490,10 +1490,10 @@ def test_open_and_list_position(db_session, fake_chain_0dte):
     )
     assert sig is not None
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    pid = open_position(engine, bot="frost", strategy="iron_butterfly",
+    pid = open_position(engine, bot="breeze", strategy="iron_butterfly",
                         signal=sig, now=now)
-    assert pid.startswith("frost-2026-05-20-")
-    opens = list_open_positions(engine, "frost")
+    assert pid.startswith("breeze-2026-05-20-")
+    opens = list_open_positions(engine, "breeze")
     assert len(opens) == 1
     assert opens[0]["position_id"] == pid
     legs = json.loads(opens[0]["legs"])
@@ -1509,13 +1509,13 @@ def test_close_writes_to_closed_trades(db_session, fake_chain_0dte):
         equity=10000.0,
     )
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    pid = open_position(engine, "frost", "iron_butterfly", sig, now)
+    pid = open_position(engine, "breeze", "iron_butterfly", sig, now)
     later = datetime(2026, 5, 20, 11, 0, tzinfo=CT)
-    close_position(engine, bot="frost", position_id=pid,
+    close_position(engine, bot="breeze", position_id=pid,
                    close_value=sig.credit * 0.7, close_reason="PT", now=later)
     with engine.begin() as conn:
         ct = conn.execute(text(
-            "SELECT * FROM frost_closed_trades WHERE position_id=:p"
+            "SELECT * FROM breeze_closed_trades WHERE position_id=:p"
         ), {"p": pid}).mappings().first()
     assert ct is not None
     assert ct["close_reason"] == "PT"
@@ -1523,7 +1523,7 @@ def test_close_writes_to_closed_trades(db_session, fake_chain_0dte):
     # original position now CLOSED
     with engine.begin() as conn:
         row = conn.execute(text(
-            "SELECT status FROM frost_positions WHERE position_id=:p"
+            "SELECT status FROM breeze_positions WHERE position_id=:p"
         ), {"p": pid}).mappings().first()
     assert row["status"] == "CLOSED"
 
@@ -1552,7 +1552,7 @@ def test_compute_mtm_credit_strategy(fake_chain_0dte):
 
 def test_account_equity_starts_at_config(db_session):
     engine = db_session.bind
-    eq = account_equity(engine, "frost")
+    eq = account_equity(engine, "breeze")
     assert eq == 10000.0
 ```
 
@@ -1812,7 +1812,7 @@ def test_sl_hit_returns_sl():
     assert d.reason == "SL"
 
 
-def test_frost_eod_force_close():
+def test_breeze_eod_force_close():
     d = decide_exit(
         strategy="iron_butterfly", mtm_pnl=10.0,
         pt_target_pnl=45.0, sl_target_pnl=300.0,
@@ -1889,7 +1889,7 @@ class ExitDecision:
 
 
 def pt_pct_for_time_of_day(now_ct_time: time) -> float:
-    """FROST-only profit-target ladder.
+    """BREEZE-only profit-target ladder.
 
     MORNING (open-11:00 CT) -> 0.30
     MIDDAY  (11:00-13:00 CT) -> 0.40
@@ -2003,49 +2003,49 @@ def _enable_bot(engine, bot):
         conn.execute(text(f"UPDATE {bot}_config SET enabled = 1 WHERE id = 1"))
 
 
-def test_frost_opens_position_in_entry_window(db_session, fake_chain_0dte):
+def test_breeze_opens_position_in_entry_window(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] in ("TRADE", "NO_TRADE")  # not blocked
     # If TRADE, position should exist
     if res["outcome"] == "TRADE":
         with engine.begin() as conn:
             n = conn.execute(text(
-                "SELECT COUNT(*) c FROM frost_positions WHERE status='OPEN'"
+                "SELECT COUNT(*) c FROM breeze_positions WHERE status='OPEN'"
             )).mappings().first()["c"]
         assert n == 1
 
 
-def test_frost_disabled_blocks_trading(db_session, fake_chain_0dte):
+def test_breeze_disabled_blocks_trading(db_session, fake_chain_0dte):
     engine = db_session.bind  # NOT enabling
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "BLOCKED_DISABLED"
 
 
 def test_outside_entry_window_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     # Before 08:35
     now = datetime(2026, 5, 20, 8, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "BLOCKED_OUTSIDE_WINDOW"
 
 
 def test_event_blackout_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                         chain_provider=provider, event_blackout=True)
     assert res["outcome"] == "BLOCKED_EVENT"
 
@@ -2055,46 +2055,46 @@ def test_existing_open_position_monitors_instead_of_opens(db_session, fake_chain
     from backend.bots.strategies.iron_butterfly import build_iron_butterfly_signal
     from backend.bots.executor import open_position
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte,
         config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
                 "pt_pct": 0.30, "sl_pct": 2.0, "use_gex_walls": False},
         equity=10000.0,
     )
-    open_position(engine, "frost", "iron_butterfly", sig,
+    open_position(engine, "breeze", "iron_butterfly", sig,
                   datetime(2026, 5, 20, 9, 0, tzinfo=CT))
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "MONITOR"
 
 
 def test_scan_activity_row_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT outcome FROM frost_scan_activity"
+            "SELECT outcome FROM breeze_scan_activity"
         )).mappings().all()
     assert len(rows) >= 1
 
 
 def test_equity_snapshot_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "frost")
+    _enable_bot(engine, "breeze")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="frost", now_ct=now,
+    run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT equity FROM frost_equity_snapshots"
+            "SELECT equity FROM breeze_equity_snapshots"
         )).mappings().all()
     assert len(rows) == 1
     assert float(rows[0]["equity"]) >= 9000  # near starting capital
@@ -2643,10 +2643,10 @@ def client(db_session, monkeypatch):
 
 
 def test_status_returns_basic_fields(client):
-    r = client.get("/api/spreadworks/bots/frost/status")
+    r = client.get("/api/spreadworks/bots/breeze/status")
     assert r.status_code == 200
     d = r.json()
-    assert d["bot"] == "frost"
+    assert d["bot"] == "breeze"
     assert d["enabled"] is False
     assert d["open_positions"] == 0
 
@@ -2657,22 +2657,22 @@ def test_unknown_bot_returns_404(client):
 
 
 def test_toggle_flips_enabled(client):
-    r = client.post("/api/spreadworks/bots/frost/toggle")
+    r = client.post("/api/spreadworks/bots/breeze/toggle")
     assert r.status_code == 200
     assert r.json()["enabled"] is True
-    r2 = client.post("/api/spreadworks/bots/frost/toggle")
+    r2 = client.post("/api/spreadworks/bots/breeze/toggle")
     assert r2.json()["enabled"] is False
 
 
 def test_config_get_and_post(client):
-    r = client.get("/api/spreadworks/bots/frost/config")
+    r = client.get("/api/spreadworks/bots/breeze/config")
     assert r.status_code == 200
     cfg = r.json()
     assert cfg["pt_pct"] == 0.30 or float(cfg["pt_pct"]) == 0.30
 
-    r2 = client.post("/api/spreadworks/bots/frost/config", json={"pt_pct": 0.40})
+    r2 = client.post("/api/spreadworks/bots/breeze/config", json={"pt_pct": 0.40})
     assert r2.status_code == 200
-    r3 = client.get("/api/spreadworks/bots/frost/config")
+    r3 = client.get("/api/spreadworks/bots/breeze/config")
     assert float(r3.json()["pt_pct"]) == 0.40
 ```
 
@@ -3128,7 +3128,7 @@ git commit -m "feat(spreadworks): optional Discord open/close embeds for bots"
 // Keep these in sync when editing.
 
 export const BOT_REGISTRY = {
-  frost:  { display: 'FROST',  strategy: 'iron_butterfly',  ticker: 'SPY' },
+  breeze:  { display: 'BREEZE',  strategy: 'iron_butterfly',  ticker: 'SPY' },
   tide:  { display: 'TIDE',  strategy: 'double_calendar', ticker: 'SPY' },
   drift: { display: 'DRIFT', strategy: 'double_diagonal', ticker: 'SPY' },
 };
@@ -3140,7 +3140,7 @@ export const STRATEGY_LABEL = {
 };
 
 export const BOT_THEME = {
-  frost: { accent: '#A5F3FC', glyph: 'snowflake' },
+  breeze: { accent: '#A5F3FC', glyph: 'snowflake' },
   tide:  { accent: '#38BDF8', glyph: 'wave' },
   drift: { accent: '#7DD3FC', glyph: 'current' },
 };
@@ -3361,7 +3361,7 @@ export default function BotsOverview() {
         Toggle a bot on from its dashboard.
       </p>
       <div className="bots-grid">
-        {['frost', 'tide', 'drift'].map(b => <BotCard key={b} bot={b} />)}
+        {['breeze', 'tide', 'drift'].map(b => <BotCard key={b} bot={b} />)}
       </div>
     </div>
   );
