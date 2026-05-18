@@ -1483,7 +1483,7 @@ def _start_scheduler(app: FastAPI):
         "midday_pulse (12:00), gex_shift (*/5 min), "
         "market_close_msg (15:00), eod (15:00:30), "
         "scoreboard (15:05), evening_brief (15:30), "
-        "weekend_playbook (Sat 10:00) CT"
+        "weekend_playbook (Sat 10:00), scan_bots (*/min 8-14) CT"
     )
     return scheduler
 
