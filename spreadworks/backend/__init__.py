@@ -1610,6 +1610,9 @@ app.add_middleware(
 
 app.include_router(router)
 
+from .routes_bots import router as bots_router
+app.include_router(bots_router)
+
 
 @app.get("/health")
 async def health():
