@@ -2,6 +2,17 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 
 const API_URL = process.env.VITE_API_URL || 'http://localhost:8000';
 
+// Brand palette — mirrors frontend/src/index.css @theme tokens.
+const BRAND = {
+  ACCENT: 0x3b82f6,
+  SUCCESS: 0x22c55e,
+  DANGER: 0xef4444,
+  WARNING: 0xeab308,
+};
+
+const mono = (v) => `\`${v}\``;
+const dollar = (v) => (v == null ? '--' : mono(`$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`));
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('spread')
@@ -31,47 +42,43 @@ module.exports = {
     const strategy = interaction.options.getString('strategy') || 'double_diagonal';
 
     try {
-      // Fetch GEX levels
       const gexRes = await fetch(`${API_URL}/api/spreadworks/gex?symbol=${symbol}`);
       if (!gexRes.ok) throw new Error(`GEX fetch failed: ${gexRes.status}`);
       const gexData = await gexRes.json();
 
-      // Fetch suggested strikes
       const suggestRes = await fetch(
         `${API_URL}/api/spreadworks/gex-suggest?symbol=${symbol}&strategy=${strategy}`
       );
       if (!suggestRes.ok) throw new Error(`Suggestion fetch failed: ${suggestRes.status}`);
       const suggestion = await suggestRes.json();
 
-      // Build GEX levels string
       const gexLines = [];
-      if (gexData.flip_point) gexLines.push(`Flip Point: $${gexData.flip_point.toFixed(2)}`);
-      if (gexData.call_wall) gexLines.push(`Call Wall: $${gexData.call_wall.toFixed(2)}`);
-      if (gexData.put_wall) gexLines.push(`Put Wall: $${gexData.put_wall.toFixed(2)}`);
-      if (gexData.gamma_regime) gexLines.push(`Regime: ${gexData.gamma_regime}`);
+      if (gexData.flip_point) gexLines.push(`Flip · ${dollar(gexData.flip_point)}`);
+      if (gexData.call_wall) gexLines.push(`Call Wall · ${dollar(gexData.call_wall)}`);
+      if (gexData.put_wall) gexLines.push(`Put Wall · ${dollar(gexData.put_wall)}`);
+      if (gexData.gamma_regime) gexLines.push(`Regime · ${mono(gexData.gamma_regime)}`);
 
-      // Build suggested strikes string
       const strikeLines = [];
       if (suggestion.legs) {
         const legs = suggestion.legs;
         if (strategy === 'double_diagonal') {
-          strikeLines.push(`Long Put: $${legs.long_put_strike}`);
-          strikeLines.push(`Short Put: $${legs.short_put_strike}`);
-          strikeLines.push(`Short Call: $${legs.short_call_strike}`);
-          strikeLines.push(`Long Call: $${legs.long_call_strike}`);
-          strikeLines.push(`Short Exp: ${legs.short_expiration}`);
-          strikeLines.push(`Long Exp: ${legs.long_expiration}`);
+          strikeLines.push(`Long Put · ${dollar(legs.long_put_strike)}`);
+          strikeLines.push(`Short Put · ${dollar(legs.short_put_strike)}`);
+          strikeLines.push(`Short Call · ${dollar(legs.short_call_strike)}`);
+          strikeLines.push(`Long Call · ${dollar(legs.long_call_strike)}`);
+          strikeLines.push(`Short Exp · ${mono(legs.short_expiration)}`);
+          strikeLines.push(`Long Exp · ${mono(legs.long_expiration)}`);
         } else if (strategy === 'iron_condor') {
-          strikeLines.push(`Long Put: $${legs.long_put_strike}`);
-          strikeLines.push(`Short Put: $${legs.short_put_strike}`);
-          strikeLines.push(`Short Call: $${legs.short_call_strike}`);
-          strikeLines.push(`Long Call: $${legs.long_call_strike}`);
-          strikeLines.push(`Expiration: ${legs.expiration}`);
+          strikeLines.push(`Long Put · ${dollar(legs.long_put_strike)}`);
+          strikeLines.push(`Short Put · ${dollar(legs.short_put_strike)}`);
+          strikeLines.push(`Short Call · ${dollar(legs.short_call_strike)}`);
+          strikeLines.push(`Long Call · ${dollar(legs.long_call_strike)}`);
+          strikeLines.push(`Expiration · ${mono(legs.expiration)}`);
         } else {
-          strikeLines.push(`Put Strike: $${legs.put_strike}`);
-          strikeLines.push(`Call Strike: $${legs.call_strike}`);
-          strikeLines.push(`Front Exp: ${legs.front_expiration}`);
-          strikeLines.push(`Back Exp: ${legs.back_expiration}`);
+          strikeLines.push(`Put Strike · ${dollar(legs.put_strike)}`);
+          strikeLines.push(`Call Strike · ${dollar(legs.call_strike)}`);
+          strikeLines.push(`Front Exp · ${mono(legs.front_expiration)}`);
+          strikeLines.push(`Back Exp · ${mono(legs.back_expiration)}`);
         }
       }
 
@@ -82,17 +89,23 @@ module.exports = {
       };
       const strategyLabel = strategyLabels[strategy] || strategy;
 
+      // Color: green if positive-gamma regime, red if negative, accent otherwise.
+      const regime = (gexData.gamma_regime || '').toUpperCase();
+      const color = regime === 'POSITIVE' ? BRAND.SUCCESS
+        : regime === 'NEGATIVE' ? BRAND.DANGER
+        : BRAND.ACCENT;
+
       const embed = new EmbedBuilder()
-        .setTitle(`SpreadWorks: ${symbol} ${strategyLabel}`)
-        .setColor(gexData.gamma_regime === 'POSITIVE' ? 0x22c55e : 0xef4444)
+        .setTitle(`SpreadWorks · ${symbol} · ${strategyLabel}`)
+        .setColor(color)
         .addFields(
           {
-            name: 'GEX Levels',
+            name: 'GEX LEVELS',
             value: gexLines.length > 0 ? gexLines.join('\n') : 'No GEX data available',
             inline: true,
           },
           {
-            name: 'Suggested Strikes',
+            name: 'SUGGESTED STRIKES',
             value: strikeLines.length > 0 ? strikeLines.join('\n') : 'No suggestion available',
             inline: true,
           }
@@ -101,7 +114,7 @@ module.exports = {
 
       if (suggestion.rationale) {
         embed.addFields({
-          name: 'Rationale',
+          name: 'RATIONALE',
           value: suggestion.rationale,
           inline: false,
         });
@@ -109,7 +122,7 @@ module.exports = {
 
       if (suggestion.net_debit != null) {
         embed.setFooter({
-          text: `Est. Net Debit: $${suggestion.net_debit.toFixed(2)}`,
+          text: `Est. Net Debit · $${suggestion.net_debit.toFixed(2)}`,
         });
       }
 
