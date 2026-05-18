@@ -18,12 +18,15 @@ if DATABASE_URL:
 else:
     print("[SpreadWorks] DATABASE_URL is empty/unset")
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-) if DATABASE_URL else None
+if DATABASE_URL:
+    _is_sqlite = DATABASE_URL.startswith("sqlite")
+    _pool_kwargs: dict = {"pool_pre_ping": True} if not _is_sqlite else {}
+    if not _is_sqlite:
+        _pool_kwargs["pool_size"] = 5
+        _pool_kwargs["max_overflow"] = 10
+    engine = create_engine(DATABASE_URL, **_pool_kwargs)
+else:
+    engine = None
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False) if engine else None
 
