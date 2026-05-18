@@ -160,6 +160,22 @@ def run_scan_cycle(
                     close_position(engine, bot, pos["position_id"],
                                    close_value=mtm_value, close_reason=d.reason,
                                    now=now_ct)
+                    if bool(cfg.get("discord_alerts")):
+                        try:
+                            from . import discord_alerts
+                            entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
+                                else datetime.fromisoformat(str(pos["entry_time"]))
+                            if entry_dt.tzinfo is None:
+                                entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
+                            mins = int((now_ct - entry_dt).total_seconds() // 60)
+                            discord_alerts.post_close(
+                                bot=bot, display=meta["display"], strategy=pos["strategy"],
+                                position_id=pos["position_id"], close_reason=d.reason,
+                                realized_pnl=mtm_pnl,
+                                time_in_trade_min=mins,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[{bot}] discord post_close failed: {e}")
                     result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
                               "position_id": pos["position_id"]}
                 else:
@@ -186,6 +202,19 @@ def run_scan_cycle(
             return result
 
         pid = open_position(engine, bot, meta["strategy"], signal, now_ct)
+        if bool(cfg.get("discord_alerts")):
+            try:
+                from . import discord_alerts
+                discord_alerts.post_open(
+                    bot=bot, display=meta["display"], strategy=meta["strategy"],
+                    position_id=pid, legs=signal.legs(),
+                    entry_price=getattr(signal, "credit", None) if hasattr(signal, "credit") else signal.debit,
+                    contracts=signal.contracts,
+                    max_profit=signal.max_profit * signal.contracts,
+                    max_loss=signal.max_loss * signal.contracts,
+                )
+            except Exception as e:
+                logger.warning(f"[{bot}] discord post_open failed: {e}")
         result = {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
         return result
     finally:
