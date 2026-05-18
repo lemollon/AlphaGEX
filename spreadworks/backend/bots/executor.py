@@ -46,7 +46,7 @@ def open_position(
     t = bot_table(bot, "positions")
     # All signals expose .legs(), .pt_target_pnl, .sl_target_pnl, .max_profit,
     # .max_loss, .contracts, .ticker plus EITHER .credit (IBF) OR .debit (DC/DD).
-    entry_price = getattr(signal, "credit", None) or getattr(signal, "debit")
+    entry_price = signal.credit if hasattr(signal, "credit") else signal.debit
     legs_json = json.dumps(signal.legs())
     with engine.begin() as conn:
         conn.execute(text(
