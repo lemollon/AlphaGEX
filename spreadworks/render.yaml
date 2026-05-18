@@ -1,6 +1,12 @@
 # Render Blueprint for SpreadWorks
 # Double Diagonal & Calendar Spread Analyzer
 # 3 services: Static Frontend + Python Backend + Node Discord Bot
+#
+# NOTE: spreadworks-backend (srv-d6mv30f5gffc73bog9a0) was created
+# from this blueprint then its live Build Command drifted in the
+# dashboard. As of 2026-05-18 the live command is pip-only and does
+# NOT match the SERVICE 2 buildCommand below. Source of truth for
+# the LIVE service is the dashboard, not this file.
 
 services:
   # SERVICE 1: React Frontend (Vite static build)
