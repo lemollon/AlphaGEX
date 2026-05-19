@@ -220,7 +220,7 @@ export default function StrategyPanel({
   useEffect(() => {
     if (prevSymbolRef.current !== symbol) {
       prevSymbolRef.current = symbol;
-      setLegs(DEFAULT_LEGS[strategy]);
+      setLegs(strategy ? DEFAULT_LEGS[strategy] : {});
       setContracts(1);
       setExpirations([]);
       setChainStrikes([]);
@@ -418,7 +418,10 @@ export default function StrategyPanel({
   };
 
   useEffect(() => {
-    setLegs(DEFAULT_LEGS[strategy]);
+    // When strategy is cleared (null), wipe everything strategy-shaped so
+    // the panel returns to a clean empty state. When a strategy IS picked,
+    // hydrate legs from that strategy's defaults.
+    setLegs(strategy ? DEFAULT_LEGS[strategy] : {});
     setGexSuggestion(null);
   }, [strategy]);
 
@@ -456,6 +459,7 @@ export default function StrategyPanel({
   }, [symbol]);
 
   const fetchGexSuggestion = useCallback(async () => {
+    if (!strategy) return;
     setLoading(true);
     setError(null);
     try {
@@ -604,19 +608,43 @@ export default function StrategyPanel({
 
       {/* Strategy */}
       <div className="sw-sidebar-section">
-        <div className="sw-label mb-2.5">Strategy</div>
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="sw-label">Strategy</div>
+          {strategy && (
+            <button
+              type="button"
+              onClick={() => setStrategy(null)}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors"
+              style={{ color: '#94a3b8' }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#f1f5f9'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; }}
+              title="Clear strategy and start over"
+            >
+              <X size={11} />
+              Clear
+            </button>
+          )}
+        </div>
         <div className="sw-strategy-grid">
           <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL ? 'active' : ''}`}
-            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_DIAGONAL)}>Dbl Diagonal</button>
+            onClick={() => setStrategy(s => s === STRATEGY_TYPES.DOUBLE_DIAGONAL ? null : STRATEGY_TYPES.DOUBLE_DIAGONAL)}>Dbl Diagonal</button>
           <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.DOUBLE_CALENDAR ? 'active' : ''}`}
-            onClick={() => setStrategy(STRATEGY_TYPES.DOUBLE_CALENDAR)}>Dbl Calendar</button>
+            onClick={() => setStrategy(s => s === STRATEGY_TYPES.DOUBLE_CALENDAR ? null : STRATEGY_TYPES.DOUBLE_CALENDAR)}>Dbl Calendar</button>
           <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.IRON_CONDOR ? 'active' : ''}`}
-            onClick={() => setStrategy(STRATEGY_TYPES.IRON_CONDOR)}>Iron Condor</button>
+            onClick={() => setStrategy(s => s === STRATEGY_TYPES.IRON_CONDOR ? null : STRATEGY_TYPES.IRON_CONDOR)}>Iron Condor</button>
           <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.BUTTERFLY ? 'active' : ''}`}
-            onClick={() => setStrategy(STRATEGY_TYPES.BUTTERFLY)}>Butterfly</button>
+            onClick={() => setStrategy(s => s === STRATEGY_TYPES.BUTTERFLY ? null : STRATEGY_TYPES.BUTTERFLY)}>Butterfly</button>
           <button className={`sw-strategy-btn ${strategy === STRATEGY_TYPES.IRON_BUTTERFLY ? 'active' : ''} col-span-2`}
-            onClick={() => setStrategy(STRATEGY_TYPES.IRON_BUTTERFLY)}>Iron Fly</button>
+            onClick={() => setStrategy(s => s === STRATEGY_TYPES.IRON_BUTTERFLY ? null : STRATEGY_TYPES.IRON_BUTTERFLY)}>Iron Fly</button>
         </div>
+        {!strategy && (
+          <div
+            className="text-[12px] mt-2.5 italic"
+            style={{ color: '#64748b' }}
+          >
+            Pick a strategy to start building.
+          </div>
+        )}
       </div>
 
       {/* Input Mode */}
