@@ -11,6 +11,7 @@ from typing import Any
 
 from .double_calendar import (
     MIN_DEBIT, MAX_DEBIT, MAX_VIX, MIN_VEGA_EDGE, _mid, _find,
+    _strikes_for, _nearest,
 )
 
 
@@ -81,10 +82,33 @@ def build_double_diagonal_signal(
         return _reject(f"implied_move_zero: atm_straddle_mid={implied_move}")
 
     skew = int(config.get("delta_skew", 0))
-    short_call_strike = round(spot + implied_move)
-    short_put_strike = round(spot - implied_move)
-    long_call_strike = short_call_strike + 1 + skew
-    long_put_strike = short_put_strike - 1 + skew
+    target_short_call = round(spot + implied_move)
+    target_short_put = round(spot - implied_move)
+
+    # Snap shorts to nearest available strike in the FRONT chain. The
+    # front month (1DTE SPY) is usually $1-spaced so snap = exact.
+    front_calls = _strikes_for(front_chain, "call")
+    front_puts = _strikes_for(front_chain, "put")
+    short_call_strike = _nearest(front_calls, target_short_call)
+    short_put_strike = _nearest(front_puts, target_short_put)
+    if short_call_strike is None or short_put_strike is None:
+        return _reject(f"front_chain_empty: calls={len(front_calls)} puts={len(front_puts)}")
+
+    # Long strikes target 1 OTM from the shorts (+ delta_skew). Back-month
+    # SPY chains are typically $5-spaced, so snap to the nearest available
+    # back strike in the OTM direction we want — call: just above the short,
+    # put: just below.
+    back_calls = _strikes_for(back_chain, "call")
+    back_puts = _strikes_for(back_chain, "put")
+    target_long_call = short_call_strike + 1 + skew
+    target_long_put = short_put_strike - 1 + skew
+
+    long_call_candidates = [s for s in back_calls if s >= target_long_call] or back_calls
+    long_put_candidates = [s for s in back_puts if s <= target_long_put] or back_puts
+    long_call_strike = _nearest(long_call_candidates, target_long_call)
+    long_put_strike = _nearest(long_put_candidates, target_long_put)
+    if long_call_strike is None or long_put_strike is None:
+        return _reject(f"back_chain_empty: calls={len(back_calls)} puts={len(back_puts)}")
 
     sfc = _find(front_chain, short_call_strike, "call")
     sfp = _find(front_chain, short_put_strike, "put")
@@ -92,7 +116,7 @@ def build_double_diagonal_signal(
     lbp = _find(back_chain, long_put_strike, "put")
     if not all([sfc, sfp, lbc, lbp]):
         return _reject(
-            f"strike_missing: short_call={short_call_strike} short_put={short_put_strike} "
+            f"strike_missing_after_snap: short_call={short_call_strike} short_put={short_put_strike} "
             f"long_call={long_call_strike} long_put={long_put_strike}"
         )
 

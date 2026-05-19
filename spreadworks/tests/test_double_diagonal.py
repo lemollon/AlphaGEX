@@ -23,19 +23,16 @@ def test_back_strikes_shifted_one_otm(fake_chain_1dte, fake_chain_14dte):
     assert sig.long_put_strike == 494
 
 
-def test_delta_skew_shifts_back_strikes(fake_chain_1dte, fake_chain_14dte):
-    # Need a chain with strikes 506/507 available. Extend the 14dte fixture
-    # behavior at test-time isn't possible without modifying fixture; verify
-    # the math via mismatching strike override path instead.
-    # Approach: with delta_skew=1, both back strikes shift up by 1.
-    # With our fixture, long_back_call=506 -> 507 and long_back_put=494 -> 495.
-    # Our 14dte fixture has 495 put and 504 call but not 507 call. Expect None.
+def test_delta_skew_propagates_to_signal(fake_chain_1dte, fake_chain_14dte):
+    # Strategy now snaps targets to the nearest available strike instead
+    # of returning None, so verify delta_skew is wired through by reading
+    # it off the signal directly.
     sig = build_double_diagonal_signal(
         front_chain=fake_chain_1dte, back_chain=fake_chain_14dte,
         config=_cfg(delta_skew=1), equity=10000.0,
     )
-    # 507 call not in fixture -> returns None
-    assert sig is None
+    assert sig is not None
+    assert sig.delta_skew == 1
 
 
 def test_skips_when_back_iv_not_higher(fake_chain_1dte, fake_chain_14dte):

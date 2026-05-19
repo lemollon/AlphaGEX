@@ -68,6 +68,28 @@ def _find(chain: dict, strike: int, opt_type: str) -> dict | None:
     return None
 
 
+def _strikes_for(chain: dict, opt_type: str) -> list[int]:
+    """Sorted list of unique int strikes for a given option type."""
+    return sorted({int(o["strike"]) for o in chain["options"] if o["type"] == opt_type})
+
+
+def _nearest(strikes: list[int], target: int) -> int | None:
+    """Pick the strike in `strikes` closest to `target`."""
+    if not strikes:
+        return None
+    return min(strikes, key=lambda s: abs(s - target))
+
+
+def _nearest_in_intersection(front_chain: dict, back_chain: dict,
+                             opt_type: str, target: int) -> int | None:
+    """Find the closest strike to `target` that exists in BOTH chains for
+    the given option type. Returns None if no overlap."""
+    front_set = set(_strikes_for(front_chain, opt_type))
+    back_set = set(_strikes_for(back_chain, opt_type))
+    common = sorted(front_set & back_set)
+    return _nearest(common, target)
+
+
 def build_double_calendar_signal(
     *,
     front_chain: dict[str, Any],
@@ -102,15 +124,25 @@ def build_double_calendar_signal(
     if implied_move <= 0:
         return _reject(f"implied_move_zero: atm_straddle_mid={implied_move}")
 
-    call_strike = call_strike_override if call_strike_override is not None else round(spot + implied_move)
-    put_strike = put_strike_override if put_strike_override is not None else round(spot - implied_move)
+    target_call = call_strike_override if call_strike_override is not None else round(spot + implied_move)
+    target_put = put_strike_override if put_strike_override is not None else round(spot - implied_move)
+
+    # Snap to the nearest strike that exists in BOTH the front and back
+    # chain — DC requires the same strike on both legs, and back-month
+    # SPY chains are often $5-spaced while the front is $1-spaced.
+    call_strike = _nearest_in_intersection(front_chain, back_chain, "call", target_call)
+    put_strike = _nearest_in_intersection(front_chain, back_chain, "put", target_put)
+    if call_strike is None or put_strike is None:
+        return _reject(f"no_overlapping_strikes: target_call={target_call} target_put={target_put}")
 
     sfc = _find(front_chain, call_strike, "call")
     sfp = _find(front_chain, put_strike, "put")
     lbc = _find(back_chain, call_strike, "call")
     lbp = _find(back_chain, put_strike, "put")
     if not all([sfc, sfp, lbc, lbp]):
-        return _reject(f"strike_missing: call={call_strike} put={put_strike}")
+        return _reject(
+            f"strike_missing_after_snap: call={call_strike} put={put_strike}"
+        )
 
     sfc_m, sfp_m = _mid(sfc), _mid(sfp)
     lbc_m, lbp_m = _mid(lbc), _mid(lbp)
