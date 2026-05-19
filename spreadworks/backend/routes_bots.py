@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -36,10 +36,30 @@ def get_status(bot: str):
     cfg = load_config(ENGINE, bot)
     opens = list_open_positions(ENGINE, bot)
     equity = account_equity(ENGINE, bot)
+
+    # Sum of MTM P&L across all OPEN positions (paper-mark from latest scan).
+    unrealized = sum(float(p.get("mtm_pnl") or 0) for p in opens)
+
+    # Today P&L = realized P&L from trades closed during today's CT session.
+    # Computed in Python so the SQL is dialect-portable (SQLite tests +
+    # production Postgres both treat TIMESTAMP columns as naive datetimes).
+    now_ct = datetime.now(CT)
+    day_start_ct = now_ct.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end_ct = day_start_ct + timedelta(days=1)
+    # Strip tzinfo before binding — TIMESTAMP columns are stored naive.
+    day_start = day_start_ct.replace(tzinfo=None)
+    day_end = day_end_ct.replace(tzinfo=None)
+
     with ENGINE.begin() as conn:
         last = conn.execute(text(
             f"SELECT MAX(scan_time) AS s FROM {bot_table(bot, 'scan_activity')}"
         )).mappings().first()
+        today = conn.execute(text(
+            f"SELECT COALESCE(SUM(realized_pnl), 0) AS p "
+            f"FROM {bot_table(bot, 'closed_trades')} "
+            "WHERE close_time >= :s AND close_time < :e"
+        ), {"s": day_start, "e": day_end}).mappings().first()
+
     return {
         "bot": bot,
         "display": BOT_REGISTRY[bot]["display"],
@@ -48,6 +68,8 @@ def get_status(bot: str):
         "open_positions": len(opens),
         "equity": float(equity),
         "starting_capital": float(cfg["starting_capital"]),
+        "today_pnl": float(today["p"] or 0),
+        "unrealized_pnl": float(unrealized),
         "last_scan_at": str(last["s"]) if last["s"] else None,
     }
 

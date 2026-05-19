@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Snowflake, Waves, Wind } from 'lucide-react';
+import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
+import BotGlyph from './components/bots/BotGlyph';
+import { BOT_REGISTRY, BOT_THEME } from './lib/botRegistry';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
 import PnLTable from './components/PnLTable';
@@ -108,75 +110,136 @@ function DatePill() {
   );
 }
 
+function BotsSwitcher() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [enabledMap, setEnabledMap] = useState({});
+
+  const match = location.pathname.match(/^\/bots\/([^/]+)/);
+  const activeBotId = match ? match[1] : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await fetch(`${API_URL}/api/spreadworks/bots`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const next = {};
+        for (const b of (data?.bots || data || [])) {
+          const id = b?.bot || b?.id;
+          if (id && typeof b.enabled === 'boolean') next[id] = b.enabled;
+        }
+        if (!cancelled) setEnabledMap(next);
+      } catch { /* silent */ }
+    }
+    poll();
+    const iv = setInterval(poll, 30_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
+  const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
+
+  return (
+    <div
+      className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-2 py-1 rounded-full"
+      style={{
+        background: 'rgba(13,17,25,0.7)',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04)',
+      }}
+    >
+      <span className="text-[9.5px] uppercase tracking-[0.18em] font-bold text-text-tertiary pl-2">
+        Bots
+      </span>
+      <div className="flex items-center gap-1">
+        {bots.map(b => {
+          const theme = BOT_THEME[b.id];
+          const active = activeBotId === b.id;
+          const enabled = enabledMap[b.id];
+          const showDisabledDot = enabled === false;
+          const label = b.display.charAt(0) + b.display.slice(1).toLowerCase();
+          return (
+            <button
+              key={b.id}
+              onClick={() => navigate(`/bots/${b.id}`)}
+              className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12.5px] font-medium transition-all ${
+                active ? '' : 'hover:bg-white/5'
+              }`}
+              style={
+                active
+                  ? {
+                      background: theme.primarySoft,
+                      color: theme.primary,
+                      boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+                    }
+                  : { color: 'var(--color-text-secondary)' }
+              }
+            >
+              <BotGlyph kind={theme.glyph} size={13} />
+              {label}
+              {showDisabledDot && (
+                <span className="w-1.5 h-1.5 rounded-full bg-text-muted ml-0.5" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function NavBar() {
   return (
-    <nav className="flex items-center h-[56px] px-5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
-      {/* Logo — simple S mark in rounded-square, white wordmark + blue Works */}
-      <div className="flex items-center gap-2.5 pr-5 mr-5 h-full border-r border-white/5">
-        <div className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-md text-sm text-white font-black bg-accent">
-          S
+    <nav className="relative flex items-center h-[56px] px-5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
+      {/* LEFT: brand + primary routes */}
+      <div className="flex items-center gap-7 h-full">
+        <div className="flex items-center gap-2.5">
+          <div className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-md text-sm text-white font-black bg-accent">
+            S
+          </div>
+          <span className="font-extrabold text-[17px] text-white tracking-tight">
+            Spread<span className="text-accent">Works</span>
+          </span>
         </div>
-        <span className="font-extrabold text-[17px] text-white tracking-tight">
-          Spread<span className="text-accent">Works</span>
-        </span>
-      </div>
 
-      {/* Nav Links — active tab is filled accent per brand book */}
-      <div className="flex items-center gap-1 h-full">
-        <NavLink to="/" end className={({ isActive }) =>
-          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent'
-              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
-          }`
-        }>
-          <Layers size={13} />
-          Builder
-        </NavLink>
-        <NavLink to="/positions" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent'
-              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
-          }`
-        }>
-          <BarChart3 size={13} />
-          Positions
-        </NavLink>
-        <NavLink to="/gex-profile" className={({ isActive }) =>
-          `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
-            isActive
-              ? 'text-white bg-accent'
-              : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
-          }`
-        }>
-          <Activity size={13} />
-          GEX Profile
-        </NavLink>
-        <div className="mx-2 h-5 w-px bg-white/10" aria-hidden="true" />
-
-        <span className="px-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-          Bots
-        </span>
-
-        {[
-          { to: '/bots/breeze', label: 'Breeze', Icon: Snowflake },
-          { to: '/bots/tide',   label: 'Tide',   Icon: Waves },
-          { to: '/bots/drift',  label: 'Drift',  Icon: Wind },
-        ].map(({ to, label, Icon }) => (
-          <NavLink key={to} to={to} className={({ isActive }) =>
+        <div className="flex items-center gap-0.5">
+          <NavLink to="/" end className={({ isActive }) =>
             `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
               isActive
                 ? 'text-white bg-accent'
                 : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
             }`
           }>
-            <Icon size={13} />
-            {label}
+            <Layers size={13} />
+            Builder
           </NavLink>
-        ))}
+          <NavLink to="/positions" className={({ isActive }) =>
+            `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
+              isActive
+                ? 'text-white bg-accent'
+                : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
+            }`
+          }>
+            <BarChart3 size={13} />
+            Positions
+          </NavLink>
+          <NavLink to="/gex-profile" className={({ isActive }) =>
+            `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
+              isActive
+                ? 'text-white bg-accent'
+                : 'text-text-tertiary hover:text-white hover:bg-white/[0.04]'
+            }`
+          }>
+            <Activity size={13} />
+            GEX Profile
+          </NavLink>
+        </div>
       </div>
 
+      {/* CENTER: bots switcher (its own absolutely-centered pillbox) */}
+      <BotsSwitcher />
+
+      {/* RIGHT: market status */}
       <div className="ml-auto flex items-center gap-3">
         <LivePnlTape />
         <NextPostCountdown />

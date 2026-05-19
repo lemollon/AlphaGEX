@@ -2,9 +2,9 @@
 // Keep these in sync when editing.
 
 export const BOT_REGISTRY = {
-  breeze: { display: 'BREEZE', strategy: 'iron_butterfly',  ticker: 'SPY' },
-  tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY' },
-  drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY' },
+  breeze: { display: 'BREEZE', strategy: 'iron_butterfly',  ticker: 'SPY', version: 'v1.4' },
+  tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
+  drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
 };
 
 export const STRATEGY_LABEL = {
@@ -13,8 +13,32 @@ export const STRATEGY_LABEL = {
   double_diagonal:  'Double Diagonal',
 };
 
+// Per-bot theme palette mirrored from the SpreadWorks Design System
+// (see design_handoff_bots/bots-data.jsx BOT_THEMES). The whole bot page
+// tints to these colors — nameplate, equity curve, active tab, nav pill.
 export const BOT_THEME = {
-  breeze: { accent: '#A5F3FC', glyph: 'snowflake' },
-  tide:   { accent: '#38BDF8', glyph: 'wave' },
-  drift:  { accent: '#7DD3FC', glyph: 'current' },
+  breeze: {
+    glyph:       'snowflake',
+    primary:     '#22d3ee',                    // cyan-400
+    primarySoft: 'rgba(34,211,238,0.10)',
+    primaryRing: 'rgba(34,211,238,0.30)',
+    glow:        'rgba(34,211,238,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(34,211,238,0.22) 0%, rgba(34,211,238,0.03) 100%)',
+  },
+  tide: {
+    glyph:       'wave',
+    primary:     '#2dd4bf',                    // teal-400
+    primarySoft: 'rgba(45,212,191,0.10)',
+    primaryRing: 'rgba(45,212,191,0.30)',
+    glow:        'rgba(45,212,191,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(45,212,191,0.22) 0%, rgba(45,212,191,0.03) 100%)',
+  },
+  drift: {
+    glyph:       'compass',
+    primary:     '#a78bfa',                    // violet-400
+    primarySoft: 'rgba(167,139,250,0.10)',
+    primaryRing: 'rgba(167,139,250,0.30)',
+    glow:        'rgba(167,139,250,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0.03) 100%)',
+  },
 };
