@@ -5,6 +5,7 @@ import { botApi } from '../../lib/botApi';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
 import BotGlyph from './BotGlyph';
 import BotPayoffChart from './BotPayoffChart';
+import AdjustPositionModal from './AdjustPositionModal';
 
 /* ─── Helpers ──────────────────────────────────────────────────── */
 
@@ -67,7 +68,7 @@ function pluckLegs(legs) {
 
 /* ─── PositionCard (per spec) ──────────────────────────────────── */
 
-function PositionCard({ p, bot, theme, isChartOpen, onToggleChart, onForceClose }) {
+function PositionCard({ p, bot, theme, isChartOpen, onToggleChart, onForceClose, onAdjust }) {
   const legsRaw = typeof p.legs === 'string'
     ? (() => { try { return JSON.parse(p.legs); } catch { return []; } })()
     : (p.legs || []);
@@ -207,7 +208,7 @@ function PositionCard({ p, bot, theme, isChartOpen, onToggleChart, onForceClose 
             <InlineStat label="Current" value={`$${current.toFixed(2)}`} />
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <GhostBtn disabled title="Coming soon">Adjust</GhostBtn>
+            <GhostBtn onClick={onAdjust} title="Adjust PT / SL targets">Adjust</GhostBtn>
             <GhostBtn disabled title="Coming soon">Roll</GhostBtn>
             <ThemedBtn theme={theme} onClick={onToggleChart}>
               {isChartOpen ? 'Hide Chart' : 'Chart'}
@@ -416,6 +417,7 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
   const theme = BOT_THEME[bot];
   const meta = BOT_REGISTRY[bot];
   const [openCharts, setOpenCharts] = useState(() => new Set());
+  const [adjusting, setAdjusting] = useState(null); // position object or null
 
   function toggleChart(pid) {
     setOpenCharts(prev => {
@@ -472,8 +474,18 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
           isChartOpen={openCharts.has(p.position_id)}
           onToggleChart={() => toggleChart(p.position_id)}
           onForceClose={() => onClose(p.position_id)}
+          onAdjust={() => setAdjusting(p)}
         />
       ))}
+      {adjusting && (
+        <AdjustPositionModal
+          bot={bot}
+          position={adjusting}
+          theme={theme}
+          onClose={() => setAdjusting(null)}
+          onSaved={() => { /* hook auto-refreshes every 5s */ }}
+        />
+      )}
     </div>
   );
 }

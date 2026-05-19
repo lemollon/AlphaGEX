@@ -35,5 +35,7 @@ export const botApi = {
   forceClose:     (b, pid)   => _post(`/api/spreadworks/bots/${b}/force-close?position_id=${encodeURIComponent(pid)}`),
   scanActivity:   (b, limit=200) => _get(`/api/spreadworks/bots/${b}/scan-activity?limit=${limit}`),
   positionPayoff: (b, pid)   => _get(`/api/spreadworks/bots/${b}/positions/${encodeURIComponent(pid)}/payoff`),
+  adjustPosition: (b, pid, body) =>
+    _post(`/api/spreadworks/bots/${b}/positions/${encodeURIComponent(pid)}/adjust`, body),
   candles:        (symbol)   => _get(`/api/spreadworks/candles?symbol=${encodeURIComponent(symbol)}`),
 };

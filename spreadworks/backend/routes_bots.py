@@ -250,6 +250,64 @@ def post_force_trade(bot: str):
     return result
 
 
+class AdjustBody(BaseModel):
+    pt_target_pnl: float | None = None
+    sl_target_pnl: float | None = None
+
+
+@router.post("/{bot}/positions/{position_id}/adjust")
+def adjust_position(bot: str, position_id: str, body: AdjustBody):
+    """Update a position's PT and/or SL targets in place.
+
+    Setting pt_target_pnl flips pt_override=TRUE so the scanner's time-of-day
+    ladder (iron_butterfly / iron_condor) stops resetting the value on the
+    next tick.
+
+    sl_target_pnl is stored as an absolute MAGNITUDE on the position row.
+    decide_exit() compares mtm_pnl <= -abs(sl_target_pnl), so the sign of
+    the value the client sends doesn't matter — we normalize to abs() here.
+    """
+    _validate(bot)
+    if body.pt_target_pnl is None and body.sl_target_pnl is None:
+        raise HTTPException(400, "Provide at least one of pt_target_pnl / sl_target_pnl")
+
+    t = bot_table(bot, "positions")
+    with ENGINE.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT position_id, pt_target_pnl, sl_target_pnl FROM {t} "
+            "WHERE position_id=:p AND status='OPEN'"
+        ), {"p": position_id}).mappings().first()
+        if row is None:
+            raise HTTPException(404, f"No OPEN position {position_id}")
+
+        sets = []
+        params: dict[str, Any] = {"p": position_id}
+        if body.pt_target_pnl is not None:
+            sets.append("pt_target_pnl = :pt")
+            sets.append("pt_override = TRUE")
+            params["pt"] = float(body.pt_target_pnl)
+        if body.sl_target_pnl is not None:
+            sets.append("sl_target_pnl = :sl")
+            # Normalize to magnitude — decide_exit uses -abs(sl) internally.
+            params["sl"] = abs(float(body.sl_target_pnl))
+
+        conn.execute(text(
+            f"UPDATE {t} SET {', '.join(sets)} WHERE position_id = :p"
+        ), params)
+
+        updated = conn.execute(text(
+            f"SELECT pt_target_pnl, sl_target_pnl, pt_override FROM {t} "
+            "WHERE position_id=:p"
+        ), {"p": position_id}).mappings().first()
+
+    return {
+        "position_id": position_id,
+        "pt_target_pnl": float(updated["pt_target_pnl"]),
+        "sl_target_pnl": float(updated["sl_target_pnl"]),
+        "pt_override": bool(updated["pt_override"]),
+    }
+
+
 @router.post("/{bot}/force-close")
 def post_force_close(bot: str, position_id: str):
     _validate(bot)

@@ -167,15 +167,25 @@ def run_scan_cycle(
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
                 pt_target = float(pos["pt_target_pnl"])
-                if pos["strategy"] == "iron_butterfly":
-                    # Re-derive PT target each scan using the time-of-day ladder.
-                    new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
-                    pt_target = new_pt_pct * float(pos["max_profit"])
-                elif pos["strategy"] == "iron_condor":
-                    # FLOW uses the SPARK-style DECREASING ladder — take less
-                    # profit as expiration approaches to dodge late-day gamma.
-                    new_pt_pct = pt_pct_for_iron_condor_tod(now_ct.timetz().replace(tzinfo=None))
-                    pt_target = new_pt_pct * float(pos["max_profit"])
+                # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
+                # the row. When it's set, the scanner respects the stored
+                # value and skips the time-of-day ladder.
+                pt_override = bool(pos.get("pt_override")) if hasattr(pos, "get") else False
+                if not pt_override:
+                    try:
+                        pt_override = bool(pos["pt_override"])
+                    except (KeyError, IndexError):
+                        pt_override = False
+                if not pt_override:
+                    if pos["strategy"] == "iron_butterfly":
+                        # Re-derive PT target each scan using the time-of-day ladder.
+                        new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
+                        pt_target = new_pt_pct * float(pos["max_profit"])
+                    elif pos["strategy"] == "iron_condor":
+                        # FLOW uses the SPARK-style DECREASING ladder — take less
+                        # profit as expiration approaches to dodge late-day gamma.
+                        new_pt_pct = pt_pct_for_iron_condor_tod(now_ct.timetz().replace(tzinfo=None))
+                        pt_target = new_pt_pct * float(pos["max_profit"])
 
                 front_exp_str = legs[0]["expiration"]  # legs share front expiration order for IBF; for DC/DD the short legs are first
                 # For DC/DD the front expiration is the SHORT side, which we
