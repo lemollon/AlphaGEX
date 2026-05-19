@@ -61,16 +61,28 @@ def build_iron_butterfly_signal(
     chain: dict[str, Any],
     config: dict[str, Any],
     equity: float,
+    diag: list[str] | None = None,
 ) -> IronButterflySignal | None:
+    """Build a signal or return None.
+
+    `diag` is an optional list that gets a single human-readable rejection
+    reason appended when this function returns None. Used by the scanner
+    to surface the gate that killed the cycle into scan_activity.reason.
+    """
+    def _reject(msg: str):
+        if diag is not None:
+            diag.append(msg)
+        return None
+
     spot = float(chain["spot"])
     vix = float(chain.get("vix", 0))
     if vix >= MAX_VIX:
-        return None
+        return _reject(f"vix_too_high: vix={vix:.2f} max={MAX_VIX}")
 
     gex = chain.get("gex") or {}
     flip = gex.get("flip_point")
     if flip is not None and abs(float(flip) - spot) < MIN_FLIP_DIST:
-        return None
+        return _reject(f"too_close_to_flip: spot={spot:.2f} flip={float(flip):.2f}")
 
     atm_straddle = float(chain.get("atm_straddle_mid", 0))
     sd_mult = float(config.get("sd_mult", 1.0))
@@ -93,13 +105,13 @@ def build_iron_butterfly_signal(
     long_call = _find_option(chain, long_call_strike, "call")
     long_put = _find_option(chain, long_put_strike, "put")
     if not all([short_call, short_put, long_call, long_put]):
-        return None
+        return _reject(f"strike_missing: body={body} put_wing={long_put_strike} call_wing={long_call_strike}")
 
     sc_mid, sp_mid = _mid(short_call), _mid(short_put)
     lc_mid, lp_mid = _mid(long_call), _mid(long_put)
     credit = round(sc_mid + sp_mid - lc_mid - lp_mid, 4)
     if credit < MIN_CREDIT:
-        return None
+        return _reject(f"credit_too_low: credit={credit:.2f} min={MIN_CREDIT}")
 
     wing_width_call = long_call_strike - body
     wing_width_put = body - long_put_strike
@@ -107,14 +119,14 @@ def build_iron_butterfly_signal(
     max_profit_per = credit * 100.0
     max_loss_per = (wing_width - credit) * 100.0
     if max_loss_per <= 0:
-        return None
+        return _reject(f"negative_max_loss: wing={wing_width} credit={credit:.2f}")
 
     bp_pct = float(config.get("bp_pct", 0.10))
     max_contracts = int(config.get("max_contracts", 1))
     raw_contracts = int((equity * bp_pct) // max_loss_per)
     contracts = max(0, min(max_contracts, raw_contracts))
     if contracts < 1:
-        return None
+        return _reject(f"sizing_below_one: equity={equity:.0f} bp_pct={bp_pct} max_loss_per={max_loss_per:.0f}")
 
     pt_pct = float(config.get("pt_pct", 0.30))
     sl_pct = float(config.get("sl_pct", 2.0))

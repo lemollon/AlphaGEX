@@ -91,22 +91,41 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
 
 def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   config: dict, equity: float, today: date,
-                  ticker: str, front_dte: int, back_dte: int | None):
+                  ticker: str, front_dte: int, back_dte: int | None,
+                  diag: list[str] | None = None):
+    """Build a signal. Returns (signal_or_none, chain_or_none).
+
+    `diag` (if provided) collects the rejection reason from the strategy
+    builder OR from chain-fetch failure, so scan_activity.reason can
+    surface a specific cause instead of bare "no signal".
+    """
     if strategy == "iron_butterfly":
         chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
-        if chain is None: return None, None
-        return build_iron_butterfly_signal(chain=chain, config=config, equity=equity), chain
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        sig = build_iron_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
+        return sig, chain
     front = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
     back = chain_provider.get_chain(ticker=ticker, dte=back_dte, today=today)
-    if front is None or back is None: return None, None
+    if front is None or back is None:
+        if diag is not None:
+            diag.append(
+                f"chain_unavailable: ticker={ticker} front_dte={front_dte} "
+                f"back_dte={back_dte} front_ok={front is not None} back_ok={back is not None}"
+            )
+        return None, None
     if strategy == "double_calendar":
-        return build_double_calendar_signal(
-            front_chain=front, back_chain=back, config=config, equity=equity
-        ), front
+        sig = build_double_calendar_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
+        )
+        return sig, front
     if strategy == "double_diagonal":
-        return build_double_diagonal_signal(
-            front_chain=front, back_chain=back, config=config, equity=equity
-        ), front
+        sig = build_double_diagonal_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
+        )
+        return sig, front
     raise ValueError(f"unknown strategy {strategy}")
 
 
@@ -191,14 +210,17 @@ def run_scan_cycle(
             return result
 
         equity = account_equity(engine, bot)
+        diag: list[str] = []
         signal, _chain = _build_signal(
             bot=bot, strategy=meta["strategy"], chain_provider=chain_provider,
             config=cfg, equity=equity, today=now_ct.date(),
             ticker=meta["ticker"], front_dte=meta["front_dte"],
             back_dte=meta["back_dte"],
+            diag=diag,
         )
         if signal is None:
-            result = {"outcome": "NO_TRADE", "reason": "no signal"}
+            reason = diag[0] if diag else "no signal"
+            result = {"outcome": "NO_TRADE", "reason": reason}
             return result
 
         pid = open_position(engine, bot, meta["strategy"], signal, now_ct)

@@ -54,20 +54,30 @@ def build_double_diagonal_signal(
     back_chain: dict[str, Any],
     config: dict[str, Any],
     equity: float,
+    diag: list[str] | None = None,
 ) -> DoubleDiagonalSignal | None:
+    def _reject(msg: str):
+        if diag is not None:
+            diag.append(msg)
+        return None
+
     spot = float(front_chain["spot"])
     vix = float(front_chain.get("vix", 0))
     if vix >= MAX_VIX:
-        return None
+        return _reject(f"vix_too_high: vix={vix:.2f} max={MAX_VIX}")
 
     front_iv = float(front_chain.get("iv_atm", 0))
     back_iv = float(back_chain.get("iv_atm", 0))
-    if (back_iv - front_iv) < (MIN_VEGA_EDGE / 100.0):
-        return None
+    edge_vp = (back_iv - front_iv) * 100.0
+    if edge_vp < MIN_VEGA_EDGE:
+        return _reject(
+            f"vega_edge_below_min: front_iv={front_iv:.4f} back_iv={back_iv:.4f} "
+            f"edge={edge_vp:.2f}vp min={MIN_VEGA_EDGE}vp"
+        )
 
     implied_move = float(front_chain.get("atm_straddle_mid", 0))
     if implied_move <= 0:
-        return None
+        return _reject(f"implied_move_zero: atm_straddle_mid={implied_move}")
 
     skew = int(config.get("delta_skew", 0))
     short_call_strike = round(spot + implied_move)
@@ -80,13 +90,16 @@ def build_double_diagonal_signal(
     lbc = _find(back_chain, long_call_strike, "call")
     lbp = _find(back_chain, long_put_strike, "put")
     if not all([sfc, sfp, lbc, lbp]):
-        return None
+        return _reject(
+            f"strike_missing: short_call={short_call_strike} short_put={short_put_strike} "
+            f"long_call={long_call_strike} long_put={long_put_strike}"
+        )
 
     sfc_m, sfp_m = _mid(sfc), _mid(sfp)
     lbc_m, lbp_m = _mid(lbc), _mid(lbp)
     debit = round((lbc_m + lbp_m) - (sfc_m + sfp_m), 4)
     if debit < MIN_DEBIT or debit > MAX_DEBIT:
-        return None
+        return _reject(f"debit_out_of_range: debit={debit:.2f} min={MIN_DEBIT} max={MAX_DEBIT}")
 
     max_loss_per = (debit + 1.0) * 100.0  # debit + 1-strike width worst case
     max_profit_per = debit * 100.0
@@ -96,7 +109,7 @@ def build_double_diagonal_signal(
     raw_contracts = int((equity * bp_pct) // max_loss_per)
     contracts = max(0, min(max_contracts, raw_contracts))
     if contracts < 1:
-        return None
+        return _reject(f"sizing_below_one: equity={equity:.0f} bp_pct={bp_pct} max_loss_per={max_loss_per:.0f}")
 
     pt_pct = float(config.get("pt_pct", 0.50))
     sl_pct = float(config.get("sl_pct", 1.0))
