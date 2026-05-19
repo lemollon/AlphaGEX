@@ -155,13 +155,20 @@ export async function GET(
     const cand = await loadCandidate(positionId)
     if (!cand) return NextResponse.json({ error: 'position_id not found' }, { status: 404 })
 
-    const eligible = cand.status === 'closed'
-      && cand.realized_pnl === 0
-      && (
-        cand.close_reason === 'broker_position_gone'
-        || cand.close_reason === 'deferred_broker_gone'
-        || cand.close_reason.startsWith('broker_gone_backfill_')
-      )
+    const eligible =
+      // Closed rows that landed with $0 P&L via the broker-gone paths.
+      (cand.status === 'closed'
+        && cand.realized_pnl === 0
+        && (
+          cand.close_reason === 'broker_position_gone'
+          || cand.close_reason === 'deferred_broker_gone'
+          || cand.close_reason.startsWith('broker_gone_backfill_')
+        ))
+      // Rows the safety gate transitioned away from 'open' (added 2026-05-19) when
+      // the broker had no legs and the only recovery option was entry_credit_fallback.
+      // Reconcile pulls the real close from Tradier order history and transitions
+      // status='broker_gone_blocked' -> 'closed' with the recovered values.
+      || cand.status === 'broker_gone_blocked'
 
     if (!eligible) {
       return NextResponse.json({
@@ -253,10 +260,12 @@ export async function POST(
     const cand = await loadCandidate(positionId)
     if (!cand) return NextResponse.json({ error: 'position_id not found' }, { status: 404 })
 
-    if (cand.realized_pnl !== 0 || cand.status !== 'closed') {
+    const isClosedZero = cand.status === 'closed' && cand.realized_pnl === 0
+    const isBrokerGoneBlocked = cand.status === 'broker_gone_blocked'
+    if (!isClosedZero && !isBrokerGoneBlocked) {
       return NextResponse.json({
         applied: false,
-        reason: 'row already has non-zero realized_pnl or is not closed',
+        reason: "row is neither closed-with-zero-pnl nor broker_gone_blocked",
         current: cand,
       })
     }
@@ -288,15 +297,21 @@ export async function POST(
     }
 
     // UPDATE the position row.
+    // For broker_gone_blocked rows, also transition status='closed' and stamp
+    // close_time. For closed-zero rows, leave status/close_time untouched.
     const rowsAffected = await dbExecute(
       `UPDATE spark_positions
        SET close_price = $1,
            realized_pnl = $2,
            close_reason = 'broker_gone_backfill_tradier_order_history',
+           status = 'closed',
+           close_time = COALESCE(close_time, NOW()),
            updated_at = NOW()
        WHERE position_id = $3
-         AND status = 'closed'
-         AND realized_pnl = 0`,
+         AND (
+           (status = 'closed' AND realized_pnl = 0)
+           OR status = 'broker_gone_blocked'
+         )`,
       [recovery.close_price, recovery.realized_pnl, positionId],
     )
 
