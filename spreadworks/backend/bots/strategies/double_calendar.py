@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from typing import Any
 
 MIN_DEBIT = 0.20
-MAX_DEBIT = 6.0   # raised from 5.0: realistic 14DTE-vs-1DTE on $500 SPY yields ~5.40
+# Cap on debit ($) per contract. Sized for the underlying — SPY at $500
+# yields ~5.40 typical 14DTE-vs-1DTE; at $733 (current) we see ~9.95
+# legitimately. 12.0 leaves headroom without going into broken-chain
+# territory. BP sizing (`max_loss_per <= equity * bp_pct`) still
+# protects against oversized positions.
+MAX_DEBIT = 12.0
 MAX_VIX = 30.0
 # Required back-vs-front IV edge in vol points (0.01 = 1 vp). Positive
 # values demand contango (back richer than front); negative values allow
