@@ -27,6 +27,23 @@ def pt_pct_for_time_of_day(now_ct_time: time) -> float:
     return 0.50
 
 
+def pt_pct_for_iron_condor_tod(now_ct_time: time) -> float:
+    """FLOW (Iron Condor 1DTE) profit-target ladder.
+
+    Mirrors IronForge SPARK's behavior (decreasing — take profit earlier
+    as expiration approaches, since gamma risk grows toward end-of-day):
+
+      MORNING (open-11:00 CT) -> 0.30
+      MIDDAY  (11:00-13:00 CT) -> 0.20
+      AFTERNOON (13:00+)        -> 0.15
+    """
+    if now_ct_time < time(11, 0):
+        return 0.30
+    if now_ct_time < time(13, 0):
+        return 0.20
+    return 0.15
+
+
 def eod_close_time_for_strategy(strategy: str, eod_close_ct: time) -> time:
     return eod_close_ct  # currently uniform; kept for future per-strategy tweaks
 

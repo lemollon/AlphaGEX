@@ -55,5 +55,19 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'river') {
+    // Two converging streamlines for FLOW — distinct from "wave" (TIDE)
+    // which uses 3 horizontal sine waves. River reads as directional
+    // current.
+    return (
+      <svg {...common}>
+        <path d="M3 7c4 0 5 4 9 4s5-4 9-4" />
+        <path d="M3 13c4 0 5 4 9 4s5-4 9-4" />
+        <circle cx="7" cy="7" r="0.7" fill="currentColor" />
+        <circle cx="17" cy="17" r="0.7" fill="currentColor" />
+      </svg>
+    );
+  }
+
   return null;
 }
