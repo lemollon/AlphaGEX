@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { Power, Zap, Play, Inbox, List, Terminal, Sliders } from 'lucide-react';
+import { Power, Zap, Play, Inbox, List, Terminal, Sliders, LineChart } from 'lucide-react';
 import { BOT_REGISTRY, STRATEGY_LABEL, BOT_THEME } from '../lib/botRegistry';
 import { botApi } from '../lib/botApi';
 import { useBotStatus } from '../hooks/useBotStatus';
 import { useBotEquity } from '../hooks/useBotEquity';
 import BotGlyph from '../components/bots/BotGlyph';
 import PositionsTab from '../components/bots/PositionsTab';
+import StrategyChartTab from '../components/bots/StrategyChartTab';
 import TradesTab from '../components/bots/TradesTab';
 import LogsTab from '../components/bots/LogsTab';
 import ConfigTab from '../components/bots/ConfigTab';
@@ -589,10 +590,11 @@ function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }
   const [tab, setTab] = useState('positions');
 
   const tabs = [
-    { id: 'positions', label: 'Positions',     Icon: Inbox,    count: openCount },
-    { id: 'history',   label: 'Trade History', Icon: List,     count: tradeCount },
-    { id: 'logs',      label: 'Logs',          Icon: Terminal, count: null },
-    { id: 'config',    label: 'Config',        Icon: Sliders,  count: null },
+    { id: 'positions', label: 'Positions',      Icon: Inbox,     count: openCount },
+    { id: 'chart',     label: 'Strategy Chart', Icon: LineChart, count: null },
+    { id: 'history',   label: 'Trade History',  Icon: List,      count: tradeCount },
+    { id: 'logs',      label: 'Logs',           Icon: Terminal,  count: null },
+    { id: 'config',    label: 'Config',         Icon: Sliders,   count: null },
   ];
 
   return (
@@ -645,10 +647,11 @@ function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }
 
       {/* Tab content */}
       <div className="min-h-[280px]">
-        {tab === 'positions' && <PositionsTab bot={bot} lastScanAt={lastScanAt} enabled={enabled} />}
-        {tab === 'history'   && <TradesTab    bot={bot} />}
-        {tab === 'logs'      && <LogsTab      bot={bot} />}
-        {tab === 'config'    && <ConfigTab    bot={bot} />}
+        {tab === 'positions' && <PositionsTab     bot={bot} lastScanAt={lastScanAt} enabled={enabled} />}
+        {tab === 'chart'     && <StrategyChartTab bot={bot} />}
+        {tab === 'history'   && <TradesTab        bot={bot} />}
+        {tab === 'logs'      && <LogsTab          bot={bot} />}
+        {tab === 'config'    && <ConfigTab        bot={bot} />}
       </div>
     </div>
   );
