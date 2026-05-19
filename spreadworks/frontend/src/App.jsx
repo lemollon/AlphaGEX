@@ -234,14 +234,42 @@ function capitalize(s) {
 // 3-card layout per the design spec. LEFT card holds brand + divider +
 // inline-styled RouteBtns. CENTER pill is absolute, mathematically centered.
 // RIGHT card wraps a themed dropdown chip that opens BotMenu below.
+// Persisted "currently active bot" — survives page nav and reloads so the
+// chip on the Builder / Positions / GEX pages reflects the last pick, not
+// just the URL. URL still wins when the user is actually on /bots/<id>.
+const ACTIVE_BOT_KEY = 'spreadworks.activeBot';
+
+function readStoredBot() {
+  try {
+    const v = localStorage.getItem(ACTIVE_BOT_KEY);
+    if (v && BOT_REGISTRY[v]) return v;
+  } catch { /* SSR / quota — fall through */ }
+  return null;
+}
+
 function NavBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const match = location.pathname.match(/^\/bots\/([^/]+)/);
+  const urlBotId = match && BOT_REGISTRY[match[1]] ? match[1] : null;
   const firstBotId = Object.keys(BOT_REGISTRY)[0];
-  const activeBotId = match ? match[1] : firstBotId;
+
+  // When URL is on /bots/<id>, that's authoritative. Otherwise fall back to
+  // the last picked bot from localStorage so the chip stays meaningful on
+  // Builder / Positions / GEX without forcing the user to renavigate.
+  const [storedBotId, setStoredBotId] = useState(() => readStoredBot());
+  const activeBotId = urlBotId || storedBotId || firstBotId;
   const activeBot = BOT_REGISTRY[activeBotId];
   const theme = BOT_THEME[activeBotId];
+
+  // Keep storage in sync when URL drives the bot (e.g. user followed a
+  // link straight to /bots/tide).
+  useEffect(() => {
+    if (urlBotId && urlBotId !== storedBotId) {
+      try { localStorage.setItem(ACTIVE_BOT_KEY, urlBotId); } catch { /* ignore */ }
+      setStoredBotId(urlBotId);
+    }
+  }, [urlBotId, storedBotId]);
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -319,7 +347,7 @@ function NavBar() {
           <RouteBtn to="/"            end icon={<Layers size={14} />}    label="Builder" />
           <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
           <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
-          <RouteBtn to={`/bots/${firstBotId}`} icon={<Cpu size={14} />}  label="Bots" />
+          <RouteBtn to={`/bots/${activeBotId}`} icon={<Cpu size={14} />}  label="Bots" />
         </nav>
       </div>
 
@@ -403,7 +431,20 @@ function NavBar() {
         {menuOpen && (
           <BotMenu
             activeBotId={activeBotId}
-            onSelect={(id) => { navigate(`/bots/${id}`); setMenuOpen(false); }}
+            onSelect={(id) => {
+              // Always persist so the chip survives across pages and reloads.
+              try { localStorage.setItem(ACTIVE_BOT_KEY, id); } catch { /* ignore */ }
+              setStoredBotId(id);
+              setMenuOpen(false);
+              // Only navigate when the user is already viewing a bot dashboard.
+              // From Builder / Positions / GEX we just re-theme — switching to
+              // another page would be an unwelcome surprise.
+              if (urlBotId && urlBotId !== id) {
+                navigate(`/bots/${id}`);
+              } else if (!urlBotId) {
+                // Stay on the current non-bot route; chip updates via state.
+              }
+            }}
           />
         )}
       </div>
