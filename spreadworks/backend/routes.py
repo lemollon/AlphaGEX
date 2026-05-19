@@ -736,6 +736,396 @@ async def get_chain(request: Request, symbol: str = "SPY", expiration: str = "")
 # ---------------------------------------------------------------------------
 
 
+def _round_half(v: float) -> float:
+    """Round to nearest $0.50 — typical SPY chain quantum for ATM strikes."""
+    return round(v * 2) / 2
+
+
+def _snap_to_strike(target: float, available: list[float]) -> float | None:
+    """Snap a target strike to the closest actually-listed strike in the chain.
+    Returns None if the chain is empty."""
+    if not available:
+        return None
+    return min(available, key=lambda s: abs(s - target))
+
+
+def _leg_mid(options: list[dict], strike: float, opt_type: str) -> float | None:
+    """Pull the mid for a specific leg from a Tradier options list. Returns
+    None when the strike+type combo isn't present so callers can decide
+    whether the suggestion is still actionable."""
+    for o in options:
+        try:
+            if float(o.get("strike", 0)) == float(strike) and o.get("option_type") == opt_type:
+                bid = float(o.get("bid") or 0)
+                ask = float(o.get("ask") or 0)
+                if bid <= 0 and ask <= 0:
+                    return None
+                return (bid + ask) / 2.0
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _atm_straddle_mid(options: list[dict], spot: float) -> float | None:
+    """Sum of ATM call mid + ATM put mid. Used by the bots' sd_mult sizing
+    and now by gex-suggest's vol-aware variants."""
+    strikes = sorted({float(o["strike"]) for o in options if "strike" in o})
+    if not strikes:
+        return None
+    atm = min(strikes, key=lambda s: abs(s - spot))
+    call_mid = _leg_mid(options, atm, "call")
+    put_mid = _leg_mid(options, atm, "put")
+    if call_mid is None or put_mid is None:
+        return None
+    return round(call_mid + put_mid, 4)
+
+
+def _next_weekday(d):
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+async def _nearest_listed_expiration(request, symbol: str, target_iso: str) -> str:
+    """Return the first Tradier expiration on or after `target_iso`, falling
+    back to `target_iso` if the call fails or the symbol has no listings."""
+    try:
+        data = await _tradier_get(
+            request,
+            "/markets/options/expirations",
+            {"symbol": symbol, "includeAllRoots": "true"},
+        )
+        dates = (data.get("expirations") or {}).get("date") or []
+        if isinstance(dates, str):
+            dates = [dates]
+        for d in sorted(dates):
+            if d >= target_iso:
+                return d
+    except Exception:
+        pass
+    return target_iso
+
+
+def _variant_specs(strategy: str) -> list[dict]:
+    """Return (name, description, sd_offset, wing_delta) tuples — sd_offset
+    shifts the SHORT distance from walls/flip in units of ATM straddles;
+    wing_delta adjusts the wing width in dollars. Standard = no shift."""
+    if strategy in ("iron_condor", "iron_butterfly", "double_diagonal", "double_calendar"):
+        return [
+            {"name": "Conservative", "sd_offset": 0.40, "wing_delta": 1.0,
+             "description": "Shorts pushed farther OTM, wings $1 wider — lower credit, more cushion"},
+            {"name": "Standard",     "sd_offset": 0.0,  "wing_delta": 0.0,
+             "description": "Shorts anchored at GEX walls — matches the bot baseline"},
+            {"name": "Aggressive",   "sd_offset": -0.30, "wing_delta": -1.0,
+             "description": "Shorts closer to spot, tighter wings — higher credit, tighter R:R"},
+        ]
+    # butterfly: center always at flip, vary wing width
+    return [
+        {"name": "Conservative", "sd_offset": 0.0, "wing_delta": 2.0,
+         "description": "Wider wings — lower max profit, wider profit zone"},
+        {"name": "Standard",     "sd_offset": 0.0, "wing_delta": 0.0,
+         "description": "Standard wings centered on flip"},
+        {"name": "Aggressive",   "sd_offset": 0.0, "wing_delta": -1.5,
+         "description": "Tight wings — higher max profit at the peak, narrower zone"},
+    ]
+
+
+def _build_legs_for_variant(
+    strategy: str, spec: dict, *,
+    spot: float, flip: float, call_wall: float, put_wall: float,
+    atm_straddle: float | None, regime: str | None,
+    front_strikes_call: list[float], front_strikes_put: list[float],
+    front_exp: str, back_exp: str, credit_exp: str,
+):
+    """Produce a strikes dict (snapped to the actual chain) for one variant."""
+    sd_offset = spec["sd_offset"]
+    wing_delta = spec["wing_delta"]
+    base_wing = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
+    wing = max(1.0, base_wing + wing_delta)
+    # Shift in $ derived from ATM straddle so it's vol-aware. Fall back to a
+    # fixed $2 nudge if we couldn't read the straddle.
+    sd_shift_dollars = (atm_straddle * sd_offset) if atm_straddle else (2.0 * sd_offset)
+
+    def snap_put(target):
+        s = _snap_to_strike(_round_half(target), front_strikes_put)
+        return float(s) if s is not None else _round_half(target)
+
+    def snap_call(target):
+        s = _snap_to_strike(_round_half(target), front_strikes_call)
+        return float(s) if s is not None else _round_half(target)
+
+    if strategy == "iron_condor":
+        short_put = snap_put(put_wall - sd_shift_dollars)
+        short_call = snap_call(call_wall + sd_shift_dollars)
+        long_put = snap_put(short_put - wing)
+        long_call = snap_call(short_call + wing)
+        return {
+            "long_put_strike": long_put, "short_put_strike": short_put,
+            "short_call_strike": short_call, "long_call_strike": long_call,
+            "expiration": credit_exp,
+        }
+    if strategy == "double_diagonal":
+        short_put = snap_put(put_wall - sd_shift_dollars)
+        short_call = snap_call(call_wall + sd_shift_dollars)
+        long_put = snap_put(short_put - wing)
+        long_call = snap_call(short_call + wing)
+        return {
+            "long_put_strike": long_put, "short_put_strike": short_put,
+            "short_call_strike": short_call, "long_call_strike": long_call,
+            "short_expiration": front_exp, "long_expiration": back_exp,
+        }
+    if strategy == "double_calendar":
+        put_strike = snap_put(put_wall - sd_shift_dollars)
+        call_strike = snap_call(call_wall + sd_shift_dollars)
+        return {
+            "put_strike": put_strike, "call_strike": call_strike,
+            "front_expiration": front_exp, "back_expiration": back_exp,
+        }
+    if strategy == "iron_butterfly":
+        # Body at flip (current behavior); vary wing width.
+        body_call = snap_call(flip)
+        body_put = snap_put(flip)
+        long_put = snap_put(body_put - wing)
+        long_call = snap_call(body_call + wing)
+        # For IBF the body is a single strike — prefer call's snap (typically
+        # call/put share strikes ATM).
+        return {
+            "long_put_strike": long_put,
+            "short_strike": body_call,
+            "long_call_strike": long_call,
+            "expiration": credit_exp,
+        }
+    # butterfly
+    center_call = snap_call(flip)
+    lower = snap_call(center_call - wing)
+    upper = snap_call(center_call + wing)
+    return {
+        "lower_strike": lower, "middle_strike": center_call, "upper_strike": upper,
+        "option_type": "call", "expiration": front_exp,
+    }
+
+
+def _estimate_preview(
+    strategy: str, legs: dict,
+    front_options: list[dict], back_options: list[dict] | None,
+    spot: float,
+):
+    """Compute credit/debit estimate + max profit/loss + breakevens + POP for
+    one variant. Returns None when any leg's mid is missing — callers should
+    treat the variant as 'price unavailable' rather than fabricate numbers."""
+    sigma = 0.20
+    r = RISK_FREE_RATE
+
+    if strategy == "iron_condor":
+        lp, sp = float(legs["long_put_strike"]), float(legs["short_put_strike"])
+        sc, lc = float(legs["short_call_strike"]), float(legs["long_call_strike"])
+        mids = [
+            _leg_mid(front_options, sp, "put"),
+            _leg_mid(front_options, sc, "call"),
+            _leg_mid(front_options, lp, "put"),
+            _leg_mid(front_options, lc, "call"),
+        ]
+        if any(m is None for m in mids):
+            return None
+        credit = round(mids[0] + mids[1] - mids[2] - mids[3], 4)
+        if credit <= 0:
+            return {"credit_estimate": credit, "max_profit": None, "max_loss": None,
+                    "breakevens": None, "pop_estimate": None}
+        entry_cost = -credit  # credit
+        profile = _scan_pnl_profile(
+            "iron_condor", spot,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": legs["expiration"]},
+            r, sigma, entry_cost, 1,
+        )
+        return _profile_to_preview(profile, credit_estimate=credit)
+    if strategy == "iron_butterfly":
+        lp = float(legs["long_put_strike"])
+        body = float(legs["short_strike"])
+        lc = float(legs["long_call_strike"])
+        mids = [
+            _leg_mid(front_options, body, "put"),
+            _leg_mid(front_options, body, "call"),
+            _leg_mid(front_options, lp, "put"),
+            _leg_mid(front_options, lc, "call"),
+        ]
+        if any(m is None for m in mids):
+            return None
+        credit = round(mids[0] + mids[1] - mids[2] - mids[3], 4)
+        if credit <= 0:
+            return {"credit_estimate": credit, "max_profit": None, "max_loss": None,
+                    "breakevens": None, "pop_estimate": None}
+        entry_cost = -credit
+        profile = _scan_pnl_profile(
+            "iron_butterfly", body,
+            {"lp": lp, "short": body, "lc": lc},
+            {"exp": legs["expiration"]},
+            r, sigma, entry_cost, 1,
+        )
+        return _profile_to_preview(profile, credit_estimate=credit)
+    if strategy == "double_diagonal":
+        lp, sp = float(legs["long_put_strike"]), float(legs["short_put_strike"])
+        sc, lc = float(legs["short_call_strike"]), float(legs["long_call_strike"])
+        if back_options is None:
+            return None
+        mids = [
+            _leg_mid(front_options, sp, "put"),
+            _leg_mid(front_options, sc, "call"),
+            _leg_mid(back_options, lp, "put"),
+            _leg_mid(back_options, lc, "call"),
+        ]
+        if any(m is None for m in mids):
+            return None
+        debit = round((mids[2] + mids[3]) - (mids[0] + mids[1]), 4)
+        if debit <= 0:
+            return {"credit_estimate": -debit, "max_profit": None, "max_loss": None,
+                    "breakevens": None, "pop_estimate": None}
+        profile = _scan_pnl_profile(
+            "double_diagonal", (sp + sc) / 2,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"short": legs["short_expiration"], "long": legs["long_expiration"]},
+            r, sigma, debit, 1,
+        )
+        return _profile_to_preview(profile, credit_estimate=-debit)
+    if strategy == "double_calendar":
+        ps = float(legs["put_strike"])
+        cs = float(legs["call_strike"])
+        if back_options is None:
+            return None
+        mids = [
+            _leg_mid(front_options, ps, "put"),
+            _leg_mid(front_options, cs, "call"),
+            _leg_mid(back_options, ps, "put"),
+            _leg_mid(back_options, cs, "call"),
+        ]
+        if any(m is None for m in mids):
+            return None
+        debit = round((mids[2] + mids[3]) - (mids[0] + mids[1]), 4)
+        if debit <= 0:
+            return {"credit_estimate": -debit, "max_profit": None, "max_loss": None,
+                    "breakevens": None, "pop_estimate": None}
+        profile = _scan_pnl_profile(
+            "double_calendar", (ps + cs) / 2,
+            {"ps": ps, "cs": cs},
+            {"front": legs["front_expiration"], "back": legs["back_expiration"]},
+            r, sigma, debit, 1,
+        )
+        return _profile_to_preview(profile, credit_estimate=-debit)
+    # butterfly
+    lower = float(legs["lower_strike"])
+    middle = float(legs["middle_strike"])
+    upper = float(legs["upper_strike"])
+    is_call = legs.get("option_type", "call") == "call"
+    opt_type = "call" if is_call else "put"
+    mids = [
+        _leg_mid(front_options, lower, opt_type),
+        _leg_mid(front_options, middle, opt_type),
+        _leg_mid(front_options, upper, opt_type),
+    ]
+    if any(m is None for m in mids):
+        return None
+    debit = round((mids[0] + mids[2]) - 2 * mids[1], 4)
+    if debit <= 0:
+        return {"credit_estimate": -debit, "max_profit": None, "max_loss": None,
+                "breakevens": None, "pop_estimate": None}
+    profile = _scan_pnl_profile(
+        "butterfly", middle,
+        {"lower": lower, "middle": middle, "upper": upper, "is_call": is_call},
+        {"exp": legs["expiration"]},
+        r, sigma, debit, 1,
+    )
+    return _profile_to_preview(profile, credit_estimate=-debit)
+
+
+def _profile_to_preview(profile: dict, *, credit_estimate: float) -> dict:
+    return {
+        "credit_estimate": credit_estimate,
+        "max_profit": profile.get("max_profit"),
+        "max_loss": profile.get("max_loss"),
+        "breakevens": {
+            "lower": profile.get("lower_breakeven"),
+            "upper": profile.get("upper_breakeven"),
+        },
+        "pop_estimate": profile.get("probability_of_profit"),
+    }
+
+
+def _bot_preview(
+    bot_id: str, *,
+    spot: float, vix: float | None, atm_straddle: float | None,
+    front_options: list[dict], expiration: str,
+    flip: float, call_wall: float | None, put_wall: float | None,
+) -> dict:
+    """Run the live bot's signal builder against an in-memory chain and
+    summarize what it would do right now. Returns {would_open, legs, preview,
+    rejection_reasons}. Used by ?bot=<id> to show 'what FLOW would pick'."""
+    from .bots.registry import BOT_REGISTRY as _BR
+    from .bots.db import load_config as _load_cfg
+    from .db import engine as _engine
+
+    meta = _BR.get(bot_id)
+    if meta is None:
+        return None
+
+    chain_for_bot = {
+        "spot": spot,
+        "vix": vix or 0,
+        "atm_straddle_mid": atm_straddle or 0,
+        "iv_atm": 0,
+        "expiration": expiration,
+        "ticker": meta.get("ticker", "SPY"),
+        "options": [
+            {"strike": float(o.get("strike", 0)), "type": o.get("option_type"),
+             "bid": float(o.get("bid") or 0), "ask": float(o.get("ask") or 0)}
+            for o in front_options
+        ],
+        "gex": {
+            "flip_point": flip,
+            "call_wall": call_wall,
+            "put_wall": put_wall,
+        },
+    }
+    try:
+        cfg = _load_cfg(_engine, bot_id) if _engine is not None else dict(meta.get("defaults", {}))
+    except Exception:
+        cfg = dict(meta.get("defaults", {}))
+
+    diag: list[str] = []
+    sig = None
+    strategy_name = meta.get("strategy")
+    if strategy_name == "iron_condor":
+        from .bots.strategies.iron_condor import build_iron_condor_signal
+        sig = build_iron_condor_signal(chain=chain_for_bot, config=cfg, equity=10000.0, diag=diag)
+    elif strategy_name == "iron_butterfly":
+        from .bots.strategies.iron_butterfly import build_iron_butterfly_signal
+        sig = build_iron_butterfly_signal(chain=chain_for_bot, config=cfg, equity=10000.0, diag=diag)
+    # DC/DD need a back chain — skip bot-preview when we don't have it readily
+    # in this single-expiration helper. Caller passes only `front_options`.
+
+    if sig is None:
+        return {
+            "bot": bot_id,
+            "would_open": False,
+            "rejection_reasons": diag,
+            "legs": None,
+            "preview": None,
+        }
+
+    legs_out = sig.legs()
+    return {
+        "bot": bot_id,
+        "would_open": True,
+        "rejection_reasons": [],
+        "legs": legs_out,
+        "preview": {
+            "credit_estimate": getattr(sig, "credit", None) or getattr(sig, "debit", None),
+            "max_profit": sig.max_profit * sig.contracts,
+            "max_loss": -abs(sig.max_loss) * sig.contracts,
+            "contracts": sig.contracts,
+        },
+    }
+
+
 @router.get("/gex-suggest")
 async def gex_suggest(
     request: Request,
@@ -743,6 +1133,7 @@ async def gex_suggest(
     strategy: str = "double_diagonal",
     dte: int | None = None,
     back_dte: int | None = None,
+    bot: str | None = None,
 ):
     """Auto-generate strike suggestions from GEX levels.
 
@@ -758,25 +1149,18 @@ async def gex_suggest(
     gex = await get_gex(request, symbol)
     if "error" in gex:
         raise HTTPException(502, gex["error"])
-    if gex.get("stale"):
-        # Don't silently suggest strikes built from stale walls — that's the
-        # exact "call wall $652 while SPY is $695" bug.  Tell the caller so
-        # the UI can refuse to populate and prompt the user.
-        raise HTTPException(
-            409,
-            gex.get("stale_reason") or "GEX snapshot is stale — refusing to suggest strikes",
-        )
+
+    # Don't hard-fail on stale anymore — surface it as a warning so the user
+    # still sees variants but knows the data may be off. The old 409 path
+    # gave a worse UX (blanking the panel) and the user couldn't tell what
+    # happened.
     flip = gex.get("flip_point")
     call_wall = gex.get("call_wall")
     put_wall = gex.get("put_wall")
-    spot = gex.get("spot_price")
+    spot = gex.get("current_spot") or gex.get("spot_price")
     regime = gex.get("gamma_regime")
-
-    # Prefer the live market spot (passed through from the staleness annotation)
-    # over the possibly-older spot that came back with the GEX snapshot, so
-    # suggestions are anchored to current price.
-    if gex.get("current_spot"):
-        spot = gex["current_spot"]
+    vix_raw = gex.get("vix")
+    vix = float(vix_raw) if vix_raw is not None else None
 
     if not flip or not spot:
         raise HTTPException(
@@ -789,150 +1173,147 @@ async def gex_suggest(
     if not put_wall:
         put_wall = spot - (spot * 0.01)
 
-    def _round_strike(v: float) -> float:
-        return round(v * 2) / 2
-
     today = _today_ct()
-
-    def _next_weekday(d):
-        """Snap a date forward to the next weekday (Mon-Fri)."""
-        while d.weekday() >= 5:
-            d += timedelta(days=1)
-        return d
-
     credit_strategies = {"iron_condor", "iron_butterfly"}
     is_credit = strategy in credit_strategies
 
+    # 1) Resolve target expirations from DTE picker (or historical defaults).
     if dte is not None and dte >= 0:
-        # User-supplied DTE — anchor expirations to it. Snap to next weekday
-        # so weekend-clicking doesn't suggest a non-trading expiration.
         front_target = _next_weekday(today + timedelta(days=dte))
         back_days = back_dte if back_dte is not None and back_dte >= 0 else dte + 7
         back_target = _next_weekday(today + timedelta(days=back_days))
-        front_exp = front_target.isoformat()
-        back_exp = back_target.isoformat()
-        credit_exp = front_exp
+        front_exp_target = front_target.isoformat()
+        back_exp_target = back_target.isoformat()
+        credit_exp_target = front_exp_target
     else:
-        # Historical default — next Friday for non-credit; today/next-weekday
-        # for credit. Preserves the pre-DTE-param behavior for old callers.
         days_until_friday = (4 - today.weekday()) % 7
         if days_until_friday == 0:
             days_until_friday = 7
-        front_exp = (today + timedelta(days=days_until_friday)).isoformat()
-        back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
-        if is_credit:
-            credit_exp = _next_weekday(today).isoformat()
-        else:
-            credit_exp = front_exp
+        front_exp_target = (today + timedelta(days=days_until_friday)).isoformat()
+        back_exp_target = (today + timedelta(days=days_until_friday + 7)).isoformat()
+        credit_exp_target = _next_weekday(today).isoformat() if is_credit else front_exp_target
 
-    wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
+    # 2) Snap to actually-listed expirations so the suggestion is tradeable.
+    front_exp = await _nearest_listed_expiration(request, symbol, front_exp_target)
+    back_exp = await _nearest_listed_expiration(request, symbol, back_exp_target)
+    credit_exp = await _nearest_listed_expiration(request, symbol, credit_exp_target)
 
-    if strategy == "double_diagonal":
-        short_put = _round_strike(put_wall)
-        short_call = _round_strike(call_wall)
-        long_put = _round_strike(short_put - wing_offset)
-        long_call = _round_strike(short_call + wing_offset)
+    # 3) Pull the actual chain — used for strike snapping, ATM straddle, and
+    #    leg-mid pricing in the preview metrics.
+    primary_exp = credit_exp if is_credit else front_exp
+    try:
+        front_options = await _fetch_chain_raw(request, symbol, primary_exp)
+    except Exception as e:
+        raise HTTPException(502, f"Chain fetch failed for {symbol} {primary_exp}: {e}")
+    back_options = None
+    if back_exp and back_exp != primary_exp and strategy in ("double_diagonal", "double_calendar"):
+        try:
+            back_options = await _fetch_chain_raw(request, symbol, back_exp)
+        except Exception:
+            back_options = None
 
-        legs = {
-            "long_put_strike": long_put,
-            "short_put_strike": short_put,
-            "short_call_strike": short_call,
-            "long_call_strike": long_call,
-            "short_expiration": front_exp,
-            "long_expiration": back_exp,
-        }
-        rationale = (
-            f"Short strikes at GEX walls (put wall ${short_put}, call wall ${short_call}). "
-            f"Long wings ${wing_offset} wide. "
-            f"Front exp {front_exp}, back exp {back_exp}. "
-            f"Regime: {regime or 'UNKNOWN'}."
+    front_call_strikes = sorted({float(o["strike"]) for o in front_options
+                                 if o.get("option_type") == "call" and "strike" in o})
+    front_put_strikes = sorted({float(o["strike"]) for o in front_options
+                                if o.get("option_type") == "put" and "strike" in o})
+
+    atm_straddle = _atm_straddle_mid(front_options, spot)
+
+    # 4) Build the response context (always returned, used by the UI panel).
+    context = {
+        "spot": float(spot),
+        "flip_point": float(flip),
+        "call_wall": float(call_wall),
+        "put_wall": float(put_wall),
+        "gamma_regime": regime,
+        "vix": vix,
+        "flip_distance": round(abs(float(spot) - float(flip)), 4),
+        "atm_straddle_mid": atm_straddle,
+        "primary_expiration": primary_exp,
+        "back_expiration": back_exp if back_exp != primary_exp else None,
+    }
+
+    # 5) Non-blocking warnings — mirror the bots' entry-gate checks so the
+    #    user knows the live bot would reject the same setup.
+    warnings = []
+    if gex.get("stale"):
+        warnings.append(gex.get("stale_reason") or "GEX snapshot may be stale.")
+    if vix is not None and vix >= 32.0:
+        warnings.append(f"VIX at {vix:.1f} — the IC bots skip ≥32.")
+    if context["flip_distance"] < 1.0:
+        warnings.append(
+            f"Spot within ${context['flip_distance']:.2f} of flip — directional risk; "
+            "bots skip when distance < $1."
         )
-    elif strategy == "iron_condor":
-        short_put = _round_strike(put_wall)
-        short_call = _round_strike(call_wall)
-        long_put = _round_strike(short_put - wing_offset)
-        long_call = _round_strike(short_call + wing_offset)
+    if atm_straddle is None:
+        warnings.append("ATM straddle unavailable — wing sizing is using fixed dollars.")
 
-        legs = {
-            "long_put_strike": long_put,
-            "short_put_strike": short_put,
-            "short_call_strike": short_call,
-            "long_call_strike": long_call,
-            "expiration": credit_exp,
-        }
-        is_0dte = credit_exp == today.isoformat()
-        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
-        rationale = (
-            f"Iron Condor: short strikes at GEX walls "
-            f"(put wall ${short_put}, call wall ${short_call}). "
-            f"Long wings ${wing_offset} wide. "
-            f"{dte_note}. "
-            f"Regime: {regime or 'UNKNOWN'}."
+    # 6) Build 3 variants. Each fully snapped to actual chain strikes, with
+    #    preview metrics priced from real bid/ask mids.
+    variants = []
+    for spec in _variant_specs(strategy):
+        legs_dict = _build_legs_for_variant(
+            strategy, spec,
+            spot=spot, flip=flip, call_wall=call_wall, put_wall=put_wall,
+            atm_straddle=atm_straddle, regime=regime,
+            front_strikes_call=front_call_strikes,
+            front_strikes_put=front_put_strikes,
+            front_exp=front_exp, back_exp=back_exp, credit_exp=credit_exp,
         )
-    elif strategy == "butterfly":
-        # Butterfly centered at flip point (neutral bet on pin)
-        center = _round_strike(flip)
-        lower_strike = _round_strike(center - wing_offset)
-        upper_strike = _round_strike(center + wing_offset)
+        preview = _estimate_preview(strategy, legs_dict, front_options, back_options, float(spot))
+        variants.append({
+            "name": spec["name"],
+            "description": spec["description"],
+            "legs": legs_dict,
+            "preview": preview,
+        })
 
-        legs = {
-            "lower_strike": lower_strike,
-            "middle_strike": center,
-            "upper_strike": upper_strike,
-            "option_type": "call",
-            "expiration": front_exp,
-        }
-        rationale = (
-            f"Butterfly centered at GEX flip point ${center}. "
-            f"Wings ${wing_offset} wide (${lower_strike}/${center}/${upper_strike}). "
-            f"Exp {front_exp}. Regime: {regime or 'UNKNOWN'}."
-        )
-    elif strategy == "iron_butterfly":
-        # Iron Butterfly: short straddle at flip, wings at walls
-        short_strike = _round_strike(flip)
-        lp_strike = _round_strike(short_strike - wing_offset)
-        lc_strike = _round_strike(short_strike + wing_offset)
+    # 7) Optional bot-aligned preview — "what would FLOW pick right now?"
+    bot_preview = None
+    if bot:
+        try:
+            bot_preview = _bot_preview(
+                bot,
+                spot=float(spot), vix=vix, atm_straddle=atm_straddle,
+                front_options=front_options, expiration=primary_exp,
+                flip=float(flip),
+                call_wall=float(call_wall) if call_wall else None,
+                put_wall=float(put_wall) if put_wall else None,
+            )
+        except Exception as e:
+            bot_preview = {"bot": bot, "would_open": False,
+                           "rejection_reasons": [f"preview_error: {e}"],
+                           "legs": None, "preview": None}
 
-        legs = {
-            "long_put_strike": lp_strike,
-            "short_strike": short_strike,
-            "long_call_strike": lc_strike,
-            "expiration": credit_exp,
-        }
-        is_0dte = credit_exp == today.isoformat()
-        dte_note = "0DTE" if is_0dte else f"exp {credit_exp}"
-        rationale = (
-            f"Iron Butterfly: short straddle at flip ${short_strike}, "
-            f"wings at ${lp_strike}/${lc_strike}. "
-            f"{dte_note}. "
-            f"Regime: {regime or 'UNKNOWN'}."
-        )
-    else:  # double_calendar
-        put_strike = _round_strike(put_wall)
-        call_strike = _round_strike(call_wall)
-
-        legs = {
-            "put_strike": put_strike,
-            "call_strike": call_strike,
-            "front_expiration": front_exp,
-            "back_expiration": back_exp,
-        }
-        rationale = (
-            f"Calendar strikes at GEX walls (put ${put_strike}, call ${call_strike}). "
-            f"Front {front_exp}, back {back_exp}. "
-            f"Regime: {regime or 'UNKNOWN'}."
-        )
+    # 8) Standard variant duplicated at top-level for the Discord-bot reader
+    #    (and any other legacy caller). Kept verbose to match the old shape.
+    standard = next((v for v in variants if v["name"] == "Standard"), None) or (
+        variants[0] if variants else {"legs": {}, "description": ""}
+    )
+    rationale_parts = [standard["description"]]
+    if regime:
+        rationale_parts.append(f"Regime: {regime}.")
+    if warnings:
+        rationale_parts.append("Warnings: " + " ".join(warnings))
+    rationale = " ".join(rationale_parts)
 
     return {
         "symbol": symbol,
         "strategy": strategy,
-        "legs": legs,
+        "as_of": datetime.utcnow().isoformat() + "Z",
+        # Backward compat — old callers (Discord bot) read these top-level keys.
+        "legs": standard["legs"],
+        "rationale": rationale,
         "flip_point": flip,
         "call_wall": call_wall,
         "put_wall": put_wall,
         "gamma_regime": regime,
         "spot_price": spot,
-        "rationale": rationale,
+        # New, richer payload for the SpreadWorks Builder.
+        "context": context,
+        "warnings": warnings,
+        "variants": variants,
+        "bot_preview": bot_preview,
     }
 
 

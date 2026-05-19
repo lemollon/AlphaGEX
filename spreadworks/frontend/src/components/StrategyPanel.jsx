@@ -184,6 +184,255 @@ function DteQuickButtons({ onSelect }) {
   );
 }
 
+/* ── GEX Suggest panel ─────────────────────────────────────────── */
+
+function fmtUsd(v, decimals = 2) {
+  if (v == null || Number.isNaN(v)) return '—';
+  const abs = Math.abs(v);
+  const sign = v < 0 ? '−' : '';
+  return `${sign}$${abs.toFixed(decimals)}`;
+}
+
+function fmtPct(v, decimals = 1) {
+  if (v == null || Number.isNaN(v)) return '—';
+  return `${(v * 100).toFixed(decimals)}%`;
+}
+
+function fmtTimestamp(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }) + ' ET';
+  } catch { return ''; }
+}
+
+function ContextStrip({ ctx }) {
+  if (!ctx) return null;
+  const items = [
+    { label: 'Spot', value: fmtUsd(ctx.spot), color: '#fff' },
+    { label: 'Flip', value: fmtUsd(ctx.flip_point), color: '#cbd5e1' },
+    { label: 'Put Wall', value: fmtUsd(ctx.put_wall), color: '#fb7185' },
+    { label: 'Call Wall', value: fmtUsd(ctx.call_wall), color: '#34d399' },
+    { label: 'VIX', value: ctx.vix != null ? ctx.vix.toFixed(1) : '—', color: '#fcd34d' },
+    { label: 'Regime', value: ctx.gamma_regime || '—', color: '#7dd3fc' },
+    { label: 'ATM Strad', value: ctx.atm_straddle_mid != null ? fmtUsd(ctx.atm_straddle_mid) : '—', color: '#cbd5e1' },
+    { label: 'Δ Flip', value: fmtUsd(ctx.flip_distance), color: ctx.flip_distance < 1.0 ? '#fcd34d' : '#cbd5e1' },
+  ];
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(4, minmax(0,1fr))',
+        gap: 6,
+        padding: '8px 10px',
+        background: 'rgba(7,16,28,0.55)',
+        boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08)',
+        borderRadius: 6,
+        marginBottom: 8,
+      }}
+    >
+      {items.map((it, i) => (
+        <div key={i} style={{ minWidth: 0 }}>
+          <div style={{
+            fontSize: 8.5, fontWeight: 700, color: '#64748b',
+            textTransform: 'uppercase', letterSpacing: '0.10em',
+            marginBottom: 1,
+          }}>{it.label}</div>
+          <div style={{
+            fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 700,
+            color: it.color, overflow: 'hidden', textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}>{it.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function WarningBanner({ warnings }) {
+  if (!warnings || warnings.length === 0) return null;
+  return (
+    <div
+      style={{
+        padding: '6px 10px',
+        marginBottom: 8,
+        borderRadius: 6,
+        background: 'rgba(252,211,77,0.08)',
+        boxShadow: 'inset 0 0 0 1px rgba(252,211,77,0.25)',
+      }}
+    >
+      {warnings.map((w, i) => (
+        <div key={i} style={{
+          fontSize: 10.5, color: '#fcd34d', fontWeight: 600,
+          lineHeight: 1.5,
+        }}>
+          ⚠ {w}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function VariantCard({ variant, onApply, isActive }) {
+  const p = variant.preview;
+  const hasMetrics = p && p.max_profit != null && p.max_loss != null;
+  const positiveCredit = p && p.credit_estimate != null && p.credit_estimate > 0;
+  return (
+    <div
+      style={{
+        padding: '10px 12px',
+        borderRadius: 8,
+        background: isActive ? 'rgba(125,211,252,0.10)' : 'rgba(7,16,28,0.55)',
+        boxShadow: isActive
+          ? 'inset 0 0 0 1px rgba(125,211,252,0.35)'
+          : 'inset 0 0 0 1px rgba(125,211,252,0.08)',
+        marginBottom: 6,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0' }}>
+          {variant.name}
+        </span>
+        <button
+          onClick={() => onApply(variant)}
+          style={{
+            padding: '3px 10px', borderRadius: 4, border: 'none',
+            fontSize: 10.5, fontWeight: 700, cursor: 'pointer',
+            color: isActive ? '#06121f' : '#22d3ee',
+            background: isActive ? '#22d3ee' : 'rgba(34,211,238,0.10)',
+            boxShadow: isActive ? 'none' : 'inset 0 0 0 1px rgba(34,211,238,0.30)',
+          }}
+        >
+          {isActive ? 'Applied' : 'Use'}
+        </button>
+      </div>
+      <div style={{
+        fontSize: 10, color: '#94a3b8', marginBottom: 6, lineHeight: 1.4,
+      }}>
+        {variant.description}
+      </div>
+      {hasMetrics ? (
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 4,
+          fontFamily: 'JetBrains Mono', fontSize: 10,
+        }}>
+          <Metric label={positiveCredit ? 'Credit' : 'Debit'} value={fmtUsd(Math.abs(p.credit_estimate))} color={positiveCredit ? '#34d399' : '#fcd34d'} />
+          <Metric label="Max P" value={fmtUsd(p.max_profit, 0)} color="#34d399" />
+          <Metric label="Max L" value={fmtUsd(p.max_loss, 0)} color="#fb7185" />
+          <Metric label="POP"   value={fmtPct(p.pop_estimate)} color="#fcd34d" />
+        </div>
+      ) : p && p.credit_estimate != null ? (
+        <div style={{ fontSize: 10, color: '#fb7185', fontStyle: 'italic' }}>
+          {positiveCredit ? 'Net credit too small to evaluate' : `Negative credit at these strikes (${fmtUsd(p.credit_estimate)}) — bot would skip`}
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: '#64748b', fontStyle: 'italic' }}>
+          Pricing unavailable — chain may be missing a leg.
+        </div>
+      )}
+      {p && p.breakevens && (p.breakevens.lower != null || p.breakevens.upper != null) && (
+        <div style={{
+          fontFamily: 'JetBrains Mono', fontSize: 9.5, color: '#94a3b8',
+          marginTop: 4,
+        }}>
+          BE: {p.breakevens.lower != null ? `$${p.breakevens.lower.toFixed(2)}` : '—'} · {p.breakevens.upper != null ? `$${p.breakevens.upper.toFixed(2)}` : '—'}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Metric({ label, value, color }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 8.5, fontWeight: 700, color: '#64748b',
+        textTransform: 'uppercase', letterSpacing: '0.10em' }}>{label}</div>
+      <div style={{ color, fontWeight: 700, overflow: 'hidden',
+        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+    </div>
+  );
+}
+
+function GexSuggestPanel({ suggestion, loading, onApplyVariant, onRefresh, onDismiss }) {
+  const variants = suggestion?.variants || [];
+  const context = suggestion?.context;
+  const warnings = suggestion?.warnings || [];
+  // Track which variant was last applied so the "Use"/"Applied" buttons
+  // reflect the active selection. Default to Standard on first render.
+  const [appliedName, setAppliedName] = useState(() => {
+    const std = variants.find(v => v.name === 'Standard');
+    return std?.name || variants[0]?.name || null;
+  });
+  return (
+    <div
+      style={{
+        padding: 10,
+        borderRadius: 8,
+        background: 'rgba(13,28,46,0.55)',
+        boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.12)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Sparkles size={12} style={{ color: '#22d3ee' }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: '#22d3ee',
+            textTransform: 'uppercase', letterSpacing: '0.10em' }}>GEX Suggest</span>
+          {loading && <span style={{ fontSize: 9.5, color: '#64748b' }}>refreshing…</span>}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {suggestion?.as_of && (
+            <span style={{ fontSize: 9, color: '#64748b', fontFamily: 'JetBrains Mono' }}>
+              {fmtTimestamp(suggestion.as_of)}
+            </span>
+          )}
+          <button
+            onClick={onRefresh}
+            style={{
+              fontSize: 9.5, fontWeight: 700, color: '#94a3b8',
+              padding: '2px 8px', borderRadius: 4, border: 'none',
+              background: 'rgba(255,255,255,0.04)', cursor: 'pointer',
+              textTransform: 'uppercase', letterSpacing: '0.10em',
+            }}
+            title="Re-fetch GEX walls + chain"
+          >Refresh</button>
+          <button
+            onClick={onDismiss}
+            style={{
+              fontSize: 14, color: '#fb7185',
+              padding: '2px 4px', border: 'none', background: 'transparent',
+              cursor: 'pointer', lineHeight: 1,
+            }}
+            title="Dismiss suggestion and switch to Manual"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      </div>
+
+      <ContextStrip ctx={context} />
+      <WarningBanner warnings={warnings} />
+
+      {variants.length === 0 && (
+        <div style={{ fontSize: 11, color: '#94a3b8', padding: 8, fontStyle: 'italic' }}>
+          No variants available — strike chain may be missing or strategy unsupported.
+        </div>
+      )}
+
+      {variants.map((v) => (
+        <VariantCard
+          key={v.name}
+          variant={v}
+          isActive={appliedName === v.name}
+          onApply={(variant) => { setAppliedName(variant.name); onApplyVariant(variant); }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function StrategyPanel({
   symbol = 'SPY',
   spotPrice,
@@ -462,6 +711,53 @@ export default function StrategyPanel({
     }
   }, [symbol]);
 
+  // Apply a single variant's legs onto local state — used both by the
+  // initial fetch (auto-loads Standard) and by clicking another variant
+  // in the GexSuggestPanel.
+  const applyVariantLegs = useCallback((variantLegs) => {
+    if (!variantLegs) return;
+    if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
+      setLegs({
+        longPutStrike: variantLegs.long_put_strike ?? '',
+        shortPutStrike: variantLegs.short_put_strike ?? '',
+        shortCallStrike: variantLegs.short_call_strike ?? '',
+        longCallStrike: variantLegs.long_call_strike ?? '',
+        longExpiration: variantLegs.long_expiration ?? '',
+        shortExpiration: variantLegs.short_expiration ?? '',
+      });
+    } else if (strategy === STRATEGY_TYPES.IRON_CONDOR) {
+      setLegs({
+        longPutStrike: variantLegs.long_put_strike ?? '',
+        shortPutStrike: variantLegs.short_put_strike ?? '',
+        shortCallStrike: variantLegs.short_call_strike ?? '',
+        longCallStrike: variantLegs.long_call_strike ?? '',
+        expiration: variantLegs.expiration ?? '',
+      });
+    } else if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR) {
+      setLegs({
+        putStrike: variantLegs.put_strike ?? '',
+        callStrike: variantLegs.call_strike ?? '',
+        frontExpiration: variantLegs.front_expiration ?? '',
+        backExpiration: variantLegs.back_expiration ?? '',
+      });
+    } else if (strategy === STRATEGY_TYPES.BUTTERFLY) {
+      setLegs({
+        lowerStrike: variantLegs.lower_strike ?? '',
+        middleStrike: variantLegs.middle_strike ?? '',
+        upperStrike: variantLegs.upper_strike ?? '',
+        optionType: variantLegs.option_type ?? 'call',
+        expiration: variantLegs.expiration ?? '',
+      });
+    } else if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY) {
+      setLegs({
+        longPutStrike: variantLegs.long_put_strike ?? '',
+        shortStrike: variantLegs.short_strike ?? '',
+        longCallStrike: variantLegs.long_call_strike ?? '',
+        expiration: variantLegs.expiration ?? '',
+      });
+    }
+  }, [strategy]);
+
   const fetchGexSuggestion = useCallback(async () => {
     if (!strategy) return;
     setLoading(true);
@@ -473,57 +769,30 @@ export default function StrategyPanel({
       if (!res.ok) throw new Error('Failed to fetch GEX suggestion');
       const data = await res.json();
       setGexSuggestion(data);
-      if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL && data.legs) {
-        setLegs({
-          longPutStrike: data.legs.long_put_strike ?? '',
-          shortPutStrike: data.legs.short_put_strike ?? '',
-          shortCallStrike: data.legs.short_call_strike ?? '',
-          longCallStrike: data.legs.long_call_strike ?? '',
-          longExpiration: data.legs.long_expiration ?? '',
-          shortExpiration: data.legs.short_expiration ?? '',
-        });
-      } else if (strategy === STRATEGY_TYPES.IRON_CONDOR && data.legs) {
-        setLegs({
-          longPutStrike: data.legs.long_put_strike ?? '',
-          shortPutStrike: data.legs.short_put_strike ?? '',
-          shortCallStrike: data.legs.short_call_strike ?? '',
-          longCallStrike: data.legs.long_call_strike ?? '',
-          expiration: data.legs.expiration ?? '',
-        });
-      } else if (strategy === STRATEGY_TYPES.DOUBLE_CALENDAR && data.legs) {
-        setLegs({
-          putStrike: data.legs.put_strike ?? '',
-          callStrike: data.legs.call_strike ?? '',
-          frontExpiration: data.legs.front_expiration ?? '',
-          backExpiration: data.legs.back_expiration ?? '',
-        });
-      } else if (strategy === STRATEGY_TYPES.BUTTERFLY && data.legs) {
-        setLegs({
-          lowerStrike: data.legs.lower_strike ?? '',
-          middleStrike: data.legs.middle_strike ?? '',
-          upperStrike: data.legs.upper_strike ?? '',
-          optionType: data.legs.option_type ?? 'call',
-          expiration: data.legs.expiration ?? '',
-        });
-      } else if (strategy === STRATEGY_TYPES.IRON_BUTTERFLY && data.legs) {
-        setLegs({
-          longPutStrike: data.legs.long_put_strike ?? '',
-          shortStrike: data.legs.short_strike ?? '',
-          longCallStrike: data.legs.long_call_strike ?? '',
-          expiration: data.legs.expiration ?? '',
-        });
-      }
+      // Default-apply the Standard variant so the user gets immediate legs
+      // (matches the prior "auto-fill on mode switch" behavior). Falls back
+      // to the top-level legs payload if variants[] is missing (very old API).
+      const standard = (data.variants || []).find(v => v.name === 'Standard');
+      applyVariantLegs(standard?.legs || data.legs);
     } catch (err) {
       setError(`GEX Suggest: ${err.message}`);
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategy, selectedDte]);
+  }, [symbol, strategy, selectedDte, applyVariantLegs]);
 
   useEffect(() => {
     if (inputMode === INPUT_MODES.GEX_SUGGEST) {
       fetchGexSuggestion();
     }
+  }, [inputMode, fetchGexSuggestion]);
+
+  // Auto-refresh every 60s while the user has GEX Suggest open — walls move
+  // intraday so a stale suggestion will silently rot otherwise.
+  useEffect(() => {
+    if (inputMode !== INPUT_MODES.GEX_SUGGEST) return;
+    const iv = setInterval(() => { fetchGexSuggestion(); }, 60_000);
+    return () => clearInterval(iv);
   }, [inputMode, fetchGexSuggestion]);
 
   const updateLeg = (field, value) => {
@@ -707,30 +976,19 @@ export default function StrategyPanel({
         </div>
       )}
 
-      {/* GEX Suggestion */}
+      {/* GEX Suggest panel — variants + context + warnings */}
       {inputMode === INPUT_MODES.GEX_SUGGEST && gexSuggestion && (
-        <div className="bg-accent-dim border border-accent/20 rounded-lg px-3 py-2.5 text-[11px] text-accent animate-fade-in">
-          <div className="flex justify-between items-center">
-            <span className="font-bold text-xs flex items-center gap-1.5">
-              <Sparkles size={12} />
-              GEX Suggestion
-            </span>
-            <button
-              onClick={() => {
-                setGexSuggestion(null);
-                setLegs(DEFAULT_LEGS[strategy]);
-                setInputMode(INPUT_MODES.MANUAL);
-              }}
-              className="sw-btn-ghost p-0 text-sw-red hover:text-sw-red text-base leading-none"
-              title="Dismiss suggestion and switch to Manual"
-            ><X size={14} /></button>
-          </div>
-          {gexSuggestion.rationale && (
-            <div className="text-text-secondary mt-1 text-[11px] leading-relaxed">
-              {gexSuggestion.rationale}
-            </div>
-          )}
-        </div>
+        <GexSuggestPanel
+          suggestion={gexSuggestion}
+          loading={loading}
+          onApplyVariant={(variant) => applyVariantLegs(variant.legs)}
+          onRefresh={fetchGexSuggestion}
+          onDismiss={() => {
+            setGexSuggestion(null);
+            setLegs(DEFAULT_LEGS[strategy] || {});
+            setInputMode(INPUT_MODES.MANUAL);
+          }}
+        />
       )}
 
       {/* Spot Price */}
