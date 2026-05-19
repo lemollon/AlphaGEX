@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Send } from 'lucide-react';
 import usePositions from '../hooks/usePositions';
 import PositionCard from '../components/positions/PositionCard';
+import PositionCardHero from '../components/positions/PositionCardHero';
 import PortfolioSummary from '../components/positions/PortfolioSummary';
 import ClosePositionModal from '../components/positions/ClosePositionModal';
 import EmptySlot from '../components/positions/EmptySlot';
@@ -117,15 +118,23 @@ export default function PositionsPage() {
           </span>
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(520px,1fr))] gap-4">
           {visiblePositions.map((pos) => (
-            <PositionCard
-              key={pos.id}
-              position={pos}
-              onClose={(p) => setClosingPos(p)}
-              onExpireWorthless={handleExpireWorthless}
-              onDelete={handleDelete}
-            />
+            pos.status === 'open' ? (
+              <PositionCardHero
+                key={pos.id}
+                position={pos}
+                onClose={(p) => setClosingPos(p)}
+              />
+            ) : (
+              <PositionCard
+                key={pos.id}
+                position={pos}
+                onClose={(p) => setClosingPos(p)}
+                onExpireWorthless={handleExpireWorthless}
+                onDelete={handleDelete}
+              />
+            )
           ))}
           {Array.from({ length: emptySlots }).map((_, i) => (
             <EmptySlot
