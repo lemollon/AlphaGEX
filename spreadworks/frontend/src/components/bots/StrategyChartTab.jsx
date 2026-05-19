@@ -160,96 +160,189 @@ function interpolatePnlAtPrice(pnlCurve, price) {
   return null;
 }
 
-/* ─── Summary strip ─────────────────────────────────────────────── */
+/* ─── Strategy summary strip (zoned · per design spec) ──────────── */
 
-function Dot() {
-  return <span className="inline-block w-1 h-1 rounded-full mx-2" style={{ background: '#475569' }} />;
+function ZoneLabel({ children }) {
+  return (
+    <span
+      style={{
+        fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '0.14em', color: '#64748b',
+      }}
+    >
+      {children}
+    </span>
+  );
 }
 
-function SummaryStrip({ d }) {
-  if (!d) return null;
-  const legs = legsForLabel(
-    [
-      { side: 'long', type: 'put', strike: d.legs.longPut },
-      { side: 'short', type: 'put', strike: d.legs.shortPut },
-      { side: 'short', type: 'call', strike: d.legs.shortCall },
-      { side: 'long', type: 'call', strike: d.legs.longCall },
-    ]
+function StrategyCodeChip({ code }) {
+  return (
+    <span
+      style={{
+        fontFamily: 'JetBrains Mono',
+        fontSize: 10, fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '0.06em',
+        color: '#c4b5fd',
+        padding: '2px 8px', borderRadius: 4,
+        background: 'rgba(167,139,250,0.10)',
+        boxShadow: 'inset 0 0 0 1px rgba(167,139,250,0.30)',
+      }}
+    >
+      {code}
+    </span>
   );
+}
 
-  const unrealColor = d.unrealized >= 0 ? '#34d399' : '#fb7185';
+function OpenPill() {
+  return (
+    <span
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        padding: '2px 8px', borderRadius: 6,
+        fontSize: 10, fontWeight: 700,
+        textTransform: 'uppercase', letterSpacing: '0.06em',
+        color: '#34d399',
+        background: 'rgba(52,211,153,0.10)',
+        boxShadow: 'inset 0 0 0 1px rgba(52,211,153,0.30)',
+      }}
+    >
+      <span
+        style={{
+          width: 6, height: 6, borderRadius: 9999,
+          background: '#34d399',
+          animation: 'pulse 2s infinite',
+        }}
+      />
+      OPEN
+    </span>
+  );
+}
+
+function SummaryLegChips({ legs }) {
+  const items = [
+    { side: 'long',  type: 'P', strike: legs.longPut },
+    { side: 'short', type: 'P', strike: legs.shortPut },
+    { side: 'short', type: 'C', strike: legs.shortCall },
+    { side: 'long',  type: 'C', strike: legs.longCall },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {items.map((l, i) => {
+        if (l.strike == null) return null;
+        const isLong = l.side === 'long';
+        const color = isLong ? '#34d399' : '#fb7185';
+        const bg    = isLong ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)';
+        const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
+        return (
+          <span
+            key={i}
+            style={{
+              fontFamily: 'JetBrains Mono',
+              fontSize: 11.5, fontWeight: 600,
+              padding: '4px 10px', borderRadius: 6,
+              background: bg, color,
+              boxShadow: `inset 0 0 0 1px ${ring}`,
+            }}
+          >
+            {isLong ? '+' : '−'}${l.strike}{l.type}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function StrategySummaryStrip({ d }) {
+  if (!d) return null;
+  const positive = d.unrealized >= 0;
+  const pnlColor = positive ? '#34d399' : '#fb7185';
+  // For credit strategies (BREEZE / FLOW) the entry money is a credit
+  // received; for debit strategies (TIDE / DRIFT) it's a debit paid. Same
+  // value displayed, just labeled correctly.
+  const entryAbs = Math.abs(d.netCredit || 0);
+  const entryLabel = d.isCredit ? 'credit' : 'debit';
+  const entryColor = d.isCredit ? '#34d399' : '#fcd34d';
 
   return (
-    <div className="flex items-center flex-wrap gap-y-1.5 px-1 py-0.5">
-      <span
-        className="sw-mono uppercase tracking-[0.14em] font-bold text-[10px]"
-        style={{ color: '#64748b' }}
-      >
-        {d.strategyCode}
-      </span>
-      <span className="ml-2 sw-mono text-[14px] font-bold text-white">{d.symbol}</span>
-      <span className="ml-2 text-[10.5px] uppercase tracking-[0.14em] font-semibold" style={{ color: '#64748b' }}>
-        EXP
-      </span>
-      <span className="ml-1 sw-mono text-[12px]" style={{ color: '#94a3b8' }}>{d.exp || '—'}</span>
-      <span
-        className="ml-2 sw-mono text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full"
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '1.2fr 1.6fr 1fr',
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: 'rgba(13,28,46,0.55)',
+        backdropFilter: 'blur(12px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(12px) saturate(140%)',
+        boxShadow:
+          'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
+        marginBottom: 16,
+      }}
+    >
+      {/* ZONE 1 · STRATEGY */}
+      <div style={{ padding: '16px 20px' }}>
+        <ZoneLabel>Strategy</ZoneLabel>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'JetBrains Mono', fontSize: 16, fontWeight: 700, color: '#fff' }}>
+            {d.symbol}
+          </span>
+          <StrategyCodeChip code={d.strategyCode} />
+          {d.status === 'OPEN' && <OpenPill />}
+        </div>
+        <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10.5, color: '#64748b', marginTop: 6 }}>
+          exp {d.exp || '—'}
+        </div>
+      </div>
+
+      {/* ZONE 2 · POSITION */}
+      <div
         style={{
-          background: d.status === 'OPEN' ? 'rgba(52,211,153,0.10)' : 'rgba(125,211,252,0.10)',
-          color: d.status === 'OPEN' ? '#34d399' : '#94a3b8',
-          boxShadow: `inset 0 0 0 1px ${d.status === 'OPEN' ? 'rgba(52,211,153,0.30)' : 'rgba(125,211,252,0.30)'}`,
+          padding: '16px 20px',
+          borderLeft: '1px solid rgba(125,211,252,0.10)',
+          borderRight: '1px solid rgba(125,211,252,0.10)',
         }}
       >
-        {d.status}
-      </span>
-
-      <Dot />
-      <span className="sw-mono text-[12px]">
-        {legs.map((lg, i) => (
-          <span key={i}>
-            <span style={{ color: strikeColor(lg.side), fontWeight: 700 }}>
-              {lg.glyph}{lg.letter}{lg.strike}
+        <ZoneLabel>Position</ZoneLabel>
+        <div style={{ marginTop: 6 }}>
+          <SummaryLegChips legs={d.legs} />
+        </div>
+        <div
+          style={{
+            display: 'flex', alignItems: 'baseline', gap: 20,
+            fontFamily: 'JetBrains Mono', fontSize: 11.5, color: '#94a3b8',
+            marginTop: 8,
+          }}
+        >
+          <span>{d.contracts} ctr</span>
+          <span>
+            {entryLabel}{' '}
+            <span style={{ color: entryColor, fontWeight: 700 }}>
+              ${entryAbs.toFixed(2)}
             </span>
-            {i === 1 && <span style={{ color: '#64748b' }} className="mx-1">—</span>}
-            {i === 2 && <span style={{ color: '#64748b' }} className="mx-1">/</span>}
-            {(i === 0 || i === 3) && i !== 3 && <span style={{ color: '#64748b' }} className="mx-1">/</span>}
           </span>
-        ))}
-      </span>
+        </div>
+      </div>
 
-      <Dot />
-      <span className="text-[10px] uppercase tracking-[0.14em] font-bold" style={{ color: '#64748b' }}>
-        CONTRACTS
-      </span>
-      <span className="ml-1.5 sw-mono text-[14px] font-bold text-white">{d.contracts}</span>
-
-      <Dot />
-      <span className="text-[10px] uppercase tracking-[0.14em] font-bold" style={{ color: '#64748b' }}>
-        {d.isCredit ? 'CREDIT' : 'DEBIT'}
-      </span>
-      <span
-        className="ml-1.5 sw-mono text-[14px] font-bold"
-        style={{ color: d.isCredit ? '#34d399' : '#fcd34d' }}
-      >
-        {money(Math.abs(d.netCredit))}
-      </span>
-
-      <Dot />
-      <span className="text-[10px] uppercase tracking-[0.14em] font-bold" style={{ color: '#64748b' }}>
-        UNREALIZED
-      </span>
-      <span className="ml-1.5 sw-mono text-[14px] font-bold" style={{ color: unrealColor }}>
-        {money(d.unrealized, { signed: true })}{' '}
-        <span className="text-[11px] opacity-80">({pctText(d.unrealizedPct)})</span>
-      </span>
-
-      <div className="ml-auto flex items-center">
-        <span className="text-[10px] uppercase tracking-[0.14em] font-bold" style={{ color: '#64748b' }}>
-          SPOT
-        </span>
-        <span className="ml-1.5 sw-mono text-[14px] font-bold text-white">
-          {d.spot != null ? `$${d.spot.toFixed(2)}` : '—'}
-        </span>
+      {/* ZONE 3 · LIVE */}
+      <div style={{ padding: '16px 20px' }}>
+        <ZoneLabel>Live</ZoneLabel>
+        <div
+          style={{
+            fontFamily: 'JetBrains Mono', fontSize: 18, fontWeight: 700,
+            display: 'inline-flex', alignItems: 'baseline', gap: 6,
+            color: pnlColor, marginTop: 6,
+          }}
+        >
+          {positive ? '+' : '−'}${Math.abs(d.unrealized).toFixed(2)}
+          <span style={{ fontSize: 11, opacity: 0.8 }}>
+            ({positive ? '+' : '−'}{Math.abs((d.unrealizedPct || 0) * 100).toFixed(1)}%)
+          </span>
+        </div>
+        <div style={{ fontFamily: 'JetBrains Mono', fontSize: 11.5, color: '#94a3b8', marginTop: 6 }}>
+          spot{' '}
+          <span style={{ color: '#fff', fontWeight: 700 }}>
+            {d.spot != null ? `$${d.spot.toFixed(2)}` : '—'}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -944,7 +1037,7 @@ export default function StrategyChartTab({ bot }) {
 
   return (
     <div className="px-5 py-5 flex flex-col gap-5">
-      <SummaryStrip d={d} />
+      <StrategySummaryStrip d={d} />
       <EconomicsRow d={d} />
       <GreeksRow />
       <ChartCard d={d} theme={theme} botId={bot} />
