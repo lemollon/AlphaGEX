@@ -1,24 +1,12 @@
 import { useState } from 'react';
-import { Inbox, BarChart3, X } from 'lucide-react';
+import { Inbox } from 'lucide-react';
 import { useBotPositions } from '../../hooks/useBotPositions';
 import { botApi } from '../../lib/botApi';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
+import BotGlyph from './BotGlyph';
 import BotPayoffChart from './BotPayoffChart';
 
-// Format a legs array the way the design handoff wants it:
-//   "+P 580 / −P 585 / −C 600 / +C 605"
-function formatLegs(legs) {
-  if (!legs || legs.length === 0) return '—';
-  return legs.map(l => {
-    const side = (l.side || '').toLowerCase();
-    const type = (l.type || '').toLowerCase();
-    const isCall = type.startsWith('c');
-    const isShort = side.startsWith('s') || side === '-1' || side === 'short';
-    const sign = isShort ? '−' : '+';
-    const letter = isCall ? 'C' : 'P';
-    return `${sign}${letter} ${l.strike}`;
-  }).join(' / ');
-}
+/* ─── Helpers ──────────────────────────────────────────────────── */
 
 function formatOpened(ts) {
   if (!ts) return '';
@@ -47,6 +35,381 @@ function relativeTime(ts) {
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
+
+function computeDte(legs) {
+  if (!Array.isArray(legs) || legs.length === 0) return null;
+  // Front expiration is the earliest leg expiration.
+  const exps = legs.map(l => l.expiration).filter(Boolean).sort();
+  if (exps.length === 0) return null;
+  try {
+    const exp = new Date(exps[0] + 'T00:00:00');
+    const today = new Date();
+    const ms = exp.setHours(0, 0, 0, 0) - today.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round(ms / 86400000));
+  } catch {
+    return null;
+  }
+}
+
+// Pluck the four canonical legs (longPut / shortPut / shortCall / longCall)
+// from a raw legs array. Some strategies (iron_butterfly) reuse the same
+// strike for shortPut + shortCall — that's preserved, just shown twice.
+function pluckLegs(legs) {
+  const out = { longPut: null, shortPut: null, shortCall: null, longCall: null };
+  for (const l of legs || []) {
+    if (l.side === 'long' && l.type === 'put')  out.longPut   = Number(l.strike);
+    if (l.side === 'short' && l.type === 'put') out.shortPut  = Number(l.strike);
+    if (l.side === 'short' && l.type === 'call') out.shortCall = Number(l.strike);
+    if (l.side === 'long' && l.type === 'call')  out.longCall  = Number(l.strike);
+  }
+  return out;
+}
+
+/* ─── PositionCard (per spec) ──────────────────────────────────── */
+
+function PositionCard({ p, bot, theme, isChartOpen, onToggleChart, onForceClose }) {
+  const legsRaw = typeof p.legs === 'string'
+    ? (() => { try { return JSON.parse(p.legs); } catch { return []; } })()
+    : (p.legs || []);
+  const legs = pluckLegs(legsRaw);
+  const symbol = p.ticker || 'SPY';
+  const strategy = STRATEGY_LABEL[p.strategy] || p.strategy;
+  const qty = Number(p.contracts) || 1;
+  const dte = computeDte(legsRaw);
+
+  const pnl = p.mtm_pnl != null ? Number(p.mtm_pnl) : 0;
+  const positive = pnl >= 0;
+  const pnlColor = positive ? '#34d399' : '#fb7185';
+  const entryCredit = Number(p.entry_price) || 0;
+  const current = p.mtm_value != null ? Number(p.mtm_value) : 0;
+  const pnlPct = entryCredit && qty
+    ? pnl / (Math.abs(entryCredit) * qty * 100)
+    : 0;
+
+  const pt = Math.abs(Number(p.pt_target_pnl) || 0);
+  const sl = Math.abs(Number(p.sl_target_pnl) || 0);
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        borderRadius: 12,
+        overflow: 'hidden',
+        background: 'rgba(13,28,46,0.55)',
+        backdropFilter: 'blur(12px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(12px) saturate(140%)',
+        boxShadow:
+          'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
+      }}
+    >
+      {/* ───────────── LEFT ACCENT STRIPE ───────────── */}
+      <div
+        style={{
+          width: 6,
+          flexShrink: 0,
+          background: `linear-gradient(180deg, ${theme.primary}, ${theme.primary}33)`,
+        }}
+      />
+
+      {/* ───────────── BODY ───────────── */}
+      <div style={{ flex: 1, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* HEADER ROW */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Bot glyph tile */}
+            <div
+              style={{
+                width: 44, height: 44, borderRadius: 8,
+                display: 'grid', placeItems: 'center',
+                background: theme.primarySoft,
+                boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+                color: theme.primary,
+              }}
+            >
+              <BotGlyph kind={theme.glyph} size={20} strokeWidth={1.6} />
+            </div>
+
+            {/* Identity */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: 'JetBrains Mono', fontSize: 15, fontWeight: 700, color: '#fff' }}>
+                  {symbol}
+                </span>
+                <span style={{ fontSize: 13, color: '#cbd5e1', fontWeight: 500 }}>
+                  {strategy}
+                </span>
+                <span
+                  style={{
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 10.5,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    color: '#67e8f9',
+                    background: 'rgba(34,211,238,0.10)',
+                    boxShadow: 'inset 0 0 0 1px rgba(34,211,238,0.30)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {qty}× · DTE {dte ?? '—'}
+                </span>
+              </div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10.5, color: '#64748b', marginTop: 4 }}>
+                Opened {formatOpened(p.entry_time)}
+              </div>
+            </div>
+          </div>
+
+          {/* HERO P&L */}
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <Label>Unrealized</Label>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono',
+                fontSize: 32,
+                fontWeight: 900,
+                lineHeight: 1,
+                marginTop: 6,
+                color: pnlColor,
+                textShadow: `0 0 18px ${pnlColor}55`,
+              }}
+            >
+              {positive ? '+' : '−'}${Math.abs(pnl).toFixed(2)}
+            </div>
+            <div
+              style={{
+                fontFamily: 'JetBrains Mono',
+                fontSize: 11,
+                fontWeight: 600,
+                marginTop: 6,
+                color: pnlColor,
+                opacity: 0.85,
+              }}
+            >
+              {positive ? '+' : '−'}{Math.abs(pnlPct * 100).toFixed(1)}% on credit
+            </div>
+          </div>
+        </div>
+
+        {/* LEG CHIPS */}
+        <LegChips legs={legs} />
+
+        {/* PT/SL PROGRESS BAR */}
+        <PtSlBar pnl={pnl} pt={pt} sl={sl} />
+
+        {/* STATS + ACTIONS ROW */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 20, fontFamily: 'JetBrains Mono', fontSize: 12 }}>
+            <InlineStat label="Entry"   value={`$${entryCredit.toFixed(2)}`} />
+            <InlineStat label="Current" value={`$${current.toFixed(2)}`} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <GhostBtn disabled title="Coming soon">Adjust</GhostBtn>
+            <GhostBtn disabled title="Coming soon">Roll</GhostBtn>
+            <ThemedBtn theme={theme} onClick={onToggleChart}>
+              {isChartOpen ? 'Hide Chart' : 'Chart'}
+            </ThemedBtn>
+            <DangerBtn onClick={onForceClose}>Close</DangerBtn>
+          </div>
+        </div>
+
+        {/* Optional payoff chart drawer */}
+        {isChartOpen && (
+          <div
+            style={{
+              marginTop: 4,
+              paddingTop: 12,
+              borderTop: '1px solid rgba(125,211,252,0.08)',
+            }}
+          >
+            <BotPayoffChart
+              bot={bot}
+              positionId={p.position_id}
+              contracts={qty}
+              height={210}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─── PT/SL Progress Bar ───────────────────────────────────────── */
+
+function PtSlBar({ pnl, pt, sl }) {
+  const range = pt + sl;
+  // Defend against zero/missing config so the bar still renders the markers
+  // (a degenerate range collapses to a centered $0 with no dot motion).
+  const safeRange = range > 0 ? range : 1;
+  const centerPct = (sl / safeRange) * 100;
+  const rawDotPct = ((sl + pnl) / safeRange) * 100;
+  const dotPct = Math.max(0, Math.min(100, rawDotPct));
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+          letterSpacing: '0.12em', marginBottom: 6,
+        }}
+      >
+        <span style={{ color: '#fb7185' }}>SL −${Math.round(sl)}</span>
+        <span style={{ color: '#64748b' }}>$0</span>
+        <span style={{ color: '#34d399' }}>PT +${Math.round(pt)}</span>
+      </div>
+      <div
+        style={{
+          position: 'relative',
+          height: 6,
+          borderRadius: 9999,
+          background: 'rgba(125,211,252,0.08)',
+        }}
+      >
+        {/* $0 tick */}
+        <div
+          style={{
+            position: 'absolute', top: 0, bottom: 0,
+            left: `${centerPct}%`, width: 1,
+            background: 'rgba(125,211,252,0.30)',
+          }}
+        />
+        {/* current-P&L dot — amber to match Now markers elsewhere */}
+        <div
+          style={{
+            position: 'absolute',
+            top: -4,
+            left: `calc(${dotPct}% - 7px)`,
+            width: 14, height: 14, borderRadius: 9999,
+            background: '#fcd34d',
+            boxShadow: '0 0 10px rgba(252,211,77,0.7), inset 0 0 0 2px #06121f',
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ─── Leg chips ─────────────────────────────────────────────────── */
+
+function LegChips({ legs }) {
+  const items = [
+    { side: 'long',  type: 'P', strike: legs.longPut },
+    { side: 'short', type: 'P', strike: legs.shortPut },
+    { side: 'short', type: 'C', strike: legs.shortCall },
+    { side: 'long',  type: 'C', strike: legs.longCall },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {items.map((l, i) => {
+        if (l.strike == null) return null;
+        const isLong = l.side === 'long';
+        const color = isLong ? '#34d399' : '#fb7185';
+        const bg    = isLong ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)';
+        const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
+        return (
+          <span
+            key={i}
+            style={{
+              fontFamily: 'JetBrains Mono',
+              fontSize: 11.5,
+              fontWeight: 600,
+              padding: '4px 10px',
+              borderRadius: 6,
+              background: bg,
+              color: color,
+              boxShadow: `inset 0 0 0 1px ${ring}`,
+            }}
+          >
+            {isLong ? '+' : '−'}${l.strike}{l.type}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Inline helpers ───────────────────────────────────────────── */
+
+function Label({ children }) {
+  return (
+    <span style={{
+      fontSize: 9.5,
+      fontWeight: 700,
+      textTransform: 'uppercase',
+      letterSpacing: '0.14em',
+      color: '#64748b',
+    }}>
+      {children}
+    </span>
+  );
+}
+
+function InlineStat({ label, value }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+      <Label>{label}</Label>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: '#fff' }}>{value}</span>
+    </span>
+  );
+}
+
+function GhostBtn({ children, onClick, disabled, title }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+        color: '#cbd5e1', background: 'rgba(7,16,28,0.55)',
+        boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10)',
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ThemedBtn({ theme, children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+        color: theme.primary, background: theme.primarySoft,
+        boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+        border: 'none', cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function DangerBtn({ children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '6px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+        color: '#fb7185', background: 'rgba(251,113,133,0.10)',
+        boxShadow: 'inset 0 0 0 1px rgba(251,113,133,0.30)',
+        border: 'none', cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ─── Tab container ────────────────────────────────────────────── */
 
 export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
   const { positions } = useBotPositions(bot, 5000);
@@ -100,125 +463,17 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
 
   return (
     <div className="px-5 py-5 space-y-3">
-      {positions.map(p => {
-        const pnl = p.mtm_pnl != null ? Number(p.mtm_pnl) : null;
-        const pos = pnl != null && pnl >= 0;
-        const entry = Number(p.entry_price) || 0;
-        const current = p.mtm_value != null ? Number(p.mtm_value) : null;
-        const contracts = Number(p.contracts) || 1;
-        const pnlPct = pnl != null && entry && contracts
-          ? pnl / (Math.abs(entry) * contracts * 100)
-          : null;
-        const legs = typeof p.legs === 'string'
-          ? (() => { try { return JSON.parse(p.legs); } catch { return []; } })()
-          : (p.legs || []);
-
-        return (
-          <div
-            key={p.position_id}
-            className="rounded-md sw-glass-deep px-5 py-4"
-            style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                  <span className="sw-mono text-[12px] font-bold text-white">{p.ticker}</span>
-                  <span className="w-1 h-1 rounded-full bg-text-muted" />
-                  <span className="text-[12px] text-text-secondary font-medium">
-                    {STRATEGY_LABEL[p.strategy] || p.strategy}
-                  </span>
-                  <span
-                    className="sw-mono text-[10.5px] uppercase tracking-wider font-bold px-2 py-0.5 rounded whitespace-nowrap"
-                    style={{
-                      color: '#7dd3fc',
-                      background: 'rgba(125,211,252,0.10)',
-                      boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.30)',
-                    }}
-                  >
-                    {contracts}×
-                  </span>
-                </div>
-                <div className="sw-mono text-[12.5px] text-text-secondary">
-                  {formatLegs(legs)}
-                </div>
-                <div className="sw-mono text-[10.5px] text-text-muted mt-1">
-                  Opened {formatOpened(p.entry_time)}
-                </div>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <div
-                  className="sw-mono text-[18px] font-bold"
-                  style={{ color: pos ? '#34d399' : '#fb7185' }}
-                >
-                  {pnl != null
-                    ? `${pos ? '+' : '−'}$${Math.abs(pnl).toFixed(2)}`
-                    : '—'}
-                </div>
-                <div className="sw-mono text-[11px] text-text-tertiary mt-0.5">
-                  {pnlPct != null
-                    ? `${pnlPct >= 0 ? '+' : ''}${(pnlPct * 100).toFixed(1)}% on credit`
-                    : ''}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-[1fr_1fr_1fr_auto] gap-4 text-[11px] items-end">
-              <div>
-                <div className="text-text-tertiary uppercase tracking-wider font-semibold text-[10px] mb-1">
-                  Entry credit
-                </div>
-                <div className="sw-mono text-text-secondary font-semibold">${entry.toFixed(2)}</div>
-              </div>
-              <div>
-                <div className="text-text-tertiary uppercase tracking-wider font-semibold text-[10px] mb-1">
-                  Current
-                </div>
-                <div className="sw-mono text-white font-semibold">
-                  {current != null ? `$${current.toFixed(2)}` : '—'}
-                </div>
-              </div>
-              <div>
-                <div className="text-text-tertiary uppercase tracking-wider font-semibold text-[10px] mb-1">
-                  PT / SL
-                </div>
-                <div className="sw-mono text-text-secondary font-semibold">
-                  ${Number(p.pt_target_pnl).toFixed(0)} / ${Number(p.sl_target_pnl).toFixed(0)}
-                </div>
-              </div>
-              <div className="text-right flex gap-1.5 justify-end">
-                <button
-                  onClick={() => toggleChart(p.position_id)}
-                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors inline-flex items-center gap-1"
-                  style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
-                  title="Toggle payoff chart"
-                >
-                  {openCharts.has(p.position_id)
-                    ? <><X size={10} /> Chart</>
-                    : <><BarChart3 size={10} /> Chart</>}
-                </button>
-                <button
-                  onClick={() => onClose(p.position_id)}
-                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors"
-                  style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            {openCharts.has(p.position_id) && (
-              <div className="mt-3 pt-3 border-t border-border-subtle">
-                <BotPayoffChart
-                  bot={bot}
-                  positionId={p.position_id}
-                  contracts={contracts}
-                  height={190}
-                />
-              </div>
-            )}
-          </div>
-        );
-      })}
+      {positions.map(p => (
+        <PositionCard
+          key={p.position_id}
+          p={p}
+          bot={bot}
+          theme={theme}
+          isChartOpen={openCharts.has(p.position_id)}
+          onToggleChart={() => toggleChart(p.position_id)}
+          onForceClose={() => onClose(p.position_id)}
+        />
+      ))}
     </div>
   );
 }
