@@ -15,6 +15,16 @@ export default function PositionsPage() {
     postDiscordOpen, postDiscordEod,
   } = usePositions(filter);
 
+  // Hide expired positions from the OPEN view — they should auto-roll into
+  // the Closed/All views once the user finalizes them with Expire Worthless.
+  // Other views keep showing everything.
+  const visiblePositions = filter === 'open'
+    ? positions.filter(p => !(p.dte != null && p.dte <= 0))
+    : positions;
+  const hiddenExpiredCount = filter === 'open'
+    ? positions.length - visiblePositions.length
+    : 0;
+
   const emptySlots = filter === 'open' && summary
     ? Math.max(0, summary.slots_total - (summary.slots_used || 0))
     : 0;
@@ -73,9 +83,32 @@ export default function PositionsPage() {
       )}
       <PortfolioSummary summary={summary} />
 
+      {hiddenExpiredCount > 0 && (
+        <div
+          className="rounded-md px-3 py-2 mb-3 text-[12px] flex items-center justify-between"
+          style={{
+            background: 'rgba(252,211,77,0.08)',
+            boxShadow: 'inset 0 0 0 1px rgba(252,211,77,0.25)',
+            color: '#fcd34d',
+          }}
+        >
+          <span>
+            {hiddenExpiredCount} expired {hiddenExpiredCount === 1 ? 'position' : 'positions'} hidden.
+            Use the <span className="font-semibold">All</span> tab to finalize them.
+          </span>
+          <button
+            type="button"
+            onClick={() => setFilter('all')}
+            className="sw-btn-ghost !text-[11px] !text-sw-yellow"
+          >
+            View
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="text-center py-12 text-text-tertiary text-[15px] font-medium">Loading positions...</div>
-      ) : positions.length === 0 && emptySlots === 0 ? (
+      ) : visiblePositions.length === 0 && emptySlots === 0 ? (
         <div className="text-center py-12 text-text-tertiary text-[15px] font-medium">
           No open positions yet.
           <br />
@@ -85,7 +118,7 @@ export default function PositionsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-4">
-          {positions.map((pos) => (
+          {visiblePositions.map((pos) => (
             <PositionCard
               key={pos.id}
               position={pos}
