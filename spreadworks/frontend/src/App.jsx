@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -14,12 +14,16 @@ import PositionsPage from './pages/PositionsPage';
 // Lazy-load heavy chart pages so Plotly + Recharts don't drag the main bundle.
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
+
+const CARD_CHROME = {
+  background: 'rgba(7,16,28,0.55)',
+  boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
+};
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
 import useMarketHours from './hooks/useMarketHours';
 import SymbolSelector from './components/SymbolSelector';
-import LivePnlTape from './components/LivePnlTape';
 import { MetricsBarSkeleton, CalcOverlay } from './components/Skeleton';
 import { API_URL } from './lib/api';
 
@@ -27,9 +31,11 @@ const CHART_HEIGHT = 500;
 
 // ── Market chip ─────────────────────────────────────────────────────
 // Single glass capsule: "HH:MM ET | • Market open / After hours".
-// Replaces the red MarketStatusBadge + red DatePill + red NextPostCountdown
-// trio. Amber dot when closed (atmospheric, not alarmed); emerald when open.
-function MarketChip() {
+// ── Center clock — lives in an absolutely-centered pill inside the header.
+// Matches the side cards' chrome (translucent + inset ring) so it reads as
+// the third card in the row. NEVER uses red — emerald when market is open,
+// amber when after-hours.
+function CenterClock() {
   const { isOpen, statusText } = useMarketHours();
   const [time, setTime] = useState(() => formatEt());
   useEffect(() => {
@@ -37,27 +43,27 @@ function MarketChip() {
     return () => clearInterval(iv);
   }, []);
 
-  const dot = isOpen ? '#34d399' : '#fcd34d';
+  const dotColor = isOpen ? '#34d399' : '#fcd34d';
   const label = isOpen ? 'Market open' : (statusText || 'After hours');
+  const labelColor = isOpen ? '#34d399' : '#fcd34d';
 
   return (
-    <div
-      className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full sw-glass"
-      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
-    >
-      <span className="sw-mono text-[12px] font-semibold text-[#e2e8f0]">{time.hhmm}</span>
-      <span className="text-[10px] uppercase tracking-wider text-text-secondary">ET</span>
-      <span className="h-3.5 w-px" style={{ background: 'rgba(255,255,255,0.08)' }} />
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${isOpen ? 'animate-pulse-dot' : ''}`}
-          style={{ background: dot }}
-        />
-        <span className="text-[10.5px] uppercase tracking-[0.12em] font-semibold text-text-secondary">
-          {label}
-        </span>
+    <>
+      <span className="font-mono font-semibold text-[12.5px]" style={{ color: '#e2e8f0' }}>
+        {time.hhmm}
       </span>
-    </div>
+      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: '#64748b' }}>
+        ET
+      </span>
+      <span className="w-px h-3.5" style={{ background: 'rgba(255,255,255,0.10)' }} />
+      <span className="inline-flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.12em] font-semibold" style={{ color: labelColor }}>
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${isOpen ? 'animate-pulse-dot' : ''}`}
+          style={{ background: dotColor }}
+        />
+        {label}
+      </span>
+    </>
   );
 }
 
@@ -72,66 +78,11 @@ function formatEt() {
   return { hhmm };
 }
 
-// Bot-cycle countdown ("Open Post in 1h 5m") — kept but restyled to slate +
-// amber, no longer red.
-function NextPostCountdown() {
-  const [text, setText] = useState('');
-
-  useEffect(() => {
-    const update = () => {
-      const now = new Date();
-      const targets = [
-        { h: 8, m: 25, label: 'Open Post' },
-        { h: 15, m: 0, label: 'EOD Mark' },
-        { h: 15, m: 5, label: 'EOD Post' },
-      ];
-      const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }));
-      const ctMins = ct.getHours() * 60 + ct.getMinutes();
-      let next = null;
-      for (const t of targets) {
-        const tMins = t.h * 60 + t.m;
-        if (tMins > ctMins) {
-          const diff = tMins - ctMins;
-          const hrs = Math.floor(diff / 60);
-          const mins = diff % 60;
-          next = `${t.label} in ${hrs > 0 ? hrs + 'h ' : ''}${mins}m`;
-          break;
-        }
-      }
-      setText(next || '');
-    };
-    update();
-    const iv = setInterval(update, 30_000);
-    return () => clearInterval(iv);
-  }, []);
-
-  if (!text) return null;
-  return (
-    <div
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full sw-glass text-[10.5px] font-semibold uppercase tracking-[0.12em]"
-      style={{
-        color: '#cbd5e1',
-        boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
-      }}
-    >
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#fcd34d] animate-pulse-dot" />
-      {text}
-    </div>
-  );
-}
-
-// ── Bot cards row (second nav row, only on /bots/* routes) ─────────
-// Replaces the previous centered pillbox. Each card = glass surface with
-// glyph + name + strategy + status dot + today P&L. Active card is themed
-// with primarySoft gradient + glow.
-function BotCardsRow() {
-  const navigate = useNavigate();
-  const location = useLocation();
+// ── useBotStatusMap — polls /api/spreadworks/bots every 15s and returns a
+// keyed map { breeze: {enabled, today_pnl, ...}, tide: {...} } used by the
+// dropdown's per-bot status dots and today-P&L numbers.
+function useBotStatusMap() {
   const [statusMap, setStatusMap] = useState({});
-
-  const match = location.pathname.match(/^\/bots\/([^/]+)/);
-  const activeBotId = match ? match[1] : null;
-
   useEffect(() => {
     let cancelled = false;
     async function poll() {
@@ -151,93 +102,161 @@ function BotCardsRow() {
     const iv = setInterval(poll, 15_000);
     return () => { cancelled = true; clearInterval(iv); };
   }, []);
+  return statusMap;
+}
+
+// ── Bot dropdown — the RIGHT card. Chip shows the active bot tinted to its
+// theme. Clicking opens a 260px menu below with all bots, their status dot,
+// and today's P&L. Navigates via react-router (the existing route pattern);
+// no URL-hash routing — the page tree is already wired to /bots/:bot.
+function BotDropdown() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const statusMap = useBotStatusMap();
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  const match = location.pathname.match(/^\/bots\/([^/]+)/);
+  const activeBotId = match ? match[1] : null;
+
+  // If not on a /bots/* route, fall back to the first bot in the registry so
+  // the chip still shows something meaningful.
+  const firstBotId = Object.keys(BOT_REGISTRY)[0];
+  const chipBotId = activeBotId || firstBotId;
+  const chipBot = BOT_REGISTRY[chipBotId];
+  const chipTheme = BOT_THEME[chipBotId];
+
+  // Close menu on outside click or Esc.
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const onPick = (id) => {
+    navigate(`/bots/${id}`);
+    setOpen(false);
+  };
 
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
 
   return (
-    <div className="px-7 pt-4 pb-5 flex items-center gap-3">
-      {bots.map(b => {
-        const theme = BOT_THEME[b.id];
-        const active = activeBotId === b.id;
-        const status = statusMap[b.id] || {};
-        const enabled = !!status.enabled;
-        const todayPnl = typeof status.today_pnl === 'number' ? status.today_pnl : null;
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
+        style={{
+          background: chipTheme.primarySoft,
+          boxShadow: `inset 0 0 0 1px ${chipTheme.primaryRing}`,
+        }}
+      >
+        <div
+          className="w-6 h-6 rounded-md grid place-items-center flex-shrink-0"
+          style={{ background: `${chipTheme.primary}1f`, color: chipTheme.primary }}
+        >
+          <BotGlyph kind={chipTheme.glyph} size={13} />
+        </div>
+        <span className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#64748b' }}>
+          Bot
+        </span>
+        <span className="text-[13px] font-bold" style={{ color: chipTheme.primary }}>
+          {chipBot.display}
+        </span>
+        <ChevronDown size={12} style={{ color: chipTheme.primary, opacity: 0.6 }} />
+      </button>
 
-        const cardStyle = active
-          ? {
-              background: `linear-gradient(135deg, ${theme.primarySoft}, rgba(255,255,255,0.02))`,
-              boxShadow: `inset 0 0 0 1px ${theme.primaryRing}, inset 0 1px 0 rgba(255,255,255,0.06), 0 8px 32px -16px ${theme.glow}`,
-            }
-          : {
-              background: 'rgba(255,255,255,0.025)',
-              boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05), inset 0 1px 0 rgba(255,255,255,0.04)',
-            };
+      {open && (
+        <div
+          className="absolute right-0 mt-2 p-1.5 z-50"
+          style={{
+            width: 260,
+            background: 'rgba(13,28,46,0.92)',
+            backdropFilter: 'blur(16px) saturate(140%)',
+            WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+            borderRadius: 12,
+            boxShadow:
+              'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
+          }}
+        >
+          {bots.map(b => {
+            const theme = BOT_THEME[b.id];
+            const active = activeBotId === b.id;
+            const status = statusMap[b.id] || {};
+            const enabled = !!status.enabled;
+            const todayPnl = typeof status.today_pnl === 'number' ? status.today_pnl : null;
 
-        return (
-          <button
-            key={b.id}
-            onClick={() => navigate(`/bots/${b.id}`)}
-            className="flex-1 flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-left"
-            style={{
-              ...cardStyle,
-              backdropFilter: 'blur(8px) saturate(140%)',
-              WebkitBackdropFilter: 'blur(8px) saturate(140%)',
-            }}
-          >
-            {/* Glyph tile */}
-            <div
-              className="w-9 h-9 rounded-lg grid place-items-center flex-shrink-0"
-              style={
-                active
-                  ? { background: theme.primarySoft, color: theme.primary }
-                  : { background: 'rgba(255,255,255,0.03)', color: '#94a3b8' }
-              }
-            >
-              <BotGlyph kind={theme.glyph} size={17} />
-            </div>
-
-            {/* Name + strategy */}
-            <div className="min-w-0 flex-1">
-              <div
-                className="text-[14px] font-bold tracking-wide"
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => onPick(b.id)}
+                className="flex items-center gap-3 w-full px-2.5 py-2 rounded-lg transition-colors text-left"
                 style={
                   active
-                    ? { color: theme.primary, textShadow: `0 0 12px ${theme.glow}` }
-                    : { color: '#e2e8f0' }
+                    ? {
+                        background: theme.primarySoft,
+                        boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+                      }
+                    : undefined
                 }
+                onMouseEnter={(e) => {
+                  if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+                }}
+                onMouseLeave={(e) => {
+                  if (!active) e.currentTarget.style.background = '';
+                }}
               >
-                {b.display}
-              </div>
-              <div className="sw-mono text-[10px] text-text-tertiary mt-0.5">
-                {STRATEGY_LABEL[b.strategy] || b.strategy}
-              </div>
-            </div>
-
-            {/* Status + today P&L */}
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ background: enabled ? '#34d399' : '#475569' }}
-              />
-              {todayPnl != null && (
-                <span
-                  className="sw-mono text-[11.5px] font-semibold"
-                  style={{
-                    color:
-                      todayPnl > 0 ? '#34d399' :
-                      todayPnl < 0 ? '#fb7185' :
-                      '#64748b',
-                  }}
+                <div
+                  className="w-7 h-7 rounded-md grid place-items-center flex-shrink-0"
+                  style={{ background: `${theme.primary}1f`, color: theme.primary }}
                 >
-                  {todayPnl === 0
-                    ? '—'
-                    : `${todayPnl > 0 ? '+' : '−'}$${Math.abs(todayPnl).toFixed(2)}`}
-                </span>
-              )}
-            </div>
-          </button>
-        );
-      })}
+                  <BotGlyph kind={theme.glyph} size={14} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="text-[13px] font-bold"
+                    style={{ color: active ? theme.primary : '#e2e8f0' }}
+                  >
+                    {b.display}
+                  </div>
+                  <div className="sw-mono text-[10px]" style={{ color: '#64748b' }}>
+                    {STRATEGY_LABEL[b.strategy] || b.strategy}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ background: enabled ? '#34d399' : '#475569' }}
+                  />
+                  <span
+                    className="sw-mono text-[11px] font-semibold"
+                    style={{
+                      color:
+                        todayPnl == null || todayPnl === 0 ? '#64748b' :
+                        todayPnl > 0 ? '#34d399' : '#fb7185',
+                    }}
+                  >
+                    {todayPnl == null || todayPnl === 0
+                      ? '—'
+                      : `${todayPnl > 0 ? '+' : '−'}$${Math.abs(todayPnl).toFixed(2)}`}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -264,57 +283,76 @@ function NavTabLink({ to, end, Icon, label }) {
   );
 }
 
-function NavBar() {
+// ── Brand block (left card head). Tile + wordmark, untouched palette.
+function Brand() {
   return (
-    <nav
-      className="relative flex items-center h-16 px-7 font-[var(--font-ui)] text-[13px]"
-      style={{
-        background: 'linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0))',
-        backdropFilter: 'blur(20px) saturate(140%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(140%)',
-        borderBottom: '1px solid rgba(125,211,252,0.08)',
-      }}
-    >
-      {/* LEFT: brand + primary routes */}
-      <div className="flex items-center gap-8 h-full">
-        <div className="flex items-center gap-2.5">
-          <div
-            className="inline-flex items-center justify-center w-9 h-9 rounded-xl text-base text-white font-black"
-            style={{
-              background: 'linear-gradient(135deg, rgba(125,211,252,0.4), rgba(45,212,191,0.2))',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 0 0 1px rgba(255,255,255,0.10)',
-            }}
-          >
-            S
-          </div>
-          <span className="font-extrabold text-[19px] text-text-primary tracking-tight">
-            Spread<span style={{ color: '#22d3ee' }}>Works</span>
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1">
-          <NavTabLink to="/"            end Icon={Layers}    label="Builder" />
-          <NavTabLink to="/positions"       Icon={BarChart3} label="Positions" />
-          <NavTabLink to="/gex-profile"     Icon={Activity}  label="GEX Profile" />
-          <NavTabLink to="/bots/breeze"     Icon={Layers}    label="Bots" />
-        </div>
+    <div className="flex items-center gap-2.5">
+      <div
+        className="inline-flex items-center justify-center w-9 h-9 rounded-xl text-base text-white font-black"
+        style={{
+          background: 'linear-gradient(135deg, rgba(125,211,252,0.4), rgba(45,212,191,0.2))',
+          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 0 0 1px rgba(255,255,255,0.10)',
+        }}
+      >
+        S
       </div>
-
-      {/* RIGHT: live tape + countdown + market chip */}
-      <div className="ml-auto flex items-center gap-3">
-        <LivePnlTape />
-        <NextPostCountdown />
-        <MarketChip />
-      </div>
-    </nav>
+      <span className="font-extrabold text-[19px] text-text-primary tracking-tight">
+        Spread<span style={{ color: '#22d3ee' }}>Works</span>
+      </span>
+    </div>
   );
 }
 
-// Renders BotCardsRow only when the URL is on a bot page.
-function BotCardsRowGate() {
-  const location = useLocation();
-  if (!location.pathname.startsWith('/bots')) return null;
-  return <BotCardsRow />;
+// ── NavBar — 3-card layout: LEFT card (brand + nav), CENTER pill (market
+// clock, absolute positioned so it stays mathematically centered), RIGHT
+// card (bot dropdown). All three share the same chrome: rgba(7,16,28,0.55)
+// background with an inset cyan ring + subtle top highlight.
+function NavBar() {
+  return (
+    <header
+      className="relative px-7 py-3 flex items-center justify-between gap-4 font-[var(--font-ui)] text-[13px]"
+      style={{
+        backdropFilter: 'blur(20px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(140%)',
+        borderBottom: '1px solid rgba(125,211,252,0.10)',
+      }}
+    >
+      {/* LEFT CARD — brand + primary routes */}
+      <div
+        className="flex items-center gap-1 px-2 py-1.5 rounded-xl"
+        style={CARD_CHROME}
+      >
+        <div className="px-3"><Brand /></div>
+        <span className="w-px h-7 mx-2" style={{ background: 'rgba(125,211,252,0.10)' }} />
+        <nav className="flex items-center gap-0.5">
+          <NavTabLink to="/"            end Icon={Layers}    label="Builder" />
+          <NavTabLink to="/positions"       Icon={BarChart3} label="Positions" />
+          <NavTabLink to="/gex-profile"     Icon={Activity}  label="GEX" />
+          <NavTabLink to="/bots/breeze"     Icon={Cpu}       label="Bots" />
+        </nav>
+      </div>
+
+      {/* CENTER — market clock, absolute-positioned dead-center */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-full"
+        style={{
+          ...CARD_CHROME,
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        }}
+      >
+        <CenterClock />
+      </div>
+
+      {/* RIGHT CARD — bot dropdown */}
+      <div
+        className="flex items-center px-3 py-2 rounded-xl"
+        style={CARD_CHROME}
+      >
+        <BotDropdown />
+      </div>
+    </header>
+  );
 }
 
 function BuilderPage() {
@@ -474,7 +512,6 @@ export default function App() {
     <BrowserRouter>
       <div className="flex flex-col h-screen w-full overflow-hidden">
         <NavBar />
-        <BotCardsRowGate />
         <Suspense fallback={
           <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
             Loading…
