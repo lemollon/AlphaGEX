@@ -126,12 +126,12 @@ export default function CandleChart({
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
     longPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        strikeLines.push({ price: p, y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
+        strikeLines.push({ price: p, y: pToY(p), color: '#34d399', dash: '5,4', label: `$${p}` });
       }
     });
     shortPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        strikeLines.push({ price: p, y: pToY(p), color: '#ef4444', dash: '5,4', label: `$${p}` });
+        strikeLines.push({ price: p, y: pToY(p), color: '#fb7185', dash: '5,4', label: `$${p}` });
       }
     });
   }
@@ -140,7 +140,7 @@ export default function CandleChart({
   const gexLines = [];
   if (gexData) {
     if (gexData.flip_point && gexData.flip_point >= minPrice && gexData.flip_point <= maxPrice) {
-      gexLines.push({ y: pToY(gexData.flip_point), color: '#ffd600', dash: '7,5', label: `$${gexData.flip_point.toFixed(0)}` });
+      gexLines.push({ y: pToY(gexData.flip_point), color: '#fcd34d', dash: '7,5', label: `$${gexData.flip_point.toFixed(0)}` });
     }
     if (gexData.call_wall && gexData.call_wall >= minPrice && gexData.call_wall <= maxPrice) {
       gexLines.push({ y: pToY(gexData.call_wall), color: '#00bcd4', dash: '7,5', label: `$${gexData.call_wall.toFixed(0)}` });

@@ -327,7 +327,7 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
       {lossFill && <path d={lossFill} fill="rgba(239, 68, 68, 0.10)" />}
 
       {/* P&L line */}
-      <path d={svg.linePath} fill="none" stroke="#3b82f6" strokeWidth="1.5" />
+      <path d={svg.linePath} fill="none" stroke="#7dd3fc" strokeWidth="1.5" />
 
       {/* Spot price */}
       {spotPrice && spotPrice >= svg.minP && spotPrice <= svg.maxP && (
@@ -369,11 +369,11 @@ function MiniPayoff({ curve, spotPrice, breakevens, maxProfit, maxLoss }) {
 
       {/* Max profit / loss labels */}
       {maxProfit != null && (
-        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#22c55e" fontSize="8"
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + 10} textAnchor="end" fill="#34d399" fontSize="8"
           fontFamily="'JetBrains Mono', monospace">Max +${maxProfit.toFixed(0)}</text>
       )}
       {maxLoss != null && (
-        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#ef4444" fontSize="8"
+        <text x={svg.pad.left + svg.plotW - 2} y={svg.pad.top + svg.plotH - 3} textAnchor="end" fill="#fb7185" fontSize="8"
           fontFamily="'JetBrains Mono', monospace">Max ${maxLoss.toFixed(0)}</text>
       )}
 

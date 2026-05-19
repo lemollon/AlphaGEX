@@ -367,7 +367,7 @@ export default function GexProfilePage() {
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`text-[11px] px-2.5 py-1 rounded-[var(--radius-sm)] font-semibold cursor-pointer transition-all duration-150 ${
                 autoRefresh
-                  ? 'border border-[rgba(34,197,94,0.3)] bg-sw-green-dim text-sw-green'
+                  ? 'border border-[rgba(52,211,153,0.3)] bg-sw-green-dim text-sw-green'
                   : 'border border-border-default bg-bg-elevated text-text-muted'
               }`}
             >
@@ -394,7 +394,7 @@ export default function GexProfilePage() {
 
       {/* Error */}
       {error && (
-        <div className="bg-sw-red-dim border border-[rgba(239,68,68,0.3)] rounded-[var(--radius-lg)] px-4 py-3 flex items-center gap-2.5 mb-4 text-sw-red text-[13px]">
+        <div className="bg-sw-red-dim border border-[rgba(251,113,133,0.3)] rounded-[var(--radius-lg)] px-4 py-3 flex items-center gap-2.5 mb-4 text-sw-red text-[13px]">
           <AlertTriangle size={16} />
           <span>{error}</span>
         </div>
@@ -669,8 +669,8 @@ function PriceGauge({ price, flipPoint, callWall, putWall }) {
         </span>
       </div>
       <div className="relative h-7 rounded-[20px] overflow-hidden bg-bg-elevated border border-border-default">
-        <div className="absolute top-0 h-full" style={{ background: 'rgba(239,68,68,0.1)', left: '0%', width: `${flipPos}%` }} />
-        <div className="absolute top-0 h-full" style={{ background: 'rgba(34,197,94,0.1)', left: `${flipPos}%`, width: `${100 - flipPos}%` }} />
+        <div className="absolute top-0 h-full" style={{ background: 'rgba(251,113,133,0.1)', left: '0%', width: `${flipPos}%` }} />
+        <div className="absolute top-0 h-full" style={{ background: 'rgba(52,211,153,0.1)', left: `${flipPos}%`, width: `${100 - flipPos}%` }} />
         <div className="absolute top-0 h-full w-0.5" style={{ background: 'rgba(255,214,0,0.7)', left: `${flipPos}%` }} />
         <div
           className="absolute top-0.5 w-3.5 h-6 rounded-[3px] bg-accent border border-accent-bright"
@@ -718,8 +718,8 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
     const gexShapes = visibleStrikes.map(ss => {
       const pct = (ss.abs_net_gamma / maxGamma) * barMaxWidth;
-      const color = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)';
-      const borderColor = ss.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)';
+      const color = ss.net_gamma >= 0 ? 'rgba(52,211,153,0.6)' : 'rgba(251,113,133,0.6)';
+      const borderColor = ss.net_gamma >= 0 ? 'rgba(52,211,153,0.9)' : 'rgba(251,113,133,0.9)';
       return {
         type: 'rect', xref: 'paper', yref: 'y',
         x0: barRight, x1: barRight - pct,
@@ -736,13 +736,13 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
         y: ss.strike,
         text: `${formatGex(ss.net_gamma, 1)} [$${ss.strike}]`,
         showarrow: false,
-        font: { color: ss.net_gamma >= 0 ? '#22c55e' : '#ef4444', size: 9, family: 'monospace' },
+        font: { color: ss.net_gamma >= 0 ? '#34d399' : '#fb7185', size: 9, family: 'monospace' },
         xanchor: 'right', yanchor: 'middle',
       }));
 
     const refLines = [];
     const { gex_flip: flip, call_wall: cw, put_wall: pw, upper_1sd, lower_1sd, expected_move } = data.levels;
-    if (flip) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: flip, y1: flip, line: { color: '#eab308', width: 2.5, dash: 'dash' } });
+    if (flip) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: flip, y1: flip, line: { color: '#fcd34d', width: 2.5, dash: 'dash' } });
     if (cw) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: cw, y1: cw, line: { color: '#06b6d4', width: 2.5, dash: 'dot' } });
     if (pw) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: pw, y1: pw, line: { color: '#a855f7', width: 2.5, dash: 'dot' } });
     if (upper_1sd) refLines.push({ type: 'line', xref: 'paper', yref: 'y', x0: 0, x1: 1, y0: upper_1sd, y1: upper_1sd, line: { color: '#f97316', width: 1.5, dash: 'dashdot' } });
@@ -765,7 +765,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
     const yRange = [yMin - yPad, yMax + yPad];
 
     const refAnnotations = [];
-    if (flip) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: flip, text: `FLIP $${flip.toFixed(0)}`, showarrow: false, font: { color: '#eab308', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
+    if (flip) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: flip, text: `FLIP $${flip.toFixed(0)}`, showarrow: false, font: { color: '#fcd34d', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
     if (cw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: cw, text: `CALL WALL $${cw.toFixed(0)}`, showarrow: false, font: { color: '#06b6d4', size: 10 }, xanchor: 'left', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
     if (pw) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.01, y: pw, text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false, font: { color: '#a855f7', size: 10 }, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
     if (upper_1sd) refAnnotations.push({ xref: 'paper', yref: 'y', x: 0.77, y: upper_1sd, text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`, showarrow: false, font: { color: '#f97316', size: 9 }, xanchor: 'right', yanchor: 'bottom', bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2 });
@@ -778,8 +778,8 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
         open: intradayBars.map(b => b.open), high: intradayBars.map(b => b.high),
         low: intradayBars.map(b => b.low), close: intradayBars.map(b => b.close),
         type: 'candlestick',
-        increasing: { line: { color: '#22c55e' }, fillcolor: 'rgba(34,197,94,0.3)' },
-        decreasing: { line: { color: '#ef4444' }, fillcolor: 'rgba(239,68,68,0.8)' },
+        increasing: { line: { color: '#34d399' }, fillcolor: 'rgba(52,211,153,0.3)' },
+        decreasing: { line: { color: '#fb7185' }, fillcolor: 'rgba(251,113,133,0.8)' },
         name: 'Price', hoverinfo: 'x+text',
         text: intradayBars.map(b =>
           `O:${b.open.toFixed(2)} H:${b.high.toFixed(2)} L:${b.low.toFixed(2)} C:${b.close.toFixed(2)}<br>Vol:${b.volume.toLocaleString()}`
@@ -789,7 +789,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
       traces.push({
         x: spotTimes, y: spotPrices,
         type: 'scatter', mode: 'lines',
-        line: { color: '#3b82f6', width: 2.5 }, name: 'Price',
+        line: { color: '#7dd3fc', width: 2.5 }, name: 'Price',
       });
     }
 
@@ -830,17 +830,17 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
       <div className="flex flex-wrap gap-3.5 mt-2.5 text-[11px] items-center">
         {plotData.hasCandleData ? (
           <>
-            <LegendItem color="#22c55e" label="Bullish" />
-            <LegendItem color="#ef4444" label="Bearish" />
+            <LegendItem color="#34d399" label="Bullish" />
+            <LegendItem color="#fb7185" label="Bearish" />
           </>
         ) : (
-          <LegendItem color="#3b82f6" label="Price" line />
+          <LegendItem color="#7dd3fc" label="Price" line />
         )}
         <span className="text-border-subtle">|</span>
-        <span className="text-[#22c55e] font-semibold">&#9632; +GEX Bar</span>
-        <span className="text-[#ef4444] font-semibold">&#9632; -GEX Bar</span>
+        <span className="text-[#34d399] font-semibold">&#9632; +GEX Bar</span>
+        <span className="text-[#fb7185] font-semibold">&#9632; -GEX Bar</span>
         <span className="text-border-subtle">|</span>
-        <span className="text-[#eab308]">--- Flip</span>
+        <span className="text-[#fcd34d]">--- Flip</span>
         <span className="text-[#06b6d4]">... Call Wall</span>
         <span className="text-[#a855f7]">... Put Wall</span>
         <span className="text-[#f97316]">-.- ±1σ</span>
@@ -885,17 +885,17 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
           const atPW = i === pwIdx && pwIdx !== priceIdx;
 
           const refBg = atPrice ? 'rgba(245,158,11,0.08)'
-            : atFlip ? 'rgba(234,179,8,0.06)'
+            : atFlip ? 'rgba(252,211,77,0.06)'
             : atCW ? 'rgba(6,182,212,0.06)'
             : atPW ? 'rgba(168,85,247,0.06)' : undefined;
 
           const borderTop = atPrice ? '2px solid rgba(245,158,11,0.5)'
-            : atFlip ? '2px solid rgba(234,179,8,0.4)'
+            : atFlip ? '2px solid rgba(252,211,77,0.4)'
             : atCW ? '2px solid rgba(6,182,212,0.4)'
             : atPW ? '2px solid rgba(168,85,247,0.4)' : undefined;
 
           const strikeColor = atPrice ? 'var(--color-accent)'
-            : atFlip ? '#eab308'
+            : atFlip ? '#fcd34d'
             : atCW ? '#06b6d4'
             : atPW ? '#a855f7' : undefined;
 
@@ -911,7 +911,7 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
             >
               <div className="w-24 shrink-0 text-right pr-2 text-[9px] font-semibold">
                 {atPrice && <span className="text-accent">PRICE ${price?.toFixed(0)}</span>}
-                {atFlip && <span className="text-[#eab308]">FLIP ${flip?.toFixed(0)}</span>}
+                {atFlip && <span className="text-[#fcd34d]">FLIP ${flip?.toFixed(0)}</span>}
                 {atCW && <span className="text-[#06b6d4]">CALL WALL</span>}
                 {atPW && <span className="text-[#a855f7]">PUT WALL</span>}
               </div>
@@ -921,7 +921,7 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
                     width: `${Math.max(pct, 0.5)}%`,
                     height: Math.min(Math.max(rowH - 4, 6), 18),
                     borderRadius: '2px 0 0 2px',
-                    background: pos ? '#22c55e' : '#ef4444',
+                    background: pos ? '#34d399' : '#fb7185',
                     opacity: entry.is_magnet ? 1 : entry.is_danger ? 0.9 : 0.75,
                     boxShadow: entry.is_magnet ? '0 0 4px rgba(255,214,0,0.4)' : 'none',
                   }}
@@ -936,19 +936,19 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
               {isHovered && (
                 <div className="absolute right-14 top-0 z-50 bg-[rgba(10,10,20,0.95)] border border-border-default rounded-[var(--radius-md)] px-3 py-2 shadow-lg text-[11px] min-w-[200px] pointer-events-none animate-[sw-fadeIn_0.15s_ease]">
                   <div className="font-bold text-white mb-1">${entry.strike}</div>
-                  <div className={`font-semibold mb-1 ${pos ? 'text-[#22c55e]' : 'text-[#ef4444]'}`}>
+                  <div className={`font-semibold mb-1 ${pos ? 'text-[#34d399]' : 'text-[#fb7185]'}`}>
                     Net GEX: {entry.gex_label}
                   </div>
                   <div className="text-text-muted leading-[1.8]">
-                    <div>Call GEX: <span className="text-[#22c55e]">{formatGex(entry.call_gamma, 2)}</span></div>
-                    <div>Put GEX: <span className="text-[#ef4444]">{formatGex(entry.put_gamma, 2)}</span></div>
+                    <div>Call GEX: <span className="text-[#34d399]">{formatGex(entry.call_gamma, 2)}</span></div>
+                    <div>Put GEX: <span className="text-[#fb7185]">{formatGex(entry.put_gamma, 2)}</span></div>
                     {entry.call_iv && <div>Call IV: {(entry.call_iv * 100).toFixed(1)}%</div>}
                     {entry.put_iv && <div>Put IV: {(entry.put_iv * 100).toFixed(1)}%</div>}
                     <div>Volume: {entry.total_volume?.toLocaleString()}</div>
                   </div>
-                  {entry.is_magnet && <div className="text-[#eab308] font-semibold mt-1">Magnet Strike</div>}
+                  {entry.is_magnet && <div className="text-[#fcd34d] font-semibold mt-1">Magnet Strike</div>}
                   {entry.is_pin && <div className="text-[#a855f7] font-semibold mt-1">Pin Strike</div>}
-                  {entry.is_danger && <div className="text-[#ef4444] font-semibold mt-1">{entry.danger_type}</div>}
+                  {entry.is_danger && <div className="text-[#fb7185] font-semibold mt-1">{entry.danger_type}</div>}
                 </div>
               )}
             </div>
@@ -956,11 +956,11 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
         })}
       </div>
       <div className="flex flex-wrap gap-3.5 mt-2.5 text-[11px] items-center">
-        <LegendItem color="#22c55e" label="Positive Gamma" />
-        <LegendItem color="#ef4444" label="Negative Gamma" />
+        <LegendItem color="#34d399" label="Positive Gamma" />
+        <LegendItem color="#fb7185" label="Negative Gamma" />
         <span className="text-border-subtle">|</span>
         <span className="text-accent">— Price</span>
-        <span className="text-[#eab308]">--- Flip</span>
+        <span className="text-[#fcd34d]">--- Flip</span>
         <span className="text-[#06b6d4]">--- Call Wall</span>
         <span className="text-[#a855f7]">--- Put Wall</span>
       </div>
@@ -978,8 +978,8 @@ function CallVsPutView({ sortedStrikes, data }) {
             <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#1a1a2e' }} />
             <Tooltip content={<StrikeTooltip />} />
             {data.levels.gex_flip && (
-              <ReferenceLine y={data.levels.gex_flip} stroke="#eab308" strokeDasharray="5 3"
-                label={{ value: `Flip ${data.levels.gex_flip}`, fill: '#eab308', fontSize: 9, position: 'right' }} />
+              <ReferenceLine y={data.levels.gex_flip} stroke="#fcd34d" strokeDasharray="5 3"
+                label={{ value: `Flip ${data.levels.gex_flip}`, fill: '#fcd34d', fontSize: 9, position: 'right' }} />
             )}
             <ReferenceLine y={data.levels.price} stroke="#448aff" strokeWidth={2}
               label={{ value: `Price ${data.levels.price}`, fill: '#448aff', fontSize: 9, position: 'right' }} />
@@ -991,14 +991,14 @@ function CallVsPutView({ sortedStrikes, data }) {
               <ReferenceLine y={data.levels.put_wall} stroke="#a855f7" strokeDasharray="3 3"
                 label={{ value: 'Put Wall', fill: '#a855f7', fontSize: 9, position: 'right' }} />
             )}
-            <Bar dataKey="call_gamma" name="Call Gamma" fill="#22c55e" fillOpacity={0.75} />
-            <Bar dataKey="put_gamma_display" name="Put Gamma" fill="#ef4444" fillOpacity={0.75} />
+            <Bar dataKey="call_gamma" name="Call Gamma" fill="#34d399" fillOpacity={0.75} />
+            <Bar dataKey="put_gamma_display" name="Put Gamma" fill="#fb7185" fillOpacity={0.75} />
           </BarChart>
         </ResponsiveContainer>
       </div>
       <div className="flex flex-wrap gap-3.5 mt-2.5 text-[11px] items-center">
-        <LegendItem color="#22c55e" label="Call Gamma" />
-        <LegendItem color="#ef4444" label="Put Gamma" />
+        <LegendItem color="#34d399" label="Call Gamma" />
+        <LegendItem color="#fb7185" label="Put Gamma" />
       </div>
     </>
   );
@@ -1012,13 +1012,13 @@ function StrikeTooltip({ active, payload, label }) {
     <div className="bg-[rgba(10,10,20,0.95)] border border-border-default rounded-[var(--radius-md)] px-3.5 py-2.5 shadow-lg text-[11px] min-w-[220px]">
       <div className="font-bold text-white text-[13px] mb-1.5">
         Strike: ${label}
-        {d.is_magnet && <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold bg-[rgba(234,179,8,0.15)] text-[#eab308]"> MAGNET{d.magnet_rank ? ` #${d.magnet_rank}` : ''}</span>}
+        {d.is_magnet && <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold bg-[rgba(252,211,77,0.15)] text-[#fcd34d]"> MAGNET{d.magnet_rank ? ` #${d.magnet_rank}` : ''}</span>}
         {d.is_pin && <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold bg-[rgba(168,85,247,0.15)] text-[#a855f7]"> PIN</span>}
-        {d.is_danger && <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold bg-[rgba(239,68,68,0.15)] text-[#ef4444]"> {d.danger_type}</span>}
+        {d.is_danger && <span className="text-[10px] px-1.5 py-px rounded-[var(--radius-sm)] font-semibold bg-[rgba(251,113,133,0.15)] text-[#fb7185]"> {d.danger_type}</span>}
       </div>
-      <TipRow label="Net Gamma" value={formatGex(d.net_gamma, 4)} color={d.net_gamma >= 0 ? '#22c55e' : '#ef4444'} bold />
-      <TipRow label="Call Gamma" value={d.call_gamma?.toFixed(6)} color="#22c55e" />
-      <TipRow label="Put Gamma" value={d.put_gamma?.toFixed(6)} color="#ef4444" />
+      <TipRow label="Net Gamma" value={formatGex(d.net_gamma, 4)} color={d.net_gamma >= 0 ? '#34d399' : '#fb7185'} bold />
+      <TipRow label="Call Gamma" value={d.call_gamma?.toFixed(6)} color="#34d399" />
+      <TipRow label="Put Gamma" value={d.put_gamma?.toFixed(6)} color="#fb7185" />
       <div className="border-t border-border-subtle pt-1 mt-1">
         <TipRow label="Call Vol / Put Vol" value={`${(d.call_volume || 0).toLocaleString()} / ${(d.put_volume || 0).toLocaleString()}`} color="#fff" />
         <TipRow label="Call OI / Put OI" value={`${(d.call_oi || 0).toLocaleString()} / ${(d.put_oi || 0).toLocaleString()}`} color="#fff" />
@@ -1088,7 +1088,7 @@ function getCardBorder(card) {
   if (card.id === 'volume_pressure' && card.raw_value > 0.1) return 'rgba(6,182,212,0.4)';
   if (card.id === 'call_share' && card.raw_value > 55) return 'rgba(6,182,212,0.4)';
   if (card.id === 'short_dte_share' && card.raw_value > 50) return 'rgba(6,182,212,0.4)';
-  if (card.id === 'volume_pressure' && card.raw_value < -0.1) return 'rgba(239,68,68,0.4)';
-  if (card.id === 'lotto_turnover' && card.raw_value > 0.3) return 'rgba(234,179,8,0.4)';
+  if (card.id === 'volume_pressure' && card.raw_value < -0.1) return 'rgba(251,113,133,0.4)';
+  if (card.id === 'lotto_turnover' && card.raw_value > 0.3) return 'rgba(252,211,77,0.4)';
   return 'var(--color-border-subtle)';
 }

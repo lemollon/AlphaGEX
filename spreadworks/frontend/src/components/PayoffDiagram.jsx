@@ -81,7 +81,7 @@ export default function PayoffDiagram({ pnlCurve, spotPrice, breakevens, height 
       {svg.profitPath.length > 1 && (
         <polygon
           points={`${svg.xScale(pnlCurve.find((p) => p.pnl >= 0)?.price ?? 0).toFixed(1)},${svg.zeroY} ${svg.profitPath.join(' ')} ${svg.xScale(pnlCurve.filter((p) => p.pnl >= 0).pop()?.price ?? 0).toFixed(1)},${svg.zeroY}`}
-          fill="rgba(34,197,94,0.15)"
+          fill="rgba(52,211,153,0.15)"
         />
       )}
 
@@ -89,12 +89,12 @@ export default function PayoffDiagram({ pnlCurve, spotPrice, breakevens, height 
       {svg.lossPath.length > 1 && (
         <polygon
           points={`${svg.xScale(pnlCurve.find((p) => p.pnl <= 0)?.price ?? 0).toFixed(1)},${svg.zeroY} ${svg.lossPath.join(' ')} ${svg.xScale(pnlCurve.filter((p) => p.pnl <= 0).pop()?.price ?? 0).toFixed(1)},${svg.zeroY}`}
-          fill="rgba(239,68,68,0.12)"
+          fill="rgba(251,113,133,0.12)"
         />
       )}
 
       {/* P&L line */}
-      <path d={svg.linePath} fill="none" stroke="#3b82f6" strokeWidth="2" />
+      <path d={svg.linePath} fill="none" stroke="#7dd3fc" strokeWidth="2" />
 
       {/* Spot price vertical line */}
       {spotPrice && (

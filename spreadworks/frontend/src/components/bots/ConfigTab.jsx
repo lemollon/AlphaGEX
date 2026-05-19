@@ -3,8 +3,8 @@ import { Pencil } from 'lucide-react';
 import { botApi } from '../../lib/botApi';
 import { BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
 
-const PT_GREEN = '#22c55e';
-const SL_RED   = '#ef4444';
+const PT_GREEN = '#34d399';   // emerald-400
+const SL_RED   = '#fb7185';   // rose-400
 
 function fmtPct(v, digits = 0) {
   if (v == null || Number.isNaN(Number(v))) return '—';
@@ -75,7 +75,7 @@ function ReadOnlySection({ section }) {
             <span className="text-[12.5px] text-text-secondary">{r.label}</span>
             <span
               className="sw-mono text-[12.5px] font-semibold"
-              style={{ color: r.accent || '#e5e7eb' }}
+              style={{ color: r.accent || '#e2e8f0' }}
             >
               {r.value}
             </span>
@@ -156,15 +156,16 @@ function EditableForm({ cfg, onChange, onCancel, onSave, saving }) {
       <div className="col-span-2 flex items-center justify-end gap-2 pt-2 border-t" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
         <button
           onClick={onCancel}
-          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold text-text-secondary hover:text-white ring-1 ring-white/5 transition-colors"
-          style={{ background: '#0d1119' }}
+          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors"
+          style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
         >
           Cancel
         </button>
         <button
           onClick={onSave}
           disabled={saving}
-          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold text-white bg-blue-500 hover:bg-blue-600 inline-flex items-center gap-1.5 disabled:opacity-60"
+          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold text-white inline-flex items-center gap-1.5 disabled:opacity-60 hover:brightness-110 transition"
+          style={{ background: '#0ea5e9' }}
         >
           {saving ? 'Saving…' : 'Save changes'}
         </button>
@@ -243,8 +244,8 @@ export default function ConfigTab({ bot }) {
       <div className="col-span-2 flex items-center justify-end gap-2 pt-2">
         <button
           onClick={reload}
-          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold text-text-secondary hover:text-white ring-1 ring-white/5 transition-colors"
-          style={{ background: '#0d1119' }}
+          className="px-3.5 py-2 rounded-md text-[12.5px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors"
+          style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
         >
           Reset
         </button>

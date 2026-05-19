@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Snowflake, Waves, Wind } from 'lucide-react';
+import { Snowflake, Waves, Compass } from 'lucide-react';
 import { botApi } from '../lib/botApi';
 
 const TAPE_BOTS = [
   { key: 'breeze', code: 'BRZ', Icon: Snowflake },
   { key: 'tide',   code: 'TID', Icon: Waves },
-  { key: 'drift',  code: 'DRF', Icon: Wind },
+  { key: 'drift',  code: 'DRF', Icon: Compass },
 ];
 
 const REFRESH_MS = 15_000;
@@ -47,7 +47,10 @@ export default function LivePnlTape() {
   }, []);
 
   return (
-    <div className="hidden lg:flex items-center gap-3 px-3 py-1 rounded-md bg-bg-card border border-border-subtle">
+    <div
+      className="hidden lg:flex items-center gap-3 px-3 py-1.5 rounded-full sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
       <span className="inline-flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[0.08em] text-text-muted">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-sw-green animate-pulse-dot" />
         Live

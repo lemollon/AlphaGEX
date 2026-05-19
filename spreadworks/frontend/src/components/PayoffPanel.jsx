@@ -55,12 +55,12 @@ export default function PayoffPanel({
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter(Boolean).map(Number);
     longPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        lines.push({ y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` });
+        lines.push({ y: pToY(p), color: '#34d399', dash: '5,4', label: `$${p}` });
       }
     });
     shortPrices.forEach(p => {
       if (p >= minPrice && p <= maxPrice) {
-        lines.push({ y: pToY(p), color: '#ef4444', dash: '5,4' });
+        lines.push({ y: pToY(p), color: '#fb7185', dash: '5,4' });
       }
     });
     return lines;
@@ -88,12 +88,12 @@ export default function PayoffPanel({
       >
         <defs>
           <linearGradient id="profitGrad" x1="1" y1="0" x2="0" y2="0">
-            <stop offset="0%" stopColor="#22c55e" stopOpacity="0" />
-            <stop offset="100%" stopColor="#22c55e" stopOpacity="0.5" />
+            <stop offset="0%" stopColor="#34d399" stopOpacity="0" />
+            <stop offset="100%" stopColor="#34d399" stopOpacity="0.5" />
           </linearGradient>
           <linearGradient id="lossGrad" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0%" stopColor="#ef4444" stopOpacity="0" />
-            <stop offset="100%" stopColor="#ef4444" stopOpacity="0.5" />
+            <stop offset="0%" stopColor="#fb7185" stopOpacity="0" />
+            <stop offset="100%" stopColor="#fb7185" stopOpacity="0.5" />
           </linearGradient>
         </defs>
 
@@ -119,7 +119,7 @@ export default function PayoffPanel({
             {paths.lossFill && (
               <path d={paths.lossFill} fill="url(#lossGrad)" />
             )}
-            <path d={paths.mainPath} fill="none" stroke="#22c55e" strokeWidth="2.5" />
+            <path d={paths.mainPath} fill="none" stroke="#34d399" strokeWidth="2.5" />
           </>
         )}
 
@@ -137,14 +137,14 @@ export default function PayoffPanel({
         {/* Breakeven markers */}
         {breakevens && breakevens.lower && (
           <g>
-            <line x1={ZERO_X - 10} y1={pToY(breakevens.lower)} x2={ZERO_X + 10} y2={pToY(breakevens.lower)} stroke="#ffd600" strokeWidth="2" />
-            <text x={ZERO_X - 14} y={pToY(breakevens.lower) + 3} textAnchor="end" fill="#ffd600" fontSize="8" fontFamily="'Courier New', monospace">BE</text>
+            <line x1={ZERO_X - 10} y1={pToY(breakevens.lower)} x2={ZERO_X + 10} y2={pToY(breakevens.lower)} stroke="#fcd34d" strokeWidth="2" />
+            <text x={ZERO_X - 14} y={pToY(breakevens.lower) + 3} textAnchor="end" fill="#fcd34d" fontSize="8" fontFamily="'Courier New', monospace">BE</text>
           </g>
         )}
         {breakevens && breakevens.upper && (
           <g>
-            <line x1={ZERO_X - 10} y1={pToY(breakevens.upper)} x2={ZERO_X + 10} y2={pToY(breakevens.upper)} stroke="#ffd600" strokeWidth="2" />
-            <text x={ZERO_X - 14} y={pToY(breakevens.upper) + 3} textAnchor="end" fill="#ffd600" fontSize="8" fontFamily="'Courier New', monospace">BE</text>
+            <line x1={ZERO_X - 10} y1={pToY(breakevens.upper)} x2={ZERO_X + 10} y2={pToY(breakevens.upper)} stroke="#fcd34d" strokeWidth="2" />
+            <text x={ZERO_X - 14} y={pToY(breakevens.upper) + 3} textAnchor="end" fill="#fcd34d" fontSize="8" fontFamily="'Courier New', monospace">BE</text>
           </g>
         )}
 
@@ -165,8 +165,8 @@ export default function PayoffPanel({
           const pctOfRisk = maxRisk > 0 ? (pnlAtSpot / maxRisk) * 100 : 0;
           const isProfit = pnlAtSpot > 0;
           const nearBreakeven = Math.abs(pctOfRisk) < 10;
-          const badgeColor = nearBreakeven ? '#ffd600' : isProfit ? '#22c55e' : '#ef4444';
-          const bgColor = nearBreakeven ? '#ffd60022' : isProfit ? '#22c55e22' : '#ef444422';
+          const badgeColor = nearBreakeven ? '#fcd34d' : isProfit ? '#34d399' : '#fb7185';
+          const bgColor = nearBreakeven ? '#fcd34d22' : isProfit ? '#34d39922' : '#fb718522';
 
           const label = `Now: ${formatDollarPnl(pnlAtSpot)} (${formatSignedPct(pctOfRisk)})`;
 

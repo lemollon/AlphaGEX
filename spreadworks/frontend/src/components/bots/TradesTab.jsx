@@ -70,7 +70,10 @@ export default function TradesTab({ bot }) {
 
   return (
     <div>
-      <div className="grid grid-cols-[120px_64px_1fr_80px_100px_70px] gap-3 px-5 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-text-tertiary border-b border-white/5">
+      <div
+        className="grid grid-cols-[120px_64px_1fr_80px_100px_70px] gap-3 px-5 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-text-tertiary"
+        style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
+      >
         <div>Date</div>
         <div>Action</div>
         <div>Trade</div>
@@ -78,7 +81,7 @@ export default function TradesTab({ bot }) {
         <div className="text-right">P&amp;L</div>
         <div className="text-right">Status</div>
       </div>
-      <div className="divide-y divide-white/[0.04]">
+      <div className="divide-y divide-[rgba(125,211,252,0.06)]">
         {trades.map(t => {
           const pnl = Number(t.realized_pnl);
           const win = pnl >= 0;
@@ -92,7 +95,7 @@ export default function TradesTab({ bot }) {
           return (
             <div
               key={t.position_id}
-              className="grid grid-cols-[120px_64px_1fr_80px_100px_70px] gap-3 px-5 py-3 items-center hover:bg-white/[0.02]"
+              className="grid grid-cols-[120px_64px_1fr_80px_100px_70px] gap-3 px-5 py-3 items-center hover:bg-[rgba(125,211,252,0.03)]"
             >
               <div className="sw-mono text-[11.5px] text-text-secondary">
                 <div>{date}</div>
@@ -103,7 +106,7 @@ export default function TradesTab({ bot }) {
               <div className="sw-mono text-[12px] text-text-secondary text-right">{creditStr}</div>
               <div
                 className="sw-mono text-[12.5px] font-bold text-right"
-                style={{ color: win ? '#22c55e' : '#ef4444' }}
+                style={{ color: win ? '#34d399' : '#fb7185' }}
               >
                 {win ? '+' : '−'}${Math.abs(pnl).toFixed(2)}
               </div>

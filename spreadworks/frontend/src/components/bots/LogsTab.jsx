@@ -3,10 +3,10 @@ import { ScrollText, Download } from 'lucide-react';
 import { botApi } from '../../lib/botApi';
 
 const LEVEL_COLORS = {
-  info: '#9ca3af',
-  win:  '#22c55e',
-  warn: '#eab308',
-  err:  '#ef4444',
+  info: '#94a3b8',   // slate-400
+  win:  '#34d399',   // emerald-400
+  warn: '#fcd34d',   // amber-300
+  err:  '#fb7185',   // rose-400
 };
 
 // scan_activity.outcome → log level
@@ -96,7 +96,7 @@ export default function LogsTab({ bot }) {
           return (
             <div
               key={r.id}
-              className="grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-1.5 text-[11.5px] hover:bg-white/[0.02]"
+              className="grid grid-cols-[112px_56px_1fr] gap-3 px-4 py-1.5 text-[11.5px] hover:bg-[rgba(125,211,252,0.03)]"
             >
               <span className="sw-mono text-text-muted">{fmtTime(r.scan_time)}</span>
               <span
@@ -110,11 +110,15 @@ export default function LogsTab({ bot }) {
           );
         })}
       </div>
-      <div className="px-4 py-2 mt-2 text-[11px] text-text-muted border-t border-white/5 flex items-center justify-between">
+      <div
+        className="px-4 py-2 mt-2 text-[11px] text-text-muted flex items-center justify-between"
+        style={{ borderTop: '1px solid rgba(125,211,252,0.08)' }}
+      >
         <span>{rows.length} entries{sessionRange ? ` · session ${sessionRange}` : ''}</span>
         <button
           onClick={() => downloadCsv(bot, rows)}
-          className="text-blue-400 hover:text-blue-300 font-medium inline-flex items-center gap-1"
+          className="font-medium inline-flex items-center gap-1 hover:brightness-110"
+          style={{ color: '#7dd3fc' }}
         >
           <Download size={11} /> Export
         </button>

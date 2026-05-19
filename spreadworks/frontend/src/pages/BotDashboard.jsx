@@ -75,7 +75,10 @@ function relativeTime(ts) {
 
 function KpiTile({ label, value, sub, mono = true, accent }) {
   return (
-    <div className="px-5 py-4 rounded-lg ring-1 ring-white/5" style={{ background: '#0d1119' }}>
+    <div
+      className="px-5 py-4 rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
       <div
         className={`leading-none ${mono ? 'sw-mono' : ''}`}
         style={{ fontSize: 28, fontWeight: 700, color: accent || 'var(--color-text-primary)' }}
@@ -96,7 +99,10 @@ function KpiTile({ label, value, sub, mono = true, accent }) {
 
 function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, onForceTrade }) {
   return (
-    <div className="px-8 pt-7 pb-6 border-b border-white/5">
+    <div
+      className="px-8 pt-7 pb-6"
+      style={{ borderBottom: '1px solid rgba(125,211,252,0.18)' }}
+    >
       <div className="flex items-start justify-between gap-6">
         <div className="flex items-center gap-5 min-w-0">
           {/* Glyph tile */}
@@ -142,11 +148,10 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
               <button
                 onClick={onToggle}
                 disabled={toggling}
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold hover:brightness-110 transition disabled:opacity-60"
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold sw-glass hover:brightness-110 transition disabled:opacity-60"
                 style={{
-                  color: theme.primary,
-                  background: '#0d1119',
-                  boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+                  color: '#7dd3fc',
+                  boxShadow: `inset 0 0 0 1px ${theme.primaryRing}, inset 0 1px 0 rgba(255,255,255,0.04)`,
                 }}
               >
                 <Power size={13} /> {toggling ? 'Working…' : 'Disable'}
@@ -154,8 +159,8 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
               <button
                 onClick={onForceTrade}
                 disabled={forcing}
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold text-text-secondary hover:text-white ring-1 ring-white/5 transition-colors disabled:opacity-60"
-                style={{ background: '#0d1119' }}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors disabled:opacity-60"
+                style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
               >
                 <Zap size={13} /> {forcing ? 'Sending…' : 'Force Trade'}
               </button>
@@ -178,8 +183,8 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
               </button>
               <button
                 disabled
-                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold text-text-tertiary ring-1 ring-white/5 cursor-not-allowed opacity-60"
-                style={{ background: '#0d1119' }}
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md text-[13px] font-semibold sw-glass text-text-tertiary cursor-not-allowed opacity-60"
+                style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
               >
                 <Zap size={13} /> Force Trade
               </button>
@@ -332,13 +337,19 @@ function KpiGrid({ bot, status, perf, theme }) {
 
 function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
   return (
-    <div className="rounded-lg ring-1 ring-white/5" style={{ background: '#0d1119' }}>
-      <div className="px-5 py-4 flex items-center justify-between border-b border-white/5">
+    <div
+      className="rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
+      <div
+        className="px-5 py-4 flex items-center justify-between"
+        style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
+      >
         <div className="flex items-center gap-3">
-          <h3 className="text-[14px] font-semibold text-white">Equity Curve</h3>
+          <h3 className="text-[14px] font-semibold text-text-primary">Equity Curve</h3>
           <span className="text-[11.5px] text-text-tertiary">Account equity over time</span>
         </div>
-        <div className="flex items-center gap-1 rounded-md p-0.5" style={{ background: '#070b14' }}>
+        <div className="flex items-center gap-1 rounded-md p-0.5" style={{ background: 'rgba(7,16,28,0.4)' }}>
           {EQUITY_PERIODS.map(p => {
             const active = period === p.value;
             return (
@@ -348,7 +359,7 @@ function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
                 className="sw-mono px-3 py-1 text-[11px] font-medium rounded transition-all"
                 style={
                   active
-                    ? { background: theme.primary, color: '#070b14' }
+                    ? { background: theme.primary, color: '#0a1726' }
                     : { color: 'var(--color-text-secondary)' }
                 }
               >
@@ -463,14 +474,14 @@ function EquityChart({ bot, theme, data }) {
             y1={t.y}
             x2={W - padR}
             y2={t.y}
-            stroke="#0e131e"
+            stroke="rgba(125,211,252,0.06)"
             strokeWidth="1"
             strokeDasharray={i === 0 || i === 4 ? '0' : '3 6'}
           />
           <text
             x={padL - 8}
             y={t.y + 3}
-            fill="#4b5563"
+            fill="#475569"
             fontSize="10.5"
             fontFamily="JetBrains Mono"
             textAnchor="end"
@@ -486,7 +497,7 @@ function EquityChart({ bot, theme, data }) {
           key={`x-${i}`}
           x={x.x}
           y={H - 10}
-          fill="#4b5563"
+          fill="#475569"
           fontSize="10.5"
           fontFamily="JetBrains Mono"
           textAnchor="middle"
@@ -513,7 +524,7 @@ function EquityChart({ bot, theme, data }) {
       />
 
       {/* last-point marker + dashed guideline */}
-      <circle cx={lastX} cy={lastY} r="4.5" fill={theme.primary} stroke="#0d1119" strokeWidth="2.5" />
+      <circle cx={lastX} cy={lastY} r="4.5" fill={theme.primary} stroke="#0a1726" strokeWidth="2.5" />
       <line
         x1={lastX}
         y1={padT}
@@ -531,7 +542,7 @@ function EquityChart({ bot, theme, data }) {
         <text
           x="48"
           y="18"
-          fill="#070b14"
+          fill="#0a1726"
           fontSize="12"
           fontFamily="JetBrains Mono"
           fontWeight="700"
@@ -546,7 +557,7 @@ function EquityChart({ bot, theme, data }) {
         <text
           x="0"
           y="10"
-          fill="#6b7280"
+          fill="#64748b"
           fontSize="10.5"
           fontFamily="Inter"
           fontWeight="600"
@@ -558,7 +569,7 @@ function EquityChart({ bot, theme, data }) {
         <text
           x="0"
           y="28"
-          fill={deltaPos ? '#22c55e' : '#ef4444'}
+          fill={deltaPos ? '#34d399' : '#fb7185'}
           fontSize="14"
           fontFamily="JetBrains Mono"
           fontWeight="700"
@@ -585,9 +596,15 @@ function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }
   ];
 
   return (
-    <div className="rounded-lg ring-1 ring-white/5" style={{ background: '#0d1119' }}>
+    <div
+      className="rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
       {/* Tab bar */}
-      <div className="flex items-center gap-1 px-3 pt-3 border-b border-white/5">
+      <div
+        className="flex items-center gap-1 px-3 pt-3"
+        style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
+      >
         {tabs.map(t => {
           const active = tab === t.id;
           return (
@@ -703,10 +720,7 @@ export default function BotDashboard() {
   const tradeCount = perf?.trades ?? 0;
 
   return (
-    <div
-      className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary"
-      style={{ background: '#050810' }}
-    >
+    <div className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
       <BotHeader
         meta={meta}
         theme={theme}

@@ -105,8 +105,8 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
         return (
           <div
             key={p.position_id}
-            className="rounded-md ring-1 ring-white/5 px-5 py-4"
-            style={{ background: '#070b14' }}
+            className="rounded-md sw-glass-deep px-5 py-4"
+            style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
           >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
@@ -116,7 +116,14 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
                   <span className="text-[12px] text-text-secondary font-medium">
                     {STRATEGY_LABEL[p.strategy] || p.strategy}
                   </span>
-                  <span className="sw-mono text-[10.5px] uppercase tracking-wider font-bold px-2 py-0.5 rounded text-blue-300 bg-blue-500/10 ring-1 ring-blue-500/20 whitespace-nowrap">
+                  <span
+                    className="sw-mono text-[10.5px] uppercase tracking-wider font-bold px-2 py-0.5 rounded whitespace-nowrap"
+                    style={{
+                      color: '#7dd3fc',
+                      background: 'rgba(125,211,252,0.10)',
+                      boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.30)',
+                    }}
+                  >
                     {contracts}×
                   </span>
                 </div>
@@ -130,7 +137,7 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
               <div className="text-right flex-shrink-0">
                 <div
                   className="sw-mono text-[18px] font-bold"
-                  style={{ color: pos ? '#22c55e' : '#ef4444' }}
+                  style={{ color: pos ? '#34d399' : '#fb7185' }}
                 >
                   {pnl != null
                     ? `${pos ? '+' : '−'}$${Math.abs(pnl).toFixed(2)}`
@@ -170,8 +177,8 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
               <div className="text-right">
                 <button
                   onClick={() => onClose(p.position_id)}
-                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold text-text-secondary hover:text-white ring-1 ring-white/5 transition-colors"
-                  style={{ background: '#11151f' }}
+                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors"
+                  style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
                 >
                   Close
                 </button>

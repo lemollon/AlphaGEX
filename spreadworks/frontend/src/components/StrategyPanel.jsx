@@ -55,7 +55,7 @@ const DEFAULT_LEGS = {
 import { API_URL } from '../lib/api';
 
 function StrikeInput({ label, value, color, inputMode, chainStrikes, chainOptions, onChange, disabled }) {
-  const isGreen = color === '#00e676' || color === '#22c55e';
+  const isGreen = color === '#34d399' || color === '#34d399';
   const borderCls = isGreen ? 'border-sw-green/25 focus:border-sw-green' : 'border-sw-red/25 focus:border-sw-red';
   const labelCls = isGreen ? 'text-sw-green' : 'text-sw-red';
   const optionType = label.toLowerCase().includes('put') ? 'put' : 'call';
@@ -592,7 +592,15 @@ export default function StrategyPanel({
   };
 
   return (
-    <div className="w-[312px] min-w-[312px] border-r border-white/5 px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-4 h-full bg-bg-base">
+    <div
+      className="w-[312px] min-w-[312px] px-4 py-5 overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-4 h-full"
+      style={{
+        background: 'rgba(13,28,46,0.45)',
+        backdropFilter: 'blur(16px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+        borderRight: '1px solid rgba(125,211,252,0.08)',
+      }}
+    >
 
       {/* Strategy */}
       <div className="sw-sidebar-section">
@@ -721,16 +729,16 @@ export default function StrategyPanel({
               <div className="line bg-sw-green/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-sw-red">
               <span>Call Side</span>
               <div className="line bg-sw-red/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-text-tertiary mt-2">
               <span>Expirations</span>
@@ -749,11 +757,11 @@ export default function StrategyPanel({
               <div className="line bg-accent/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Lower (Buy)" value={legs.lowerStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('lowerStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Middle (Sell 2x)" value={legs.middleStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('middleStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Lower (Buy)" value={legs.lowerStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('lowerStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Middle (Sell 2x)" value={legs.middleStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('middleStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Upper (Buy)" value={legs.upperStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('upperStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Upper (Buy)" value={legs.upperStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('upperStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-text-tertiary mt-2">
               <span>Type &amp; Expiration</span>
@@ -778,15 +786,15 @@ export default function StrategyPanel({
               <div className="line bg-sw-green/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-sw-red">
               <span>Body ATM (Sell)</span>
               <div className="line bg-sw-red/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Short Strike (ATM)" value={legs.shortStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Strike (ATM)" value={legs.shortStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
               Sell 1 Put + 1 Call at same strike (ATM)
@@ -807,16 +815,16 @@ export default function StrategyPanel({
               <div className="line bg-sw-green/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Put" value={legs.longPutStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Put" value={legs.shortPutStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortPutStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-sw-red">
               <span>Call Side</span>
               <div className="line bg-sw-red/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
-              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Short Call" value={legs.shortCallStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('shortCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Long Call" value={legs.longCallStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('longCallStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="sw-section-divider text-text-tertiary mt-2">
               <span>Expiration</span>
@@ -834,7 +842,7 @@ export default function StrategyPanel({
               <div className="line bg-sw-red/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Put Strike" value={legs.putStrike} color="#ef4444" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Put Strike" value={legs.putStrike} color="#fb7185" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('putStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
               Sell @ Front Exp &middot; Buy @ Back Exp
@@ -844,7 +852,7 @@ export default function StrategyPanel({
               <div className="line bg-sw-green/15" />
             </div>
             <div className="flex gap-2 mb-1.5">
-              <StrikeInput label="Call Strike" value={legs.callStrike} color="#22c55e" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
+              <StrikeInput label="Call Strike" value={legs.callStrike} color="#34d399" inputMode={inputMode} chainStrikes={chainStrikes} chainOptions={chainOptions} onChange={(v) => updateLeg('callStrike', v)} disabled={inputMode === INPUT_MODES.GEX_SUGGEST} />
             </div>
             <div className="text-[10px] text-text-tertiary mb-1 -mt-0.5">
               Sell @ Front Exp &middot; Buy @ Back Exp

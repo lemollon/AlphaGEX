@@ -1,8 +1,9 @@
-/* ── SpreadWorks Design System — Tailwind v4 ──
-   Source of truth for tokens lives in
-   ../../../SpreadWorks Design System/colors_and_type.css
-   (see README for the full brand book). Values mirrored here so Tailwind
-   classes resolve to the canonical palette.
+/* ── SpreadWorks · AURORA Design System ──────────────────────────────────
+   Cool, atmospheric, water/ice-inspired palette. Translucent surfaces
+   over a fixed aurora wash (cyan top-left, violet top-right) so every
+   page reads as one continuous atmosphere.
+
+   Site-wide refresh — replaces the prior near-black/red palette.
 */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
@@ -10,77 +11,93 @@
 @import "tailwindcss";
 
 @theme {
-  /* Background layers (3-step depth, per brand book).
-     bg-base matches the canonical mockup (#050810) — see
-     SpreadWorks Design System/ui_kits/builder/index.html. */
-  --color-bg-base: #050810;
-  --color-bg-surface: #0a0e1a;
-  --color-bg-elevated: #11151f;
-  --color-bg-card: #11151f;
-  --color-bg-card-hover: #1a1f2e;
-  --color-bg-hover: #1a1f2e;
+  /* ── Surfaces ─────────────────────────────────────────────────────── */
+  /* Page itself is transparent so the body aurora shows through. Cards
+     are translucent navy with a backdrop blur — applied via .sw-glass. */
+  --color-bg-base:        transparent;
+  --color-bg-surface:     rgba(7,16,28,0.50);
+  --color-bg-elevated:    rgba(13,28,46,0.55);
+  --color-bg-card:        rgba(13,28,46,0.55);
+  --color-bg-card-hover:  rgba(20,40,60,0.65);
+  --color-bg-hover:       rgba(20,40,60,0.65);
+  --color-bg-deep:        rgba(7,16,28,0.70);   /* inputs, terminal logs */
 
-  /* Borders — subtle, the spec calls for rgba(255,255,255,0.04) on most
-     surfaces and a 1px accent border on active items */
-  --color-border-subtle: #1f2937;
-  --color-border-default: #374151;
-  --color-border-accent: rgba(59, 130, 246, 0.3);
+  /* Solid bg used by the equity-curve last-value pill text (matches body) */
+  --color-bg-page-solid:  #0a1726;
 
-  /* Accent — Electric Blue, used surgically (primary action + active state) */
-  --color-accent: #3b82f6;
-  --color-accent-glow: rgba(59, 130, 246, 0.2);
-  --color-accent-hover: #2563eb;
-  --color-accent-bright: #60a5fa;
-  --color-accent-dim: rgba(59, 130, 246, 0.12);
+  /* ── Borders ──────────────────────────────────────────────────────── */
+  --color-border-subtle:  rgba(125,211,252,0.08);  /* icy hair-line */
+  --color-border-default: rgba(125,211,252,0.14);
+  --color-border-strong:  rgba(125,211,252,0.18);
+  --color-divider-row:    rgba(125,211,252,0.06);
+  --color-border-accent:  rgba(34,211,238,0.35);
 
-  /* Aliases — keep so existing utility classes still resolve */
-  --color-blue: #3b82f6;
-  --color-blue-bright: #60a5fa;
-  --color-blue-dim: rgba(59, 130, 246, 0.12);
+  /* ── Brand accent — cyan (was electric blue) ─────────────────────── */
+  --color-accent:         #22d3ee;
+  --color-accent-hover:   #06b6d4;
+  --color-accent-bright:  #67e8f9;
+  --color-accent-dim:     rgba(34,211,238,0.12);
+  --color-accent-glow:    rgba(34,211,238,0.30);
 
-  /* Semantic — PUT side = green / CALL side = red is sacred */
-  --color-sw-green: #22c55e;
-  --color-sw-green-dim: rgba(34, 197, 94, 0.12);
-  --color-sw-red: #ef4444;
-  --color-sw-red-dim: rgba(239, 68, 68, 0.12);
-  --color-sw-yellow: #eab308;             /* GEX flip — signature visual */
-  --color-sw-yellow-dim: rgba(234, 179, 8, 0.12);
-  --color-sw-purple: #8b5cf6;
-  --color-sw-purple-dim: rgba(139, 92, 246, 0.12);
+  /* Aliases — keep so utility classes resolve to the new cyan brand. */
+  --color-blue:           #22d3ee;
+  --color-blue-bright:    #67e8f9;
+  --color-blue-dim:       rgba(34,211,238,0.12);
 
-  /* Text */
-  --color-text-primary: #f3f4f6;
-  --color-text-secondary: #9ca3af;
-  --color-text-tertiary: #6b7280;
-  --color-text-muted: #4b5563;
+  /* Sky-300 for "info" surfaces (Open action, Export link, DTE chip) */
+  --color-info:           #7dd3fc;
+  --color-info-soft:      rgba(125,211,252,0.10);
+  --color-info-ring:      rgba(125,211,252,0.30);
 
-  /* Typography */
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* ── Semantic — emerald / rose / amber, cooler than green/red ────── */
+  /* PUT side = green / CALL side = red is preserved but emeralded. */
+  --color-sw-green:       #34d399;   /* emerald-400 */
+  --color-sw-green-dim:   rgba(52,211,153,0.10);
+  --color-sw-red:         #fb7185;   /* rose-400 */
+  --color-sw-red-dim:     rgba(251,113,133,0.10);
+  --color-sw-yellow:      #fcd34d;   /* amber-300 — GEX flip */
+  --color-sw-yellow-dim:  rgba(252,211,77,0.10);
+  --color-sw-purple:      #a78bfa;
+  --color-sw-purple-dim:  rgba(167,139,250,0.10);
+
+  /* ── Text — slate, not gray ──────────────────────────────────────── */
+  --color-text-primary:   #f1f5f9;   /* slate-100 */
+  --color-text-body:      #cbd5e1;   /* slate-300 */
+  --color-text-secondary: #94a3b8;   /* slate-400 */
+  --color-text-tertiary:  #64748b;   /* slate-500 */
+  --color-text-muted:     #475569;   /* slate-600 */
+  --color-text-placeholder: #334155; /* slate-700 — chart axis */
+
+  /* ── Typography ──────────────────────────────────────────────────── */
+  --font-ui:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 
-  /* Shadows — Builder uses NO outer shadows (relies on bg contrast).
-     Tokens kept for non-Builder surfaces (modals, dropdowns). */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  /* ── Shadows + glows ─────────────────────────────────────────────── */
+  --shadow-sm:    0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:    0 4px 6px rgba(0,0,0,0.4);
+  --shadow-lg:    0 10px 30px -10px rgba(2,6,23,0.6);
+  --shadow-glow:  0 0 0 2px rgba(34,211,238,0.25);
   --shadow-panel: none;
 
-  /* Radius — 8px default, 6px on small chips, 9999px only on pills */
+  /* Inner ring + top highlight — apply on every glass card */
+  --ring-glass:   inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04);
+  --ring-glass-strong: inset 0 0 0 1px rgba(125,211,252,0.14), inset 0 1px 0 rgba(255,255,255,0.06);
+
+  /* ── Radius ──────────────────────────────────────────────────────── */
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
 
-  /* Animations */
-  --animate-shimmer: sw-shimmer 1.2s ease-in-out infinite;
+  /* ── Animations ──────────────────────────────────────────────────── */
+  --animate-shimmer:   sw-shimmer 1.2s ease-in-out infinite;
   --animate-spin-fast: sw-spin 0.8s linear infinite;
-  --animate-fade-in: sw-fadeIn 0.2s ease;
+  --animate-fade-in:   sw-fadeIn 0.2s ease;
   --animate-pulse-dot: sw-pulse 1.8s ease-in-out infinite;
-  --animate-slide-in: sw-slideIn 0.2s ease;
+  --animate-slide-in:  sw-slideIn 0.2s ease;
 }
 
-/* ── Base Styles ── */
+/* ── Base ─────────────────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -98,21 +115,32 @@ html, body, #root {
 
 body {
   font-family: var(--font-ui);
-  background: var(--color-bg-base);
   color: var(--color-text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+
+  /* AURORA wash — cyan top-left, violet top-right, deep navy base.
+     background-attachment: fixed keeps the gradient locked to the
+     viewport so long pages don't reveal new aurora on scroll. */
+  background:
+    radial-gradient(120% 200% at 0% -20%, rgba(34,211,238,0.20) 0%, transparent 45%),
+    radial-gradient(120% 180% at 100% -10%, rgba(167,139,250,0.18) 0%, transparent 50%),
+    linear-gradient(180deg, #0a1726 0%, #061322 100%);
+  background-attachment: fixed;
 }
 
-/* ── Scrollbar — flat, subtle, no gradients ── */
+/* ── Scrollbar — icy thin track ──────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #1f2937; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: #374151; }
+::-webkit-scrollbar-thumb {
+  background: rgba(125,211,252,0.18);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(125,211,252,0.28); }
 
-/* ── Form Inputs ── */
+/* ── Form inputs ─────────────────────────────────────────────────── */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -123,7 +151,7 @@ input[type="range"] {
 }
 input[type="range"]::-webkit-slider-runnable-track {
   height: 3px;
-  background: #1a1f2e;
+  background: rgba(125,211,252,0.10);
   border-radius: 9999px;
 }
 input[type="range"]::-webkit-slider-thumb {
@@ -135,15 +163,15 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 50%;
   cursor: pointer;
   margin-top: -5.5px;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 3px rgba(34,211,238,0.18);
   transition: box-shadow 0.15s ease;
 }
 input[type="range"]::-webkit-slider-thumb:hover {
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 4px rgba(34,211,238,0.28);
 }
 input[type="range"]::-moz-range-track {
   height: 3px;
-  background: #1a1f2e;
+  background: rgba(125,211,252,0.10);
   border-radius: 9999px;
 }
 input[type="range"]::-moz-range-thumb {
@@ -153,7 +181,7 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
   cursor: pointer;
   border: none;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 3px rgba(34,211,238,0.18);
 }
 
 input[type="number"]::-webkit-inner-spin-button,
@@ -167,208 +195,290 @@ input[type="date"] { color-scheme: dark; }
 
 select { cursor: pointer; }
 
-/* ── Focus styles — subtle 1px accent border + faint halo ── */
 input:focus, select:focus {
   border-color: var(--color-accent) !important;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 2px rgba(34,211,238,0.25);
   outline: none;
 }
 
-/* ── Button effects ── */
+/* ── Button effects ──────────────────────────────────────────────── */
 button {
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
-button:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-button:active:not(:disabled) {
-  transform: translateY(1px);
-}
-button:disabled {
-  cursor: not-allowed;
-}
+button:hover:not(:disabled) { filter: brightness(1.08); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:disabled { cursor: not-allowed; }
 
-/* ── Animations ── */
+/* ── Keyframes ───────────────────────────────────────────────────── */
 @keyframes sw-shimmer {
-  0%   { opacity: 0.2; }
-  50%  { opacity: 0.5; }
-  100% { opacity: 0.2; }
+  0%, 100% { opacity: 0.2; }
+  50%      { opacity: 0.5; }
 }
-
-@keyframes sw-spin {
-  to { transform: rotate(360deg); }
-}
-
+@keyframes sw-spin { to { transform: rotate(360deg); } }
 @keyframes sw-fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes sw-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.45; }
+  50%      { opacity: 0.45; }
 }
-
 @keyframes sw-slideIn {
   from { opacity: 0; transform: translateX(-6px); }
   to   { opacity: 1; transform: translateX(0); }
 }
 
-/* ── Reusable Component Classes ── */
+/* ── Glass utility — translucent surface + backdrop blur ─────────── */
+.sw-glass {
+  background: var(--color-bg-card);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: var(--ring-glass);
+}
+.sw-glass-deep {
+  background: var(--color-bg-deep);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: var(--ring-glass);
+}
 
+/* ── Cards ───────────────────────────────────────────────────────── */
 .sw-card {
-  @apply bg-bg-card border border-border-subtle rounded-[var(--radius-md)] transition-colors duration-150;
+  background: var(--color-bg-card);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border-radius: var(--radius-md);
+  box-shadow: var(--ring-glass);
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
 }
 .sw-card:hover {
-  @apply border-border-default;
+  background: var(--color-bg-card-hover);
+  box-shadow: var(--ring-glass-strong);
 }
 
+/* ── Buttons ─────────────────────────────────────────────────────── */
 .sw-btn-primary {
-  @apply px-4 py-2.5 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150;
-  background: var(--color-accent);
+  padding: 0.625rem 1rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  background: #0891b2;     /* cyan-600 */
   color: #fff;
 }
-.sw-btn-primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-.sw-btn-primary:disabled {
-  opacity: 0.4;
-}
+.sw-btn-primary:hover:not(:disabled) { background: #0e7490; }  /* cyan-700 */
+.sw-btn-primary:disabled { opacity: 0.4; }
 
 .sw-btn-secondary {
-  @apply px-4 py-2 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150 bg-transparent;
-  border: 1px solid rgba(59, 130, 246, 0.25);
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  background: var(--color-bg-card);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: inset 0 0 0 1px var(--color-border-accent);
   color: var(--color-accent);
 }
 .sw-btn-secondary:hover:not(:disabled) {
-  background: var(--color-accent-dim);
+  background: var(--color-bg-card-hover);
 }
 
 .sw-btn-ghost {
-  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-medium text-sm cursor-pointer transition-colors duration-150 bg-transparent border-none;
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  background: transparent;
+  border: none;
   color: var(--color-text-secondary);
 }
 .sw-btn-ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(125,211,252,0.06);
   color: var(--color-text-primary);
 }
 
 .sw-btn-danger {
-  @apply px-3 py-1.5 rounded-[var(--radius-sm)] font-semibold text-sm cursor-pointer transition-colors duration-150;
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
   background: var(--color-sw-red-dim);
   color: var(--color-sw-red);
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(251,113,133,0.25);
 }
 .sw-btn-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.2);
+  background: rgba(251,113,133,0.18);
 }
 
-.sw-input {
-  @apply w-full rounded-[var(--radius-sm)] text-sm font-medium;
-  padding: 8px 10px;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-hover);
-  color: var(--color-text-primary);
-  font-family: var(--font-mono);
-  outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+.sw-btn-primary-tall {
+  padding: 0 1rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 44px;
+  background: #0891b2;     /* cyan-600 */
+  color: #fff;
+  transition: background-color 0.15s ease;
 }
+.sw-btn-primary-tall:hover:not(:disabled) { background: #0e7490; }
+.sw-btn-primary-tall:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* ── Inputs ──────────────────────────────────────────────────────── */
+.sw-input,
 .sw-select {
-  @apply w-full rounded-[var(--radius-sm)] text-sm font-medium;
+  width: 100%;
   padding: 8px 10px;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-bg-hover);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: var(--color-bg-deep);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
   color: var(--color-text-primary);
   font-family: var(--font-mono);
   outline: none;
-  transition: border-color 0.15s ease;
+  transition: box-shadow 0.15s ease;
+}
+.sw-input:focus,
+.sw-select:focus {
+  box-shadow: inset 0 0 0 1px var(--color-accent), 0 0 0 2px rgba(34,211,238,0.25);
 }
 
+/* ── Labels & misc ───────────────────────────────────────────────── */
 .sw-label {
-  @apply text-[10px] font-semibold uppercase tracking-wider;
-  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
   letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
 }
 
 .sw-toggle-group {
-  @apply flex gap-0.5 rounded-[var(--radius-md)] p-0.5;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: rgba(7,16,28,0.5);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
 }
-
 .sw-toggle-btn {
-  @apply flex-1 py-2 px-2 text-center text-[11px] font-medium cursor-pointer transition-colors duration-150 rounded-[var(--radius-sm)] border-none;
+  flex: 1;
+  padding: 6px 8px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
   background: transparent;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
   font-family: var(--font-ui);
+  transition: background-color 0.15s ease, color 0.15s ease;
 }
 .sw-toggle-btn.active {
   background: var(--color-accent);
-  color: #fff;
+  color: #0a1726;
   font-weight: 600;
 }
 
 .sw-badge {
-  @apply text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 9999px;
 }
 
 .sw-section-divider {
-  @apply flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider mt-1 mb-1.5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
   letter-spacing: 0.08em;
+  margin: 4px 0 6px;
 }
 .sw-section-divider .line {
-  @apply flex-1 h-px;
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
 }
 
-/* Number values always mono */
 .sw-mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-/* P&L colors */
 .sw-pnl-positive { color: var(--color-sw-green); }
 .sw-pnl-negative { color: var(--color-sw-red); }
 
-/* ── Sidebar — flat sections with subtle separators (per brand book:
-   "Borders extremely subtle — 1px solid rgba(255,255,255,0.04) or
-   completely absent." No card wrappers in Builder sidebar.) ── */
+/* ── Sidebar (Builder) ──────────────────────────────────────────── */
 .sw-sidebar-section {
-  @apply pb-3.5;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--color-divider-row);
 }
-.sw-sidebar-section:last-child {
-  border-bottom: none;
-}
+.sw-sidebar-section:last-child { border-bottom: none; }
 
-/* Strategy chips — 2-column grid, bigger surface area (~64px tall)
-   per mockup ui_kits/builder/index.html */
-.sw-strategy-grid {
-  @apply grid grid-cols-2 gap-1.5;
-}
+/* Strategy chips */
+.sw-strategy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .sw-strategy-btn {
-  @apply flex items-center justify-center text-center text-[13px] font-semibold cursor-pointer rounded-[var(--radius-md)] border-none px-2 transition-colors duration-150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  border: none;
+  padding: 0 8px;
   min-height: 56px;
   background: var(--color-bg-card);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--ring-glass);
   color: var(--color-text-secondary);
   font-family: var(--font-ui);
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 .sw-strategy-btn:hover:not(.active) {
-  background: var(--color-bg-hover);
+  background: var(--color-bg-card-hover);
   color: var(--color-text-primary);
 }
 .sw-strategy-btn.active {
   background: var(--color-accent);
-  color: #fff;
+  color: #0a1726;
+  box-shadow: 0 8px 32px -16px rgba(34,211,238,0.6), inset 0 1px 0 rgba(255,255,255,0.15);
 }
 
-/* Stat-strip cards — used in Positions header + GEX Profile metrics
-   row. Flat surface, generous padding, big mono value. */
+/* Stat-strip cards (Positions / GEX summary) */
 .sw-stat-card {
-  @apply px-3.5 py-3 rounded-[var(--radius-md)] flex flex-col gap-1;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   background: var(--color-bg-card);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  box-shadow: var(--ring-glass);
 }
 .sw-stat-value {
   font-family: var(--font-mono);
@@ -384,78 +494,81 @@ button:disabled {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
   color: var(--color-text-tertiary);
-  letter-spacing: 0;
 }
 
-/* Chart header row — used for "Intraday 5m · Price + Net Gamma" + view tabs */
+/* Chart header strip */
 .sw-chart-header {
-  @apply flex items-center gap-3 px-4 py-2.5 border-b border-white/5 font-[var(--font-ui)] text-[13px] flex-wrap;
-  background: var(--color-bg-base);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  flex-wrap: wrap;
+  background: transparent;
 }
 
-/* Strike badges for Positions cards — LP / SP / SC / LC */
+/* Strike badges */
 .sw-strike-badge {
-  @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-[11px] font-bold uppercase tracking-wider;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   font-family: var(--font-ui);
   border: 1px solid transparent;
 }
-.sw-strike-badge--put-long {
-  background: var(--color-sw-green-dim);
-  border-color: rgba(34, 197, 94, 0.25);
-  color: var(--color-sw-green);
-}
-.sw-strike-badge--put-short {
-  background: var(--color-sw-red-dim);
-  border-color: rgba(239, 68, 68, 0.25);
-  color: var(--color-sw-red);
-}
-.sw-strike-badge--call-short {
-  background: var(--color-sw-red-dim);
-  border-color: rgba(239, 68, 68, 0.25);
-  color: var(--color-sw-red);
-}
+.sw-strike-badge--put-long,
 .sw-strike-badge--call-long {
   background: var(--color-sw-green-dim);
-  border-color: rgba(34, 197, 94, 0.25);
+  border-color: rgba(52,211,153,0.30);
   color: var(--color-sw-green);
+}
+.sw-strike-badge--put-short,
+.sw-strike-badge--call-short {
+  background: var(--color-sw-red-dim);
+  border-color: rgba(251,113,133,0.30);
+  color: var(--color-sw-red);
 }
 .sw-strike-badge .strike-value {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
   font-weight: 700;
-  letter-spacing: 0;
   text-transform: none;
 }
 
-/* Empty position slot — prominent placeholder */
+/* Empty position slot */
 .sw-empty-card {
-  @apply rounded-[var(--radius-md)] grid place-items-center text-center text-[11px] font-semibold uppercase tracking-wider;
-  background: rgba(255, 255, 255, 0.015);
-  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(125,211,252,0.025);
+  border: 1px dashed rgba(125,211,252,0.16);
   color: var(--color-text-muted);
   min-height: 200px;
   padding: 16px;
 }
 
-/* Inline chart legend (line-style swatches + labels) */
 .sw-chart-legend {
-  @apply flex items-center gap-4 flex-wrap text-[11px] text-text-tertiary px-4 py-2 border-t border-white/5;
-  background: var(--color-bg-base);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  padding: 8px 16px;
+  border-top: 1px solid var(--color-border-subtle);
+  background: transparent;
   font-family: var(--font-ui);
-}
-
-/* Calculate primary button — 44px per brand book */
-.sw-btn-primary-tall {
-  @apply px-4 rounded-[var(--radius-md)] font-semibold text-sm cursor-pointer transition-colors duration-150 flex items-center justify-center gap-2;
-  height: 44px;
-  background: var(--color-accent);
-  color: #fff;
-}
-.sw-btn-primary-tall:hover:not(:disabled) {
-  background: var(--color-accent-hover);
-}
-.sw-btn-primary-tall:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
