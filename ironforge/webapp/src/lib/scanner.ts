@@ -1437,15 +1437,29 @@ async function monitorSinglePosition(
                     console.warn(
                       `[scanner] BROKER_GONE_BLOCKED: ${pid} — refusing entry_credit_fallback close. ` +
                       `Tradier order ${userPending.order_id} status=${tradierOrderStatus ?? 'unknown'}. ` +
-                      `Position kept OPEN; reconcile via fix-zero-pnl-trades or recover-today-trade.`,
+                      `Transitioning status='broker_gone_blocked'; reconcile via recover-today-trade.`,
                     )
+                    // Transition status from 'open' so the row stops contributing to
+                    // collateral / unrealized / open-position queries. Row is preserved
+                    // (no close_time / realized_pnl) for operator reconciliation. Before
+                    // this, the safety gate kept status='open' and the dashboard showed
+                    // phantom unrealized for hours after a manual Tradier close (5/18:
+                    // SPARK-20260518-D7178B-prod-logan stranded 14:25-19:47 CT).
+                    try {
+                      await dbExecute(
+                        `UPDATE ${botTable(bot.name, 'positions')}
+                         SET status = 'broker_gone_blocked', updated_at = NOW()
+                         WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+                        [pid, bot.dte],
+                      )
+                    } catch { /* best-effort — log path below still fires */ }
                     try {
                       await query(
                         `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
                          VALUES ($1, $2, $3, $4)`,
                         [
                           'BROKER_GONE_BLOCKED',
-                          `BROKER GONE BLOCKED (entry_credit_fallback refused): ${pid} — Tradier order ${userPending.order_id} status=${tradierOrderStatus ?? 'unknown'}. Position kept OPEN.`,
+                          `BROKER GONE BLOCKED (entry_credit_fallback refused): ${pid} — Tradier order ${userPending.order_id} status=${tradierOrderStatus ?? 'unknown'}. Status=broker_gone_blocked.`,
                           JSON.stringify({
                             event: 'broker_gone_blocked',
                             position_id: pid,
@@ -1455,12 +1469,14 @@ async function monitorSinglePosition(
                             limit_price_hint: limitPriceHint,
                             entry_credit: entryCredit,
                             contracts,
-                            note: 'Disabled 2026-04-29: closing at entry credit / $0 P&L silently misrepresents real outcome. Use fix-zero-pnl-trades / recover-today-trade to reconcile manually.',
+                            new_status: 'broker_gone_blocked',
+                            note: 'Status transitioned 2026-05-19 so dashboard no longer shows phantom open position. Use recover-today-trade to reconcile.',
                           }),
                           bot.dte,
                         ],
                       )
                     } catch { /* best-effort */ }
+                    _mtmFailureCounts.delete(pid)
                     return { status: `monitoring:broker_gone_blocked_no_fill_data`, unrealizedPnl: 0 }
                   }
 
@@ -1683,6 +1699,23 @@ async function monitorSinglePosition(
     _mtmFailureCounts.set(pid, failCount)
 
     if (failCount >= MAX_CONSECUTIVE_MTM_FAILURES) {
+      // Sandbox positions must NOT auto-close on data_feed_failure.
+      // getIcMarkToMarket reads the public option-chain quote API (not per-account),
+      // so a transient Tradier quote outage fails MTM for every position sharing
+      // those strikes in lockstep. On 5/18 a user-initiated manual close of a
+      // production IC in Tradier coincided with ~3 min of MTM nulls and force-closed
+      // a 167-contract paper IC for $835 — the paper bot would have netted ~$3K at
+      // EOD. Paper has no real-money risk; keep monitoring until quotes recover.
+      const accountType = pos.account_type || 'sandbox'
+      if (accountType === 'sandbox') {
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()} ${pid}: ${failCount} consecutive MTM failures on SANDBOX — ` +
+          `refusing data_feed_failure auto-close, keeping open until quotes recover.`,
+        )
+        // Reset so this branch doesn't fire every 20-60s; reaccrues if failures persist.
+        _mtmFailureCounts.set(pid, 0)
+        return { status: `monitoring:mtm_failed_sandbox(${failCount}/${MAX_CONSECUTIVE_MTM_FAILURES})`, unrealizedPnl: 0 }
+      }
       console.error(
         `[scanner] ${bot.name.toUpperCase()} ${pid}: ${failCount} consecutive MTM failures — ` +
         `force-closing at entry credit $${entryCredit.toFixed(4)}`,
@@ -3870,15 +3903,28 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           console.warn(
             `[scanner] BROKER_RECONCILE_BLOCKED: ${pid} — refusing to auto-close. ` +
             `recovery=${recoverySource} order_id=${orderId ?? 'null'} ` +
-            `would-have-set close=$${proposedPrice.toFixed(4)}. Manual review required.`,
+            `would-have-set close=$${proposedPrice.toFixed(4)}. Status=broker_gone_blocked.`,
           )
+          // Transition status from 'open' so the row stops contributing to
+          // collateral / unrealized / open-position queries. Without this, the gate
+          // fires every reconcile cycle (every ~5 min) for the rest of the day —
+          // 90+ identical log entries on 5/18 while the dashboard still showed the
+          // position open. Row preserved for recover-today-trade reconciliation.
+          try {
+            await dbExecute(
+              `UPDATE ${posTable}
+               SET status = 'broker_gone_blocked', updated_at = NOW()
+               WHERE position_id = $1 AND status = 'open' AND dte_mode = $2`,
+              [pid, bot.dte],
+            )
+          } catch { /* best-effort — log path below still fires */ }
           try {
             await query(
               `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
                VALUES ($1, $2, $3, $4, $5)`,
               [
                 'BROKER_RECONCILE_BLOCKED',
-                `BROKER RECONCILE BLOCKED (unsafe recovery): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource}. Position kept OPEN.`,
+                `BROKER RECONCILE BLOCKED (unsafe recovery): ${pid} — ${person} ${contracts}x IC, recovery=${recoverySource}. Status=broker_gone_blocked.`,
                 JSON.stringify({
                   position_id: pid,
                   person,
@@ -3893,7 +3939,8 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
                   limit_price_hint: limitPriceHint,
                   broker_put_leg: occPs,
                   broker_call_leg: occCs,
-                  note: 'Disabled 2026-04-29: only `tradier_fill` with spark-owned order_id, or `pending_limit`, may auto-close via this path.',
+                  new_status: 'broker_gone_blocked',
+                  note: 'Status transitioned 2026-05-19 so dashboard no longer shows phantom open position. Use recover-today-trade to reconcile.',
                 }),
                 bot.dte,
                 person,
