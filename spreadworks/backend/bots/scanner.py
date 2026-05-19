@@ -21,9 +21,10 @@ from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm,
 )
-from .monitor import decide_exit, pt_pct_for_time_of_day
+from .monitor import decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
+from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
 
@@ -107,6 +108,14 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             return None, None
         sig = build_iron_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
         return sig, chain
+    if strategy == "iron_condor":
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
+        return sig, chain
     front = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
     back = chain_provider.get_chain(ticker=ticker, dte=back_dte, today=today)
     if front is None or back is None:
@@ -161,6 +170,11 @@ def run_scan_cycle(
                 if pos["strategy"] == "iron_butterfly":
                     # Re-derive PT target each scan using the time-of-day ladder.
                     new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
+                    pt_target = new_pt_pct * float(pos["max_profit"])
+                elif pos["strategy"] == "iron_condor":
+                    # FLOW uses the SPARK-style DECREASING ladder — take less
+                    # profit as expiration approaches to dodge late-day gamma.
+                    new_pt_pct = pt_pct_for_iron_condor_tod(now_ct.timetz().replace(tzinfo=None))
                     pt_target = new_pt_pct * float(pos["max_profit"])
 
                 front_exp_str = legs[0]["expiration"]  # legs share front expiration order for IBF; for DC/DD the short legs are first

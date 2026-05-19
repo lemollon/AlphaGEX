@@ -358,6 +358,22 @@ def get_position_payoff(bot: str, position_id: str):
             {"short": short_call["expiration"], "long": long_call["expiration"]},
             r, sigma, entry_cost, n,
         )
+    elif strategy == "iron_condor":
+        short_call = _leg("short", "call")
+        short_put = _leg("short", "put")
+        long_call = _leg("long", "call")
+        long_put = _leg("long", "put")
+        sp = float(short_put["strike"])
+        sc = float(short_call["strike"])
+        lp = float(long_put["strike"])
+        lc = float(long_call["strike"])
+        S = (sp + sc) / 2
+        profile = _scan_pnl_profile(
+            "iron_condor", S,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"exp": short_call["expiration"]},
+            r, sigma, entry_cost, n,
+        )
     else:
         raise HTTPException(400, f"Unsupported strategy for payoff: {strategy}")
 

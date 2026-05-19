@@ -5,12 +5,14 @@ export const BOT_REGISTRY = {
   breeze: { display: 'BREEZE', strategy: 'iron_butterfly',  ticker: 'SPY', version: 'v1.4' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
+  flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
   iron_butterfly:   'Iron Butterfly',
   double_calendar:  'Double Calendar',
   double_diagonal:  'Double Diagonal',
+  iron_condor:      'Iron Condor',
 };
 
 // Per-bot theme palette mirrored from the SpreadWorks Design System
@@ -40,5 +42,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(167,139,250,0.30)',
     glow:        'rgba(167,139,250,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(167,139,250,0.22) 0%, rgba(167,139,250,0.03) 100%)',
+  },
+  flow: {
+    glyph:       'river',                      // FLOW = current/river — distinct from breeze/tide/drift glyphs
+    primary:     '#38bdf8',                    // sky-400
+    primarySoft: 'rgba(56,189,248,0.10)',
+    primaryRing: 'rgba(56,189,248,0.30)',
+    glow:        'rgba(56,189,248,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
   },
 };
