@@ -741,8 +741,20 @@ async def gex_suggest(
     request: Request,
     symbol: str = "SPY",
     strategy: str = "double_diagonal",
+    dte: int | None = None,
+    back_dte: int | None = None,
 ):
-    """Auto-generate strike suggestions from GEX levels."""
+    """Auto-generate strike suggestions from GEX levels.
+
+    When `dte` is omitted, the endpoint falls back to its historical default
+    (next Friday for non-credit strategies; today / next weekday for credit
+    strategies). When `dte` is provided, expirations are computed from it so
+    the DTE picker in the Builder actually affects what's returned.
+
+    For double_diagonal / double_calendar, `back_dte` controls the back-leg
+    expiration. If omitted it defaults to `dte + 7`, matching the existing
+    Manual-mode DTE picker behavior.
+    """
     gex = await get_gex(request, symbol)
     if "error" in gex:
         raise HTTPException(502, gex["error"])
@@ -781,25 +793,37 @@ async def gex_suggest(
         return round(v * 2) / 2
 
     today = _today_ct()
-    days_until_friday = (4 - today.weekday()) % 7
-    if days_until_friday == 0:
-        days_until_friday = 7
-    front_exp = (today + timedelta(days=days_until_friday)).isoformat()
-    back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
 
-    # Credit strategies (IC, Iron Butterfly) always suggest 0DTE as the
-    # nearest trading day so users can explore them anytime (weekends use
-    # next Monday).  Non-credit strategies keep the next-Friday pattern.
+    def _next_weekday(d):
+        """Snap a date forward to the next weekday (Mon-Fri)."""
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        return d
+
     credit_strategies = {"iron_condor", "iron_butterfly"}
     is_credit = strategy in credit_strategies
-    if is_credit:
-        # Find nearest weekday (today if Mon-Fri, else next Monday)
-        dte_date = today
-        while dte_date.weekday() >= 5:  # Sat=5, Sun=6
-            dte_date += timedelta(days=1)
-        credit_exp = dte_date.isoformat()
-    else:
+
+    if dte is not None and dte >= 0:
+        # User-supplied DTE — anchor expirations to it. Snap to next weekday
+        # so weekend-clicking doesn't suggest a non-trading expiration.
+        front_target = _next_weekday(today + timedelta(days=dte))
+        back_days = back_dte if back_dte is not None and back_dte >= 0 else dte + 7
+        back_target = _next_weekday(today + timedelta(days=back_days))
+        front_exp = front_target.isoformat()
+        back_exp = back_target.isoformat()
         credit_exp = front_exp
+    else:
+        # Historical default — next Friday for non-credit; today/next-weekday
+        # for credit. Preserves the pre-DTE-param behavior for old callers.
+        days_until_friday = (4 - today.weekday()) % 7
+        if days_until_friday == 0:
+            days_until_friday = 7
+        front_exp = (today + timedelta(days=days_until_friday)).isoformat()
+        back_exp = (today + timedelta(days=days_until_friday + 7)).isoformat()
+        if is_credit:
+            credit_exp = _next_weekday(today).isoformat()
+        else:
+            credit_exp = front_exp
 
     wing_offset = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
 

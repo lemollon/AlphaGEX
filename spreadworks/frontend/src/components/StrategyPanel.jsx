@@ -201,6 +201,10 @@ export default function StrategyPanel({
   const [inputMode, setInputMode] = useState(INPUT_MODES.MANUAL);
   const [legs, setLegs] = useState(DEFAULT_LEGS[STRATEGY_TYPES.DOUBLE_DIAGONAL]);
   const [contracts, setContracts] = useState(1);
+  // Most-recently-clicked DTE quick button. Drives the gex-suggest URL so
+  // changing the picker actually changes the suggested strikes/expirations.
+  // `null` = use the backend default (next Friday).
+  const [selectedDte, setSelectedDte] = useState(null);
   const [expirations, setExpirations] = useState([]);
   const [expirationsWithDte, setExpirationsWithDte] = useState([]);
   const [chainStrikes, setChainStrikes] = useState([]);
@@ -463,9 +467,9 @@ export default function StrategyPanel({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${API_URL}/api/spreadworks/gex-suggest?symbol=${symbol}&strategy=${strategy}`
-      );
+      const params = new URLSearchParams({ symbol, strategy });
+      if (selectedDte != null) params.set('dte', String(selectedDte));
+      const res = await fetch(`${API_URL}/api/spreadworks/gex-suggest?${params}`);
       if (!res.ok) throw new Error('Failed to fetch GEX suggestion');
       const data = await res.json();
       setGexSuggestion(data);
@@ -514,7 +518,7 @@ export default function StrategyPanel({
     } finally {
       setLoading(false);
     }
-  }, [symbol, strategy]);
+  }, [symbol, strategy, selectedDte]);
 
   useEffect(() => {
     if (inputMode === INPUT_MODES.GEX_SUGGEST) {
@@ -527,6 +531,16 @@ export default function StrategyPanel({
   };
 
   const handleDteSelect = (dte) => {
+    // Always remember the pick so GEX Suggest can pass it to the backend
+    // and refetch — without this the suggestion stays anchored to "next
+    // Friday" no matter which DTE button the user presses.
+    setSelectedDte(dte);
+
+    // In Live Chain + GEX Suggest modes we'd be overwriting the API-driven
+    // legs.expiration, so let the fetch loop populate dates instead. In
+    // Manual mode we set them directly here for the immediate UI feedback.
+    if (inputMode !== INPUT_MODES.MANUAL) return;
+
     const expDate = dteToDate(dte);
     if (strategy === STRATEGY_TYPES.DOUBLE_DIAGONAL) {
       const longDate = dteToDate(dte + 7);
