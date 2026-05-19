@@ -89,6 +89,21 @@ const BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retrie
 const _sandboxCleanupVerified: Record<string, boolean> = { flame: false, spark: false, inferno: false }
 const _sandboxCleanupVerifiedDate: Record<string, string> = { flame: '', spark: '', inferno: '' }
 
+// Production placement race guard (added 2026-05-19 after the 5/18 double-fill).
+// The safeRunAllScans watchdog at MAX_SCAN_DURATION_MS clears _running but does
+// not cancel the in-flight Promise. A zombie scan can keep running in the
+// background while a new scan starts. Both can pass the spark_positions
+// gate query before either commits its INSERT (production rows go in AFTER the
+// Tradier fill returns). On 5/18 cycle #7 placed prod at T+6:45 and cycle #8
+// placed prod at T+8:06 — both saw 0 prod rows at their respective gate checks.
+//
+// Fix: atomic check-and-set on this map just before placeIcOrderAllAccounts.
+// JavaScript's single-threaded event loop makes the synchronous read+write
+// naturally atomic against concurrent ticks (no await between them). The
+// window matches the watchdog limit so zombies past that age are ignored.
+const _lastProductionPlacedAt: Record<string, number> = {}
+const PRODUCTION_PLACE_WINDOW_MS = 5 * 60 * 1000  // 5 min — matches MAX_SCAN_DURATION_MS
+
 const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
@@ -2836,6 +2851,20 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'
       }
+      // Pre-place race guard — see _lastProductionPlacedAt comment near top of file.
+      // Atomic synchronous check-and-set; no await between read and write so a
+      // concurrent (zombie) scan tick cannot pass this point if we're about to.
+      const nowMs = Date.now()
+      const lastMs = _lastProductionPlacedAt[bot.name] ?? 0
+      if (nowMs - lastMs < PRODUCTION_PLACE_WINDOW_MS) {
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()}: PRODUCTION RACE GUARD (prod-only path) — ` +
+          `last placement was ${((nowMs - lastMs) / 1000).toFixed(1)}s ago, refusing duplicate.`,
+        )
+        return 'skip:production_race_guard'
+      }
+      _lastProductionPlacedAt[bot.name] = nowMs
+      let didClaimProdSlot = true
       // Place production-only order
       try {
         sandboxOrderIds = await placeIcOrderAllAccounts(
@@ -2847,7 +2876,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
         console.warn(`[scanner] ${bot.name.toUpperCase()} production-only order failed: ${msg}`)
+        // Roll back the slot claim — placement failed, no real order placed.
+        if (didClaimProdSlot) delete _lastProductionPlacedAt[bot.name]
         return `skip:production_only_order_failed(${msg})`
+      }
+      // Release the claim if Tradier returned no production fills (silent reject).
+      // The DB row covers future gate checks when production DID fill.
+      if (didClaimProdSlot) {
+        const hadProdFill = Object.values(sandboxOrderIds).some(
+          (info) => info.account_type === 'production',
+        )
+        if (!hadProdFill) delete _lastProductionPlacedAt[bot.name]
       }
 
       // Record production positions (same logic as normal path below).
@@ -3055,6 +3094,29 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       }
     }
 
+    // ── Pre-place race guard ──
+    // See _lastProductionPlacedAt comment near top of file. Even when the gate
+    // query at the start of this function returned 0 prod rows, a zombie scan
+    // tick (the watchdog only resets _running, doesn't cancel) may have called
+    // placeIcOrderAllAccounts seconds ago — its INSERT happens AFTER Tradier
+    // fills, so the gate query can't see it. Atomic synchronous check-and-set
+    // closes the window. Only applies when we'd be placing a production order.
+    let didClaimProdSlot = false
+    if (!prodAlreadyTradedToday) {
+      const nowMs = Date.now()
+      const lastMs = _lastProductionPlacedAt[bot.name] ?? 0
+      if (nowMs - lastMs < PRODUCTION_PLACE_WINDOW_MS) {
+        prodAlreadyTradedToday = true
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()}: PRODUCTION RACE GUARD — ` +
+          `last placement was ${((nowMs - lastMs) / 1000).toFixed(1)}s ago, switching to sandboxOnly.`,
+        )
+      } else {
+        _lastProductionPlacedAt[bot.name] = nowMs
+        didClaimProdSlot = true
+      }
+    }
+
     // ── Place Tradier orders (sandbox + conditionally production) ──
     try {
       sandboxOrderIds = await placeIcOrderAllAccounts(
@@ -3065,6 +3127,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
+      // Roll back the slot claim — placement threw, no order in flight.
+      if (didClaimProdSlot) delete _lastProductionPlacedAt[bot.name]
       console.warn(`[scanner] ${bot.name.toUpperCase()} order placement failed: ${msg}`)
       // Log the rejected signal
       await query(
@@ -3083,6 +3147,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       )
       _consecutiveRejects[bot.name]++
       return `skip:production_order_failed(${msg})`
+    }
+
+    // Release the race-guard slot if Tradier returned no production fills
+    // (silent reject / not eligible). The DB row written below covers the
+    // gate for future ticks when production DID fill.
+    if (didClaimProdSlot) {
+      const hadProdFill = Object.values(sandboxOrderIds).some(
+        (info) => info.account_type === 'production',
+      )
+      if (!hadProdFill) delete _lastProductionPlacedAt[bot.name]
     }
 
     // ── PRODUCTION FILLS: Process INDEPENDENTLY of sandbox ──
