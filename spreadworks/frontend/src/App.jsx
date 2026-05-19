@@ -436,13 +436,8 @@ function NavBar() {
               try { localStorage.setItem(ACTIVE_BOT_KEY, id); } catch { /* ignore */ }
               setStoredBotId(id);
               setMenuOpen(false);
-              // Only navigate when the user is already viewing a bot dashboard.
-              // From Builder / Positions / GEX we just re-theme — switching to
-              // another page would be an unwelcome surprise.
-              if (urlBotId && urlBotId !== id) {
+              if (id !== urlBotId) {
                 navigate(`/bots/${id}`);
-              } else if (!urlBotId) {
-                // Stay on the current non-bot route; chip updates via state.
               }
             }}
           />
