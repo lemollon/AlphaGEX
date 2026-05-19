@@ -197,7 +197,7 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
 
 /* ── KPI Grid (4×2) ─────────────────────────────────────────────── */
 
-function KpiGrid({ status, perf, theme }) {
+function KpiGrid({ bot, status, perf, theme }) {
   const equity = status && typeof status.equity === 'number' ? status.equity : null;
   const startingCapital = status?.starting_capital ?? null;
 
@@ -229,11 +229,7 @@ function KpiGrid({ status, perf, theme }) {
       <KpiTile
         label="Account Equity"
         value={equity != null ? money(equity, { decimals: 2 }) : '…'}
-        sub={
-          startingCapital != null
-            ? `Allocated · ${money(startingCapital, { decimals: 0 })}`
-            : undefined
-        }
+        sub={`Allocated · ${bot.toUpperCase()}`}
       />
       <KpiTile
         label="Today P&L"
@@ -578,7 +574,7 @@ function EquityChart({ bot, theme, data }) {
 
 /* ── Activity Tabs (themed) ─────────────────────────────────────── */
 
-function ActivityTabs({ bot, theme, openCount, tradeCount }) {
+function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }) {
   const [tab, setTab] = useState('positions');
 
   const tabs = [
@@ -632,7 +628,7 @@ function ActivityTabs({ bot, theme, openCount, tradeCount }) {
 
       {/* Tab content */}
       <div className="min-h-[280px]">
-        {tab === 'positions' && <PositionsTab bot={bot} />}
+        {tab === 'positions' && <PositionsTab bot={bot} lastScanAt={lastScanAt} enabled={enabled} />}
         {tab === 'history'   && <TradesTab    bot={bot} />}
         {tab === 'logs'      && <LogsTab      bot={bot} />}
         {tab === 'config'    && <ConfigTab    bot={bot} />}
@@ -723,7 +719,7 @@ export default function BotDashboard() {
       />
 
       <div className="px-8 py-6 space-y-5">
-        <KpiGrid status={status} perf={perf} theme={theme} />
+        <KpiGrid bot={bot} status={status} perf={perf} theme={theme} />
 
         <EquityCurveCard
           bot={bot}
@@ -738,6 +734,8 @@ export default function BotDashboard() {
           theme={theme}
           openCount={openCount}
           tradeCount={tradeCount}
+          lastScanAt={status?.last_scan_at}
+          enabled={enabled}
         />
       </div>
     </div>

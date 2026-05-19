@@ -3,27 +3,19 @@ import { useBotPositions } from '../../hooks/useBotPositions';
 import { botApi } from '../../lib/botApi';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
 
-function LegBadges({ legs }) {
-  if (!legs || legs.length === 0) return <span className="text-text-muted text-[11px]">—</span>;
-  return (
-    <div className="flex flex-wrap gap-1">
-      {legs.map((l, i) => {
-        const side = (l.side || '').toLowerCase();
-        const type = (l.type || '').toLowerCase();
-        const isCall = type.startsWith('c');
-        const isShort = side.startsWith('s') || side === '-1' || side === 'short';
-        const variant = isCall
-          ? (isShort ? 'sw-strike-badge--call-short' : 'sw-strike-badge--call-long')
-          : (isShort ? 'sw-strike-badge--put-short'  : 'sw-strike-badge--put-long');
-        const label = `${isShort ? 'S' : 'L'}${isCall ? 'C' : 'P'}`;
-        return (
-          <span key={i} className={`sw-strike-badge ${variant}`}>
-            {label} <span className="strike-value">{l.strike}</span>
-          </span>
-        );
-      })}
-    </div>
-  );
+// Format a legs array the way the design handoff wants it:
+//   "+P 580 / −P 585 / −C 600 / +C 605"
+function formatLegs(legs) {
+  if (!legs || legs.length === 0) return '—';
+  return legs.map(l => {
+    const side = (l.side || '').toLowerCase();
+    const type = (l.type || '').toLowerCase();
+    const isCall = type.startsWith('c');
+    const isShort = side.startsWith('s') || side === '-1' || side === 'short';
+    const sign = isShort ? '−' : '+';
+    const letter = isCall ? 'C' : 'P';
+    return `${sign}${letter} ${l.strike}`;
+  }).join(' / ');
 }
 
 function formatOpened(ts) {
@@ -44,7 +36,17 @@ function formatOpened(ts) {
   }
 }
 
-export default function PositionsTab({ bot }) {
+function relativeTime(ts) {
+  if (!ts) return 'just now';
+  const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  if (diff < 0) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
+export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
   const { positions } = useBotPositions(bot, 5000);
   const theme = BOT_THEME[bot];
   const meta = BOT_REGISTRY[bot];
@@ -55,6 +57,10 @@ export default function PositionsTab({ bot }) {
   }
 
   if (positions.length === 0) {
+    const scanLabel = enabled
+      ? `Scanning · ${relativeTime(lastScanAt)}`
+      : 'Scanner paused';
+    const dotClass = enabled ? 'bg-sw-green animate-pulse' : 'bg-text-tertiary';
     return (
       <div className="px-5 py-16 flex flex-col items-center text-center">
         <div
@@ -73,8 +79,8 @@ export default function PositionsTab({ bot }) {
         </div>
         <div className="flex items-center gap-2 mt-5 text-[11px] text-text-tertiary">
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-sw-green animate-pulse" />
-            Scanning
+            <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
+            {scanLabel}
           </span>
         </div>
       </div>
@@ -89,10 +95,12 @@ export default function PositionsTab({ bot }) {
         const entry = Number(p.entry_price) || 0;
         const current = p.mtm_value != null ? Number(p.mtm_value) : null;
         const contracts = Number(p.contracts) || 1;
-        // P&L as percent of the structure's notional (entry × contracts × 100).
         const pnlPct = pnl != null && entry && contracts
           ? pnl / (Math.abs(entry) * contracts * 100)
           : null;
+        const legs = typeof p.legs === 'string'
+          ? (() => { try { return JSON.parse(p.legs); } catch { return []; } })()
+          : (p.legs || []);
 
         return (
           <div
@@ -112,8 +120,10 @@ export default function PositionsTab({ bot }) {
                     {contracts}×
                   </span>
                 </div>
-                <LegBadges legs={p.legs} />
-                <div className="sw-mono text-[10.5px] text-text-muted mt-2">
+                <div className="sw-mono text-[12.5px] text-text-secondary">
+                  {formatLegs(legs)}
+                </div>
+                <div className="sw-mono text-[10.5px] text-text-muted mt-1">
                   Opened {formatOpened(p.entry_time)}
                 </div>
               </div>
