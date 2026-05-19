@@ -1,7 +1,9 @@
-import { Inbox } from 'lucide-react';
+import { useState } from 'react';
+import { Inbox, BarChart3, X } from 'lucide-react';
 import { useBotPositions } from '../../hooks/useBotPositions';
 import { botApi } from '../../lib/botApi';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
+import BotPayoffChart from './BotPayoffChart';
 
 // Format a legs array the way the design handoff wants it:
 //   "+P 580 / −P 585 / −C 600 / +C 605"
@@ -50,6 +52,15 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
   const { positions } = useBotPositions(bot, 5000);
   const theme = BOT_THEME[bot];
   const meta = BOT_REGISTRY[bot];
+  const [openCharts, setOpenCharts] = useState(() => new Set());
+
+  function toggleChart(pid) {
+    setOpenCharts(prev => {
+      const next = new Set(prev);
+      if (next.has(pid)) next.delete(pid); else next.add(pid);
+      return next;
+    });
+  }
 
   async function onClose(pid) {
     if (!confirm('Force-close this position?')) return;
@@ -174,7 +185,17 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
                   ${Number(p.pt_target_pnl).toFixed(0)} / ${Number(p.sl_target_pnl).toFixed(0)}
                 </div>
               </div>
-              <div className="text-right">
+              <div className="text-right flex gap-1.5 justify-end">
+                <button
+                  onClick={() => toggleChart(p.position_id)}
+                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors inline-flex items-center gap-1"
+                  style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+                  title="Toggle payoff chart"
+                >
+                  {openCharts.has(p.position_id)
+                    ? <><X size={10} /> Chart</>
+                    : <><BarChart3 size={10} /> Chart</>}
+                </button>
                 <button
                   onClick={() => onClose(p.position_id)}
                   className="px-2.5 py-1 rounded-md text-[11px] font-semibold sw-glass text-text-body hover:text-text-primary transition-colors"
@@ -184,6 +205,17 @@ export default function PositionsTab({ bot, lastScanAt, enabled = true }) {
                 </button>
               </div>
             </div>
+
+            {openCharts.has(p.position_id) && (
+              <div className="mt-3 pt-3 border-t border-border-subtle">
+                <BotPayoffChart
+                  bot={bot}
+                  positionId={p.position_id}
+                  contracts={contracts}
+                  height={190}
+                />
+              </div>
+            )}
           </div>
         );
       })}

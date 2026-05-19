@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
@@ -11,8 +11,9 @@ import LegBreakdown from './components/LegBreakdown';
 import MetricsBar from './components/MetricsBar';
 import Legend from './components/Legend';
 import PositionsPage from './pages/PositionsPage';
-import GexProfilePage from './pages/GexProfilePage';
-import BotDashboard from './pages/BotDashboard';
+// Lazy-load heavy chart pages so Plotly + Recharts don't drag the main bundle.
+const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
+const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
@@ -474,13 +475,19 @@ export default function App() {
       <div className="flex flex-col h-screen w-full overflow-hidden">
         <NavBar />
         <BotCardsRowGate />
-        <Routes>
-          <Route path="/" element={<BuilderPage />} />
-          <Route path="/positions" element={<PositionsPage />} />
-          <Route path="/gex-profile" element={<GexProfilePage />} />
-          <Route path="/bots" element={<Navigate to="/bots/breeze" replace />} />
-          <Route path="/bots/:bot" element={<BotDashboard />} />
-        </Routes>
+        <Suspense fallback={
+          <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
+            Loading…
+          </div>
+        }>
+          <Routes>
+            <Route path="/" element={<BuilderPage />} />
+            <Route path="/positions" element={<PositionsPage />} />
+            <Route path="/gex-profile" element={<GexProfilePage />} />
+            <Route path="/bots" element={<Navigate to="/bots/breeze" replace />} />
+            <Route path="/bots/:bot" element={<BotDashboard />} />
+          </Routes>
+        </Suspense>
       </div>
     </BrowserRouter>
   );
