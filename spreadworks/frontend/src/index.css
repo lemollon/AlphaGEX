@@ -223,6 +223,13 @@ button:disabled { cursor: not-allowed; }
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.45; }
 }
+/* Public name used by the TopBar's inline animation:'pulse 2s infinite'.
+   Mirrors sw-pulse but with the literal keyframe name the design spec asks
+   for so inline style declarations work without a Tailwind utility. */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
 @keyframes sw-slideIn {
   from { opacity: 0; transform: translateX(-6px); }
   to   { opacity: 1; transform: translateX(0); }

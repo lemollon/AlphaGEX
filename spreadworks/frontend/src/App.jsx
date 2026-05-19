@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Navigate, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown } from 'lucide-react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -15,10 +15,6 @@ import PositionsPage from './pages/PositionsPage';
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 
-const CARD_CHROME = {
-  background: 'rgba(7,16,28,0.55)',
-  boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
-};
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
 import useCalculate from './hooks/useCalculate';
@@ -31,51 +27,45 @@ const CHART_HEIGHT = 500;
 
 // ── Market chip ─────────────────────────────────────────────────────
 // Single glass capsule: "HH:MM ET | • Market open / After hours".
-// ── Center clock — lives in an absolutely-centered pill inside the header.
-// Matches the side cards' chrome (translucent + inset ring) so it reads as
-// the third card in the row. NEVER uses red — emerald when market is open,
-// amber when after-hours.
-function CenterClock() {
-  const { isOpen, statusText } = useMarketHours();
-  const [time, setTime] = useState(() => formatEt());
+// ── Clock — ET time + ●Market open|After hours. Inline styles only (per
+// the design spec — every padding / gap / border-radius value matters).
+function Clock() {
+  const { isOpen } = useMarketHours();
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const iv = setInterval(() => setTime(formatEt()), 30_000);
-    return () => clearInterval(iv);
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
   }, []);
-
-  const dotColor = isOpen ? '#34d399' : '#fcd34d';
-  const label = isOpen ? 'Market open' : (statusText || 'After hours');
-  const labelColor = isOpen ? '#34d399' : '#fcd34d';
-
-  return (
-    <>
-      <span className="font-mono font-semibold text-[12.5px]" style={{ color: '#e2e8f0' }}>
-        {time.hhmm}
-      </span>
-      <span className="font-mono text-[10px] uppercase tracking-wider" style={{ color: '#64748b' }}>
-        ET
-      </span>
-      <span className="w-px h-3.5" style={{ background: 'rgba(255,255,255,0.10)' }} />
-      <span className="inline-flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.12em] font-semibold" style={{ color: labelColor }}>
-        <span
-          className={`w-1.5 h-1.5 rounded-full ${isOpen ? 'animate-pulse-dot' : ''}`}
-          style={{ background: dotColor }}
-        />
-        {label}
-      </span>
-    </>
-  );
-}
-
-function formatEt() {
-  const now = new Date();
-  const hhmm = now.toLocaleTimeString('en-US', {
+  const fmt = now.toLocaleTimeString('en-US', {
     timeZone: 'America/New_York',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   });
-  return { hhmm };
+  return (
+    <>
+      <span style={{ fontFamily: 'JetBrains Mono', fontSize: 12.5, fontWeight: 600, color: '#e2e8f0' }}>
+        {fmt}
+      </span>
+      <span style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+        ET
+      </span>
+      <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.10)' }} />
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        fontSize: 10.5, fontWeight: 600,
+        textTransform: 'uppercase', letterSpacing: '0.12em',
+        color: isOpen ? '#34d399' : '#fcd34d',
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: 9999,
+          background: isOpen ? '#34d399' : '#fcd34d',
+          animation: isOpen ? 'pulse 2s infinite' : 'none',
+        }} />
+        {isOpen ? 'Market open' : 'After hours'}
+      </span>
+    </>
+  );
 }
 
 // ── useBotStatusMap — polls /api/spreadworks/bots every 15s and returns a
@@ -105,251 +95,317 @@ function useBotStatusMap() {
   return statusMap;
 }
 
-// ── Bot dropdown — the RIGHT card. Chip shows the active bot tinted to its
-// theme. Clicking opens a 260px menu below with all bots, their status dot,
-// and today's P&L. Navigates via react-router (the existing route pattern);
-// no URL-hash routing — the page tree is already wired to /bots/:bot.
-function BotDropdown() {
+// ── RouteBtn — inline-styled nav button per spec. Active state is derived
+// from the current URL via react-router so the URL stays source of truth.
+function RouteBtn({ icon, label, to, end = false }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [hover, setHover] = useState(false);
+  const active = end
+    ? location.pathname === to
+    : location.pathname === to || location.pathname.startsWith(to + '/');
+  return (
+    <button
+      onClick={() => navigate(to)}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        paddingLeft: 12,
+        paddingRight: 12,
+        paddingTop: 6,
+        paddingBottom: 6,
+        borderRadius: 6,
+        fontSize: 13,
+        fontWeight: 500,
+        color: active ? '#fff' : hover ? '#fff' : '#94a3b8',
+        background: active ? 'rgba(255,255,255,0.06)' : hover ? 'rgba(255,255,255,0.03)' : 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        transition: 'all 150ms',
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+// ── BotMenu — 260px dropdown panel with all bots + status + today P&L.
+function BotMenu({ activeBotId, onSelect }) {
   const statusMap = useBotStatusMap();
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef(null);
+  const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
+  return (
+    <div
+      style={{
+        position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+        width: 260, padding: 6, borderRadius: 12, zIndex: 50,
+        background: 'rgba(13,28,46,0.92)',
+        backdropFilter: 'blur(16px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(16px) saturate(140%)',
+        boxShadow:
+          'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
+      }}
+    >
+      {bots.map(b => {
+        const t = BOT_THEME[b.id];
+        const active = b.id === activeBotId;
+        const status = statusMap[b.id] || {};
+        const enabled = !!status.enabled;
+        const pnl = typeof status.today_pnl === 'number' ? status.today_pnl : 0;
+        return (
+          <button
+            key={b.id}
+            onClick={() => onSelect(b.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              width: '100%', padding: '8px 10px', borderRadius: 8,
+              background: active ? t.primarySoft : 'transparent',
+              boxShadow: active ? `inset 0 0 0 1px ${t.primaryRing}` : 'none',
+              border: 'none', cursor: 'pointer', textAlign: 'left',
+              transition: 'background-color 150ms',
+            }}
+            onMouseEnter={(e) => {
+              if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
+            }}
+            onMouseLeave={(e) => {
+              if (!active) e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <div style={{
+              width: 28, height: 28, borderRadius: 6,
+              display: 'grid', placeItems: 'center',
+              background: `${t.primary}1f`, color: t.primary, flexShrink: 0,
+            }}>
+              <BotGlyph kind={t.glyph} size={14} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: active ? t.primary : '#e2e8f0' }}>
+                {capitalize(b.display)}
+              </div>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                {STRATEGY_LABEL[b.strategy] || b.strategy}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: 9999,
+                background: enabled ? '#34d399' : '#475569',
+              }} />
+              <span style={{
+                fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 600,
+                color: pnl > 0 ? '#34d399' : pnl < 0 ? '#fb7185' : '#64748b',
+              }}>
+                {pnl === 0 ? '—' : (pnl > 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(0)}
+              </span>
+            </div>
+          </button>
+        );
+      })}
+      <div style={{
+        marginTop: 6, paddingTop: 6,
+        borderTop: '1px solid rgba(125,211,252,0.08)',
+      }}>
+        <button
+          disabled
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            width: '100%', padding: '6px 10px', borderRadius: 8,
+            background: 'transparent', border: 'none', cursor: 'not-allowed',
+            fontSize: 12.5, fontWeight: 500, color: '#94a3b8',
+            textAlign: 'left', opacity: 0.6,
+          }}
+          title="Coming soon"
+        >
+          <Plus size={12} /> New bot
+        </button>
+      </div>
+    </div>
+  );
+}
 
+function capitalize(s) {
+  return s.charAt(0) + s.slice(1).toLowerCase();
+}
+
+// ── TopBar (exported as NavBar to keep the existing import name in App).
+// 3-card layout per the design spec. LEFT card holds brand + divider +
+// inline-styled RouteBtns. CENTER pill is absolute, mathematically centered.
+// RIGHT card wraps a themed dropdown chip that opens BotMenu below.
+function NavBar() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const match = location.pathname.match(/^\/bots\/([^/]+)/);
-  const activeBotId = match ? match[1] : null;
-
-  // If not on a /bots/* route, fall back to the first bot in the registry so
-  // the chip still shows something meaningful.
   const firstBotId = Object.keys(BOT_REGISTRY)[0];
-  const chipBotId = activeBotId || firstBotId;
-  const chipBot = BOT_REGISTRY[chipBotId];
-  const chipTheme = BOT_THEME[chipBotId];
+  const activeBotId = match ? match[1] : firstBotId;
+  const activeBot = BOT_REGISTRY[activeBotId];
+  const theme = BOT_THEME[activeBotId];
 
-  // Close menu on outside click or Esc.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
   useEffect(() => {
-    if (!open) return;
-    const onClick = (e) => {
-      if (containerRef.current && !containerRef.current.contains(e.target)) {
-        setOpen(false);
-      }
-    };
-    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onClick);
+    function onDoc(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    function onKey(e) { if (e.key === 'Escape') setMenuOpen(false); }
+    document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, []);
 
-  const onPick = (id) => {
-    navigate(`/bots/${id}`);
-    setOpen(false);
-  };
-
-  const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors"
-        style={{
-          background: chipTheme.primarySoft,
-          boxShadow: `inset 0 0 0 1px ${chipTheme.primaryRing}`,
-        }}
-      >
-        <div
-          className="w-6 h-6 rounded-md grid place-items-center flex-shrink-0"
-          style={{ background: `${chipTheme.primary}1f`, color: chipTheme.primary }}
-        >
-          <BotGlyph kind={chipTheme.glyph} size={13} />
-        </div>
-        <span className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#64748b' }}>
-          Bot
-        </span>
-        <span className="text-[13px] font-bold" style={{ color: chipTheme.primary }}>
-          {chipBot.display}
-        </span>
-        <ChevronDown size={12} style={{ color: chipTheme.primary, opacity: 0.6 }} />
-      </button>
-
-      {open && (
-        <div
-          className="absolute right-0 mt-2 p-1.5 z-50"
-          style={{
-            width: 260,
-            background: 'rgba(13,28,46,0.92)',
-            backdropFilter: 'blur(16px) saturate(140%)',
-            WebkitBackdropFilter: 'blur(16px) saturate(140%)',
-            borderRadius: 12,
-            boxShadow:
-              'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
-          }}
-        >
-          {bots.map(b => {
-            const theme = BOT_THEME[b.id];
-            const active = activeBotId === b.id;
-            const status = statusMap[b.id] || {};
-            const enabled = !!status.enabled;
-            const todayPnl = typeof status.today_pnl === 'number' ? status.today_pnl : null;
-
-            return (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => onPick(b.id)}
-                className="flex items-center gap-3 w-full px-2.5 py-2 rounded-lg transition-colors text-left"
-                style={
-                  active
-                    ? {
-                        background: theme.primarySoft,
-                        boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
-                      }
-                    : undefined
-                }
-                onMouseEnter={(e) => {
-                  if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)';
-                }}
-                onMouseLeave={(e) => {
-                  if (!active) e.currentTarget.style.background = '';
-                }}
-              >
-                <div
-                  className="w-7 h-7 rounded-md grid place-items-center flex-shrink-0"
-                  style={{ background: `${theme.primary}1f`, color: theme.primary }}
-                >
-                  <BotGlyph kind={theme.glyph} size={14} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div
-                    className="text-[13px] font-bold"
-                    style={{ color: active ? theme.primary : '#e2e8f0' }}
-                  >
-                    {b.display}
-                  </div>
-                  <div className="sw-mono text-[10px]" style={{ color: '#64748b' }}>
-                    {STRATEGY_LABEL[b.strategy] || b.strategy}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full"
-                    style={{ background: enabled ? '#34d399' : '#475569' }}
-                  />
-                  <span
-                    className="sw-mono text-[11px] font-semibold"
-                    style={{
-                      color:
-                        todayPnl == null || todayPnl === 0 ? '#64748b' :
-                        todayPnl > 0 ? '#34d399' : '#fb7185',
-                    }}
-                  >
-                    {todayPnl == null || todayPnl === 0
-                      ? '—'
-                      : `${todayPnl > 0 ? '+' : '−'}$${Math.abs(todayPnl).toFixed(2)}`}
-                  </span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function NavTabLink({ to, end, Icon, label }) {
-  return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        `flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium transition-colors duration-150 no-underline rounded-md ${
-          isActive
-            ? 'text-text-primary'
-            : 'text-text-secondary hover:text-text-primary'
-        }`
-      }
-      style={({ isActive }) =>
-        isActive ? { background: 'rgba(255,255,255,0.06)' } : undefined
-      }
-    >
-      <Icon size={13} />
-      {label}
-    </NavLink>
-  );
-}
-
-// ── Brand block (left card head). Tile + wordmark, untouched palette.
-function Brand() {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div
-        className="inline-flex items-center justify-center w-9 h-9 rounded-xl text-base text-white font-black"
-        style={{
-          background: 'linear-gradient(135deg, rgba(125,211,252,0.4), rgba(45,212,191,0.2))',
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 0 0 1px rgba(255,255,255,0.10)',
-        }}
-      >
-        S
-      </div>
-      <span className="font-extrabold text-[19px] text-text-primary tracking-tight">
-        Spread<span style={{ color: '#22d3ee' }}>Works</span>
-      </span>
-    </div>
-  );
-}
-
-// ── NavBar — 3-card layout: LEFT card (brand + nav), CENTER pill (market
-// clock, absolute positioned so it stays mathematically centered), RIGHT
-// card (bot dropdown). All three share the same chrome: rgba(7,16,28,0.55)
-// background with an inset cyan ring + subtle top highlight.
-function NavBar() {
   return (
     <header
-      className="relative px-7 py-3 flex items-center justify-between gap-4 font-[var(--font-ui)] text-[13px]"
+      className="relative flex items-center justify-between"
       style={{
+        paddingLeft: 28,
+        paddingRight: 28,
+        paddingTop: 12,
+        paddingBottom: 12,
         backdropFilter: 'blur(20px) saturate(140%)',
         WebkitBackdropFilter: 'blur(20px) saturate(140%)',
         borderBottom: '1px solid rgba(125,211,252,0.10)',
       }}
     >
-      {/* LEFT CARD — brand + primary routes */}
+      {/* ═══════════ LEFT CARD ═══════════ */}
       <div
-        className="flex items-center gap-1 px-2 py-1.5 rounded-xl"
-        style={CARD_CHROME}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          paddingLeft: 8,
+          paddingRight: 8,
+          paddingTop: 6,
+          paddingBottom: 6,
+          borderRadius: 12,
+          background: 'rgba(7,16,28,0.55)',
+          boxShadow:
+            'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
+        }}
       >
-        <div className="px-3"><Brand /></div>
-        <span className="w-px h-7 mx-2" style={{ background: 'rgba(125,211,252,0.10)' }} />
-        <nav className="flex items-center gap-0.5">
-          <NavTabLink to="/"            end Icon={Layers}    label="Builder" />
-          <NavTabLink to="/positions"       Icon={BarChart3} label="Positions" />
-          <NavTabLink to="/gex-profile"     Icon={Activity}  label="GEX" />
-          <NavTabLink to="/bots/breeze"     Icon={Cpu}       label="Bots" />
+        {/* Brand */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12, paddingRight: 12 }}>
+          <div
+            style={{
+              width: 36, height: 36, borderRadius: 12,
+              display: 'grid', placeItems: 'center',
+              fontWeight: 900, color: '#fff', fontSize: 16,
+              background: 'linear-gradient(135deg, rgba(125,211,252,0.4), rgba(45,212,191,0.2))',
+              boxShadow:
+                'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 0 0 1px rgba(255,255,255,0.10)',
+            }}
+          >
+            S
+          </div>
+          <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em', color: '#fff' }}>
+            Spread<span style={{ color: '#22d3ee' }}>Works</span>
+          </span>
+        </div>
+
+        {/* Divider between brand and nav */}
+        <span
+          style={{
+            width: 1, height: 28, marginLeft: 8, marginRight: 8,
+            background: 'rgba(125,211,252,0.10)',
+          }}
+        />
+
+        {/* Routes */}
+        <nav style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          <RouteBtn to="/"            end icon={<Layers size={14} />}    label="Builder" />
+          <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
+          <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
+          <RouteBtn to={`/bots/${firstBotId}`} icon={<Cpu size={14} />}  label="Bots" />
         </nav>
       </div>
 
-      {/* CENTER — market clock, absolute-positioned dead-center */}
+      {/* ═══════════ CENTER · CLOCK ═══════════ */}
       <div
-        className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2 rounded-full"
         style={{
-          ...CARD_CHROME,
+          position: 'absolute',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          paddingLeft: 16,
+          paddingRight: 16,
+          paddingTop: 8,
+          paddingBottom: 8,
+          borderRadius: 9999,
+          background: 'rgba(7,16,28,0.55)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
+          boxShadow:
+            'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
         }}
       >
-        <CenterClock />
+        <Clock />
       </div>
 
-      {/* RIGHT CARD — bot dropdown */}
+      {/* ═══════════ RIGHT CARD · BOT DROPDOWN ═══════════ */}
       <div
-        className="flex items-center px-3 py-2 rounded-xl"
-        style={CARD_CHROME}
+        ref={menuRef}
+        style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
       >
-        <BotDropdown />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            paddingLeft: 12,
+            paddingRight: 12,
+            paddingTop: 8,
+            paddingBottom: 8,
+            borderRadius: 12,
+            background: 'rgba(7,16,28,0.55)',
+            boxShadow:
+              'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
+          }}
+        >
+          <button
+            onClick={() => setMenuOpen(v => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              paddingLeft: 12, paddingRight: 12,
+              paddingTop: 8, paddingBottom: 8,
+              borderRadius: 8,
+              background: theme.primarySoft,
+              boxShadow: `inset 0 0 0 1px ${theme.primaryRing}`,
+              cursor: 'pointer',
+              border: 'none',
+              transition: 'background-color 150ms',
+            }}
+          >
+            <div
+              style={{
+                width: 24, height: 24, borderRadius: 6,
+                display: 'grid', placeItems: 'center',
+                background: `${theme.primary}1f`,
+                color: theme.primary,
+              }}
+            >
+              <BotGlyph kind={theme.glyph} size={13} />
+            </div>
+            <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Bot
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: theme.primary }}>
+              {capitalize(activeBot.display)}
+            </span>
+            <ChevronDown size={12} style={{ color: theme.primary, opacity: 0.6 }} />
+          </button>
+        </div>
+
+        {menuOpen && (
+          <BotMenu
+            activeBotId={activeBotId}
+            onSelect={(id) => { navigate(`/bots/${id}`); setMenuOpen(false); }}
+          />
+        )}
       </div>
     </header>
   );
