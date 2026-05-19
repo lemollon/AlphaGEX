@@ -36,10 +36,13 @@ def test_legs_use_same_strikes_different_expirations(fake_chain_1dte, fake_chain
 
 
 def test_skips_when_back_iv_not_higher(fake_chain_1dte, fake_chain_14dte):
+    # Module default is now permissive (-10vp) so the bot can trade in
+    # backwardation. Verify the gate still rejects flat IV when a bot
+    # explicitly opts in to strict contango via min_vega_edge.
     flat = {**fake_chain_14dte, "iv_atm": 0.16}  # equal to front
     sig = build_double_calendar_signal(
         front_chain=fake_chain_1dte, back_chain=flat,
-        config=_cfg(), equity=10000.0,
+        config=_cfg(min_vega_edge=0.3), equity=10000.0,
     )
     assert sig is None
 

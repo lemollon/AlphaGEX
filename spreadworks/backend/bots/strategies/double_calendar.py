@@ -11,11 +11,19 @@ from typing import Any
 MIN_DEBIT = 0.20
 MAX_DEBIT = 6.0   # raised from 5.0: realistic 14DTE-vs-1DTE on $500 SPY yields ~5.40
 MAX_VIX = 30.0
-# Required back-vs-front IV edge in vol points (0.01 = 1 vp).
-# 1.0 was too strict on flat-IV days (every cycle rejected); 0.3 still
-# requires the term structure to be in contango (back richer than front)
-# without demanding a steep slope.
-MIN_VEGA_EDGE = 0.3
+# Required back-vs-front IV edge in vol points (0.01 = 1 vp). Positive
+# values demand contango (back richer than front); negative values allow
+# trades in backwardation.
+#
+# Historical levels:
+#   1.0 — original strict gate (rejected ~every flat-IV day on SPY).
+#   0.3 — relaxed gate (still requires positive contango).
+#  -10  — demo / paper-only: lets the bots trade in any realistic regime
+#         including current backwardation. Trades will be edge-negative
+#         when the front month is richer than the back; that's the cost
+#         of "always trade" mode. Raise back to 0.3 (or higher) for
+#         production-style regime gating.
+MIN_VEGA_EDGE = -10.0
 
 
 @dataclass
@@ -83,10 +91,11 @@ def build_double_calendar_signal(
     front_iv = float(front_chain.get("iv_atm", 0))
     back_iv = float(back_chain.get("iv_atm", 0))
     edge_vp = (back_iv - front_iv) * 100.0
-    if edge_vp < MIN_VEGA_EDGE:
+    min_edge = float(config.get("min_vega_edge", MIN_VEGA_EDGE))
+    if edge_vp < min_edge:
         return _reject(
             f"vega_edge_below_min: front_iv={front_iv:.4f} back_iv={back_iv:.4f} "
-            f"edge={edge_vp:.2f}vp min={MIN_VEGA_EDGE}vp"
+            f"edge={edge_vp:.2f}vp min={min_edge}vp"
         )
 
     implied_move = float(front_chain.get("atm_straddle_mid", 0))

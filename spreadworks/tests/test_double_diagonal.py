@@ -39,9 +39,11 @@ def test_delta_skew_shifts_back_strikes(fake_chain_1dte, fake_chain_14dte):
 
 
 def test_skips_when_back_iv_not_higher(fake_chain_1dte, fake_chain_14dte):
+    # Module default is now permissive (-10vp); test the strict-contango
+    # path explicitly by overriding min_vega_edge in config.
     flat = {**fake_chain_14dte, "iv_atm": 0.16}
     sig = build_double_diagonal_signal(
         front_chain=fake_chain_1dte, back_chain=flat,
-        config=_cfg(), equity=10000.0,
+        config=_cfg(min_vega_edge=0.3), equity=10000.0,
     )
     assert sig is None

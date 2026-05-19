@@ -69,10 +69,11 @@ def build_double_diagonal_signal(
     front_iv = float(front_chain.get("iv_atm", 0))
     back_iv = float(back_chain.get("iv_atm", 0))
     edge_vp = (back_iv - front_iv) * 100.0
-    if edge_vp < MIN_VEGA_EDGE:
+    min_edge = float(config.get("min_vega_edge", MIN_VEGA_EDGE))
+    if edge_vp < min_edge:
         return _reject(
             f"vega_edge_below_min: front_iv={front_iv:.4f} back_iv={back_iv:.4f} "
-            f"edge={edge_vp:.2f}vp min={MIN_VEGA_EDGE}vp"
+            f"edge={edge_vp:.2f}vp min={min_edge}vp"
         )
 
     implied_move = float(front_chain.get("atm_straddle_mid", 0))
