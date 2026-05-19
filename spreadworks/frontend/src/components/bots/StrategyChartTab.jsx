@@ -400,23 +400,40 @@ function ChartCard({ d, theme, botId }) {
       }
     }
 
-    // Split samples by sign so we can fill profit and loss as separate runs.
-    const profitFillPath = (() => {
-      const pts = samples.filter(s => s.pnl >= 0);
-      if (pts.length < 2) return null;
-      const head = `M${overlayLeft.toFixed(1)},${pts[0].y.toFixed(1)}`;
-      const body = pts.map(p => ` L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
-      const tail = ` L${overlayLeft.toFixed(1)},${pts[pts.length - 1].y.toFixed(1)} Z`;
-      return head + body + tail;
-    })();
-    const lossFillPath = (() => {
-      const pts = samples.filter(s => s.pnl < 0);
-      if (pts.length < 2) return null;
-      const head = `M${overlayRight.toFixed(1)},${pts[0].y.toFixed(1)}`;
-      const body = pts.map(p => ` L${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
-      const tail = ` L${overlayRight.toFixed(1)},${pts[pts.length - 1].y.toFixed(1)} Z`;
-      return head + body + tail;
-    })();
+    // Walk samples in price order and split into contiguous same-sign runs.
+    // Each run becomes a separate fill polygon closed back to the $0 baseline
+    // (xZero) — NOT to the overlay edges. This means the fill shows the
+    // ACTUAL profit/loss pocket between the curve and the zero-P&L axis,
+    // which is what a payoff diagram is meant to communicate.
+    //
+    // IC / butterflies have TWO loss segments (below lower BE and above upper
+    // BE) with a profit run between them — so filtering by sign yields three
+    // distinct runs that must be drawn separately, otherwise SVG draws a
+    // diagonal cheat-line between the bottom and top loss tails.
+    const runs = [];
+    for (const s of samples) {
+      const sign = s.pnl >= 0 ? 1 : -1;
+      if (runs.length === 0 || runs[runs.length - 1].sign !== sign) {
+        runs.push({ sign, pts: [] });
+      }
+      runs[runs.length - 1].pts.push(s);
+    }
+    const fillPaths = runs
+      .filter(r => r.pts.length >= 2)
+      .map(r => {
+        const first = r.pts[0];
+        const last = r.pts[r.pts.length - 1];
+        const body = r.pts
+          .map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`)
+          .join(' L');
+        // Polygon: follow curve, then close back to xZero at last y, then
+        // up to xZero at first y, then Z closes back to the first curve pt.
+        const path =
+          `M${first.x.toFixed(1)},${first.y.toFixed(1)} L${body} ` +
+          `L${xZero.toFixed(1)},${last.y.toFixed(1)} ` +
+          `L${xZero.toFixed(1)},${first.y.toFixed(1)} Z`;
+        return { sign: r.sign, path };
+      });
     const linePath = samples.length > 1
       ? `M${samples.map(s => `${s.x.toFixed(1)},${s.y.toFixed(1)}`).join(' L')}`
       : '';
@@ -551,7 +568,7 @@ function ChartCard({ d, theme, botId }) {
       yPx, xPnl, yMin, yMax,
       candleRects, volBars,
       strikeLines, yTicks, xAxisLabels,
-      profitFillPath, lossFillPath, linePath,
+      fillPaths, linePath,
       nowMarker, spotInfo, beDots,
       maxProfit, maxLoss: maxLossAbs,
     };
@@ -621,13 +638,25 @@ function ChartCard({ d, theme, botId }) {
       {/* The chart */}
       <svg viewBox={`0 0 ${L.W} ${L.H}`} width="100%" preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
         <defs>
-          <linearGradient id={`pl-pos-${idSuffix}`} x1="1" x2="0" y1="0" y2="0">
-            <stop offset="0%" stopColor="#34d399" stopOpacity="0.05" />
-            <stop offset="100%" stopColor="#34d399" stopOpacity="0.32" />
+          {/* userSpaceOnUse so the gradient orientation is consistent across
+              all fill polygons regardless of each path's bounding box. Light
+              at xZero (the $0 baseline), darker toward the corresponding
+              max-profit / max-loss edge. */}
+          <linearGradient
+            id={`pl-pos-${idSuffix}`}
+            gradientUnits="userSpaceOnUse"
+            x1={L.xZero} y1="0" x2={L.overlayLeft} y2="0"
+          >
+            <stop offset="0%" stopColor="#34d399" stopOpacity="0.10" />
+            <stop offset="100%" stopColor="#34d399" stopOpacity="0.45" />
           </linearGradient>
-          <linearGradient id={`pl-neg-${idSuffix}`} x1="0" x2="1" y1="0" y2="0">
-            <stop offset="0%" stopColor="#fb7185" stopOpacity="0.05" />
-            <stop offset="100%" stopColor="#fb7185" stopOpacity="0.32" />
+          <linearGradient
+            id={`pl-neg-${idSuffix}`}
+            gradientUnits="userSpaceOnUse"
+            x1={L.xZero} y1="0" x2={L.overlayRight} y2="0"
+          >
+            <stop offset="0%" stopColor="#fb7185" stopOpacity="0.10" />
+            <stop offset="100%" stopColor="#fb7185" stopOpacity="0.45" />
           </linearGradient>
           <filter id={`glow-${idSuffix}`} x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="2" result="blur" />
@@ -735,14 +764,17 @@ function ChartCard({ d, theme, botId }) {
           stroke="rgba(125,211,252,0.30)" strokeWidth="1" strokeDasharray="3 5"
         />
 
-        {/* Payoff fills (clipped to overlay band) */}
+        {/* Payoff fills (clipped to overlay band). One polygon per
+            contiguous same-sign run so the two loss tails of an Iron Condor
+            render as separate fills instead of one connecting cheat-line. */}
         <g clipPath={`url(#overlay-clip-${idSuffix})`}>
-          {L.profitFillPath && (
-            <path d={L.profitFillPath} fill={`url(#pl-pos-${idSuffix})`} />
-          )}
-          {L.lossFillPath && (
-            <path d={L.lossFillPath} fill={`url(#pl-neg-${idSuffix})`} />
-          )}
+          {L.fillPaths.map((f, i) => (
+            <path
+              key={i}
+              d={f.path}
+              fill={`url(#${f.sign > 0 ? 'pl-pos' : 'pl-neg'}-${idSuffix})`}
+            />
+          ))}
           {L.linePath && (
             <path
               d={L.linePath}
