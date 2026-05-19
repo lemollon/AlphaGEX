@@ -153,3 +153,65 @@ def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
 def test_position_payoff_404_on_unknown_position(client):
     r = client.get("/api/spreadworks/bots/breeze/positions/does-not-exist/payoff")
     assert r.status_code == 404
+
+
+def test_adjust_updates_pt_and_flips_override(client):
+    from backend import routes_bots
+    pid = "breeze-adj-001"
+    _seed_bot_position(
+        routes_bots.ENGINE, "breeze", pid, "iron_butterfly",
+        [
+            {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
+            {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "call", "strike": 505, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "put",  "strike": 495, "expiration": "2099-01-15"},
+        ],
+        2.0,
+    )
+    r = client.post(
+        f"/api/spreadworks/bots/breeze/positions/{pid}/adjust",
+        json={"pt_target_pnl": 75.0},
+    )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["pt_target_pnl"] == pytest.approx(75.0)
+    assert d["pt_override"] is True
+
+
+def test_adjust_normalizes_sl_to_magnitude(client):
+    from backend import routes_bots
+    pid = "tide-adj-001"
+    _seed_bot_position(
+        routes_bots.ENGINE, "tide", pid, "double_calendar",
+        [
+            {"side": "short", "type": "call", "strike": 505, "expiration": "2099-01-16"},
+            {"side": "short", "type": "put",  "strike": 495, "expiration": "2099-01-16"},
+            {"side": "long",  "type": "call", "strike": 505, "expiration": "2099-01-30"},
+            {"side": "long",  "type": "put",  "strike": 495, "expiration": "2099-01-30"},
+        ],
+        1.5,
+    )
+    # Sending a negative SL is interpreted as a magnitude — decide_exit uses
+    # -abs(sl) internally, so the sign on the wire shouldn't matter.
+    r = client.post(
+        f"/api/spreadworks/bots/tide/positions/{pid}/adjust",
+        json={"sl_target_pnl": -250.0},
+    )
+    assert r.status_code == 200
+    assert r.json()["sl_target_pnl"] == pytest.approx(250.0)
+
+
+def test_adjust_400_when_no_fields(client):
+    r = client.post(
+        "/api/spreadworks/bots/breeze/positions/anything/adjust",
+        json={},
+    )
+    assert r.status_code == 400
+
+
+def test_adjust_404_on_unknown_position(client):
+    r = client.post(
+        "/api/spreadworks/bots/breeze/positions/does-not-exist/adjust",
+        json={"pt_target_pnl": 50.0},
+    )
+    assert r.status_code == 404

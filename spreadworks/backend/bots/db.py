@@ -135,6 +135,33 @@ def _autoincrement_for_dialect(ddl: str, engine: Engine) -> str:
     )
 
 
+def _column_exists(conn, table: str, column: str, engine: Engine) -> bool:
+    """Dialect-portable check for whether `table.column` exists."""
+    if _is_sqlite(engine):
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+        return any(r[1] == column for r in rows)
+    # Postgres
+    row = conn.execute(text(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = :t AND column_name = :c"
+    ), {"t": table, "c": column}).first()
+    return row is not None
+
+
+def _ensure_position_overrides(conn, engine: Engine) -> None:
+    """Idempotent column add for the manual-override flag introduced when
+    the Adjust button shipped (2026-05-19). pt_override = TRUE means the
+    scanner must keep the stored pt_target_pnl as-is instead of recomputing
+    from the time-of-day ladder (relevant for iron_butterfly / iron_condor).
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "positions")
+        if not _column_exists(conn, t, "pt_override", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN pt_override BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -145,6 +172,7 @@ def create_bot_tables(engine: Engine) -> None:
             for short, ddl in _TABLES.items():
                 t = bot_table(bot, short)
                 conn.execute(text(_autoincrement_for_dialect(ddl.format(t=t), engine)))
+        _ensure_position_overrides(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
