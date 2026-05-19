@@ -80,3 +80,76 @@ def test_config_get_and_post(client):
     assert r2.status_code == 200
     r3 = client.get("/api/spreadworks/bots/breeze/config")
     assert float(r3.json()["pt_pct"]) == 0.40
+
+
+def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: list, entry_price: float):
+    """Insert a synthetic OPEN position into {bot}_positions for payoff tests."""
+    import json
+    from datetime import datetime
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {bot}_positions ("
+            "position_id, ticker, strategy, legs, entry_price, contracts, entry_time, "
+            "status, mtm_value, mtm_pnl, mtm_updated_at, pt_target_pnl, sl_target_pnl, "
+            "max_profit, max_loss, account_label"
+            ") VALUES ("
+            ":pid, 'SPY', :st, :legs, :ep, 1, :et, 'OPEN', :mv, 0, :et, "
+            "10, -50, 100, -200, 'paper')"
+        ), {
+            "pid": position_id, "st": strategy, "legs": json.dumps(legs),
+            "ep": entry_price, "et": datetime.now(), "mv": entry_price,
+        })
+
+
+@pytest.mark.parametrize("bot,strategy,legs,entry", [
+    (
+        "breeze", "iron_butterfly",
+        [
+            {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
+            {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "call", "strike": 505, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "put",  "strike": 495, "expiration": "2099-01-15"},
+        ],
+        2.0,  # credit
+    ),
+    (
+        "tide", "double_calendar",
+        [
+            {"side": "short", "type": "call", "strike": 505, "expiration": "2099-01-16"},
+            {"side": "short", "type": "put",  "strike": 495, "expiration": "2099-01-16"},
+            {"side": "long",  "type": "call", "strike": 505, "expiration": "2099-01-30"},
+            {"side": "long",  "type": "put",  "strike": 495, "expiration": "2099-01-30"},
+        ],
+        1.5,  # debit
+    ),
+    (
+        "drift", "double_diagonal",
+        [
+            {"side": "short", "type": "call", "strike": 505, "expiration": "2099-01-16"},
+            {"side": "short", "type": "put",  "strike": 495, "expiration": "2099-01-16"},
+            {"side": "long",  "type": "call", "strike": 506, "expiration": "2099-01-30"},
+            {"side": "long",  "type": "put",  "strike": 494, "expiration": "2099-01-30"},
+        ],
+        2.0,  # debit
+    ),
+])
+def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
+    from backend import routes_bots
+    pid = f"{bot}-test-001"
+    _seed_bot_position(routes_bots.ENGINE, bot, pid, strategy, legs, entry)
+
+    r = client.get(f"/api/spreadworks/bots/{bot}/positions/{pid}/payoff")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["position_id"] == pid
+    assert d["strategy"] == strategy
+    assert isinstance(d["pnl_curve"], list) and len(d["pnl_curve"]) > 0
+    sample = d["pnl_curve"][0]
+    assert "price" in sample and "pnl" in sample
+    assert "breakevens" in d
+
+
+def test_position_payoff_404_on_unknown_position(client):
+    r = client.get("/api/spreadworks/bots/breeze/positions/does-not-exist/payoff")
+    assert r.status_code == 404

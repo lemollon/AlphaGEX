@@ -273,6 +273,115 @@ def post_force_close(bot: str, position_id: str):
     return {"position_id": position_id, "realized_pnl": realized}
 
 
+@router.get("/{bot}/positions/{position_id}/payoff")
+def get_position_payoff(bot: str, position_id: str):
+    """At-expiration (or modeled, for time-dependent strategies) payoff curve
+    for a single bot position. Mirrors /positions/{id}/payoff in routes.py but
+    targets the per-bot table layout (legs stored as JSON in {bot}_positions).
+    """
+    _validate(bot)
+    # Lazy import to avoid a circular dep with routes.py at module load.
+    from .routes import _scan_pnl_profile, RISK_FREE_RATE, CREDIT_STRATEGIES
+
+    t_pos = bot_table(bot, "positions")
+    t_cls = bot_table(bot, "closed_trades")
+    with ENGINE.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT position_id, strategy, legs, entry_price, contracts, "
+            f"max_profit, max_loss, ticker FROM {t_pos} WHERE position_id=:p"
+        ), {"p": position_id}).mappings().first()
+        if row is None:
+            row = conn.execute(text(
+                f"SELECT position_id, strategy, legs, entry_price, contracts, "
+                f"NULL AS max_profit, NULL AS max_loss, ticker FROM {t_cls} "
+                "WHERE position_id=:p"
+            ), {"p": position_id}).mappings().first()
+    if row is None:
+        raise HTTPException(404, f"Position not found: {position_id}")
+
+    legs = json.loads(row["legs"]) if isinstance(row["legs"], str) else row["legs"]
+    strategy = row["strategy"]
+    entry_price = float(row["entry_price"])
+    n = int(row["contracts"])
+
+    # entry_cost convention mirrors routes.position_payoff:
+    # credit strategies → negative; debit strategies → positive.
+    entry_cost = -entry_price if strategy in CREDIT_STRATEGIES else entry_price
+
+    def _leg(side: str, opt_type: str) -> dict | None:
+        for lg in legs:
+            if lg.get("side") == side and lg.get("type") == opt_type:
+                return lg
+        return None
+
+    sigma = 0.20
+    r = RISK_FREE_RATE
+
+    if strategy == "iron_butterfly":
+        lp = float(_leg("long", "put")["strike"])
+        lc = float(_leg("long", "call")["strike"])
+        # body strike — short put and short call share the same strike
+        short_strike = float(_leg("short", "call")["strike"])
+        exp = _leg("short", "call")["expiration"]
+        profile = _scan_pnl_profile(
+            "iron_butterfly", short_strike,
+            {"lp": lp, "short": short_strike, "lc": lc},
+            {"exp": exp},
+            r, sigma, entry_cost, n,
+        )
+    elif strategy == "double_calendar":
+        short_call = _leg("short", "call")
+        short_put = _leg("short", "put")
+        long_call = _leg("long", "call")
+        ps = float(short_put["strike"])
+        cs = float(short_call["strike"])
+        S = (ps + cs) / 2
+        profile = _scan_pnl_profile(
+            "double_calendar", S,
+            {"ps": ps, "cs": cs},
+            {"front": short_call["expiration"], "back": long_call["expiration"]},
+            r, sigma, entry_cost, n,
+        )
+    elif strategy == "double_diagonal":
+        short_call = _leg("short", "call")
+        short_put = _leg("short", "put")
+        long_call = _leg("long", "call")
+        long_put = _leg("long", "put")
+        sp = float(short_put["strike"])
+        sc = float(short_call["strike"])
+        lp = float(long_put["strike"])
+        lc = float(long_call["strike"])
+        S = (sp + sc) / 2
+        profile = _scan_pnl_profile(
+            "double_diagonal", S,
+            {"lp": lp, "sp": sp, "sc": sc, "lc": lc},
+            {"short": short_call["expiration"], "long": long_call["expiration"]},
+            r, sigma, entry_cost, n,
+        )
+    else:
+        raise HTTPException(400, f"Unsupported strategy for payoff: {strategy}")
+
+    # Prefer stored max_profit/max_loss so the chart's headline matches the
+    # card display (per-contract * contracts already baked in at open time).
+    stored_mp = row["max_profit"]
+    stored_ml = row["max_loss"]
+    max_profit = float(stored_mp) if stored_mp is not None else profile["max_profit"]
+    max_loss = float(stored_ml) if stored_ml is not None else profile["max_loss"]
+
+    return {
+        "position_id": position_id,
+        "strategy": strategy,
+        "ticker": row["ticker"],
+        "pnl_curve": profile["pnl_curve"],
+        "max_profit": max_profit,
+        "max_loss": max_loss,
+        "breakevens": {
+            "lower": profile["lower_breakeven"],
+            "upper": profile["upper_breakeven"],
+        },
+    }
+
+
 @router.get("/{bot}/logs")
 @router.get("/{bot}/scan-activity")
 def get_scan_activity(bot: str, limit: int = 200):
