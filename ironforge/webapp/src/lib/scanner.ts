@@ -1429,7 +1429,23 @@ async function monitorSinglePosition(
                     }
                   } catch { /* Tradier order fetch is best-effort — fall through to limit_price */ }
 
-                  if (recoveredPrice == null && limitPriceHint != null && limitPriceHint > 0) {
+                  // pending_limit recovery means "the broker legs are gone and Tradier
+                  // didn't surface a fill price, so assume the close executed near the
+                  // limit we set." That assumption breaks when Tradier explicitly told
+                  // us the order didn't go through (rejected/canceled/expired) — the
+                  // limit price hint is meaningless because the order never filled.
+                  // 5/19 SPARK-20260519-220172: User sandbox close rejected (position
+                  // had contracts=178 but only 9 actually filled at entry), pending_limit
+                  // then wrote a phantom +$3,257 realized at $0.427. Fall through to
+                  // entry_credit_fallback → safety gate → broker_gone_blocked instead.
+                  const TRADIER_STATUS_INVALIDATES_LIMIT_HINT = (s: string | null) =>
+                    s != null && ['rejected', 'canceled', 'expired'].includes(s.toLowerCase())
+                  if (
+                    recoveredPrice == null
+                    && limitPriceHint != null
+                    && limitPriceHint > 0
+                    && !TRADIER_STATUS_INVALIDATES_LIMIT_HINT(tradierOrderStatus)
+                  ) {
                     recoveredPrice = limitPriceHint
                     recoverySource = 'pending_limit'
                   }
@@ -3374,7 +3390,27 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     effectiveCredit = primaryFillFinal.fill_price
-    // effectiveContracts stays as maxContracts (85% of paper BP)
+    // Reconcile contracts to ACTUAL sandbox fills summed across User/Matt/Logan.
+    // Old behavior: effectiveContracts stayed as maxContracts (85% of paper BP)
+    // regardless of how many actually filled. 5/19 SPARK-20260519-220172 wanted
+    // 178 contracts but Tradier sandbox only filled 19 across the 3 accounts
+    // (User=9, Matt=6, Logan=4). DB recorded 178; close path then sent close orders
+    // for 178 per account, Tradier rejected User/Matt (held 9/6), broker-gone
+    // recovery wrote a phantom $3,257 realized at the limit price. Recording what
+    // actually filled keeps the close orders right-sized too.
+    const sandboxFilledContracts = Object.values(sandboxOrderIds)
+      .filter(info => info.account_type === 'sandbox'
+        && info.contracts > 0
+        && info.fill_price != null
+        && info.fill_price > 0)
+      .reduce((sum, info) => sum + info.contracts, 0)
+    if (sandboxFilledContracts > 0 && sandboxFilledContracts < effectiveContracts) {
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} CONTRACT RECONCILE: paper-sized=${effectiveContracts} but ` +
+        `only ${sandboxFilledContracts} actually filled across sandbox accounts. Using actual.`,
+      )
+      effectiveContracts = sandboxFilledContracts
+    }
     effectiveCollateral = Math.max(0, (spreadWidth - effectiveCredit) * 100) * effectiveContracts
     console.log(
       `[scanner] ${bot.name.toUpperCase()} Tradier-fill: ${PRODUCTION_PRIMARY_ACCOUNT} filled ${primaryFillFinal.contracts} contracts @ $${effectiveCredit.toFixed(4)} ` +
@@ -3913,7 +3949,18 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
             }
           } catch { /* Tradier order fetch is best-effort — fall through */ }
         }
-        if (recoveredPrice == null && limitPriceHint != null && limitPriceHint > 0) {
+        // Same pending_limit invalidation as the monitorSinglePosition path
+        // (see comment there). Tradier-rejected/canceled/expired close orders did
+        // not execute, so the limit-price hint must not be promoted to a fake
+        // realized close. Force fall-through to entry_credit_fallback → safety gate.
+        const tradierStatusInvalidatesLimitHint = tradierOrderStatus != null
+          && ['rejected', 'canceled', 'expired'].includes(tradierOrderStatus.toLowerCase())
+        if (
+          recoveredPrice == null
+          && limitPriceHint != null
+          && limitPriceHint > 0
+          && !tradierStatusInvalidatesLimitHint
+        ) {
           recoveredPrice = limitPriceHint
           recoverySource = 'pending_limit'
         }

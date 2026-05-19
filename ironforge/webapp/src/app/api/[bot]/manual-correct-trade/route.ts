@@ -76,8 +76,8 @@ async function buildCorrectionPlan(
     return { error: `position_id ${positionId} not found in ${bot}_positions`, status: 404 }
   }
   const pos = rows[0]
-  if (pos.status !== 'closed' && pos.status !== 'expired') {
-    return { error: `position is ${pos.status}; manual correction is for closed/expired only`, status: 400 }
+  if (pos.status !== 'closed' && pos.status !== 'expired' && pos.status !== 'broker_gone_blocked') {
+    return { error: `position is ${pos.status}; manual correction is for closed/expired/broker_gone_blocked only`, status: 400 }
   }
 
   const contracts = int(pos.contracts)
@@ -216,23 +216,93 @@ export async function POST(
     const positionsTable = botTable(bot, 'positions')
     const dailyPerfTable = botTable(bot, 'daily_perf')
 
-    // Update the position row
-    const positionRows = await dbExecute(
-      `UPDATE ${positionsTable}
-       SET close_price = $1,
-           realized_pnl = $2,
-           close_reason = $3,
-           updated_at = NOW()
-       WHERE position_id = $4 ${dteFilter}`,
-      [result.plan.proposed.close_price, result.plan.proposed.realized_pnl, result.plan.proposed.close_reason, inputs.positionId!],
+    // Update the position row. For broker_gone_blocked rows, also transition
+    // status='closed' and stamp close_time so the position appears in the
+    // ledger and daily_perf recompute below picks it up. Also reverse the
+    // collateral hold on the appropriate paper_account row.
+    const wasBlocked = await dbQuery(
+      `SELECT status, collateral_required, account_type, person
+       FROM ${positionsTable}
+       WHERE position_id = $1 ${dteFilter}`,
+      [inputs.positionId!],
     )
+    const wasBrokerGoneBlocked = wasBlocked[0]?.status === 'broker_gone_blocked'
+
+    const positionRows = wasBrokerGoneBlocked
+      ? await dbExecute(
+          `UPDATE ${positionsTable}
+           SET close_price = $1,
+               realized_pnl = $2,
+               close_reason = $3,
+               status = 'closed',
+               close_time = COALESCE(close_time, NOW()),
+               updated_at = NOW()
+           WHERE position_id = $4 ${dteFilter}`,
+          [result.plan.proposed.close_price, result.plan.proposed.realized_pnl, result.plan.proposed.close_reason, inputs.positionId!],
+        )
+      : await dbExecute(
+          `UPDATE ${positionsTable}
+           SET close_price = $1,
+               realized_pnl = $2,
+               close_reason = $3,
+               updated_at = NOW()
+           WHERE position_id = $4 ${dteFilter}`,
+          [result.plan.proposed.close_price, result.plan.proposed.realized_pnl, result.plan.proposed.close_reason, inputs.positionId!],
+        )
+
+    // Reverse collateral hold + credit realized P&L on paper_account when
+    // transitioning from broker_gone_blocked. Mirrors what closePosition does
+    // on its normal path. Without this the production paper_account stays
+    // pinned at the entry collateral and the ledger never sees the recovered P&L.
+    if (wasBrokerGoneBlocked) {
+      const blockedCollateral = num(wasBlocked[0]?.collateral_required)
+      const blockedAccountType = (wasBlocked[0]?.account_type || 'sandbox') as string
+      const blockedPerson = (wasBlocked[0]?.person as string | null) ?? null
+      const realizedDelta = result.plan.proposed.realized_pnl
+      const paperTable = botTable(bot, 'paper_account')
+      if (blockedAccountType === 'production' && blockedPerson) {
+        await dbExecute(
+          `UPDATE ${paperTable}
+           SET current_balance = current_balance + $1,
+               cumulative_pnl  = cumulative_pnl  + $1,
+               total_trades    = total_trades    + 1,
+               collateral_in_use = GREATEST(0, collateral_in_use - $2),
+               buying_power    = buying_power + $2 + $1,
+               updated_at = NOW()
+           WHERE account_type = 'production' AND person = $3 AND is_active = TRUE
+             ${dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''}`,
+          [realizedDelta, blockedCollateral, blockedPerson],
+        )
+      } else {
+        await dbExecute(
+          `UPDATE ${paperTable}
+           SET current_balance = current_balance + $1,
+               cumulative_pnl  = cumulative_pnl  + $1,
+               total_trades    = total_trades    + 1,
+               collateral_in_use = GREATEST(0, collateral_in_use - $2),
+               buying_power    = buying_power + $2 + $1,
+               updated_at = NOW()
+           WHERE COALESCE(account_type, 'sandbox') = 'sandbox'
+             ${dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''}`,
+          [realizedDelta, blockedCollateral],
+        )
+      }
+    }
 
     // Recompute daily_perf for the affected (date, person, account_type) by
     // summing the now-corrected positions table. If the row doesn't exist
     // yet, ON CONFLICT clause will insert it.
+    // For broker_gone_blocked rows the plan's trade_date_ct was null (no close_time);
+    // fall back to today CT since the UPDATE above just stamped close_time=NOW().
     let dailyPerfRows = 0
-    if (result.plan.trade_date_ct) {
-      const tradeDate = result.plan.trade_date_ct
+    const effectiveTradeDateCt = result.plan.trade_date_ct ?? (wasBrokerGoneBlocked
+      ? (() => {
+          const ct = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+          return `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
+        })()
+      : null)
+    if (effectiveTradeDateCt) {
+      const tradeDate = effectiveTradeDateCt
       const personVal = result.plan.person
       const accountType = result.plan.account_type
       const sumRows = await dbQuery(
@@ -248,17 +318,19 @@ export async function POST(
       )
       const newPositionsClosed = int(sumRows[0]?.positions_closed)
       const newRealizedPnl = num(sumRows[0]?.realized_pnl)
+      // UPSERT — the original code was UPDATE-only with a comment claiming
+      // ON CONFLICT, but there was no ON CONFLICT clause. For broker_gone_blocked
+      // rows transitioning to closed via this endpoint, no daily_perf row may
+      // exist yet for (date, person, account_type), so the UPDATE silently
+      // matched 0 rows and the dashboard never reflected the correction.
       dailyPerfRows = await dbExecute(
-        `UPDATE ${dailyPerfTable}
-         SET realized_pnl = $1,
-             positions_closed = $2,
-             updated_at = NOW()
-         WHERE trade_date = $3
-           AND person ${personVal ? '= $4' : 'IS NULL'}
-           AND COALESCE(account_type, 'sandbox') = $${personVal ? '5' : '4'}`,
-        personVal
-          ? [newRealizedPnl, newPositionsClosed, tradeDate, personVal, accountType]
-          : [newRealizedPnl, newPositionsClosed, tradeDate, accountType],
+        `INSERT INTO ${dailyPerfTable} (trade_date, trades_executed, positions_closed, realized_pnl, person, account_type)
+         VALUES ($1, 0, $2, $3, $4, $5)
+         ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox'))
+         DO UPDATE SET realized_pnl = EXCLUDED.realized_pnl,
+                       positions_closed = EXCLUDED.positions_closed,
+                       updated_at = NOW()`,
+        [tradeDate, newPositionsClosed, newRealizedPnl, personVal, accountType],
       )
     }
 
