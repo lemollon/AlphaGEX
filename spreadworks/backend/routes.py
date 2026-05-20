@@ -412,19 +412,30 @@ async def get_candles(
             "data_as_of": fresh.get("fetched_at"),
         }
 
-    # Tradier's `/markets/timesales` returns intraday bars including today's
-    # in-progress session ONLY when `start` includes a time component. Passing
-    # a date-only string (YYYY-MM-DD) was making Tradier interpret the request
-    # as "historical bars up to end of yesterday", which is why the chart was
-    # frozen on yesterday's last bar. Use "YYYY-MM-DD HH:MM" in ET — same
-    # format ironforge's working Tradier client uses.
+    # Tradier `/markets/timesales` needs `start` AND `end` in
+    # "YYYY-MM-DD HH:MM" ET to include today's in-progress session. Without
+    # `end`, the response stops at yesterday's close. The alphagex production
+    # backend follows this same start+end pattern and gets live intraday data.
     _ET = ZoneInfo("America/New_York")
-    start_dt = datetime.now(_ET) - timedelta(days=14)
+    now_et = datetime.now(_ET)
+    start_dt = now_et - timedelta(days=14)
     start_str = start_dt.strftime("%Y-%m-%d %H:%M")
+    # Pad end slightly past now so the partial bar containing the live tape
+    # comes back too.
+    end_str = (now_et + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M")
 
     candles: list[dict] = []
     last_price = None
     data_as_of = None
+    quote_last = None
+
+    # Always pull a live quote in parallel so the chart's spot marker reflects
+    # the current tape even when timesales is lagging.
+    try:
+        q = await _get_quote(request, symbol)
+        quote_last = q.get("last")
+    except Exception as e:
+        logger.debug(f"[candles] live quote fetch failed for {symbol}: {e}")
 
     try:
         ts_data = await _tradier_get(
@@ -434,6 +445,7 @@ async def get_candles(
                 "symbol": symbol,
                 "interval": "15min",
                 "start": start_str,
+                "end": end_str,
                 "session_filter": "open",
             },
         )
@@ -451,20 +463,16 @@ async def get_candles(
             background_tasks.add_task(
                 _cache_candles, symbol, interval, candles, last_price
             )
-            if last_price:
-                background_tasks.add_task(_cache_quote, symbol, last_price)
     except Exception as e:
         logger.warning(f"[candles] Tradier timesales failed for {symbol}: {e}")
 
-    # Fallback: if timesales returned nothing, try quote then cache
-    if not candles:
-        try:
-            q = await _get_quote(request, symbol)
-            last_price = q.get("last")
-            if last_price:
-                background_tasks.add_task(_cache_quote, symbol, last_price)
-        except Exception as e:
-            logger.warning(f"[candles] Quote fallback failed for {symbol}: {e}")
+    # Prefer the live quote for `last_price` over the candles' last close —
+    # this keeps the chart's spot marker honest even when timesales is stuck
+    # on yesterday's data for whatever reason (Tradier intermittently lags
+    # the in-progress session into the timesales feed).
+    if quote_last is not None:
+        last_price = quote_last
+        background_tasks.add_task(_cache_quote, symbol, quote_last)
 
     # If still no candles (market closed, API down, etc.), read from cache with
     # a TTL so we never serve days-old data as if it were current.
