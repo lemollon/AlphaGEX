@@ -207,9 +207,8 @@ function KpiGrid({ bot, status, perf, theme }) {
   const equity = status && typeof status.equity === 'number' ? status.equity : null;
   const startingCapital = status?.starting_capital ?? null;
 
-  // The backend doesn't yet expose `today_pnl`/`unrealized_pnl`; derive what we
-  // can from the data we have, otherwise show em-dash.
   const todayPnl = status && typeof status.today_pnl === 'number' ? status.today_pnl : null;
+  const unrealizedPnl = status && typeof status.unrealized_pnl === 'number' ? status.unrealized_pnl : null;
   const openPos = status?.open_positions ?? 0;
   const lastScanAt = status?.last_scan_at ?? null;
 
@@ -222,6 +221,26 @@ function KpiGrid({ bot, status, perf, theme }) {
   const avgWin     = perf?.avg_win ?? null;
   const avgLoss    = perf?.avg_loss ?? null;
   const totalPos   = totalPnl != null && totalPnl >= 0;
+
+  // Compact chip showing live mark-to-market on open positions — rendered
+  // next to the realized P&L numbers so the user sees both at a glance.
+  const unrealChip = unrealizedPnl != null && Math.abs(unrealizedPnl) >= 0.005 ? (
+    <span
+      className="sw-mono ml-2 align-middle"
+      style={{
+        fontSize: 13,
+        fontWeight: 700,
+        padding: '3px 8px',
+        borderRadius: 6,
+        color: unrealizedPnl >= 0 ? '#34d399' : '#fb7185',
+        background: unrealizedPnl >= 0 ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)',
+        boxShadow: `inset 0 0 0 1px ${unrealizedPnl >= 0 ? 'rgba(52,211,153,0.30)' : 'rgba(251,113,133,0.30)'}`,
+      }}
+      title="Unrealized P&L on currently open positions"
+    >
+      {money(unrealizedPnl, { signed: true })} open
+    </span>
+  ) : null;
 
   const equityBase = equity ?? startingCapital ?? null;
 
@@ -240,17 +259,20 @@ function KpiGrid({ bot, status, perf, theme }) {
       <KpiTile
         label="Today P&L"
         value={
-          todayPnl == null
-            ? <span className="text-text-muted">—</span>
-            : todayPnl === 0
+          <span className="inline-flex items-baseline">
+            {todayPnl == null || todayPnl === 0
               ? <span className="text-text-muted">—</span>
-              : money(todayPnl, { signed: true })
+              : <span>{money(todayPnl, { signed: true })}</span>}
+            {unrealChip}
+          </span>
         }
         accent={todayPos ? 'var(--color-sw-green)' : todayNeg ? 'var(--color-sw-red)' : undefined}
         sub={
           todayPnl != null && todayPnl !== 0 && equityBase
             ? `${pct(todayPnl / equityBase, 2)} on equity`
-            : 'No fills today'
+            : (unrealizedPnl != null && Math.abs(unrealizedPnl) >= 0.005
+                ? `${openPos} open · live mark-to-market`
+                : 'No fills today')
         }
       />
       <KpiTile
@@ -296,9 +318,12 @@ function KpiGrid({ bot, status, perf, theme }) {
       <KpiTile
         label="Total P&L"
         value={
-          totalPnl != null
-            ? money(totalPnl, { signed: true })
-            : <span className="text-text-muted">—</span>
+          <span className="inline-flex items-baseline">
+            {totalPnl != null
+              ? <span>{money(totalPnl, { signed: true })}</span>
+              : <span className="text-text-muted">—</span>}
+            {unrealChip}
+          </span>
         }
         accent={
           totalPnl != null
