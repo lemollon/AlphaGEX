@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
@@ -134,6 +134,10 @@ function RouteBtn({ icon, label, to, end = false }) {
 }
 
 // ── BotMenu — 260px dropdown panel with all bots + status + today P&L.
+//
+// Each row is a react-router `<Link>` so navigation works even if the
+// onClick side-effects throw — clicking always changes the URL, period.
+// The onClick callback only persists localStorage + closes the menu.
 function BotMenu({ activeBotId, onSelect }) {
   const statusMap = useBotStatusMap();
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
@@ -156,15 +160,16 @@ function BotMenu({ activeBotId, onSelect }) {
         const enabled = !!status.enabled;
         const pnl = typeof status.today_pnl === 'number' ? status.today_pnl : 0;
         return (
-          <button
+          <Link
             key={b.id}
+            to={`/bots/${b.id}`}
             onClick={() => onSelect(b.id)}
             style={{
               display: 'flex', alignItems: 'center', gap: 12,
               width: '100%', padding: '8px 10px', borderRadius: 8,
               background: active ? t.primarySoft : 'transparent',
               boxShadow: active ? `inset 0 0 0 1px ${t.primaryRing}` : 'none',
-              border: 'none', cursor: 'pointer', textAlign: 'left',
+              textAlign: 'left', textDecoration: 'none', color: 'inherit',
               transition: 'background-color 150ms',
             }}
             onMouseEnter={(e) => {
@@ -201,7 +206,7 @@ function BotMenu({ activeBotId, onSelect }) {
                 {pnl === 0 ? '—' : (pnl > 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(0)}
               </span>
             </div>
-          </button>
+          </Link>
         );
       })}
       <div style={{
@@ -432,13 +437,11 @@ function NavBar() {
           <BotMenu
             activeBotId={activeBotId}
             onSelect={(id) => {
-              // Always persist so the chip survives across pages and reloads.
+              // The <Link> in BotMenu handles navigation. We just persist the
+              // pick for the chip + Bots-tab destination, then close the menu.
               try { localStorage.setItem(ACTIVE_BOT_KEY, id); } catch { /* ignore */ }
               setStoredBotId(id);
               setMenuOpen(false);
-              if (id !== urlBotId) {
-                navigate(`/bots/${id}`);
-              }
             }}
           />
         )}
