@@ -18,11 +18,17 @@ import { BOT_REGISTRY } from '../lib/botRegistry';
  * Auto-refreshes every `intervalMs` (default 15s). All four API calls
  * (positions, payoff, candles, spot) run in parallel.
  */
+// Module-level cache keyed by bot id — re-mounting the Strategy Chart tab
+// (or switching to a bot and back) hydrates from this immediately instead
+// of waiting on the first refresh tick to paint.
+const stratChartCache = new Map();
+
 export function useStrategyChart(bot, intervalMs = 15000) {
   const meta = BOT_REGISTRY[bot];
   const ticker = meta?.ticker || 'SPY';
 
-  const [state, setState] = useState({
+  const cached = stratChartCache.get(bot);
+  const [state, setState] = useState(cached ?? {
     loading: true,
     error: null,
     position: null,
@@ -59,7 +65,7 @@ export function useStrategyChart(bot, intervalMs = 15000) {
         }
 
         if (cancelled) return;
-        setState({
+        const next = {
           loading: false,
           error: null,
           position: open,
@@ -67,7 +73,9 @@ export function useStrategyChart(bot, intervalMs = 15000) {
           candles: candlesResp.candles || [],
           spot: candlesResp.last_price ?? null,
           ticker,
-        });
+        };
+        stratChartCache.set(bot, next);
+        setState(next);
       } catch (e) {
         if (cancelled) return;
         setState(prev => ({ ...prev, loading: false, error: e }));

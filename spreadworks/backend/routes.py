@@ -43,7 +43,7 @@ def _today_ct() -> date:
     """Today's date in Central Time."""
     return _now_ct().date()
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -70,6 +70,11 @@ GEX_CACHE_MAX_AGE_OPEN_SEC = 15 * 60            # 15 min while market is open
 GEX_CACHE_MAX_AGE_CLOSED_SEC = 20 * 60 * 60     # 20h when closed (prior session OK)
 CANDLE_CACHE_MAX_AGE_OPEN_SEC = 10 * 60         # 10 min while market is open
 CANDLE_CACHE_MAX_AGE_CLOSED_SEC = 20 * 60 * 60  # 20h when closed
+# Cache-first freshness window for candles. If the cached snapshot is younger
+# than this, we serve it without hitting Tradier — saves the ~300-600ms
+# upstream roundtrip that was making Builder feel laggy on every page load.
+CANDLE_CACHE_FRESH_OPEN_SEC = 30               # serve cache w/o Tradier if <30s old
+CANDLE_CACHE_FRESH_CLOSED_SEC = 30 * 60        # 30 min when closed (no new bars anyway)
 # If GEX's reported spot_price disagrees with the current market by more than
 # this fraction, we flag the snapshot as stale even if the cache is "fresh".
 GEX_SPOT_DRIFT_THRESHOLD = 0.02                 # 2%
@@ -382,8 +387,31 @@ async def market_status():
 
 
 @router.get("/candles")
-async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15min"):
-    """Return 15-min candles. Live from Tradier during market hours, cached otherwise."""
+async def get_candles(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    symbol: str = "SPY",
+    interval: str = "15min",
+):
+    """Return 15-min candles. Cache-first; falls back to live Tradier fetch."""
+    market_open = _is_market_open_now()
+
+    # Cache-first: a recent enough snapshot skips the ~300-600ms Tradier hop.
+    # During open we hold for 30s (one quote-tick worth); when closed we hold
+    # for 30 min because no new bars are being printed anyway.
+    fresh_age = (
+        CANDLE_CACHE_FRESH_OPEN_SEC if market_open
+        else CANDLE_CACHE_FRESH_CLOSED_SEC
+    )
+    fresh = _read_cached_candles(symbol, interval, max_age_sec=fresh_age)
+    if fresh and fresh.get("candles"):
+        return {
+            "symbol": symbol,
+            "candles": fresh["candles"],
+            "last_price": fresh.get("last_price"),
+            "data_as_of": fresh.get("fetched_at"),
+        }
+
     start_date = (_today_ct() - timedelta(days=14)).isoformat()
 
     candles: list[dict] = []
@@ -409,10 +437,14 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
         candles = bars
         if candles:
             last_price = candles[-1].get("close")
-            # Write-through cache
-            _cache_candles(symbol, interval, candles, last_price)
+            # Background-task cache writes so the response returns before the
+            # ~365-row Postgres upsert finishes. Same DB write, just unblocks
+            # the request handler.
+            background_tasks.add_task(
+                _cache_candles, symbol, interval, candles, last_price
+            )
             if last_price:
-                _cache_quote(symbol, last_price)
+                background_tasks.add_task(_cache_quote, symbol, last_price)
     except Exception as e:
         logger.warning(f"[candles] Tradier timesales failed for {symbol}: {e}")
 
@@ -422,7 +454,7 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
             q = await _get_quote(request, symbol)
             last_price = q.get("last")
             if last_price:
-                _cache_quote(symbol, last_price)
+                background_tasks.add_task(_cache_quote, symbol, last_price)
         except Exception as e:
             logger.warning(f"[candles] Quote fallback failed for {symbol}: {e}")
 
@@ -431,7 +463,7 @@ async def get_candles(request: Request, symbol: str = "SPY", interval: str = "15
     if not candles:
         max_age = (
             CANDLE_CACHE_MAX_AGE_OPEN_SEC
-            if _is_market_open_now()
+            if market_open
             else CANDLE_CACHE_MAX_AGE_CLOSED_SEC
         )
         cached = _read_cached_candles(symbol, interval, max_age_sec=max_age)
