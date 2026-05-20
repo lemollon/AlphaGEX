@@ -386,6 +386,64 @@ async def market_status():
 # ---------------------------------------------------------------------------
 
 
+@router.get("/_debug/tradier-timesales")
+async def debug_tradier_timesales(request: Request, symbol: str = "SPY"):
+    """Diagnostic: hit Tradier timesales with multiple param combos and
+    report which (if any) return today's bars. Remove after the candle
+    freshness issue is resolved.
+    """
+    _ET = ZoneInfo("America/New_York")
+    now_et = datetime.now(_ET)
+    end_str = (now_et + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M")
+
+    combos = [
+        ("14d_open_with_end",  {"start": (now_et - timedelta(days=14)).strftime("%Y-%m-%d %H:%M"), "end": end_str, "session_filter": "open"}),
+        ("14d_all_with_end",   {"start": (now_et - timedelta(days=14)).strftime("%Y-%m-%d %H:%M"), "end": end_str, "session_filter": "all"}),
+        ("3d_open_with_end",   {"start": (now_et -  timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "end": end_str, "session_filter": "open"}),
+        ("3d_all_with_end",    {"start": (now_et -  timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "end": end_str, "session_filter": "all"}),
+        ("today_only_open",    {"start": now_et.strftime("%Y-%m-%d") + " 09:30",                                                            "session_filter": "open"}),
+        ("today_only_all",     {"start": now_et.strftime("%Y-%m-%d") + " 04:00",                                                            "session_filter": "all"}),
+        ("3d_no_filter",       {"start": (now_et -  timedelta(days=3)).strftime("%Y-%m-%d %H:%M"), "end": end_str}),
+    ]
+    today_iso = now_et.strftime("%Y-%m-%d")
+    results = []
+    for name, extra in combos:
+        params = {"symbol": symbol, "interval": "15min", **extra}
+        try:
+            ts_data = await _tradier_get(request, "/markets/timesales", params)
+            bars = (ts_data.get("series") or {}).get("data") or []
+            if isinstance(bars, dict):
+                bars = [bars]
+            last_bar_time = bars[-1].get("time") if bars else None
+            today_bars = sum(1 for b in bars if str(b.get("time", "")).startswith(today_iso))
+            results.append({
+                "combo": name,
+                "params": params,
+                "bar_count": len(bars),
+                "last_bar_time": last_bar_time,
+                "today_bar_count": today_bars,
+            })
+        except Exception as e:
+            results.append({"combo": name, "params": params, "error": str(e)[:200]})
+    # also include a quote sample
+    try:
+        q = await _get_quote(request, symbol)
+        quote_last = q.get("last")
+        quote_volume = q.get("volume")
+        quote_time = q.get("trade_date") or q.get("last_volume_date")
+    except Exception as e:
+        quote_last = None
+        quote_volume = None
+        quote_time = f"ERR:{e}"
+    return {
+        "symbol": symbol,
+        "now_et": now_et.isoformat(),
+        "today_et": today_iso,
+        "quote": {"last": quote_last, "volume": quote_volume, "time": quote_time},
+        "results": results,
+    }
+
+
 @router.get("/candles")
 async def get_candles(
     request: Request,
