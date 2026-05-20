@@ -629,6 +629,9 @@ function ChartCard({ d, theme, botId }) {
     }
 
     // ─── "Now" marker ───────────────────────────────────────────────
+    // The dot sits on the spot horizontal line; the label is offset upward
+    // by one label-height so it never lands on top of the cyan spot-price
+    // chip that lives at the same Y.
     let nowMarker = null;
     if (d.spot != null && d.unrealized != null) {
       const cx = xPnl(d.unrealized);
@@ -636,9 +639,12 @@ function ChartCard({ d, theme, botId }) {
       const labelW = 158;
       const placeLeft = cx > overlayRight - labelW - 18;
       const labelX = placeLeft ? cx - labelW - 12 : cx + 12;
+      // Keep the label inside the chart area even when spot pins near the top.
+      const labelCenterY = Math.max(padT + 16, cy - 22);
       nowMarker = {
         cx, cy,
         labelX,
+        labelY: labelCenterY,
         labelW,
         labelText: `Now: ${money(d.unrealized, { signed: true })} (${pctText(d.unrealizedPct, 1)})`,
       };
@@ -952,13 +958,19 @@ function ChartCard({ d, theme, botId }) {
               cx={L.nowMarker.cx} cy={L.nowMarker.cy} r="6"
               fill="#fcd34d" stroke="#06121f" strokeWidth="2"
             />
+            {/* Thin connector from the spot-line dot up to the offset label */}
+            <line
+              x1={L.nowMarker.cx} y1={L.nowMarker.cy - 6}
+              x2={L.nowMarker.labelX + L.nowMarker.labelW / 2} y2={L.nowMarker.labelY + 13}
+              stroke="#fcd34d" strokeWidth="1" opacity="0.55"
+            />
             <rect
-              x={L.nowMarker.labelX} y={L.nowMarker.cy - 13}
+              x={L.nowMarker.labelX} y={L.nowMarker.labelY - 13}
               width={L.nowMarker.labelW} height="26" rx="4"
               fill="#fcd34d"
             />
             <text
-              x={L.nowMarker.labelX + L.nowMarker.labelW / 2} y={L.nowMarker.cy + 4.5}
+              x={L.nowMarker.labelX + L.nowMarker.labelW / 2} y={L.nowMarker.labelY + 4.5}
               textAnchor="middle" fill="#1e1607"
               fontSize="11.5" fontWeight="700"
               fontFamily="'JetBrains Mono', monospace"
