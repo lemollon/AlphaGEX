@@ -81,6 +81,30 @@ def bs_gamma(
     return _norm_pdf(d1) / (spot * sigma * sqrt_t)
 
 
+def bs_delta(
+    spot: float,
+    strike: float,
+    t_years: float,
+    sigma: float,
+    is_call: bool,
+    r: float = DEFAULT_R,
+) -> float:
+    """Option delta (∂Price/∂spot). Call in [0,1], put in [-1,0].
+
+    At/past expiry (or non-positive sigma) returns the intrinsic delta:
+    ±1 if in-the-money, 0 if out-of-the-money.
+    """
+    if t_years <= 0 or sigma <= 0 or spot <= 0:
+        if is_call:
+            return 1.0 if spot > strike else 0.0
+        return -1.0 if spot < strike else 0.0
+    sqrt_t = math.sqrt(t_years)
+    d1 = (math.log(spot / strike) + (r + 0.5 * sigma * sigma) * t_years) / (sigma * sqrt_t)
+    if is_call:
+        return _norm_cdf(d1)
+    return _norm_cdf(d1) - 1.0
+
+
 def bs_charm(
     spot: float,
     strike: float,
