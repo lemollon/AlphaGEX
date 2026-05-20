@@ -26,8 +26,8 @@ import { API_URL } from './lib/api';
 const CHART_HEIGHT = 500;
 
 // ── Market chip ─────────────────────────────────────────────────────
-// Single glass capsule: "HH:MM ET | • Market open / After hours".
-// ── Clock — ET time + ●Market open|After hours. Inline styles only (per
+// Single glass capsule: "HH:MM CT | • Market open / After hours".
+// ── Clock — CT time + ●Market open|After hours. Inline styles only (per
 // the design spec — every padding / gap / border-radius value matters).
 function Clock() {
   const { isOpen } = useMarketHours();
@@ -37,7 +37,7 @@ function Clock() {
     return () => clearInterval(id);
   }, []);
   const fmt = now.toLocaleTimeString('en-US', {
-    timeZone: 'America/New_York',
+    timeZone: 'America/Chicago',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -48,7 +48,7 @@ function Clock() {
         {fmt}
       </span>
       <span style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        ET
+        CT
       </span>
       <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.10)' }} />
       <span style={{
@@ -559,14 +559,14 @@ function BuilderPage() {
           {!isOpen && dataAsOf && (
             <span className="ml-auto px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sw-yellow-dim border border-sw-yellow/20 text-sw-yellow">
               Market Closed &middot; Data as of {new Date(dataAsOf).toLocaleString('en-US', {
-                timeZone: 'America/New_York',
+                timeZone: 'America/Chicago',
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
                 hour12: true,
-              })} ET
+              })} CT
             </span>
           )}
         </div>

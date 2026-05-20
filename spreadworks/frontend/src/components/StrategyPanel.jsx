@@ -202,10 +202,10 @@ function fmtTimestamp(iso) {
   if (!iso) return '';
   try {
     return new Date(iso).toLocaleTimeString('en-US', {
-      timeZone: 'America/New_York',
+      timeZone: 'America/Chicago',
       hour: '2-digit', minute: '2-digit', second: '2-digit',
       hour12: false,
-    }) + ' ET';
+    }) + ' CT';
   } catch { return ''; }
 }
 
@@ -963,13 +963,13 @@ export default function StrategyPanel({
               {gexData.stale_reason || gexData.detail || 'Upstream GEX unavailable'}
               {gexData.fetched_at && (
                 <span> &middot; last update {new Date(gexData.fetched_at).toLocaleString('en-US', {
-                  timeZone: 'America/New_York',
+                  timeZone: 'America/Chicago',
                   month: 'short',
                   day: 'numeric',
                   hour: 'numeric',
                   minute: '2-digit',
                   hour12: true,
-                })} ET</span>
+                })} CT</span>
               )}
             </div>
           </div>

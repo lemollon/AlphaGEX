@@ -1650,12 +1650,24 @@ def _frontend_index() -> Path | None:
     return None
 
 
+# Browsers heuristically cache `index.html` (it has no content hash). When the
+# SPA bundle filename rotates on a new deploy, a stale `index.html` keeps the
+# user on the previous bundle until they hard-refresh. Forcing no-cache on the
+# HTML shell — while still letting the content-hashed /assets/* be cached
+# indefinitely — fixes that.
+_HTML_NO_CACHE = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @app.get("/", include_in_schema=False)
 async def serve_root():
     """Explicit root route — serves index.html or diagnostic page."""
     index = _frontend_index()
     if index:
-        return FileResponse(index, media_type="text/html")
+        return FileResponse(index, media_type="text/html", headers=_HTML_NO_CACHE)
     return HTMLResponse(
         "<h1>SpreadWorks</h1>"
         "<p>Backend is running. Frontend dist not found.</p>"
@@ -1681,5 +1693,5 @@ async def serve_frontend(full_path: str):
         if file_path.is_file() and str(file_path).startswith(str(FRONTEND_DIST.resolve())):
             return FileResponse(file_path)
 
-    # SPA fallback — return index.html for all other routes
-    return FileResponse(index, media_type="text/html")
+    # SPA fallback — return index.html (no-cache) for all other routes
+    return FileResponse(index, media_type="text/html", headers=_HTML_NO_CACHE)

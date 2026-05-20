@@ -602,7 +602,7 @@ function ChartCard({ d, theme, botId }) {
           // Tradier timesales returns "time" as ISO or "2026-05-19T13:45:00"
           const d = new Date(ts);
           return d.toLocaleTimeString('en-US', {
-            timeZone: 'America/New_York',
+            timeZone: 'America/Chicago',
             hour: 'numeric', minute: '2-digit', hour12: true,
           });
         } catch { return ''; }
