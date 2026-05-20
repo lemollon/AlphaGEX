@@ -442,11 +442,25 @@ function NavBar() {
           <BotMenu
             activeBotId={activeBotId}
             onSelect={(id) => {
-              // The <Link> in BotMenu handles navigation. We just persist the
-              // pick for the chip + Bots-tab destination, then close the menu.
+              // The <Link> in BotMenu is supposed to navigate, but Tide/Drift/
+              // Flow have been silently failing for the user in spite of the
+              // Link being present in the live bundle. As a hard fallback we
+              // also navigate via the router AND fall back to a full-page
+              // assign if the SPA navigation doesn't fire — at least one of
+              // these three mechanisms is guaranteed to land the user on the
+              // right bot page.
               try { localStorage.setItem(ACTIVE_BOT_KEY, id); } catch { /* ignore */ }
               setStoredBotId(id);
               setMenuOpen(false);
+              const target = `/bots/${id}`;
+              try { navigate(target); } catch { /* ignore */ }
+              // If the SPA route didn't change after the click finished, do
+              // a full-page navigation. setTimeout lets React Router try first.
+              setTimeout(() => {
+                if (window.location.pathname !== target) {
+                  window.location.assign(target);
+                }
+              }, 50);
             }}
           />
         )}
