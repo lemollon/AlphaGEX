@@ -145,7 +145,7 @@ function BotMenu({ activeBotId, onSelect }) {
     <div
       style={{
         position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-        width: 260, padding: 6, borderRadius: 12, zIndex: 50,
+        width: 260, padding: 6, borderRadius: 12, zIndex: 9999,
         background: 'rgba(13,28,46,0.92)',
         backdropFilter: 'blur(16px) saturate(140%)',
         WebkitBackdropFilter: 'blur(16px) saturate(140%)',
@@ -381,9 +381,14 @@ function NavBar() {
       </div>
 
       {/* ═══════════ RIGHT CARD · BOT DROPDOWN ═══════════ */}
+      {/* zIndex on the wrapper hoists the entire stacking context above the
+          chart / payoff strip — the previous z-index:50 on BotMenu alone
+          was inside this wrapper's auto stacking context, so chart elements
+          (Plotly overlays, SVG payoff badges) could intercept clicks on
+          the lower dropdown rows. */}
       <div
         ref={menuRef}
-        style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+        style={{ position: 'relative', display: 'flex', alignItems: 'center', zIndex: 9999 }}
       >
         <div
           style={{

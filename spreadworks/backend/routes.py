@@ -412,7 +412,15 @@ async def get_candles(
             "data_as_of": fresh.get("fetched_at"),
         }
 
-    start_date = (_today_ct() - timedelta(days=14)).isoformat()
+    # Tradier's `/markets/timesales` returns intraday bars including today's
+    # in-progress session ONLY when `start` includes a time component. Passing
+    # a date-only string (YYYY-MM-DD) was making Tradier interpret the request
+    # as "historical bars up to end of yesterday", which is why the chart was
+    # frozen on yesterday's last bar. Use "YYYY-MM-DD HH:MM" in ET — same
+    # format ironforge's working Tradier client uses.
+    _ET = ZoneInfo("America/New_York")
+    start_dt = datetime.now(_ET) - timedelta(days=14)
+    start_str = start_dt.strftime("%Y-%m-%d %H:%M")
 
     candles: list[dict] = []
     last_price = None
@@ -425,7 +433,7 @@ async def get_candles(
             {
                 "symbol": symbol,
                 "interval": "15min",
-                "start": start_date,
+                "start": start_str,
                 "session_filter": "open",
             },
         )
