@@ -3,12 +3,21 @@ import { isMarketOpen } from './useMarketHours';
 import { API_URL } from '../lib/api';
 const REFRESH_INTERVAL = 30000;
 
+// Module-level cache keyed by `${symbol}|${interval}`. Survives unmount/
+// remount of the Builder page, so navigating Builder → Positions → Builder
+// shows the last candles instantly and only the background refresh waits on
+// the network. Backend cache-first already cuts most of that wait anyway.
+const candleCache = new Map();
+
 export default function useCandles(symbol, interval = '15min') {
-  const [candles, setCandles] = useState([]);
-  const [spotPrice, setSpotPrice] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const cacheKey = `${symbol}|${interval}`;
+  const cached = candleCache.get(cacheKey);
+
+  const [candles, setCandles] = useState(cached?.candles || []);
+  const [spotPrice, setSpotPrice] = useState(cached?.spotPrice || null);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState(null);
-  const [dataAsOf, setDataAsOf] = useState(null);
+  const [dataAsOf, setDataAsOf] = useState(cached?.dataAsOf || null);
   const timerRef = useRef(null);
 
   const fetchCandles = useCallback(async () => {
@@ -21,9 +30,15 @@ export default function useCandles(symbol, interval = '15min') {
       }
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
-      setCandles(data.candles || []);
+      const nextCandles = data.candles || [];
+      setCandles(nextCandles);
       if (data.last_price) setSpotPrice(data.last_price);
       if (data.data_as_of) setDataAsOf(data.data_as_of);
+      candleCache.set(cacheKey, {
+        candles: nextCandles,
+        spotPrice: data.last_price ?? null,
+        dataAsOf: data.data_as_of ?? null,
+      });
       setError(null);
       setLoading(false);
     } catch (err) {
@@ -31,13 +46,15 @@ export default function useCandles(symbol, interval = '15min') {
       setError(err.message);
       setLoading(false);
     }
-  }, [symbol, interval]);
+  }, [symbol, interval, cacheKey]);
 
-  // Initial fetch
+  // Initial fetch. Keep stale candles visible (don't flip loading=true) if
+  // we already have cached data — the user sees the chart immediately and
+  // the network call replaces the data in place.
   useEffect(() => {
-    setLoading(true);
+    if (!candleCache.has(cacheKey)) setLoading(true);
     fetchCandles();
-  }, [fetchCandles]);
+  }, [fetchCandles, cacheKey]);
 
   // Auto-refresh when market open
   useEffect(() => {
