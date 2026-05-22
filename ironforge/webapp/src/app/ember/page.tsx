@@ -22,13 +22,14 @@ export interface BuildParams {
 export interface BuildStatus {
   build_id: string
   params: BuildParams | null
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'canceled'
   progress: number
   progress_message: string | null
   n_days: number | null
   error: string | null
   created_at: string | null
   updated_at: string | null
+  cancel_requested?: boolean
 }
 
 export interface ExitParams {
@@ -118,6 +119,7 @@ export default function EmberPage() {
   const [buildStatus, setBuildStatus] = useState<BuildStatus | null>(null)
   const [buildLoading, setBuildLoading] = useState(false)
   const [buildError, setBuildError] = useState<string | null>(null)
+  const [canceling, setCanceling] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Exit params state
@@ -136,8 +138,9 @@ export default function EmberPage() {
         if (!res.ok) return
         const data: BuildStatus = await res.json()
         setBuildStatus(data)
-        if (data.status === 'completed' || data.status === 'failed') {
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'canceled') {
           if (pollRef.current) clearInterval(pollRef.current)
+          setCanceling(false)
           if (data.status === 'completed') {
             runEvaluate(id, exitParams)
           }
@@ -188,6 +191,35 @@ export default function EmberPage() {
     }, 300)
   }, [buildId, buildStatus?.status, runEvaluate])
 
+  /* ---- Stop (cancel running build) ---- */
+  async function handleStop() {
+    if (!buildId) return
+    setCanceling(true)
+    try {
+      const res = await fetch(`/api/ember/build/${buildId}/cancel`, { method: 'POST' })
+      if (res.status === 409) {
+        // Already not cancelable — just refetch status
+        const statusRes = await fetch(`/api/ember/build/${buildId}`)
+        if (statusRes.ok) {
+          const data: BuildStatus = await statusRes.json()
+          setBuildStatus(data)
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'canceled') {
+            setCanceling(false)
+            if (pollRef.current) clearInterval(pollRef.current)
+          }
+        }
+      }
+      // On success: keep polling — the poll will see status: "canceled"
+    } catch {
+      // silently ignore; polling will surface the real state
+    }
+  }
+
+  /* ---- Retry (restart build with current params) ---- */
+  function handleRetry() {
+    handleBuild()
+  }
+
   /* ---- Build / Load ---- */
   async function handleBuild() {
     setBuildLoading(true)
@@ -195,6 +227,7 @@ export default function EmberPage() {
     setBuildStatus(null)
     setEvalResult(null)
     setBuildId(null)
+    setCanceling(false)
     if (pollRef.current) clearInterval(pollRef.current)
 
     try {
@@ -249,6 +282,11 @@ export default function EmberPage() {
   }
 
   const buildReady = buildStatus?.status === 'completed'
+  // Form is disabled while a build is actively running/queued/canceling
+  const buildInProgress = canceling
+    || buildStatus?.status === 'pending'
+    || buildStatus?.status === 'running'
+  const formDisabled = buildLoading || buildInProgress
 
   return (
     <div className="space-y-6">
@@ -300,7 +338,7 @@ export default function EmberPage() {
         params={buildParams}
         onChange={setBuildParams}
         onBuild={handleBuild}
-        loading={buildLoading}
+        loading={formDisabled}
       />
 
       {/* Build error */}
@@ -310,9 +348,14 @@ export default function EmberPage() {
         </div>
       )}
 
-      {/* Build progress */}
+      {/* Build progress — shown for all non-completed states */}
       {buildStatus && !buildReady && (
-        <EmberBuildProgress status={buildStatus} />
+        <EmberBuildProgress
+          status={buildStatus}
+          onStop={handleStop}
+          onRetry={handleRetry}
+          canceling={canceling}
+        />
       )}
 
       {/* Build complete banner */}
