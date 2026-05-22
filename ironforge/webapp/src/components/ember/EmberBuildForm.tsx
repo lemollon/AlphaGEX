@@ -1,6 +1,7 @@
 'use client'
 
 import { type BuildParams } from '@/app/ember/page'
+import InfoTip from '@/components/ember/InfoTip'
 
 interface Props {
   params: BuildParams
@@ -20,17 +21,21 @@ export default function EmberBuildForm({ params, onChange, onBuild, loading }: P
     onChange({ ...params, [k]: v })
   }
 
-  // Entry minute options: every 30 min from 0 to 360 (09:30 to 15:30 ET)
+  // Entry minute options: every 30 min from 0 to 360
+  // Open = 8:30 AM CT (same as 9:30 AM ET). We display CT.
   const entryOptions: { value: number; label: string }[] = []
   for (let m = 0; m <= 360; m += 30) {
-    const totalMin = 9 * 60 + 30 + m
+    // 8:30 AM CT = 510 minutes since midnight
+    const totalMin = 8 * 60 + 30 + m
     const h = Math.floor(totalMin / 60)
     const min = totalMin % 60
     const ampm = h < 12 ? 'AM' : 'PM'
     const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h
+    const timeStr = `${h12}:${String(min).padStart(2, '0')} ${ampm} CT`
+    const offsetStr = m === 0 ? 'open' : `+${m}min`
     entryOptions.push({
       value: m,
-      label: `${h12}:${String(min).padStart(2, '0')} ${ampm} ET (+${m}min)`,
+      label: `${timeStr} (${offsetStr})`,
     })
   }
 
@@ -78,8 +83,9 @@ export default function EmberBuildForm({ params, onChange, onBuild, loading }: P
         {/* Entry time */}
         <div className="lg:col-span-1">
           <label className="block text-xs text-forge-muted mb-1.5">
-            Entry Time ET
-            <span className="ml-1 text-forge-muted/60">(minutes since 09:30)</span>
+            Entry Time CT
+            <span className="ml-1 text-forge-muted/60">(minutes after 8:30 AM open)</span>
+            <InfoTip text="When to enter each day — minutes after the 8:30 AM CT market open (30 = 9:00 AM CT). Changing it requires a new build." />
           </label>
           <select
             value={params.entry_minute}
@@ -99,6 +105,7 @@ export default function EmberBuildForm({ params, onChange, onBuild, loading }: P
           <label className="block text-xs text-forge-muted mb-1.5">
             Short Delta
             <span className="ml-1 text-forge-muted/60">(0.05–0.30)</span>
+            <InfoTip text="How far out-of-the-money the short strikes sit, by option delta. ~0.16 ≈ a 16% chance of finishing in-the-money. Lower = wider/safer strikes but less credit." />
           </label>
           <input
             type="number"
@@ -116,6 +123,7 @@ export default function EmberBuildForm({ params, onChange, onBuild, loading }: P
           <label className="block text-xs text-forge-muted mb-1.5">
             Wing Width $
             <span className="ml-1 text-forge-muted/60">(1–20)</span>
+            <InfoTip text="Dollars between each short strike and its long (protective) strike. Wider wings collect more credit but risk more if the trade goes against you." />
           </label>
           <input
             type="number"
@@ -130,7 +138,10 @@ export default function EmberBuildForm({ params, onChange, onBuild, loading }: P
 
         {/* Fill model */}
         <div className="lg:col-span-1">
-          <label className="block text-xs text-forge-muted mb-1.5">Fill Model</label>
+          <label className="block text-xs text-forge-muted mb-1.5">
+            Fill Model
+            <InfoTip text="How fills are priced. Ask Cross = conservative (cross the spread — worst realistic fill). Mid = optimistic (mid-price). Mid+Slip = in between. Real results sit between Mid and Ask Cross." />
+          </label>
           <select
             value={params.fill}
             onChange={(e) => set('fill', e.target.value as BuildParams['fill'])}

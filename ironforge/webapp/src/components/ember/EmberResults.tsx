@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import InfoTip from '@/components/ember/InfoTip'
 import {
   Area,
   XAxis,
@@ -403,12 +404,13 @@ function EmberGrid({ grid }: { grid: PolicyResult[] }) {
 
 function minuteToTime(minute: number | null | undefined): string {
   if (minute == null) return '—'
-  const totalMin = 9 * 60 + 30 + minute
+  // 8:30 AM CT = market open (same instant as 9:30 AM ET). Display in CT.
+  const totalMin = 8 * 60 + 30 + minute
   const h = Math.floor(totalMin / 60)
   const m = totalMin % 60
   const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h
   const ampm = h < 12 ? 'AM' : 'PM'
-  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm} CT`
 }
 
 function EmberTradeTable({ trades }: { trades: TradeRow[] }) {
@@ -620,8 +622,8 @@ export default function EmberResults({
           {/* Summary tab */}
           {tab === 'summary' && (
             <div className="space-y-4">
-              {/* Period toggle */}
-              <div className="flex items-center gap-2">
+              {/* Period toggle + explainer */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs text-forge-muted">Period:</span>
                 <div className="flex gap-0.5 bg-forge-border/50 rounded-lg p-0.5">
                   {(['in_sample', 'oos'] as const).map((p) => (
@@ -638,7 +640,23 @@ export default function EmberResults({
                     </button>
                   ))}
                 </div>
+                <InfoTip text="In-Sample = the earlier period the policy is tuned on (trading days through Dec 31, 2024). Out-of-Sample (OOS) = held-out later data (Jan 2025 onward) the policy was NOT tuned on — the honest test of whether it generalizes. A policy that shines in-sample but falls apart out-of-sample is overfit." />
               </div>
+
+              {/* Empty in-sample note — shown when start date is entirely in 2025+ */}
+              {summaryPeriod === 'in_sample' && result.chosen.in_sample.n === 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/8 px-4 py-3 flex items-start gap-3">
+                  {/* Info glyph */}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0 mt-0.5 text-amber-400">
+                    <circle cx="8" cy="8" r="6.75" stroke="currentColor" strokeWidth="1.3" />
+                    <circle cx="8" cy="5" r="0.8" fill="currentColor" />
+                    <path d="M8 7v4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
+                  <p className="text-xs text-amber-300 leading-relaxed">
+                    No in-sample trades — your date range is entirely after the Dec 31, 2024 training cutoff, so all of it is out-of-sample. To see in-sample results, set the Start Date into 2024 or earlier.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <SummaryPanel
