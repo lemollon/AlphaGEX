@@ -1,0 +1,2 @@
+# Per-trade audit CSVs are large (~6 MB each) and regenerable from the CLI.
+*/trades.csv

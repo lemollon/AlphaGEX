@@ -36,6 +36,7 @@ from . import tastytrade_routes
 from . import valor_routes
 from . import dashboard_batch_routes
 from . import reconciliation_routes
+from . import ember_routes
 
 __all__ = [
     'vix_routes',
@@ -71,4 +72,5 @@ __all__ = [
     'valor_routes',
     'dashboard_batch_routes',
     'reconciliation_routes',
+    'ember_routes',
 ]

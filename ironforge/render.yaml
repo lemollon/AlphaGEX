@@ -41,3 +41,5 @@ services:
         sync: false
       - key: NODE_ENV
         value: production
+      - key: ALPHAGEX_API_BASE
+        value: https://alphagex-api.onrender.com
