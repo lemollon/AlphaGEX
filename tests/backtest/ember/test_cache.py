@@ -71,3 +71,69 @@ def test_get_build_missing_returns_none():
         pytest.skip("DATABASE_URL not set")
     ensure_tables(os.environ["DATABASE_URL"])
     assert get_build(os.environ["DATABASE_URL"], "nonexistent_build_xyz") is None
+
+
+def test_stale_seconds_constant():
+    from backtest.ember.cache import STALE_SECONDS
+    assert STALE_SECONDS > 0
+
+
+@pytest.mark.integration
+def test_cancel_and_retry_lifecycle():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    from backtest.ember.cache import (ensure_tables, create_pending, set_progress,
+                                       request_cancel, is_cancel_requested, set_canceled,
+                                       get_build, build_key)
+    db = os.environ["DATABASE_URL"]
+    ensure_tables(db)
+    params = dict(PARAMS, _test_marker="ember_cancel_test")
+    bid = build_key(params)
+    import psycopg2
+    try:
+        create_pending(db, bid, params)
+        set_progress(db, bid, 20, "running")
+        assert request_cancel(db, bid) is True            # cancelable while running
+        assert is_cancel_requested(db, bid) is True
+        set_canceled(db, bid)
+        assert get_build(db, bid)["status"] == "canceled"
+        assert is_cancel_requested(db, bid) is False       # cleared on cancel
+        # canceled build is retryable -> create_pending resets it
+        create_pending(db, bid, params)
+        assert get_build(db, bid)["status"] == "pending"
+        # request_cancel on a non-inflight (e.g. completed) build returns False
+        from backtest.ember.cache import set_completed
+        set_completed(db, bid, [])
+        assert request_cancel(db, bid) is False
+    finally:
+        with psycopg2.connect(db) as conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM ember_builds WHERE build_id = %s", (bid,))
+
+
+@pytest.mark.integration
+def test_reap_stale_is_selective():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    from backtest.ember.cache import ensure_tables, create_pending, reap_stale_builds, get_build, build_key
+    db = os.environ["DATABASE_URL"]
+    ensure_tables(db)
+    params = dict(PARAMS, _test_marker="ember_reap_test")
+    bid = build_key(params)
+    import psycopg2
+    try:
+        create_pending(db, bid, params)
+        # a FRESH build must NOT be reaped by a normal threshold
+        reap_stale_builds(db, max_idle_seconds=120)
+        assert get_build(db, bid)["status"] == "pending"
+        # backdate updated_at to 10 min ago, then it MUST be reaped
+        with psycopg2.connect(db) as conn:
+            with conn.cursor() as c:
+                c.execute("UPDATE ember_builds SET updated_at = now() - make_interval(secs => 600) WHERE build_id = %s", (bid,))
+        n = reap_stale_builds(db, max_idle_seconds=120)
+        assert n >= 1
+        assert get_build(db, bid)["status"] == "failed"
+    finally:
+        with psycopg2.connect(db) as conn:
+            with conn.cursor() as c:
+                c.execute("DELETE FROM ember_builds WHERE build_id = %s", (bid,))

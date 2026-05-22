@@ -47,3 +47,9 @@ def test_policy_from_params_trail_fields_passed():
     assert p.trail_activation_pct == 20.0
     assert p.trail_giveback_pct == 5.0
     assert p.min_hold_minutes == 10
+
+
+def test_cancel_route_registered():
+    from backend.api.routes.ember_routes import router
+    paths = {r.path for r in router.routes}
+    assert "/api/ember/build/{build_id}/cancel" in paths

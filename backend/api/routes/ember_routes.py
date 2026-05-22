@@ -18,13 +18,17 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from backtest.ember.build import build_paths, evaluate_grid, evaluate_policy
+from backtest.ember.build import BuildCancelled, build_paths, evaluate_grid, evaluate_policy
 from backtest.ember.cache import (
     build_key,
     create_pending,
     ensure_tables,
     get_build,
+    is_cancel_requested,
     load_paths,
+    reap_stale_builds,
+    request_cancel,
+    set_canceled,
     set_completed,
     set_failed,
     set_progress,
@@ -84,13 +88,12 @@ def _policy_from_params(body) -> ExitPolicy:
 
 def _run_build(db_url: str, build_id: str, params: dict) -> None:
     """Executed in a daemon thread. Runs build_paths, then persists the result."""
+    bid = build_id
     try:
         start = date.fromisoformat(params["start"])
         end = date.fromisoformat(params["end"])
 
-        def _progress(done: int, total: int) -> None:
-            pct = int(100 * done / total) if total else 0
-            set_progress(db_url, build_id, pct, f"{done}/{total} days")
+        set_progress(db_url, bid, 0, "Queued — starting…")
 
         paths = build_paths(
             start,
@@ -100,11 +103,16 @@ def _run_build(db_url: str, build_id: str, params: dict) -> None:
             wing_width=params["wing_width"],
             fill=params["fill"],
             db_url=db_url,
-            progress_cb=_progress,
+            progress_cb=lambda done, total, msg: set_progress(
+                db_url, bid, int(100 * done / total) if total else 0, msg
+            ),
+            should_cancel=lambda: is_cancel_requested(db_url, bid),
         )
-        set_completed(db_url, build_id, paths)
+        set_completed(db_url, bid, paths)
+    except BuildCancelled:
+        set_canceled(db_url, bid)
     except Exception as exc:
-        set_failed(db_url, build_id, str(exc))
+        set_failed(db_url, bid, str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +137,7 @@ async def start_build(body: BuildRequest):
             "fill": body.fill,
         }
         ensure_tables(db_url)
+        reap_stale_builds(db_url)
         bid = build_key(params)
 
         existing = get_build(db_url, bid)
@@ -138,17 +147,19 @@ async def start_build(body: BuildRequest):
                 "build_id": bid,
                 "status": "completed",
                 "cached": True,
-                "n_days": existing["n_days"],
+                "n_days": existing.get("n_days"),
             }
 
         if existing and existing["status"] in ("pending", "running"):
+            # Reap already demoted genuinely stale builds to failed, so this
+            # is a live in-flight build — return its current status as-is.
             return {
                 "build_id": bid,
                 "status": existing["status"],
                 "cached": False,
             }
 
-        # New build (or previously failed — create_pending resets it).
+        # None / failed / canceled — create fresh and launch.
         create_pending(db_url, bid, params)
         threading.Thread(
             target=_run_build,
@@ -173,6 +184,24 @@ async def get_build_status(build_id: str):
         if record is None:
             raise HTTPException(status_code=404, detail=f"Build {build_id!r} not found")
         return record
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/build/{build_id}/cancel")
+async def cancel_build(build_id: str):
+    """Request cancellation of an in-flight build."""
+    try:
+        db_url = _get_db_url()
+        ok = request_cancel(db_url, build_id)
+        if not ok:
+            # Not pending/running — already finished, canceled, or unknown.
+            existing = get_build(db_url, build_id)
+            status = existing["status"] if existing else "not_found"
+            raise HTTPException(status_code=409, detail=f"build not cancelable (status: {status})")
+        return {"build_id": build_id, "status": "canceling"}
     except HTTPException:
         raise
     except Exception as exc:
