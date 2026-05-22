@@ -32,6 +32,7 @@ const links: NavLink[] = [
   { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-400 hover:text-gray-200' },
+  { href: '/ember', label: 'EMBER', className: 'text-amber-400 hover:text-amber-300' },
   { href: '/forge', label: 'Forge', className: 'text-orange-400 hover:text-orange-300', external: true },
 ]
 
