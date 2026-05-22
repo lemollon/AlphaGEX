@@ -58,3 +58,73 @@ def test_build_paths_live_db():
     assert len(paths) >= 5
     assert all(p.path for p in paths)
     assert all(p.entry_credit > 0 for p in paths)
+
+
+def _synthetic_day(date=dt.date(2024, 6, 3)):
+    from backtest.ember.models import Quote, MinuteChain, DayChain
+    quotes = {}
+    spot = 500.0
+    for k in range(480, 521, 5):
+        c_int = max(spot - k, 0.0); p_int = max(k - spot, 0.0)
+        tv = max(2.5 - 0.05 * abs(k - spot), 0.2)
+        quotes[(float(k), "C")] = Quote(c_int + tv - 0.1, c_int + tv + 0.1, c_int + tv)
+        quotes[(float(k), "P")] = Quote(p_int + tv - 0.1, p_int + tv + 0.1, p_int + tv)
+    mc = MinuteChain(minute=0, spot=spot, quotes=quotes)
+    return DayChain(date, date + dt.timedelta(days=1), {0: mc})
+
+
+def test_day_path_from_chain_builds_valid_daypath():
+    from backtest.ember.build import day_path_from_chain
+    from backtest.ember.adapters.base import AdapterConfig
+    cfg = AdapterConfig(entry_minute=0, short_delta=0.16, wing_width=5.0)
+    dp = day_path_from_chain(_synthetic_day(), cfg, fill="ask_cross", is_oos=True)
+    assert dp is not None
+    assert dp.is_oos is True
+    assert dp.entry_credit > 0
+    assert dp.commission_dollars > 0
+    assert len(dp.path) >= 1
+
+
+def test_day_path_from_chain_none_when_no_entry():
+    from backtest.ember.build import day_path_from_chain
+    from backtest.ember.adapters.base import AdapterConfig
+    from backtest.ember.models import DayChain
+    import datetime as _dt
+    empty = DayChain(_dt.date(2024, 6, 3), _dt.date(2024, 6, 4), {})  # no minutes -> ineligible
+    cfg = AdapterConfig(entry_minute=0, short_delta=0.16, wing_width=5.0)
+    assert day_path_from_chain(empty, cfg, fill="ask_cross", is_oos=False) is None
+
+
+def test_build_cancelled_exception_exists():
+    from backtest.ember.build import BuildCancelled
+    assert issubclass(BuildCancelled, Exception)
+
+
+@pytest.mark.integration
+def test_build_paths_reports_incremental_progress():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    calls = []
+    paths = build_paths(dt.date(2024, 1, 1), dt.date(2024, 1, 31), entry_minute=30,
+                        short_delta=0.16, wing_width=5.0, fill="ask_cross",
+                        db_url=os.environ["DATABASE_URL"],
+                        progress_cb=lambda done, total, msg: calls.append((done, total, msg)))
+    assert len(paths) >= 5
+    assert len(calls) >= 5
+    # progress is monotonic non-decreasing in `done`, and messages are non-empty
+    assert calls[0][2] and isinstance(calls[0][2], str)
+    dones = [c[0] for c in calls]
+    assert dones == sorted(dones)
+    assert calls[-1][0] == calls[-1][1]  # ends at done == total
+
+
+@pytest.mark.integration
+def test_build_paths_cancellation_raises():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    from backtest.ember.build import BuildCancelled
+    with pytest.raises(BuildCancelled):
+        build_paths(dt.date(2024, 1, 1), dt.date(2024, 3, 31), entry_minute=30,
+                    short_delta=0.16, wing_width=5.0, fill="ask_cross",
+                    db_url=os.environ["DATABASE_URL"],
+                    should_cancel=lambda: True)  # cancel on the very first check (i=0)

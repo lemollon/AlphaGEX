@@ -6,12 +6,22 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from backtest.ember.adapters.base import AdapterConfig
 from backtest.ember.adapters.spark import SparkRepresentativeIC
-from backtest.ember.data import build_day_chains_from_range, query_range_rows
+from backtest.ember.data import (
+    build_day_chain,
+    build_day_chains_from_range,
+    list_trade_dates,
+    query_day_rows,
+    query_range_rows,
+)
 from backtest.ember.engine import apply_policy, price_path
 from backtest.ember.fills import commission
 from backtest.ember.policy import ExitPolicy
 from backtest.ember.report import summarize
 from backtest.ember.walkforward import DEFAULT_TRAIN_END, split
+
+
+class BuildCancelled(Exception):
+    """Raised inside build_paths when a cancel was requested."""
 
 
 @dataclass
@@ -51,6 +61,25 @@ class DayPath:
         )
 
 
+def day_path_from_chain(chain, cfg: AdapterConfig, fill: str, is_oos: bool, slippage: float = 0.03):
+    """Build one DayPath from an in-memory DayChain (pure; no DB). None if no valid entry/path."""
+    pos = SparkRepresentativeIC().build_entry(chain, cfg)
+    if pos is None:
+        return None
+    path = price_path(chain, pos, fill, slippage)
+    if not path:
+        return None
+    return DayPath(
+        trade_date=chain.trade_date,
+        entry_minute=pos.entry_minute,
+        entry_credit=pos.entry_credit,
+        contracts=pos.contracts,
+        commission_dollars=commission(pos.legs, pos.contracts),
+        is_oos=is_oos,
+        path=path,
+    )
+
+
 def build_paths(
     start: dt.date,
     end: dt.date,
@@ -62,38 +91,38 @@ def build_paths(
     db_url: str,
     slippage: float = 0.03,
     train_end: dt.date = DEFAULT_TRAIN_END,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> List[DayPath]:
-    """Load the range in one query, build one IC per eligible day, compute its minute
-    P&L path. The expensive, cache-once step. `progress_cb(done, total)` is called per day."""
-    rows = query_range_rows(start, end, db_url)
-    chains = build_day_chains_from_range(rows)
-    dates = sorted(chains.keys())
+    """Load one trading day at a time (bounded memory), build its IC + minute P&L path.
+
+    Reports progress via progress_cb(done, total, message) from the first step.
+    Checks should_cancel() periodically and raises BuildCancelled if it returns True."""
+    cfg = AdapterConfig(entry_minute=entry_minute, short_delta=short_delta, wing_width=wing_width)
+
+    if progress_cb is not None:
+        progress_cb(0, 1, "Loading trading calendar…")
+    dates = list_trade_dates(db_url, start, end)
+    total = len(dates)
+    if total == 0:
+        if progress_cb is not None:
+            progress_cb(0, 0, "No 1DTE trading days in range")
+        return []
+
     _, oos_dates = split(dates, train_end)
     oos_set = set(oos_dates)
 
-    cfg = AdapterConfig(entry_minute=entry_minute, short_delta=short_delta, wing_width=wing_width)
-    adapter = SparkRepresentativeIC()
-
     out: List[DayPath] = []
-    total = len(dates)
     for i, d in enumerate(dates):
-        chain = chains[d]
-        pos = adapter.build_entry(chain, cfg)
-        if pos is not None:
-            path = price_path(chain, pos, fill, slippage)
-            if path:
-                out.append(DayPath(
-                    trade_date=d,
-                    entry_minute=pos.entry_minute,
-                    entry_credit=pos.entry_credit,
-                    contracts=pos.contracts,
-                    commission_dollars=commission(pos.legs, pos.contracts),
-                    is_oos=(d in oos_set),
-                    path=path,
-                ))
+        if should_cancel is not None and i % 10 == 0 and should_cancel():
+            raise BuildCancelled()
+        rows = query_day_rows(d, db_url)
+        chain = build_day_chain(d, d + dt.timedelta(days=1), rows)
+        dp = day_path_from_chain(chain, cfg, fill, is_oos=(d in oos_set), slippage=slippage)
+        if dp is not None:
+            out.append(dp)
         if progress_cb is not None:
-            progress_cb(i + 1, total)
+            progress_cb(i + 1, total, f"Replaying day {i + 1}/{total}…")
     return out
 
 
