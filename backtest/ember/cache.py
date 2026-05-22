@@ -8,6 +8,7 @@ import psycopg2
 import psycopg2.extras
 
 from backtest.ember.build import DayPath
+from backtest.ember.dbutil import db_cursor
 
 STALE_SECONDS = 120  # a build with no progress update for this long is considered stuck
 
@@ -59,15 +60,12 @@ def create_pending(db_url: str, build_id: str, params: dict) -> None:
             )
 
 
-def set_progress(db_url: str, build_id: str, progress: int, message: Optional[str] = None) -> None:
-    with psycopg2.connect(db_url) as conn:
-        with conn.cursor() as c:
-            c.execute(
-                """UPDATE ember_builds
-                   SET status='running', progress=%s, progress_message=%s, updated_at=now()
-                   WHERE build_id=%s""",
-                (progress, message, build_id),
-            )
+def set_progress(db_url: str | None = None, build_id: str = None, progress: int = 0, message: Optional[str] = None, *, conn=None) -> None:
+    with db_cursor(db_url, conn) as c:
+        c.execute(
+            "UPDATE ember_builds SET status='running', progress=%s, progress_message=%s, updated_at=now() WHERE build_id=%s",
+            (progress, message, build_id),
+        )
 
 
 def set_completed(db_url: str, build_id: str, paths: List[DayPath]) -> None:
@@ -134,12 +132,11 @@ def request_cancel(db_url: str, build_id: str) -> bool:
             return c.rowcount > 0
 
 
-def is_cancel_requested(db_url: str, build_id: str) -> bool:
-    with psycopg2.connect(db_url) as conn:
-        with conn.cursor() as c:
-            c.execute("SELECT cancel_requested FROM ember_builds WHERE build_id = %s", (build_id,))
-            row = c.fetchone()
-            return bool(row[0]) if row else False
+def is_cancel_requested(db_url: str | None = None, build_id: str = None, *, conn=None) -> bool:
+    with db_cursor(db_url, conn) as c:
+        c.execute("SELECT cancel_requested FROM ember_builds WHERE build_id=%s", (build_id,))
+        row = c.fetchone()
+        return bool(row[0]) if row else False
 
 
 def set_canceled(db_url: str, build_id: str) -> None:

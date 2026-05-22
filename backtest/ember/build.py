@@ -87,6 +87,7 @@ def build_paths(
     wing_width: float,
     fill: str,
     db_url: str,
+    conn=None,
     slippage: float = 0.03,
     train_end: dt.date = DEFAULT_TRAIN_END,
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
@@ -95,12 +96,15 @@ def build_paths(
     """Load one trading day at a time (bounded memory), build its IC + minute P&L path.
 
     Reports progress via progress_cb(done, total, message) from the first step.
-    Checks should_cancel() periodically and raises BuildCancelled if it returns True."""
+    Checks should_cancel() periodically and raises BuildCancelled if it returns True.
+
+    If `conn` is provided it is threaded through to list_trade_dates and query_day_rows
+    so the entire build uses a single database connection instead of one per query."""
     cfg = AdapterConfig(entry_minute=entry_minute, short_delta=short_delta, wing_width=wing_width)
 
     if progress_cb is not None:
         progress_cb(0, 1, "Loading trading calendar…")
-    dates = list_trade_dates(db_url, start, end)
+    dates = list_trade_dates(db_url, start, end, conn=conn)
     total = len(dates)
     if total == 0:
         if progress_cb is not None:
@@ -114,7 +118,7 @@ def build_paths(
     for i, d in enumerate(dates):
         if should_cancel is not None and i % 10 == 0 and should_cancel():
             raise BuildCancelled()
-        rows = query_day_rows(d, db_url)
+        rows = query_day_rows(d, db_url, conn=conn)
         chain = build_day_chain(d, d + dt.timedelta(days=1), rows)
         dp = day_path_from_chain(chain, cfg, fill, is_oos=(d in oos_set), slippage=slippage)
         if dp is not None:

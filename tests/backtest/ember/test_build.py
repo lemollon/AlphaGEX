@@ -128,3 +128,21 @@ def test_build_paths_cancellation_raises():
                     short_delta=0.16, wing_width=5.0, fill="ask_cross",
                     db_url=os.environ["DATABASE_URL"],
                     should_cancel=lambda: True)  # cancel on the very first check (i=0)
+
+
+@pytest.mark.integration
+def test_build_paths_with_shared_connection():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    from backtest.ember.dbutil import open_build_connection
+    conn = open_build_connection(os.environ["DATABASE_URL"])
+    try:
+        calls = []
+        paths = build_paths(dt.date(2024, 1, 1), dt.date(2024, 1, 31), entry_minute=30,
+                            short_delta=0.16, wing_width=5.0, fill="ask_cross",
+                            db_url=os.environ["DATABASE_URL"], conn=conn,
+                            progress_cb=lambda d, t, m: calls.append((d, t, m)))
+        assert len(paths) >= 5
+        assert calls and calls[-1][0] == calls[-1][1]
+    finally:
+        conn.close()
