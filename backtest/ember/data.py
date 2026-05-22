@@ -37,11 +37,38 @@ _DATES_SQL = """
     ORDER BY trade_date
 """
 
+_RANGE_ROWS_SQL = """
+    SELECT
+        trade_date,
+        (EXTRACT(EPOCH FROM (
+            (bar_time AT TIME ZONE 'America/New_York')
+            - date_trunc('day', bar_time AT TIME ZONE 'America/New_York')
+            - INTERVAL '9 hours 30 minutes'
+        )) / 60)::int AS minute,
+        strike::float8 AS strike,
+        "right"        AS right,
+        bid::float8    AS bid,
+        ask::float8    AS ask,
+        close::float8  AS close
+    FROM helios_options_intraday
+    WHERE (expiration_date - trade_date) = 1
+      AND trade_date BETWEEN %s AND %s
+    ORDER BY trade_date, minute, strike
+"""
+
 
 def query_day_rows(trade_date: dt.date, db_url: str) -> List[dict]:
     with psycopg2.connect(db_url) as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
             c.execute(_DAY_ROWS_SQL, (trade_date,))
+            return [dict(r) for r in c.fetchall()]
+
+
+def query_range_rows(start: dt.date, end: dt.date, db_url: str) -> List[dict]:
+    """All 1DTE rows in [start, end] in a single query (rows include trade_date)."""
+    with psycopg2.connect(db_url) as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
+            c.execute(_RANGE_ROWS_SQL, (start, end))
             return [dict(r) for r in c.fetchall()]
 
 
@@ -88,6 +115,17 @@ def build_day_chain(trade_date: dt.date, expiration: dt.date, rows: List[dict]) 
         minutes[minute] = MinuteChain(minute=minute, spot=spot, quotes=quotes)
 
     return DayChain(trade_date=trade_date, expiration=expiration, minutes=minutes)
+
+
+def build_day_chains_from_range(rows: List[dict]) -> Dict[dt.date, DayChain]:
+    """Group range rows by trade_date and build one DayChain per day (expiry = day+1)."""
+    by_date: Dict[dt.date, List[dict]] = {}
+    for r in rows:
+        by_date.setdefault(r["trade_date"], []).append(r)
+    return {
+        td: build_day_chain(td, td + dt.timedelta(days=1), day_rows)
+        for td, day_rows in by_date.items()
+    }
 
 
 def delta_at(day: DayChain, minute: int, strike: float, right: str) -> Optional[float]:

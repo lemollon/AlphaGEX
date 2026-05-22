@@ -60,3 +60,37 @@ def test_load_day_live_db():
     assert 0 <= day.sorted_minutes[0] <= 5
     mid_min = day.sorted_minutes[len(day.sorted_minutes) // 2]
     assert day.spot(mid_min) and 300 < day.spot(mid_min) < 800
+
+
+def test_build_day_chains_from_range_groups_by_date():
+    rows = [
+        {"trade_date": dt.date(2024, 6, 3), "minute": 0, "strike": 100.0, "right": "C", "bid": 1.9, "ask": 2.1, "close": 2.0},
+        {"trade_date": dt.date(2024, 6, 3), "minute": 0, "strike": 100.0, "right": "P", "bid": 0.9, "ask": 1.1, "close": 1.0},
+        {"trade_date": dt.date(2024, 6, 4), "minute": 0, "strike": 100.0, "right": "C", "bid": 1.4, "ask": 1.6, "close": 1.5},
+        {"trade_date": dt.date(2024, 6, 4), "minute": 0, "strike": 100.0, "right": "P", "bid": 1.4, "ask": 1.6, "close": 1.5},
+    ]
+    from backtest.ember.data import build_day_chains_from_range
+    chains = build_day_chains_from_range(rows)
+    assert set(chains.keys()) == {dt.date(2024, 6, 3), dt.date(2024, 6, 4)}
+    assert chains[dt.date(2024, 6, 3)].expiration == dt.date(2024, 6, 4)
+    assert chains[dt.date(2024, 6, 3)].sorted_minutes == [0]
+    assert chains[dt.date(2024, 6, 4)].spot(0) is not None
+
+
+def test_build_day_chains_from_range_empty():
+    from backtest.ember.data import build_day_chains_from_range
+    assert build_day_chains_from_range([]) == {}
+
+
+@pytest.mark.integration
+def test_query_range_rows_live_db():
+    if not os.environ.get("DATABASE_URL"):
+        pytest.skip("DATABASE_URL not set")
+    from backtest.ember.data import query_range_rows, build_day_chains_from_range
+    rows = query_range_rows(dt.date(2024, 1, 1), dt.date(2024, 1, 15), os.environ["DATABASE_URL"])
+    assert rows, "expected rows in Jan 2024"
+    assert "trade_date" in rows[0] and "minute" in rows[0]
+    chains = build_day_chains_from_range(rows)
+    assert len(chains) >= 5  # several 1DTE days in the first half of Jan 2024
+    any_day = next(iter(chains.values()))
+    assert any_day.sorted_minutes
