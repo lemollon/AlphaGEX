@@ -17,8 +17,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": False,
-            "max_contracts": 2,
-            "bp_pct": 0.10,
+            # Deploy 50% of the account, uncapped (max_contracts=0), matching
+            # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
+            "max_contracts": 0,
+            "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.30,
             "sl_pct": 2.0,
@@ -39,8 +41,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": False,
-            "max_contracts": 2,
-            "bp_pct": 0.10,
+            # Deploy 50% of the account, uncapped (max_contracts=0), matching
+            # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
+            "max_contracts": 0,
+            "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 1.0,
@@ -61,8 +65,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": False,
-            "max_contracts": 2,
-            "bp_pct": 0.10,
+            # Deploy 50% of the account, uncapped (max_contracts=0), matching
+            # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
+            "max_contracts": 0,
+            "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 1.0,

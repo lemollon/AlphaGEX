@@ -14,6 +14,9 @@ def test_breeze_defaults():
     assert b["defaults"]["sl_pct"] == 2.0
     assert b["defaults"]["sd_mult"] == 1.0
     assert b["defaults"]["eod_close_ct"] == "14:45"
+    # All bots deploy 50% of the account, uncapped — matches FLOW.
+    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["defaults"]["max_contracts"] == 0
 
 
 def test_tide_defaults():
@@ -23,6 +26,8 @@ def test_tide_defaults():
     assert b["back_dte"] == 14
     assert b["defaults"]["pt_pct"] == 0.50
     assert b["defaults"]["sl_pct"] == 1.0
+    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["defaults"]["max_contracts"] == 0
 
 
 def test_drift_defaults():
@@ -31,6 +36,8 @@ def test_drift_defaults():
     assert b["front_dte"] == 1
     assert b["back_dte"] == 14
     assert b["defaults"]["delta_skew"] == 0
+    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["defaults"]["max_contracts"] == 0
 
 
 def test_flow_defaults():
