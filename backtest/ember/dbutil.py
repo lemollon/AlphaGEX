@@ -23,9 +23,13 @@ def db_cursor(db_url: str | None = None, conn=None, dict_rows: bool = False):
         finally:
             cur.close()
     else:
-        with psycopg2.connect(db_url) as c:
-            with c.cursor(cursor_factory=factory) as cur:
-                yield cur
+        transient = psycopg2.connect(db_url)
+        try:
+            with transient:  # commits on success / rolls back on exception
+                with transient.cursor(cursor_factory=factory) as cur:
+                    yield cur
+        finally:
+            transient.close()  # release the slot deterministically (don't wait for GC)
 
 
 def open_build_connection(db_url: str):
