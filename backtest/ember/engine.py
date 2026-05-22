@@ -55,19 +55,24 @@ def price_path(
     return out
 
 
-def evaluate_exit(
-    chain: DayChain,
-    position: Position,
+def apply_policy(
+    path: List[Tuple[int, float]],
+    *,
+    trade_date: dt.date,
+    entry_minute: int,
+    entry_credit: float,
+    contracts: int,
+    commission_dollars: float,
     policy: ExitPolicy,
-    fill: str,
-    slippage: float = 0.03,
 ) -> Optional[TradeResult]:
-    """Replay the position under one policy. Returns None if it never quotes."""
-    path = price_path(chain, position, fill, slippage)
+    """Evaluate one exit policy against a PRECOMPUTED price path.
+
+    `path` is [(minute, gross_pnl_dollars)] as produced by `price_path`.
+    Returns None if the path is empty. Exit precedence: SL -> PT -> TRAIL -> TIME, forced EOD last."""
     if not path:
         return None
 
-    credit_dollars = position.entry_credit * CONTRACT_MULTIPLIER * position.contracts
+    credit_dollars = entry_credit * CONTRACT_MULTIPLIER * contracts
     pt_target = (policy.profit_target_pct / 100.0) * credit_dollars if policy.profit_target_pct else None
     sl_thresh = (policy.stop_loss_mult * credit_dollars) if policy.stop_loss_mult else None
     trail_arm = (policy.trail_activation_pct / 100.0) * credit_dollars if policy.trail_activation_pct else None
@@ -86,9 +91,8 @@ def evaluate_exit(
         max_fav = max(max_fav, gross)
         max_adv = min(max_adv, gross)
         peak = max(peak, gross)
-        if minute - position.entry_minute < policy.min_hold_minutes:
+        if minute - entry_minute < policy.min_hold_minutes:
             continue
-        # Precedence: SL -> PT -> TRAIL -> TIME
         if sl_thresh is not None and gross <= -sl_thresh:
             chosen_minute, chosen_reason, chosen_gross = minute, "SL", gross
             break
@@ -105,20 +109,40 @@ def evaluate_exit(
     if chosen_minute is None:
         chosen_minute, chosen_reason, chosen_gross = last_minute, "EOD", last_gross
 
-    comm = commission(position.legs, position.contracts)
-    net_pnl = chosen_gross - comm
-    # exit_cost (price units, per spread) implied by gross: gross = (credit - exit_cost)*mult*contracts
-    exit_cost = position.entry_credit - chosen_gross / (CONTRACT_MULTIPLIER * position.contracts)
+    net_pnl = chosen_gross - commission_dollars
+    exit_cost = entry_credit - chosen_gross / (CONTRACT_MULTIPLIER * contracts)
 
     return TradeResult(
-        trade_date=chain.trade_date,
+        trade_date=trade_date,
         policy=policy.name,
-        entry_minute=position.entry_minute,
+        entry_minute=entry_minute,
         exit_minute=chosen_minute,
         exit_reason=chosen_reason,
-        entry_credit=position.entry_credit,
+        entry_credit=entry_credit,
         exit_cost=exit_cost,
         pnl=net_pnl,
         max_favorable=max_fav,
         max_adverse=max_adv,
+    )
+
+
+def evaluate_exit(
+    chain: DayChain,
+    position: Position,
+    policy: ExitPolicy,
+    fill: str,
+    slippage: float = 0.03,
+) -> Optional[TradeResult]:
+    """Replay the position under one policy. Returns None if it never quotes."""
+    path = price_path(chain, position, fill, slippage)
+    if not path:
+        return None
+    return apply_policy(
+        path,
+        trade_date=chain.trade_date,
+        entry_minute=position.entry_minute,
+        entry_credit=position.entry_credit,
+        contracts=position.contracts,
+        commission_dollars=commission(position.legs, position.contracts),
+        policy=policy,
     )

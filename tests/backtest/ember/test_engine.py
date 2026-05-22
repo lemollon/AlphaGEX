@@ -87,3 +87,23 @@ def test_price_path_forward_fills_missing_minute():
     path = price_path(chain, pos, fill=FILL_MID)
     minutes = [m for m, _ in path]
     assert minutes == [0, 10, 385]   # only minutes present in the chain
+
+
+def test_apply_policy_pt_on_precomputed_path():
+    from backtest.ember.engine import apply_policy
+    # path is [(minute, gross_dollars)]. credit 1.00 -> credit_dollars=100; PT50 target=50.
+    path = [(0, 0.0), (5, 30.0), (10, 60.0), (385, 60.0)]
+    policy = ExitPolicy("pt50", profit_target_pct=50, stop_loss_mult=None, time_stop_minute=None, min_hold_minutes=1)
+    r = apply_policy(path, trade_date=dt.date(2024, 6, 3), entry_minute=0, entry_credit=1.00,
+                     contracts=1, commission_dollars=5.20, policy=policy)
+    assert r.exit_reason == "PT"
+    assert r.exit_minute == 10
+    assert abs(r.pnl - (60.0 - 5.20)) < 1e-9
+    assert abs(r.exit_cost - 0.40) < 1e-9   # 1.00 - 60/100
+
+
+def test_apply_policy_empty_path_returns_none():
+    from backtest.ember.engine import apply_policy
+    policy = ExitPolicy("x", profit_target_pct=50, stop_loss_mult=None, time_stop_minute=None)
+    assert apply_policy([], trade_date=dt.date(2024, 6, 3), entry_minute=0, entry_credit=1.0,
+                        contracts=1, commission_dollars=5.2, policy=policy) is None
