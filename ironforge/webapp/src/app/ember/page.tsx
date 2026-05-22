@@ -394,6 +394,121 @@ export default function EmberPage() {
           loading={evalLoading}
         />
       )}
+
+      {/* Load-sample guide card */}
+      <div className="rounded-xl border border-forge-border bg-forge-card/60 p-5">
+        {/* Card header */}
+        <div className="flex items-center gap-2 mb-4">
+          {/* Compass / guide glyph */}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-amber-400 shrink-0">
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 2v1.5M8 12.5V14M2 8h1.5M12.5 8H14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            {/* North arrow */}
+            <path d="M8 5L9.2 9H6.8L8 5Z" fill="currentColor" />
+            {/* South arrow */}
+            <path d="M8 11L6.8 7H9.2L8 11Z" fill="rgba(217,119,6,0.4)" />
+          </svg>
+          <h2 className="text-sm font-semibold text-gray-300">New here? Load a sample setup</h2>
+        </div>
+
+        {/* Two-column param preview */}
+        <div className="grid grid-cols-2 gap-6 mb-4 text-xs">
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-forge-muted font-semibold mb-2">Entry</p>
+            <div className="space-y-1 text-gray-400">
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Start Date</span>
+                <span className="font-mono text-gray-300">2024-01-02</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">End Date</span>
+                <span className="font-mono text-gray-300">2025-12-05</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Entry Time</span>
+                <span className="font-mono text-gray-300">9:00 AM CT (+30min)</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Short Delta</span>
+                <span className="font-mono text-gray-300">0.16</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Wing Width</span>
+                <span className="font-mono text-gray-300">$5</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Fill Model</span>
+                <span className="font-mono text-gray-300">Ask Cross</span>
+              </div>
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-forge-muted font-semibold mb-2">Exit</p>
+            <div className="space-y-1 text-gray-400">
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Profit Target</span>
+                <span className="font-mono text-gray-300">40%</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Stop Loss</span>
+                <span className="font-mono text-gray-300">1.0×</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Time Stop</span>
+                <span className="font-mono text-gray-300">None (hold to EOD)</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Trailing Stop</span>
+                <span className="font-mono text-gray-300">Off</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-forge-muted">Min Hold</span>
+                <span className="font-mono text-gray-300">5 min</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* What you'll see */}
+        <p className="text-xs text-forge-muted mb-4 leading-relaxed">
+          Loads ~560 trading days. 2024 is in-sample (the policy is tuned here); 2025 is out-of-sample (validation).
+          These 1DTE SPY iron condors are typically slightly negative after costs — the goal is not a winner, it&apos;s the
+          least-bad exit, and checking it holds up out-of-sample.
+        </p>
+
+        {/* Load button */}
+        <button
+          onClick={() => {
+            setBuildParams({
+              start: '2024-01-02',
+              end: '2025-12-05',
+              entry_minute: 30,
+              short_delta: 0.16,
+              wing_width: 5,
+              fill: 'ask_cross',
+            })
+            setExitParams({
+              profit_target_pct: 40,
+              stop_loss_mult: 1.0,
+              time_stop_minute: null,
+              trail_activation_pct: null,
+              trail_giveback_pct: null,
+              min_hold_minutes: 5,
+            })
+          }}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/35 hover:border-amber-500/55 transition-all"
+        >
+          {/* Download / load glyph */}
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <path d="M7 2v7M4 7l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M2 11h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          Load this sample
+        </button>
+        <p className="text-[10px] text-forge-muted mt-2">
+          Loads values into the form above — click Build / Load to run.
+        </p>
+      </div>
     </div>
   )
 }

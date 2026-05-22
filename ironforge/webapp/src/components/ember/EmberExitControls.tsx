@@ -1,6 +1,7 @@
 'use client'
 
 import { type ExitParams } from '@/app/ember/page'
+import InfoTip from '@/components/ember/InfoTip'
 
 interface Props {
   params: ExitParams
@@ -8,11 +9,15 @@ interface Props {
   disabled: boolean
 }
 
+// Values stay as-is (minutes since 8:30 AM open). Labels updated to CT clock times.
+// 8:30 AM CT open + 180 min = 11:30 AM CT
+// 8:30 AM CT open + 300 min = 1:30 PM CT
+// 8:30 AM CT open + 385 min = 2:55 PM CT
 const TIME_STOP_OPTIONS: { value: number | null; label: string }[] = [
   { value: null, label: 'None (hold to EOD)' },
-  { value: 180, label: '12:30 ET (+180 min)' },
-  { value: 300, label: '14:30 ET (+300 min)' },
-  { value: 385, label: '15:55 ET (+385 min)' },
+  { value: 180, label: '11:30 AM CT' },
+  { value: 300, label: '1:30 PM CT' },
+  { value: 385, label: '2:55 PM CT' },
 ]
 
 export default function EmberExitControls({ params, onChange, disabled }: Props) {
@@ -42,6 +47,7 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
           <label className="block text-xs text-forge-muted mb-1.5">
             Profit Target %
             <span className="ml-1 text-forge-muted/60">(of credit)</span>
+            <InfoTip text="Take profit — close once the trade has captured this % of the credit collected at entry. e.g. 40% on a $1.00 credit closes when you can buy it back for ~$0.60, locking $0.40. Higher % holds for more but wins less often." />
           </label>
           <div className="space-y-1.5">
             <input
@@ -66,6 +72,7 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
           <label className="block text-xs text-forge-muted mb-1.5">
             Stop Loss ×credit
             <span className="ml-1 text-forge-muted/60">(0–3×)</span>
+            <InfoTip text="Cut losses — close when the loss reaches this multiple of the credit collected. e.g. 1.0× on a $1.00 credit closes when down ~$1.00. Lower = tighter stop (more frequent, smaller losses); higher = looser." />
           </label>
           <div className="space-y-1.5">
             <input
@@ -87,7 +94,10 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
 
         {/* Time stop */}
         <div className="lg:col-span-1">
-          <label className="block text-xs text-forge-muted mb-1.5">Time Stop</label>
+          <label className="block text-xs text-forge-muted mb-1.5">
+            Time Stop
+            <InfoTip text="Force-close at a fixed time of day regardless of profit or loss. 'None (hold to EOD)' keeps the position until the end of the day." />
+          </label>
           <select
             value={params.time_stop_minute === null ? 'none' : String(params.time_stop_minute)}
             onChange={(e) => {
@@ -109,6 +119,7 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
           <label className="block text-xs text-forge-muted mb-1.5">
             Trail Activation %
             <span className="ml-1 text-forge-muted/60">(optional)</span>
+            <InfoTip text="Optional trailing stop — once profit reaches this % of the credit, arm a trailing stop. Leave Off to disable trailing." />
           </label>
           <input
             type="number"
@@ -130,6 +141,7 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
           <label className="block text-xs text-forge-muted mb-1.5">
             Trail Giveback %
             <span className="ml-1 text-forge-muted/60">(optional)</span>
+            <InfoTip text="Once the trailing stop is armed, close if profit falls back by this % of the credit from its peak." />
           </label>
           <input
             type="number"
@@ -151,6 +163,7 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
           <label className="block text-xs text-forge-muted mb-1.5">
             Min Hold
             <span className="ml-1 text-forge-muted/60">(minutes)</span>
+            <InfoTip text="Block any exit for this many minutes after entry — prevents instant exits on noisy opening-minute prices." />
           </label>
           <input
             type="number"
@@ -166,10 +179,17 @@ export default function EmberExitControls({ params, onChange, disabled }: Props)
 
       {/* Summary line */}
       <div className="mt-4 pt-3 border-t border-forge-border/50 text-xs font-mono text-forge-muted">
-        Policy: PT={params.profit_target_pct}% / SL={params.stop_loss_mult.toFixed(2)}× /
-        Time={params.time_stop_minute != null ? `+${params.time_stop_minute}min` : 'EOD'} /
-        Trail={params.trail_activation_pct != null ? `act@${params.trail_activation_pct}%,give${params.trail_giveback_pct ?? 0}%` : 'off'} /
-        MinHold={params.min_hold_minutes}min
+        {(() => {
+          const timeLabel = TIME_STOP_OPTIONS.find((o) => o.value === params.time_stop_minute)?.label ?? 'EOD'
+          return (
+            <>
+              Policy: PT={params.profit_target_pct}% / SL={params.stop_loss_mult.toFixed(2)}× /
+              Time={timeLabel} /
+              Trail={params.trail_activation_pct != null ? `act@${params.trail_activation_pct}%,give${params.trail_giveback_pct ?? 0}%` : 'off'} /
+              MinHold={params.min_hold_minutes}min
+            </>
+          )
+        })()}
       </div>
     </div>
   )
