@@ -103,6 +103,7 @@ from backend.api.routes import (
     reconciliation_routes,  # Reconciliation - Map Tradier orders/positions to bots
     goliath_routes,  # GOLIATH - LETF earnings-week options paper-trading bot
     perp_exit_optimizer_routes,  # Admin: backtest exit-rule param grid for the 5 perp bots
+    ember_routes,  # EMBER backtester: build cache + instant exit-policy evaluation
 )
 
 # ============================================================================
@@ -387,7 +388,8 @@ app.include_router(dashboard_batch_routes.router)
 app.include_router(reconciliation_routes.router)
 app.include_router(goliath_routes.router)
 app.include_router(perp_exit_optimizer_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto, goliath")
+app.include_router(ember_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto, goliath, ember")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
