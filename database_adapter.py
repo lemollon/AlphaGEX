@@ -27,11 +27,11 @@ class DatabaseUnavailableError(Exception):
 class DatabaseAdapter:
     """PostgreSQL database adapter with connection pooling"""
 
-    # Pool configuration — Render Standard supports up to ~97 connections.
-    # min=5 keeps warm connections ready; max=40 handles batch endpoint
-    # concurrency without exhausting the Render PostgreSQL limit.
-    MIN_CONNECTIONS = 5
-    MAX_CONNECTIONS = 40
+    # Pool configuration — PgBouncer handles connection multiplexing; the app
+    # pool is intentionally small (min=1, max=10). PgBouncer will multiplex
+    # these 10 app-side slots across the full server connection limit.
+    MIN_CONNECTIONS = 1
+    MAX_CONNECTIONS = 10
 
     def __init__(self):
         """Initialize adapter with connection pool - requires DATABASE_URL"""
@@ -67,7 +67,8 @@ class DatabaseAdapter:
                 self.database_url,
                 # Timeout settings
                 connect_timeout=30,
-                options='-c statement_timeout=300000',  # 5 minute query timeout
+                # statement_timeout set via role default (ALTER ROLE alphagex_user SET statement_timeout)
+                # — not as a session/startup GUC, for PgBouncer transaction-mode compatibility
                 # Keepalive settings
                 keepalives=1,
                 keepalives_idle=30,
@@ -98,7 +99,8 @@ class DatabaseAdapter:
         conn = psycopg2.connect(
             self.database_url,
             connect_timeout=30,
-            options='-c statement_timeout=300000',
+            # statement_timeout set via role default (ALTER ROLE alphagex_user SET statement_timeout)
+            # — not as a session/startup GUC, for PgBouncer transaction-mode compatibility
             keepalives=1,
             keepalives_idle=30,
             keepalives_interval=10,
@@ -216,6 +218,13 @@ class PooledPostgreSQLConnection(PostgreSQLConnection):
                 # Rollback any uncommitted transaction before returning to pool
                 try:
                     self._conn.rollback()
+                except Exception:
+                    pass
+                # Reset autocommit to False before returning to pool — prevents a
+                # connection flipped to autocommit=True (e.g. during DDL init) from
+                # contaminating the next borrower (PgBouncer transaction-mode safety).
+                try:
+                    self._conn.autocommit = False
                 except Exception:
                     pass
                 self._adapter.return_connection(self._conn)
