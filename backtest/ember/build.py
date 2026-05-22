@@ -8,10 +8,8 @@ from backtest.ember.adapters.base import AdapterConfig
 from backtest.ember.adapters.spark import SparkRepresentativeIC
 from backtest.ember.data import (
     build_day_chain,
-    build_day_chains_from_range,
     list_trade_dates,
     query_day_rows,
-    query_range_rows,
 )
 from backtest.ember.engine import apply_policy, price_path
 from backtest.ember.fills import commission
