@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple
 import psycopg2
 import psycopg2.extras
 
+from backtest.ember.dbutil import db_cursor
 from quant.bs import DEFAULT_R, bs_delta, derive_spot_from_parity, implied_vol
 from backtest.ember.models import DayChain, MinuteChain, Quote
 
@@ -57,11 +58,10 @@ _RANGE_ROWS_SQL = """
 """
 
 
-def query_day_rows(trade_date: dt.date, db_url: str) -> List[dict]:
-    with psycopg2.connect(db_url) as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
-            c.execute(_DAY_ROWS_SQL, (trade_date,))
-            return [dict(r) for r in c.fetchall()]
+def query_day_rows(trade_date: dt.date, db_url: str | None = None, *, conn=None) -> List[dict]:
+    with db_cursor(db_url, conn, dict_rows=True) as c:
+        c.execute(_DAY_ROWS_SQL, (trade_date,))
+        return [dict(r) for r in c.fetchall()]
 
 
 def query_range_rows(start: dt.date, end: dt.date, db_url: str) -> List[dict]:
@@ -72,11 +72,10 @@ def query_range_rows(start: dt.date, end: dt.date, db_url: str) -> List[dict]:
             return [dict(r) for r in c.fetchall()]
 
 
-def list_trade_dates(db_url: str, start: dt.date, end: dt.date) -> List[dt.date]:
-    with psycopg2.connect(db_url) as conn:
-        with conn.cursor() as c:
-            c.execute(_DATES_SQL, (start, end))
-            return [r[0] for r in c.fetchall()]
+def list_trade_dates(db_url: str | None = None, start: dt.date = None, end: dt.date = None, *, conn=None) -> List[dt.date]:
+    with db_cursor(db_url, conn) as c:
+        c.execute(_DATES_SQL, (start, end))
+        return [r[0] for r in c.fetchall()]
 
 
 def t_years(trade_date: dt.date, expiration: dt.date, minute: int) -> float:

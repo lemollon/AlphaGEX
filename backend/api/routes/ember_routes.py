@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backtest.ember.build import BuildCancelled, build_paths, evaluate_grid, evaluate_policy
+from backtest.ember.dbutil import open_build_connection
 from backtest.ember.cache import (
     build_key,
     create_pending,
@@ -87,13 +88,18 @@ def _policy_from_params(body) -> ExitPolicy:
 # ---------------------------------------------------------------------------
 
 def _run_build(db_url: str, build_id: str, params: dict) -> None:
-    """Executed in a daemon thread. Runs build_paths, then persists the result."""
+    """Executed in a daemon thread. Runs build_paths, then persists the result.
+
+    Opens ONE autocommit connection for the full build loop so that a 567-day
+    build uses ~1 connection instead of ~1,100 short-lived ones."""
     bid = build_id
+    conn = None
     try:
+        conn = open_build_connection(db_url)
         start = date.fromisoformat(params["start"])
         end = date.fromisoformat(params["end"])
 
-        set_progress(db_url, bid, 0, "Queued — starting…")
+        set_progress(db_url, bid, 0, "Queued — starting…", conn=conn)
 
         paths = build_paths(
             start,
@@ -103,16 +109,23 @@ def _run_build(db_url: str, build_id: str, params: dict) -> None:
             wing_width=params["wing_width"],
             fill=params["fill"],
             db_url=db_url,
+            conn=conn,
             progress_cb=lambda done, total, msg: set_progress(
-                db_url, bid, int(100 * done / total) if total else 0, msg
+                db_url, bid, int(100 * done / total) if total else 0, msg, conn=conn
             ),
-            should_cancel=lambda: is_cancel_requested(db_url, bid),
+            should_cancel=lambda: is_cancel_requested(db_url, bid, conn=conn),
         )
-        set_completed(db_url, bid, paths)
+        set_completed(db_url, bid, paths)   # transient connection, once — fine
     except BuildCancelled:
         set_canceled(db_url, bid)
     except Exception as exc:
         set_failed(db_url, bid, str(exc))
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
