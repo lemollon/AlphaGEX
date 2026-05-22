@@ -716,7 +716,8 @@ class HybridFixedBacktester:
             password=result.password,
             database=result.path[1:],
             connect_timeout=30,
-            options='-c statement_timeout=300000'
+            # statement_timeout set via role default (ALTER ROLE alphagex_user SET statement_timeout)
+            # — not as a session/startup GUC, for PgBouncer transaction-mode compatibility
         )
         return conn
 
