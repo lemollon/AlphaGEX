@@ -490,6 +490,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Pick up from max(trade_date)+1 in helios_options_intraday.",
     )
+    p.add_argument(
+        "--half-width",
+        type=int,
+        default=DEFAULT_HALF_WIDTH,
+        help="Strikes pulled = ATM +/- this many whole dollars (default %d = %d strikes). "
+             "Use a wider band (e.g. 30) to capture GEX-wall condors like SPARK's, whose "
+             "wings sit outside the near-ATM band. Idempotent: re-running a wider band over "
+             "already-pulled days ADDS the missing outer strikes (ON CONFLICT DO NOTHING)."
+             % (DEFAULT_HALF_WIDTH, 2 * DEFAULT_HALF_WIDTH + 1),
+    )
     return p.parse_args(argv)
 
 
@@ -576,7 +586,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                              trade_date, spot)
             last_known_spot = spot
 
-            pulls = plan_pulls(trade_date, spot, half_width=DEFAULT_HALF_WIDTH)
+            pulls = plan_pulls(trade_date, spot, half_width=args.half_width)
 
             for pull in pulls:
                 try:
