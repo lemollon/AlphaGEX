@@ -1,9 +1,10 @@
 # Spreadworks — Content Playbook (Project B)
 
 How the Spreadworks avatar turns the tool + bots + community into a steady content
-stream. Primary platforms: **X/Twitter**, **Discord/Reddit (community)**, and
-**short-form video** (the tool demos beautifully), with **LinkedIn** for long-form.
-Follow the compliance and CTA rules in `shared/`.
+stream. **Channels (decided): X/Twitter, Instagram, and the shared Discord** (Spreadworks
+content routes to `#daily-brief` / `#spread-lab` / `#spreadworks-bots`). The tool demos
+beautifully on Instagram Reels. LinkedIn/Reddit/YouTube are optional add-ons. Follow the
+compliance and cross-channel rules in `shared/05`.
 
 ---
 
@@ -42,19 +43,23 @@ Follow the compliance and CTA rules in `shared/`.
 - Host conversations, run the engagement prompts, celebrate members' disciplined trades,
   do live "let's build this spread" walk-throughs.
 
-### Short-form video (YouTube Shorts / TikTok / Reels — strong fit here)
-- **60-sec tool demos:** symbol in → GEX-Suggest → payoff diagram out. Visually clean,
-  on-brand colors.
-- **"What is a Double Calendar?" in 60 seconds**, with the payoff shape animating.
-- **"Reading a payoff diagram"** micro-lessons.
+### Instagram (primary, visual — Spreadworks shines here)
+- **Reels:** 60-sec tool demos (symbol in → GEX-Suggest → payoff diagram out), "what is
+  a Double Calendar?" with the payoff shape animating, "reading a payoff diagram" micro-
+  lessons. The cleanest visual proof of the whole GEX thesis. Hook in 2 seconds.
+- **Carousels:** "4 ways to play a range" (BREEZE/TIDE/DRIFT/FLOW), strategy teardowns
+  slide-by-slide, a GEX-map mini-lesson, "PUT=green/CALL=red — here's the logic."
+- **Stories:** repurpose the daily brief (verse / tip / engagement poll / close), tool
+  screenshots, "come build this in the Discord" sticker.
+- Follow the brand book in every graphic (blue/green/red/yellow, PUT=green/CALL=red, mono
+  numbers, no emoji in product chrome).
 
-### Reddit (secondary, careful)
-- Value-first educational posts in r/options, r/thetagang. Follow each sub's self-promo
-  rules; the tool/Discord link goes only where it genuinely helps.
-
-### LinkedIn (secondary, long-form)
-- Educational essays on spread construction and GEX; the "I built a GEX-powered spread
-  lab and a community around discipline" founder narrative. Spell out acronyms.
+### Optional add-ons (only with spare capacity)
+- **Reddit:** value-first educational posts in r/options, r/thetagang; obey each sub's
+  self-promo rules; link only where it genuinely helps.
+- **LinkedIn / YouTube:** essays on spread construction + GEX, the "I built a GEX spread
+  lab and a community around discipline" narrative; longer tool walkthroughs. Spell out
+  acronyms.
 
 ---
 
@@ -86,10 +91,9 @@ Follow the compliance and CTA rules in `shared/`.
 ## Cadence (sustainable)
 
 - **X:** 1–2/day (1 teach + 1 demo/tip), 1 teardown thread/week.
+- **Instagram:** 3–4/week (Reels demos + carousels), Stories most market days.
 - **Discord:** the daily brief, every market day (it's largely automated — amplify it).
-- **Short-form:** 2–3/week (the demos are repeatable and fast).
-- **LinkedIn:** 1–2/week.
-- **Reddit:** 1 genuinely useful post/week, max, where rules allow.
+- **Optional:** LinkedIn 1–2/week, Reddit ≤1 useful post/week where rules allow.
 - **Anchor:** the daily Discord brief + a weekly "Spread of the Week."
 
 ---

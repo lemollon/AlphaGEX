@@ -23,6 +23,63 @@ step — without ever being spammy or violating the compliance rules.
 
 ---
 
+## Channel strategy (DECIDED)
+
+One personal founder brand, three channels, **both products on each**:
+
+| Channel | Role | What it carries |
+|---|---|---|
+| **X / Twitter** | Reach + authority | Daily teaching, build-in-public bot recaps, GEX threads, hot-takes. Highest cadence. Both products. |
+| **Instagram** | Reach + visual proof | Carousels (education, payoff diagrams, GEX maps), Reels (tool demos, bot recaps as motion), Stories (daily-brief snippets, polls, behind-the-scenes). Both products. |
+| **Discord** (shared) | Community + retention | The home base. The daily brief, the `/spread` command, member conversation, both products' bot updates. Where followers become a community. |
+
+> **LinkedIn / YouTube / Reddit are optional add-ons**, not part of the committed set.
+> Add them later only if you have spare capacity; don't let them dilute the three core
+> channels.
+
+### The shared Discord — suggested channel map (both brands, one server)
+
+Keep both products clearly organized so the room never feels like two servers crammed
+into one:
+
+```
+WELCOME
+  #start-here          rules, what this place is, links to both products
+  #gex-101             pinned GEX explainers (shared education)
+COMMUNITY
+  #general             chat / off-topic
+  #trade-journal       members share their own (real or paper) trades + lessons
+  #wins-and-lessons    celebrate disciplined trades; normalize posting losses
+DAILY
+  #daily-brief         the automated brief: verse → context + event intel → tip → prompt → close
+SPREADWORKS
+  #spread-lab          the /spread command + analyzer talk (Double Diagonal / Calendar)
+  #spreadworks-bots    BREEZE / TIDE / DRIFT / FLOW updates + alerts
+IRON FORGE
+  #forge-report        FLAME / SPARK / INFERNO recaps + the weekly Forge Report
+  #iron-forge-bots     live bot activity / alerts
+```
+
+- The **`/spread` command and the daily brief already exist** in the Spreadworks build —
+  wire them into the relevant channels and *amplify* them; don't recreate them by hand.
+- Run the **engagement prompts** (21 in rotation) in `#general` or `#daily-brief` to keep
+  conversation alive.
+- The brief's **verse-at-open / reflection-at-close** rhythm sets the server's culture
+  (discipline + gratitude). Keep it invitational (compliance rule 10).
+
+### Cross-brand content calendar (so one feed stays balanced)
+
+Across X + Instagram in a typical week, aim for roughly:
+- **~40% brand-neutral GEX education + build-in-public** (serves both, widest reach)
+- **~30% Iron Forge** (bot recaps, 0DTE/IC mechanics, the Forge Report)
+- **~30% Spreadworks** (tool demos, calendars/diagonals, daily-brief repurposing)
+
+Don't alternate rigidly post-by-post; cluster naturally (e.g., a Forge Report day, a
+GEX-Suggest demo day). The **website hub and the Discord `#start-here`** are where the
+two products' stories officially connect.
+
+---
+
 ## The funnel (how attention becomes a relationship)
 
 ```
@@ -44,20 +101,23 @@ Over-asking burns the trust that is the entire strategy.
 
 ---
 
-## CTA conventions per platform
+## CTA conventions per channel
 
 - **X/Twitter:** Don't paste links in the body of high-reach posts (it suppresses
   reach). Put the link in the reply, the bio, or a thread's final tweet. CTA style:
-  "Full write-up + the dashboard → link in reply."
-- **LinkedIn:** Link in the first comment or at the very end. CTA style: professional,
-  "I write about this weekly — site in comments."
-- **Instagram / TikTok:** "Link in bio." Keep the bio link pointed at the hub (or a
-  link-in-bio page that lists both products + Discord).
-- **YouTube:** Links in description; verbal CTA to the website/Discord at a natural
-  point, not the first 5 seconds.
-- **Discord/Reddit:** Be a member first, promoter second. Link to the app/site only
-  when it actually answers the question. Reddit especially punishes self-promo — follow
-  each subreddit's rules.
+  "Full write-up + the dashboard → link in reply." Frequent soft CTA: "we go deeper in
+  the Discord → bio."
+- **Instagram:** "Link in bio." Point the bio link at the hub or a link-in-bio page
+  listing both products + the Discord invite. In-content CTA lives in the last carousel
+  slide / end of a Reel / a Story sticker — never as the opening line. Stories are the
+  best low-friction "join the Discord" nudge.
+- **Discord (shared):** This is the destination, not just a promo target — be the host.
+  Surface the products where they genuinely help (the `/spread` command in `#spread-lab`,
+  dashboards in the bot channels). Invite people in *from* X/IG; convert *inside* via
+  value, not pitches.
+- **Optional (LinkedIn / YouTube / Reddit):** if used — LinkedIn link in first comment;
+  YouTube links in description + a natural verbal CTA (not the first 5s); Reddit value-
+  first and obey each sub's self-promo rules.
 
 ---
 

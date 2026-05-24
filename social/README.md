@@ -11,29 +11,30 @@ compliant content without you re-explaining the products every time.
 
 ---
 
-## How to set up the two Claude Projects
+## How to set up the Claude Project
 
-**Recommended structure: two brand projects + one shared library.**
+**Decided channel strategy:** one personal founder brand across a **shared Discord**,
+**X/Twitter**, and **Instagram**, promoting **both** products. Because the channels are
+shared, the recommended setup is **one combined Claude Project.**
 
-### Project A — "Iron Forge — Social"
-Upload as Project Knowledge:
-- Everything in `shared/` (5 files)
-- Everything in `ironforge/` (4 files)
+### Recommended — One combined project ("GEX Social" or your name)
+Upload as Project Knowledge: **everything in `social/`** — all of `shared/`,
+`ironforge/`, and `spreadworks/`.
 
-Paste `ironforge/04_project_instructions.md` into the Project's **custom instructions**.
+Paste `combined_project_instructions.md` into the Project's **custom instructions**.
 
-### Project B — "Spreadworks — Social"
-Upload as Project Knowledge:
-- Everything in `shared/` (5 files)
-- Everything in `spreadworks/` (4 files)
+This matches the unified distribution: one feed per channel, mixing Iron Forge content,
+Spreadworks content, and brand-neutral GEX education. The avatar decides which product
+lens a given post needs (see `shared/05_website_and_funnel.md` for the cross-brand
+calendar).
 
-Paste `spreadworks/04_project_instructions.md` into the Project's **custom instructions**.
-
-> **Why two projects, not one?** The two products tell different stories to different
-> audiences. Iron Forge is a *watch-the-bots-trade* build-in-public story. Spreadworks
-> is a *tool + community* story. One combined project blurs the voices. The only cost
-> is that the 5 `shared/` files live in both projects — when a shared fact changes,
-> update it in both. That folder is deliberately small to keep that cheap.
+### Alternative — Two brand projects (only if you later split into separate handles)
+If you ever run separate per-product accounts, split into two projects instead:
+- **Project A — Iron Forge:** upload `shared/` + `ironforge/`; paste
+  `ironforge/04_project_instructions.md` as custom instructions.
+- **Project B — Spreadworks:** upload `shared/` + `spreadworks/`; paste
+  `spreadworks/04_project_instructions.md` as custom instructions.
+- Cost: the `shared/` files live in both projects — update shared facts in both.
 
 ---
 
@@ -42,7 +43,8 @@ Paste `spreadworks/04_project_instructions.md` into the Project's **custom instr
 ```
 social/
 ├── README.md                        ← you are here
-├── shared/                          ← paste into BOTH projects
+├── combined_project_instructions.md ← paste into the ONE combined project (recommended)
+├── shared/                          ← always uploaded
 │   ├── 01_GEX_explained.md          Gamma Exposure, plain-English → technical
 │   ├── 02_glossary.md               Options + GEX terms the avatar must use correctly
 │   ├── 03_compliance_and_disclaimers.md   Hard rules. Non-negotiable.

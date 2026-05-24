@@ -1,8 +1,9 @@
 # Iron Forge — Content Playbook (Project A)
 
 How the Iron Forge avatar turns the product + voice into a steady stream of posts.
-Primary platforms: **X/Twitter** and **LinkedIn**, with short-form video and a
-community as secondary. Respect the compliance rules and CTA conventions from `shared/`.
+**Channels (decided): X/Twitter, Instagram, and the shared Discord** (Iron Forge content
+routes to `#forge-report` / `#iron-forge-bots`). LinkedIn/YouTube are optional add-ons.
+Respect the compliance rules and the cross-channel strategy in `shared/05`.
 
 ---
 
@@ -38,24 +39,27 @@ community as secondary. Respect the compliance rules and CTA conventions from `s
 - **Loss autopsy:** a red day, told straight, ending in the lesson.
 - Link hygiene: keep links out of the main post; put them in a reply or bio.
 
-### LinkedIn (primary, lower cadence — 2–4×/week)
-- **Long-form build update:** weekly, narrative, "here's what the three bots taught me
-  this week," with one chart. Disclaimer at the end, link in first comment.
-- **Educational explainer:** GEX or Iron Condor mechanics for a smart-but-not-options
-  audience. Spell out acronyms.
-- **Founder/engineering essay:** a design decision and why (standalone architecture,
-  paper-fill integrity, sizing philosophy).
+### Instagram (primary, visual)
+- **Carousels:** "anatomy of an Iron Condor," equity-curve recaps (labeled paper),
+  "FLAME vs SPARK vs INFERNO," a 5-slide GEX mini-lesson. Last slide = soft CTA + "link
+  in bio."
+- **Reels:** screen-recorded dashboard walkthroughs ("watch SPARK close a 1DTE condor"),
+  60-sec GEX explainers, "what my bot does that panic-me couldn't." Hook in 2 seconds.
+- **Stories:** the day's bot result, a poll ("IC or stay flat today?"), behind-the-scenes
+  build clips, a Discord-invite sticker.
+- Use the fire/forge dark visual look; keep a consistent founder-brand frame across both
+  products' posts.
 
-### Short-form video (YouTube Shorts / TikTok / Reels — secondary)
-- **Screen-recorded dashboard walkthroughs** (label paper): "watch SPARK take and close
-  a 1DTE condor."
-- **60-sec GEX explainer** with a simple SPY chart + flip point/walls overlay.
-- **"What my bot does that I couldn't"** — discipline mechanics, fast cuts.
-- Defer until the written cadence is humming; high production cost.
+### Discord (shared — Iron Forge channels)
+- Post the **weekly Forge Report** to `#forge-report`; pipe live bot activity/alerts to
+  `#iron-forge-bots`. Host the conversation — answer "why did INFERNO skip today?" type
+  questions. Bring people in from X/IG; deepen the relationship here.
 
-### Community (Discord/Reddit — secondary)
-- Be a participant first. Share dashboards when they answer a question. Reddit: follow
-  each subreddit's self-promo rules; lead with value in r/options, r/thetagang.
+### Optional add-ons (only with spare capacity)
+- **LinkedIn:** weekly long-form build update + the occasional engineering essay
+  (standalone architecture, paper-fill integrity, sizing philosophy). Spell out acronyms.
+- **YouTube / Reddit:** longer dashboard walkthroughs; value-first posts in r/options /
+  r/thetagang per each sub's rules.
 
 ---
 
@@ -87,8 +91,8 @@ community as secondary. Respect the compliance rules and CTA conventions from `s
 ## Cadence (sustainable beats heroic)
 
 - **X:** 1–2 posts/day (1 recap + 1 teach/take), 1 thread/week.
-- **LinkedIn:** 2–3 posts/week, anchored by the weekly long-form recap.
-- **Short-form:** 1–2/week once you start.
+- **Instagram:** 3–4/week (mix of carousels + Reels), Stories most market days.
+- **Discord:** weekly Forge Report + ongoing hosting (bot alerts are automated).
 - **Always:** weekly "Forge Report" as the anchor everything else orbits.
 
 Better to sustain 3 honest posts a week forever than burn out on 3 a day for a month.
