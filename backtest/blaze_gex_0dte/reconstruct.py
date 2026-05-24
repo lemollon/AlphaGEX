@@ -81,8 +81,14 @@ def build_snapshots(day: DayChain) -> List[GexSnapshot]:
                 break
             cum = nxt
         sigma_1d = spot * atm_iv * math.sqrt(1.0 / _TRADING_DAYS)
-        open_et = dt.datetime(day.trade_date.year, day.trade_date.month, day.trade_date.day, 9, 30, tzinfo=_ET)
-        snap_at = (open_et + dt.timedelta(minutes=minute)).astimezone(dt.timezone.utc)
+        # Encode snapshot_at in the replay engine's FIXED UTC-5h minute
+        # convention so engine._minutes_since_open_ct() recovers exactly the
+        # loader's bar-minute (minute 0 = 9:30 ET open) in BOTH EST and EDT.
+        # A real ET->UTC encode would drift +60 min in winter (engine uses a
+        # fixed -5h, not DST-aware), mis-mapping the PT/SL mark lookups.
+        # 13:30 UTC - 5h = 08:30 -> minute 0; +minute thereafter.
+        snap_at = dt.datetime(day.trade_date.year, day.trade_date.month, day.trade_date.day,
+                              13, 30, tzinfo=dt.timezone.utc) + dt.timedelta(minutes=minute)
         out.append(GexSnapshot(
             symbol="SPY", spot=spot, net_gex=net_gex, flip_point=flip,
             call_wall=call_wall, put_wall=put_wall, vix=0.0,
