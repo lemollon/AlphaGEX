@@ -4,6 +4,14 @@ import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/au
 import { decideAccess } from '@/lib/auth/access'
 
 export async function middleware(req: NextRequest) {
+  // Placeholder mode: while public access is on, the login wall is dormant and the
+  // whole site is open (until invite/signup goes live). Fail-secure — ANY value other
+  // than the exact string 'true' leaves the gate enforced, so losing the env var locks
+  // down rather than exposes. Flip IRONFORGE_PUBLIC_MODE off (or remove it) to enforce.
+  if (process.env.IRONFORGE_PUBLIC_MODE === 'true') {
+    return NextResponse.next()
+  }
+
   const { pathname } = req.nextUrl
   const isApi = pathname.startsWith('/api/')
   const hasServiceToken = hasValidServiceToken(req.headers.get('x-ironforge-service'))

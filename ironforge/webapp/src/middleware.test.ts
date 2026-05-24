@@ -12,6 +12,7 @@ import { middleware, config } from '@/middleware'
 beforeEach(() => {
   process.env.IRONFORGE_SESSION_SECRET = 'x'.repeat(32)
   process.env.IRONFORGE_SERVICE_TOKEN = 'svc-token'
+  delete process.env.IRONFORGE_PUBLIC_MODE // enforcement tests assume the gate is ON
   vi.mocked(getIronSession).mockReset()
 })
 
@@ -56,6 +57,24 @@ describe('middleware gate', () => {
     vi.mocked(getIronSession).mockRejectedValue(new Error('bad cookie'))
     const res = await middleware(req('/api/spark/status'))
     expect(res.status).toBe(401)
+  })
+})
+
+describe('public placeholder mode (IRONFORGE_PUBLIC_MODE)', () => {
+  it('bypasses the gate entirely when set to "true" (no session needed)', async () => {
+    process.env.IRONFORGE_PUBLIC_MODE = 'true'
+    vi.mocked(getIronSession).mockResolvedValue({} as never)
+    const res = await middleware(req('/api/spark/status'))
+    expect(res.status).toBe(200)
+    delete process.env.IRONFORGE_PUBLIC_MODE
+  })
+
+  it('still enforces the gate for any value other than "true" (fail-secure)', async () => {
+    process.env.IRONFORGE_PUBLIC_MODE = 'false'
+    vi.mocked(getIronSession).mockResolvedValue({} as never)
+    const res = await middleware(req('/api/spark/status'))
+    expect(res.status).toBe(401)
+    delete process.env.IRONFORGE_PUBLIC_MODE
   })
 })
 
