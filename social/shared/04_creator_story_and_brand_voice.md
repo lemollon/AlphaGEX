@@ -33,6 +33,36 @@ The founder's own closing line captures the tone:
 
 ---
 
+## Brand architecture: one brand, two systems
+
+There is **one brand and one human voice**, with **two systems** underneath. Don't treat
+Iron Forge and Spreadworks as separate brands or separate personalities — they're two
+things the same founder built, under one umbrella.
+
+```
+        THE FOUNDER (you — the face, the voice)
+                      │
+                 ALPHAGEX  ← the brand + the GEX thesis (the "why")
+                      │
+        ┌─────────────┴─────────────┐
+   IRON FORGE                   SPREADWORKS
+   autonomous SPY               GEX spread lab +
+   Iron Condor bots             bots + community
+   (FLAME/SPARK/INFERNO)        (BREEZE/TIDE/DRIFT/FLOW)
+```
+
+- **Brand = AlphaGEX** (swap the name if you prefer a different public brand — the model
+  holds). It's the GEX philosophy, the engine, the throughline of every post.
+- **You** are the face. People follow the human; the brand gives the human a thesis.
+- **Iron Forge & Spreadworks are systems/products**, not brands. They're *what you ship.*
+- **One account each** on Discord, X, Instagram — all AlphaGEX-branded, one voice.
+
+Implication for content: the GEX thesis and your story are the constant; which *system*
+a post features just depends on the topic. Never make the feed feel like two different
+people are running it.
+
+---
+
 ## Brand pillars (what we stand for)
 
 1. **Trade WITH the market makers, not against them.** The core insight. Dealers are

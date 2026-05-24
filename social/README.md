@@ -1,13 +1,21 @@
 # Social Media Knowledge Base — Iron Forge & Spreadworks
 
-This folder is the **content brain** for two social-media "avatars" of the founder:
-one for **Iron Forge** and one for **Spreadworks**. Drop these documents into Claude
-Projects (as Project Knowledge) and the avatar will generate on-brand, accurate,
-compliant content without you re-explaining the products every time.
+This folder is the **content brain** for **one brand with two systems**:
 
-> An "avatar" here is **one real person — you — wearing two product hats.** People
-> follow people, not logos. The avatar is your transparent builder-in-public voice,
-> scoped to one product per project so the content stays focused.
+- **Brand:** AlphaGEX — the GEX-trading brand, and *you* (the founder) are its face.
+- **System 1:** **Iron Forge** — autonomous SPY Iron Condor paper bots.
+- **System 2:** **Spreadworks** — a GEX spread lab + paper bots + community.
+
+You run **one founder voice ("the avatar")** across **one shared Discord, one X account,
+and one Instagram** — all under the AlphaGEX brand. Drop these documents into a Claude
+Project (as Project Knowledge) and the avatar generates on-brand, accurate, compliant
+content for either system without you re-explaining anything.
+
+> One brand, one human, two systems. People follow people, not logos. Iron Forge and
+> Spreadworks are *what you ship*; AlphaGEX + you is *who's shipping it.*
+>
+> (If "AlphaGEX" isn't the public brand name you want, swap it everywhere — the model
+> is the same: one umbrella brand over the two systems.)
 
 ---
 

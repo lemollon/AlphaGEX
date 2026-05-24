@@ -137,17 +137,21 @@ promises returns or implies a managed service (see compliance doc).
 
 ---
 
-## Cross-promotion between the two brands (do it thoughtfully)
+## One brand, two systems — how they connect
 
-The two products share a parent (AlphaGEX) and a philosophy (GEX), so cross-promotion
-is natural — but keep each account in its lane:
-- Iron Forge content can mention "the same GEX engine also powers a spread-builder tool
-  (Spreadworks)" when relevant, linking to the hub.
-- Spreadworks content can mention "the autonomous Iron Condor side of the project lives
-  in Iron Forge" when relevant.
-- The **website hub is where the two stories officially connect** — that's its job.
-  Don't turn either feed into an ad for the other; cross-reference, then point to the
-  hub.
+It's **one brand (AlphaGEX), one founder voice, one set of accounts** — Iron Forge and
+Spreadworks are two systems under it, not two competing brands. So this isn't "cross-
+promotion between accounts"; it's *balancing two systems within a single feed.*
+
+- Both systems share the same parent engine (AlphaGEX) and the same philosophy (GEX) —
+  that shared GEX thesis is the connective tissue in almost every post.
+- A post can introduce either system naturally: "the autonomous Iron Condor side
+  (Iron Forge)…" or "the spread lab (Spreadworks)…" — same author, same brand.
+- Keep the *systems* distinct so followers aren't confused about which does what
+  (Iron Forge = autonomous IC bots; Spreadworks = build-your-own spreads + community),
+  but you never have to apologize for covering both — they're yours.
+- The **website hub and the Discord `#start-here`** are where the two systems are
+  formally laid out side by side under the AlphaGEX umbrella.
 
 ---
 
