@@ -15,7 +15,7 @@ import {
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-interface CurvePoint {
+export interface CurvePoint {
   timestamp: string
   pnl: number
   cumulative_pnl: number
@@ -236,6 +236,7 @@ export default function EquityChart({
   const hypoFill = 'rgba(167, 139, 250, 0.10)'
   const lastHypoCum = lastPoint.cumulative_hypothetical_pnl ?? null
   const lastHypoEquity = lastPoint.hypothetical_equity ?? null
+  const botLabel = (bot || 'this bot').toUpperCase()
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -246,7 +247,7 @@ export default function EquityChart({
           {hasHypo && lastHypoCum != null && (
             <span
               className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
-              title="Hypothetical cumulative P&L if SPARK had held every trade to 2:59 PM CT"
+              title={`Hypothetical cumulative P&L if ${botLabel} had held every trade to 2:59 PM CT`}
             >
               Hypo: {lastHypoCum >= 0 ? '+' : ''}${lastHypoCum.toFixed(2)}
             </span>
@@ -420,75 +421,140 @@ function formatTime(ts: string) {
 /*  Comparison Chart                                                   */
 /* ------------------------------------------------------------------ */
 
+export interface CompareSeries {
+  key: string
+  label: string
+  color: string
+  start: number
+  data: CurvePoint[]
+}
+
 export function ComparisonChart({
-  flameData,
-  sparkData,
-  infernoData,
-  flameStart,
-  sparkStart,
-  infernoStart,
+  series,
+  period,
+  onPeriodChange,
+  showHypo,
+  onToggleHypo,
+  allowHypo,
 }: {
-  flameData: CurvePoint[]
-  sparkData: CurvePoint[]
-  infernoData?: CurvePoint[]
-  flameStart: number
-  sparkStart: number
-  infernoStart: number
+  series: CompareSeries[]
+  period: Period
+  onPeriodChange: (p: Period) => void
+  showHypo: boolean
+  onToggleHypo: () => void
+  allowHypo: boolean
 }) {
-  const infData = infernoData || []
-  if (!flameData.length && !sparkData.length && !infData.length) {
-    return (
-      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-        <p className="text-forge-muted">No closed trades yet for any bot</p>
-      </div>
-    )
-  }
+  const periods: { key: Period; label: string }[] = [
+    { key: 'intraday', label: 'Intraday' },
+    { key: '1w', label: '1W' },
+    { key: '1m', label: '1M' },
+    { key: '3m', label: '3M' },
+    { key: 'all', label: 'All' },
+  ]
 
   // Normalize each bot to % return from its OWN starting capital so bots with
   // different capital (e.g. SPARK ~$5k vs FLAME/INFERNO ~$10k) compare apples-to-apples.
   const pct = (equity: number, start: number) => (start > 0 ? (equity / start - 1) * 100 : 0)
+  const hypoKey = (key: string) => `${key}__hypo`
 
-  const map = new Map<string, { flame?: number; spark?: number; inferno?: number }>()
-  const allTimestamps = [
-    ...flameData.map((d) => d.timestamp),
-    ...sparkData.map((d) => d.timestamp),
-    ...infData.map((d) => d.timestamp),
-  ].sort()
+  const map = new Map<string, Record<string, number>>()
+  const allTimestamps = series
+    .flatMap((s) => s.data.map((d) => d.timestamp))
+    .filter(Boolean)
+    .sort()
   if (allTimestamps.length) {
-    map.set(allTimestamps[0], { flame: 0, spark: 0, inferno: 0 })
+    const seed: Record<string, number> = {}
+    for (const s of series) {
+      seed[s.key] = 0
+      if (allowHypo) seed[hypoKey(s.key)] = 0
+    }
+    map.set(allTimestamps[0], seed)
   }
 
-  for (const p of flameData) map.set(p.timestamp, { ...map.get(p.timestamp), flame: pct(p.equity, flameStart) })
-  for (const p of sparkData) map.set(p.timestamp, { ...map.get(p.timestamp), spark: pct(p.equity, sparkStart) })
-  for (const p of infData) map.set(p.timestamp, { ...map.get(p.timestamp), inferno: pct(p.equity, infernoStart) })
+  for (const s of series) {
+    for (const p of s.data) {
+      if (!p.timestamp) continue
+      const row = { ...(map.get(p.timestamp) || {}) }
+      row[s.key] = pct(p.equity, s.start)
+      if (allowHypo && p.hypothetical_equity != null) {
+        row[hypoKey(s.key)] = pct(p.hypothetical_equity, s.start)
+      }
+      map.set(p.timestamp, row)
+    }
+  }
 
   const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
 
-  let lastFlame = 0
-  let lastSpark = 0
-  let lastInferno = 0
+  // Forward-fill each channel so a bot with no trade at a given timestamp holds
+  // its last known % rather than dropping to 0.
+  const last: Record<string, number> = {}
+  for (const s of series) {
+    last[s.key] = 0
+    if (allowHypo) last[hypoKey(s.key)] = 0
+  }
   const chartData = sorted.map(([ts, vals]) => {
-    if (vals.flame !== undefined) lastFlame = vals.flame
-    if (vals.spark !== undefined) lastSpark = vals.spark
-    if (vals.inferno !== undefined) lastInferno = vals.inferno
-    return {
-      timestamp: ts,
-      flame: vals.flame ?? lastFlame,
-      spark: vals.spark ?? lastSpark,
-      inferno: vals.inferno ?? lastInferno,
+    const row: Record<string, string | number> = { timestamp: ts }
+    for (const s of series) {
+      if (vals[s.key] !== undefined) last[s.key] = vals[s.key]
+      row[s.key] = last[s.key]
+      if (allowHypo) {
+        const hk = hypoKey(s.key)
+        if (vals[hk] !== undefined) last[hk] = vals[hk]
+        row[hk] = last[hk]
+      }
     }
+    return row
   })
 
-  const nameMap: Record<string, string> = { flame: 'FLAME', spark: 'SPARK', inferno: 'INFERNO' }
+  const nameMap: Record<string, string> = {}
+  for (const s of series) {
+    nameMap[s.key] = s.label
+    nameMap[hypoKey(s.key)] = `${s.label} (hypo @ 2:59)`
+  }
+
+  const header = (
+    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+      <h3 className="text-sm font-medium text-gray-400">
+        Equity Comparison — % return{period === 'intraday' ? ' (intraday)' : ''}, normalized per bot
+      </h3>
+      <div className="flex items-center gap-2">
+        {allowHypo && (
+          <button
+            onClick={onToggleHypo}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors border ${
+              showHypo
+                ? 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                : 'bg-transparent text-gray-500 border-forge-border hover:text-gray-300'
+            }`}
+            title={showHypo ? 'Hide hypothetical 2:59 PM lines' : 'Show hypothetical 2:59 PM lines'}
+          >
+            Hypo @ 2:59
+          </button>
+        )}
+        <PeriodSelector periods={periods} active={period} onChange={onPeriodChange} />
+      </div>
+    </div>
+  )
+
+  if (!series.some((s) => s.data.length > 0)) {
+    return (
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
+        {header}
+        <div className="flex items-center justify-center h-64">
+          <p className="text-forge-muted text-sm">No data for any bot in this period</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-3">Equity Comparison — % return (normalized to each bot&apos;s starting capital)</h3>
+      {header}
       <ResponsiveContainer width="100%" height={380}>
         <ComposedChart data={chartData}>
           <XAxis
             dataKey="timestamp"
-            tickFormatter={formatDate}
+            tickFormatter={period === 'intraday' ? formatTime : formatDate}
             stroke="#44403c"
             tick={{ fill: '#a8a29e', fontSize: 11 }}
           />
@@ -506,11 +572,40 @@ export function ComparisonChart({
             }}
           />
           <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
-          <Area type="monotone" dataKey="flame" stroke="#f59e0b" strokeWidth={2} fill="rgba(245, 158, 11, 0.1)" />
-          <Area type="monotone" dataKey="spark" stroke="#3b82f6" strokeWidth={2} fill="rgba(59, 130, 246, 0.1)" />
-          <Area type="monotone" dataKey="inferno" stroke="#ef4444" strokeWidth={2} fill="rgba(239, 68, 68, 0.1)" />
+          {series.map((s) => (
+            <Area
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              stroke={s.color}
+              strokeWidth={2}
+              fill={s.color}
+              fillOpacity={0.08}
+              isAnimationActive={false}
+            />
+          ))}
+          {allowHypo &&
+            showHypo &&
+            series.map((s) => (
+              <Area
+                key={hypoKey(s.key)}
+                type="monotone"
+                dataKey={hypoKey(s.key)}
+                stroke={s.color}
+                strokeWidth={1.3}
+                strokeDasharray="4 3"
+                fill={s.color}
+                fillOpacity={0}
+                isAnimationActive={false}
+              />
+            ))}
         </ComposedChart>
       </ResponsiveContainer>
+      {allowHypo && showHypo && (
+        <p className="text-xs text-violet-300/80 mt-2 px-2">
+          Dashed = &ldquo;held to 2:59 PM CT every day&rdquo; counterfactual (flat where no hypo data, e.g. BLAZE).
+        </p>
+      )}
     </div>
   )
 }

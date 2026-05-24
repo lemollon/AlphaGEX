@@ -3,48 +3,101 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
-import { ComparisonChart } from '@/components/EquityChart'
+import { ComparisonChart, type Period, type CompareSeries, type CurvePoint } from '@/components/EquityChart'
 import PerformanceCard from '@/components/PerformanceCard'
 
 const REFRESH = 60_000
 
+const BOTS = [
+  { key: 'flame', label: 'FLAME (2DTE)', short: 'FLAME', color: '#f59e0b', accent: 'text-amber-400' },
+  { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: '#3b82f6', accent: 'text-blue-400' },
+  { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: '#ef4444', accent: 'text-red-400' },
+  { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: '#fb923c', accent: 'text-orange-400' },
+] as const
+
+type BotKey = (typeof BOTS)[number]['key']
+
+interface BotData {
+  status?: any
+  perf?: any
+  hist?: any
+  intra?: any
+}
+
+/** Per-bot data: status + performance always; chart data is either the
+ *  historical equity-curve (period-filtered, carries the hypothetical line) or
+ *  intraday snapshots. SWR skips a null key, so only the active chart source
+ *  is fetched. Called once per bot at the top level (stable hook order). */
+function useBotData(botKey: string, period: Period, personQ: string, isIntraday: boolean): BotData {
+  const q = personQ ? `?${personQ}` : ''
+  const status = useSWR(`/api/${botKey}/status${q}`, fetcher, { refreshInterval: REFRESH }).data
+  const perf = useSWR(`/api/${botKey}/performance${q}`, fetcher, { refreshInterval: REFRESH }).data
+  const hist = useSWR(
+    !isIntraday ? `/api/${botKey}/equity-curve?period=${period}${personQ ? `&${personQ}` : ''}` : null,
+    fetcher,
+    { refreshInterval: REFRESH },
+  ).data
+  const intra = useSWR(
+    isIntraday ? `/api/${botKey}/equity-curve/intraday${q}` : null,
+    fetcher,
+    { refreshInterval: REFRESH },
+  ).data
+  return { status, perf, hist, intra }
+}
+
 export default function CompareContent() {
   const [selectedPerson, setSelectedPerson] = useState('all')
+  const [period, setPeriod] = useState<Period>('all')
+  const [showHypo, setShowHypo] = useState(false)
+
   const { data: personsData } = useSWR('/api/persons', fetcher)
   const personEntries: Array<{ person: string; alias: string | null }> = personsData?.persons ?? []
   const persons: string[] = personEntries.map((pe) => pe.person)
 
-  const pq = selectedPerson !== 'all' ? `?person=${encodeURIComponent(selectedPerson)}` : ''
+  const personQ = selectedPerson !== 'all' ? `person=${encodeURIComponent(selectedPerson)}` : ''
+  const isIntraday = period === 'intraday'
 
-  const { data: flameStatus } = useSWR(`/api/flame/status${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: sparkStatus } = useSWR(`/api/spark/status${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: infernoStatus } = useSWR(`/api/inferno/status${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: flameEquity } = useSWR(`/api/flame/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: sparkEquity } = useSWR(`/api/spark/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: infernoEquity } = useSWR(`/api/inferno/equity-curve${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: flamePerf } = useSWR(`/api/flame/performance${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: sparkPerf } = useSWR(`/api/spark/performance${pq}`, fetcher, { refreshInterval: REFRESH })
-  const { data: infernoPerf } = useSWR(`/api/inferno/performance${pq}`, fetcher, { refreshInterval: REFRESH })
+  const flame = useBotData('flame', period, personQ, isIntraday)
+  const spark = useBotData('spark', period, personQ, isIntraday)
+  const inferno = useBotData('inferno', period, personQ, isIntraday)
+  const blaze = useBotData('blaze', period, personQ, isIntraday)
+  const byKey: Record<BotKey, BotData> = { flame, spark, inferno, blaze }
 
-  // Per-bot starting capital — each bot normalizes against ITS OWN capital so the
-  // comparison is fair across different account sizes (e.g. SPARK ~$5k vs ~$10k).
-  const flameStart = flameEquity?.starting_capital ?? flameStatus?.account?.starting_capital ?? 10000
-  const sparkStart = sparkEquity?.starting_capital ?? sparkStatus?.account?.starting_capital ?? 10000
-  const infernoStart = infernoEquity?.starting_capital ?? infernoStatus?.account?.starting_capital ?? 10000
+  const startOf = (k: BotKey): number =>
+    byKey[k].status?.account?.starting_capital ?? byKey[k].hist?.starting_capital ?? 10000
+
+  // Build the normalized series for the overlay. Intraday maps snapshots to the
+  // {timestamp, equity} shape the chart expects; historical passes the curve
+  // through directly (it already carries hypothetical_equity).
+  const series: CompareSeries[] = BOTS.map((b) => {
+    const d = byKey[b.key]
+    const data: CurvePoint[] = isIntraday
+      ? (d.intra?.snapshots ?? []).map((s: any) => ({
+          timestamp: s.timestamp,
+          equity: s.equity ?? s.balance ?? 0,
+          pnl: 0,
+          cumulative_pnl: 0,
+        }))
+      : (d.hist?.curve ?? [])
+    return { key: b.key, label: b.short, color: b.color, start: startOf(b.key), data }
+  })
+
+  const allPerfReady = BOTS.every((b) => byKey[b.key].perf)
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-baseline gap-2 flex-wrap">
           <h1 className="text-2xl font-bold">
-          <span className="text-amber-400">FLAME</span>
-          <span className="text-forge-muted mx-2">vs</span>
-          <span className="text-blue-400">SPARK</span>
-          <span className="text-forge-muted mx-2">vs</span>
-          <img src="/inferno-icon.svg" alt="" className="h-5 w-5 inline-block align-[-2px]" />
-          <span className="text-red-400">INFERNO</span>
-        </h1>
-          <span className="text-forge-muted">2DTE vs 1DTE vs 0DTE Comparison</span>
+            <span className="text-amber-400">FLAME</span>
+            <span className="text-forge-muted mx-1.5">vs</span>
+            <span className="text-blue-400">SPARK</span>
+            <span className="text-forge-muted mx-1.5">vs</span>
+            <span className="text-red-400">INFERNO</span>
+            <span className="text-forge-muted mx-1.5">vs</span>
+            <span className="text-orange-400">BLAZE</span>
+          </h1>
+          <span className="text-forge-muted text-sm">2DTE · 1DTE · 0DTE · 1DTE directional</span>
         </div>
         {persons.length > 1 && (
           <select
@@ -60,67 +113,63 @@ export default function CompareContent() {
         )}
       </div>
 
-      {/* Equity overlay */}
+      {/* Normalized equity overlay with timeframe selector + hypothetical toggle */}
       <ComparisonChart
-        flameData={flameEquity?.curve || []}
-        sparkData={sparkEquity?.curve || []}
-        infernoData={infernoEquity?.curve || []}
-        flameStart={flameStart}
-        sparkStart={sparkStart}
-        infernoStart={infernoStart}
+        series={series}
+        period={period}
+        onPeriodChange={setPeriod}
+        showHypo={showHypo}
+        onToggleHypo={() => setShowHypo((v) => !v)}
+        allowHypo={!isIntraday}
       />
 
       {/* Side-by-side status */}
-      <div className="grid md:grid-cols-3 gap-6">
-        {/* FLAME */}
-        <div>
-          <h3 className="text-sm font-medium text-amber-400 mb-2">FLAME (2DTE)</h3>
-          {flameStatus && <MiniStatus account={flameStatus.account} />}
-          {flamePerf && <PerformanceCard data={flamePerf} label="FLAME" />}
-        </div>
-        <div>
-          <h3 className="text-sm font-medium text-blue-400 mb-2">SPARK (1DTE)</h3>
-          {sparkStatus && <MiniStatus account={sparkStatus.account} />}
-          {sparkPerf && <PerformanceCard data={sparkPerf} label="SPARK" />}
-        </div>
-        {/* INFERNO */}
-        <div>
-          <h3 className="text-sm font-medium text-red-400 mb-2">
-            <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1 align-[-2px]" />
-            INFERNO (0DTE)
-          </h3>
-          {infernoStatus && <MiniStatus account={infernoStatus.account} />}
-          {infernoPerf && <PerformanceCard data={infernoPerf} label="INFERNO" />}
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {BOTS.map((b) => {
+          const d = byKey[b.key]
+          return (
+            <div key={b.key}>
+              <h3 className={`text-sm font-medium ${b.accent} mb-2`}>{b.label}</h3>
+              {d.status && <MiniStatus account={d.status.account} />}
+              {d.perf && <PerformanceCard data={d.perf} label={b.short} />}
+            </div>
+          )
+        })}
       </div>
 
-      {/* Head-to-head table */}
-      {flamePerf && sparkPerf && infernoPerf && (
+      {/* Head-to-head table (normalized to % of each bot's capital) */}
+      {allPerfReady && (
         <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
-          <h3 className="text-sm font-medium text-gray-400 p-4 pb-2">Head-to-Head Metrics</h3>
+          <h3 className="text-sm font-medium text-gray-400 p-4 pb-2">Head-to-Head Metrics (% of capital)</h3>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-forge-border text-forge-muted text-xs">
                 <th className="text-left p-3">Metric</th>
-                <th className="text-right p-3 text-amber-400">FLAME (2DTE)</th>
-                <th className="text-right p-3 text-blue-400">SPARK (1DTE)</th>
-                <th className="text-right p-3 text-red-400">INFERNO (0DTE)</th>
+                {BOTS.map((b) => (
+                  <th key={b.key} className={`text-right p-3 ${b.accent}`}>{b.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {metricRows(flamePerf, sparkPerf, infernoPerf, flameStart, sparkStart, infernoStart).map(([name, fv, sv, iv, higherBetter]) => {
-                const fNum = parseFloat(String(fv).replace(/[$%+,]/g, ''))
-                const sNum = parseFloat(String(sv).replace(/[$%+,]/g, ''))
-                const iNum = parseFloat(String(iv).replace(/[$%+,]/g, ''))
-                const best = higherBetter
-                  ? Math.max(fNum, sNum, iNum)
-                  : Math.min(fNum, sNum, iNum)
+              {metricRows(BOTS.map((b) => ({ perf: byKey[b.key].perf, start: startOf(b.key) }))).map((r) => {
+                const nums = r.values.map((v) => parseFloat(String(v).replace(/[$%+,]/g, '')))
+                const valid = nums.filter((n) => !Number.isNaN(n))
+                const best = valid.length
+                  ? r.higherBetter
+                    ? Math.max(...valid)
+                    : Math.min(...valid)
+                  : NaN
                 return (
-                  <tr key={name} className="border-b border-forge-border/50">
-                    <td className="p-3 font-medium">{name}</td>
-                    <td className={`p-3 text-right ${fNum === best ? 'text-emerald-400 font-bold' : ''}`}>{fv}</td>
-                    <td className={`p-3 text-right ${sNum === best ? 'text-emerald-400 font-bold' : ''}`}>{sv}</td>
-                    <td className={`p-3 text-right ${iNum === best ? 'text-emerald-400 font-bold' : ''}`}>{iv}</td>
+                  <tr key={r.name} className="border-b border-forge-border/50">
+                    <td className="p-3 font-medium">{r.name}</td>
+                    {r.values.map((v, i) => (
+                      <td
+                        key={i}
+                        className={`p-3 text-right ${nums[i] === best ? 'text-emerald-400 font-bold' : ''}`}
+                      >
+                        {v}
+                      </td>
+                    ))}
                   </tr>
                 )
               })}
@@ -133,26 +182,21 @@ export default function CompareContent() {
 }
 
 function metricRows(
-  flame: any,
-  spark: any,
-  inferno: any,
-  fStart: number,
-  sStart: number,
-  iStart: number,
-): [string, string, string, string, boolean][] {
+  items: { perf: any; start: number }[],
+): { name: string; values: string[]; higherBetter: boolean }[] {
   // Dollar metrics are normalized to % of each bot's own starting capital so
   // bots of different sizes compare fairly. Win Rate / Total Trades are already
-  // scale-independent and stay as-is.
+  // scale-independent.
   const asPct = (v: number, start: number) => (start > 0 ? (v / start) * 100 : 0)
   const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
   return [
-    ['Total Trades', String(flame.total_trades), String(spark.total_trades), String(inferno.total_trades), true],
-    ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, `${inferno.win_rate.toFixed(1)}%`, true],
-    ['Total Return', fmtPct(asPct(flame.total_pnl, fStart)), fmtPct(asPct(spark.total_pnl, sStart)), fmtPct(asPct(inferno.total_pnl, iStart)), true],
-    ['Avg Win (% cap)', fmtPct(asPct(flame.avg_win, fStart)), fmtPct(asPct(spark.avg_win, sStart)), fmtPct(asPct(inferno.avg_win, iStart)), true],
-    ['Avg Loss (% cap)', fmtPct(asPct(flame.avg_loss, fStart)), fmtPct(asPct(spark.avg_loss, sStart)), fmtPct(asPct(inferno.avg_loss, iStart)), false],
-    ['Best Trade (% cap)', fmtPct(asPct(flame.best_trade, fStart)), fmtPct(asPct(spark.best_trade, sStart)), fmtPct(asPct(inferno.best_trade, iStart)), true],
-    ['Worst Trade (% cap)', fmtPct(asPct(flame.worst_trade, fStart)), fmtPct(asPct(spark.worst_trade, sStart)), fmtPct(asPct(inferno.worst_trade, iStart)), false],
+    { name: 'Total Trades', values: items.map((it) => String(it.perf.total_trades)), higherBetter: true },
+    { name: 'Win Rate', values: items.map((it) => `${it.perf.win_rate.toFixed(1)}%`), higherBetter: true },
+    { name: 'Total Return', values: items.map((it) => fmtPct(asPct(it.perf.total_pnl, it.start))), higherBetter: true },
+    { name: 'Avg Win (% cap)', values: items.map((it) => fmtPct(asPct(it.perf.avg_win, it.start))), higherBetter: true },
+    { name: 'Avg Loss (% cap)', values: items.map((it) => fmtPct(asPct(it.perf.avg_loss, it.start))), higherBetter: false },
+    { name: 'Best Trade (% cap)', values: items.map((it) => fmtPct(asPct(it.perf.best_trade, it.start))), higherBetter: true },
+    { name: 'Worst Trade (% cap)', values: items.map((it) => fmtPct(asPct(it.perf.worst_trade, it.start))), higherBetter: false },
   ]
 }
 
