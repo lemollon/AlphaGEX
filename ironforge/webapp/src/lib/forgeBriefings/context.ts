@@ -1,6 +1,7 @@
 import { query } from '../db'
 import { getRawQuotes } from '../tradier'
 import { listForBot } from './repo'
+import { serviceHeaders } from '@/lib/auth/session'
 import type { BotKey, BriefType, GatheredContext, MacroRibbon, SparklinePoint } from './types'
 
 const PER_BOT_DTE: Record<Exclude<BotKey, 'portfolio'>, string> = {
@@ -16,9 +17,9 @@ function num(v: any): number {
 async function fetchDashboardState(bot: Exclude<BotKey, 'portfolio'>, baseUrl: string): Promise<any | null> {
   try {
     const [statusR, posR, perfR] = await Promise.all([
-      fetch(`${baseUrl}/api/${bot}/status`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${baseUrl}/api/${bot}/positions`).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch(`${baseUrl}/api/${bot}/performance`).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${baseUrl}/api/${bot}/status`, { headers: serviceHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${baseUrl}/api/${bot}/positions`, { headers: serviceHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch(`${baseUrl}/api/${bot}/performance`, { headers: serviceHeaders() }).then(r => r.ok ? r.json() : null).catch(() => null),
     ])
     if (!statusR && !posR && !perfR) return null
     return { status: statusR, positions: posR, performance: perfR }

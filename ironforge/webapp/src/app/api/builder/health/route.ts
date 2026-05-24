@@ -24,6 +24,7 @@
  * Single curl replaces the manual four-bot loop the operator used to run.
  */
 import { NextRequest, NextResponse } from 'next/server'
+import { serviceHeaders } from '@/lib/auth/session'
 
 export const dynamic = 'force-dynamic'
 
@@ -72,6 +73,7 @@ async function checkOne(origin: string, bot: BotName): Promise<BotCheck> {
   try {
     const res = await fetch(`${origin}/api/${bot}/builder/snapshot?account_type=sandbox`, {
       cache: 'no-store',
+      headers: serviceHeaders(),
     })
     if (!res.ok) {
       out.failures.push(`snapshot fetch returned ${res.status}`)
