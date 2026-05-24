@@ -16,6 +16,7 @@ CLI:
     python scripts/backfill_thetadata.py --smoke --start 2024-03-15
     python scripts/backfill_thetadata.py --start 2020-01-02 --end 2025-12-05
     python scripts/backfill_thetadata.py --resume
+    python scripts/backfill_thetadata.py --dte 0 --start 2023-01-03 --end 2026-05-22
 
 Environment:
     THETADATA_USERNAME  — for log messages only (defaults to
@@ -180,15 +181,17 @@ def plan_pulls(
     trade_date: dt.date,
     spot: float,
     half_width: int = DEFAULT_HALF_WIDTH,
+    dte: int = 1,
 ) -> List[Pull]:
     """
     Build the list of (date, exp, strike, right) requests for one trade day.
 
-    - expiration = next trading day after trade_date (matches HELIOS 1DTE design)
+    - expiration = same trade_date for dte=0 (0DTE / same-day expiration), or
+                   next trading day after trade_date for dte=1 (HELIOS 1DTE design)
     - strikes    = ATM ± half_width
     - rights     = ['C', 'P']
     """
-    exp = next_trading_day(trade_date)
+    exp = trade_date if dte == 0 else next_trading_day(trade_date)
     strikes = strike_window(spot, half_width)
     pulls: List[Pull] = []
     for k in strikes:
@@ -452,10 +455,19 @@ def insert_bars(conn, rows: List[tuple]) -> int:
     return len(rows)
 
 
-def get_resume_point(conn) -> Optional[dt.date]:
-    """Return max(trade_date) already in the table, or None if empty."""
+def get_resume_point(conn, dte: int = 1) -> Optional[dt.date]:
+    """Return max(trade_date) already in the table for this DTE mode, or None.
+
+    Filters by DTE so a 0DTE resume does NOT see the existing 1DTE rows (which
+    already span 2023->2026) and wrongly conclude the 0DTE pull is complete.
+        dte=0 -> rows where expiration_date = trade_date (same-day / 0DTE)
+        dte=1 -> rows where expiration_date > trade_date (next-day / 1DTE)
+    """
+    clause = "expiration_date = trade_date" if dte == 0 else "expiration_date > trade_date"
     with conn.cursor() as cur:
-        cur.execute("SELECT MAX(trade_date) FROM helios_options_intraday")
+        cur.execute(
+            f"SELECT MAX(trade_date) FROM helios_options_intraday WHERE {clause}"
+        )
         row = cur.fetchone()
     return row[0] if row and row[0] else None
 
@@ -488,7 +500,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument(
         "--resume",
         action="store_true",
-        help="Pick up from max(trade_date)+1 in helios_options_intraday.",
+        help="Pick up from max(trade_date)+1 in helios_options_intraday (DTE-aware).",
+    )
+    p.add_argument(
+        "--dte",
+        type=int,
+        choices=(0, 1),
+        default=1,
+        help="Days to expiration to pull: 1 = next-day expiration (default; HELIOS/BLAZE "
+             "1DTE design), 0 = same-day expiration (0DTE). 0DTE bars are stored in the "
+             "same helios_options_intraday table, distinguished by expiration_date = trade_date.",
     )
     p.add_argument(
         "--half-width",
@@ -525,6 +546,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     logging.info("HELIOS backfill starting (ThetaData user: %s)", username)
+    logging.info("DTE mode: %dDTE (expiration = %s)", args.dte,
+                 "same trade day" if args.dte == 0 else "next trading day")
     logging.info("Terminal endpoint: %s (no auth — Terminal handles ThetaData login)",
                  THETADATA_BASE_URL)
 
@@ -548,7 +571,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             start = args.start
             if args.resume:
-                last = get_resume_point(conn)
+                last = get_resume_point(conn, args.dte)
                 if last is not None:
                     start = max(start, next_trading_day(last))
                     logging.info("RESUME: last completed trade_date in DB = %s; "
@@ -586,7 +609,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                              trade_date, spot)
             last_known_spot = spot
 
-            pulls = plan_pulls(trade_date, spot, half_width=args.half_width)
+            pulls = plan_pulls(trade_date, spot, half_width=args.half_width, dte=args.dte)
 
             for pull in pulls:
                 try:

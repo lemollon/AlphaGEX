@@ -2928,6 +2928,57 @@ export async function getTradierGainLoss(
   }))
 }
 
+/**
+ * Match an iron condor's 4 legs against a Tradier gain/loss closed-position
+ * list and return the position's authoritative realized P&L (sum of the 4
+ * legs' gain_loss) + the implied per-contract close price.
+ *
+ * SAFE attribution (vs. summing all of a day's fills): requires ALL 4 distinct
+ * legs present and each leg's net |quantity| == `contracts`. `openDateCt`
+ * (YYYY-MM-DD, position's open date in CT) disambiguates a prior trade that
+ * happened to reuse the same strikes/expiration — pass null to skip that guard.
+ *
+ * Returns null when the legs aren't all present with matching quantity (caller
+ * then falls through to the safety gate rather than guessing). Pure — unit
+ * tested in __tests__/tradier.test.ts against real production reconcile data.
+ */
+export function matchIcGainLoss(
+  legs: TradierClosedPosition[],
+  ic: { ticker: string; expiration: string; putShort: number; putLong: number; callShort: number; callLong: number },
+  contracts: number,
+  openDateCt: string | null,
+  entryCredit: number,
+): { realized_pnl: number; close_price: number; matched_rows: number } | null {
+  if (contracts <= 0) return null
+  const want = [
+    buildOccSymbol(ic.ticker, ic.expiration, ic.putShort, 'P'),
+    buildOccSymbol(ic.ticker, ic.expiration, ic.putLong, 'P'),
+    buildOccSymbol(ic.ticker, ic.expiration, ic.callShort, 'C'),
+    buildOccSymbol(ic.ticker, ic.expiration, ic.callLong, 'C'),
+  ]
+  const agg: Record<string, { qty: number; gl: number; rows: number }> = {}
+  for (const leg of legs) {
+    if (!leg.symbol || !want.includes(leg.symbol)) continue
+    if (openDateCt && leg.open_date && leg.open_date.slice(0, 10) !== openDateCt) continue
+    if (!agg[leg.symbol]) agg[leg.symbol] = { qty: 0, gl: 0, rows: 0 }
+    agg[leg.symbol].qty += leg.quantity ?? 0
+    agg[leg.symbol].gl += leg.gain_loss ?? 0
+    agg[leg.symbol].rows += 1
+  }
+  let totalGl = 0
+  let rows = 0
+  for (const sym of want) {
+    const e = agg[sym]
+    if (!e) return null // a required leg is missing → don't guess
+    if (Math.abs(Math.abs(e.qty) - contracts) > 0.5) return null // qty mismatch → not this position
+    totalGl += e.gl
+    rows += e.rows
+  }
+  const realized = Math.round(totalGl * 100) / 100
+  const closePrice = Math.max(0, Math.round((entryCredit - realized / (100 * contracts)) * 10000) / 10000)
+  return { realized_pnl: realized, close_price: closePrice, matched_rows: rows }
+}
+
 // Expose for scanner re-poll and testing
 export { getOrderFillPrice, getAccountIdForKey }
 

@@ -52,6 +52,8 @@ import {
   getAccountIdForKey,
   getRawQuotes,
   buildOccSymbol,
+  getTradierGainLoss,
+  matchIcGainLoss,
   getAccountsForBot,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
@@ -3852,9 +3854,10 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
               put_short_strike, put_long_strike,
               call_short_strike, call_long_strike,
               contracts, total_credit, collateral_required,
-              person, account_type, sandbox_close_order_id
+              person, account_type, sandbox_close_order_id,
+              open_time, status
        FROM ${posTable}
-       WHERE status = 'open' AND dte_mode = $1 AND account_type = 'production'`,
+       WHERE status IN ('open', 'broker_gone_blocked') AND dte_mode = $1 AND account_type = 'production'`,
       [bot.dte],
     )
 
@@ -3924,7 +3927,8 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         const limitPriceHint = typeof pendingInfo._limit_price === 'number' ? pendingInfo._limit_price : null
 
         let recoveredPrice: number | null = null
-        let recoverySource: 'tradier_fill' | 'pending_limit' | 'tradier_order_history' | 'entry_credit_fallback' = 'entry_credit_fallback'
+        let recoverySource: 'tradier_fill' | 'pending_limit' | 'tradier_order_history' | 'tradier_gainloss' | 'entry_credit_fallback' = 'entry_credit_fallback'
+        let gainlossRealized: number | null = null
         let tradierOrderStatus: string | null = null
         if (orderId != null) {
           try {
@@ -3963,6 +3967,51 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         ) {
           recoveredPrice = limitPriceHint
           recoverySource = 'pending_limit'
+        }
+
+        // R2 tier 5 (2026-05-24): authoritative recovery from Tradier gain/loss,
+        // matched to THIS IC's exact 4 legs (strikes + expiration + open date) via
+        // matchIcGainLoss. Unlike tier-4 order-history (sums ALL of a day's close
+        // fills → unsafe on shared accounts), it attributes only this position's
+        // legs and requires all 4 present with matching quantity. The production
+        // account is dedicated (no cross-person contamination), and gain/loss
+        // captures manual closes, untracked closes, expirations & assignments — so
+        // this is treated as a SAFE auto-close (see the safety gate below). Runs
+        // before tier-4 so the authoritative+safe source wins.
+        if (recoveredPrice == null) {
+          try {
+            const prodAcct = prodAccounts.find((a) => a.name === person)
+            if (prodAcct) {
+              const accountId = await getAccountIdForKey(prodAcct.apiKey, prodAcct.baseUrl)
+              if (accountId) {
+                const openIso = pos.open_time?.toISOString?.() ?? (pos.open_time ? String(pos.open_time) : null)
+                const openDateCt = openIso
+                  ? new Date(new Date(openIso).toLocaleString('en-US', { timeZone: 'America/Chicago' })).toISOString().slice(0, 10)
+                  : null
+                const gl = await getTradierGainLoss(
+                  prodAcct.apiKey, accountId, prodAcct.baseUrl,
+                  openIso ? openIso.slice(0, 10) : undefined, undefined,
+                )
+                const m = matchIcGainLoss(
+                  gl,
+                  { ticker, expiration: exp, putShort: ps, putLong: pl, callShort: cs, callLong: cl },
+                  contracts, openDateCt, entryCredit,
+                )
+                if (m != null) {
+                  gainlossRealized = m.realized_pnl
+                  recoveredPrice = m.close_price
+                  recoverySource = 'tradier_gainloss'
+                  console.log(
+                    `[scanner] PROD GAINLOSS RECOVERY ${pid}: matched 4 legs (${m.matched_rows} rows) → ` +
+                    `realized=$${m.realized_pnl.toFixed(2)} close=$${m.close_price.toFixed(4)}`,
+                  )
+                }
+              }
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn(`[scanner] PROD gainloss recovery failed ${pid}: ${msg}`)
+          }
         }
 
         // R2 tier 4: reconstruct close P&L from Tradier's order history when
@@ -4018,8 +4067,14 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         //     so an operator can investigate manually.
         const isSafeRecovery =
           (recoverySource === 'tradier_fill' && orderId != null) ||
-          recoverySource === 'pending_limit'
+          recoverySource === 'pending_limit' ||
+          recoverySource === 'tradier_gainloss'
         if (!isSafeRecovery) {
+          // Rows already transitioned to broker_gone_blocked that still can't be
+          // recovered (e.g. gain/loss not yet populated by Tradier): skip quietly so
+          // we don't re-emit BROKER_RECONCILE_BLOCKED every cycle. The next cycle
+          // retries the tier-5 gain/loss match until it resolves.
+          if (pos.status === 'broker_gone_blocked') continue
           const proposedPrice = recoveredPrice ?? entryCredit
           console.warn(
             `[scanner] BROKER_RECONCILE_BLOCKED: ${pid} — refusing to auto-close. ` +
@@ -4072,9 +4127,14 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
         }
 
         const effectiveClosePrice = recoveredPrice ?? entryCredit
-        const realizedPnl = recoveredPrice != null
-          ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
-          : 0
+        // tradier_gainloss carries the exact summed realized P&L; use it directly
+        // rather than re-deriving from the back-computed close_price (avoids a
+        // double-rounding drift from the authoritative broker number).
+        const realizedPnl = recoverySource === 'tradier_gainloss' && gainlossRealized != null
+          ? gainlossRealized
+          : (recoveredPrice != null
+            ? Math.round((entryCredit - recoveredPrice) * 100 * contracts * 100) / 100
+            : 0)
 
         // Preserve the original PT/SL/EOD tier label when spark itself placed
         // the close order — sandbox_close_order_id JSON includes _pending_reason
@@ -4101,7 +4161,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
                close_price = $1, realized_pnl = $2,
                close_reason = $3,
                updated_at = NOW()
-           WHERE position_id = $4 AND status = 'open' AND dte_mode = $5`,
+           WHERE position_id = $4 AND status IN ('open', 'broker_gone_blocked') AND dte_mode = $5`,
           [effectiveClosePrice, realizedPnl, closeReason, pid, bot.dte],
         )
 

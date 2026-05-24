@@ -34,6 +34,8 @@ import {
   getLoadedSandboxAccounts,
   getSandboxAccountPositions,
   getBatchOptionQuotes,
+  matchIcGainLoss,
+  type TradierClosedPosition,
 } from '../tradier'
 
 /* ------------------------------------------------------------------ */
@@ -76,6 +78,86 @@ describe('buildOccSymbol', () => {
   it('pads single-digit months and days', () => {
     const sym = buildOccSymbol('SPY', '2026-01-05', 600, 'C')
     expect(sym).toBe('SPY260105C00600000')
+  })
+})
+
+/* ================================================================== */
+/*  Section 1b: matchIcGainLoss (production broker-gone reconcile)     */
+/* ================================================================== */
+
+describe('matchIcGainLoss', () => {
+  const glLeg = (
+    symbol: string, quantity: number, gain_loss: number, open_date = '2026-05-22',
+  ): TradierClosedPosition => ({
+    symbol, open_date, close_date: '2026-05-22', quantity,
+    cost: null, proceeds: null, gain_loss, gain_loss_percent: null, term: null,
+  })
+
+  it('sums the 4 IC legs to the broker realized P&L (real prod row 1345C0)', () => {
+    // SPARK-20260522-1345C0-prod-logan: exp 5/26, P731/736 C756/761, 25c @0.74 → +$265.37
+    const legs = [
+      glLeg('SPY260526P00736000', -25, 31.58),
+      glLeg('SPY260526P00731000', 25, -105.40),
+      glLeg('SPY260526C00756000', -25, 369.58),
+      glLeg('SPY260526C00761000', 25, -30.39),
+    ]
+    const r = matchIcGainLoss(
+      legs,
+      { ticker: 'SPY', expiration: '2026-05-26', putShort: 736, putLong: 731, callShort: 756, callLong: 761 },
+      25, '2026-05-22', 0.74,
+    )
+    expect(r).not.toBeNull()
+    expect(r!.realized_pnl).toBe(265.37)
+    expect(r!.close_price).toBeCloseTo(0.6339, 4)
+  })
+
+  it('ignores legs from a prior trade that reused the same strikes (open-date guard)', () => {
+    // SPARK-20260521-C51B28-prod-logan: exp 5/22, P723/728 C749/754, 25c @0.58 → +$78.39
+    const legs = [
+      glLeg('SPY260522P00728000', -25, 444.58, '2026-05-21'),
+      glLeg('SPY260522P00723000', 25, -205.40, '2026-05-21'),
+      glLeg('SPY260522C00749000', -25, -155.40, '2026-05-21'),
+      glLeg('SPY260522C00754000', 25, -5.39, '2026-05-21'),
+      // contaminating leg: same symbol, DIFFERENT open date — must be excluded
+      glLeg('SPY260522P00728000', -25, 999, '2026-05-19'),
+    ]
+    const r = matchIcGainLoss(
+      legs,
+      { ticker: 'SPY', expiration: '2026-05-22', putShort: 728, putLong: 723, callShort: 749, callLong: 754 },
+      25, '2026-05-21', 0.58,
+    )
+    expect(r).not.toBeNull()
+    expect(r!.realized_pnl).toBe(78.39)
+  })
+
+  it('returns null when a leg is missing (incomplete attribution → do not guess)', () => {
+    const legs = [
+      glLeg('SPY260526P00736000', -25, 31.58),
+      glLeg('SPY260526P00731000', 25, -105.40),
+      glLeg('SPY260526C00756000', -25, 369.58),
+      // call-long leg absent
+    ]
+    const r = matchIcGainLoss(
+      legs,
+      { ticker: 'SPY', expiration: '2026-05-26', putShort: 736, putLong: 731, callShort: 756, callLong: 761 },
+      25, '2026-05-22', 0.74,
+    )
+    expect(r).toBeNull()
+  })
+
+  it('returns null when a leg quantity does not match the position contracts', () => {
+    const legs = [
+      glLeg('SPY260526P00736000', -25, 31.58),
+      glLeg('SPY260526P00731000', 25, -105.40),
+      glLeg('SPY260526C00756000', -25, 369.58),
+      glLeg('SPY260526C00761000', 10, -30.39), // qty 10 != 25 contracts
+    ]
+    const r = matchIcGainLoss(
+      legs,
+      { ticker: 'SPY', expiration: '2026-05-26', putShort: 736, putLong: 731, callShort: 756, callLong: 761 },
+      25, '2026-05-22', 0.74,
+    )
+    expect(r).toBeNull()
   })
 })
 
