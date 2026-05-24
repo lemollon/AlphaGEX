@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import AuthControls from './AuthControls'
 
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
@@ -99,6 +100,8 @@ export default function Nav() {
             )
           })}
         </div>
+
+        <AuthControls />
       </div>
     </nav>
   )
