@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS ironforge_person_aliases (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 ` + `
+CREATE TABLE IF NOT EXISTS ironforge_users (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  email TEXT UNIQUE,
+  name TEXT NOT NULL,
+  person TEXT,
+  password_hash TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  must_change_password BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  last_login_at TIMESTAMPTZ
+);
+` + `
 CREATE TABLE IF NOT EXISTS ironforge_pdt_config (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   bot_name TEXT NOT NULL UNIQUE,
