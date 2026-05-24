@@ -452,59 +452,92 @@ export function ComparisonChart({
     { key: 'all', label: 'All' },
   ]
 
-  // Normalize each bot to % return from its OWN starting capital so bots with
-  // different capital (e.g. SPARK ~$5k vs FLAME/INFERNO ~$10k) compare apples-to-apples.
-  const pct = (equity: number, start: number) => (start > 0 ? (equity / start - 1) * 100 : 0)
+  const pct = (v: number, base: number) => (base > 0 ? (v / base - 1) * 100 : 0)
   const hypoKey = (key: string) => `${key}__hypo`
+  const isIntradayMode = period === 'intraday'
 
-  const map = new Map<string, Record<string, number>>()
-  const allTimestamps = series
-    .flatMap((s) => s.data.map((d) => d.timestamp))
-    .filter(Boolean)
-    .sort()
-  if (allTimestamps.length) {
-    const seed: Record<string, number> = {}
+  // CT calendar date (YYYY-MM-DD) for a timestamp; en-CA gives ISO-style dates.
+  const ctDay = (ts: string) => new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+  const fmtDay = (s: string) => {
+    const p = String(s).split('-')
+    return p.length === 3 ? `${+p[1]}/${+p[2]}` : s
+  }
+
+  let chartData: Record<string, string | number>[] = []
+
+  if (isIntradayMode) {
+    // Intraday: rebase each bot to its first snapshot (day open = 0%). Cumulative
+    // within the day only — never since inception.
+    const map = new Map<string, Record<string, number>>()
     for (const s of series) {
-      seed[s.key] = 0
-      if (allowHypo) seed[hypoKey(s.key)] = 0
-    }
-    map.set(allTimestamps[0], seed)
-  }
-
-  for (const s of series) {
-    for (const p of s.data) {
-      if (!p.timestamp) continue
-      const row = { ...(map.get(p.timestamp) || {}) }
-      row[s.key] = pct(p.equity, s.start)
-      if (allowHypo && p.hypothetical_equity != null) {
-        row[hypoKey(s.key)] = pct(p.hypothetical_equity, s.start)
-      }
-      map.set(p.timestamp, row)
-    }
-  }
-
-  const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
-
-  // Forward-fill each channel so a bot with no trade at a given timestamp holds
-  // its last known % rather than dropping to 0.
-  const last: Record<string, number> = {}
-  for (const s of series) {
-    last[s.key] = 0
-    if (allowHypo) last[hypoKey(s.key)] = 0
-  }
-  const chartData = sorted.map(([ts, vals]) => {
-    const row: Record<string, string | number> = { timestamp: ts }
-    for (const s of series) {
-      if (vals[s.key] !== undefined) last[s.key] = vals[s.key]
-      row[s.key] = last[s.key]
-      if (allowHypo) {
-        const hk = hypoKey(s.key)
-        if (vals[hk] !== undefined) last[hk] = vals[hk]
-        row[hk] = last[hk]
+      const base = s.data[0]?.equity ?? s.start
+      for (const p of s.data) {
+        if (!p.timestamp) continue
+        const row = { ...(map.get(p.timestamp) || {}) }
+        row[s.key] = pct(p.equity, base)
+        map.set(p.timestamp, row)
       }
     }
-    return row
-  })
+    const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
+    const last: Record<string, number> = {}
+    for (const s of series) last[s.key] = 0
+    chartData = sorted.map(([ts, vals]) => {
+      const row: Record<string, string | number> = { timestamp: ts }
+      for (const s of series) {
+        if (vals[s.key] !== undefined) last[s.key] = vals[s.key]
+        row[s.key] = last[s.key]
+      }
+      return row
+    })
+  } else {
+    // Historical: per-DAY % return. Resample to end-of-day equity per CT day, then
+    // take the day-over-day change — computed over FULL history so the first day of
+    // any window has a correct prior-day baseline. No accumulation since inception,
+    // so a bot up +500% all-time doesn't pin the scale; all bots stay comparable.
+    const dailyReturns = (data: CurvePoint[], start: number, field: 'equity' | 'hypothetical_equity') => {
+      const eod = new Map<string, number>()
+      for (const p of data) {
+        const v = field === 'equity' ? p.equity : p.hypothetical_equity
+        if (v == null || !p.timestamp) continue
+        eod.set(ctDay(p.timestamp), v) // data is ASC by close_time → last write = EOD
+      }
+      const days = Array.from(eod.keys()).sort()
+      const out = new Map<string, number>()
+      let prev = start
+      for (const d of days) {
+        const v = eod.get(d) as number
+        out.set(d, prev > 0 ? (v / prev - 1) * 100 : 0)
+        prev = v
+      }
+      return out
+    }
+
+    const perSeries = series.map((s) => ({
+      key: s.key,
+      ret: dailyReturns(s.data, s.start, 'equity'),
+      hypo: allowHypo ? dailyReturns(s.data, s.start, 'hypothetical_equity') : new Map<string, number>(),
+    }))
+
+    let days = Array.from(
+      new Set(perSeries.flatMap((s) => Array.from(s.ret.keys()).concat(Array.from(s.hypo.keys())))),
+    ).sort()
+    if (period !== 'all') {
+      const back = period === '1w' ? 7 : period === '1m' ? 30 : 90
+      const cutoff = new Date(Date.now() - back * 86_400_000).toLocaleDateString('en-CA', {
+        timeZone: 'America/Chicago',
+      })
+      days = days.filter((d) => d >= cutoff)
+    }
+
+    chartData = days.map((d) => {
+      const row: Record<string, string | number> = { timestamp: d }
+      for (const s of perSeries) {
+        row[s.key] = s.ret.get(d) ?? 0
+        if (allowHypo) row[hypoKey(s.key)] = s.hypo.get(d) ?? 0
+      }
+      return row
+    })
+  }
 
   const nameMap: Record<string, string> = {}
   for (const s of series) {
@@ -515,7 +548,7 @@ export function ComparisonChart({
   const header = (
     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
       <h3 className="text-sm font-medium text-gray-400">
-        Equity Comparison — % return{period === 'intraday' ? ' (intraday)' : ''}, normalized per bot
+        {period === 'intraday' ? 'Intraday % return (vs day open)' : 'Daily % return per bot'}
       </h3>
       <div className="flex items-center gap-2">
         {allowHypo && (
@@ -554,7 +587,7 @@ export function ComparisonChart({
         <ComposedChart data={chartData}>
           <XAxis
             dataKey="timestamp"
-            tickFormatter={period === 'intraday' ? formatTime : formatDate}
+            tickFormatter={period === 'intraday' ? formatTime : fmtDay}
             stroke="#44403c"
             tick={{ fill: '#a8a29e', fontSize: 11 }}
           />

@@ -32,8 +32,11 @@ function useBotData(botKey: string, period: Period, personQ: string, isIntraday:
   const q = personQ ? `?${personQ}` : ''
   const status = useSWR(`/api/${botKey}/status${q}`, fetcher, { refreshInterval: REFRESH }).data
   const perf = useSWR(`/api/${botKey}/performance${q}`, fetcher, { refreshInterval: REFRESH }).data
+  // Always fetch full history — the chart computes per-day returns over all
+  // history (so the first day of any window has a correct prior-day baseline)
+  // and windows the result client-side from the selected period.
   const hist = useSWR(
-    !isIntraday ? `/api/${botKey}/equity-curve?period=${period}${personQ ? `&${personQ}` : ''}` : null,
+    !isIntraday ? `/api/${botKey}/equity-curve?period=all${personQ ? `&${personQ}` : ''}` : null,
     fetcher,
     { refreshInterval: REFRESH },
   ).data
