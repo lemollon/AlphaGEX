@@ -27,38 +27,46 @@ interface PerfData {
 export default function PerformanceCard({
   data,
   label,
+  compact = false,
 }: {
   data: PerfData
   label: string
+  /** Tighter layout for narrow containers (e.g. the 4-up compare grid): fewer
+   *  inner columns + smaller value text so dollar amounts don't collide. */
+  compact?: boolean
 }) {
   const pnlPositive = data.total_pnl >= 0
+  const valueText = compact ? 'text-base' : 'text-lg'
+  const topGrid = compact ? 'grid grid-cols-2 gap-2 mb-3' : 'grid grid-cols-4 gap-4 mb-4'
+  const bottomGrid = compact ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-5 gap-4'
+  const hypoGrid = compact ? 'grid grid-cols-1 gap-1.5' : 'grid grid-cols-3 gap-4'
 
   return (
-    <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
+    <div className={`rounded-xl border border-forge-border bg-forge-card/80 ${compact ? 'p-3' : 'p-4'}`}>
       <h3 className="text-sm font-medium text-gray-400 mb-3">{label} Performance</h3>
 
-      <div className="grid grid-cols-4 gap-4 mb-4">
+      <div className={topGrid}>
         <div>
           <p className="text-xs text-forge-muted">Win Rate</p>
-          <p className="text-lg font-semibold">{data.win_rate.toFixed(1)}%</p>
+          <p className={`${valueText} font-semibold`}>{data.win_rate.toFixed(1)}%</p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Total P&L</p>
-          <p className={`text-lg font-semibold ${pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+          <p className={`${valueText} font-semibold ${pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
             {pnlPositive ? '+' : ''}${data.total_pnl.toFixed(2)}
           </p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Avg Win</p>
-          <p className="text-lg font-semibold text-emerald-400">+${data.avg_win.toFixed(2)}</p>
+          <p className={`${valueText} font-semibold text-emerald-400`}>+${data.avg_win.toFixed(2)}</p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Avg Loss</p>
-          <p className="text-lg font-semibold text-red-400">${data.avg_loss.toFixed(2)}</p>
+          <p className={`${valueText} font-semibold text-red-400`}>${data.avg_loss.toFixed(2)}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-4 text-sm border-t border-forge-border pt-3">
+      <div className={`${bottomGrid} text-sm border-t border-forge-border pt-3`}>
         <div>
           <p className="text-xs text-forge-muted">Record</p>
           <p className="font-medium">{data.wins}W / {data.losses}L</p>
@@ -90,7 +98,7 @@ export default function PerformanceCard({
           PT tier? Δ = hypo − actual. Positive Δ = we left money on the table
           by exiting early. Negative Δ = early exits beat the late-day hold. */}
       {data.hypothetical_eod && data.hypothetical_eod.matched_trades > 0 && (
-        <div className="grid grid-cols-3 gap-4 text-sm border-t border-forge-border mt-3 pt-3">
+        <div className={`${hypoGrid} text-sm border-t border-forge-border mt-3 pt-3`}>
           <div>
             <p className="text-xs text-forge-muted">Hypothetical Total (held to 2:59 PM)</p>
             <p className={`font-medium ${data.hypothetical_eod.hypo_total >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>

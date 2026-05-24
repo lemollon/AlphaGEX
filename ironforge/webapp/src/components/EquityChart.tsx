@@ -429,10 +429,14 @@ export interface CompareSeries {
   data: CurvePoint[]
 }
 
+export type CompareMode = 'daily' | 'total'
+
 export function ComparisonChart({
   series,
   period,
   onPeriodChange,
+  mode,
+  onModeChange,
   showHypo,
   onToggleHypo,
   allowHypo,
@@ -440,6 +444,8 @@ export function ComparisonChart({
   series: CompareSeries[]
   period: Period
   onPeriodChange: (p: Period) => void
+  mode: CompareMode
+  onModeChange: (m: CompareMode) => void
   showHypo: boolean
   onToggleHypo: () => void
   allowHypo: boolean
@@ -489,8 +495,47 @@ export function ComparisonChart({
       }
       return row
     })
+  } else if (mode === 'total') {
+    // Total view: cumulative % return since inception, per bot. Build the full
+    // forward-filled series then window it, so a bot that didn't trade in the
+    // window still shows its standing level rather than dropping to 0.
+    const map = new Map<string, Record<string, number>>()
+    for (const s of series) {
+      for (const p of s.data) {
+        if (!p.timestamp) continue
+        const row = { ...(map.get(p.timestamp) || {}) }
+        row[s.key] = pct(p.equity, s.start)
+        if (allowHypo && p.hypothetical_equity != null) row[hypoKey(s.key)] = pct(p.hypothetical_equity, s.start)
+        map.set(p.timestamp, row)
+      }
+    }
+    const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
+    const last: Record<string, number> = {}
+    for (const s of series) {
+      last[s.key] = 0
+      if (allowHypo) last[hypoKey(s.key)] = 0
+    }
+    let full = sorted.map(([ts, vals]) => {
+      const row: Record<string, string | number> = { timestamp: ts }
+      for (const s of series) {
+        if (vals[s.key] !== undefined) last[s.key] = vals[s.key]
+        row[s.key] = last[s.key]
+        if (allowHypo) {
+          const hk = hypoKey(s.key)
+          if (vals[hk] !== undefined) last[hk] = vals[hk]
+          row[hk] = last[hk]
+        }
+      }
+      return row
+    })
+    if (period !== 'all') {
+      const back = period === '1w' ? 7 : period === '1m' ? 30 : 90
+      const cutoffTs = new Date(Date.now() - back * 86_400_000).toISOString()
+      full = full.filter((r) => String(r.timestamp) >= cutoffTs)
+    }
+    chartData = full
   } else {
-    // Historical: per-DAY % return. Resample to end-of-day equity per CT day, then
+    // Daily view: per-DAY % return. Resample to end-of-day equity per CT day, then
     // take the day-over-day change — computed over FULL history so the first day of
     // any window has a correct prior-day baseline. No accumulation since inception,
     // so a bot up +500% all-time doesn't pin the scale; all bots stay comparable.
@@ -548,9 +593,28 @@ export function ComparisonChart({
   const header = (
     <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
       <h3 className="text-sm font-medium text-gray-400">
-        {period === 'intraday' ? 'Intraday % return (vs day open)' : 'Daily % return per bot'}
+        {isIntradayMode
+          ? 'Intraday % return (vs day open)'
+          : mode === 'daily'
+            ? 'Daily % return per bot'
+            : 'Total % return per bot (since inception)'}
       </h3>
       <div className="flex items-center gap-2">
+        {!isIntradayMode && (
+          <div className="flex gap-0.5 bg-forge-border/50 rounded-lg p-0.5">
+            {([['daily', 'Daily %'], ['total', 'Total']] as const).map(([m, lbl]) => (
+              <button
+                key={m}
+                onClick={() => onModeChange(m)}
+                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                  mode === m ? 'bg-forge-card text-white shadow-sm' : 'text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        )}
         {allowHypo && (
           <button
             onClick={onToggleHypo}
@@ -587,7 +651,7 @@ export function ComparisonChart({
         <ComposedChart data={chartData}>
           <XAxis
             dataKey="timestamp"
-            tickFormatter={period === 'intraday' ? formatTime : fmtDay}
+            tickFormatter={isIntradayMode ? formatTime : mode === 'daily' ? fmtDay : formatDate}
             stroke="#44403c"
             tick={{ fill: '#a8a29e', fontSize: 11 }}
           />

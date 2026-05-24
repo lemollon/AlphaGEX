@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
-import { ComparisonChart, type Period, type CompareSeries, type CurvePoint } from '@/components/EquityChart'
+import { ComparisonChart, type Period, type CompareSeries, type CompareMode, type CurvePoint } from '@/components/EquityChart'
 import PerformanceCard from '@/components/PerformanceCard'
 
 const REFRESH = 60_000
@@ -51,6 +51,7 @@ function useBotData(botKey: string, period: Period, personQ: string, isIntraday:
 export default function CompareContent() {
   const [selectedPerson, setSelectedPerson] = useState('all')
   const [period, setPeriod] = useState<Period>('all')
+  const [chartMode, setChartMode] = useState<CompareMode>('daily')
   const [showHypo, setShowHypo] = useState(false)
 
   const { data: personsData } = useSWR('/api/persons', fetcher)
@@ -121,20 +122,23 @@ export default function CompareContent() {
         series={series}
         period={period}
         onPeriodChange={setPeriod}
+        mode={chartMode}
+        onModeChange={setChartMode}
         showHypo={showHypo}
         onToggleHypo={() => setShowHypo((v) => !v)}
         allowHypo={!isIntraday}
       />
 
-      {/* Side-by-side status */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Side-by-side status — 2-up on smaller screens, 4-up on wide; compact
+          cards so the dollar values don't collide at narrow column widths. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
         {BOTS.map((b) => {
           const d = byKey[b.key]
           return (
             <div key={b.key}>
               <h3 className={`text-sm font-medium ${b.accent} mb-2`}>{b.label}</h3>
               {d.status && <MiniStatus account={d.status.account} />}
-              {d.perf && <PerformanceCard data={d.perf} label={b.short} />}
+              {d.perf && <PerformanceCard data={d.perf} label={b.short} compact />}
             </div>
           )
         })}
@@ -211,17 +215,17 @@ function MiniStatus({ account }: { account: any }) {
       <div className="grid grid-cols-3 gap-4">
         <div>
           <p className="text-xs text-forge-muted">Balance</p>
-          <p className="text-lg font-semibold">${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <p className="text-base font-semibold">${account.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">P&L</p>
-          <p className={`text-lg font-semibold ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+          <p className={`text-base font-semibold ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
             {positive ? '+' : ''}${account.cumulative_pnl.toFixed(2)}
           </p>
         </div>
         <div>
           <p className="text-xs text-forge-muted">Return</p>
-          <p className={`text-lg font-semibold ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+          <p className={`text-base font-semibold ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
             {positive ? '+' : ''}{account.return_pct.toFixed(1)}%
           </p>
         </div>
