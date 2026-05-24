@@ -496,16 +496,51 @@ export function ComparisonChart({
       return row
     })
   } else if (mode === 'total') {
-    // Total view: cumulative % return since inception, per bot. Build the full
-    // forward-filled series then window it, so a bot that didn't trade in the
-    // window still shows its standing level rather than dropping to 0.
+    // Cumulative % return over the SELECTED window: each bot is rebased to its
+    // equity at the START of the window, so every line begins at 0% on the left
+    // and shows how much that bot accumulated over the chosen period (1W = this
+    // week, 1M = this month, …). 'All' rebases to inception. Switching the
+    // timeframe answers "who's best this week / month / all-time".
+    const back = period === '1w' ? 7 : period === '1m' ? 30 : period === '3m' ? 90 : null
+    const cutoffTs = back ? new Date(Date.now() - back * 86_400_000).toISOString() : null
+
+    // Per-bot baseline = equity at the window start (last point before the cutoff),
+    // falling back to its starting capital when it has no pre-window history.
+    const base: Record<string, number> = {}
+    const hypoBase: Record<string, number> = {}
+    for (const s of series) {
+      let bse = s.start
+      let hbse = s.start
+      if (cutoffTs) {
+        for (const p of s.data) {
+          if (!p.timestamp || p.timestamp >= cutoffTs) break
+          bse = p.equity
+          if (p.hypothetical_equity != null) hbse = p.hypothetical_equity
+        }
+      }
+      base[s.key] = bse
+      hypoBase[s.key] = hbse
+    }
+
     const map = new Map<string, Record<string, number>>()
+    // Seed a 0% point at the window's left edge so every line starts aligned.
+    const seedTs =
+      cutoffTs ?? series.flatMap((s) => s.data.map((d) => d.timestamp)).filter(Boolean).sort()[0]
+    if (seedTs) {
+      const seed: Record<string, number> = {}
+      for (const s of series) {
+        seed[s.key] = 0
+        if (allowHypo) seed[hypoKey(s.key)] = 0
+      }
+      map.set(seedTs, seed)
+    }
     for (const s of series) {
       for (const p of s.data) {
         if (!p.timestamp) continue
+        if (cutoffTs && p.timestamp < cutoffTs) continue
         const row = { ...(map.get(p.timestamp) || {}) }
-        row[s.key] = pct(p.equity, s.start)
-        if (allowHypo && p.hypothetical_equity != null) row[hypoKey(s.key)] = pct(p.hypothetical_equity, s.start)
+        row[s.key] = pct(p.equity, base[s.key])
+        if (allowHypo && p.hypothetical_equity != null) row[hypoKey(s.key)] = pct(p.hypothetical_equity, hypoBase[s.key])
         map.set(p.timestamp, row)
       }
     }
@@ -515,7 +550,7 @@ export function ComparisonChart({
       last[s.key] = 0
       if (allowHypo) last[hypoKey(s.key)] = 0
     }
-    let full = sorted.map(([ts, vals]) => {
+    chartData = sorted.map(([ts, vals]) => {
       const row: Record<string, string | number> = { timestamp: ts }
       for (const s of series) {
         if (vals[s.key] !== undefined) last[s.key] = vals[s.key]
@@ -528,12 +563,6 @@ export function ComparisonChart({
       }
       return row
     })
-    if (period !== 'all') {
-      const back = period === '1w' ? 7 : period === '1m' ? 30 : 90
-      const cutoffTs = new Date(Date.now() - back * 86_400_000).toISOString()
-      full = full.filter((r) => String(r.timestamp) >= cutoffTs)
-    }
-    chartData = full
   } else {
     // Daily view: per-DAY % return. Resample to end-of-day equity per CT day, then
     // take the day-over-day change — computed over FULL history so the first day of
@@ -597,12 +626,14 @@ export function ComparisonChart({
           ? 'Intraday % return (vs day open)'
           : mode === 'daily'
             ? 'Daily % return per bot'
-            : 'Total % return per bot (since inception)'}
+            : period === 'all'
+              ? 'Cumulative % return per bot (since inception)'
+              : `Cumulative % return per bot — last ${period === '1w' ? 'week' : period === '1m' ? 'month' : '3 months'}`}
       </h3>
       <div className="flex items-center gap-2">
         {!isIntradayMode && (
           <div className="flex gap-0.5 bg-forge-border/50 rounded-lg p-0.5">
-            {([['daily', 'Daily %'], ['total', 'Total']] as const).map(([m, lbl]) => (
+            {([['daily', 'Daily %'], ['total', 'Cumulative']] as const).map(([m, lbl]) => (
               <button
                 key={m}
                 onClick={() => onModeChange(m)}
