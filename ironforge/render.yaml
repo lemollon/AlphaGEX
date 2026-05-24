@@ -35,6 +35,12 @@ services:
         sync: false
       - key: TRADIER_SANDBOX_KEY_LOGAN
         sync: false
+      - key: IRONFORGE_SESSION_SECRET
+        sync: false
+      - key: IRONFORGE_SERVICE_TOKEN
+        sync: false
+      - key: IRONFORGE_SEED_TOKEN
+        sync: false
       - key: IRONFORGE_API_URL
         sync: false
       - key: DISCORD_WEBHOOK_URL

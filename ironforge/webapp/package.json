@@ -12,6 +12,8 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "iron-session": "^8.0.4",
     "next": "14.2.21",
     "pg": "^8.13.0",
     "react": "^18.2.0",
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/pg": "^8.11.0",
     "@types/react": "^18",
