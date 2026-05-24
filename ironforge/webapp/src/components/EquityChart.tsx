@@ -424,12 +424,16 @@ export function ComparisonChart({
   flameData,
   sparkData,
   infernoData,
-  startingCapital,
+  flameStart,
+  sparkStart,
+  infernoStart,
 }: {
   flameData: CurvePoint[]
   sparkData: CurvePoint[]
   infernoData?: CurvePoint[]
-  startingCapital: number
+  flameStart: number
+  sparkStart: number
+  infernoStart: number
 }) {
   const infData = infernoData || []
   if (!flameData.length && !sparkData.length && !infData.length) {
@@ -440,6 +444,10 @@ export function ComparisonChart({
     )
   }
 
+  // Normalize each bot to % return from its OWN starting capital so bots with
+  // different capital (e.g. SPARK ~$5k vs FLAME/INFERNO ~$10k) compare apples-to-apples.
+  const pct = (equity: number, start: number) => (start > 0 ? (equity / start - 1) * 100 : 0)
+
   const map = new Map<string, { flame?: number; spark?: number; inferno?: number }>()
   const allTimestamps = [
     ...flameData.map((d) => d.timestamp),
@@ -447,32 +455,18 @@ export function ComparisonChart({
     ...infData.map((d) => d.timestamp),
   ].sort()
   if (allTimestamps.length) {
-    map.set(allTimestamps[0], { flame: startingCapital, spark: startingCapital, inferno: startingCapital })
+    map.set(allTimestamps[0], { flame: 0, spark: 0, inferno: 0 })
   }
 
-  let flameCum = startingCapital
-  for (const pt of flameData) {
-    flameCum = pt.equity
-    map.set(pt.timestamp, { ...map.get(pt.timestamp), flame: flameCum })
-  }
-
-  let sparkCum = startingCapital
-  for (const pt of sparkData) {
-    sparkCum = pt.equity
-    map.set(pt.timestamp, { ...map.get(pt.timestamp), spark: sparkCum })
-  }
-
-  let infernoCum = startingCapital
-  for (const pt of infData) {
-    infernoCum = pt.equity
-    map.set(pt.timestamp, { ...map.get(pt.timestamp), inferno: infernoCum })
-  }
+  for (const p of flameData) map.set(p.timestamp, { ...map.get(p.timestamp), flame: pct(p.equity, flameStart) })
+  for (const p of sparkData) map.set(p.timestamp, { ...map.get(p.timestamp), spark: pct(p.equity, sparkStart) })
+  for (const p of infData) map.set(p.timestamp, { ...map.get(p.timestamp), inferno: pct(p.equity, infernoStart) })
 
   const sorted = Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
 
-  let lastFlame = startingCapital
-  let lastSpark = startingCapital
-  let lastInferno = startingCapital
+  let lastFlame = 0
+  let lastSpark = 0
+  let lastInferno = 0
   const chartData = sorted.map(([ts, vals]) => {
     if (vals.flame !== undefined) lastFlame = vals.flame
     if (vals.spark !== undefined) lastSpark = vals.spark
@@ -489,7 +483,7 @@ export function ComparisonChart({
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-sm font-medium text-gray-400 mb-3">Equity Comparison</h3>
+      <h3 className="text-sm font-medium text-gray-400 mb-3">Equity Comparison — % return (normalized to each bot&apos;s starting capital)</h3>
       <ResponsiveContainer width="100%" height={380}>
         <ComposedChart data={chartData}>
           <XAxis
@@ -499,19 +493,19 @@ export function ComparisonChart({
             tick={{ fill: '#a8a29e', fontSize: 11 }}
           />
           <YAxis
-            tickFormatter={(v) => `$${v.toLocaleString()}`}
+            tickFormatter={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`}
             stroke="#44403c"
             tick={{ fill: '#a8a29e', fontSize: 11 }}
             domain={['auto', 'auto']}
           />
           <Tooltip
             contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8 }}
-            formatter={(value: number, name: string) => [
-              `$${(typeof value === 'number' ? value : 0).toFixed(2)}`,
-              nameMap[name] || name,
-            ]}
+            formatter={(value: number, name: string) => {
+              const v = typeof value === 'number' ? value : 0
+              return [`${v >= 0 ? '+' : ''}${v.toFixed(2)}%`, nameMap[name] || name]
+            }}
           />
-          <ReferenceLine y={startingCapital} stroke="#78716c" strokeDasharray="4 4" />
+          <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
           <Area type="monotone" dataKey="flame" stroke="#f59e0b" strokeWidth={2} fill="rgba(245, 158, 11, 0.1)" />
           <Area type="monotone" dataKey="spark" stroke="#3b82f6" strokeWidth={2} fill="rgba(59, 130, 246, 0.1)" />
           <Area type="monotone" dataKey="inferno" stroke="#ef4444" strokeWidth={2} fill="rgba(239, 68, 68, 0.1)" />

@@ -8,10 +8,6 @@ import PerformanceCard from '@/components/PerformanceCard'
 
 const REFRESH = 60_000
 
-function fmtPnl(v: number) {
-  return `$${v >= 0 ? '+' : ''}${v.toFixed(2)}`
-}
-
 export default function CompareContent() {
   const [selectedPerson, setSelectedPerson] = useState('all')
   const { data: personsData } = useSWR('/api/persons', fetcher)
@@ -30,7 +26,11 @@ export default function CompareContent() {
   const { data: sparkPerf } = useSWR(`/api/spark/performance${pq}`, fetcher, { refreshInterval: REFRESH })
   const { data: infernoPerf } = useSWR(`/api/inferno/performance${pq}`, fetcher, { refreshInterval: REFRESH })
 
-  const startingCapital = flameEquity?.starting_capital || sparkEquity?.starting_capital || infernoEquity?.starting_capital || 5000
+  // Per-bot starting capital — each bot normalizes against ITS OWN capital so the
+  // comparison is fair across different account sizes (e.g. SPARK ~$5k vs ~$10k).
+  const flameStart = flameEquity?.starting_capital ?? flameStatus?.account?.starting_capital ?? 10000
+  const sparkStart = sparkEquity?.starting_capital ?? sparkStatus?.account?.starting_capital ?? 10000
+  const infernoStart = infernoEquity?.starting_capital ?? infernoStatus?.account?.starting_capital ?? 10000
 
   return (
     <div className="space-y-6">
@@ -65,7 +65,9 @@ export default function CompareContent() {
         flameData={flameEquity?.curve || []}
         sparkData={sparkEquity?.curve || []}
         infernoData={infernoEquity?.curve || []}
-        startingCapital={startingCapital}
+        flameStart={flameStart}
+        sparkStart={sparkStart}
+        infernoStart={infernoStart}
       />
 
       {/* Side-by-side status */}
@@ -106,7 +108,7 @@ export default function CompareContent() {
               </tr>
             </thead>
             <tbody>
-              {metricRows(flamePerf, sparkPerf, infernoPerf).map(([name, fv, sv, iv, higherBetter]) => {
+              {metricRows(flamePerf, sparkPerf, infernoPerf, flameStart, sparkStart, infernoStart).map(([name, fv, sv, iv, higherBetter]) => {
                 const fNum = parseFloat(String(fv).replace(/[$%+,]/g, ''))
                 const sNum = parseFloat(String(sv).replace(/[$%+,]/g, ''))
                 const iNum = parseFloat(String(iv).replace(/[$%+,]/g, ''))
@@ -134,15 +136,23 @@ function metricRows(
   flame: any,
   spark: any,
   inferno: any,
+  fStart: number,
+  sStart: number,
+  iStart: number,
 ): [string, string, string, string, boolean][] {
+  // Dollar metrics are normalized to % of each bot's own starting capital so
+  // bots of different sizes compare fairly. Win Rate / Total Trades are already
+  // scale-independent and stay as-is.
+  const asPct = (v: number, start: number) => (start > 0 ? (v / start) * 100 : 0)
+  const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
   return [
     ['Total Trades', String(flame.total_trades), String(spark.total_trades), String(inferno.total_trades), true],
     ['Win Rate', `${flame.win_rate.toFixed(1)}%`, `${spark.win_rate.toFixed(1)}%`, `${inferno.win_rate.toFixed(1)}%`, true],
-    ['Total P&L', fmtPnl(flame.total_pnl), fmtPnl(spark.total_pnl), fmtPnl(inferno.total_pnl), true],
-    ['Avg Win', `$+${flame.avg_win.toFixed(2)}`, `$+${spark.avg_win.toFixed(2)}`, `$+${inferno.avg_win.toFixed(2)}`, true],
-    ['Avg Loss', `$${flame.avg_loss.toFixed(2)}`, `$${spark.avg_loss.toFixed(2)}`, `$${inferno.avg_loss.toFixed(2)}`, false],
-    ['Best Trade', `$+${flame.best_trade.toFixed(2)}`, `$+${spark.best_trade.toFixed(2)}`, `$+${inferno.best_trade.toFixed(2)}`, true],
-    ['Worst Trade', `$${flame.worst_trade.toFixed(2)}`, `$${spark.worst_trade.toFixed(2)}`, `$${inferno.worst_trade.toFixed(2)}`, false],
+    ['Total Return', fmtPct(asPct(flame.total_pnl, fStart)), fmtPct(asPct(spark.total_pnl, sStart)), fmtPct(asPct(inferno.total_pnl, iStart)), true],
+    ['Avg Win (% cap)', fmtPct(asPct(flame.avg_win, fStart)), fmtPct(asPct(spark.avg_win, sStart)), fmtPct(asPct(inferno.avg_win, iStart)), true],
+    ['Avg Loss (% cap)', fmtPct(asPct(flame.avg_loss, fStart)), fmtPct(asPct(spark.avg_loss, sStart)), fmtPct(asPct(inferno.avg_loss, iStart)), false],
+    ['Best Trade (% cap)', fmtPct(asPct(flame.best_trade, fStart)), fmtPct(asPct(spark.best_trade, sStart)), fmtPct(asPct(inferno.best_trade, iStart)), true],
+    ['Worst Trade (% cap)', fmtPct(asPct(flame.worst_trade, fStart)), fmtPct(asPct(spark.worst_trade, sStart)), fmtPct(asPct(inferno.worst_trade, iStart)), false],
   ]
 }
 
