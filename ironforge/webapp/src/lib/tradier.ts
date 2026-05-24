@@ -2872,6 +2872,62 @@ export async function getTradierOrders(
   })
 }
 
+export interface TradierClosedPosition {
+  symbol: string | null
+  open_date: string | null
+  close_date: string | null
+  quantity: number | null
+  cost: number | null
+  proceeds: number | null
+  gain_loss: number | null
+  gain_loss_percent: number | null
+  term: number | null
+}
+
+/**
+ * Tradier realized gain/loss for an account — its CLOSED positions, including
+ * option EXPIRATIONS and ASSIGNMENTS (which never appear as orders, so the
+ * order-history reconstruction in recover-today-trade can't see them). This is
+ * the authoritative realized-P&L source for reconciling broker_gone_blocked
+ * rows whose close orders were rejected or whose legs vanished.
+ *
+ * Each option leg is its own closed_position row; callers sum the legs of a
+ * multileg IC by matching close_date (+ strikes). Optional start/end
+ * (YYYY-MM-DD) filter by close date server-side. Read-only.
+ */
+export async function getTradierGainLoss(
+  apiKey: string,
+  accountId: string,
+  baseUrl: string,
+  start?: string,
+  end?: string,
+): Promise<TradierClosedPosition[]> {
+  const params: Record<string, string> = { sortBy: 'closeDate', sort: 'desc', limit: '500' }
+  if (start) params.start = start
+  if (end) params.end = end
+  const data = await sandboxGet(`/accounts/${accountId}/gainloss`, params, apiKey, baseUrl)
+  if (!data) return []
+  let rows = data.gainloss?.closed_position
+  if (!rows) return []
+  if (!Array.isArray(rows)) rows = [rows]
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null || v === '') return null
+    const n = typeof v === 'number' ? v : parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  return rows.map((r: any): TradierClosedPosition => ({
+    symbol: r.symbol ?? null,
+    open_date: r.open_date ?? null,
+    close_date: r.close_date ?? null,
+    quantity: numOrNull(r.quantity),
+    cost: numOrNull(r.cost),
+    proceeds: numOrNull(r.proceeds),
+    gain_loss: numOrNull(r.gain_loss),
+    gain_loss_percent: numOrNull(r.gain_loss_percent),
+    term: numOrNull(r.term),
+  }))
+}
+
 // Expose for scanner re-poll and testing
 export { getOrderFillPrice, getAccountIdForKey }
 
