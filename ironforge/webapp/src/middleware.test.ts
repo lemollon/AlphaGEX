@@ -7,7 +7,7 @@ import { NextRequest } from 'next/server'
 vi.mock('iron-session', () => ({ getIronSession: vi.fn() }))
 
 import { getIronSession } from 'iron-session'
-import { middleware } from '@/middleware'
+import { middleware, config } from '@/middleware'
 
 beforeEach(() => {
   process.env.IRONFORGE_SESSION_SECRET = 'x'.repeat(32)
@@ -56,5 +56,23 @@ describe('middleware gate', () => {
     vi.mocked(getIronSession).mockRejectedValue(new Error('bad cookie'))
     const res = await middleware(req('/api/spark/status'))
     expect(res.status).toBe(401)
+  })
+})
+
+describe('matcher config (gate completeness)', () => {
+  const matchers = config.matcher as string[]
+
+  it('always gates every API route (no static-extension escape hatch)', () => {
+    // Guards against the /api/ember/build.js bypass: an explicit /api matcher
+    // must exist so no API path can be skipped by the asset-extension rule.
+    expect(matchers).toContain('/api/:path*')
+  })
+
+  it('anchors the page asset-extension exclusion to the end of the path', () => {
+    // Without the `$` anchor, any path merely CONTAINING ".js"/".css"/etc would
+    // be skipped by middleware. The page matcher must end-anchor the extensions.
+    const pageMatcher = matchers.find((m) => m.includes('_next/static'))
+    expect(pageMatcher).toBeDefined()
+    expect(pageMatcher).toContain('woff2?)$')
   })
 })

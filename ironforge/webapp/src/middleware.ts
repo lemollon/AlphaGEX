@@ -29,8 +29,14 @@ export async function middleware(req: NextRequest) {
   return NextResponse.redirect(url)
 }
 
-// Run on everything except framework statics and static asset files (so public
-// images/styles load on the unauthenticated /login page).
+// API routes are ALWAYS gated — no static-extension escape hatch (a path like
+// /api/ember/build.js must not bypass the gate into the catch-all proxy).
+// Pages run on everything except framework statics and files whose path ENDS in a
+// static-asset extension (so public images/styles load on the /login page). The `$`
+// end-anchor is essential: without it, any path *containing* ".js" etc. is skipped.
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|.*\\.(?:svg|png|jpg|jpeg|gif|ico|webp|css|js|map|woff2?)).*)'],
+  matcher: [
+    '/api/:path*',
+    '/((?!_next/static|_next/image|.*\\.(?:svg|png|jpg|jpeg|gif|ico|webp|css|js|map|woff2?)$).*)',
+  ],
 }
