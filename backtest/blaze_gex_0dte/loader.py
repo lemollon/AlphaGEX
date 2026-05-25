@@ -39,22 +39,25 @@ def bars_to_daychain(trade_date, rows, oi) -> DayChain:
     return day
 
 
-def load_day(conn, trade_date: dt.date) -> Optional[DayChain]:
-    """Load the 0DTE chain (expiration_date = trade_date) for one session."""
-    sql = """
+def load_day(conn, trade_date: dt.date, dte: int = 0) -> Optional[DayChain]:
+    """Load the chain for one session. dte=0 -> same-day (0DTE) expiration
+    (expiration_date = trade_date); dte=1 -> next-day (1DTE) expiration
+    (expiration_date > trade_date)."""
+    op = "=" if dte == 0 else ">"
+    sql = f"""
         WITH first_bar AS (
             SELECT MIN(bar_time) AS t0 FROM helios_options_intraday
-            WHERE trade_date = %s AND expiration_date = %s
+            WHERE trade_date = %s AND expiration_date {op} %s
         )
         SELECT EXTRACT(EPOCH FROM (b.bar_time - first_bar.t0))::int / 60 AS minute,
                b.strike, b."right", b.bid, b.ask
         FROM helios_options_intraday b, first_bar
-        WHERE b.trade_date = %s AND b.expiration_date = %s
+        WHERE b.trade_date = %s AND b.expiration_date {op} %s
         ORDER BY minute, b.strike, b."right"
     """
-    oi_sql = """
+    oi_sql = f"""
         SELECT strike, "right", open_interest FROM helios_options_oi
-        WHERE trade_date = %s AND expiration_date = %s
+        WHERE trade_date = %s AND expiration_date {op} %s
     """
     cur = conn.cursor()
     cur.execute(sql, (trade_date, trade_date, trade_date, trade_date))

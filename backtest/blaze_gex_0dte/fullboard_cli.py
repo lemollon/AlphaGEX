@@ -15,6 +15,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--end", type=lambda s: dt.date.fromisoformat(s), default=dt.date(2025, 12, 5))
     p.add_argument("--pts", type=int, nargs="+", default=[20, 30, 50])
     p.add_argument("--sls", type=int, nargs="+", default=[30, 50, 100])
+    p.add_argument("--dte", type=int, choices=(0, 1), default=0)
     p.add_argument("--out", default="backtest/blaze_gex_0dte/output/fullboard_results.csv")
     return p.parse_args(argv)
 
@@ -25,7 +26,7 @@ def main(argv=None) -> int:
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     rows = []
     for cfg in build_grid(args.pts, args.sls):
-        outcomes = run_fullboard_backtest(db_url, orat_url, cfg, args.start, args.end)
+        outcomes = run_fullboard_backtest(db_url, orat_url, cfg, args.start, args.end, dte=args.dte)
         for setup, s in summarize(outcomes).items():
             verdict = go_no_go(s)
             rows.append({

@@ -148,23 +148,25 @@ def replay_daychain_fullboard(day: DayChain, eod: EodGex, config) -> List[TradeO
     return replay_day(snaps, config=config, spot_mark_provider=mark_provider, debit_estimator=debit_estimator)
 
 
-def run_fullboard_backtest(iron_db_url: str, orat_db_url: str, config, start: dt.date, end: dt.date) -> List[TradeOutcome]:
-    """Cross-DB: 0DTE intraday chain from IronForge + full-board EOD GEX from ORAT."""
+def run_fullboard_backtest(iron_db_url: str, orat_db_url: str, config, start: dt.date, end: dt.date, dte: int = 0) -> List[TradeOutcome]:
+    """Cross-DB: intraday chain (dte=0 same-day / dte=1 next-day) from IronForge
+    + full-board EOD GEX from ORAT."""
     import psycopg2
+    op = "=" if dte == 0 else ">"
     iron = psycopg2.connect(iron_db_url)
     orat = psycopg2.connect(orat_db_url)
     out: List[TradeOutcome] = []
     try:
         cur = iron.cursor()
         cur.execute(
-            "SELECT DISTINCT trade_date FROM helios_options_intraday "
-            "WHERE expiration_date = trade_date AND trade_date BETWEEN %s AND %s ORDER BY trade_date",
+            f"SELECT DISTINCT trade_date FROM helios_options_intraday "
+            f"WHERE expiration_date {op} trade_date AND trade_date BETWEEN %s AND %s ORDER BY trade_date",
             (start, end),
         )
         dates = [r[0] for r in cur.fetchall()]
         cur.close()
         for d in dates:
-            day = load_day(iron, d)
+            day = load_day(iron, d, dte=dte)
             if day is None:
                 continue
             eod = load_eod_gex(orat, d)

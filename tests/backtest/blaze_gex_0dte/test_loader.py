@@ -1,6 +1,23 @@
 import datetime as dt
 from backtest.blaze_gex_0dte.loader import DayChain, bars_to_daychain
 
+def test_load_day_dte_switches_expiration_operator():
+    """dte=0 filters same-day expiration; dte=1 filters next-day (>)."""
+    captured = []
+    class _Cur:
+        def execute(self, sql, params=None): captured.append(sql)
+        def fetchall(self): return []
+        def close(self): pass
+    class _Conn:
+        def cursor(self): return _Cur()
+    import datetime as _dt
+    from backtest.blaze_gex_0dte.loader import load_day
+    load_day(_Conn(), _dt.date(2024, 3, 15), dte=0)
+    assert any("expiration_date = %s" in s for s in captured)
+    captured.clear()
+    load_day(_Conn(), _dt.date(2024, 3, 15), dte=1)
+    assert any("expiration_date > %s" in s for s in captured)
+
 def test_bars_to_daychain_groups_by_minute_and_strike():
     rows = [
         (0, 500.0, "C", 1.00, 1.10),
