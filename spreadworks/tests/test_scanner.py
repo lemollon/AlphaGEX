@@ -4,9 +4,24 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import text
 
-from backend.bots.scanner import run_scan_cycle, ChainProvider
+from backend.bots.scanner import run_scan_cycle, should_run_scan_loop, ChainProvider
 
 CT = ZoneInfo("America/Chicago")
+
+
+# 2026-05-20 = Wed, 05-23 = Sat, 05-24 = Sun, 05-25 = Mon (Memorial Day holiday)
+@pytest.mark.parametrize("dt,is_holiday,expected", [
+    (datetime(2026, 5, 20, 9, 0, tzinfo=CT),  False, True),   # Wed, RTH, normal day
+    (datetime(2026, 5, 20, 8, 0, tzinfo=CT),  False, True),   # 08:00 boundary — open
+    (datetime(2026, 5, 20, 14, 59, tzinfo=CT), False, True),  # 14:59 — last minute
+    (datetime(2026, 5, 20, 7, 59, tzinfo=CT), False, False),  # before 08:00
+    (datetime(2026, 5, 20, 15, 0, tzinfo=CT), False, False),  # 15:00 — closed
+    (datetime(2026, 5, 23, 9, 0, tzinfo=CT),  False, False),  # Saturday
+    (datetime(2026, 5, 24, 9, 0, tzinfo=CT),  False, False),  # Sunday
+    (datetime(2026, 5, 25, 9, 0, tzinfo=CT),  True,  False),  # Memorial Day holiday
+])
+def test_should_run_scan_loop(dt, is_holiday, expected):
+    assert should_run_scan_loop(dt, is_holiday=is_holiday) is expected
 
 
 class FakeChainProvider(ChainProvider):

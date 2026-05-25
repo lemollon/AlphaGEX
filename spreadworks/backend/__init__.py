@@ -1432,13 +1432,16 @@ def _start_scheduler(app: FastAPI):
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
-        from .bots.scanner import run_scan_cycle_with_timeout
+        from .bots.scanner import run_scan_cycle_with_timeout, should_run_scan_loop
         from .bots.registry import list_bots
         now_ct = datetime.now(ZoneInfo("America/Chicago"))
-        # Defensive double-check (cron already restricts; guards against misfires)
-        if now_ct.weekday() >= 5:
-            return
-        if not (8 <= now_ct.hour < 15):
+        # Market-wide gate: weekday + RTH + not a holiday. The cron already
+        # restricts day/hour, but holidays (e.g. Memorial Day) fall on
+        # weekdays the cron still fires on — so consult is_market_holiday here
+        # too, skipping ALL bots when the market is closed (no opens, no
+        # monitoring). Falls back to weekday/hour-only if content didn't load.
+        holiday = bool(content_loaded and is_market_holiday(now_ct.date()))
+        if not should_run_scan_loop(now_ct, is_holiday=holiday):
             return
 
         # Build the live chain provider lazily so we don't crash imports if
