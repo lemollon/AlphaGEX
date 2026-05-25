@@ -31,7 +31,7 @@ const SNAPSHOT_REFRESH_MS = 30_000
 const CANDLES_REFRESH_MS = 60_000
 
 interface BuilderTabProps {
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
   accountType: 'sandbox' | 'production'
 }
 

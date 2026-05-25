@@ -5,7 +5,7 @@ import { fetcher } from '@/lib/fetcher'
 
 const REFRESH_MS = 15_000
 
-type AccentColor = 'amber' | 'blue' | 'red' | 'orange'
+type AccentColor = 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 
 interface BalanceRow {
   name: string

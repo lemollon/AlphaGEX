@@ -97,9 +97,9 @@ export default function StatusCard({
   viewMode,
 }: {
   data: StatusData
-  accent: 'amber' | 'blue' | 'red' | 'orange'
+  accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
   config?: ConfigData | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
   liveUnrealizedPnl?: number | null
   liveUnrealizedPct?: number | null
   pendingOrderCount?: number
@@ -166,8 +166,8 @@ export default function StatusCard({
   const todayTotalPositive = todayTotal >= 0
   const todayTotalPct = startingCapital > 0 ? (todayTotal / startingCapital) * 100 : null
 
-  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : 'border-blue-500/30'
-  const accentText = accent === 'amber' ? 'text-amber-400' : 'text-blue-400'
+  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : accent === 'red' ? 'border-red-500/30' : accent === 'orange' ? 'border-orange-500/30' : accent === 'fuchsia' ? 'border-fuchsia-500/30' : 'border-blue-500/30'
+  const accentText = accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'
 
   /* ---- Toggle bot active state ---- */
   const [toggling, setToggling] = useState(false)

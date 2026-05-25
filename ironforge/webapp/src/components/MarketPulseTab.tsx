@@ -83,7 +83,7 @@ function formatCT(ts: string | null | undefined): string {
   } catch { return ts.slice(0, 19) }
 }
 
-export default function MarketPulseTab({ bot }: { bot: 'flame' | 'spark' | 'inferno' | 'blaze' }) {
+export default function MarketPulseTab({ bot }: { bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' }) {
   const { data, error, isLoading, mutate } = useSWR<RiskSignalsResponse>(
     `/api/${bot}/risk-signals`,
     fetcher,
