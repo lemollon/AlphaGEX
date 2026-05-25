@@ -9,6 +9,7 @@ const botIcons: Record<string, React.ReactNode> = {
   SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   INFERNO: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   BLAZE: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  FLARE: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
 }
 
 const botGlow: Record<string, string> = {
@@ -16,6 +17,7 @@ const botGlow: Record<string, string> = {
   SPARK: 'glow-spark',
   INFERNO: 'glow-inferno',
   BLAZE: 'glow-inferno',
+  FLARE: 'glow-inferno',
 }
 
 /** Bots with trading accounts get a green dot; paper-only get nothing */
@@ -29,6 +31,7 @@ const links: NavLink[] = [
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
   { href: '/inferno', label: 'INFERNO', className: 'text-red-400 hover:text-red-300' },
   { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
+  { href: '/flare', label: 'FLARE', className: 'text-fuchsia-400 hover:text-fuchsia-300' },
   { href: '/compare', label: 'Compare' },
   { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },

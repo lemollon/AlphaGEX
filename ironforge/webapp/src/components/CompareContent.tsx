@@ -13,6 +13,7 @@ const BOTS = [
   { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: '#3b82f6', accent: 'text-blue-400' },
   { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: '#ef4444', accent: 'text-red-400' },
   { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: '#fb923c', accent: 'text-orange-400' },
+  { key: 'flare', label: 'FLARE (0DTE dir.)', short: 'FLARE', color: '#d946ef', accent: 'text-fuchsia-400' },
 ] as const
 
 type BotKey = (typeof BOTS)[number]['key']
@@ -65,7 +66,8 @@ export default function CompareContent() {
   const spark = useBotData('spark', period, personQ, isIntraday)
   const inferno = useBotData('inferno', period, personQ, isIntraday)
   const blaze = useBotData('blaze', period, personQ, isIntraday)
-  const byKey: Record<BotKey, BotData> = { flame, spark, inferno, blaze }
+  const flare = useBotData('flare', period, personQ, isIntraday)
+  const byKey: Record<BotKey, BotData> = { flame, spark, inferno, blaze, flare }
 
   const startOf = (k: BotKey): number =>
     byKey[k].status?.account?.starting_capital ?? byKey[k].hist?.starting_capital ?? 10000
@@ -100,8 +102,10 @@ export default function CompareContent() {
             <span className="text-red-400">INFERNO</span>
             <span className="text-forge-muted mx-1.5">vs</span>
             <span className="text-orange-400">BLAZE</span>
+            <span className="text-forge-muted mx-1.5">vs</span>
+            <span className="text-fuchsia-400">FLARE</span>
           </h1>
-          <span className="text-forge-muted text-sm">2DTE · 1DTE · 0DTE · 1DTE directional</span>
+          <span className="text-forge-muted text-sm">2DTE · 1DTE IC · 0DTE IC · 1DTE dir. · 0DTE dir.</span>
         </div>
         {persons.length > 1 && (
           <select
@@ -129,9 +133,9 @@ export default function CompareContent() {
         allowHypo={!isIntraday}
       />
 
-      {/* Side-by-side status — 2-up on smaller screens, 4-up on wide; compact
-          cards so the dollar values don't collide at narrow column widths. */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* Side-by-side status — 2-up on smaller screens, 3-up on md, 5-up on xl;
+          compact cards so the dollar values don't collide at narrow column widths. */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         {BOTS.map((b) => {
           const d = byKey[b.key]
           return (
