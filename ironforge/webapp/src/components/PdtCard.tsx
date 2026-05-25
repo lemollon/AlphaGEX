@@ -89,8 +89,8 @@ export default function PdtCard({
   botStatus,
   accountType,
 }: {
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
-  accent: 'amber' | 'blue' | 'red' | 'orange'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+  accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
   botStatus?: BotStatus | null
   accountType?: 'sandbox' | 'production'
 }) {

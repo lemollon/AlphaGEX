@@ -84,6 +84,7 @@ const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {}
 const TAB_LABEL_OVERRIDES: Record<string, Partial<Record<Tab, string>>> = {
   flame: { 'IC Chart': 'Spread Chart' },
   blaze: { 'IC Chart': 'Directional Chart' },
+  flare: { 'IC Chart': 'Directional Chart' },
 }
 
 /** Reserved for future per-bot tab gating. Empty for now — Market Pulse
@@ -109,8 +110,8 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze'
-  accent: 'amber' | 'blue' | 'red' | 'orange'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+  accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 }) {
   const hasAccounts = ACCOUNT_BOTS.has(bot)
   const [tab, setTab] = useState<Tab>('Equity Curve')
@@ -336,6 +337,7 @@ export default function BotDashboard({
     accent === 'amber' ? 'border-amber-400 text-amber-400'
     : accent === 'red' ? 'border-red-400 text-red-400'
     : accent === 'orange' ? 'border-orange-400 text-orange-400'
+    : accent === 'fuchsia' ? 'border-fuchsia-500 text-fuchsia-400'
     : 'border-blue-400 text-blue-400'
 
   return (
@@ -344,7 +346,7 @@ export default function BotDashboard({
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
           <h1
-            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : 'text-blue-400'}`}
+            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'}`}
           >
             {bot.toUpperCase()}
           </h1>
@@ -353,7 +355,9 @@ export default function BotDashboard({
               ? '2DTE Put Credit Spread'
               : bot === 'blaze'
                 ? '1DTE Directional Spread'
-                : `${bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor`}
+                : bot === 'flare'
+                  ? '0DTE Directional Spread'
+                  : `${bot === 'inferno' ? '0DTE' : '1DTE'} Iron Condor`}
           </span>
         </div>
         {hasAccounts ? (
@@ -528,7 +532,7 @@ export default function BotDashboard({
                 data={equity?.curve || []}
                 intradayData={intraday?.snapshots}
                 startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : '#3b82f6'}
+                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : accent === 'fuchsia' ? '#d946ef' : '#3b82f6'}
                 title={`${bot.toUpperCase()} Equity Curve`}
                 liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
                 period={equityPeriod}
@@ -543,10 +547,10 @@ export default function BotDashboard({
         {tab === 'IC Chart' && (
           <ComponentErrorBoundary fallback={
             bot === 'flame' ? 'Spread Chart tab error'
-              : bot === 'blaze' ? 'Directional Chart tab error'
+              : (bot === 'blaze' || bot === 'flare') ? 'Directional Chart tab error'
               : 'IC Chart tab error'
           }>
-            {bot === 'blaze' ? (
+            {bot === 'blaze' || bot === 'flare' ? (
               <BlazeDirectionalChart />
             ) : (
               <BuilderTab
@@ -662,10 +666,10 @@ function BrokerEquityTab({
   person: string
   period: string
   onPeriodChange: (p: 'intraday' | '1d' | '1w' | '1m' | '3m' | 'all') => void
-  accent: 'amber' | 'blue' | 'red' | 'orange'
+  accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 }) {
   const points = data?.mode === 'intraday' ? data?.snapshots : data?.curve
-  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : '#3b82f6'
+  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : accent === 'fuchsia' ? '#d946ef' : '#3b82f6'
 
   if (!data) return <TabLoading />
 

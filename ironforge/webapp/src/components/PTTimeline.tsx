@@ -35,7 +35,7 @@ function widthPct(startMin: number, endMin: number): string {
   return `${((endMin - startMin) / TOTAL) * 100}%`
 }
 
-export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' | 'blaze' }) {
+export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' }) {
   // INFERNO (HOLD_TO_EOD after PR #2289) and BLAZE (directional, single
   // fixed PT/SL) don't use tier-based exits — suppress the strip entirely.
   if (bot === 'inferno' || bot === 'blaze') return null
