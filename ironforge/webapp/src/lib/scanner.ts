@@ -5656,6 +5656,15 @@ async function runAllScans(): Promise<void> {
     console.warn(`[scanner] BLAZE fatal error: ${msg}`)
   }
 
+  // FLARE — 0DTE directional bot, sibling of BLAZE. Same code path shape.
+  try {
+    const { scanFlare } = await import('./flare/scanner')
+    await scanFlare(ct)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] FLARE fatal error: ${msg}`)
+  }
+
   // Save production account equity snapshots every cycle (same as paper snapshots).
   // This gives production accounts their own equity curve based on real Tradier balances.
   // Gate by isMarketOpen(ct) — runAllScans() runs until 3:10 PM CT to allow the EOD safety
