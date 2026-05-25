@@ -10,8 +10,10 @@ CT = ZoneInfo("America/Chicago")
 
 
 class FakeChainProvider(ChainProvider):
-    def __init__(self, *, chain_0dte=None, chain_1dte=None, chain_14dte=None):
+    def __init__(self, *, chain_0dte=None, chain_1dte=None, chain_14dte=None,
+                 chain_6dte=None, chain_9dte=None):
         self.c0 = chain_0dte; self.c1 = chain_1dte; self.c14 = chain_14dte
+        self.c6 = chain_6dte; self.c9 = chain_9dte
         self.calls = 0
         self.leg_mid_overrides = None  # if set, get_leg_mids returns this
 
@@ -19,6 +21,8 @@ class FakeChainProvider(ChainProvider):
         self.calls += 1
         if dte == 0: return self.c0
         if dte == 1: return self.c1
+        if dte == 6: return self.c6
+        if dte == 9: return self.c9
         if dte == 14: return self.c14
         return None
 
@@ -113,6 +117,33 @@ def test_scan_activity_row_written(db_session, fake_chain_0dte):
             "SELECT outcome FROM breeze_scan_activity"
         )).mappings().all()
     assert len(rows) >= 1
+
+
+def test_meadow_blocked_on_non_entry_day(db_session, fake_chain_6dte, fake_chain_9dte):
+    """MEADOW enters Mon/Fri only — a Wednesday scan must not open."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    wednesday = datetime(2026, 5, 20, 9, 0, tzinfo=CT)  # 2026-05-20 is a Wednesday
+    res = run_scan_cycle(engine=engine, bot="meadow", now_ct=wednesday,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "BLOCKED_ENTRY_DAY"
+
+
+def test_meadow_opens_on_entry_day(db_session, fake_chain_6dte, fake_chain_9dte):
+    """On a Friday, the day gate allows MEADOW to open its credit DD."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    friday = datetime(2026, 5, 22, 9, 0, tzinfo=CT)  # 2026-05-22 is a Friday
+    res = run_scan_cycle(engine=engine, bot="meadow", now_ct=friday,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
 
 
 def test_equity_snapshot_written(db_session, fake_chain_0dte):

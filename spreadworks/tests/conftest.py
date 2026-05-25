@@ -56,6 +56,18 @@ def fake_chain_14dte():
 
 
 @pytest.fixture
+def fake_chain_6dte():
+    """MEADOW front chain — short strangle leg (credit double diagonal)."""
+    return json.loads((FIXTURE_DIR / "spy_6dte_chain.json").read_text())
+
+
+@pytest.fixture
+def fake_chain_9dte():
+    """MEADOW back chain — long strangle leg, further OTM and cheaper."""
+    return json.loads((FIXTURE_DIR / "spy_9dte_chain.json").read_text())
+
+
+@pytest.fixture
 def market_open_ct():
     """A safe within-entry-window time: 09:00 CT on a Wednesday."""
     return datetime(2026, 5, 20, 9, 0, tzinfo=CT)

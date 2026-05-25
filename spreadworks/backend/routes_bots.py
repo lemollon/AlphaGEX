@@ -192,6 +192,7 @@ class ConfigUpdate(BaseModel):
     discord_alerts: bool | None = None
     delta_skew: int | None = None
     use_gex_walls: bool | None = None
+    entry_days: str | None = None
 
 
 @router.post("/{bot}/config")
@@ -400,7 +401,10 @@ def get_position_payoff(bot: str, position_id: str):
             {"front": short_call["expiration"], "back": long_call["expiration"]},
             r, sigma, entry_cost, n,
         )
-    elif strategy == "double_diagonal":
+    elif strategy in ("double_diagonal", "double_diagonal_credit"):
+        # Credit and debit double diagonals share identical payoff geometry —
+        # only the entry_cost sign differs, and that's already handled above
+        # via CREDIT_STRATEGIES. Route both through the double_diagonal model.
         short_call = _leg("short", "call")
         short_put = _leg("short", "put")
         long_call = _leg("long", "call")

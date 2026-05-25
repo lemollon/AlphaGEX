@@ -6,13 +6,15 @@ export const BOT_REGISTRY = {
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
+  meadow: { display: 'MEADOW', strategy: 'double_diagonal_credit', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
-  iron_butterfly:   'Iron Butterfly',
-  double_calendar:  'Double Calendar',
-  double_diagonal:  'Double Diagonal',
-  iron_condor:      'Iron Condor',
+  iron_butterfly:        'Iron Butterfly',
+  double_calendar:       'Double Calendar',
+  double_diagonal:       'Double Diagonal',
+  iron_condor:           'Iron Condor',
+  double_diagonal_credit: 'Credit Double Diagonal',
 };
 
 // Per-bot theme palette mirrored from the SpreadWorks Design System
@@ -50,5 +52,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(56,189,248,0.30)',
     glow:        'rgba(56,189,248,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
+  },
+  meadow: {
+    glyph:       'sprout',                      // MEADOW = a seedling/sprout — grassy, distinct from the others
+    primary:     '#34d399',                    // emerald-400
+    primarySoft: 'rgba(52,211,153,0.10)',
+    primaryRing: 'rgba(52,211,153,0.30)',
+    glow:        'rgba(52,211,153,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(52,211,153,0.22) 0%, rgba(52,211,153,0.03) 100%)',
   },
 };

@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS {t} (
     discord_alerts    BOOLEAN NOT NULL DEFAULT FALSE,
     delta_skew        INTEGER NOT NULL DEFAULT 0,
     use_gex_walls     BOOLEAN NOT NULL DEFAULT FALSE,
+    entry_days        TEXT NOT NULL DEFAULT '',
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -162,6 +163,20 @@ def _ensure_position_overrides(conn, engine: Engine) -> None:
             ))
 
 
+def _ensure_config_entry_days(conn, engine: Engine) -> None:
+    """Idempotent column add for the day-of-week entry gate (2026-05-24,
+    introduced with MEADOW). entry_days is a CSV of lowercase weekday
+    abbreviations (e.g. 'mon,fri'); empty string = no restriction. Existing
+    bots get '' so their behavior is unchanged.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "entry_days", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN entry_days TEXT NOT NULL DEFAULT ''"
+            ))
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -173,6 +188,7 @@ def create_bot_tables(engine: Engine) -> None:
                 t = bot_table(bot, short)
                 conn.execute(text(_autoincrement_for_dialect(ddl.format(t=t), engine)))
         _ensure_position_overrides(conn, engine)
+        _ensure_config_entry_days(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
@@ -185,10 +201,10 @@ def create_bot_tables(engine: Engine) -> None:
                     f"INSERT OR IGNORE INTO {t} ("
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
-                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls"
+                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed"
                     ")"
                 )
             else:
@@ -196,10 +212,10 @@ def create_bot_tables(engine: Engine) -> None:
                     f"INSERT INTO {t} ("
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
-                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls"
+                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed"
                     ") ON CONFLICT (id) DO NOTHING"
                 )
             conn.execute(stmt, {
@@ -219,6 +235,7 @@ def create_bot_tables(engine: Engine) -> None:
                 "dc": defs["discord_alerts"],
                 "ds": defs["delta_skew"],
                 "gw": defs["use_gex_walls"],
+                "ed": defs.get("entry_days", ""),
             })
 
 

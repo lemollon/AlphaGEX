@@ -105,6 +105,7 @@ const EDIT_SECTIONS = [
     ['entry_start_ct', 'text', 'Entry Start (CT)'],
     ['entry_end_ct',   'text', 'Entry End (CT)'],
     ['eod_close_ct',   'text', 'EOD Close (CT)'],
+    ['entry_days',     'text', 'Entry Days (blank=all)'],
   ]},
   { label: 'Notifications', fields: [
     ['discord_alerts', 'checkbox', 'Discord Alerts'],

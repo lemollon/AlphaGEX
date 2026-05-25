@@ -1,0 +1,16 @@
+{
+  "spot": 500.0,
+  "vix": 17.0,
+  "atm_straddle_mid": 7.0,
+  "expiration": "2026-05-30",
+  "iv_atm": 0.175,
+  "ticker": "SPY",
+  "options": [
+    {"strike": 489, "type": "put",  "bid": 1.15, "ask": 1.25},
+    {"strike": 494, "type": "put",  "bid": 2.35, "ask": 2.45},
+    {"strike": 500, "type": "put",  "bid": 3.50, "ask": 3.60},
+    {"strike": 500, "type": "call", "bid": 3.50, "ask": 3.60},
+    {"strike": 506, "type": "call", "bid": 2.35, "ask": 2.45},
+    {"strike": 511, "type": "call", "bid": 1.15, "ask": 1.25}
+  ]
+}

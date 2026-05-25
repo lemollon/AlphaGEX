@@ -2174,8 +2174,10 @@ STRATEGY_LABELS = {
 
 # Strategies where entry_price represents a credit received (entry_cost < 0).
 # For debit strategies, entry_price = |debit per share| (positive), but
-# the P&L formula must negate it.
-CREDIT_STRATEGIES = {"iron_condor", "iron_butterfly"}
+# the P&L formula must negate it. Canonical set lives in bots.strategies so
+# the executor and routes can't drift apart; re-exported here for callers
+# (e.g. routes_bots) that import it from this module.
+from .bots.strategies import CREDIT_STRATEGIES  # noqa: E402
 
 
 def _compute_unrealized_pnl(

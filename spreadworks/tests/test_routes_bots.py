@@ -133,6 +133,16 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
         ],
         2.0,  # debit
     ),
+    (
+        "meadow", "double_diagonal_credit",
+        [
+            {"side": "short", "type": "call", "strike": 506, "expiration": "2099-01-16"},
+            {"side": "short", "type": "put",  "strike": 494, "expiration": "2099-01-16"},
+            {"side": "long",  "type": "call", "strike": 511, "expiration": "2099-01-19"},
+            {"side": "long",  "type": "put",  "strike": 489, "expiration": "2099-01-19"},
+        ],
+        1.6,  # credit
+    ),
 ])
 def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
     from backend import routes_bots

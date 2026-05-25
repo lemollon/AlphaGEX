@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .db import bot_table, load_config
+from .strategies import CREDIT_STRATEGIES
 
 logger = logging.getLogger("spreadworks.bots.executor")
 
@@ -91,7 +92,7 @@ def close_position(
         strategy = row["strategy"]
         entry_price = float(row["entry_price"])
         contracts = int(row["contracts"])
-        if strategy in ("iron_butterfly", "iron_condor"):
+        if strategy in CREDIT_STRATEGIES:
             realized = (entry_price - float(close_value)) * contracts * 100.0
         else:
             realized = (float(close_value) - entry_price) * contracts * 100.0
@@ -166,10 +167,10 @@ def compute_mtm(
             signed += sign * m
         mtm_value = signed
 
-    if strategy in ("iron_butterfly", "iron_condor"):
-        # Both IBF and IC are credit strategies: mtm_value already reads as
-        # "cost to buy back the structure"; pnl is (credit received - cost
-        # to close) × contracts × $100/share.
+    if strategy in CREDIT_STRATEGIES:
+        # Credit strategies (IBF, IC, credit double diagonal): mtm_value
+        # already reads as "cost to buy back the structure"; pnl is (credit
+        # received - cost to close) × contracts × $100/share.
         mtm_pnl = (entry_price - mtm_value) * contracts * 100.0
     else:
         # For debit strats, mtm_value above is signed as "cost to buy in",

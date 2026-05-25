@@ -69,5 +69,18 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'sprout') {
+    // MEADOW = a seedling sprouting two leaves from the ground. Reads as
+    // growth/meadow — distinct from the water/wind glyphs of the siblings.
+    return (
+      <svg {...common}>
+        <line x1="12" y1="21" x2="12" y2="11" />
+        <path d="M12 13c0-3-2.2-5.2-5.5-5.2C6.5 11 8.7 13 12 13z" fill="currentColor" fillOpacity="0.2" />
+        <path d="M12 11c0-3.4 2.4-5.8 6-5.8C18 8.6 15.6 11 12 11z" fill="currentColor" fillOpacity="0.2" />
+        <path d="M5 21h14" />
+      </svg>
+    );
+  }
+
   return null;
 }
