@@ -1,8 +1,8 @@
 from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
-def test_four_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow"}
+def test_bots_registered():
+    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow", "meadow"}
 
 
 def test_breeze_defaults():
@@ -55,6 +55,23 @@ def test_flow_defaults():
     assert b["defaults"]["entry_start_ct"] == "08:30"
 
 
+def test_meadow_defaults():
+    """MEADOW — credit double diagonal, the credit-side sibling of DRIFT."""
+    b = get_bot("meadow")
+    assert b["strategy"] == "double_diagonal_credit"
+    assert b["ticker"] == "SPY"
+    assert b["front_dte"] == 6
+    assert b["back_dte"] == 9
+    assert b["defaults"]["sd_mult"] == 1.0
+    assert b["defaults"]["pt_pct"] == 0.50
+    assert b["defaults"]["sl_pct"] == 1.0
+    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["defaults"]["max_contracts"] == 0
+    assert b["defaults"]["enabled"] is True
+    # Enters Mondays and Fridays only.
+    assert b["defaults"]["entry_days"] == "mon,fri"
+
+
 def test_get_bot_unknown_raises():
     import pytest
     with pytest.raises(KeyError):
@@ -62,4 +79,4 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["breeze", "drift", "flow", "tide"]
+    assert sorted(list_bots()) == ["breeze", "drift", "flow", "meadow", "tide"]

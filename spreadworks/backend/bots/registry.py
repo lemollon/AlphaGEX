@@ -107,6 +107,34 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
+    # MEADOW — SPY Credit Double Diagonal. The credit-side sibling of DRIFT:
+    # sell the near-dated (6 DTE) strangle close to the money, buy a slightly-
+    # longer-dated (9 DTE) strangle $5 further OTM, for a net credit. Short
+    # vega, positive theta. Enters Mondays and Fridays only (entry_days gate).
+    # Sized 50% BP uncapped like the other bots; PT=50% / SL=100% of credit.
+    "meadow": {
+        "display": "MEADOW",
+        "strategy": "double_diagonal_credit",
+        "ticker": "SPY",
+        "front_dte": 6,
+        "back_dte": 9,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": True,
+            "max_contracts": 0,
+            "bp_pct": 0.50,
+            "sd_mult": 1.0,
+            "pt_pct": 0.50,
+            "sl_pct": 1.0,
+            "entry_start_ct": "08:35",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "entry_days": "mon,fri",
+        },
+    },
 }
 
 

@@ -27,6 +27,7 @@ from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
+from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
 
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
@@ -135,6 +136,11 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
         )
         return sig, front
+    if strategy == "double_diagonal_credit":
+        sig = build_double_diagonal_credit_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
+        )
+        return sig, front
     raise ValueError(f"unknown strategy {strategy}")
 
 
@@ -232,6 +238,18 @@ def run_scan_cycle(
         if not _within_window(now_ct, cfg["entry_start_ct"], cfg["entry_end_ct"]):
             result = {"outcome": "BLOCKED_OUTSIDE_WINDOW"}
             return result
+
+        # Day-of-week entry gate (MEADOW = Mon/Fri only). entry_days is a CSV
+        # of lowercase weekday abbreviations; empty string = no restriction.
+        # Only gates OPENING — open positions are still managed any day.
+        entry_days = str(cfg.get("entry_days") or "").strip()
+        if entry_days:
+            allowed = {d.strip().lower() for d in entry_days.split(",") if d.strip()}
+            today_abbr = now_ct.strftime("%a").lower()  # mon, tue, wed, ...
+            if today_abbr not in allowed:
+                result = {"outcome": "BLOCKED_ENTRY_DAY",
+                          "reason": f"entry_day_blocked: today={today_abbr} allowed={sorted(allowed)}"}
+                return result
 
         equity = account_equity(engine, bot)
         diag: list[str] = []
