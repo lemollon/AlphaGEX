@@ -57,9 +57,14 @@ export const DEFAULT_BLAZE_CONFIG: BlazeConfig = {
   ticker: 'SPY',
   spread_width: 1,
   profit_target_pct: 20.0,
-  stop_loss_pct: 30.0,
+  // Widened 30 -> 100 per the full-board backtest + 1DTE cross-check (2026-05-25):
+  // SL=100 is GO on 1DTE (SL=30 was NO-GO) — the tight stop was killing a real edge.
+  stop_loss_pct: 100.0,
   eod_time_ct: '15:55',
-  risk_per_trade_pct: 0.20,
+  // Cut 0.20 -> 0.05: with SL=100 the debit deployed IS the max loss, so the old
+  // 0.20 x 0.85 = ~17%/trade would be ruinous (25%/trade backtested to -66% DD).
+  // ~4.25% deploy now (~-10% backtested DD). See backtest/blaze_gex_0dte/account_sim.py.
+  risk_per_trade_pct: 0.05,
   buying_power_usage_pct: 0.85,
   gex_stale_max_seconds: 90,
   wall_fade_em_threshold: 0.30,
