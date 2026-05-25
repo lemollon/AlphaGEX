@@ -44,6 +44,23 @@ def _parse_time(s: str) -> time:
     return time(int(h), int(m))
 
 
+def should_run_scan_loop(now_ct: datetime, *, is_holiday: bool) -> bool:
+    """Market-wide gate for the per-minute scan loop.
+
+    The loop should only run on a regular-trading-hours weekday that is not a
+    market holiday. This skips ALL bots at once (no opens, no monitoring) when
+    the market is closed — there are no real quotes to act on. Per-bot gates
+    (entry window, entry_days) live separately in run_scan_cycle.
+    """
+    if now_ct.weekday() >= 5:      # Sat / Sun
+        return False
+    if is_holiday:                 # US market holiday
+        return False
+    if not (8 <= now_ct.hour < 15):  # 08:00–14:59 CT
+        return False
+    return True
+
+
 def _log_scan(engine: Engine, bot: str, *, now: datetime, outcome: str,
               reason: str | None = None, signal: dict | None = None,
               position_id: str | None = None) -> None:
