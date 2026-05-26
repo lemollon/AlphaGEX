@@ -109,6 +109,30 @@ describe('Market Hours', () => {
     })
   })
 
+  describe('market holidays (calendar gate — 2026-05-26 incident)', () => {
+    const spark = BOTS.find(b => b.name === 'spark')!
+
+    it('isMarketOpen is false on Memorial Day 2026 (Mon 5/25) despite normal hours', () => {
+      // The incident: SPARK traded the holiday because the gate only checked
+      // weekday + time. Noon on a Monday holiday must read as closed.
+      expect(isMarketOpen(new Date(2026, 4, 25, 12, 0))).toBe(false)
+    })
+
+    it('isMarketOpen is still true on the next real trading day (Tue 5/26)', () => {
+      expect(isMarketOpen(new Date(2026, 4, 26, 12, 0))).toBe(true)
+    })
+
+    it('isInEntryWindow is false on a holiday', () => {
+      expect(isInEntryWindow(new Date(2026, 4, 25, 10, 0), spark)).toBe(false)
+    })
+
+    it('isMarketOpen respects the early-close cutoff (half-day closes 12:00 CT)', () => {
+      // Day after Thanksgiving 2025 (Fri 11/28) closes at 12:00 PM CT.
+      expect(isMarketOpen(new Date(2025, 10, 28, 11, 0))).toBe(true)   // before noon
+      expect(isMarketOpen(new Date(2025, 10, 28, 13, 0))).toBe(false)  // after noon
+    })
+  })
+
   describe('isAfterEodCutoff (Fix 6)', () => {
     // Default eod_cutoff_hhmm_ct = 1450 (= 14:50 CT, the historical hardcoded
     // value). After the eod_cutoff_et fix the cutoff is per-bot from config.

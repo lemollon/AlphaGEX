@@ -420,6 +420,12 @@ export async function GET(
     const todayRealizedPnl = todayRealizedOverride != null
       ? todayRealizedOverride
       : Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
+    // DB-ledger realized for today (this bot's TRACKED trades only). For
+    // production this can diverge from today_realized_pnl, which mirrors the
+    // broker's whole-account close_pl — the gap = activity on the (shared) live
+    // account that IronForge didn't record. Surfacing it is what flags phantom
+    // positions like the 2026-05-26 holiday fills.
+    const todayRealizedTracked = Math.round(num(todayRealizedRows[0]?.today_realized_pnl) * 100) / 100
     const todayTradesClosed = todayTradesClosedOverride != null
       ? todayTradesClosedOverride
       : int(todayRealizedRows[0]?.today_trades_closed)
@@ -450,11 +456,18 @@ export async function GET(
     if (accountTypeParam === 'production') {
       const prodBrokerData = sandboxBalances.find((s: any) => s.account_type === 'production')
       if (prodBrokerData) {
-        const brokerPosCount = prodBrokerData.open_positions_count || 0
+        // open_positions_count is the count of non-zero option LEGS at the broker.
+        // One iron condor = 4 legs, so a single tracked IC legitimately shows 4
+        // broker legs. Compare against (DB positions × 4); only the excess is a
+        // genuine orphan. (Pre-fix this compared legs vs positions and always
+        // reported "3 orphans" for one clean IC — a false alarm.)
+        const brokerLegs = prodBrokerData.open_positions_count || 0
         const dbPosCount = int(positionCountRows[0]?.cnt)
-        if (brokerPosCount > dbPosCount) {
-          dataIntegrityWarning = `Tradier has ${brokerPosCount} open legs but DB tracks ${dbPosCount}. ` +
-            `${brokerPosCount - dbPosCount} orphan leg(s) not tracked by IronForge.`
+        const expectedLegs = dbPosCount * 4
+        if (brokerLegs > expectedLegs) {
+          const orphanLegs = brokerLegs - expectedLegs
+          dataIntegrityWarning = `Tradier has ${brokerLegs} open option legs but IronForge tracks ` +
+            `${dbPosCount} position(s) (${expectedLegs} legs). ${orphanLegs} untracked leg(s) on this account.`
         }
       }
     }
@@ -510,6 +523,10 @@ export async function GET(
         cumulative_pnl: realizedPnl,
         unrealized_pnl: unrealizedPnl,
         today_realized_pnl: todayRealizedPnl,
+        // SPARK-tracked realized today (DB ledger). Diverges from
+        // today_realized_pnl on production when the live account has untracked
+        // activity; the UI shows both and flags the gap.
+        today_realized_tracked: todayRealizedTracked,
         today_trades_closed: todayTradesClosed,
         today_ic_return_pct: todayIcReturnPct,
         total_pnl: Math.round(totalPnl * 100) / 100,

@@ -19,6 +19,8 @@
  * the UI tier helpers below treat it like FLAME for display purposes.
  */
 
+import { isMarketHoliday, isEarlyClose } from './market-calendar'
+
 export type Bot = 'flame' | 'spark' | 'inferno' | 'blaze'
 
 export interface PTTier {
@@ -65,13 +67,16 @@ export function getCTMinutes(ctDate?: Date): number {
   return d.getHours() * 60 + d.getMinutes()
 }
 
-/** Is it a weekday and between 8:30 AM and 3:00 PM CT? */
+/** Is it a regular-session weekday (not a holiday) between 8:30 AM CT and the
+ *  session close (3:00 PM normally, 12:00 PM on early-close half-days)? */
 export function isMarketOpen(ctDate?: Date): boolean {
   const d = ctDate ?? getCTNow()
   const day = d.getDay()
   if (day === 0 || day === 6) return false
+  if (isMarketHoliday(d)) return false // full-closure holidays (see market-calendar.ts)
   const mins = d.getHours() * 60 + d.getMinutes()
-  return mins >= 510 && mins < 900 // 8:30 AM – 3:00 PM
+  const closeMins = isEarlyClose(d) ? 720 : 900 // 12:00 PM CT half-day, else 3:00 PM CT
+  return mins >= 510 && mins < closeMins
 }
 
 /** Morning-end minute for each bot (must mirror scanner.ts getSlidingProfitTarget). */
