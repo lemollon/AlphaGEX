@@ -89,6 +89,18 @@ def test_gex_walls_clip_wings(fake_chain_0dte):
     assert sig.long_put_strike == 498
 
 
+def test_max_contracts_zero_means_uncapped(fake_chain_0dte):
+    # Regression: max_contracts=0 must mean "no ceiling, size by BP alone",
+    # NOT "clamp to zero". The old min(max_contracts, raw) rejected every
+    # entry (sizing_below_one) once config flipped to 0, freezing the bot.
+    sig = build_iron_butterfly_signal(
+        chain=fake_chain_0dte, config=_config(max_contracts=0, bp_pct=0.50),
+        equity=10000.0,
+    )
+    assert sig is not None
+    assert sig.contracts > 2  # uncapped 50% BP far exceeds the old 2-cap
+
+
 def test_returns_legs_in_signal(fake_chain_0dte):
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte, config=_config(), equity=10000.0

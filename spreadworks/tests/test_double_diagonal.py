@@ -9,6 +9,21 @@ def _cfg(**o):
     base.update(o); return base
 
 
+def test_max_contracts_zero_means_uncapped(fake_chain_1dte, fake_chain_14dte):
+    # Regression: max_contracts=0 must size by BP, not clamp to zero.
+    capped = build_double_diagonal_signal(
+        front_chain=fake_chain_1dte, back_chain=fake_chain_14dte,
+        config=_cfg(max_contracts=1, bp_pct=0.50), equity=10000.0,
+    )
+    uncapped = build_double_diagonal_signal(
+        front_chain=fake_chain_1dte, back_chain=fake_chain_14dte,
+        config=_cfg(max_contracts=0, bp_pct=0.50), equity=10000.0,
+    )
+    assert uncapped is not None
+    assert uncapped.contracts >= 1
+    assert uncapped.contracts >= capped.contracts
+
+
 def test_back_strikes_shifted_one_otm(fake_chain_1dte, fake_chain_14dte):
     sig = build_double_diagonal_signal(
         front_chain=fake_chain_1dte, back_chain=fake_chain_14dte,
