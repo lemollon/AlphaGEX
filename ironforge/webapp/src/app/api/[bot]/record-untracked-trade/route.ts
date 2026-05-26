@@ -185,8 +185,10 @@ function buildInsertSql(bot: string, i: RecordInputs): { sql: string; params: an
       'RECONCILE', 'RECONCILE',
       'closed', ($16::date + TIME '09:00')::timestamptz, $16::date, NOW(), $17, $18, $19,
       $20, $21, $22
-    )
-    ON CONFLICT (position_id) DO NOTHING`
+    )`
+  // NOTE: spark_positions has no unique index on position_id (PK is on id), so we
+  // cannot use ON CONFLICT here. Duplicate inserts are prevented by the
+  // already_exists SELECT guard + 409 refusal in POST.
   const params = [
     i.positionId, i.ticker, i.expiration,
     i.putShort, i.putLong, halfCredit,
@@ -247,7 +249,7 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
       await dbExecute(
         `INSERT INTO ${dailyPerfTable} (trade_date, trades_executed, positions_closed, realized_pnl, updated_at, person, account_type)
          VALUES (${CT_TODAY}, 0, $1, $2, NOW(), $3, $4)
-         ON CONFLICT (trade_date, person, account_type)
+         ON CONFLICT (trade_date, COALESCE(person, ''), COALESCE(account_type, 'sandbox'))
          DO UPDATE SET realized_pnl = EXCLUDED.realized_pnl, positions_closed = EXCLUDED.positions_closed, updated_at = NOW()`,
         [int(sumRows[0]?.c), newDailySum, i.person, i.accountType],
       ).catch(() => { /* daily_perf upsert best-effort (conflict target may differ) */ })
