@@ -122,9 +122,14 @@ def build_iron_butterfly_signal(
         return _reject(f"negative_max_loss: wing={wing_width} credit={credit:.2f}")
 
     bp_pct = float(config.get("bp_pct", 0.10))
-    max_contracts = int(config.get("max_contracts", 1))
+    raw_max_contracts = int(config.get("max_contracts", 0) or 0)
     raw_contracts = int((equity * bp_pct) // max_loss_per)
-    contracts = max(0, min(max_contracts, raw_contracts))
+    # max_contracts=0 means "no ceiling, size by BP alone" (matches FLOW/MEADOW).
+    contracts = (
+        max(0, raw_contracts)
+        if raw_max_contracts <= 0
+        else max(0, min(raw_max_contracts, raw_contracts))
+    )
     if contracts < 1:
         return _reject(f"sizing_below_one: equity={equity:.0f} bp_pct={bp_pct} max_loss_per={max_loss_per:.0f}")
 
