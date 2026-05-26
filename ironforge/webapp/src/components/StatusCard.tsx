@@ -160,20 +160,6 @@ export default function StatusCard({
   // Today's P&L
   const todayRealized = account.today_realized_pnl ?? 0
   const todayRealizedPositive = todayRealized >= 0
-  // Live (production) accounts mirror the broker's WHOLE-account realized P&L into
-  // today_realized_pnl. today_realized_tracked is only this bot's RECORDED trades.
-  // A gap means realized activity on the (shared) live account that IronForge never
-  // booked — e.g. the 2026-05-26 holiday phantom positions. We surface it loudly
-  // instead of hiding it, because that divergence is what exposes such bugs.
-  const todayRealizedTracked = account.today_realized_tracked ?? todayRealized
-  const realizedDivergence = Math.round((todayRealized - todayRealizedTracked) * 100) / 100
-  // Only flag MATERIAL divergence — a genuinely untracked position. Small gaps are
-  // routine broker commissions (IronForge's ledger runs gross; the broker nets
-  // fees), not a bug, so they shouldn't nag. $100 sits above a day's fees and well
-  // below an untracked IC (hundreds of dollars).
-  const REALIZED_DIVERGENCE_FLAG_THRESHOLD = 100
-  const hasRealizedDivergence = Math.abs(realizedDivergence) >= REALIZED_DIVERGENCE_FLAG_THRESHOLD
-  const trackedPositive = todayRealizedTracked >= 0
   // IC return % = how much of the credit premium was kept (the real trading metric)
   const todayIcReturnPct = account.today_ic_return_pct ?? null
   const todayUnrealized = unrealized ?? 0
@@ -437,24 +423,6 @@ export default function StatusCard({
         </div>
       )}
 
-      {/* P&L divergence — broker account day P&L vs this bot's tracked trades.
-          A gap means realized activity on the live account that IronForge didn't
-          record (shared account, or unrecorded positions). Surfaced, not hidden. */}
-      {hasRealizedDivergence && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2 mb-3 text-xs text-amber-300">
-          <span className="font-semibold">P&L Mismatch:</span> Broker account realized{' '}
-          <span className={todayRealizedPositive ? 'text-emerald-400' : 'text-red-400'}>
-            {todayRealizedPositive ? '+' : ''}${todayRealized.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>{' '}
-          today, but {data.bot_name}&apos;s tracked trades total{' '}
-          <span className={trackedPositive ? 'text-emerald-400' : 'text-red-400'}>
-            {trackedPositive ? '+' : ''}${todayRealizedTracked.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-          </span>.{' '}
-          <span className="font-mono">${Math.abs(realizedDivergence).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>{' '}
-          of P&L on this account is not from {data.bot_name}&apos;s recorded trades — untracked or shared-account activity. Investigate before trusting the headline number.
-        </div>
-      )}
-
       {/* Live market data */}
       {(data.spot_price || data.vix) && (
         <div className="flex items-center gap-4 mb-3 text-sm font-mono text-gray-300">
@@ -570,14 +538,6 @@ export default function StatusCard({
               </span>
             )}
           </p>
-          {hasRealizedDivergence && (
-            <p className="text-[10px] text-amber-400/80 mt-0.5" title="This bot's recorded trades only (DB ledger). The headline above is the whole broker account.">
-              {data.bot_name} tracked:{' '}
-              <span className={trackedPositive ? 'text-emerald-400' : 'text-red-400'}>
-                {trackedPositive ? '+' : ''}${todayRealizedTracked.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </span>
-            </p>
-          )}
           {/* Close reason breakdown — aggregated summary of today's PT tiers */}
           {(() => {
             // Prefer status API data (always available), fall back to position-monitor
