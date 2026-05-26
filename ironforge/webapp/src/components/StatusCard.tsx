@@ -167,7 +167,12 @@ export default function StatusCard({
   // instead of hiding it, because that divergence is what exposes such bugs.
   const todayRealizedTracked = account.today_realized_tracked ?? todayRealized
   const realizedDivergence = Math.round((todayRealized - todayRealizedTracked) * 100) / 100
-  const hasRealizedDivergence = Math.abs(realizedDivergence) >= 1
+  // Only flag MATERIAL divergence — a genuinely untracked position. Small gaps are
+  // routine broker commissions (IronForge's ledger runs gross; the broker nets
+  // fees), not a bug, so they shouldn't nag. $100 sits above a day's fees and well
+  // below an untracked IC (hundreds of dollars).
+  const REALIZED_DIVERGENCE_FLAG_THRESHOLD = 100
+  const hasRealizedDivergence = Math.abs(realizedDivergence) >= REALIZED_DIVERGENCE_FLAG_THRESHOLD
   const trackedPositive = todayRealizedTracked >= 0
   // IC return % = how much of the credit premium was kept (the real trading metric)
   const todayIcReturnPct = account.today_ic_return_pct ?? null
