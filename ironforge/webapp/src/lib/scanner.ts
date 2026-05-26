@@ -50,6 +50,7 @@ import {
   getOrderFillPrice,
   getTradierOrderDetails,
   getTradierOrders,
+  getProductionAccountsForBot,
   getAccountIdForKey,
   getRawQuotes,
   buildOccSymbol,
@@ -583,6 +584,35 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
  */
 function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
   return ctHHMM(ct) >= cfg(bot).eod_cutoff_hhmm_ct
+}
+
+/**
+ * Dedup safeguard: does the broker already hold a WORKING (unfilled) ENTRY order?
+ *
+ * The DB-based "already traded today" gate only counts FILLED positions. An
+ * order that's placed but not yet filled leaves no position row, so that gate
+ * reads 0 and the scanner re-enters on the next cycle — which spawned 7
+ * untracked positions on 2026-05-25. This detects an opening leg ("*_to_open")
+ * on any still-open broker order (multileg or single-leg) so a pending entry
+ * blocks a duplicate. Closing orders (to_close) do not count.
+ *
+ * `tagPrefix` scopes the check to this bot's OWN orders (tags are like
+ * "SPARK-..."). The production account is shared with a co-tenant 0DTE system,
+ * so without scoping we'd false-block on the other system's working orders.
+ */
+function hasWorkingEntryOrder(
+  orders: Array<{ side?: string | null; tag?: string | null; legs?: Array<{ side?: string | null }> | null }> | null | undefined,
+  tagPrefix?: string,
+): boolean {
+  if (!orders || orders.length === 0) return false
+  const pfx = tagPrefix?.toUpperCase()
+  return orders.some((o) => {
+    if (pfx && !String(o.tag ?? '').toUpperCase().startsWith(pfx)) return false
+    const sides: string[] = []
+    if (o.side) sides.push(String(o.side))
+    for (const leg of o.legs ?? []) if (leg?.side) sides.push(String(leg.side))
+    return sides.some((s) => s.toLowerCase().includes('to_open'))
+  })
 }
 
 /* ------------------------------------------------------------------ */
@@ -2861,6 +2891,30 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           [],
         )
         prodAlreadyTradedToday = int(prodDayCheck[0]?.cnt) > 0
+      }
+      // Dedup safeguard (added after the 2026-05-25 phantom-position incident):
+      // the DB check above only sees FILLED positions. An order placed but not
+      // yet filled leaves no row, so the gate would re-enter and pile up
+      // duplicates. Also block when the broker already holds a WORKING (unfilled)
+      // ENTRY order for this production account. Best-effort: a broker hiccup
+      // falls through to the DB gate (no worse than before).
+      if (!prodAlreadyTradedToday) {
+        try {
+          const prodAccts = await getProductionAccountsForBot(bot.name)
+          for (const pa of prodAccts) {
+            if (!pa.accountId) continue
+            const openOrders = await getTradierOrders(pa.apiKey, pa.accountId, pa.baseUrl, 'open')
+            // Scope to THIS bot's own orders by tag — the account is shared with
+            // a co-tenant 0DTE system, so we must not block on its working orders.
+            if (hasWorkingEntryOrder(openOrders, `${bot.name.toUpperCase()}-`)) {
+              prodAlreadyTradedToday = true
+              console.warn(`[scanner] ${bot.name.toUpperCase()}: working (unfilled) entry order already at broker (${pa.name}) — skipping new entry (dedup safeguard)`)
+              break
+            }
+          }
+        } catch (e: unknown) {
+          console.warn(`[scanner] ${bot.name.toUpperCase()}: working-order dedup check failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+        }
       }
       if (prodAlreadyTradedToday) {
         console.log(`[scanner] ${bot.name.toUpperCase()}: Production already traded or PDT blocked — sandboxOnly`)
@@ -5731,6 +5785,7 @@ export const _testing = {
   isMarketOpen,
   isInEntryWindow,
   isAfterEodCutoff,
+  hasWorkingEntryOrder,
   getSlidingProfitTarget,
   evaluateAdvisor,
   calculateStrikes,

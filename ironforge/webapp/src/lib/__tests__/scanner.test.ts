@@ -47,6 +47,7 @@ const {
   isMarketOpen,
   isInEntryWindow,
   isAfterEodCutoff,
+  hasWorkingEntryOrder,
   getSlidingProfitTarget,
   evaluateAdvisor,
   calculateStrikes,
@@ -130,6 +131,44 @@ describe('Market Hours', () => {
       // Day after Thanksgiving 2025 (Fri 11/28) closes at 12:00 PM CT.
       expect(isMarketOpen(new Date(2025, 10, 28, 11, 0))).toBe(true)   // before noon
       expect(isMarketOpen(new Date(2025, 10, 28, 13, 0))).toBe(false)  // after noon
+    })
+  })
+
+  describe('hasWorkingEntryOrder (dedup safeguard)', () => {
+    it('detects a multileg IC entry order (sell_to_open leg)', () => {
+      const orders = [{ legs: [
+        { side: 'sell_to_open' }, { side: 'buy_to_open' },
+        { side: 'sell_to_open' }, { side: 'buy_to_open' },
+      ] }]
+      expect(hasWorkingEntryOrder(orders)).toBe(true)
+    })
+
+    it('detects a single-leg entry order (order-level side)', () => {
+      expect(hasWorkingEntryOrder([{ side: 'sell_to_open', legs: [] }])).toBe(true)
+    })
+
+    it('does NOT count a working CLOSE order as an entry', () => {
+      const orders = [{ legs: [
+        { side: 'buy_to_close' }, { side: 'sell_to_close' },
+        { side: 'buy_to_close' }, { side: 'sell_to_close' },
+      ] }]
+      expect(hasWorkingEntryOrder(orders)).toBe(false)
+    })
+
+    it('returns false for no working orders', () => {
+      expect(hasWorkingEntryOrder([])).toBe(false)
+      expect(hasWorkingEntryOrder(null)).toBe(false)
+    })
+
+    it('with a tag prefix, ignores another system\'s order on a shared account', () => {
+      // 6YB71371 is shared with a co-tenant 0DTE bot — don\'t false-block on it.
+      const orders = [{ tag: 'FORTRESS-20260526-abc', legs: [{ side: 'sell_to_open' }] }]
+      expect(hasWorkingEntryOrder(orders, 'SPARK-')).toBe(false)
+    })
+
+    it('with a tag prefix, counts this bot\'s own working entry order', () => {
+      const orders = [{ tag: 'SPARK-20260526-xyz', legs: [{ side: 'sell_to_open' }] }]
+      expect(hasWorkingEntryOrder(orders, 'SPARK-')).toBe(true)
     })
   })
 
