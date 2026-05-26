@@ -24,6 +24,7 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
+import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
 import { postFlameOpen, postFlameClose } from './discord'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
@@ -556,16 +557,21 @@ function ctHHMM(ct: Date): number {
 function isMarketOpen(ct: Date): boolean {
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return false
+  if (isMarketHoliday(ct)) return false // full-closure holidays (see market-calendar.ts)
   const hhmm = ctHHMM(ct)
-  return hhmm >= 830 && hhmm <= 1500 // Fix: was 1530, market closes at 3:00 PM CT
+  // marketCloseMinuteCT = 1500 normally, 1200 on early-close half-days.
+  return hhmm >= 830 && hhmm <= marketCloseMinuteCT(ct)
 }
 
 /** Per-bot entry window using config entry_end (Fix 11) */
 function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return false
+  if (isMarketHoliday(ct)) return false // never open new positions on a closed market
   const hhmm = ctHHMM(ct)
-  const entryEnd = cfg(bot).entry_end
+  // Cap the entry window at the real session close so half-days don't queue
+  // orders into a closed market (root cause of the 2026-05-25 phantom positions).
+  const entryEnd = Math.min(cfg(bot).entry_end, marketCloseMinuteCT(ct))
   return hhmm >= 830 && hhmm <= entryEnd
 }
 
