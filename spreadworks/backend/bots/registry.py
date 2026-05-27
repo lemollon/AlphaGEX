@@ -133,6 +133,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "delta_skew": 0,
             "use_gex_walls": False,
             "entry_days": "mon,fri",
+            # Open a fresh position on EVERY entry day (Mon/Fri) even if an
+            # earlier one is still open — capped to one entry per entry-day by
+            # the scanner. The other bots trade daily and stay one-at-a-time.
+            "allow_stacking": True,
         },
     },
 }

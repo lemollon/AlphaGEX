@@ -129,6 +129,22 @@ def list_open_positions(engine: Engine, bot: str) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def count_positions_opened_on(engine: Engine, bot: str, now: datetime) -> int:
+    """Count positions (any status) whose entry_time falls on `now`'s date.
+
+    Used by the stacking gate to cap MEADOW at one new entry per entry-day:
+    closed rows are retained in {bot}_positions, so a position opened and
+    closed earlier the same day still counts. Mirrors the dialect-portable
+    `DATE(col) = DATE(:n)` comparison used in the equity-snapshot query.
+    """
+    t = bot_table(bot, "positions")
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT COUNT(*) AS c FROM {t} WHERE DATE(entry_time) = DATE(:n)"
+        ), {"n": now}).mappings().first()
+    return int(row["c"] or 0)
+
+
 def compute_mtm(
     *,
     strategy: str,

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS {t} (
     delta_skew        INTEGER NOT NULL DEFAULT 0,
     use_gex_walls     BOOLEAN NOT NULL DEFAULT FALSE,
     entry_days        TEXT NOT NULL DEFAULT '',
+    allow_stacking    BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -177,6 +178,21 @@ def _ensure_config_entry_days(conn, engine: Engine) -> None:
             ))
 
 
+def _ensure_config_allow_stacking(conn, engine: Engine) -> None:
+    """Idempotent column add for the multi-position entry gate (2026-05-27,
+    introduced for MEADOW). allow_stacking=TRUE lets the scanner open a new
+    position on each entry-day even while an earlier one is still open
+    (capped to one entry per entry-day). Existing bots default FALSE so their
+    one-at-a-time behavior is unchanged.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "allow_stacking", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN allow_stacking BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -189,6 +205,7 @@ def create_bot_tables(engine: Engine) -> None:
                 conn.execute(text(_autoincrement_for_dialect(ddl.format(t=t), engine)))
         _ensure_position_overrides(conn, engine)
         _ensure_config_entry_days(conn, engine)
+        _ensure_config_allow_stacking(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
@@ -201,10 +218,11 @@ def create_bot_tables(engine: Engine) -> None:
                     f"INSERT OR IGNORE INTO {t} ("
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
-                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days"
+                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
+                    "allow_stacking"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk"
                     ")"
                 )
             else:
@@ -212,10 +230,11 @@ def create_bot_tables(engine: Engine) -> None:
                     f"INSERT INTO {t} ("
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
-                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days"
+                    "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
+                    "allow_stacking"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk"
                     ") ON CONFLICT (id) DO NOTHING"
                 )
             conn.execute(stmt, {
@@ -236,6 +255,7 @@ def create_bot_tables(engine: Engine) -> None:
                 "ds": defs["delta_skew"],
                 "gw": defs["use_gex_walls"],
                 "ed": defs.get("entry_days", ""),
+                "stk": defs.get("allow_stacking", False),
             })
 
 
