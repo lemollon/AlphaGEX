@@ -19,7 +19,7 @@ from sqlalchemy.engine import Engine
 from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
-    close_position, compute_mtm, update_mtm,
+    close_position, compute_mtm, update_mtm, count_positions_opened_on,
 )
 from .monitor import decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod
 from .registry import BOT_REGISTRY, get_bot
@@ -161,6 +161,63 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
     raise ValueError(f"unknown strategy {strategy}")
 
 
+def _evaluate_entry(
+    *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
+    chain_provider: ChainProvider, event_blackout: bool, allow_stacking: bool,
+) -> dict[str, Any]:
+    """Evaluate whether to OPEN a new position. Returns a result dict; never
+    opens more than the gates allow. Callers decide whether to invoke this
+    (legacy bots only when flat; stacking bots on every entry-day)."""
+    if event_blackout:
+        return {"outcome": "BLOCKED_EVENT"}
+    if not _within_window(now_ct, cfg["entry_start_ct"], cfg["entry_end_ct"]):
+        return {"outcome": "BLOCKED_OUTSIDE_WINDOW"}
+
+    # Day-of-week entry gate (MEADOW = Mon/Fri only). entry_days is a CSV of
+    # lowercase weekday abbreviations; empty string = no restriction. Only
+    # gates OPENING — open positions are still managed any day.
+    entry_days = str(cfg.get("entry_days") or "").strip()
+    if entry_days:
+        allowed = {d.strip().lower() for d in entry_days.split(",") if d.strip()}
+        today_abbr = now_ct.strftime("%a").lower()  # mon, tue, wed, ...
+        if today_abbr not in allowed:
+            return {"outcome": "BLOCKED_ENTRY_DAY",
+                    "reason": f"entry_day_blocked: today={today_abbr} allowed={sorted(allowed)}"}
+
+    # Stacking bots open at most ONE new position per entry-day. Closed rows
+    # stay in {bot}_positions, so an earlier same-day open-then-close counts.
+    if allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
+        return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
+
+    equity = account_equity(engine, bot)
+    diag: list[str] = []
+    signal, _chain = _build_signal(
+        bot=bot, strategy=meta["strategy"], chain_provider=chain_provider,
+        config=cfg, equity=equity, today=now_ct.date(),
+        ticker=meta["ticker"], front_dte=meta["front_dte"],
+        back_dte=meta["back_dte"],
+        diag=diag,
+    )
+    if signal is None:
+        return {"outcome": "NO_TRADE", "reason": diag[0] if diag else "no signal"}
+
+    pid = open_position(engine, bot, meta["strategy"], signal, now_ct)
+    if bool(cfg.get("discord_alerts")):
+        try:
+            from . import discord_alerts
+            discord_alerts.post_open(
+                bot=bot, display=meta["display"], strategy=meta["strategy"],
+                position_id=pid, legs=signal.legs(),
+                entry_price=getattr(signal, "credit", None) if hasattr(signal, "credit") else signal.debit,
+                contracts=signal.contracts,
+                max_profit=signal.max_profit * signal.contracts,
+                max_loss=signal.max_loss * signal.contracts,
+            )
+        except Exception as e:
+            logger.warning(f"[{bot}] discord post_open failed: {e}")
+    return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
+
+
 def run_scan_cycle(
     *, engine: Engine, bot: str, now_ct: datetime,
     chain_provider: ChainProvider, event_blackout: bool,
@@ -175,128 +232,103 @@ def run_scan_cycle(
             result = {"outcome": "BLOCKED_DISABLED"}
             return result
 
+        allow_stacking = bool(cfg.get("allow_stacking"))
         opens = list_open_positions(engine, bot)
-        if opens:
-            # Monitor branch — no new trades while one is open.
-            for pos in opens:
-                legs = json.loads(pos["legs"])
-                mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
-                mtm_value, mtm_pnl = compute_mtm(
-                    strategy=pos["strategy"], legs=legs,
-                    entry_price=float(pos["entry_price"]),
-                    contracts=int(pos["contracts"]),
-                    leg_mids=mids,
-                )
-                update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
-                pt_target = float(pos["pt_target_pnl"])
-                # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
-                # the row. When it's set, the scanner respects the stored
-                # value and skips the time-of-day ladder.
-                pt_override = bool(pos.get("pt_override")) if hasattr(pos, "get") else False
-                if not pt_override:
+        # --- Monitor every open position (runs every scan, on any weekday) ---
+        # A held position is managed (PT/SL/EOD) regardless of entry day. A
+        # close logged this scan outranks a plain MONITOR for the headline.
+        monitor_result: dict[str, Any] | None = None
+        for pos in opens:
+            legs = json.loads(pos["legs"])
+            mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
+            mtm_value, mtm_pnl = compute_mtm(
+                strategy=pos["strategy"], legs=legs,
+                entry_price=float(pos["entry_price"]),
+                contracts=int(pos["contracts"]),
+                leg_mids=mids,
+            )
+            update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
+
+            pt_target = float(pos["pt_target_pnl"])
+            # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
+            # the row. When it's set, the scanner respects the stored
+            # value and skips the time-of-day ladder.
+            pt_override = bool(pos.get("pt_override")) if hasattr(pos, "get") else False
+            if not pt_override:
+                try:
+                    pt_override = bool(pos["pt_override"])
+                except (KeyError, IndexError):
+                    pt_override = False
+            if not pt_override:
+                if pos["strategy"] == "iron_butterfly":
+                    # Re-derive PT target each scan using the time-of-day ladder.
+                    new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
+                    pt_target = new_pt_pct * float(pos["max_profit"])
+                elif pos["strategy"] == "iron_condor":
+                    # FLOW uses the SPARK-style DECREASING ladder — take less
+                    # profit as expiration approaches to dodge late-day gamma.
+                    new_pt_pct = pt_pct_for_iron_condor_tod(now_ct.timetz().replace(tzinfo=None))
+                    pt_target = new_pt_pct * float(pos["max_profit"])
+
+            front_exp_str = legs[0]["expiration"]  # legs share front expiration order for IBF; for DC/DD the short legs are first
+            # For DC/DD the front expiration is the SHORT side, which we
+            # placed first in legs[] in both strategy modules.
+            front_exp = date.fromisoformat(front_exp_str)
+
+            d = decide_exit(
+                strategy=pos["strategy"], mtm_pnl=mtm_pnl,
+                pt_target_pnl=pt_target, sl_target_pnl=float(pos["sl_target_pnl"]),
+                now_ct=now_ct, front_expiration=front_exp,
+                eod_close_ct=_parse_time(cfg["eod_close_ct"]),
+                event_blackout=event_blackout,
+            )
+            if d.should_close:
+                close_position(engine, bot, pos["position_id"],
+                               close_value=mtm_value, close_reason=d.reason,
+                               now=now_ct)
+                if bool(cfg.get("discord_alerts")):
                     try:
-                        pt_override = bool(pos["pt_override"])
-                    except (KeyError, IndexError):
-                        pt_override = False
-                if not pt_override:
-                    if pos["strategy"] == "iron_butterfly":
-                        # Re-derive PT target each scan using the time-of-day ladder.
-                        new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
-                        pt_target = new_pt_pct * float(pos["max_profit"])
-                    elif pos["strategy"] == "iron_condor":
-                        # FLOW uses the SPARK-style DECREASING ladder — take less
-                        # profit as expiration approaches to dodge late-day gamma.
-                        new_pt_pct = pt_pct_for_iron_condor_tod(now_ct.timetz().replace(tzinfo=None))
-                        pt_target = new_pt_pct * float(pos["max_profit"])
+                        from . import discord_alerts
+                        entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
+                            else datetime.fromisoformat(str(pos["entry_time"]))
+                        if entry_dt.tzinfo is None:
+                            entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
+                        mins = int((now_ct - entry_dt).total_seconds() // 60)
+                        discord_alerts.post_close(
+                            bot=bot, display=meta["display"], strategy=pos["strategy"],
+                            position_id=pos["position_id"], close_reason=d.reason,
+                            realized_pnl=mtm_pnl,
+                            time_in_trade_min=mins,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[{bot}] discord post_close failed: {e}")
+                monitor_result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
+                                  "position_id": pos["position_id"]}
+            elif monitor_result is None or monitor_result["outcome"] != "TRADE":
+                monitor_result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
 
-                front_exp_str = legs[0]["expiration"]  # legs share front expiration order for IBF; for DC/DD the short legs are first
-                # For DC/DD the front expiration is the SHORT side, which we
-                # placed first in legs[] in both strategy modules.
-                front_exp = date.fromisoformat(front_exp_str)
+        # --- Evaluate a NEW entry ---
+        # Legacy (one-at-a-time) bots only open when flat. Stacking bots open
+        # on every entry-day even while a position is held (capped to one new
+        # entry per entry-day inside _evaluate_entry).
+        entry_result: dict[str, Any] | None = None
+        if (not opens) or allow_stacking:
+            entry_result = _evaluate_entry(
+                engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
+                chain_provider=chain_provider, event_blackout=event_blackout,
+                allow_stacking=allow_stacking,
+            )
 
-                d = decide_exit(
-                    strategy=pos["strategy"], mtm_pnl=mtm_pnl,
-                    pt_target_pnl=pt_target, sl_target_pnl=float(pos["sl_target_pnl"]),
-                    now_ct=now_ct, front_expiration=front_exp,
-                    eod_close_ct=_parse_time(cfg["eod_close_ct"]),
-                    event_blackout=event_blackout,
-                )
-                if d.should_close:
-                    close_position(engine, bot, pos["position_id"],
-                                   close_value=mtm_value, close_reason=d.reason,
-                                   now=now_ct)
-                    if bool(cfg.get("discord_alerts")):
-                        try:
-                            from . import discord_alerts
-                            entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                                else datetime.fromisoformat(str(pos["entry_time"]))
-                            if entry_dt.tzinfo is None:
-                                entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
-                            mins = int((now_ct - entry_dt).total_seconds() // 60)
-                            discord_alerts.post_close(
-                                bot=bot, display=meta["display"], strategy=pos["strategy"],
-                                position_id=pos["position_id"], close_reason=d.reason,
-                                realized_pnl=mtm_pnl,
-                                time_in_trade_min=mins,
-                            )
-                        except Exception as e:
-                            logger.warning(f"[{bot}] discord post_close failed: {e}")
-                    result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
-                              "position_id": pos["position_id"]}
-                else:
-                    result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
-            return result
-
-        # No open positions — try to OPEN
-        if event_blackout:
-            result = {"outcome": "BLOCKED_EVENT"}
-            return result
-        if not _within_window(now_ct, cfg["entry_start_ct"], cfg["entry_end_ct"]):
-            result = {"outcome": "BLOCKED_OUTSIDE_WINDOW"}
-            return result
-
-        # Day-of-week entry gate (MEADOW = Mon/Fri only). entry_days is a CSV
-        # of lowercase weekday abbreviations; empty string = no restriction.
-        # Only gates OPENING — open positions are still managed any day.
-        entry_days = str(cfg.get("entry_days") or "").strip()
-        if entry_days:
-            allowed = {d.strip().lower() for d in entry_days.split(",") if d.strip()}
-            today_abbr = now_ct.strftime("%a").lower()  # mon, tue, wed, ...
-            if today_abbr not in allowed:
-                result = {"outcome": "BLOCKED_ENTRY_DAY",
-                          "reason": f"entry_day_blocked: today={today_abbr} allowed={sorted(allowed)}"}
-                return result
-
-        equity = account_equity(engine, bot)
-        diag: list[str] = []
-        signal, _chain = _build_signal(
-            bot=bot, strategy=meta["strategy"], chain_provider=chain_provider,
-            config=cfg, equity=equity, today=now_ct.date(),
-            ticker=meta["ticker"], front_dte=meta["front_dte"],
-            back_dte=meta["back_dte"],
-            diag=diag,
-        )
-        if signal is None:
-            reason = diag[0] if diag else "no signal"
-            result = {"outcome": "NO_TRADE", "reason": reason}
-            return result
-
-        pid = open_position(engine, bot, meta["strategy"], signal, now_ct)
-        if bool(cfg.get("discord_alerts")):
-            try:
-                from . import discord_alerts
-                discord_alerts.post_open(
-                    bot=bot, display=meta["display"], strategy=meta["strategy"],
-                    position_id=pid, legs=signal.legs(),
-                    entry_price=getattr(signal, "credit", None) if hasattr(signal, "credit") else signal.debit,
-                    contracts=signal.contracts,
-                    max_profit=signal.max_profit * signal.contracts,
-                    max_loss=signal.max_loss * signal.contracts,
-                )
-            except Exception as e:
-                logger.warning(f"[{bot}] discord post_open failed: {e}")
-        result = {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
+        # --- Headline outcome for logging/return ---
+        # A fresh OPEN is most salient; otherwise prefer monitor activity
+        # (close/MONITOR) over an entry-block reason; fall back to the block.
+        if entry_result is not None and entry_result["outcome"] == "TRADE":
+            result = entry_result
+        elif monitor_result is not None:
+            result = monitor_result
+        elif entry_result is not None:
+            result = entry_result
         return result
     finally:
         _log_scan(engine, bot, now=now_ct, outcome=result["outcome"],

@@ -193,6 +193,7 @@ class ConfigUpdate(BaseModel):
     delta_skew: int | None = None
     use_gex_walls: bool | None = None
     entry_days: str | None = None
+    allow_stacking: bool | None = None
 
 
 @router.post("/{bot}/config")

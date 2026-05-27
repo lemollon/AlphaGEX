@@ -52,6 +52,33 @@ def _enable_bot(engine, bot):
         conn.execute(text(f"UPDATE {bot}_config SET enabled = 1 WHERE id = 1"))
 
 
+def _set_stacking(engine, bot, on):
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE {bot}_config SET allow_stacking = :v WHERE id = 1"),
+                     {"v": 1 if on else 0})
+
+
+def _open_meadow_at(engine, when, c6, c9):
+    """Open a real MEADOW credit-double-diagonal position dated `when`."""
+    from backend.bots.strategies.double_diagonal_credit import (
+        build_double_diagonal_credit_signal,
+    )
+    from backend.bots.executor import open_position
+    from backend.bots.db import load_config
+    sig = build_double_diagonal_credit_signal(
+        front_chain=c6, back_chain=c9, config=dict(load_config(engine, "meadow")),
+        equity=10000.0,
+    )
+    assert sig is not None
+    return open_position(engine, "meadow", "double_diagonal_credit", sig, when)
+
+
+# 2026-05-18 = Monday, 2026-05-22 = Friday (both before the fixture's
+# front expiration 2026-05-27, so a held position is not force-closed).
+MONDAY = datetime(2026, 5, 18, 9, 0, tzinfo=CT)
+FRIDAY = datetime(2026, 5, 22, 9, 0, tzinfo=CT)
+
+
 def test_breeze_opens_position_in_entry_window(db_session, fake_chain_0dte):
     engine = db_session.bind
     _enable_bot(engine, "breeze")
@@ -154,6 +181,68 @@ def test_meadow_opens_on_entry_day(db_session, fake_chain_6dte, fake_chain_9dte)
     res = run_scan_cycle(engine=engine, bot="meadow", now_ct=friday,
                          chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "TRADE"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_meadow_stacks_on_next_entry_day_while_position_open(
+    db_session, fake_chain_6dte, fake_chain_9dte
+):
+    """allow_stacking ON: a Monday position still open on Friday must NOT block
+    the Friday entry — MEADOW opens a second concurrent position."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    _set_stacking(engine, "meadow", True)
+    _open_meadow_at(engine, MONDAY, fake_chain_6dte, fake_chain_9dte)
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    res = run_scan_cycle(engine=engine, bot="meadow", now_ct=FRIDAY,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    assert res["reason"] == "OPENED"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 2
+
+
+def test_meadow_one_entry_per_day_cap(db_session, fake_chain_6dte, fake_chain_9dte):
+    """Even with stacking, MEADOW opens at most ONE position per entry-day —
+    a second scan the same Friday monitors instead of opening a third."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    _set_stacking(engine, "meadow", True)
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    first = run_scan_cycle(engine=engine, bot="meadow", now_ct=FRIDAY,
+                           chain_provider=provider, event_blackout=False)
+    assert first["outcome"] == "TRADE"
+    second = run_scan_cycle(engine=engine, bot="meadow",
+                            now_ct=FRIDAY.replace(minute=1),
+                            chain_provider=provider, event_blackout=False)
+    assert second["outcome"] == "MONITOR"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_meadow_without_stacking_stays_one_at_a_time(
+    db_session, fake_chain_6dte, fake_chain_9dte
+):
+    """allow_stacking OFF: a held position blocks new entries even on a Friday
+    — preserves the legacy one-at-a-time behavior used by all other bots."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    _set_stacking(engine, "meadow", False)  # MEADOW seeds ON; force legacy path
+    _open_meadow_at(engine, MONDAY, fake_chain_6dte, fake_chain_9dte)
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    res = run_scan_cycle(engine=engine, bot="meadow", now_ct=FRIDAY,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "MONITOR"
     with engine.begin() as conn:
         n = conn.execute(text(
             "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
