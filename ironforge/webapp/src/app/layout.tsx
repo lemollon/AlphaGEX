@@ -4,7 +4,8 @@ import Shell from '@/components/Shell'
 
 export const metadata: Metadata = {
   title: 'IronForge',
-  description: 'FLAME vs SPARK Iron Condor Paper Trading on Render',
+  description:
+    'Autonomous, defined-risk options bots for SPY that run in your own Tradier account — every position has a capped max loss, sized and exited by rule. Join the IronForge early-access waitlist.',
   icons: { icon: '/favicon.svg' },
 }
 
