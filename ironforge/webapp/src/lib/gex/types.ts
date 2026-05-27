@@ -69,6 +69,14 @@ export interface GexAnalysisData {
     previous_regime: string | null
     regime_flipped: boolean
   }
+  call_structure_details?: {
+    structure: string
+    description: string
+    call_buying_pressure: number
+    is_hedging: boolean
+    is_overwrite: boolean
+    is_speculation: boolean
+  }
   flow_diagnostics: { cards: DiagnosticCard[]; note: string }
   skew_measures: SkewMeasures
   rating: { rating: string; confidence: string; bullish_score: number; bearish_score: number; net_score: number }

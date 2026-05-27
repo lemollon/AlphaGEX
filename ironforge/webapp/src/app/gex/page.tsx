@@ -2,8 +2,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { GexAnalysisData, GexAllData } from '@/lib/gex/types'
 import HeaderMetrics from '@/components/gex/HeaderMetrics'
+import CallStructure from '@/components/gex/CallStructure'
 import KeyGammaLevels from '@/components/gex/KeyGammaLevels'
 import NetGexChart from '@/components/gex/NetGexChart'
+import ExpectedMove from '@/components/gex/ExpectedMove'
 import ReactionFramework from '@/components/gex/ReactionFramework'
 import PositioningRegime from '@/components/gex/PositioningRegime'
 import StructureBalanceCard from '@/components/gex/StructureBalance'
@@ -96,13 +98,14 @@ export default function GexProfilePage() {
       ) : data ? (
         <>
           <HeaderMetrics data={data} />
+          <CallStructure data={data} />
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <ReactionFramework data={data} balanceLabel={balanceLabel} />
             <PositioningRegime positioning={data.positioning} />
             <div className="space-y-6">
-              <KeyGammaLevels data={data} />
-              <StructureBalanceCard sb={allData?.structure_balance} loading={allLoading} />
+              <KeyGammaLevels data={data} allData={allData || undefined} allLoading={allLoading && !allData} />
+              <StructureBalanceCard sb={allData?.structure_balance} loading={allLoading && !allData} />
             </div>
           </div>
 
@@ -114,6 +117,15 @@ export default function GexProfilePage() {
               flip={data.levels.gex_flip}
               upper1sd={data.levels.upper_1sd}
               lower1sd={data.levels.lower_1sd}
+              windowPct={0.05}
+              subtitle={
+                <ExpectedMove
+                  price={data.levels.price}
+                  expectedMove={data.levels.expected_move}
+                  upper1sd={data.levels.upper_1sd}
+                  lower1sd={data.levels.lower_1sd}
+                />
+              }
               emptyMessage="Real-time data not available outside market hours (8:30am–3:00pm CT)."
             />
             <NetGexChart
@@ -121,6 +133,7 @@ export default function GexProfilePage() {
               strikes={allData?.gex_chart_all.strikes || []}
               price={allData?.spot_price ?? data.levels.price}
               flip={data.levels.gex_flip}
+              windowPct={0.12}
               loading={allLoading && !allData}
               emptyMessage="Full-board aggregate unavailable."
             />

@@ -1,4 +1,5 @@
 'use client'
+import type { ReactNode } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell,
 } from 'recharts'
@@ -17,6 +18,9 @@ interface Props {
   lower1sd?: number | null
   loading?: boolean
   emptyMessage?: string
+  subtitle?: ReactNode
+  /** Half-width of the strike window around price, as a fraction (e.g. 0.05 = ±5%). */
+  windowPct?: number
 }
 
 function fmt(n: number): string {
@@ -28,12 +32,29 @@ function fmt(n: number): string {
 }
 
 export default function NetGexChart({
-  title, strikes, price, flip, upper1sd, lower1sd, loading, emptyMessage,
+  title, strikes, price, flip, upper1sd, lower1sd, loading, emptyMessage, subtitle,
+  windowPct = 0.06,
 }: Props) {
-  const data = [...strikes].sort((a, b) => a.strike - b.strike)
+  const sorted = [...strikes].sort((a, b) => a.strike - b.strike)
+
+  // Center the view on price (fallback: median strike) and window the strikes to a
+  // FIXED band around it. This keeps the y-axis domain stable across 30s refreshes
+  // (no more auto-rescaling to dataMin/dataMax) and drops the long empty tails that
+  // made the chart look like it was expanding/collapsing.
+  const center = price && price > 0 ? price : (sorted.length ? sorted[Math.floor(sorted.length / 2)].strike : 0)
+  const lo = center > 0 ? center * (1 - windowPct) : undefined
+  const hi = center > 0 ? center * (1 + windowPct) : undefined
+  const data = lo != null && hi != null
+    ? sorted.filter((s) => s.strike >= lo && s.strike <= hi)
+    : sorted
+  const yDomain: [number | string, number | string] = lo != null && hi != null
+    ? [Math.floor(lo), Math.ceil(hi)]
+    : ['dataMin', 'dataMax']
+
   return (
     <div className="bg-forge-card border border-forge-border rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-white mb-3">{title}</h3>
+      <h3 className="text-sm font-semibold text-white mb-1">{title}</h3>
+      {subtitle && <div className="mb-2">{subtitle}</div>}
       {loading ? (
         <div className="h-[480px] flex items-center justify-center text-gray-500 text-sm">Loading…</div>
       ) : data.length === 0 ? (
@@ -52,7 +73,8 @@ export default function NetGexChart({
               <YAxis
                 type="number"
                 dataKey="strike"
-                domain={['dataMin', 'dataMax']}
+                domain={yDomain}
+                allowDataOverflow
                 tick={{ fill: '#9ca3af', fontSize: 10 }}
                 width={48}
               />
@@ -78,7 +100,7 @@ export default function NetGexChart({
                 <ReferenceLine y={lower1sd} stroke="#f59e0b" strokeDasharray="2 4"
                   label={{ value: '−1σ', fill: '#f59e0b', fontSize: 10, position: 'right' }} />
               )}
-              <Bar dataKey="net_gamma" barSize={6}>
+              <Bar dataKey="net_gamma" barSize={6} isAnimationActive={false}>
                 {data.map((d, i) => (
                   <Cell key={i} fill={d.net_gamma >= 0 ? '#22c55e' : '#ef4444'} />
                 ))}
