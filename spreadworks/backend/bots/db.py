@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS {t} (
     use_gex_walls     BOOLEAN NOT NULL DEFAULT FALSE,
     entry_days        TEXT NOT NULL DEFAULT '',
     allow_stacking    BOOLEAN NOT NULL DEFAULT FALSE,
+    max_concurrent_positions INTEGER NOT NULL DEFAULT 0,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
 """
@@ -193,6 +194,21 @@ def _ensure_config_allow_stacking(conn, engine: Engine) -> None:
             ))
 
 
+def _ensure_config_max_concurrent(conn, engine: Engine) -> None:
+    """Idempotent column add for the concurrent-position cap (2026-05-27,
+    introduced for MEADOW stacking). max_concurrent_positions limits how many
+    positions a bot may hold OPEN at once; 0 = unlimited (mirrors the
+    max_contracts "0 = uncapped" convention). Existing bots default 0 so
+    behavior is unchanged.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "max_concurrent_positions", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN max_concurrent_positions INTEGER NOT NULL DEFAULT 0"
+            ))
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -206,6 +222,7 @@ def create_bot_tables(engine: Engine) -> None:
         _ensure_position_overrides(conn, engine)
         _ensure_config_entry_days(conn, engine)
         _ensure_config_allow_stacking(conn, engine)
+        _ensure_config_max_concurrent(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
@@ -219,10 +236,10 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking"
+                    "allow_stacking, max_concurrent_positions"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp"
                     ")"
                 )
             else:
@@ -231,10 +248,10 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking"
+                    "allow_stacking, max_concurrent_positions"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp"
                     ") ON CONFLICT (id) DO NOTHING"
                 )
             conn.execute(stmt, {
@@ -256,6 +273,7 @@ def create_bot_tables(engine: Engine) -> None:
                 "gw": defs["use_gex_walls"],
                 "ed": defs.get("entry_days", ""),
                 "stk": defs.get("allow_stacking", False),
+                "mcp": defs.get("max_concurrent_positions", 0),
             })
 
 
