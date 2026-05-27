@@ -1042,6 +1042,37 @@ describe('Close position — source code structural', () => {
   })
 })
 
+describe('Per-account config in position monitor (live SL bug, 2026-05-27)', () => {
+  const { readFileSync } = require('fs')
+  const { resolve } = require('path')
+  const src = readFileSync(resolve(__dirname, '../scanner.ts'), 'utf-8')
+  // Slice out just the monitorSinglePosition body so we assert against the
+  // EXIT monitor, not the entry-sizing path (which legitimately also loads the
+  // production config). closePosition is the next function declaration after it.
+  const monitorBody: string = src.slice(
+    src.indexOf('async function monitorSinglePosition('),
+    src.indexOf('async function closePosition('),
+  )
+
+  it('the monitor body was located and computes a stop-loss price', () => {
+    expect(monitorBody.length).toBeGreaterThan(0)
+    expect(monitorBody).toContain('stopLossPrice')
+  })
+
+  it('resolves the position\'s OWN account config — production positions use the production row', () => {
+    // Regression guard: previously the monitor used `cfg(bot)` (sandbox-only),
+    // so LIVE positions were stopped at the sandbox SL multiple instead of
+    // their configured one. The monitor must consult loadProductionConfigFor
+    // and branch on the position's account_type.
+    expect(monitorBody).toMatch(/loadProductionConfigFor/)
+    expect(monitorBody).toMatch(/['"]production['"]/)
+  })
+
+  it('stop-loss price is derived from the per-account botCfg.sl_mult', () => {
+    expect(monitorBody).toMatch(/stopLossPrice\s*=\s*Math\.round\(\s*entryCredit\s*\*\s*botCfg\.sl_mult/)
+  })
+})
+
 describe('Config loading resilience', () => {
   const { readFileSync } = require('fs')
   const { resolve } = require('path')
