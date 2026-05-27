@@ -74,6 +74,7 @@ export default function NetGexChart({
                 type="number"
                 dataKey="strike"
                 domain={yDomain}
+                reversed
                 allowDataOverflow
                 tick={{ fill: '#9ca3af', fontSize: 10 }}
                 width={48}

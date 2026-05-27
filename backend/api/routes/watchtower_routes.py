@@ -2743,7 +2743,9 @@ async def get_gex_analysis_all(
         raise HTTPException(status_code=503, detail="WATCHTOWER engine not available")
 
     cache_key = f"gex_all_{symbol.upper()}"
-    cached = get_cached(cache_key, 120)
+    # Full board = ~37 Tradier chains; it changes slowly intraday, so cache it
+    # for 5 min. Repeat page loads / 30s auto-refreshes serve from cache instantly.
+    cached = get_cached(cache_key, 300)
     if cached:
         return cached
 
