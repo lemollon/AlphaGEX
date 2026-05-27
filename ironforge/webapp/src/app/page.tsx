@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import LandingSiteNav from '@/components/LandingSiteNav'
 import { LANDING_MARKUP } from './_landing/landingMarkup'
 import './_landing/landing.css'
 
@@ -97,6 +98,8 @@ export default function Home() {
         rel="stylesheet"
       />
       <div className="ironforge-landing" dangerouslySetInnerHTML={{ __html: LANDING_MARKUP }} />
+      {/* Operator access to all app pages (the landing suppresses the global nav). */}
+      <LandingSiteNav />
     </>
   )
 }

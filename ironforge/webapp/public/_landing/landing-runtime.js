@@ -1,4 +1,4 @@
-/* AUTO-GENERATED from ~/Downloads/landing.html — verbatim design JS (blocks 1-5).
+/* AUTO-GENERATED from ~/Downloads/landing.html — verbatim design JS (Tweaks panel removed).
    Injected once by src/app/page.tsx after the markup mounts. */
 (function(){
 try {
@@ -342,164 +342,6 @@ try {
 
 try {
 (() => {
-  const TWEAKS = /*EDITMODE-BEGIN*/{
-    "accent": "#ff6b35",
-    "brand": "IRONFORGE",
-    "eyebrow": "THE FORGE IS LIT",
-    "plSpeed": 2200,
-    "cinderCount": 7,
-    "glow": 100,
-    "tape": true,
-    "molten": true
-  }/*EDITMODE-END*/;
-
-  const state = { ...TWEAKS };
-  const panel = document.getElementById('tw-panel');
-
-  // ─── Apply tweaks to the page ────────────────────────
-  const apply = () => {
-    document.documentElement.style.setProperty('--accent', state.accent);
-    // recompute soft variants from accent
-    const a = state.accent;
-    document.documentElement.style.setProperty('--accent-soft', a + '33');
-    document.documentElement.style.setProperty('--accent-dim',  a + '14');
-
-    // brand name
-    const brandEl = document.querySelector('.brand-name');
-    if (brandEl) brandEl.textContent = state.brand;
-    const markEl = document.querySelector('.brand-mark');
-    if (markEl) {
-      const initials = state.brand.trim().split(/\s+/).map(s=>s[0]).join('').slice(0,2).toUpperCase() || 'IF';
-      markEl.textContent = initials;
-    }
-
-    // hero eyebrow
-    const eyeEl = document.querySelector('.hero-eyebrow');
-    if (eyeEl) eyeEl.innerHTML = '<span class="dot"></span> ' + state.eyebrow;
-
-    // P/L speed
-    if (window.__setPLSpeed) window.__setPLSpeed(state.plSpeed);
-
-    // Cinder count
-    const cinderRoot = document.getElementById('cinders');
-    if (cinderRoot) {
-      cinderRoot.innerHTML = '';
-      const N = state.cinderCount;
-      for (let i = 0; i < N; i++) {
-        const c = document.createElement('div');
-        c.className = 'cinder';
-        const left = N > 0 ? (12 + (i * 76 / N) + (Math.random()*6 - 3)) : 0;
-        const drift = (Math.random()*60 - 30) + 'px';
-        c.style.left = left + '%';
-        c.style.setProperty('--drift', drift);
-        c.style.animationDuration = (4 + Math.random()*3).toFixed(2) + 's';
-        c.style.animationDelay = (i * 0.6 + Math.random()*0.5).toFixed(2) + 's';
-        cinderRoot.appendChild(c);
-      }
-    }
-
-    // Forge glow intensity
-    const fl = document.querySelector('.forge-line');
-    if (fl) fl.style.opacity = (state.glow / 100).toString();
-
-    // Tape toggle
-    const tape = document.querySelector('.tape-sheet');
-    if (tape) tape.style.display = state.tape ? '' : 'none';
-
-    // Molten headline toggle
-    const heroEm = document.querySelector('.hero h1 em');
-    if (heroEm) heroEm.style.animation = state.molten ? '' : 'none';
-  };
-
-  // ─── Persist + apply ─────────────────────────────────
-  const setTweak = (k, v) => {
-    state[k] = v;
-    apply();
-    try {
-      window.parent.postMessage({type:'__edit_mode_set_keys', edits:{[k]: v}}, '*');
-    } catch(_) {}
-  };
-
-  // ─── UI bindings ─────────────────────────────────────
-  const sync = () => {
-    document.querySelectorAll('#tw-accent .tw-sw').forEach(b =>
-      b.classList.toggle('on', b.dataset.c.toLowerCase() === state.accent.toLowerCase()));
-    document.getElementById('tw-brand').value = state.brand;
-    document.getElementById('tw-eyebrow').value = state.eyebrow;
-    document.getElementById('tw-pl-speed').value = state.plSpeed;
-    document.getElementById('tw-pl-speed-v').textContent = state.plSpeed + 'ms';
-    document.getElementById('tw-cinders').value = state.cinderCount;
-    document.getElementById('tw-cinders-v').textContent = state.cinderCount;
-    document.getElementById('tw-glow').value = state.glow;
-    document.getElementById('tw-glow-v').textContent = state.glow + '%';
-    document.getElementById('tw-tape').classList.toggle('on', !!state.tape);
-    document.getElementById('tw-molten').classList.toggle('on', !!state.molten);
-  };
-
-  document.querySelectorAll('#tw-accent .tw-sw').forEach(b => {
-    b.addEventListener('click', () => { setTweak('accent', b.dataset.c); sync(); });
-  });
-  document.getElementById('tw-brand').addEventListener('input', e => setTweak('brand', e.target.value));
-  document.getElementById('tw-eyebrow').addEventListener('input', e => setTweak('eyebrow', e.target.value));
-  document.getElementById('tw-pl-speed').addEventListener('input', e => {
-    const v = parseInt(e.target.value, 10);
-    document.getElementById('tw-pl-speed-v').textContent = v + 'ms';
-    setTweak('plSpeed', v);
-  });
-  document.getElementById('tw-cinders').addEventListener('input', e => {
-    const v = parseInt(e.target.value, 10);
-    document.getElementById('tw-cinders-v').textContent = v;
-    setTweak('cinderCount', v);
-  });
-  document.getElementById('tw-glow').addEventListener('input', e => {
-    const v = parseInt(e.target.value, 10);
-    document.getElementById('tw-glow-v').textContent = v + '%';
-    setTweak('glow', v);
-  });
-  document.getElementById('tw-tape').addEventListener('click', () => { setTweak('tape', !state.tape); sync(); });
-  document.getElementById('tw-molten').addEventListener('click', () => { setTweak('molten', !state.molten); sync(); });
-
-  // ─── Drag handle ─────────────────────────────────────
-  (() => {
-    const head = document.getElementById('tw-head');
-    let drag = null;
-    head.addEventListener('mousedown', e => {
-      if (e.target.id === 'tw-close') return;
-      const r = panel.getBoundingClientRect();
-      drag = { x: e.clientX - r.left, y: e.clientY - r.top };
-      e.preventDefault();
-    });
-    window.addEventListener('mousemove', e => {
-      if (!drag) return;
-      panel.style.left = (e.clientX - drag.x) + 'px';
-      panel.style.top  = (e.clientY - drag.y) + 'px';
-      panel.style.right = 'auto';
-      panel.style.bottom = 'auto';
-    });
-    window.addEventListener('mouseup', () => drag = null);
-  })();
-
-  // ─── Host protocol ───────────────────────────────────
-  document.getElementById('tw-close').addEventListener('click', () => {
-    panel.classList.remove('open');
-    try { window.parent.postMessage({type:'__edit_mode_dismissed'}, '*'); } catch(_){}
-  });
-  window.addEventListener('message', e => {
-    const d = e.data;
-    if (!d || typeof d !== 'object') return;
-    if (d.type === '__activate_edit_mode')   { panel.classList.add('open'); sync(); }
-    if (d.type === '__deactivate_edit_mode') { panel.classList.remove('open'); }
-  });
-  // Defer initial apply until DOM scripts above have run
-  setTimeout(() => { apply(); sync(); }, 80);
-  try { window.parent.postMessage({type:'__edit_mode_available'}, '*'); } catch(_){}
-})();
-} catch (e) { console.error('[landing block 3]', e); }
-
-/* ═══════════════════════════════════════════ */
-
-try {
-(() => {
   // ─── Live tape (looped prints) ───────────────────────
   const prints = [
     {bot:'SPK', c:'#5b8fd9', sym:'SPY', strikes:'515P/510P · 540C/545C', credit:'+$1.48', pnl:'+52%',  cls:'pos'},
@@ -767,7 +609,7 @@ try {
   let plTimer = setInterval(tickPL, 2200);
   window.__setPLSpeed = (ms) => { clearInterval(plTimer); plTimer = setInterval(tickPL, ms); };
 })();
-} catch (e) { console.error('[landing block 4]', e); }
+} catch (e) { console.error('[landing block 3]', e); }
 
 /* ═══════════════════════════════════════════ */
 
@@ -934,6 +776,31 @@ try {
       result.classList.add('show');
     }
   }
+})();
+} catch (e) { console.error('[landing block 4]', e); }
+
+/* ═══════════════════════════════════════════ */
+
+try {
+(() => {
+  // Forge-edge embers for #cinders (preserves the 7-ember look the removed
+  // Tweaks panel produced on load; runs just after the base populateCinders).
+  const apply = () => {
+    const root = document.getElementById('cinders');
+    if (!root) return;
+    root.innerHTML = '';
+    const N = 7;
+    for (let i = 0; i < N; i++) {
+      const c = document.createElement('div');
+      c.className = 'cinder';
+      c.style.left = (12 + (i * 76 / N) + (Math.random()*6 - 3)) + '%';
+      c.style.setProperty('--drift', (Math.random()*60 - 30) + 'px');
+      c.style.animationDuration = (4 + Math.random()*3).toFixed(2) + 's';
+      c.style.animationDelay = (i * 0.6 + Math.random()*0.5).toFixed(2) + 's';
+      root.appendChild(c);
+    }
+  };
+  setTimeout(apply, 80);
 })();
 } catch (e) { console.error('[landing block 5]', e); }
 })();

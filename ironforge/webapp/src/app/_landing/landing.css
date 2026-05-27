@@ -905,60 +905,6 @@
 
 /* ─────────────────────────────────────────── */
 
-.tw-panel{
-    position:fixed;right:20px;bottom:20px;z-index:1000;
-    width:300px;background:#0e0c0a;border:1px solid #3a342b;
-    font-family:'IBM Plex Mono',monospace;color:#e8e2d4;font-size:11px;
-    box-shadow:0 24px 60px -12px rgba(0,0,0,.7), 0 0 0 1px rgba(255,107,53,.18);
-    display:none;
-  }
-  .tw-panel.open{display:block}
-  .tw-head{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:10px 14px;border-bottom:1px solid #2a2520;cursor:move;user-select:none;
-    background:linear-gradient(180deg, rgba(255,107,53,.08), transparent);
-  }
-  .tw-title{font-size:10px;letter-spacing:.22em;color:#ff6b35;text-transform:uppercase}
-  .tw-x{
-    background:none;border:1px solid #3a342b;color:#a8a092;width:22px;height:22px;
-    cursor:pointer;font-family:inherit;line-height:1;display:inline-flex;align-items:center;justify-content:center;
-  }
-  .tw-x:hover{border-color:#ff6b35;color:#ff6b35}
-  .tw-body{padding:14px;display:flex;flex-direction:column;gap:14px;max-height:70vh;overflow:auto}
-  .tw-row label.tw-lbl{display:block;font-size:9px;letter-spacing:.18em;color:#5a5447;margin-bottom:6px;text-transform:uppercase}
-  .tw-row input[type=text]{
-    width:100%;background:#0a0807;border:1px solid #3a342b;color:#e8e2d4;
-    padding:8px 10px;font-family:inherit;font-size:11px;outline:none;
-  }
-  .tw-row input[type=text]:focus{border-color:#ff6b35}
-  .tw-swatches{display:flex;gap:6px}
-  .tw-sw{
-    width:36px;height:36px;border:1px solid #3a342b;cursor:pointer;
-    display:flex;align-items:center;justify-content:center;
-    transition:transform .12s;
-  }
-  .tw-sw:hover{transform:translateY(-2px)}
-  .tw-sw.on{border-color:#fff;box-shadow:0 0 0 1px #fff}
-  .tw-sw .sw-fill{width:18px;height:18px}
-  .tw-slider{display:flex;align-items:center;gap:10px}
-  .tw-slider input[type=range]{flex:1;accent-color:#ff6b35}
-  .tw-slider .val{min-width:46px;text-align:right;color:#ff6b35;font-size:11px}
-  .tw-toggle{
-    display:flex;align-items:center;justify-content:space-between;
-    padding:8px 10px;background:#0a0807;border:1px solid #3a342b;cursor:pointer;
-  }
-  .tw-toggle .pip{
-    width:32px;height:16px;background:#2a2520;border-radius:8px;position:relative;transition:background .15s;
-  }
-  .tw-toggle .pip::after{
-    content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;background:#a8a092;border-radius:50%;transition:left .15s, background .15s;
-  }
-  .tw-toggle.on .pip{background:#ff6b35}
-  .tw-toggle.on .pip::after{left:18px;background:#1a0a02}
-  .tw-section{font-size:9px;letter-spacing:.22em;color:#5a5447;text-transform:uppercase;border-bottom:1px solid #2a2520;padding-bottom:4px}
-
-/* ─────────────────────────────────────────── */
-
 /* strategy chips */
   .schematic .strat-chips{
     position:absolute;top:48px;right:20px;z-index:6;display:flex;gap:6px;

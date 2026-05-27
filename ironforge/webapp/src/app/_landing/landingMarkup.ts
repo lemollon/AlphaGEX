@@ -1,6 +1,7 @@
 // AUTO-GENERATED from ~/Downloads/landing.html by _split_landing.mjs — do not hand-edit.
 // Body markup of the IronForge landing page (all <style>/<script> stripped; anvil img path
-// rewritten assets/anvil-iso.png -> /anvil-iso.png). Rendered via dangerouslySetInnerHTML.
+// rewritten assets/anvil-iso.png -> /anvil-iso.png; design-tool Tweaks panel removed and its
+// eyebrow text baked in). Rendered via dangerouslySetInnerHTML.
 export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:none"></div>
 
 <!-- TITLE BLOCK -->
@@ -39,7 +40,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
 <!-- HERO / SHEET 01 -->
 <section class="hero">
   <div class="hero-l">
-    <div class="hero-eyebrow"><span class="dot"></span> AUTONOMOUS · DEFINED-RISK · TRADIER NATIVE</div>
+    <div class="hero-eyebrow"><span class="dot"></span> THE FORGE IS LIT</div>
     <div class="hero-meta">
       <span>SHEET <b>01 / 04</b></span>
       <span>FORGE / SPY / SET-AND-FORGET</span>
@@ -725,66 +726,6 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
 </div>
 
 <!-- ─── INTERACTIVE BEHAVIORS ─────────────────────── -->
-
-<!-- ─── TWEAKS PANEL ─────────────────────────────── -->
-
-<div class="tw-panel" id="tw-panel" role="dialog" aria-label="Tweaks">
-  <div class="tw-head" id="tw-head">
-    <span class="tw-title">⚙ Tweaks</span>
-    <button class="tw-x" id="tw-close" aria-label="Close">×</button>
-  </div>
-  <div class="tw-body">
-    <div class="tw-section">Brand</div>
-    <div class="tw-row">
-      <label class="tw-lbl">Accent color</label>
-      <div class="tw-swatches" id="tw-accent">
-        <button class="tw-sw" data-c="#ff6b35" title="Forge orange"><span class="sw-fill" style="background:#ff6b35"></span></button>
-        <button class="tw-sw" data-c="#d4a017" title="Brass"><span class="sw-fill" style="background:#d4a017"></span></button>
-        <button class="tw-sw" data-c="#c2362b" title="Crimson"><span class="sw-fill" style="background:#c2362b"></span></button>
-        <button class="tw-sw" data-c="#3b82f6" title="Blueprint"><span class="sw-fill" style="background:#3b82f6"></span></button>
-      </div>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl" for="tw-brand">Brand name</label>
-      <input type="text" id="tw-brand"/>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl" for="tw-eyebrow">Hero eyebrow</label>
-      <input type="text" id="tw-eyebrow"/>
-    </div>
-
-    <div class="tw-section">Atmosphere</div>
-    <div class="tw-row">
-      <label class="tw-lbl">P/L tick speed</label>
-      <div class="tw-slider">
-        <input type="range" id="tw-pl-speed" min="600" max="5000" step="200"/>
-        <span class="val" id="tw-pl-speed-v">2200ms</span>
-      </div>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl">Cinder count</label>
-      <div class="tw-slider">
-        <input type="range" id="tw-cinders" min="0" max="20" step="1"/>
-        <span class="val" id="tw-cinders-v">7</span>
-      </div>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl">Forge edge glow</label>
-      <div class="tw-slider">
-        <input type="range" id="tw-glow" min="0" max="200" step="5"/>
-        <span class="val" id="tw-glow-v">100%</span>
-      </div>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl">Live tape</label>
-      <div class="tw-toggle" id="tw-tape" role="switch"><span>Show forge tape</span><span class="pip"></span></div>
-    </div>
-    <div class="tw-row">
-      <label class="tw-lbl">Molten headline</label>
-      <div class="tw-toggle" id="tw-molten" role="switch"><span>Animated gradient</span><span class="pip"></span></div>
-    </div>
-  </div>
-</div>
 
 <!-- ─── PROGRESSIVE FEATURES (chips, scrubber, sparklines, quiz) ─── -->
 
