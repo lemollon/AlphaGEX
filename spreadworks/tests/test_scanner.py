@@ -77,6 +77,7 @@ def _open_meadow_at(engine, when, c6, c9):
 # front expiration 2026-05-27, so a held position is not force-closed).
 MONDAY = datetime(2026, 5, 18, 9, 0, tzinfo=CT)
 FRIDAY = datetime(2026, 5, 22, 9, 0, tzinfo=CT)
+MONDAY2 = datetime(2026, 5, 25, 9, 0, tzinfo=CT)  # next Mon, still < exp 2026-05-27
 
 
 def test_breeze_opens_position_in_entry_window(db_session, fake_chain_0dte):
@@ -228,6 +229,28 @@ def test_meadow_one_entry_per_day_cap(db_session, fake_chain_6dte, fake_chain_9d
             "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
         )).mappings().first()["c"]
     assert n == 1
+
+
+def test_meadow_max_concurrent_cap_blocks_third(
+    db_session, fake_chain_6dte, fake_chain_9dte
+):
+    """With max_concurrent_positions=2, holding two positions blocks a third
+    entry on a later entry-day — even though the per-day cap wouldn't (no
+    position was opened on MONDAY2)."""
+    engine = db_session.bind
+    _enable_bot(engine, "meadow")
+    _set_stacking(engine, "meadow", True)  # MEADOW seeds max_concurrent=2
+    _open_meadow_at(engine, MONDAY, fake_chain_6dte, fake_chain_9dte)
+    _open_meadow_at(engine, FRIDAY, fake_chain_6dte, fake_chain_9dte)
+    provider = FakeChainProvider(chain_6dte=fake_chain_6dte, chain_9dte=fake_chain_9dte)
+    res = run_scan_cycle(engine=engine, bot="meadow", now_ct=MONDAY2,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "MONITOR"  # managing the 2 held positions
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM meadow_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 2  # cap held — no third opened
 
 
 def test_meadow_without_stacking_stays_one_at_a_time(

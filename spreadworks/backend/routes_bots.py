@@ -194,6 +194,7 @@ class ConfigUpdate(BaseModel):
     use_gex_walls: bool | None = None
     entry_days: str | None = None
     allow_stacking: bool | None = None
+    max_concurrent_positions: int | None = None
 
 
 @router.post("/{bot}/config")

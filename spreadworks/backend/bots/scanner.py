@@ -164,6 +164,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
 def _evaluate_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, event_blackout: bool, allow_stacking: bool,
+    open_count: int,
 ) -> dict[str, Any]:
     """Evaluate whether to OPEN a new position. Returns a result dict; never
     opens more than the gates allow. Callers decide whether to invoke this
@@ -183,6 +184,14 @@ def _evaluate_entry(
         if today_abbr not in allowed:
             return {"outcome": "BLOCKED_ENTRY_DAY",
                     "reason": f"entry_day_blocked: today={today_abbr} allowed={sorted(allowed)}"}
+
+    # Concurrent-position cap — never hold more than max_concurrent_positions
+    # open at once (0 = unlimited, mirrors max_contracts). Bounds stacked
+    # collateral to ~cap x bp_pct of equity.
+    max_concurrent = int(cfg.get("max_concurrent_positions") or 0)
+    if max_concurrent > 0 and open_count >= max_concurrent:
+        return {"outcome": "BLOCKED_MAX_CONCURRENT",
+                "reason": f"max_concurrent_reached: open={open_count} cap={max_concurrent}"}
 
     # Stacking bots open at most ONE new position per entry-day. Closed rows
     # stay in {bot}_positions, so an earlier same-day open-then-close counts.
@@ -317,7 +326,7 @@ def run_scan_cycle(
             entry_result = _evaluate_entry(
                 engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
                 chain_provider=chain_provider, event_blackout=event_blackout,
-                allow_stacking=allow_stacking,
+                allow_stacking=allow_stacking, open_count=len(opens),
             )
 
         # --- Headline outcome for logging/return ---

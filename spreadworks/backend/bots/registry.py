@@ -137,6 +137,9 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # earlier one is still open — capped to one entry per entry-day by
             # the scanner. The other bots trade daily and stay one-at-a-time.
             "allow_stacking": True,
+            # Hold at most 2 positions open at once (caps stacked collateral to
+            # ~2x bp_pct of equity). 0 = unlimited.
+            "max_concurrent_positions": 2,
         },
     },
 }
