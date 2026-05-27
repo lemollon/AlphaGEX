@@ -2734,8 +2734,11 @@ async def get_gex_analysis_all(
     Full-board GEX aggregate: net gamma summed per strike across ALL listed
     expirations for the symbol, plus a 7-day-horizon structure-balance score.
 
-    Lazy/expensive (one Tradier chain per expiration). Cached 120s per symbol.
+    Lazy/expensive (one Tradier chain per expiration). Cached 300s per symbol.
     Tolerates per-expiration fetch failures (skips + reports them).
+    Uses the stateless calculate_net_gamma() arithmetic only — never
+    process_options_chain — so it cannot corrupt the shared engine state read
+    by the single-expiration 0DTE view.
     """
     import asyncio
     engine = get_engine()
@@ -2781,29 +2784,50 @@ async def get_gex_analysis_all(
         per_exp_strikes = []          # for full-board aggregate
         seven_day_strikes = []        # for structure balance (DTE <= 7)
         included, failed = [], []
-        spot_price, expected_move = 0.0, 0.0
+        spot_price, vix_val = 0.0, 0.0
 
+        # IMPORTANT: do NOT call engine.process_options_chain here. That method
+        # mutates SHARED engine state (per-strike gamma-smoothing windows, ROC
+        # history, market-open baselines, previous_snapshot) keyed by strike —
+        # running 37 expirations through it corrupts the single-expiration 0DTE
+        # view that reads the same state (its profile would flip scale/shape
+        # right after this endpoint ran). calculate_net_gamma() is pure
+        # arithmetic (gamma*OI*100), so use it directly and leave the engine
+        # completely untouched.
         for (exp, dte), raw in zip(future_exps, raw_results):
             if isinstance(raw, Exception) or not raw or raw.get('data_unavailable'):
                 failed.append(exp)
                 continue
             sp = raw.get('spot_price', 0) or 0
-            vix = raw.get('vix', 0) or 0
             if sp <= 0:
                 failed.append(exp)
                 continue
-            snapshot = engine.process_options_chain(raw, sp, vix, exp)
-            strikes = [{"strike": s.strike, "net_gamma": s.net_gamma} for s in snapshot.strikes]
+            strikes = []
+            for si in raw.get('strikes', []):
+                k = si.get('strike')
+                if k is None:
+                    continue
+                ng = engine.calculate_net_gamma(
+                    si.get('call_gamma', 0) or 0,
+                    si.get('put_gamma', 0) or 0,
+                    si.get('call_oi', 0) or 0,
+                    si.get('put_oi', 0) or 0,
+                )
+                strikes.append({"strike": k, "net_gamma": round(ng, 4)})
             per_exp_strikes.append(strikes)
             included.append(exp)
             spot_price = sp
-            expected_move = snapshot.expected_move or expected_move
+            vix_val = raw.get('vix', 0) or vix_val
             if dte <= 7:
                 seven_day_strikes.extend(strikes)
 
+        # 7-day expected-range band for structure balance, derived from VIX
+        # (stable) rather than the engine's flaky intraday expected_move.
+        sigma_1d = spot_price * (vix_val / 100.0) * (1.0 / 252.0) ** 0.5 if vix_val > 0 else 0.0
+        seven_day_band = sigma_1d * (7.0 ** 0.5)
         aggregated = aggregate_net_gamma_by_strike(per_exp_strikes)
         structure_balance = calculate_structure_balance(
-            seven_day_strikes, spot_price, expected_move, horizon_days=7
+            seven_day_strikes, spot_price, seven_day_band, horizon_days=7
         )
         total_net_gamma = round(sum(r["net_gamma"] for r in aggregated), 4)
 
