@@ -2540,25 +2540,57 @@ async def get_gex_analysis(
         max_put_gamma = 0
 
         if snapshot.strikes:
-            # Find flip point
-            for i, strike in enumerate(snapshot.strikes[:-1]):
-                curr_gamma = strike.net_gamma
+            # Daily 1-sigma band from VIX. Used to keep flip/wall detection near
+            # spot instead of latching onto noisy far-OTM strikes: the 0DTE
+            # net-gamma series routinely has many spurious zero-crossings and
+            # far-OTM gamma spikes, which previously produced flips 30+ points
+            # off spot and walls pinned at the chain extremes.
+            sigma_1d = spot_price * (vix / 100.0) * (1.0 / 252.0) ** 0.5 if vix and vix > 0 else 0.0
+            wall_band = max(3.0 * sigma_1d, spot_price * 0.03)
+
+            # Find flip point: collect ALL net-gamma zero-crossings and pick the
+            # one CLOSEST TO SPOT (matches the engine's other flip finders and
+            # TradingVolatility's "inside the band" behaviour).
+            _flip_candidates = []
+            for i in range(len(snapshot.strikes) - 1):
+                curr_gamma = snapshot.strikes[i].net_gamma
                 next_gamma = snapshot.strikes[i + 1].net_gamma
                 if curr_gamma * next_gamma < 0:
                     ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma)) if curr_gamma != next_gamma else 0.5
-                    flip_point = round(strike.strike + ratio * (snapshot.strikes[i + 1].strike - strike.strike), 2)
-                    break
+                    cand = round(
+                        snapshot.strikes[i].strike
+                        + ratio * (snapshot.strikes[i + 1].strike - snapshot.strikes[i].strike),
+                        2,
+                    )
+                    _flip_candidates.append(cand)
+            if _flip_candidates:
+                flip_point = min(_flip_candidates, key=lambda fp: abs(fp - spot_price))
 
-            # Find call and put walls
+            # Find call and put walls: largest |net gamma| WITHIN the band around
+            # spot, so far-OTM noise can't pin the wall at the chain extremes.
             for s in snapshot.strikes:
-                if s.strike > spot_price and abs(s.net_gamma) > max_call_gamma:
+                if spot_price < s.strike <= spot_price + wall_band and abs(s.net_gamma) > max_call_gamma:
                     max_call_gamma = abs(s.net_gamma)
                     call_wall = s.strike
                     max_call_gamma_strike = s
-                if s.strike < spot_price and abs(s.net_gamma) > max_put_gamma:
+                if spot_price - wall_band <= s.strike < spot_price and abs(s.net_gamma) > max_put_gamma:
                     max_put_gamma = abs(s.net_gamma)
                     put_wall = s.strike
                     max_put_gamma_strike = s
+            # Fallback: if the band contained no strikes, widen to the whole chain
+            # so we still return a wall rather than null.
+            if call_wall is None:
+                for s in snapshot.strikes:
+                    if s.strike > spot_price and abs(s.net_gamma) > max_call_gamma:
+                        max_call_gamma = abs(s.net_gamma)
+                        call_wall = s.strike
+                        max_call_gamma_strike = s
+            if put_wall is None:
+                for s in snapshot.strikes:
+                    if s.strike < spot_price and abs(s.net_gamma) > max_put_gamma:
+                        max_put_gamma = abs(s.net_gamma)
+                        put_wall = s.strike
+                        max_put_gamma_strike = s
 
         # Expected move bounds
         em = snapshot.expected_move

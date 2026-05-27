@@ -13,9 +13,9 @@ function gammaM(n: number): string {
 }
 
 function LevelRows({
-  strikes, price,
-}: { strikes: { strike: number; net_gamma: number }[]; price: number }) {
-  const { resistance, support } = topStrikesByGamma(strikes, price, 2)
+  strikes, price, bandPct,
+}: { strikes: { strike: number; net_gamma: number }[]; price: number; bandPct?: number }) {
+  const { resistance, support } = topStrikesByGamma(strikes, price, 2, bandPct)
   return (
     <div className="space-y-1.5 text-sm">
       <div className="flex items-start gap-2">
@@ -47,11 +47,11 @@ export default function KeyGammaLevels({
       <div className="text-[11px] uppercase tracking-wide text-amber-300 mb-1">
         0DTE ({data.expiration})
       </div>
-      <LevelRows strikes={data.gex_chart.strikes} price={price} />
+      <LevelRows strikes={data.gex_chart.strikes} price={price} bandPct={0.05} />
 
       <div className="text-[11px] uppercase tracking-wide text-cyan-300 mt-4 mb-1">All Expirations</div>
       {allStrikes.length ? (
-        <LevelRows strikes={allStrikes} price={allPrice} />
+        <LevelRows strikes={allStrikes} price={allPrice} bandPct={0.15} />
       ) : (
         <p className="text-xs text-gray-500">{allLoading ? 'Loading full board…' : 'Not available.'}</p>
       )}
