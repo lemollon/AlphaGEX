@@ -2,14 +2,22 @@ import type { StrikeGex } from './types'
 
 type MiniStrike = Pick<StrikeGex, 'strike' | 'net_gamma'>
 
-/** Top-N strikes above (resistance) and below (support) price, ranked by |net_gamma|. */
+/**
+ * Top-N strikes above (resistance) and below (support) price, ranked by |net_gamma|.
+ * `bandPct` (e.g. 0.05 = ±5%) restricts candidates to a band around price so noisy
+ * far-OTM gamma spikes can't masquerade as the key level. Omit/0 = whole chain.
+ */
 export function topStrikesByGamma(
   strikes: MiniStrike[],
   price: number,
   n: number,
+  bandPct = 0,
 ): { resistance: MiniStrike[]; support: MiniStrike[] } {
-  const above = strikes.filter((s) => s.strike > price)
-  const below = strikes.filter((s) => s.strike < price)
+  const lo = bandPct > 0 && price > 0 ? price * (1 - bandPct) : -Infinity
+  const hi = bandPct > 0 && price > 0 ? price * (1 + bandPct) : Infinity
+  const inBand = strikes.filter((s) => s.strike >= lo && s.strike <= hi)
+  const above = inBand.filter((s) => s.strike > price)
+  const below = inBand.filter((s) => s.strike < price)
   const byAbsGammaDesc = (a: MiniStrike, b: MiniStrike) =>
     Math.abs(b.net_gamma) - Math.abs(a.net_gamma)
   // Order by |gamma| descending (strongest level first) — matches the
@@ -17,6 +25,20 @@ export function topStrikesByGamma(
   const resistance = [...above].sort(byAbsGammaDesc).slice(0, n)
   const support = [...below].sort(byAbsGammaDesc).slice(0, n)
   return { resistance, support }
+}
+
+/**
+ * Daily 1-sigma expected move from spot and 30-day vol (VIX), the standard
+ * `S · σ · √(1/252)`. Stable and correct, unlike the engine's intraday
+ * expected_move which can swing wildly on noisy ATM IV.
+ */
+export function computeDailyExpectedMove(
+  price: number,
+  vix: number | null,
+): { move: number; lower: number | null; upper: number | null } {
+  if (!price || price <= 0 || !vix || vix <= 0) return { move: 0, lower: null, upper: null }
+  const move = price * (vix / 100) * Math.sqrt(1 / 252)
+  return { move, lower: price - move, upper: price + move }
 }
 
 export interface ReactionInput {

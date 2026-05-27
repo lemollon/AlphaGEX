@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useState } from 'react'
 import type { GexAnalysisData, GexAllData } from '@/lib/gex/types'
+import { computeDailyExpectedMove } from '@/lib/gex/derive'
 import HeaderMetrics from '@/components/gex/HeaderMetrics'
 import CallStructure from '@/components/gex/CallStructure'
 import KeyGammaLevels from '@/components/gex/KeyGammaLevels'
@@ -75,6 +76,9 @@ export default function GexProfilePage() {
   }, [fetchFast, fetchAll])
 
   const balanceLabel = allData?.structure_balance?.label || 'Balanced'
+  // Stable VIX-derived daily expected move (the engine's intraday expected_move
+  // can swing wildly, so we don't trust data.levels.expected_move for display).
+  const em = computeDailyExpectedMove(data?.levels.price ?? 0, data?.header['30_day_vol'] ?? null)
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
@@ -115,15 +119,15 @@ export default function GexProfilePage() {
               strikes={data.gex_chart.strikes}
               price={data.levels.price}
               flip={data.levels.gex_flip}
-              upper1sd={data.levels.upper_1sd}
-              lower1sd={data.levels.lower_1sd}
+              upper1sd={em.upper}
+              lower1sd={em.lower}
               windowPct={0.05}
               subtitle={
                 <ExpectedMove
                   price={data.levels.price}
-                  expectedMove={data.levels.expected_move}
-                  upper1sd={data.levels.upper_1sd}
-                  lower1sd={data.levels.lower_1sd}
+                  expectedMove={em.move}
+                  upper1sd={em.upper}
+                  lower1sd={em.lower}
                 />
               }
               emptyMessage="Real-time data not available outside market hours (8:30am–3:00pm CT)."
