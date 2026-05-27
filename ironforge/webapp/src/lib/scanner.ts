@@ -848,7 +848,22 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
 async function monitorSinglePosition(
   bot: BotDef, ct: Date, pos: Record<string, any>,
 ): Promise<{ status: string; unrealizedPnl: number }> {
-  const botCfg = cfg(bot)
+  // Exit thresholds (stop loss, profit target, EOD cutoff, trailing) MUST come
+  // from the position's OWN account config. cfg(bot) only ever holds the
+  // SANDBOX/paper row — loadConfigOverrides() filters account_type='sandbox',
+  // and the production row is otherwise loaded only at order-entry time
+  // (loadProductionConfigFor in the tradier sizing path). Before this, LIVE
+  // positions were monitored against the sandbox stop_loss_pct, so e.g. SPARK
+  // production SL=120 (-20%) was ignored and the sandbox SL=250 (-150%) applied
+  // instead — a live IC could blow past its configured stop and never close
+  // (2026-05-27 SPARK-20260527-D3653E hit ~-56% with no stop-loss fire). Fetch
+  // the production row fresh per cycle so a Live-view config edit takes effect
+  // next scan; fall back to the sandbox config if no production row exists.
+  const sandboxCfg = cfg(bot)
+  const posAccountTypeForCfg = String(pos.account_type ?? 'sandbox')
+  const botCfg = posAccountTypeForCfg === 'production'
+    ? (await loadProductionConfigFor(bot.name)) ?? sandboxCfg
+    : sandboxCfg
   const entryCredit = num(pos.total_credit)
   const contracts = int(pos.contracts)
   const collateral = num(pos.collateral_required)
