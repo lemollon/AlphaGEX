@@ -20,6 +20,7 @@ import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
 import BlazeDirectionalChart from './BlazeDirectionalChart'
+import GexSummaryBanner from './gex/GexSummaryBanner'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -456,6 +457,11 @@ export default function BotDashboard({
           ) : null}
         </div>
       )}
+
+      {/* SPY GEX context strip (Rating / Gamma Form / Price / Flip) — links to GEX Profile */}
+      <ComponentErrorBoundary fallback="GEX banner error">
+        <GexSummaryBanner symbol="SPY" />
+      </ComponentErrorBoundary>
 
       {/* Vigil event-blackout banner (only renders during/within-7d of a blackout) */}
       <ComponentErrorBoundary fallback="Blackout banner error">

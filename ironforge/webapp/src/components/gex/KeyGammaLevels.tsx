@@ -1,5 +1,5 @@
 'use client'
-import type { GexAnalysisData } from '@/lib/gex/types'
+import type { GexAnalysisData, GexAllData } from '@/lib/gex/types'
 import { topStrikesByGamma } from '@/lib/gex/derive'
 
 // Adaptive magnitude formatter (matches HeaderMetrics/NetGexChart). Per-strike
@@ -12,31 +12,51 @@ function gammaM(n: number): string {
   return n.toFixed(1)
 }
 
-export default function KeyGammaLevels({ data }: { data: GexAnalysisData }) {
+function LevelRows({
+  strikes, price,
+}: { strikes: { strike: number; net_gamma: number }[]; price: number }) {
+  const { resistance, support } = topStrikesByGamma(strikes, price, 2)
+  return (
+    <div className="space-y-1.5 text-sm">
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 px-2 py-0.5 rounded bg-red-500/15 text-red-300 text-xs font-semibold shrink-0">Resist</span>
+        <span className="text-gray-200">
+          {resistance.length ? resistance.map((s) => `${s.strike} (${gammaM(s.net_gamma)})`).join(', ') : '—'}
+        </span>
+      </div>
+      <div className="flex items-start gap-2">
+        <span className="mt-0.5 px-2 py-0.5 rounded bg-green-500/15 text-green-300 text-xs font-semibold shrink-0">Support</span>
+        <span className="text-gray-200">
+          {support.length ? support.map((s) => `${s.strike} (${gammaM(s.net_gamma)})`).join(', ') : '—'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+export default function KeyGammaLevels({
+  data, allData, allLoading,
+}: { data: GexAnalysisData; allData?: GexAllData; allLoading?: boolean }) {
   const price = data.levels.price
-  const { resistance, support } = topStrikesByGamma(data.gex_chart.strikes, price, 2)
+  const allStrikes = allData?.gex_chart_all?.strikes || []
+  const allPrice = allData?.spot_price || price
   return (
     <div className="bg-forge-card border border-forge-border rounded-xl p-4">
-      <h3 className="text-sm font-semibold text-white mb-3">Key Gamma Levels ({data.expiration})</h3>
-      <div className="space-y-2 text-sm">
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded bg-red-500/15 text-red-300 text-xs font-semibold">Resist</span>
-          <span className="text-gray-200">
-            {resistance.length
-              ? resistance.map((s) => `${s.strike} (${gammaM(s.net_gamma)})`).join(', ')
-              : '—'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded bg-green-500/15 text-green-300 text-xs font-semibold">Support</span>
-          <span className="text-gray-200">
-            {support.length
-              ? support.map((s) => `${s.strike} (${gammaM(s.net_gamma)})`).join(', ')
-              : '—'}
-          </span>
-        </div>
+      <h3 className="text-sm font-semibold text-white mb-3">Key Gamma Levels</h3>
+
+      <div className="text-[11px] uppercase tracking-wide text-amber-300 mb-1">
+        0DTE ({data.expiration})
       </div>
-      <p className="text-[11px] text-gray-500 mt-3">Largest absolute-gamma strikes around price.</p>
+      <LevelRows strikes={data.gex_chart.strikes} price={price} />
+
+      <div className="text-[11px] uppercase tracking-wide text-cyan-300 mt-4 mb-1">All Expirations</div>
+      {allStrikes.length ? (
+        <LevelRows strikes={allStrikes} price={allPrice} />
+      ) : (
+        <p className="text-xs text-gray-500">{allLoading ? 'Loading full board…' : 'Not available.'}</p>
+      )}
+
+      <p className="text-[11px] text-gray-500 mt-3">Largest absolute-gamma strikes above (resist) / below (support) price.</p>
     </div>
   )
 }
