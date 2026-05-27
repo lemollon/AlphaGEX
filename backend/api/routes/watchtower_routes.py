@@ -19,6 +19,11 @@ import time
 import httpx
 
 from database_adapter import get_connection
+from core.gex_profile_metrics import (
+    calculate_positioning_pressure,
+    calculate_structure_balance,
+    aggregate_net_gamma_by_strike,
+)
 
 router = APIRouter(prefix="/api/watchtower", tags=["WATCHTOWER"])
 logger = logging.getLogger(__name__)
@@ -2583,6 +2588,19 @@ async def get_gex_analysis(
             }
             gex_by_strike.append(strike_entry)
 
+        # Positioning regime (our TV-style approximation)
+        _vol_pressure = 0.0
+        for _card in diagnostics.get('diagnostics', []):
+            if _card.get('id') == 'volume_pressure':
+                _vol_pressure = _card.get('raw_value', 0.0) or 0.0
+                break
+        positioning = calculate_positioning_pressure(
+            volume_pressure=_vol_pressure,
+            net_gex=diagnostics['summary'].get('net_gex', 0.0) or 0.0,
+            skew_ratio=diagnostics['skew_measures'].get('skew_ratio', 1.0) or 1.0,
+            net_score=diagnostics['rating'].get('net_score', 0) or 0,
+        )
+
         response = {
             "success": True,
             "source": "tradier_live" if market_open else "tradier_cached",
@@ -2620,6 +2638,9 @@ async def get_gex_analysis(
 
                 # Overall rating
                 "rating": diagnostics['rating'],
+
+                # Positioning regime (Trading-Volatility-style approximation)
+                "positioning": positioning,
 
                 # Key levels
                 "levels": {
@@ -2670,6 +2691,110 @@ async def get_gex_analysis(
 
     except Exception as e:
         logger.error(f"Error getting GEX analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gex-analysis/all")
+async def get_gex_analysis_all(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, ...)"),
+):
+    """
+    Full-board GEX aggregate: net gamma summed per strike across ALL listed
+    expirations for the symbol, plus a 7-day-horizon structure-balance score.
+
+    Lazy/expensive (one Tradier chain per expiration). Cached 120s per symbol.
+    Tolerates per-expiration fetch failures (skips + reports them).
+    """
+    import asyncio
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="WATCHTOWER engine not available")
+
+    cache_key = f"gex_all_{symbol.upper()}"
+    cached = get_cached(cache_key, 120)
+    if cached:
+        return cached
+
+    try:
+        import os
+        api_key = os.environ.get('TRADIER_API_KEY')
+        if not (TRADIER_AVAILABLE and TradierDataFetcher and api_key):
+            raise HTTPException(status_code=503, detail="Tradier not available")
+
+        fetcher = TradierDataFetcher(api_key=api_key, sandbox=False)
+        all_exps = fetcher.get_option_expirations(symbol.upper()) or []
+        today = date.today()
+        future_exps = []
+        for e in all_exps:
+            try:
+                d = datetime.strptime(e, '%Y-%m-%d').date()
+                if d >= today:
+                    future_exps.append((e, (d - today).days))
+            except ValueError:
+                continue
+        future_exps.sort(key=lambda x: x[1])
+
+        if not future_exps:
+            return {"success": False, "message": f"No expirations for {symbol}"}
+
+        # Fetch all chains concurrently (fetch_gamma_data caches per-exp internally)
+        exp_dates = [e for e, _ in future_exps]
+        raw_results = await asyncio.gather(
+            *[fetch_gamma_data(symbol, e) for e in exp_dates],
+            return_exceptions=True,
+        )
+
+        per_exp_strikes = []          # for full-board aggregate
+        seven_day_strikes = []        # for structure balance (DTE <= 7)
+        included, failed = [], []
+        spot_price, expected_move = 0.0, 0.0
+
+        for (exp, dte), raw in zip(future_exps, raw_results):
+            if isinstance(raw, Exception) or not raw or raw.get('data_unavailable'):
+                failed.append(exp)
+                continue
+            sp = raw.get('spot_price', 0) or 0
+            vix = raw.get('vix', 0) or 0
+            if sp <= 0:
+                failed.append(exp)
+                continue
+            snapshot = engine.process_options_chain(raw, sp, vix, exp)
+            strikes = [{"strike": s.strike, "net_gamma": s.net_gamma} for s in snapshot.strikes]
+            per_exp_strikes.append(strikes)
+            included.append(exp)
+            spot_price = sp
+            expected_move = snapshot.expected_move or expected_move
+            if dte <= 7:
+                seven_day_strikes.extend(strikes)
+
+        aggregated = aggregate_net_gamma_by_strike(per_exp_strikes)
+        structure_balance = calculate_structure_balance(
+            seven_day_strikes, spot_price, expected_move, horizon_days=7
+        )
+        total_net_gamma = round(sum(r["net_gamma"] for r in aggregated), 4)
+
+        result = {
+            "success": True,
+            "data": {
+                "symbol": symbol.upper(),
+                "timestamp": format_central_timestamp(),
+                "spot_price": round(spot_price, 2),
+                "gex_chart_all": {
+                    "strikes": aggregated,
+                    "expirations_included": included,
+                    "expirations_failed": failed,
+                    "total_net_gamma": total_net_gamma,
+                },
+                "structure_balance": structure_balance,
+            },
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting full-board GEX for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
