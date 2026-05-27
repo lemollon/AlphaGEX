@@ -53,7 +53,7 @@ export async function GET(
                 close_price, close_reason, realized_pnl,
                 open_time, close_time, wings_adjusted, sandbox_order_id${directionalCols}
          FROM ${botTable(bot, 'positions')}
-         WHERE status IN ('closed', 'expired') ${dteFilter}
+         WHERE status IN ('closed', 'expired') ${dteFilter} ${accountTypeFilter}
            AND close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date
          ORDER BY close_time DESC`,
       )
