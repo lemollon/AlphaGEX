@@ -739,6 +739,28 @@ describe('Person filtering — API route support', () => {
   }
 })
 
+describe('position-monitor: todays_closed_trades is account-scoped (paper/live leak, 2026-05-27)', () => {
+  // Regression: the today's-closed-trades query omitted ${accountTypeFilter},
+  // so in Paper mode the close-reason badge (which falls back to
+  // positionMonitor.todays_closed_trades) leaked the PRODUCTION stop loss
+  // (-$125) onto the SANDBOX view — looking like the paper trade stopped out.
+  const source = readFileSync(
+    resolve(__dirname, '../../app/api/[bot]/position-monitor/route.ts'),
+    'utf-8',
+  )
+  // Isolate the closed-trades query (the one filtered on close_time = today).
+  const m = source.match(/WHERE status IN \('closed', 'expired'\)[\s\S]*?ORDER BY close_time DESC/)
+
+  it('locates the todays-closed-trades query', () => {
+    expect(m).toBeTruthy()
+  })
+
+  it('filters that query by account_type (not just dte)', () => {
+    expect(m![0]).toMatch(/\$\{accountTypeFilter\}/)
+    expect(m![0]).toMatch(/\$\{dteFilter\}/)
+  })
+})
+
 describe('Person filtering — /api/persons endpoint', () => {
   const source = readFileSync(
     resolve(__dirname, '../../app/api/persons/route.ts'),
