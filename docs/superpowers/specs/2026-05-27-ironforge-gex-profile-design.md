@@ -38,7 +38,8 @@ IronForge webapp (Next.js 14 / Render: ironforge-webapp)
 **Plumbing decision — thin HTTP proxy (chosen).** IronForge adds server-side API routes that forward to AlphaGEX. This reuses all gamma math (no TS re-implementation), inherits the after-hours TradingVolatility fallback, and is an HTTP call — not a code import — so it respects IronForge's "standalone / no AlphaGEX code imports" rule.
 
 IronForge proxy routes (all read-only GET):
-- `GET /api/gex/analysis?symbol=SPY&expiration=YYYY-MM-DD|ALL` → `${ALPHAGEX_API_BASE}/api/watchtower/gex-analysis`
+- `GET /api/gex/analysis?symbol=SPY&expiration=YYYY-MM-DD` → `${ALPHAGEX_API_BASE}/api/watchtower/gex-analysis` (fast single-expiration path)
+- `GET /api/gex/analysis-all?symbol=SPY` → `${ALPHAGEX_API_BASE}/api/watchtower/gex-analysis/all` (lazy full-board aggregate + structure balance)
 - `GET /api/gex/expirations?symbol=SPY` → `${ALPHAGEX_API_BASE}/api/watchtower/symbol-expirations`
 - `GET /api/gex/intraday?symbol=SPY` → `${ALPHAGEX_API_BASE}/api/watchtower/intraday-ticks`
 
@@ -73,7 +74,7 @@ Add to the `/gex-analysis` response under a new `positioning` block. Computed in
 - The spec documents that this is a **named approximation**; it is not represented as TV-identical.
 
 ### 2b. Structure Balance (7-Day Horizon)
-Add `structure_balance` to the response, computed from the **all-expirations aggregate** (2c) restricted to DTE ≤ 7:
+Because this needs gamma across multiple expirations, compute it inside the **all-board endpoint** (2c) from the **DTE ≤ 7 subset** of the full board, and return it there (keeps the main single-expiration path fast). The frontend populates the Structure Balance card when the lazy all-board call returns. Definition:
 
 - `resist_gamma` = Σ `abs(net_gamma)` for aggregated strikes **above** spot within +1σ.
 - `support_gamma` = Σ `abs(net_gamma)` for aggregated strikes **below** spot within −1σ.
@@ -81,16 +82,20 @@ Add `structure_balance` to the response, computed from the **all-expirations agg
 - `label` from thresholds (e.g. |balance| < 0.15 → "Balanced", else "Resistance-heavy"/"Support-heavy").
 - Response shape: `structure_balance: { balance, label, resist_gamma, support_gamma, horizon_days: 7, summary }`.
 
-### 2c. All-Expirations aggregate (`?expiration=ALL`)
-Extend `/gex-analysis` so `expiration=ALL` returns an **aggregate `gex_chart`** summing `net_gamma` per strike across multiple expirations, in addition to the single-expiration chart for the side-by-side view in Image #1.
+### 2c. All-Expirations aggregate (`?expiration=ALL`) — FULL BOARD
+Add a dedicated endpoint/mode that returns an **aggregate `gex_chart`** summing `net_gamma` per strike across **all available expirations** (full board, matching Image #1's right-hand chart), for the side-by-side view.
 
-- **Bounded for cost/latency:** aggregate only the next **N≈8 expirations** (or all with DTE ≤ 14), not the full board — one Tradier chain fetch per expiration is expensive. Document the bound.
-- **Short server-side cache** (e.g. 60s TTL keyed by symbol) so repeated/auto-refresh calls don't re-fetch N chains every 30s. This must not interfere with the single-expiration live path.
-- Response: when `expiration=ALL`, include `gex_chart_all: { strikes: [...aggregated...], expirations_included: [...], total_net_gamma }` alongside the normal single-expiration `gex_chart` (for SPY's nearest).
+- **Full board:** aggregate every listed expiration for the symbol (use the same source as `/symbol-expirations`; do not artificially cap to near-dated). For SPY this is ~20–40 expirations.
+- **Latency strategy (since this is the expensive path):**
+  - Make it a **separate, lazy call** — the frontend fetches the all-expirations aggregate independently from the fast single-expiration (0DTE) view, so the primary page renders immediately and the right-hand chart fills in when ready.
+  - **Fetch chains concurrently** (`asyncio.gather` over expirations) rather than serially.
+  - **Server-side cache** with a longer TTL (e.g. 120s, keyed by symbol) since the full board changes slowly; auto-refresh reuses the cache. Cache must not touch the single-expiration live path.
+  - Return partial results gracefully if some expirations fail to fetch (skip + report `expirations_failed`), so one bad chain doesn't blank the chart.
+- **Endpoint shape:** prefer a separate route `GET /api/watchtower/gex-analysis/all?symbol=` returning `{ strikes: [...aggregated...], expirations_included: [...], expirations_failed: [...], total_net_gamma }`, rather than overloading `expiration=ALL` on the main route (keeps the fast single-exp path uncomplicated). The IronForge proxy exposes it as `GET /api/gex/analysis-all?symbol=`.
 
 ### 2d. Frontend wiring
-- Render **two charts side-by-side** (Image #1 layout): left = single-expiration (0DTE) Net GEX; right = All-Expirations aggregate. On narrow viewports stack vertically.
-- Render the **Positioning Regime** gauge (pressure XX/100 + Bullish/Neutral/Bearish + call-vs-put pressure) and the **Structure Balance** card (balance value + label + horizon).
+- Render **two charts side-by-side** (Image #1 layout): left = single-expiration (0DTE) Net GEX (from the fast call); right = full-board All-Expirations aggregate (from the lazy `/analysis-all` call, with its own loading state). On narrow viewports stack vertically.
+- **Positioning Regime** gauge (pressure XX/100 + Bullish/Neutral/Bearish + call-vs-put pressure) renders from the fast call. **Structure Balance** card (balance value + label + 7-day horizon) renders from the lazy `/analysis-all` call.
 
 ## Reaction Framework rules (Base Case / Invalidated-if)
 
@@ -129,10 +134,9 @@ This is a deterministic mapping (no LLM); text lives client-side so it stays tri
 ## Out of scope / deferred
 
 - Exact 1:1 replication of TradingVolatility's proprietary pressure/structure formulas (we ship documented approximations).
-- Full-board (all listed expirations) aggregate — we bound to near-dated for cost; can widen later.
 - Persisting IronForge-side GEX history (we read live from AlphaGEX).
 
 ## Open risks
 
-- **All-expirations latency**: N Tradier chain fetches per call. Mitigated by the ≤8-expiration bound + 60s cache. If still slow, make the aggregate lazy (only fetch when the right-hand chart is in view).
+- **Full-board latency**: ~20–40 Tradier chain fetches per cold call. Mitigated by (a) lazy/separate `/analysis-all` endpoint so the primary 0DTE view never waits on it, (b) concurrent `asyncio.gather` fetches, (c) 120s server-side cache, (d) partial-result tolerance. If still too slow after these, fall back to a near-dated cap as a follow-up — but ship full board first per operator request.
 - **After-hours data shape**: the TradingVolatility fallback path returns a different object than the Tradier path; the Phase-2 fields must degrade gracefully (omit `positioning`/`structure_balance`/`gex_chart_all` when the upstream fallback can't supply them) so the page never crashes after close.
