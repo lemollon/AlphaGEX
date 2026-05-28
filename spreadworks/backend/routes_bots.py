@@ -233,12 +233,15 @@ def post_force_trade(bot: str):
     from .bots.routes_helpers import build_live_chain_provider
     provider = build_live_chain_provider()
     now = datetime.now(CT)
-    # Force window: temporarily widen the window by saving/restoring config
+    # Force window: temporarily widen entry hours AND clear entry_days so
+    # day-of-week gated bots (e.g. MEADOW = mon/fri) can be forced outside
+    # their normal window. Restore both fields after the scan.
     cfg = load_config(ENGINE, bot)
     t = bot_table(bot, "config")
     with ENGINE.begin() as conn:
         conn.execute(text(
-            f"UPDATE {t} SET entry_start_ct='00:00', entry_end_ct='23:59' WHERE id=1"
+            f"UPDATE {t} SET entry_start_ct='00:00', entry_end_ct='23:59', "
+            f"entry_days='' WHERE id=1"
         ))
     try:
         result = run_scan_cycle(
@@ -248,8 +251,10 @@ def post_force_trade(bot: str):
     finally:
         with ENGINE.begin() as conn:
             conn.execute(text(
-                f"UPDATE {t} SET entry_start_ct=:s, entry_end_ct=:e WHERE id=1"
-            ), {"s": cfg["entry_start_ct"], "e": cfg["entry_end_ct"]})
+                f"UPDATE {t} SET entry_start_ct=:s, entry_end_ct=:e, "
+                f"entry_days=:d WHERE id=1"
+            ), {"s": cfg["entry_start_ct"], "e": cfg["entry_end_ct"],
+                "d": cfg.get("entry_days") or ""})
     return result
 
 

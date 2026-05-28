@@ -123,12 +123,43 @@ class LiveTradierChainProvider:
         return round(cm + pm, 4)
 
     def _atm_iv(self, opts: list[dict], spot: float) -> float:
+        """Resolve ATM IV with a fallback ladder.
+
+        Back-month chains at the open often have no mid_iv on the exact ATM
+        call (no quote yet). Without a fallback the bot's vega-edge filter
+        reads back_iv=0 and blocks every entry for the first hours of the
+        session. Ladder: ATM call → ATM put → ±5 strikes (call then put).
+        For each candidate try mid_iv, smv_vol, ask_iv, bid_iv — same set
+        the `/api/spreadworks/chain` route uses.
+        """
         if not opts: return 0.0
-        atm = min({o["strike"] for o in opts}, key=lambda s: abs(float(s) - spot))
+        strikes = sorted({float(o["strike"]) for o in opts})
+        if not strikes: return 0.0
+        atm = min(strikes, key=lambda s: abs(s - spot))
+        atm_idx = strikes.index(atm)
+        # Walk outward from ATM: 0, +1, -1, +2, -2, ...
+        order = [atm_idx]
+        for off in range(1, 6):
+            for d in (off, -off):
+                j = atm_idx + d
+                if 0 <= j < len(strikes):
+                    order.append(j)
+        by_strike: dict[float, dict[str, dict]] = {}
         for o in opts:
-            if o["strike"] == atm and o["option_type"] == "call":
-                greeks = o.get("greeks") or {}
-                return float(greeks.get("mid_iv") or greeks.get("ask_iv") or 0)
+            s = float(o["strike"])
+            by_strike.setdefault(s, {})[o["option_type"]] = o
+        def _read(o: dict | None) -> float:
+            if not o: return 0.0
+            g = o.get("greeks") or {}
+            for k in ("mid_iv", "smv_vol", "ask_iv", "bid_iv"):
+                v = g.get(k)
+                if v: return float(v)
+            return 0.0
+        for j in order:
+            s = strikes[j]
+            row = by_strike.get(s, {})
+            iv = _read(row.get("call")) or _read(row.get("put"))
+            if iv: return iv
         return 0.0
 
     def _occ(self, ticker: str, leg: dict) -> str:
