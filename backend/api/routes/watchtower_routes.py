@@ -2726,6 +2726,61 @@ async def get_gex_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _fetch_chain_only(symbol: str, expiration: str, fetcher) -> dict:
+    """
+    Single-expiration option chain fetch for the all-expirations aggregate.
+
+    Slim sibling of fetch_gamma_data(): does NOT re-fetch the SPY quote or VIX
+    (the caller hoists those once), and returns only the strike-level fields the
+    aggregate needs. Synchronous so it can be dispatched through asyncio.to_thread
+    — the underlying tradier.get_option_chain() is blocking `requests`, which is
+    why a plain `asyncio.gather` over fetch_gamma_data() serialized the ~37 chain
+    calls instead of running them concurrently.
+
+    Cached per-expiration so the all-board cache miss doesn't have to refetch
+    every chain if only some expirations are stale.
+    """
+    cache_key = f"chain_only_{symbol}_{expiration}"
+    # Mirror fetch_gamma_data()'s freeze-after-hours policy: chains don't change
+    # between sessions, so don't waste a Tradier round trip refetching them.
+    ttl = 999999 if not is_market_hours() else 60
+    cached = get_cached(cache_key, ttl)
+    if cached is not None:
+        return cached
+
+    try:
+        chain = fetcher.get_option_chain(symbol, expiration)
+        contracts = chain.chains.get(expiration, []) if chain else []
+        if not contracts:
+            return {'expiration': expiration, 'strikes': [], 'failed': True}
+
+        by_key: Dict[Any, Any] = {}
+        strike_set = set()
+        for c in contracts:
+            if c.strike and c.option_type:
+                by_key[(c.strike, c.option_type)] = c
+                strike_set.add(c.strike)
+
+        strikes: List[Dict[str, Any]] = []
+        for k in sorted(strike_set):
+            call = by_key.get((k, 'call'))
+            put = by_key.get((k, 'put'))
+            strikes.append({
+                'strike': k,
+                'call_gamma': call.gamma if call else 0,
+                'put_gamma': put.gamma if put else 0,
+                'call_oi': call.open_interest if call else 0,
+                'put_oi': put.open_interest if put else 0,
+            })
+
+        result = {'expiration': expiration, 'strikes': strikes}
+        set_cached(cache_key, result)
+        return result
+    except Exception as e:
+        logger.warning(f"WATCHTOWER all: chain fetch failed for {expiration}: {e}")
+        return {'expiration': expiration, 'strikes': [], 'failed': True}
+
+
 @router.get("/gex-analysis/all")
 async def get_gex_analysis_all(
     symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, ...)"),
@@ -2739,6 +2794,11 @@ async def get_gex_analysis_all(
     Uses the stateless calculate_net_gamma() arithmetic only — never
     process_options_chain — so it cannot corrupt the shared engine state read
     by the single-expiration 0DTE view.
+
+    Concurrency: chain fetches dispatch through asyncio.to_thread() with a
+    Semaphore(10) cap so the blocking `requests` calls inside tradier client
+    actually fan out. SPY quote + VIX are hoisted out of the per-chain path
+    (previously refetched ~37 times each via fetch_gamma_data) and fetched once.
     """
     import asyncio
     engine = get_engine()
@@ -2774,17 +2834,48 @@ async def get_gex_analysis_all(
         if not future_exps:
             return {"success": False, "message": f"No expirations for {symbol}"}
 
-        # Fetch all chains concurrently (fetch_gamma_data caches per-exp internally)
+        # Hoist the shared lookups: previously each of ~37 fetch_gamma_data()
+        # calls re-pulled the SPY quote (twice — once in fetch_gamma_data, once
+        # inside tradier.get_option_chain) and the VIX, all serialized. Do them
+        # once before the fan-out.
+        sym_upper = symbol.upper()
+        spot_price = 0.0
+        try:
+            quote = fetcher.get_quote(sym_upper)
+            spot_price = float(quote.get('last', 0) or quote.get('close', 0) or 0)
+        except Exception as e:
+            logger.warning(f"WATCHTOWER all: spot quote fetch failed for {sym_upper}: {e}")
+
+        if spot_price <= 0:
+            raise HTTPException(status_code=503, detail="Spot price unavailable")
+
+        vix_val = 0.0
+        try:
+            from data.vix_fetcher import get_vix_price
+            vix_val = float(get_vix_price() or 0)
+        except Exception as e:
+            logger.warning(f"WATCHTOWER all: VIX fetch failed: {e}")
+
+        # Fan-out chain fetches through a thread pool so the blocking `requests`
+        # calls inside the tradier client actually overlap. A plain
+        # `asyncio.gather` of coroutines that internally call sync requests would
+        # still serialize (the event loop has only one thread). Cap concurrency
+        # so we don't pound Tradier with 37 simultaneous requests.
         exp_dates = [e for e, _ in future_exps]
+        sem = asyncio.Semaphore(10)
+
+        async def fetch_one(exp: str):
+            async with sem:
+                return await asyncio.to_thread(_fetch_chain_only, sym_upper, exp, fetcher)
+
         raw_results = await asyncio.gather(
-            *[fetch_gamma_data(symbol, e) for e in exp_dates],
+            *[fetch_one(e) for e in exp_dates],
             return_exceptions=True,
         )
 
         per_exp_strikes = []          # for full-board aggregate
         seven_day_strikes = []        # for structure balance (DTE <= 7)
         included, failed = [], []
-        spot_price, vix_val = 0.0, 0.0
 
         # IMPORTANT: do NOT call engine.process_options_chain here. That method
         # mutates SHARED engine state (per-strike gamma-smoothing windows, ROC
@@ -2795,11 +2886,7 @@ async def get_gex_analysis_all(
         # arithmetic (gamma*OI*100), so use it directly and leave the engine
         # completely untouched.
         for (exp, dte), raw in zip(future_exps, raw_results):
-            if isinstance(raw, Exception) or not raw or raw.get('data_unavailable'):
-                failed.append(exp)
-                continue
-            sp = raw.get('spot_price', 0) or 0
-            if sp <= 0:
+            if isinstance(raw, Exception) or not raw or raw.get('failed') or not raw.get('strikes'):
                 failed.append(exp)
                 continue
             strikes = []
@@ -2816,8 +2903,6 @@ async def get_gex_analysis_all(
                 strikes.append({"strike": k, "net_gamma": round(ng, 4)})
             per_exp_strikes.append(strikes)
             included.append(exp)
-            spot_price = sp
-            vix_val = raw.get('vix', 0) or vix_val
             if dte <= 7:
                 seven_day_strikes.extend(strikes)
 
