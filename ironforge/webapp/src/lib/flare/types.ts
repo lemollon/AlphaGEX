@@ -18,8 +18,13 @@ export type FlareConfig = BlazeConfig
 // ruinous here (a 3-loss cluster ~= -45%, and account_sim.py shows 25%/trade
 // backtested to a -66% drawdown). Cut to ~4%/trade (0.05 x 0.85 = 4.25% of the
 // account deployed) for a sane drawdown profile (~-15% on the historical path).
+//
+// Per-setup daily cap effectively removed: backtest showed cap=3 leaves real
+// money on the table (2.25 trades/day) vs 5.46/day at 74.6% WR / PF 2.72 when
+// only the signal-reset gate enforces re-entry discipline.
 export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   ...DEFAULT_BLAZE_CONFIG,
   stop_loss_pct: 100.0,
   risk_per_trade_pct: 0.05,
+  max_trades_per_setup_per_day: 999,
 }

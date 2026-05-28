@@ -139,13 +139,8 @@ function refreshTriggerOffSeen(snap: GexSnapshot, config: typeof DEFAULT_FLARE_C
 }
 
 async function runEntryCycle(): Promise<void> {
-  // Don't open if a position is already open (one-at-a-time).
-  const open = await getOpenFlarePositions()
-  if (open.length > 0) {
-    await insertSignalActivity({ outcome: 'SKIP', detail: 'position_already_open' })
-    return
-  }
-
+  // Parallel entries permitted. Re-entry discipline is enforced by the
+  // (setup,direction) signal-reset gate below, not by an open-position count.
   let snap
   try {
     snap = await fetchGexSnapshot('SPY', DEFAULT_FLARE_CONFIG.gex_stale_max_seconds)
