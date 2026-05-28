@@ -1,0 +1,251 @@
+/* ============================================================
+   FLARE — IronForge design-system restyle
+   Tokens + overrides extracted from ~/Downloads/landing.html.
+   Scoped under .flare-design so it only applies to /flare;
+   BotDashboard is shared with other bot routes and is NOT
+   touched. Structural markup is unchanged — visuals only.
+   ============================================================ */
+
+.flare-design {
+  /* ── tokens (verbatim from landing.html) ───────── */
+  --bg: #0a0807;
+  --paper: #0e0c0a;
+  --panel: #13100d;
+  --panel-2: #1a1612;
+  --ink: #e8e2d4;
+  --ink-2: #a8a092;
+  --ink-3: #5a5447;
+  --line: #2a2520;
+  --line-2: #3a342b;
+  --grid: #1a1612;
+  --accent: #ff6b35;
+  --accent-soft: rgba(255, 107, 53, 0.20);
+  --accent-dim: rgba(255, 107, 53, 0.08);
+  --pos: #4ade80;
+  --neg: #f87171;
+  /* FLARE-specific: gold, used where the existing palette uses fuchsia. */
+  --flare: #d4a017;
+  --flare-soft: rgba(212, 160, 23, 0.22);
+  --flare-dim: rgba(212, 160, 23, 0.10);
+
+  /* ── route surface: dot grid + top ember halo ───── */
+  background:
+    radial-gradient(ellipse 1200px 600px at 50% -200px, var(--accent-dim), transparent 70%),
+    radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 1px);
+  background-size: auto, 18px 18px;
+  background-position: 0 0, 0 0;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  margin: -24px -16px;   /* counteract layout's <main> py-6 / px-4 so the surface is full-bleed */
+  padding: 24px 16px;
+  min-height: calc(100vh - 56px);
+}
+
+.flare-design ::selection { background: var(--flare); color: #1a0a02; }
+
+/* ── sharp corners (engineering blueprint, not friendly fintech) ── */
+.flare-design,
+.flare-design *,
+.flare-design *::before,
+.flare-design *::after {
+  border-radius: 0 !important;
+}
+
+/* ── surfaces: re-tone Tailwind dashboard tokens to design palette ── */
+.flare-design .bg-forge-card\/80,
+.flare-design .bg-forge-card\/60,
+.flare-design .bg-forge-card\/40,
+.flare-design .bg-forge-card,
+.flare-design [class*="bg-forge-card"] {
+  background: var(--paper);
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.35);
+}
+.flare-design [class*="bg-forge-bg"] { background: var(--bg); }
+.flare-design [class*="border-forge-border"],
+.flare-design [class*="border-forge"] { border-color: var(--line); }
+.flare-design .divide-forge-border > * + *,
+.flare-design [class*="divide-forge"] > * + * { border-color: var(--line); }
+
+/* status meanings preserved, mapped to design tokens */
+.flare-design .text-forge-muted { color: var(--ink-3); }
+.flare-design .text-gray-100,
+.flare-design .text-gray-200,
+.flare-design .text-white { color: var(--ink); }
+.flare-design .text-gray-300,
+.flare-design .text-gray-400 { color: var(--ink-2); }
+.flare-design .text-gray-500,
+.flare-design .text-gray-600 { color: var(--ink-3); }
+
+.flare-design .text-emerald-400,
+.flare-design .text-emerald-500,
+.flare-design .text-green-400,
+.flare-design .text-green-500 { color: var(--pos); }
+.flare-design .text-red-300,
+.flare-design .text-red-400,
+.flare-design .text-red-500 { color: var(--neg); }
+.flare-design .text-amber-300,
+.flare-design .text-amber-400,
+.flare-design .text-amber-500,
+.flare-design .text-yellow-300,
+.flare-design .text-yellow-400 { color: var(--accent); }
+
+/* ── FLARE-specific accent: every fuchsia hit becomes the FLARE gold ── */
+.flare-design [class*="text-fuchsia"]    { color: var(--flare); }
+.flare-design [class*="border-fuchsia"]  { border-color: var(--flare); }
+.flare-design [class*="bg-fuchsia-500\/15"],
+.flare-design [class*="bg-fuchsia-500\/10"],
+.flare-design [class*="bg-fuchsia-500\/5"],
+.flare-design [class*="bg-fuchsia-500\/20"] { background: var(--flare-dim); }
+.flare-design [class*="from-fuchsia"],
+.flare-design [class*="to-fuchsia"],
+.flare-design [class*="via-fuchsia"] { --tw-gradient-from: var(--flare); --tw-gradient-to: var(--flare); }
+
+/* tame any stray ember/amber accents inside fuchsia regions */
+.flare-design [class*="hover\:bg-fuchsia"]:hover { background: var(--flare-soft); }
+
+/* ── typography ──────────────────────────── */
+.flare-design h1,
+.flare-design h2,
+.flare-design h3,
+.flare-design h4 {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  text-wrap: balance;
+}
+.flare-design h1 { font-size: clamp(34px, 4.2vw, 54px); line-height: 1.02; }
+.flare-design h2 { font-size: clamp(24px, 3vw, 36px); line-height: 1.05; }
+.flare-design h3 { font-size: 20px; line-height: 1.15; letter-spacing: -0.015em; font-weight: 500; }
+.flare-design h4 { font-size: 14px; letter-spacing: -0.005em; font-weight: 500; }
+
+/* mono technical labels — small uppercase tracked text */
+.flare-design .font-mono,
+.flare-design [class*="uppercase"],
+.flare-design code, .flare-design pre, .flare-design kbd {
+  font-family: 'IBM Plex Mono', monospace;
+}
+.flare-design .uppercase { letter-spacing: 0.18em; }
+.flare-design .text-xs.uppercase,
+.flare-design .text-\[10px\].uppercase,
+.flare-design .text-\[11px\].uppercase { letter-spacing: 0.22em; }
+.flare-design .tracking-wider { letter-spacing: 0.18em; }
+.flare-design .tracking-widest { letter-spacing: 0.24em; }
+
+/* tabular numerics everywhere numbers live */
+.flare-design table td,
+.flare-design table th,
+.flare-design .font-mono,
+.flare-design [class*="num"],
+.flare-design .text-\[10px\],
+.flare-design .text-\[11px\] { font-variant-numeric: tabular-nums; }
+
+/* serif italic for verses / display emphasis (where the page already uses italic) */
+.flare-design .italic.font-serif,
+.flare-design .font-serif.italic {
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* "Molten" animated gradient — for headline <em> emphasis. Opt-in via the
+   utility class. Existing pages don't tag headlines with .molten, so this is
+   here for the page to use without a structural change. */
+.flare-design .molten,
+.flare-design em.flare-molten {
+  font-style: italic;
+  font-weight: 500;
+  background-image: linear-gradient(90deg, #ff6b35 0%, #ffb86b 25%, #fff2c0 50%, #ffb86b 75%, #ff6b35 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(255, 107, 53, 0.35));
+  animation: flareMolten 6s linear infinite;
+}
+@keyframes flareMolten { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+
+/* ── dividers ───────────────────────────── */
+.flare-design hr,
+.flare-design .border-t,
+.flare-design .border-b,
+.flare-design [class*="divide-y"] > * + * {
+  border-style: dashed;
+  border-color: var(--line-2);
+}
+.flare-design [class*="border-dashed"] { border-style: dashed; border-color: var(--line-2); }
+.flare-design [class*="border-dotted"] { border-style: dotted; border-color: var(--line-2); }
+
+/* ── drafting-plate corners on bordered cards ─────
+   Painted with 8 stacked background gradients so no markup changes are
+   required. Only kicks in on the dashboard's main card containers. */
+.flare-design [class*="border-forge-border"],
+.flare-design [class*="border-forge"],
+.flare-design [class*="bg-forge-card"] {
+  position: relative;
+  border-width: 1px;
+  border-style: solid;
+  background-clip: padding-box;
+  background-image:
+    linear-gradient(var(--accent), var(--accent)),  /* tl-horiz */
+    linear-gradient(var(--accent), var(--accent)),  /* tl-vert  */
+    linear-gradient(var(--accent), var(--accent)),  /* tr-horiz */
+    linear-gradient(var(--accent), var(--accent)),  /* tr-vert  */
+    linear-gradient(var(--accent), var(--accent)),  /* bl-horiz */
+    linear-gradient(var(--accent), var(--accent)),  /* bl-vert  */
+    linear-gradient(var(--accent), var(--accent)),  /* br-horiz */
+    linear-gradient(var(--accent), var(--accent));  /* br-vert  */
+  background-repeat: no-repeat;
+  background-position:
+    top    left,  top    left,
+    top    right, top    right,
+    bottom left,  bottom left,
+    bottom right, bottom right;
+  background-size:
+    14px 1px, 1px 14px,
+    14px 1px, 1px 14px,
+    14px 1px, 1px 14px,
+    14px 1px, 1px 14px;
+}
+/* keep the original card surface fill behind the corner ticks */
+.flare-design [class*="bg-forge-card"] {
+  background-color: var(--paper);
+}
+
+/* ── buttons (forge-styled) ───────────────── */
+.flare-design button,
+.flare-design .btn,
+.flare-design [class*="rounded-lg"][class*="border"],
+.flare-design [class*="rounded-xl"][class*="border"] {
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: 0.14em;
+}
+
+/* ── tables ────────────────────────────── */
+.flare-design table { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; letter-spacing: 0.04em; }
+.flare-design table thead th,
+.flare-design table th { color: var(--ink-3); font-weight: 500; text-transform: uppercase; letter-spacing: 0.14em; }
+.flare-design table td { color: var(--ink-2); }
+.flare-design table tr:hover td { background: rgba(255, 107, 53, 0.02); }
+
+/* ── inputs ────────────────────────────── */
+.flare-design input,
+.flare-design select,
+.flare-design textarea {
+  background: var(--bg);
+  border: 1px solid var(--line-2);
+  color: var(--ink);
+  font-family: 'IBM Plex Mono', monospace;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.flare-design input:focus,
+.flare-design select:focus,
+.flare-design textarea:focus {
+  border-color: var(--flare);
+  box-shadow: 0 0 0 2px var(--flare-soft);
+}
