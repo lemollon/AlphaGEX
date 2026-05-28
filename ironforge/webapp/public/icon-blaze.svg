@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none">
+  <!-- BLAZE — directional 1DTE debit. Forward-leaning flame with a trailing
+       ember at its base, suggesting the overnight setup that ignites next day. -->
+  <!-- Outer leaning flame -->
+  <path d="M15 2C15 2 7 7 7 14a6 6 0 0 0 12 0c0-6-4-12-4-12z" fill="#EA580C"/>
+  <!-- Mid flame -->
+  <path d="M14 6C14 6 9 10 9 14a3.5 3.5 0 0 0 7 0c0-3-2-8-2-8z" fill="#F97316"/>
+  <!-- Inner glow -->
+  <path d="M13.5 11c0 0-1.8 1.8-1.8 3.5a1.8 1.8 0 0 0 3.6 0c0-1.7-1.8-3.5-1.8-3.5z" fill="#FDBA74"/>
+  <!-- Trailing ember (lower-left) -->
+  <circle cx="6" cy="20" r="1.4" fill="#FB923C"/>
+  <circle cx="6" cy="20" r="0.7" fill="#FED7AA"/>
+</svg>
