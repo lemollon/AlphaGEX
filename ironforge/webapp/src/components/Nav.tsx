@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useEffect, useRef, useState } from 'react'
 import AuthControls from './AuthControls'
 
 const botIcons: Record<string, React.ReactNode> = {
@@ -26,7 +27,8 @@ const ACCOUNT_BOTS = new Set(['SPARK'])
 
 type NavLink = { href: string; label: string; className?: string; external?: boolean }
 
-const links: NavLink[] = [
+// Primary row — always visible. Home, the five bots, GEX, Compare.
+const primaryLinks: NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
@@ -35,15 +37,82 @@ const links: NavLink[] = [
   { href: '/flare', label: 'FLARE', className: 'text-fuchsia-400 hover:text-fuchsia-300' },
   { href: '/gex', label: 'GEX Profile', className: 'text-cyan-400 hover:text-cyan-300' },
   { href: '/compare', label: 'Compare' },
-  { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
-  { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },
-  { href: '/accounts', label: 'Accounts', className: 'text-gray-400 hover:text-gray-200' },
+]
+
+// Secondary — folded into a "More ▾" dropdown to declutter the row.
+const moreLinks: NavLink[] = [
+  { href: '/calendar', label: 'Calendar', className: 'text-gray-300 hover:text-gray-100' },
+  { href: '/briefings', label: 'Briefings', className: 'text-gray-300 hover:text-gray-100' },
+  { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/ember', label: 'EMBER', className: 'text-amber-400 hover:text-amber-300' },
   { href: '/forge', label: 'Forge', className: 'text-orange-400 hover:text-orange-300', external: true },
 ]
 
+function NavLinkItem({
+  link,
+  pathname,
+  onClick,
+  block,
+}: {
+  link: NavLink
+  pathname: string
+  onClick?: () => void
+  block?: boolean
+}) {
+  const isActive = pathname === link.href
+  const icon = botIcons[link.label]
+  const glow = botGlow[link.label] || ''
+  const baseColor = link.className || 'text-gray-400 hover:text-gray-200'
+  const activeColor = 'text-white underline underline-offset-4 decoration-amber-500'
+  const className = `${block ? 'block px-4 py-2 ' : ''}text-sm font-medium whitespace-nowrap transition-colors ${glow} ${
+    isActive ? activeColor : baseColor
+  }`
+  const content = (
+    <>
+      {icon}{link.label}
+      {ACCOUNT_BOTS.has(link.label) && (
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 ml-1 align-[1px]"
+          title="Account Trading"
+        />
+      )}
+    </>
+  )
+  if (link.external) {
+    return (
+      <a href={link.href} className={className} onClick={onClick}>
+        {content}
+      </a>
+    )
+  }
+  return (
+    <Link href={link.href} className={className} onClick={onClick}>
+      {content}
+    </Link>
+  )
+}
+
 export default function Nav() {
   const pathname = usePathname()
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+
+  // Close the More dropdown on outside click / Escape.
+  useEffect(() => {
+    if (!moreOpen) return
+    const onClick = (e: MouseEvent) => {
+      if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false)
+    }
+    document.addEventListener('mousedown', onClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreOpen])
 
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
@@ -72,38 +141,48 @@ export default function Nav() {
           </span>
         </div>
 
-        {/* Nav links */}
-        <div className="flex gap-6">
-          {links.map((link) => {
-            const isActive = pathname === link.href
-            const icon = botIcons[link.label]
-            const glow = botGlow[link.label] || ''
-            const className = `text-sm font-medium transition-colors ${glow} ${
-              isActive
-                ? 'text-white underline underline-offset-4 decoration-amber-500'
-                : link.className || 'text-gray-400 hover:text-gray-200'
-            }`
-            const content = (
-              <>
-                {icon}{link.label}
-                {ACCOUNT_BOTS.has(link.label) && (
-                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 ml-1 align-[1px]" title="Account Trading" />
-                )}
-              </>
-            )
-            if (link.external) {
-              return (
-                <a key={link.href} href={link.href} className={className}>
-                  {content}
-                </a>
-              )
-            }
-            return (
-              <Link key={link.href} href={link.href} className={className}>
-                {content}
-              </Link>
-            )
-          })}
+        {/* Primary links + More dropdown */}
+        <div className="flex gap-6 items-center">
+          {primaryLinks.map((link) => (
+            <NavLinkItem key={link.href} link={link} pathname={pathname} />
+          ))}
+
+          <div ref={moreRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setMoreOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              className="text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
+            >
+              More
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                aria-hidden="true"
+                className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`}
+              >
+                <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.2" fill="none" />
+              </svg>
+            </button>
+            {moreOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-2 min-w-[180px] border border-amber-900/40 bg-forge-bg/95 backdrop-blur-sm py-2 shadow-2xl z-50"
+              >
+                {moreLinks.map((link) => (
+                  <NavLinkItem
+                    key={link.href}
+                    link={link}
+                    pathname={pathname}
+                    block
+                    onClick={() => setMoreOpen(false)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <AuthControls />
