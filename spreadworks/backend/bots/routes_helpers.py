@@ -16,6 +16,9 @@ logger = logging.getLogger("spreadworks.bots.chain")
 
 TRADIER_BASE = "https://api.tradier.com/v1"
 TRADIER_TOKEN = os.getenv("TRADIER_TOKEN", "")
+# AlphaGEX backend that serves the WATCHTOWER gamma snapshot (per-expiration
+# pin / magnets / walls). Same default as backend/routes.py.
+ALPHAGEX_BASE_URL = os.getenv("ALPHAGEX_BASE_URL", "http://localhost:8000")
 
 
 def _headers() -> dict:
@@ -60,9 +63,45 @@ class LiveTradierChainProvider:
                  "bid": o.get("bid") or 0, "ask": o.get("ask") or 0}
                 for o in data
             ],
-            # GEX populated by upstream `/api/spreadworks/gex` if you want it
-            "gex": {},
+            # Per-expiration GEX structure (pin / magnets / walls / regime).
+            # Resolved for THIS expiration so the gamma structure matches the
+            # DTE being traded. Empty dict on any failure — strategies fall
+            # back gracefully (e.g. butterfly bodies on spot).
+            "gex": self._fetch_gex(ticker, exp),
         }
+
+    def _fetch_gex(self, ticker: str, expiration: str) -> dict:
+        """Fetch the WATCHTOWER gamma snapshot for `expiration` and distil it
+        to the fields the bot strategies consume. Resolving by expiration is
+        what makes the pin DTE-specific — the gamma structure differs every
+        day and across expirations. Returns {} on any failure so the scanner
+        never breaks just because GEX is briefly unavailable."""
+        try:
+            resp = self._client.get(
+                f"{ALPHAGEX_BASE_URL}/api/watchtower/gamma",
+                params={"symbol": ticker, "expiration": expiration},
+                timeout=5.0,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"gex fetch failed {resp.status_code} for {ticker} {expiration}")
+                return {}
+            d = resp.json().get("data", {}) or {}
+            ms = d.get("market_structure", {}) or {}
+            fp = ms.get("flip_point")
+            flip = fp.get("current") if isinstance(fp, dict) else fp
+            gw = ms.get("gamma_walls", {}) or {}
+            return {
+                "pin_strike": d.get("likely_pin"),
+                "pin_probability": d.get("pin_probability"),
+                "magnets": d.get("magnets") or [],
+                "flip_point": flip,
+                "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
+                "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
+                "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
+            }
+        except Exception as e:  # network / parse — never fatal for a scan
+            logger.warning(f"gex fetch error for {ticker} {expiration}: {e}")
+            return {}
 
     def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float]:
         # Build OCC symbols and batch-fetch quotes

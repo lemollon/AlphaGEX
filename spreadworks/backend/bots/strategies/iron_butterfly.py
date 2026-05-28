@@ -1,16 +1,41 @@
 """BREEZE — Iron Butterfly 0DTE entry signal builder.
 
-Pure function `build_iron_butterfly_signal(chain, config, equity)` returns
-an `IronButterflySignal` dataclass or `None` if no setup passes the gates.
+An iron butterfly's payoff is a tent that peaks — maximum profit — exactly at
+the BODY strike (the shared short call / short put strike). The trade is most
+profitable when the underlying *expires at that body*. So instead of anchoring
+the body to current spot, we center it on the **predicted pin** for the
+expiration being traded — WATCHTOWER's `likely_pin`, a blend of each strike's
+gamma rank, pin probability, and proximity to spot.
+
+The pin is NOT the GEX flip point. The flip is just the gamma zero-crossing;
+price does not always gravitate there. The pin also depends on the days to
+expiration, because the gamma structure differs every day and across DTEs —
+so it is resolved per-expiration upstream and passed in on the chain.
+
+When there is more than one *comparably large* gamma magnet, price tends to
+pin BETWEEN them rather than at any single strike. So if the chain carries
+multiple large magnets (within `MAGNET_PARITY` of the top one by |gamma|), the
+body is centered on their gamma-weighted midpoint; otherwise it uses the
+single `likely_pin`. When no GEX is available it falls back to spot.
+
+There is intentionally **no minimum-credit gate**. The butterfly's edge is the
+underlying expiring at the body, not the thickness of the entry credit, so a
+thin credit is allowed. The only credit-side guard left is the structural
+`max_loss > 0` sanity check (credit must not exceed the wing width).
+
+Pure function `build_iron_butterfly_signal(chain, config, equity)` returns an
+`IronButterflySignal` dataclass or `None` if no setup passes the gates.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-MIN_CREDIT = 0.30
 MAX_VIX = 28.0
-MIN_FLIP_DIST = 1.0
+# A magnet counts as "comparably large" (and therefore part of the pin zone the
+# price gets caught between) when its |gamma| is at least this fraction of the
+# single largest magnet's |gamma|.
+MAGNET_PARITY = 0.70
 
 
 @dataclass
@@ -56,6 +81,60 @@ def _find_option(chain: dict, strike: int, opt_type: str) -> dict | None:
     return None
 
 
+def _body_candidates(chain: dict) -> list[int]:
+    """Strikes that list BOTH a call and a put — the only valid butterfly
+    bodies, since the body sells one of each."""
+    calls = {int(o["strike"]) for o in chain["options"] if o["type"] == "call"}
+    puts = {int(o["strike"]) for o in chain["options"] if o["type"] == "put"}
+    return sorted(calls & puts)
+
+
+def _nearest(strikes: list[int], target: float) -> int | None:
+    if not strikes:
+        return None
+    return min(strikes, key=lambda s: abs(s - target))
+
+
+def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
+    """Return [(strike, |gamma|)] for the magnets that are comparably large —
+    within `MAGNET_PARITY` of the top magnet's |gamma|. The chain carries the
+    top-N magnets (highest |gamma|) from the gamma engine."""
+    raw = gex.get("magnets") or []
+    pairs: list[tuple[float, float]] = []
+    for m in raw:
+        try:
+            strike = float(m["strike"])
+            gamma = abs(float(m.get("gamma", 0)))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if gamma > 0:
+            pairs.append((strike, gamma))
+    if not pairs:
+        return []
+    top = max(g for _, g in pairs)
+    return [(s, g) for s, g in pairs if g >= MAGNET_PARITY * top]
+
+
+def _pin_center(gex: dict[str, Any], spot: float) -> float:
+    """Resolve the price level the body should sit on.
+
+    Priority:
+      1. If 2+ comparably-large gamma magnets exist, price tends to pin
+         BETWEEN them — use their gamma-weighted midpoint.
+      2. Otherwise use the per-expiration predicted pin (`pin_strike`).
+      3. Otherwise fall back to spot.
+    """
+    large = _large_magnets(gex)
+    if len(large) >= 2:
+        gsum = sum(g for _, g in large)
+        if gsum > 0:
+            return sum(s * g for s, g in large) / gsum
+    pin = gex.get("pin_strike")
+    if pin is not None:
+        return float(pin)
+    return spot
+
+
 def build_iron_butterfly_signal(
     *,
     chain: dict[str, Any],
@@ -80,15 +159,21 @@ def build_iron_butterfly_signal(
         return _reject(f"vix_too_high: vix={vix:.2f} max={MAX_VIX}")
 
     gex = chain.get("gex") or {}
-    flip = gex.get("flip_point")
-    if flip is not None and abs(float(flip) - spot) < MIN_FLIP_DIST:
-        return _reject(f"too_close_to_flip: spot={spot:.2f} flip={float(flip):.2f}")
+    # Center the body (the payoff apex / max-profit strike) on the level price
+    # is most likely to pin into expiration: the gamma-weighted midpoint of
+    # comparably-large magnets when more than one exists, else the predicted
+    # `pin_strike`, else spot (see `_pin_center`). This is per-expiration GEX
+    # structure — NOT the static flip point. Snap to the nearest strike that
+    # lists BOTH a call and a put (a body sells one of each).
+    center = _pin_center(gex, spot)
+    body = _nearest(_body_candidates(chain), round(center))
+    if body is None:
+        return _reject(f"no_body_strike: center={center:.2f}")
 
     atm_straddle = float(chain.get("atm_straddle_mid", 0))
     sd_mult = float(config.get("sd_mult", 1.0))
     wing_distance = max(1, round(sd_mult * atm_straddle * 0.85))
 
-    body = round(spot)
     long_call_strike = body + wing_distance
     long_put_strike = body - wing_distance
 
@@ -109,9 +194,8 @@ def build_iron_butterfly_signal(
 
     sc_mid, sp_mid = _mid(short_call), _mid(short_put)
     lc_mid, lp_mid = _mid(long_call), _mid(long_put)
+    # No minimum-credit floor — a thin credit is acceptable for this strategy.
     credit = round(sc_mid + sp_mid - lc_mid - lp_mid, 4)
-    if credit < MIN_CREDIT:
-        return _reject(f"credit_too_low: credit={credit:.2f} min={MIN_CREDIT}")
 
     wing_width_call = long_call_strike - body
     wing_width_put = body - long_put_strike
