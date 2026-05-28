@@ -20,13 +20,70 @@ def _config(**overrides):
     return base
 
 
-def test_picks_atm_body_and_symmetric_wings(fake_chain_0dte):
+def test_uses_pin_strike_when_no_magnets(fake_chain_0dte):
+    # Fixture has pin_strike = 501 and NO magnets list -> body falls back to
+    # the predicted pin (NOT spot 500, NOT flip 502).
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte, config=_config(), equity=10000.0
     )
     assert sig is not None
+    assert sig.body_strike == 501
+    # Wing distance = 1.0 * 4.0 * 0.85 ~= 3.4 -> round to 3 -> wings at 498/504
+    assert sig.long_put_strike == 498
+    assert sig.long_call_strike == 504
+
+
+def test_pins_between_two_large_magnets(fake_chain_0dte):
+    # Two comparably-large magnets at 497 and 501 -> price pins BETWEEN them,
+    # at the gamma-weighted midpoint (499). This must WIN over the single
+    # pin_strike (502) and over spot (500), proving the multi-magnet rule.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 502.0,
+            "magnets": [
+                {"strike": 497.0, "gamma": 1.0e9},
+                {"strike": 501.0, "gamma": 1.0e9},
+            ],
+        },
+    }
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.body_strike == 499  # midpoint of 497 and 501
+    assert sig.long_put_strike == 496
+    assert sig.long_call_strike == 502
+
+
+def test_single_dominant_magnet_centers_on_top_magnet(fake_chain_0dte):
+    # One magnet far larger than the rest -> NOT a between-magnets case, so the
+    # body centers on the dominant magnet (503), winning over pin_strike (500).
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 500.0,
+            "magnets": [
+                {"strike": 503.0, "gamma": 1.0e9},
+                {"strike": 498.0, "gamma": 1.0e8},  # 10x smaller -> not comparable
+            ],
+        },
+    }
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.body_strike == 503  # dominant magnet, not pin_strike 500
+
+
+def test_falls_back_to_spot_when_no_pin(fake_chain_0dte):
+    # No pin in the GEX block -> body centers on spot (500), neutral fallback.
+    chain = {**fake_chain_0dte, "gex": {"flip_point": 502.0}}
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0
+    )
+    assert sig is not None
     assert sig.body_strike == 500
-    # Wing distance = 1.0 * 4.0 * 0.85 ~= 3.4 -> round to 3 -> wings at 497/503
     assert sig.long_put_strike == 497
     assert sig.long_call_strike == 503
 
@@ -39,16 +96,10 @@ def test_skips_when_vix_too_high(fake_chain_0dte):
     assert sig is None
 
 
-def test_skips_when_flip_too_close(fake_chain_0dte):
-    chain = {**fake_chain_0dte, "gex": {"flip_point": 500.5, "call_wall": 505, "put_wall": 496}}
-    sig = build_iron_butterfly_signal(
-        chain=chain, config=_config(), equity=10000.0
-    )
-    assert sig is None
-
-
-def test_skips_when_credit_below_floor(fake_chain_0dte):
-    # Squeeze all premiums to ~zero to force credit < 0.30
+def test_no_credit_floor_allows_thin_credit(fake_chain_0dte):
+    # Squeeze all premiums to ~zero so credit ~= 0. There is intentionally NO
+    # minimum-credit gate, so the signal must still build (the only credit-side
+    # guard is the structural max_loss > 0 check, which still passes here).
     chain = {
         **fake_chain_0dte,
         "options": [
@@ -58,7 +109,9 @@ def test_skips_when_credit_below_floor(fake_chain_0dte):
     sig = build_iron_butterfly_signal(
         chain=chain, config=_config(), equity=10000.0
     )
-    assert sig is None
+    assert sig is not None
+    assert sig.credit < 0.30  # below the old floor — proves the gate is gone
+    assert sig.contracts >= 1
 
 
 def test_credit_sizing(fake_chain_0dte):
@@ -66,27 +119,28 @@ def test_credit_sizing(fake_chain_0dte):
         chain=fake_chain_0dte, config=_config(), equity=10000.0
     )
     assert sig is not None
-    # Body credit = (2.05 + 2.05) - (0.55 + 0.55) but with 1c slippage either side.
-    # We expect a positive credit and contracts >= 1.
+    # Body at pin (501): credit = (1.60 + 2.60) - (0.70 + 1.25) = 2.25.
+    # We expect a positive credit and contracts in [1, max_contracts].
     assert sig.credit > 0.30
     assert sig.contracts >= 1
     assert sig.contracts <= 2  # bounded by max_contracts
 
 
 def test_gex_walls_clip_wings(fake_chain_0dte):
-    # call_wall=505 sits OUTSIDE the computed wing (503) so clipping should
-    # not change call wing, but put_wall=496 also outside put wing (497).
-    # Move put_wall inside to verify clipping.
+    # Body at pin 501, wings at 498/504. Move BOTH walls inside the wings to
+    # verify each gets clipped toward the body: put_wall 499 (498<499<501) and
+    # call_wall 503 (501<503<504).
     chain = {
         **fake_chain_0dte,
-        "gex": {"flip_point": 502.0, "call_wall": 505.0, "put_wall": 498.0},
+        "gex": {"pin_strike": 501.0, "call_wall": 503.0, "put_wall": 499.0},
     }
     sig = build_iron_butterfly_signal(
         chain=chain, config=_config(use_gex_walls=True), equity=10000.0
     )
     assert sig is not None
-    # Put wing clipped UP to put_wall (closer to body)
-    assert sig.long_put_strike == 498
+    # Put wing clipped UP to put_wall, call wing clipped DOWN to call_wall.
+    assert sig.long_put_strike == 499
+    assert sig.long_call_strike == 503
 
 
 def test_max_contracts_zero_means_uncapped(fake_chain_0dte):
