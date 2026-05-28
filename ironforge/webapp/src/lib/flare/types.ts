@@ -27,4 +27,10 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   stop_loss_pct: 100.0,
   risk_per_trade_pct: 0.05,
   max_trades_per_setup_per_day: 999,
+  // 0DTE timing override (vs BLAZE's 1DTE 15:55).
+  //   - Entries cut off at 14:30 in scanner.ts:isMarketHours.
+  //   - 14:45 TIME_STOP closes anything still open 15min before 15:00 settlement.
+  // The earlier eod_time_ct also forces close BEFORE Tradier stops quoting
+  // expired 0DTE contracts, avoiding the stranded-open reconciliation case.
+  eod_time_ct: '14:45',
 }
