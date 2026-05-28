@@ -36,10 +36,14 @@ function ctNow(): Date {
 }
 
 function isMarketHours(ct: Date): boolean {
+  // Entry window only — monitor runs unconditionally before this gate.
+  // Hard cutoff at 14:00 CT (operator rule): never open a 0DTE inside the last
+  // hour, when liquidity collapses and Tradier stops quoting expiring contracts
+  // cleanly. Any leftover position gets TIME_STOP'd at eod_time_ct=14:45.
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return false
   const hhmm = ct.getHours() * 100 + ct.getMinutes()
-  return hhmm >= 830 && hhmm <= 1555
+  return hhmm >= 830 && hhmm <= 1400
 }
 
 function minutesSinceOpen(ct: Date): number {
