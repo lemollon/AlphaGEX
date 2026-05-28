@@ -7,9 +7,9 @@ import AuthControls from './AuthControls'
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
   SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  INFERNO: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  BLAZE: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  FLARE: <img src="/inferno-icon.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  INFERNO: <img src="/icon-inferno.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  BLAZE: <img src="/icon-blaze.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+  FLARE: <img src="/icon-flare.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
 }
 
 const botGlow: Record<string, string> = {
@@ -20,8 +20,9 @@ const botGlow: Record<string, string> = {
   FLARE: 'glow-inferno',
 }
 
-/** Bots with trading accounts get a green dot; paper-only get nothing */
-const ACCOUNT_BOTS = new Set(['FLAME'])
+/** Bots with trading accounts get a green dot; paper-only get nothing.
+ *  SPARK is the only bot wired to a real Tradier production account (Iron Viper). */
+const ACCOUNT_BOTS = new Set(['SPARK'])
 
 type NavLink = { href: string; label: string; className?: string; external?: boolean }
 
