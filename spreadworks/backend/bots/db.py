@@ -209,6 +209,21 @@ def _ensure_config_max_concurrent(conn, engine: Engine) -> None:
             ))
 
 
+def _ensure_config_min_credit(conn, engine: Engine) -> None:
+    """Idempotent column add for the minimum-credit floor (2026-05-28). Only
+    consulted by credit strategies (iron_condor, double_diagonal_credit) —
+    the debit strategies ignore it. Default 0.25 matches the hardcoded
+    MIN_CREDIT the strategies used before this column existed. Operators
+    can lower it (or set negative) to allow thinner / debit fills.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "min_credit", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN min_credit NUMERIC NOT NULL DEFAULT 0.25"
+            ))
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -223,6 +238,7 @@ def create_bot_tables(engine: Engine) -> None:
         _ensure_config_entry_days(conn, engine)
         _ensure_config_allow_stacking(conn, engine)
         _ensure_config_max_concurrent(conn, engine)
+        _ensure_config_min_credit(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():

@@ -195,6 +195,7 @@ class ConfigUpdate(BaseModel):
     entry_days: str | None = None
     allow_stacking: bool | None = None
     max_concurrent_positions: int | None = None
+    min_credit: float | None = None
 
 
 @router.post("/{bot}/config")
