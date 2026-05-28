@@ -20,10 +20,9 @@ def _config(**overrides):
     return base
 
 
-def test_centers_body_on_pin_strike(fake_chain_0dte):
-    # Fixture pin_strike = 501 (NOT spot 500, NOT flip 502) — the body must
-    # land on the predicted pin so the payoff apex sits where price is most
-    # likely to expire.
+def test_uses_pin_strike_when_no_magnets(fake_chain_0dte):
+    # Fixture has pin_strike = 501 and NO magnets list -> body falls back to
+    # the predicted pin (NOT spot 500, NOT flip 502).
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte, config=_config(), equity=10000.0
     )
@@ -57,15 +56,15 @@ def test_pins_between_two_large_magnets(fake_chain_0dte):
     assert sig.long_call_strike == 502
 
 
-def test_single_dominant_magnet_uses_pin_strike(fake_chain_0dte):
-    # One magnet far larger than the rest -> NOT a between-magnets case, so we
-    # defer to the predicted pin_strike (501), not the magnet at 505.
+def test_single_dominant_magnet_centers_on_top_magnet(fake_chain_0dte):
+    # One magnet far larger than the rest -> NOT a between-magnets case, so the
+    # body centers on the dominant magnet (503), winning over pin_strike (500).
     chain = {
         **fake_chain_0dte,
         "gex": {
-            "pin_strike": 501.0,
+            "pin_strike": 500.0,
             "magnets": [
-                {"strike": 505.0, "gamma": 1.0e9},
+                {"strike": 503.0, "gamma": 1.0e9},
                 {"strike": 498.0, "gamma": 1.0e8},  # 10x smaller -> not comparable
             ],
         },
@@ -74,7 +73,7 @@ def test_single_dominant_magnet_uses_pin_strike(fake_chain_0dte):
         chain=chain, config=_config(), equity=10000.0
     )
     assert sig is not None
-    assert sig.body_strike == 501
+    assert sig.body_strike == 503  # dominant magnet, not pin_strike 500
 
 
 def test_falls_back_to_spot_when_no_pin(fake_chain_0dte):

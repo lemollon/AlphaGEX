@@ -3,20 +3,21 @@
 An iron butterfly's payoff is a tent that peaks — maximum profit — exactly at
 the BODY strike (the shared short call / short put strike). The trade is most
 profitable when the underlying *expires at that body*. So instead of anchoring
-the body to current spot, we center it on the **predicted pin** for the
-expiration being traded — WATCHTOWER's `likely_pin`, a blend of each strike's
-gamma rank, pin probability, and proximity to spot.
+the body to current spot, we center it on the **gamma magnet** the price is
+most likely to be drawn toward into expiration.
 
-The pin is NOT the GEX flip point. The flip is just the gamma zero-crossing;
-price does not always gravitate there. The pin also depends on the days to
-expiration, because the gamma structure differs every day and across DTEs —
-so it is resolved per-expiration upstream and passed in on the chain.
+The magnet is NOT the GEX flip point. The flip is just the gamma zero-crossing;
+price does not always gravitate there. The magnet structure also depends on the
+days to expiration, because the gamma profile differs every day and across
+DTEs — so it is resolved per-expiration upstream and passed in on the chain.
 
-When there is more than one *comparably large* gamma magnet, price tends to
-pin BETWEEN them rather than at any single strike. So if the chain carries
-multiple large magnets (within `MAGNET_PARITY` of the top one by |gamma|), the
-body is centered on their gamma-weighted midpoint; otherwise it uses the
-single `likely_pin`. When no GEX is available it falls back to spot.
+Body selection (see `_pin_center`):
+  - When there is more than one *comparably large* magnet (within
+    `MAGNET_PARITY` of the top one by |gamma|), price tends to pin BETWEEN
+    them — center on their gamma-weighted midpoint.
+  - Otherwise center on the single largest gamma magnet.
+  - Fall back to the predicted pin (`pin_strike`) when no magnets are present,
+    then to spot when there is no GEX at all.
 
 There is intentionally **no minimum-credit gate**. The butterfly's edge is the
 underlying expiring at the body, not the thickness of the entry credit, so a
@@ -121,14 +122,18 @@ def _pin_center(gex: dict[str, Any], spot: float) -> float:
     Priority:
       1. If 2+ comparably-large gamma magnets exist, price tends to pin
          BETWEEN them — use their gamma-weighted midpoint.
-      2. Otherwise use the per-expiration predicted pin (`pin_strike`).
-      3. Otherwise fall back to spot.
+      2. Otherwise center on the single largest gamma magnet (the dominant
+         magnet attracts price toward it).
+      3. Otherwise (no magnets) fall back to the predicted pin (`pin_strike`).
+      4. Otherwise fall back to spot.
     """
     large = _large_magnets(gex)
     if len(large) >= 2:
         gsum = sum(g for _, g in large)
         if gsum > 0:
             return sum(s * g for s, g in large) / gsum
+    if large:  # one dominant magnet — center on it
+        return max(large, key=lambda x: x[1])[0]
     pin = gex.get("pin_strike")
     if pin is not None:
         return float(pin)
@@ -159,12 +164,12 @@ def build_iron_butterfly_signal(
         return _reject(f"vix_too_high: vix={vix:.2f} max={MAX_VIX}")
 
     gex = chain.get("gex") or {}
-    # Center the body (the payoff apex / max-profit strike) on the level price
-    # is most likely to pin into expiration: the gamma-weighted midpoint of
-    # comparably-large magnets when more than one exists, else the predicted
-    # `pin_strike`, else spot (see `_pin_center`). This is per-expiration GEX
-    # structure — NOT the static flip point. Snap to the nearest strike that
-    # lists BOTH a call and a put (a body sells one of each).
+    # Center the body (the payoff apex / max-profit strike) on the gamma magnet
+    # price is most likely to be drawn toward: the gamma-weighted midpoint of
+    # comparably-large magnets when more than one exists, else the single
+    # largest magnet, else the predicted pin, else spot (see `_pin_center`).
+    # This is per-expiration GEX structure — NOT the static flip point. Snap to
+    # the nearest strike that lists BOTH a call and a put (body sells one each).
     center = _pin_center(gex, spot)
     body = _nearest(_body_candidates(chain), round(center))
     if body is None:
