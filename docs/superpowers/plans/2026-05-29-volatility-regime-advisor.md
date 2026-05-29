@@ -14,27 +14,23 @@
 
 - **DB access (Python):** `from database_adapter import get_connection` → `conn.cursor()`, `%s` params, `conn.commit()`, `conn.close()`. Postgres.
 - **Table creation:** add a `CREATE TABLE IF NOT EXISTS` block in `db/config_and_database.py` (see `vix_term_structure` at ~line 1210).
-- **Live curve (already shipped):** `from data.unified_data_provider import get_vvix, get_vix_term_structure` and `core/vix_hedge_manager.py get_vix_data()` returns `vix_spot, vix_9d, vix_3m, vix_6m, vvix, vvix_source, term_structure_source`.
+- **Live VIX/VVIX (on origin/main):** `from data.vix_fetcher import get_vix_with_source, get_vvix_with_source` — each returns `(price, source)`. Term structure (VIX9D/VIX3M/VIX6M) is NOT in the repo; the advisor fetches it from CBOE delayed-quotes (`cdn.cboe.com/api/global/delayed_quotes/quotes/_<SYM>.json`).
 - **CBOE history:** daily CSVs at `https://cdn.cboe.com/api/global/us_indices/daily_prices/<SYM>_History.csv` (columns `DATE,...,CLOSE`; VVIX is `DATE,VVIX`).
 - **Routes:** add to `backend/api/routes/vix_routes.py` (FastAPI `APIRouter(prefix="/api/vix")`). Never raise to the client — return a fallback dict (see `get_vix_current`).
 - **Collector worker:** `data/automated_data_collector.py` — define `run_*()` guarded by `is_after_market_close()`, register in `setup_schedule()`; log via `log_collection(job, table, success, error, tb)`.
 - **Backtest harness:** `backtest/vvix_vix_analysis/` (already has `analyze.py` + `data/` with `VIX/VVIX/VIX3M/VIX9D.csv` and `SPY_raw.json`).
 - **Frontend:** IronForge app at `ironforge/webapp/` (on `origin/main`). App-router pages under `src/app/`, components under `src/components/`, charts via recharts, tests via vitest. Match `BriefingCard`/dashboard styling; custom SVG glyphs, no emojis (per `feedback_no_cheap_visuals`).
 
-## Pre-flight (one-time, before Task 1)
+## Pre-flight (DONE by controller — for reference)
 
-- [ ] **Create the feature branch from `origin/main` (which contains IronForge) and carry over the shipped VVIX feed commit.**
+The feature branch `claude/vol-regime-advisor` was created from `origin/main` (which already contains IronForge at `ironforge/webapp/src/...` AND a `data/vix_fetcher.py` with live `get_vix_with_source()` / `get_vvix_with_source()`). The spec + plan docs are committed on this branch. The harness `backtest/vvix_vix_analysis/` (analyze.py + data CSVs/JSON) is present (untracked).
 
-```bash
-cd /c/Users/lemol/Documents/AlphaGEX
-git fetch origin
-git checkout -b claude/vol-regime-advisor origin/main
-git cherry-pick c3822a5b            # the VVIX CBOE feed (data/unified_data_provider, core/vix_hedge_manager, backend/api/routes/vix_routes)
-git cherry-pick fa20ec84            # the design spec commit (docs/superpowers/specs/...)
-# resolve trivial conflicts if the 3 backend files diverged; keep both the feed changes and origin/main content
-```
-Expected: working tree now has BOTH `ironforge/webapp/src/...` AND the VVIX feed in `data/`/`core/`/`backend/`.
-Verify: `git ls-files | grep -c ironforge/webapp/src` is > 0, and `grep -c get_vvix data/unified_data_provider.py` is ≥ 1.
+**Key integration decision (revised):** Do NOT cherry-pick the earlier VVIX-feed PR. `origin/main` already provides live VIX + VVIX via `data/vix_fetcher.py`. It does NOT provide the VIX9D/VIX3M/VIX6M term structure — the advisor brings its own CBOE fetch for that (it needs CBOE history for z-scores anyway). So the advisor sources:
+- **VIX, VVIX (live):** `from data.vix_fetcher import get_vix_with_source, get_vvix_with_source` (each returns `(price, source)`).
+- **VIX9D / VIX3M / VIX6M (live, ~15-min delayed):** CBOE delayed-quotes JSON `https://cdn.cboe.com/api/global/delayed_quotes/quotes/_<SYM>.json` (numeric field `data.current_price`).
+- **Trailing history (z-scores/percentiles):** CBOE daily history CSVs `https://cdn.cboe.com/api/global/us_indices/daily_prices/<SYM>_History.csv`.
+
+The engine imports **nothing** from `data/unified_data_provider.py`.
 
 ---
 
@@ -532,11 +528,27 @@ def fetch_cboe_history() -> pd.DataFrame:
     _HISTORY_CACHE.update(date=today, df=df)
     return df
 
+CBOE_QUOTE_URL = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_{sym}.json"
+
+def _cboe_quote(sym: str) -> Optional[float]:
+    """Latest value for a CBOE index from the delayed-quotes CDN (~15-min)."""
+    try:
+        data = (requests.get(CBOE_QUOTE_URL.format(sym=sym), timeout=8).json() or {}).get("data", {})
+        for k in ("current_price", "price", "last", "close"):
+            v = data.get(k)
+            if v is not None and float(v) > 0:
+                return float(v)
+    except Exception as e:
+        logger.debug(f"CBOE quote {sym} failed: {e}")
+    return None
+
 def _live_curve() -> dict:
-    from data.unified_data_provider import get_vvix, get_vix_term_structure, get_vix
-    ts = get_vix_term_structure() or {}
-    return {"vix": ts.get("vix") or get_vix(), "vvix": get_vvix(),
-            "vix9d": ts.get("vix9d"), "vix3m": ts.get("vix3m"), "vix6m": ts.get("vix6m")}
+    """Live curve: VIX/VVIX from origin/main's vix_fetcher; 9D/3M/6M from CBOE delayed quotes."""
+    from data.vix_fetcher import get_vix_with_source, get_vvix_with_source
+    vix, _ = get_vix_with_source()
+    vvix, _ = get_vvix_with_source()
+    return {"vix": vix, "vvix": vvix,
+            "vix9d": _cboe_quote("VIX9D"), "vix3m": _cboe_quote("VIX3M"), "vix6m": _cboe_quote("VIX6M")}
 
 def _load_evidence() -> dict:
     try:
