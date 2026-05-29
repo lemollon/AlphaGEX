@@ -5,11 +5,23 @@ Pure functions operate on an injected history DataFrame (columns: vix, vvix,
 vix3m, vix9d) whose LAST row is "today". Live wrapper fetches CBOE data.
 Backtest evidence (hit-rates + timing) is loaded from evidence.json.
 """
-import json, os
+import json, math, os
 from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 import requests
+
+
+def _num(x) -> float:
+    """NaN/None-safe float coercion. `nan or 0` returns nan (NaN is truthy),
+    so an explicit guard is required to keep values JSON-serializable."""
+    if x is None:
+        return 0.0
+    try:
+        f = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if math.isnan(f) else f
 
 CBOE_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
 EVIDENCE_PATH = os.path.join(os.path.dirname(__file__), "..", "backtest",
@@ -41,6 +53,9 @@ def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
     r = df.iloc[-1]
     ts20 = df["ts_3m"].iloc[-21] if len(df) > 21 else float("nan")
 
+    # NOTE: comparisons intentionally rely on NaN-compares-False so that an
+    # undefined (under-filled-window) signal stays OFF. Do NOT wrap these in
+    # _num — that would coerce NaN->0 and flip e.g. ts_flattening ON.
     raw = {
         "backwardation": bool(r["ts_3m"] > 1.0),
         "ts_flattening": bool(r["ts_3m"] > 0.95 and ts20 < 0.90),
@@ -48,10 +63,11 @@ def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
         "double_floor": bool(r["vvix"] < 85 and r["vix"] < 14),
         "divergence": bool((r["vvix_z"] or 0) > 1.0 and (r["vix_z"] or 0) < 0.0),
     }
+    # values ARE serialized over JSON (Task 5) — must be NaN-free, hence _num.
     values = {
-        "backwardation": float(r["ts_3m"]), "ts_flattening": float(r["ts_3m"]),
-        "exhaustion": float(r["vix_pct"] or 0), "double_floor": float(r["vvix"]),
-        "divergence": float(r["vvix_z"] or 0),
+        "backwardation": _num(r["ts_3m"]), "ts_flattening": _num(r["ts_3m"]),
+        "exhaustion": _num(r["vix_pct"]), "double_floor": _num(r["vvix"]),
+        "divergence": _num(r["vvix_z"]),
     }
     return {
         key: {"active": raw[key], "value": round(values[key], 4),

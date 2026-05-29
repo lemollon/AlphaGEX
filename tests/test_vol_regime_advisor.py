@@ -1,4 +1,5 @@
 # tests/test_vol_regime_advisor.py
+import math
 import pandas as pd
 from core.vol_regime_advisor import compute_signals
 
@@ -26,3 +27,24 @@ def test_divergence_flagged_low_confidence():
     df = _history(vix_last=15.0, vix3m_last=18.0)
     sigs = compute_signals(df)
     assert sigs["divergence"]["confidence"] == "low"
+
+def test_values_are_json_safe_on_short_history():
+    # Under-filled rolling windows (rolling(252)/rolling(60)) produce NaN internally;
+    # the serialized `value` fields must be finite (NaN is invalid JSON downstream).
+    idx = pd.date_range("2024-01-01", periods=5, freq="B")
+    df = pd.DataFrame(index=idx)
+    df["vix"] = 15.0; df["vvix"] = 90.0; df["vix3m"] = 18.0; df["vix9d"] = 13.0
+    sigs = compute_signals(df)
+    for key, s in sigs.items():
+        assert isinstance(s["value"], float)
+        assert not math.isnan(s["value"]), f"{key} value leaked NaN"
+
+def test_short_history_keeps_undefined_signals_off():
+    # With NaN ts20/vix_pct (short history), windowed signals must stay OFF,
+    # not flip ON from NaN->0 coercion.
+    idx = pd.date_range("2024-01-01", periods=5, freq="B")
+    df = pd.DataFrame(index=idx)
+    df["vix"] = 18.0; df["vvix"] = 90.0; df["vix3m"] = 18.0; df["vix9d"] = 13.0
+    sigs = compute_signals(df)
+    assert sigs["ts_flattening"]["active"] is False
+    assert sigs["exhaustion"]["active"] is False
