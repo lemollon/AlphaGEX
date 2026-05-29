@@ -1156,6 +1156,9 @@ def _bot_preview(
     elif strategy_name == "iron_butterfly":
         from .bots.strategies.iron_butterfly import build_iron_butterfly_signal
         sig = build_iron_butterfly_signal(chain=chain_for_bot, config=cfg, equity=10000.0, diag=diag)
+    elif strategy_name == "long_butterfly":
+        from .bots.strategies.long_butterfly import build_long_butterfly_signal
+        sig = build_long_butterfly_signal(chain=chain_for_bot, config=cfg, equity=10000.0, diag=diag)
     # DC/DD need a back chain — skip bot-preview when we don't have it readily
     # in this single-expiration helper. Caller passes only `front_options`.
 
@@ -2170,6 +2173,7 @@ STRATEGY_LABELS = {
     "iron_condor": "Iron Condor",
     "butterfly": "Butterfly",
     "iron_butterfly": "Iron Butterfly",
+    "long_butterfly": "Long Butterfly",
 }
 
 # Strategies where entry_price represents a credit received (entry_cost < 0).

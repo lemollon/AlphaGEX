@@ -68,7 +68,8 @@ def decide_exit(
         return ExitDecision(True, "SL")
 
     eod = eod_close_time_for_strategy(strategy, eod_close_ct)
-    if strategy == "iron_butterfly":
+    if strategy in ("iron_butterfly", "long_butterfly"):
+        # 0DTE single-expiration strategies: force-close at EOD every day.
         if now_ct.timetz().replace(tzinfo=None) >= eod:
             return ExitDecision(True, "EOD")
     else:

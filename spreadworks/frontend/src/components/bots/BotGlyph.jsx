@@ -69,6 +69,18 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'stream') {
+    // RIVER = a meandering river winding down between its banks. Distinct from
+    // FLOW's converging horizontal current and TIDE's stacked sine waves.
+    return (
+      <svg {...common}>
+        <path d="M12 3c-3 2-3 4 0 6s3 4 0 6 3 4 0 6" />
+        <path d="M6 4c-1.5 3-1.5 6 0 9" opacity="0.5" />
+        <path d="M18 5c1.5 3 1.5 6 0 9" opacity="0.5" />
+      </svg>
+    );
+  }
+
   if (kind === 'sprout') {
     // MEADOW = a seedling sprouting two leaves from the ground. Reads as
     // growth/meadow — distinct from the water/wind glyphs of the siblings.

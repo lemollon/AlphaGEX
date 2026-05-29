@@ -143,6 +143,18 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
         ],
         1.6,  # credit
     ),
+    (
+        # RIVER long butterfly: single-type 1-2-1 with the body sold twice.
+        # The payoff branch must resolve lower/upper by strike ordering.
+        "river", "long_butterfly",
+        [
+            {"side": "long",  "type": "call", "strike": 498, "expiration": "2099-01-15"},
+            {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},
+            {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "call", "strike": 504, "expiration": "2099-01-15"},
+        ],
+        0.75,  # debit
+    ),
 ])
 def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
     from backend import routes_bots
