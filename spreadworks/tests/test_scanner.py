@@ -273,6 +273,41 @@ def test_meadow_without_stacking_stays_one_at_a_time(
     assert n == 1
 
 
+def test_river_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte):
+    """End-to-end RIVER (long debit butterfly): the scanner opens a position,
+    and once the fly gains value the debit-aware MTM yields a positive P&L that
+    trips the profit target — exercising the 4-leg (body sold twice) path."""
+    engine = db_session.bind
+    _enable_bot(engine, "river")  # enabled by default, but be explicit
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+
+    # 1) Open in the entry window (fixture expiration 2026-05-20 == scan day).
+    opened = run_scan_cycle(engine=engine, bot="river",
+                            now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                            chain_provider=provider, event_blackout=False)
+    assert opened["outcome"] == "TRADE" and opened["reason"] == "OPENED"
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT entry_price, contracts FROM river_positions WHERE status='OPEN'"
+        )).mappings().first()
+    assert float(row["entry_price"]) == pytest.approx(0.75)  # the net debit
+
+    # 2) Drive the legs so the fly is worth ~3.0 (price pinned at the body):
+    #    legs order = [long lower, short body, short body, long upper];
+    #    mtm_value = lower - 2*body + upper = 3.0 - 0 + 0 = 3.0 >> 0.75 debit.
+    provider.leg_mid_overrides = [3.0, 0.0, 0.0, 0.0]
+    closed = run_scan_cycle(engine=engine, bot="river",
+                            now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
+                            chain_provider=provider, event_blackout=False)
+    assert closed["outcome"] == "TRADE"
+    assert closed["reason"] == "CLOSE_PT"
+    with engine.begin() as conn:
+        r = conn.execute(text(
+            "SELECT realized_pnl FROM river_closed_trades"
+        )).mappings().first()
+    assert float(r["realized_pnl"]) > 0  # debit trade gains as fly value rises
+
+
 def test_equity_snapshot_written(db_session, fake_chain_0dte):
     engine = db_session.bind
     _enable_bot(engine, "breeze")

@@ -24,6 +24,7 @@ from .executor import (
 from .monitor import decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
+from .strategies.long_butterfly import build_long_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
@@ -125,6 +126,14 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
             return None, None
         sig = build_iron_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
+        return sig, chain
+    if strategy == "long_butterfly":
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        sig = build_long_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
         return sig, chain
     if strategy == "iron_condor":
         chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)

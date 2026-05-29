@@ -396,6 +396,25 @@ def get_position_payoff(bot: str, position_id: str):
             {"exp": exp},
             r, sigma, entry_cost, n,
         )
+    elif strategy == "long_butterfly":
+        # Single-type 1-2-1 long fly. Both wings are the SAME type as the body,
+        # so _leg(side, type) can't tell the lower wing from the upper — resolve
+        # by strike ordering instead. Reuses the existing "butterfly" payoff
+        # model (buy 1 lower, sell 2 middle, buy 1 upper).
+        opt_type = legs[0].get("type", "call")
+        long_strikes = sorted(float(lg["strike"]) for lg in legs if lg.get("side") == "long")
+        short_strikes = [float(lg["strike"]) for lg in legs if lg.get("side") == "short"]
+        lower = long_strikes[0]
+        upper = long_strikes[-1]
+        middle = short_strikes[0]  # body sold twice — both rows share this strike
+        exp = legs[0]["expiration"]
+        profile = _scan_pnl_profile(
+            "butterfly", middle,
+            {"lower": lower, "middle": middle, "upper": upper,
+             "is_call": opt_type == "call"},
+            {"exp": exp},
+            r, sigma, entry_cost, n,
+        )
     elif strategy == "double_calendar":
         short_call = _leg("short", "call")
         short_put = _leg("short", "put")
