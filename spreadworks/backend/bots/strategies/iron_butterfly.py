@@ -11,13 +11,15 @@ price does not always gravitate there. The magnet structure also depends on the
 days to expiration, because the gamma profile differs every day and across
 DTEs — so it is resolved per-expiration upstream and passed in on the chain.
 
-Body selection (see `_pin_center`):
-  - When there is more than one *comparably large* magnet (within
-    `MAGNET_PARITY` of the top one by |gamma|), price tends to pin BETWEEN
-    them — center on their gamma-weighted midpoint.
-  - Otherwise center on the single largest gamma magnet.
+Body selection (see `gamma_pin_center`):
+  - When *comparably large* magnets (within `MAGNET_PARITY` of the top one by
+    |gamma|) BRACKET spot — a call-side wall at/above spot and a put-side wall
+    below it — price tends to pin inside that corridor, so the body is centered
+    on the gamma-weighted midpoint of that bracketing pair.
+  - Otherwise (one dominant magnet, or several clustered on the same side)
+    center on the single largest gamma magnet.
   - Fall back to the predicted pin (`pin_strike`) when no magnets are present,
-    then to spot when there is no GEX at all.
+    then to the call_wall/put_wall corridor midpoint, then to spot.
 
 There is intentionally **no minimum-credit gate**. The butterfly's edge is the
 underlying expiring at the body, not the thickness of the entry credit, so a
@@ -116,27 +118,47 @@ def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
     return [(s, g) for s, g in pairs if g >= MAGNET_PARITY * top]
 
 
-def _pin_center(gex: dict[str, Any], spot: float) -> float:
+def gamma_pin_center(gex: dict[str, Any], spot: float) -> float:
     """Resolve the price level the body should sit on.
 
     Priority:
-      1. If 2+ comparably-large gamma magnets exist, price tends to pin
-         BETWEEN them — use their gamma-weighted midpoint.
-      2. Otherwise center on the single largest gamma magnet (the dominant
-         magnet attracts price toward it).
+      1. **Pin BETWEEN the walls.** When the comparably-large magnets *bracket*
+         spot — i.e. there is a call-side wall at/above spot AND a put-side wall
+         below it — price tends to pin inside that corridor. Center on the
+         gamma-weighted midpoint of that bracketing pair (the dominant magnet on
+         each side). This mirrors the classic call-wall / put-wall framing:
+         price gets caught between the two walls dealers defend.
+      2. Otherwise center on the single largest gamma magnet (one dominant
+         magnet, or several clustered on the same side of spot — there is no
+         corridor to pin inside, so price is drawn to the heaviest strike).
       3. Otherwise (no magnets) fall back to the predicted pin (`pin_strike`).
-      4. Otherwise fall back to spot.
+      4. Otherwise, if the explicit call_wall / put_wall bracket spot, use the
+         midpoint of that corridor (no per-strike gamma to weight by, so it's a
+         plain midpoint). Lets callers that only carry the named walls — e.g.
+         the gex-suggest builder — reuse this same logic.
+      5. Otherwise fall back to spot.
     """
     large = _large_magnets(gex)
-    if len(large) >= 2:
-        gsum = sum(g for _, g in large)
-        if gsum > 0:
-            return sum(s * g for s, g in large) / gsum
-    if large:  # one dominant magnet — center on it
+    if large:
+        above = [(s, g) for s, g in large if s >= spot]  # call-side walls
+        below = [(s, g) for s, g in large if s < spot]   # put-side walls
+        if above and below:
+            cw = max(above, key=lambda x: x[1])  # heaviest call-side wall
+            pw = max(below, key=lambda x: x[1])  # heaviest put-side wall
+            gsum = cw[1] + pw[1]
+            if gsum > 0:
+                return (cw[0] * cw[1] + pw[0] * pw[1]) / gsum
+        # No bracketing pair (all magnets on one side) -> dominant magnet.
         return max(large, key=lambda x: x[1])[0]
     pin = gex.get("pin_strike")
     if pin is not None:
         return float(pin)
+    call_wall = gex.get("call_wall")
+    put_wall = gex.get("put_wall")
+    if call_wall is not None and put_wall is not None:
+        cw, pw = float(call_wall), float(put_wall)
+        if pw < spot <= cw:  # walls bracket spot -> pin in the corridor
+            return (cw + pw) / 2.0
     return spot
 
 
@@ -167,10 +189,10 @@ def build_iron_butterfly_signal(
     # Center the body (the payoff apex / max-profit strike) on the gamma magnet
     # price is most likely to be drawn toward: the gamma-weighted midpoint of
     # comparably-large magnets when more than one exists, else the single
-    # largest magnet, else the predicted pin, else spot (see `_pin_center`).
+    # largest magnet, else the predicted pin, else spot (see gamma_pin_center).
     # This is per-expiration GEX structure — NOT the static flip point. Snap to
     # the nearest strike that lists BOTH a call and a put (body sells one each).
-    center = _pin_center(gex, spot)
+    center = gamma_pin_center(gex, spot)
     body = _nearest(_body_candidates(chain), round(center))
     if body is None:
         return _reject(f"no_body_strike: center={center:.2f}")
