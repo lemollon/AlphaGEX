@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect } from 'react'
-import LandingSiteNav from '@/components/LandingSiteNav'
 import { LANDING_MARKUP } from './_landing/landingMarkup'
 import './_landing/landing.css'
 
@@ -89,17 +88,9 @@ export default function Home() {
 
   return (
     <>
-      {/* Google Fonts — preserved from the design's <head> */}
-      <link rel="preconnect" href="https://fonts.googleapis.com" />
-      {/* eslint-disable-next-line @next/next/google-font-preconnect */}
-      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-      <link
-        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Cormorant+Garamond:ital,wght@1,400;1,500&display=swap"
-        rel="stylesheet"
-      />
+      {/* Fonts now match the app design system (system font-sans via landing.css),
+          so the IBM Plex / Cormorant Google Fonts <link> is no longer needed. */}
       <div className="ironforge-landing" dangerouslySetInnerHTML={{ __html: LANDING_MARKUP }} />
-      {/* Operator access to all app pages (the landing suppresses the global nav). */}
-      <LandingSiteNav />
     </>
   )
 }

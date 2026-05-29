@@ -4,15 +4,23 @@ import { usePathname } from 'next/navigation'
 import ClientNav from './ClientNav'
 
 /**
- * App chrome wrapper. Every route gets the global nav + width-constrained main,
- * EXCEPT the marketing landing at "/", which ships its own full-bleed chrome
- * (titleblock header + footer) and must render edge-to-edge with no app nav.
+ * App chrome wrapper. Every route gets the global nav.
+ *
+ * The marketing landing at "/" now shares the global nav (so the home page is
+ * consistent with the rest of the site), but still renders edge-to-edge below
+ * it — it ships its own full-bleed chrome (sticky titleblock masthead + footer)
+ * and must NOT be wrapped in the width-constrained <main>.
  */
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
 
   if (pathname === '/') {
-    return <>{children}</>
+    return (
+      <>
+        <ClientNav />
+        {children}
+      </>
+    )
   }
 
   return (

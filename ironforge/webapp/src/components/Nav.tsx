@@ -45,7 +45,6 @@ const moreLinks: NavLink[] = [
   { href: '/briefings', label: 'Briefings', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/ember', label: 'EMBER', className: 'text-amber-400 hover:text-amber-300' },
-  { href: '/forge', label: 'Forge', className: 'text-orange-400 hover:text-orange-300', external: true },
 ]
 
 function NavLinkItem({
