@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useStrategyChart } from '../../hooks/useStrategyChart';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
+import { parseLegs, normalizeLegs } from '../../lib/legs';
 
 /* ─── Strategy code mapping (matches the spec) ──────────────────── */
 
@@ -8,6 +9,9 @@ const STRATEGY_CODE = {
   iron_butterfly: 'IB',
   double_calendar: 'DC',
   double_diagonal: 'DD',
+  iron_condor: 'IC',
+  double_diagonal_credit: 'CDD',
+  long_butterfly: 'LB',
 };
 
 const CREDIT_STRATEGIES = new Set(['iron_butterfly', 'iron_condor']);
@@ -38,39 +42,9 @@ function strikeColor(side) {
   return side === 'long' ? '#34d399' : '#fb7185';
 }
 
-/* ─── Leg parsing — normalize legs JSON into { longPut, ... } ────── */
-
-function parseLegs(legs) {
-  if (!Array.isArray(legs)) return null;
-  const out = { longPut: null, shortPut: null, shortCall: null, longCall: null };
-  for (const lg of legs) {
-    const k = (lg.side === 'long' ? 'long' : 'short') + (lg.type === 'call' ? 'Call' : 'Put');
-    out[k] = Number(lg.strike);
-  }
-  if ([out.longPut, out.shortPut, out.shortCall, out.longCall].some(v => v == null)) {
-    return null;
-  }
-  return out;
-}
-
-function legsForLabel(legs) {
-  if (!Array.isArray(legs)) return [];
-  const order = ['longPut', 'shortPut', 'shortCall', 'longCall'];
-  const m = parseLegs(legs);
-  if (!m) return [];
-  return order.map(k => {
-    const isLong = k.startsWith('long');
-    const isCall = k.endsWith('Call');
-    const isPut = !isCall;
-    return {
-      side: isLong ? 'long' : 'short',
-      type: isCall ? 'call' : 'put',
-      strike: m[k],
-      glyph: isLong ? '+' : '−',
-      letter: isPut ? 'P' : 'C',
-    };
-  });
-}
+/* ─── Leg parsing lives in lib/legs.js (parseLegs / normalizeLegs) so it can
+   be unit-tested and shared. parseLegs handles both the put/call topology
+   (IC/IB/DC/DD) and RIVER's single-type long butterfly. ─────────────────── */
 
 /* ─── Derive position-level metrics from raw position + payoff ───── */
 
@@ -79,6 +53,10 @@ function deriveDisplay({ position, payoff, spot, candles, ticker }) {
 
   const legsMap = parseLegs(position.legs);
   if (!legsMap) return null;
+  // True distinct legs (correct option type + quantity) for the leg chips —
+  // the geometry slot map above can't represent a single-type butterfly's
+  // doubled body, so chips read from this instead.
+  const legsList = normalizeLegs(position.legs);
 
   const strategy = position.strategy;
   const strategyCode = STRATEGY_CODE[strategy] || strategy.toUpperCase();
@@ -129,6 +107,7 @@ function deriveDisplay({ position, payoff, spot, candles, ticker }) {
     exp,
     status: position.status || 'OPEN',
     legs: legsMap,
+    legsList,
     contracts,
     creditPerContract: isCredit ? entryPerShare : -entryPerShare,
     netCredit,
@@ -218,13 +197,8 @@ function OpenPill() {
   );
 }
 
-function SummaryLegChips({ legs }) {
-  const items = [
-    { side: 'long',  type: 'P', strike: legs.longPut },
-    { side: 'short', type: 'P', strike: legs.shortPut },
-    { side: 'short', type: 'C', strike: legs.shortCall },
-    { side: 'long',  type: 'C', strike: legs.longCall },
-  ];
+function SummaryLegChips({ legsList }) {
+  const items = Array.isArray(legsList) ? legsList : [];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       {items.map((l, i) => {
@@ -233,6 +207,8 @@ function SummaryLegChips({ legs }) {
         const color = isLong ? '#34d399' : '#fb7185';
         const bg    = isLong ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)';
         const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
+        const qty   = l.qty > 1 ? `${l.qty}×` : '';
+        const letter = l.type === 'call' ? 'C' : 'P';
         return (
           <span
             key={i}
@@ -244,7 +220,7 @@ function SummaryLegChips({ legs }) {
               boxShadow: `inset 0 0 0 1px ${ring}`,
             }}
           >
-            {isLong ? '+' : '−'}${l.strike}{l.type}
+            {qty}{isLong ? '+' : '−'}${l.strike}{letter}
           </span>
         );
       })}
@@ -303,7 +279,7 @@ function StrategySummaryStrip({ d }) {
       >
         <ZoneLabel>Position</ZoneLabel>
         <div style={{ marginTop: 6 }}>
-          <SummaryLegChips legs={d.legs} />
+          <SummaryLegChips legsList={d.legsList} />
         </div>
         <div
           style={{
