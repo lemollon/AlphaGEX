@@ -48,3 +48,33 @@ def test_short_history_keeps_undefined_signals_off():
     sigs = compute_signals(df)
     assert sigs["ts_flattening"]["active"] is False
     assert sigs["exhaustion"]["active"] is False
+
+from core.vol_regime_advisor import build_recommendation, compute_report
+
+def _sigs(active):
+    base = {k: {"active": False, "value": 0.0, "confidence": "low", "blurb": ""}
+            for k in ("backwardation","ts_flattening","exhaustion","double_floor","divergence")}
+    for k in active: base[k]["active"] = True
+    return base
+
+def test_backwardation_takes_precedence_as_bounce():
+    rec = build_recommendation(_sigs(["backwardation", "exhaustion"]))
+    assert rec["stance"] == "buy_the_bounce"
+
+def test_flattening_leans_puts():
+    rec = build_recommendation(_sigs(["ts_flattening"]))
+    assert rec["stance"] == "lean_puts"
+
+def test_neutral_when_nothing_active():
+    rec = build_recommendation(_sigs([]))
+    assert rec["stance"] == "neutral"
+
+def test_report_has_required_keys():
+    rep = compute_report(_sigs(["exhaustion"]),
+                         curve={"vix":30,"vvix":110,"vix9d":28,"vix3m":26,"vix6m":25},
+                         evidence={"signals":{"exhaustion":{"hit_rate":0.6,"timing_median":5,
+                            "timing_p25":3,"timing_p75":8,"suggested_dte":13,"timing_cdf":[0.1]*21,
+                            "fwd_spy_5":0.009,"fwd_vix_5":-0.07,"n":91}}})
+    for k in ("regime_label","recommendation","outlook","timing","signals","inputs"):
+        assert k in rep
+    assert rep["timing"]["suggested_dte"] == 13

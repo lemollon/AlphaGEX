@@ -74,3 +74,73 @@ def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
               "confidence": SIGNAL_CONFIDENCE[key], "blurb": SIGNAL_BLURB[key]}
         for key in raw
     }
+
+
+def build_recommendation(signals: Dict[str, dict]) -> dict:
+    """Deterministic precedence -> stance + conviction + rationale."""
+    def on(k): return signals[k]["active"]
+    if on("backwardation"):
+        return {"stance": "buy_the_bounce", "conviction": "high",
+                "rationale": "Backwardation: spike is present but historically fades (VIX -8%/5d) "
+                             "and SPY recovers (+0.9%/5d). Stress is real — size carefully."}
+    if on("exhaustion"):
+        return {"stance": "buy_the_bounce", "conviction": "medium",
+                "rationale": "Exhaustion: VIX high but VVIX won't confirm — vol fades, SPY bounces."}
+    if on("ts_flattening"):
+        return {"stance": "lean_puts", "conviction": "medium",
+                "rationale": "Term structure flattening — rising-vol warning; favor downside/puts."}
+    if on("double_floor"):
+        return {"stance": "neutral", "conviction": "low",
+                "rationale": "Floor/complacent — vol is cheap and drifts up slowly; favor owning optionality."}
+    return {"stance": "neutral", "conviction": "low",
+            "rationale": "No high-confidence signal active."}
+
+def _regime_label(signals: Dict[str, dict]) -> str:
+    if signals["backwardation"]["active"]: return "backwardation_stressed"
+    if signals["exhaustion"]["active"]: return "exhaustion"
+    if signals["double_floor"]["active"]: return "floor_complacent"
+    if signals["ts_flattening"]["active"]: return "contango_flattening"
+    return "contango_calm"
+
+def _primary_signal(signals: Dict[str, dict]) -> Optional[str]:
+    for k in ("backwardation", "exhaustion", "ts_flattening", "double_floor"):
+        if signals[k]["active"]: return k
+    return None
+
+def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dict:
+    rec = build_recommendation(signals)
+    primary = _primary_signal(signals)
+    ev_sig = (evidence.get("signals", {}) or {}).get(primary, {}) if primary else {}
+    timing = {
+        "primary_signal": primary,
+        "median_days": ev_sig.get("timing_median"),
+        "p25_days": ev_sig.get("timing_p25"),
+        "p75_days": ev_sig.get("timing_p75"),
+        "suggested_dte": ev_sig.get("suggested_dte"),
+        "cdf": ev_sig.get("timing_cdf"),
+        "structure_note": _structure_note(rec["stance"], curve.get("vix")),
+    }
+    outlook = {
+        "fwd_spy_5_pct": ev_sig.get("fwd_spy_5"),
+        "fwd_vix_5_pct": ev_sig.get("fwd_vix_5"),
+        "hit_rate": ev_sig.get("hit_rate"),
+        "sample_n": ev_sig.get("n"),
+    }
+    # attach per-signal hit_rate for the signals panel
+    for k, s in signals.items():
+        s["hit_rate"] = (evidence.get("signals", {}) or {}).get(k, {}).get("hit_rate")
+    return {
+        "regime_label": _regime_label(signals),
+        "recommendation": rec,
+        "outlook": outlook,
+        "timing": timing,
+        "signals": signals,
+        "inputs": curve,
+    }
+
+def _structure_note(stance: str, vix: Optional[float]) -> str:
+    if stance in ("buy_the_bounce", "lean_calls") and vix and vix >= 22:
+        return "VIX is elevated — long single calls face IV crush; a call debit spread or shorter DTE fits better."
+    if stance == "lean_puts" and vix and vix < 16:
+        return "VIX is low — long puts are relatively cheap; single long puts are reasonable."
+    return "Standard long premium is reasonable in this IV regime; mind theta near the suggested DTE."
