@@ -12,19 +12,29 @@ class ExitDecision:
 
 
 def pt_pct_for_time_of_day(now_ct_time: time) -> float:
-    """BREEZE-only profit-target ladder.
+    """Single-expiration butterfly profit-target ladder (BREEZE + RIVER).
 
-    MORNING (open-11:00 CT) -> 0.30
-    MIDDAY  (11:00-13:00 CT) -> 0.40
-    AFTERNOON (13:00+)        -> 0.50
+    DECREASING — take profit EASIER as expiration approaches, because gamma
+    risk grows toward end-of-day and a green 0DTE fly can give it all back in
+    minutes. Anchored at 30% in the morning, eased through the day:
 
-    Ported from IronForge SPARK fix-2.
+      MORNING (open-11:00 CT) -> 0.30
+      MIDDAY  (11:00-13:00 CT) -> 0.25
+      AFTERNOON (13:00+)        -> 0.20
+
+    Returns a fraction of MAX PROFIT (credit for the iron fly, wing-minus-debit
+    for the long fly). Both BREEZE (iron_butterfly) and RIVER (long_butterfly)
+    re-derive their PT from this ladder each scan in scanner.py.
+
+    History: was an INCREASING ladder (0.30/0.40/0.50) ported from IronForge
+    SPARK fix-2, which raised the bar intraday and skipped a +36.6% BREEZE peak
+    on 2026-05-29. Flipped to decreasing per operator decision the same day.
     """
     if now_ct_time < time(11, 0):
         return 0.30
     if now_ct_time < time(13, 0):
-        return 0.40
-    return 0.50
+        return 0.25
+    return 0.20
 
 
 def pt_pct_for_iron_condor_tod(now_ct_time: time) -> float:

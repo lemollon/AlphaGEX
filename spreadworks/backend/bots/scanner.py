@@ -279,8 +279,14 @@ def run_scan_cycle(
                 except (KeyError, IndexError):
                     pt_override = False
             if not pt_override:
-                if pos["strategy"] == "iron_butterfly":
-                    # Re-derive PT target each scan using the time-of-day ladder.
+                if pos["strategy"] in ("iron_butterfly", "long_butterfly"):
+                    # Single-expiration butterflies (BREEZE iron fly, RIVER long
+                    # fly) re-derive PT each scan from the DECREASING time-of-day
+                    # ladder × max_profit. RIVER was previously NOT re-derived, so
+                    # it sat at a static 30%-of-max-profit target that a 0DTE
+                    # debit fly only reaches at pin near expiry — unreachable
+                    # intraday (2026-05-29: peaked 23.4% of max profit, never
+                    # filled). The ladder makes the target reachable late-day.
                     new_pt_pct = pt_pct_for_time_of_day(now_ct.timetz().replace(tzinfo=None))
                     pt_target = new_pt_pct * float(pos["max_profit"])
                 elif pos["strategy"] == "iron_condor":

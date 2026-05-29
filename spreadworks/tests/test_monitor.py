@@ -87,7 +87,12 @@ def test_event_blackout_closes():
 
 
 def test_pt_ladder_morning_midday_afternoon():
-    # MORNING -> 0.30, MIDDAY -> 0.40, AFTERNOON -> 0.50
+    # DECREASING ladder: take profit easier as expiry approaches.
+    # MORNING -> 0.30, MIDDAY -> 0.25, AFTERNOON -> 0.20
     assert pt_pct_for_time_of_day(time(9, 0)) == 0.30
-    assert pt_pct_for_time_of_day(time(11, 30)) == 0.40
-    assert pt_pct_for_time_of_day(time(13, 30)) == 0.50
+    assert pt_pct_for_time_of_day(time(11, 30)) == 0.25
+    assert pt_pct_for_time_of_day(time(13, 30)) == 0.20
+    # Monotonically non-increasing through the day.
+    assert (pt_pct_for_time_of_day(time(9, 0))
+            >= pt_pct_for_time_of_day(time(11, 30))
+            >= pt_pct_for_time_of_day(time(13, 30)))

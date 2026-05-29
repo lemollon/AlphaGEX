@@ -148,6 +148,53 @@ def test_existing_open_position_monitors_instead_of_opens(db_session, fake_chain
     assert res["outcome"] == "MONITOR"
 
 
+def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
+    """RIVER (long_butterfly) must re-derive PT from the DECREASING time-of-day
+    ladder, not sit at the static 30%-of-max-profit target it was opened with.
+
+    A gain of +$100 = 22.2% of the $450 max profit is below the 30% morning bar
+    ($135) but above the 20% afternoon tier ($90). Pre-fix (no re-derivation for
+    long_butterfly) it would never close; post-fix it closes in the afternoon.
+    """
+    from backend.bots.strategies.long_butterfly import build_long_butterfly_signal
+    from backend.bots.executor import open_position
+    engine = db_session.bind
+    _enable_bot(engine, "river")
+    sig = build_long_butterfly_signal(
+        chain=fake_chain_0dte,
+        config={"max_contracts": 2, "bp_pct": 0.10, "sd_mult": 1.0,
+                "pt_pct": 0.30, "sl_pct": 0.50, "use_gex_walls": False,
+                "starting_capital": 10000},
+        equity=10000.0,
+    )
+    assert sig is not None
+    # debit 0.75, 2 contracts, max_profit total = 225 * 2 = 450, stored PT = 135.
+    open_position(engine, "river", "long_butterfly", sig,
+                  datetime(2026, 5, 20, 9, 0, tzinfo=CT))
+
+    # Drive the fly's current value to 1.25 -> pnl = (1.25 - 0.75) * 2 * 100 = +$100.
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    provider.leg_mid_overrides = [1.25, 0.0, 0.0, 0.0]
+
+    # MORNING: 30% tier ($135) not met -> still just monitoring.
+    res_am = run_scan_cycle(engine=engine, bot="river",
+                            now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
+                            chain_provider=provider, event_blackout=False)
+    assert res_am["outcome"] == "MONITOR"
+
+    # AFTERNOON: 20% tier ($90) met -> take profit.
+    res_pm = run_scan_cycle(engine=engine, bot="river",
+                            now_ct=datetime(2026, 5, 20, 13, 30, tzinfo=CT),
+                            chain_provider=provider, event_blackout=False)
+    assert res_pm["outcome"] == "TRADE"
+    assert res_pm["reason"] == "CLOSE_PT"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM river_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 0
+
+
 def test_scan_activity_row_written(db_session, fake_chain_0dte):
     engine = db_session.bind
     _enable_bot(engine, "breeze")
