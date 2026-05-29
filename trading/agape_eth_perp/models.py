@@ -91,6 +91,16 @@ class AgapeEthPerpConfig:
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
+    # Mean-reversion entry gate (validated 2026-05-29). ETH's edge is FADING
+    # extension, not chasing it: out-of-sample, momentum-gating loses at every
+    # MA lookback while counter-trend (long when price<=MA, short when price>=MA)
+    # is positive in-sample at all lookbacks and OOS at 3/6/12/24h (best 24h:
+    # train +$5,659 / test +$4,761 vs ungated test -$4,012). Exit tuning was
+    # proven unable to fix ETH; this is the entry-side fix. Default off; enable
+    # via autonomous_config key agape_eth_perp_mean_reversion_gate=true.
+    mean_reversion_gate: bool = False
+    mr_ma_hours: int = 24
+
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
     # Optional per-regime profile overrides; stored as JSON strings in

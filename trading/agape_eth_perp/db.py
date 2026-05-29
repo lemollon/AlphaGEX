@@ -59,6 +59,29 @@ class AgapeEthPerpDatabase:
             cursor.close()
             conn.close()
 
+    def trailing_avg_price(self, hours: int):
+        """Mean eth_price over the trailing `hours` window from scan_activity.
+        Used by the mean-reversion entry gate. Returns None if no data."""
+        conn = self._get_conn()
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT AVG(eth_price) FROM agape_eth_perp_scan_activity "
+                "WHERE eth_price IS NOT NULL AND eth_price > 0 "
+                "AND timestamp >= NOW() - make_interval(hours => %s)",
+                (int(hours),),
+            )
+            row = cursor.fetchone()
+            return float(row[0]) if row and row[0] is not None else None
+        except Exception as e:
+            logger.error(f"AGAPE-ETH-PERP DB: trailing_avg_price failed: {e}")
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
     def _ensure_tables(self):
         conn = self._get_conn()
         if not conn:

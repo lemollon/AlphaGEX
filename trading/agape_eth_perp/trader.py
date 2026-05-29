@@ -149,6 +149,13 @@ class AgapeEthPerpTrader:
                 result["outcome"] = f"NO_SIGNAL_{signal.reasoning if signal else 'NONE'}"
                 self._log_scan(result, scan_ctx, signal=signal)
                 return result
+            # Mean-reversion entry gate: fade extension, don't chase it (validated 2026-05-29).
+            if getattr(self.config, "mean_reversion_gate", False):
+                allowed, mr_reason = self._mean_reversion_gate_check(signal)
+                if not allowed:
+                    result["outcome"] = mr_reason
+                    self._log_scan(result, scan_ctx, signal=signal)
+                    return result
             position = self.executor.execute_trade(signal)
             if position:
                 # Stamp entry-time regime so the exit path can choose its profile.
@@ -235,6 +242,27 @@ class AgapeEthPerpTrader:
             except Exception as e:
                 logger.error(f"AGAPE-ETH-PERP: Position mgmt error: {e}")
         return (len(open_positions), closed)
+
+    def _mean_reversion_gate_check(self, signal):
+        """Counter-trend (mean-reversion) entry gate. Validated 2026-05-29:
+        ETH is mean-reverting on 3-24h horizons — fading extension is profitable
+        out-of-sample while chasing it loses at every lookback. Allow LONG only
+        when price is at/below the trailing MA (buy the dip); SHORT only when
+        price is at/above it (fade the rally). Suppresses the momentum-chasing
+        entries that bled. Fail-OPEN (allow) when MA history is unavailable.
+
+        Returns (allowed: bool, reason: str).
+        """
+        hours = getattr(self.config, "mr_ma_hours", 24)
+        ma = self.db.trailing_avg_price(hours)
+        price = signal.entry_price or signal.spot_price
+        if ma is None or not price:
+            return True, ""
+        if signal.side == "long" and price > ma:
+            return False, f"MR_GATE_LONG_ABOVE_MA{hours}H"
+        if signal.side == "short" and price < ma:
+            return False, f"MR_GATE_SHORT_BELOW_MA{hours}H"
+        return True, ""
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
         if getattr(self.config, "use_regime_aware_exits", False):
