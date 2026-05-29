@@ -30,13 +30,40 @@ export async function GET(
          WHERE is_active = TRUE ${dteFilter} ${accountTypeFilter}
          LIMIT 1`,
       ),
+      // Combine all in-scope account streams into ONE curve. Each
+      // (person, account_type) writes its own snapshot row every ~1-min cycle a
+      // few ms apart, so a raw ORDER BY snapshot_time interleaves them. Under
+      // "All Accounts" SPARK's $19.5K production stream and $94K sandbox stream
+      // alternated minute-by-minute, and the comparison chart — which rebases
+      // the whole series to a single baseline (the first snapshot's equity) —
+      // rendered every production point as a ~-80% plunge, producing the solid
+      // blue "wall" down to the axis floor. Bucket to the minute, keep the last
+      // snapshot per stream in each bucket (guards against a double-fired cycle),
+      // then SUM across streams for a combined-portfolio equity per minute.
+      // Single-stream scopes (the per-bot dashboard, which always pins
+      // account_type) return one row per minute — same curve as before.
       dbQuery(
-        `SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
-               open_positions, note
-         FROM ${botTable(bot, 'equity_snapshots')}
-         WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
-           ${dteFilter} ${personFilter} ${accountTypeFilter}
-         ORDER BY snapshot_time ASC`,
+        `SELECT bucket AS snapshot_time,
+                SUM(balance) AS balance,
+                SUM(realized_pnl) AS realized_pnl,
+                SUM(unrealized_pnl) AS unrealized_pnl,
+                SUM(open_positions) AS open_positions,
+                MAX(note) AS note
+         FROM (
+           SELECT date_trunc('minute', snapshot_time) AS bucket,
+                  balance, realized_pnl, unrealized_pnl, open_positions, note,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY date_trunc('minute', snapshot_time),
+                                 person, COALESCE(account_type, 'sandbox')
+                    ORDER BY snapshot_time DESC
+                  ) AS rn
+           FROM ${botTable(bot, 'equity_snapshots')}
+           WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+             ${dteFilter} ${personFilter} ${accountTypeFilter}
+         ) s
+         WHERE rn = 1
+         GROUP BY bucket
+         ORDER BY bucket ASC`,
       ),
       dbQuery(
         `SELECT position_id, ticker, expiration,
