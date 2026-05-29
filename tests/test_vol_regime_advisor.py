@@ -78,3 +78,17 @@ def test_report_has_required_keys():
     for k in ("regime_label","recommendation","outlook","timing","signals","inputs"):
         assert k in rep
     assert rep["timing"]["suggested_dte"] == 13
+
+import core.vol_regime_advisor as adv
+
+def test_get_regime_report_uses_injected_history(monkeypatch):
+    import pandas as pd
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    hist = pd.DataFrame({"vix":15.0,"vvix":90.0,"vix3m":18.0,"vix9d":13.0}, index=idx)
+    hist.iloc[-1, hist.columns.get_loc("vix")] = 26.0
+    hist.iloc[-1, hist.columns.get_loc("vix3m")] = 20.0
+    monkeypatch.setattr(adv, "fetch_cboe_history", lambda: hist)
+    monkeypatch.setattr(adv, "_live_curve", lambda: {"vix":26.0,"vvix":110.0,"vix9d":24.0,"vix3m":20.0,"vix6m":19.0})
+    rep = adv.get_regime_report()
+    assert rep["regime_label"] == "backwardation_stressed"
+    assert rep["recommendation"]["stance"] == "buy_the_bounce"

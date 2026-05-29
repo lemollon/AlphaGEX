@@ -24,6 +24,7 @@ def _num(x) -> float:
     return 0.0 if math.isnan(f) else f
 
 CBOE_HISTORY_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/{sym}_History.csv"
+CBOE_QUOTE_URL = "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_{sym}.json"
 EVIDENCE_PATH = os.path.join(os.path.dirname(__file__), "..", "backtest",
                              "vvix_vix_analysis", "evidence.json")
 
@@ -144,3 +145,80 @@ def _structure_note(stance: str, vix: Optional[float]) -> str:
     if stance == "lean_puts" and vix and vix < 16:
         return "VIX is low — long puts are relatively cheap; single long puts are reasonable."
     return "Standard long premium is reasonable in this IV regime; mind theta near the suggested DTE."
+
+
+import logging
+logger = logging.getLogger(__name__)
+_HISTORY_CACHE = {"date": None, "df": None}
+
+def _read_cboe_csv(sym: str, col: str) -> pd.Series:
+    import io
+    txt = requests.get(CBOE_HISTORY_URL.format(sym=sym), timeout=10).text
+    df = pd.read_csv(io.StringIO(txt))
+    df.columns = [c.strip().upper() for c in df.columns]
+    d = df.columns[0]
+    df[d] = pd.to_datetime(df[d])
+    return df[[d, df.columns[-1]]].rename(columns={d: "date", df.columns[-1]: col}).set_index("date")[col]
+
+def fetch_cboe_history() -> pd.DataFrame:
+    """Daily VIX/VVIX/VIX3M/VIX9D history from CBOE, cached once per UTC date in-process."""
+    today = pd.Timestamp.utcnow().normalize()
+    if _HISTORY_CACHE["date"] == today and _HISTORY_CACHE["df"] is not None:
+        return _HISTORY_CACHE["df"]
+    df = pd.concat([
+        _read_cboe_csv("VIX", "vix"), _read_cboe_csv("VVIX", "vvix"),
+        _read_cboe_csv("VIX3M", "vix3m"), _read_cboe_csv("VIX9D", "vix9d"),
+    ], axis=1).dropna(subset=["vix", "vvix"])
+    _HISTORY_CACHE.update(date=today, df=df)
+    return df
+
+def _cboe_quote(sym: str) -> Optional[float]:
+    """Latest value for a CBOE index from the delayed-quotes CDN (~15-min)."""
+    try:
+        data = (requests.get(CBOE_QUOTE_URL.format(sym=sym), timeout=8).json() or {}).get("data", {})
+        for k in ("current_price", "price", "last", "close"):
+            v = data.get(k)
+            if v is not None and float(v) > 0:
+                return float(v)
+    except Exception as e:
+        logger.debug(f"CBOE quote {sym} failed: {e}")
+    return None
+
+def _live_curve() -> dict:
+    """Live curve: VIX/VVIX from origin/main's vix_fetcher; 9D/3M/6M from CBOE delayed quotes."""
+    from data.vix_fetcher import get_vix_with_source, get_vvix_with_source
+    vix, _ = get_vix_with_source()
+    vvix, _ = get_vvix_with_source()
+    return {"vix": vix, "vvix": vvix,
+            "vix9d": _cboe_quote("VIX9D"), "vix3m": _cboe_quote("VIX3M"), "vix6m": _cboe_quote("VIX6M")}
+
+def _load_evidence() -> dict:
+    try:
+        with open(os.path.normpath(EVIDENCE_PATH)) as f:
+            return json.load(f)
+    except Exception as e:
+        logger.warning(f"evidence.json unavailable: {e}")
+        return {"signals": {}}
+
+def get_regime_report() -> dict:
+    """Live report. Never raises; degrades to neutral if data is missing."""
+    try:
+        hist = fetch_cboe_history()
+        curve = _live_curve()
+        # ensure today's live curve is the last row so signals reflect intraday-latest
+        last = hist.iloc[-1].copy()
+        for c in ("vix", "vvix", "vix3m", "vix9d"):
+            v = curve.get(c if c != "vix9d" else "vix9d")
+            if v: last[c] = v
+        hist = pd.concat([hist.iloc[:-1], pd.DataFrame([last], index=[hist.index[-1]])])
+        signals = compute_signals(hist)
+        rep = compute_report(signals, curve, _load_evidence())
+        rep["as_of"] = str(hist.index[-1].date())
+        rep["ok"] = True
+        return rep
+    except Exception as e:
+        logger.error(f"get_regime_report failed: {e}")
+        return {"ok": False, "regime_label": "unknown",
+                "recommendation": {"stance": "neutral", "conviction": "low",
+                                   "rationale": "Volatility data temporarily unavailable."},
+                "outlook": {}, "timing": {}, "signals": {}, "inputs": {}}
