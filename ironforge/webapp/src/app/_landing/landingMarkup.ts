@@ -276,7 +276,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
 </div>
 <section class="bots-sheet">
   <div class="bots-grid">
-    <div class="bot-art" style="--c:#5b8fd9">
+    <a href="/spark" class="bot-art" style="--c:#5b8fd9">
       <div class="b-meta"><span>FIG. 02-A · <em>SPARK</em></span><span>1 DTE · <b style="color:#5b8fd9">MODERATE</b></span></div>
       <div class="b-name">Spark</div>
       <div class="b-tag">STRUCTURED INCOME · START HERE</div>
@@ -305,8 +305,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>STOP</span><b>-200%</b></div>
         <div class="row"><span>FREQ</span><b>DAILY</b></div>
       </div>
-    </div>
-    <div class="bot-art" style="--c:#f5a623">
+    </a>
+    <a href="/flame" class="bot-art" style="--c:#f5a623">
       <div class="b-meta"><span>FIG. 02-B · <em>FLAME</em></span><span>2 DTE · <b style="color:#f5a623">MODERATE</b></span></div>
       <div class="b-name">Flame</div>
       <div class="b-tag">PREMIUM SELLING · TACTICAL</div>
@@ -331,8 +331,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>STOP</span><b>STRIKE</b></div>
         <div class="row"><span>FREQ</span><b>1–2/DAY</b></div>
       </div>
-    </div>
-    <div class="bot-art" style="--c:#e74c3c">
+    </a>
+    <a href="/inferno" class="bot-art" style="--c:#e74c3c">
       <div class="b-meta"><span>FIG. 02-C · <em>INFERNO</em></span><span>0 DTE · <b style="color:#e74c3c">HIGH</b></span></div>
       <div class="b-name">Inferno</div>
       <div class="b-tag">INTRADAY VOLATILITY · EXPERIENCED</div>
@@ -357,8 +357,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>STOP</span><b>-100%</b></div>
         <div class="row"><span>FREQ</span><b>MULTI/DAY</b></div>
       </div>
-    </div>
-    <div class="bot-art" style="--c:#d4a017">
+    </a>
+    <a href="/flare" class="bot-art" style="--c:#d4a017">
       <div class="b-meta"><span>FIG. 02-D · <em>FLARE</em></span><span>0 DTE · <b style="color:#d4a017">HIGH</b></span></div>
       <div class="b-name">Flare</div>
       <div class="b-tag">DIRECTIONAL · DEFINED-RISK DEBIT</div>
@@ -382,8 +382,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>STOP</span><b>-50%</b></div>
         <div class="row"><span>FREQ</span><b>1–3/DAY</b></div>
       </div>
-    </div>
-    <div class="bot-art" style="--c:#4a90e2">
+    </a>
+    <a href="/blaze" class="bot-art" style="--c:#4a90e2">
       <div class="b-meta"><span>FIG. 02-E · <em>BLAZE</em></span><span>1 DTE · <b style="color:#4a90e2">MODERATE+</b></span></div>
       <div class="b-name">Blaze</div>
       <div class="b-tag">OVERNIGHT DIRECTIONAL · DEBIT</div>
@@ -407,7 +407,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>STOP</span><b>-50%</b></div>
         <div class="row"><span>FREQ</span><b>1–2/DAY</b></div>
       </div>
-    </div>
+    </a>
   </div>
 </section>
     </div>
