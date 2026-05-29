@@ -208,7 +208,7 @@ def get_regime_report() -> dict:
         # ensure today's live curve is the last row so signals reflect intraday-latest
         last = hist.iloc[-1].copy()
         for c in ("vix", "vvix", "vix3m", "vix9d"):
-            v = curve.get(c if c != "vix9d" else "vix9d")
+            v = curve.get(c)
             if v: last[c] = v
         hist = pd.concat([hist.iloc[:-1], pd.DataFrame([last], index=[hist.index[-1]])])
         signals = compute_signals(hist)
