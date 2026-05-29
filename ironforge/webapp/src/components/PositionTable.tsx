@@ -361,10 +361,12 @@ function PositionCard({
             <div>
               <p className="text-xs text-forge-muted">Entry Debit</p>
               <p className="font-mono text-red-300">${pos.debit.toFixed(2)}</p>
+              <p className="text-[10px] text-forge-muted">${Math.round(pos.debit * 100).toLocaleString()} / contract</p>
             </div>
             <div>
-              <p className="text-xs text-forge-muted">Capital at Risk</p>
+              <p className="text-xs text-forge-muted">Total Cost</p>
               <p className="font-mono">${Math.round(pos.debit * pos.contracts * 100).toLocaleString()}</p>
+              <p className="text-[10px] text-forge-muted">${Math.round(pos.debit * 100).toLocaleString()} × {pos.contracts}</p>
             </div>
           </>
         ) : (
@@ -372,10 +374,14 @@ function PositionCard({
             <div>
               <p className="text-xs text-forge-muted">Entry Credit</p>
               <p className="font-mono text-emerald-400">${pos.total_credit.toFixed(2)}</p>
+              <p className="text-[10px] text-forge-muted">${Math.round(pos.total_credit * 100).toLocaleString()} / contract</p>
             </div>
             <div>
-              <p className="text-xs text-forge-muted">Collateral</p>
-              <p className="font-mono">${pos.collateral_required.toFixed(0)}</p>
+              <p className="text-xs text-forge-muted">Collateral (Cost)</p>
+              <p className="font-mono">${Math.round(pos.collateral_required).toLocaleString()}</p>
+              <p className="text-[10px] text-forge-muted">
+                ${pos.contracts > 0 ? Math.round(pos.collateral_required / pos.contracts).toLocaleString() : '0'} / contract × {pos.contracts}
+              </p>
             </div>
           </>
         )}
@@ -612,12 +618,17 @@ function ClosedTradeCard({ trade, bot }: { trade: ClosedTrade; bot: string }) {
         </div>
         <div>
           <p className="text-xs text-forge-muted">
-            {trade.direction && (trade.debit ?? 0) > 0 ? 'Capital at Risk' : 'Collateral'}
+            {trade.direction && (trade.debit ?? 0) > 0 ? 'Total Cost' : 'Collateral (Cost)'}
           </p>
           <p className="font-mono">
             ${trade.direction && (trade.debit ?? 0) > 0
               ? Math.round((trade.debit ?? 0) * trade.contracts * 100).toLocaleString()
-              : trade.collateral_required.toFixed(0)}
+              : Math.round(trade.collateral_required).toLocaleString()}
+          </p>
+          <p className="text-[10px] text-forge-muted">
+            {trade.direction && (trade.debit ?? 0) > 0
+              ? `$${Math.round((trade.debit ?? 0) * 100).toLocaleString()} / contract × ${trade.contracts}`
+              : `$${trade.contracts > 0 ? Math.round(trade.collateral_required / trade.contracts).toLocaleString() : '0'} / contract × ${trade.contracts}`}
           </p>
         </div>
         <div>
