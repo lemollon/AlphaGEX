@@ -368,14 +368,233 @@ function ProgressBar({ pos }: { pos: PositionDetailData }) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Directional (BLAZE/FLARE) — 2-leg vertical debit spread            */
+/* ------------------------------------------------------------------ */
+
+interface DirectionalDetailData {
+  directional: true
+  setup_type: string | null
+  direction: 'call' | 'put'
+  long_strike: number
+  short_strike: number
+  contracts: number
+  spread_width: number
+  debit: number
+  current_value: number | null
+  spy_price: number | null
+  legs: Leg[]
+  paper_pnl: number | null
+  pnl_pct: number | null
+  max_profit: number
+  max_loss: number
+  breakeven: number
+  distance_to_breakeven: number | null
+  needs_direction: 'up' | 'down'
+  pct_of_max_profit: number | null
+  risk_reward: number | null
+  pt_pct: number
+  pt_target_value: number
+  progress: { zero_value: number; debit: number; current: number | null; pt_target: number; max_value: number }
+  accounts: {
+    name: string
+    contracts: number
+    entry_debit_total: number
+    current_value_total: number | null
+    calculated_pnl: number | null
+    tradier_pnl: number | null
+  }[]
+}
+
+/** Value-scale progress bar: 0 (max loss) → spread width (max profit). */
+function DirectionalProgressBar({ d }: { d: DirectionalDetailData }) {
+  const { progress } = d
+  const range = progress.max_value
+  if (range <= 0 || progress.current == null) return null
+  const toPct = (v: number) => Math.max(0, Math.min(100, (v / range) * 100))
+  const debitPct = toPct(progress.debit)
+  const ptPct = toPct(progress.pt_target)
+  const curPct = toPct(progress.current)
+  const curColor = progress.current >= progress.debit ? 'bg-emerald-400' : 'bg-red-400'
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between text-[10px] text-forge-muted font-mono">
+        <span className="text-red-400">$0 max loss</span>
+        <span className="text-gray-400">BE {fmtDollar(progress.debit)}</span>
+        <span className="text-amber-400">PT {fmtDollar(progress.pt_target)}</span>
+        <span className="text-emerald-400">{fmtDollar(progress.max_value)} max</span>
+      </div>
+      <div className="h-3 bg-forge-border rounded-full overflow-hidden relative">
+        {/* Loss zone: 0 → debit (breakeven) */}
+        <div className="absolute inset-y-0 left-0 bg-red-500/20" style={{ width: `${debitPct}%` }} />
+        {/* Gain to PT: debit → pt_target */}
+        <div className="absolute inset-y-0 bg-emerald-500/15" style={{ left: `${debitPct}%`, width: `${Math.max(0, ptPct - debitPct)}%` }} />
+        {/* Beyond PT */}
+        <div className="absolute inset-y-0 bg-emerald-500/25" style={{ left: `${ptPct}%`, width: `${Math.max(0, 100 - ptPct)}%` }} />
+        {/* Breakeven line */}
+        <div className="absolute inset-y-0 w-px bg-gray-500" style={{ left: `${debitPct}%` }} />
+        {/* PT marker */}
+        <div className="absolute inset-y-0 w-px bg-amber-400/70" style={{ left: `${ptPct}%` }} />
+        {/* Current value marker */}
+        <div className={`absolute top-0 h-full w-2 rounded ${curColor}`} style={{ left: `${curPct}%`, transform: 'translateX(-50%)' }} />
+      </div>
+      <div className="text-center">
+        <span className={`text-xs font-mono font-bold ${pnlColor(d.paper_pnl)}`}>
+          Value: {fmtDollar(progress.current)}
+        </span>
+        {d.pct_of_max_profit != null && (
+          <span className="text-[10px] text-forge-muted ml-2">
+            ({d.pct_of_max_profit.toFixed(0)}% of max profit)
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DirectionalAccountsTable({ accounts }: { accounts: DirectionalDetailData['accounts'] }) {
+  if (!accounts.length) return null
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs font-mono">
+        <thead>
+          <tr className="text-forge-muted text-left border-b border-forge-border/50">
+            <th className="py-1.5 pr-3">Account</th>
+            <th className="py-1.5 pr-3 text-right">Contracts</th>
+            <th className="py-1.5 pr-3 text-right">Entry Debit</th>
+            <th className="py-1.5 pr-3 text-right">Current Value</th>
+            <th className="py-1.5 text-right">Calc P&L</th>
+          </tr>
+        </thead>
+        <tbody>
+          {accounts.map((a) => (
+            <tr key={a.name} className="border-b border-forge-border/20">
+              <td className="py-1.5 pr-3 text-gray-300">{a.name}</td>
+              <td className="py-1.5 pr-3 text-right">{a.contracts}x</td>
+              <td className="py-1.5 pr-3 text-right text-red-300">{fmtDollar(a.entry_debit_total)}</td>
+              <td className="py-1.5 pr-3 text-right">{fmtDollar(a.current_value_total)}</td>
+              <td className={`py-1.5 text-right ${pnlColor(a.calculated_pnl)}`}>{fmtDollar(a.calculated_pnl)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function DirectionalDetail({ d }: { d: DirectionalDetailData }) {
+  const dirLabel = d.direction === 'call' ? 'CALL DEBIT' : 'PUT DEBIT'
+  const dirColor = d.direction === 'call' ? 'text-emerald-400' : 'text-red-400'
+  const arrow = d.needs_direction === 'up' ? '↑' : '↓'
+  const dist = d.distance_to_breakeven
+  const beNote = dist == null
+    ? ''
+    : dist > 0
+      ? `needs ${dist.toFixed(2)} ${arrow}`
+      : `past BE ${arrow} (in-the-money side)`
+
+  return (
+    <div className="space-y-3 mt-3 border-t border-forge-border/50 pt-3">
+      {/* Direction badge */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className={`px-2 py-0.5 rounded font-semibold ${dirColor} bg-forge-border/60`}>{dirLabel}</span>
+        <span className="font-mono text-gray-300">
+          {d.long_strike}/{d.short_strike}{d.direction === 'call' ? 'C' : 'P'}
+        </span>
+        <span className="text-forge-muted">×{d.contracts}</span>
+        {d.setup_type && <span className="text-forge-muted">· {d.setup_type}</span>}
+      </div>
+
+      {/* Legs */}
+      <div>
+        <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">Per-Leg Quotes (Live)</p>
+        <LegsTable legs={d.legs} />
+      </div>
+
+      {/* P&L breakdown — debit framing */}
+      <div>
+        <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">P&L Breakdown</p>
+        <div className="bg-forge-card/50 rounded-lg p-3 font-mono text-xs space-y-1">
+          <div className="flex justify-between">
+            <span className="text-forge-muted">Debit Paid (entry):</span>
+            <span className="text-red-300">
+              {fmtDollar(d.debit)}
+              <span className="text-forge-muted ml-1">({fmtDollar(d.debit * 100 * d.contracts)} total)</span>
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-forge-muted">Current Value (to close):</span>
+            <span className="text-gray-200">{d.current_value != null ? fmtDollar(d.current_value) : '--'}</span>
+          </div>
+          <div className="border-t border-forge-border/30 pt-1 flex justify-between font-bold">
+            <span className="text-gray-300">
+              Paper P&L:
+              <span className="text-forge-muted font-normal ml-1">
+                {d.current_value != null ? `((${fmtDollar(d.current_value)} − ${fmtDollar(d.debit)}) × 100 × ${d.contracts})` : ''}
+              </span>
+            </span>
+            <span className={pnlColor(d.paper_pnl)}>
+              {fmtDollar(d.paper_pnl)}
+              {d.pnl_pct != null && <span className="ml-1">({fmtPct(d.pnl_pct)})</span>}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Key metrics */}
+      <div>
+        <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">Key Metrics</p>
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs">
+          {[
+            { label: 'Max Profit', value: fmtDollar(d.max_profit), color: 'text-emerald-400' },
+            { label: 'Max Loss', value: fmtDollar(-d.max_loss), color: 'text-red-400' },
+            { label: 'R/R', value: d.risk_reward != null ? `${d.risk_reward.toFixed(2)}x` : '--', color: 'text-gray-300' },
+            { label: 'Breakeven', value: `$${d.breakeven.toFixed(2)}`, color: 'text-gray-300' },
+            { label: 'SPY', value: d.spy_price != null ? `$${d.spy_price.toFixed(2)}` : '--', color: 'text-white' },
+            { label: '% of Max', value: d.pct_of_max_profit != null ? `${d.pct_of_max_profit.toFixed(0)}%` : '--', color: pnlColor(d.pct_of_max_profit) },
+          ].map((m) => (
+            <div key={m.label} className="text-center">
+              <p className="text-forge-muted text-[10px]">{m.label}</p>
+              <p className={`font-mono font-medium ${m.color}`}>{m.value}</p>
+            </div>
+          ))}
+        </div>
+        {beNote && (
+          <p className="text-[10px] text-forge-muted mt-1.5 text-center font-mono">
+            Breakeven ${d.breakeven.toFixed(2)} vs SPY {d.spy_price != null ? `$${d.spy_price.toFixed(2)}` : '--'} — <span className={dist != null && dist > 0 ? 'text-amber-400' : 'text-emerald-400'}>{beNote}</span>
+          </p>
+        )}
+      </div>
+
+      {/* Progress bar */}
+      <div>
+        <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">Position Progress</p>
+        <DirectionalProgressBar d={d} />
+      </div>
+
+      {/* Per-account P&L */}
+      {d.accounts.length > 0 && (
+        <div>
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider mb-1.5">Per-Account P&L</p>
+          <DirectionalAccountsTable accounts={d.accounts} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
 export default function PositionDetail({
   data,
 }: {
-  data: PositionDetailData
+  data: (PositionDetailData & { directional?: false }) | DirectionalDetailData
 }) {
+  if ('directional' in data && data.directional) {
+    return <DirectionalDetail d={data} />
+  }
   return (
     <div className="space-y-3 mt-3 border-t border-forge-border/50 pt-3">
       {/* Section: Per-Leg Breakdown */}

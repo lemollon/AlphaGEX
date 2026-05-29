@@ -391,7 +391,9 @@ function PositionCard({
       {hasLiveData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm border-t border-forge-border/50 pt-3">
           <div>
-            <p className="text-xs text-forge-muted">Cost to Close</p>
+            <p className="text-xs text-forge-muted">
+              {pos.direction && (pos.debit ?? 0) > 0 ? 'Current Value' : 'Cost to Close'}
+            </p>
             <p className="font-mono">
               {pos.current_cost_to_close != null
                 ? `$${pos.current_cost_to_close.toFixed(4)}`

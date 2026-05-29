@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, isDirectionalBot, directionalThresholds } from '@/lib/db'
 import {
   getIcMarkToMarket,
   isConfigured,
@@ -26,7 +26,7 @@ export async function GET(
   const accountTypeFilter = accountTypeParam ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'` : ''
 
   try {
-    const directionalCols = bot === 'blaze'
+    const directionalCols = isDirectionalBot(bot)
       ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol`
       : ''
 
@@ -65,13 +65,13 @@ export async function GET(
         const collateral = num(r.collateral_required)
         const debit = num(r.debit)
         const contracts = int(r.contracts)
-        // Position-level return: for IC bots use credit-based; for BLAZE use debit-based
-        const returnOnCredit = bot === 'blaze' && debit > 0
+        // Position-level return: IC bots use credit-based; directional (BLAZE/FLARE) use debit-based
+        const returnOnCredit = isDirectionalBot(bot) && debit > 0
           ? Math.round((pnl / (debit * 100 * contracts)) * 10000) / 100
           : credit > 0
             ? Math.round((pnl / (credit * 100 * contracts)) * 10000) / 100
             : 0
-        const capitalAtRisk = bot === 'blaze' && debit > 0
+        const capitalAtRisk = isDirectionalBot(bot) && debit > 0
           ? debit * 100 * contracts
           : collateral
         const returnOnCollateral = capitalAtRisk > 0 ? Math.round((pnl / capitalAtRisk) * 10000) / 100 : 0
@@ -98,7 +98,7 @@ export async function GET(
           close_time: r.close_time || null,
           wings_adjusted: r.wings_adjusted === true || r.wings_adjusted === 'true',
           sandbox_order_ids: r.sandbox_order_id ? (() => { try { return JSON.parse(r.sandbox_order_id) } catch { return null } })() : null,
-          ...(bot === 'blaze' ? {
+          ...(isDirectionalBot(bot) ? {
             setup_type: r.setup_type || null,
             direction: r.direction || null,
             long_strike: num(r.long_strike),
@@ -135,7 +135,7 @@ export async function GET(
     // debit-based thresholds (DEFAULT_BLAZE_CONFIG) and ignores these.
     let icSlMult = 2.0
     let icPtPct = 0.30
-    if (bot !== 'blaze') {
+    if (!isDirectionalBot(bot)) {
       try {
         const cfgScope = accountTypeParam === 'production' ? 'production' : 'sandbox'
         const cfgRows = await dbQuery(
@@ -168,27 +168,29 @@ export async function GET(
         const ticker = r.ticker || 'SPY'
         const expiration = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
 
-        // BLAZE: directional vertical debit spread (long_symbol/short_symbol/debit).
+        // Directional bots (BLAZE/FLARE): vertical debit spread (long_symbol/short_symbol/debit).
         // Use vertical MTM math: value_to_close - entry_debit, capped to spread_width.
-        const isVertical = bot === 'blaze' && r.long_symbol && r.short_symbol
+        const isVertical = isDirectionalBot(bot) && r.long_symbol && r.short_symbol
         const entryDebit = num(r.debit)
         const verticalSpreadWidth = isVertical
           ? Math.abs(num(r.short_strike) - num(r.long_strike))
           : 0
 
-        // BLAZE PT/SL must match DEFAULT_BLAZE_CONFIG in lib/blaze/types.ts —
-        // these were drifted to 50%/50% before, but the actual exit code
-        // (lib/blaze/exit.ts) fires at +20% / −30%. The mismatch made the
-        // dashboard show PT $1.08 when the bot was actually exiting at $0.864
-        // ("PT trigger not fast enough" perception bug).
+        // Directional PT/SL must match DEFAULT_*_CONFIG: value rises to PT
+        // (debit × (1 + pt%)), falls to SL (debit × (1 − sl%)). The thresholds
+        // differ per bot — BLAZE SL=30% → debit × 0.70, but FLARE SL=100% →
+        // debit × 0 (let it ride to zero). Hardcoding BLAZE's 0.70 for FLARE
+        // showed a stop the scanner never fires. The actual exit code lives in
+        // lib/{blaze,flare}/exit.ts (+pt% / −sl%).
         // IC PT triggers when cost-to-close drops to (1 - pt_pct) × credit.
         // SPARK pt=0.30 → 0.70 × credit (30% profit captured); INFERNO
         // pt=1.0 (HOLD_TO_EOD) → 0 (only triggers at full max profit).
+        const dirThresh = directionalThresholds(bot)
         const profitTargetPrice = isVertical
-          ? Math.round(entryDebit * 1.20 * 10000) / 10000  // BLAZE PT +20% → debit × 1.20
+          ? Math.round(entryDebit * (1 + dirThresh.ptPct / 100) * 10000) / 10000
           : Math.round(entryCredit * (1 - icPtPct) * 10000) / 10000
         const stopLossPrice = isVertical
-          ? Math.round(entryDebit * 0.70 * 10000) / 10000  // BLAZE SL −30% → debit × 0.70
+          ? Math.round(entryDebit * (1 - dirThresh.slPct / 100) * 10000) / 10000
           : Math.round(entryCredit * icSlMult * 10000) / 10000
 
         let mtm: number | null = null

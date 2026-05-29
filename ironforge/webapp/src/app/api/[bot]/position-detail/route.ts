@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, isDirectionalBot, directionalThresholds } from '@/lib/db'
 import {
   isConfigured,
   buildOccSymbol,
@@ -28,6 +28,10 @@ export async function GET(
   const personFilter = filterByPerson ? `AND person = '${escapeSql(personParam)}'` : ''
   const accountTypeFilter = accountTypeParam ? `AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountTypeParam)}'` : ''
 
+  const directionalCols = isDirectionalBot(bot)
+    ? `, setup_type, direction, long_strike, short_strike, debit, long_symbol, short_symbol`
+    : ''
+
   try {
     const positionRows = await dbQuery(
       `SELECT position_id, ticker, expiration,
@@ -35,7 +39,7 @@ export async function GET(
               call_short_strike, call_long_strike, call_credit,
               contracts, spread_width, total_credit, max_loss, max_profit,
               underlying_at_entry, vix_at_entry, collateral_required,
-              wings_adjusted, open_time, sandbox_order_id
+              wings_adjusted, open_time, sandbox_order_id${directionalCols}
        FROM ${botTable(bot, 'positions')}
        WHERE status = 'open' ${dteFilter} ${personFilter} ${accountTypeFilter}
        ORDER BY open_time DESC`,
@@ -50,6 +54,106 @@ export async function GET(
 
     const positions = await Promise.all(
       positionRows.map(async (r) => {
+        // ---- Directional bots (BLAZE/FLARE): 2-leg vertical debit spread ----
+        // Economics are debit-based (max loss = debit, max profit = width − debit,
+        // single breakeven). Use the stored long_symbol/short_symbol, NOT the
+        // zeroed IC columns. Returns a `directional: true` payload the card branches on.
+        if (isDirectionalBot(bot) && r.long_symbol && r.short_symbol) {
+          const contractsD = int(r.contracts)
+          const debitD = num(r.debit)
+          const longStrike = num(r.long_strike)
+          const shortStrike = num(r.short_strike)
+          const direction = r.direction === 'put' ? 'put' : 'call'
+          const optType: 'C' | 'P' = direction === 'call' ? 'C' : 'P'
+          const widthD = Math.round(Math.abs(shortStrike - longStrike) * 100) / 100
+          const tickerD = r.ticker || 'SPY'
+          const expirationD = r.expiration?.toISOString?.()?.slice(0, 10) || (r.expiration ? String(r.expiration).slice(0, 10) : '')
+          const longSym = String(r.long_symbol)
+          const shortSym = String(r.short_symbol)
+
+          let dirLegQuotes: Record<string, { bid: number; ask: number; mid: number; last: number }> = {}
+          let spyD: number | null = null
+          if (isConfigured()) {
+            const [bq, sq] = await Promise.all([
+              getBatchOptionQuotes([longSym, shortSym]),
+              getQuote(tickerD),
+            ])
+            dirLegQuotes = bq
+            spyD = sq?.last ?? null
+          }
+          const lq = dirLegQuotes[longSym]
+          const sq2 = dirLegQuotes[shortSym]
+          const hasQ = !!(lq && sq2)
+
+          // Value to close the debit spread: sell long @ bid, buy back short @ ask
+          // (worst case). A mid/last value drives P&L to match Tradier-style marks.
+          let currentValue: number | null = null   // mid/last — for P&L
+          let closeValueWorst: number | null = null // bid/ask — cost/proximity
+          let paperPnlD: number | null = null
+          let pnlPctD: number | null = null
+          if (hasQ) {
+            const rawWorst = lq.bid - sq2.ask
+            closeValueWorst = Math.round(Math.min(Math.max(0, rawWorst), widthD) * 10000) / 10000
+            const lLast = lq.last > 0 ? lq.last : lq.mid
+            const sLast = sq2.last > 0 ? sq2.last : sq2.mid
+            const rawVal = lLast - sLast
+            currentValue = Math.round(Math.min(Math.max(0, rawVal), widthD) * 10000) / 10000
+            paperPnlD = Math.round((currentValue - debitD) * 100 * contractsD * 100) / 100
+            pnlPctD = debitD > 0 ? Math.round(((currentValue / debitD) - 1) * 10000) / 100 : 0
+          }
+
+          const maxProfitD = Math.round((widthD - debitD) * 100 * contractsD * 100) / 100
+          const maxLossD = Math.round(debitD * 100 * contractsD * 100) / 100
+          // Single breakeven: call profits above long+debit; put profits below long−debit.
+          const breakevenD = direction === 'call'
+            ? Math.round((longStrike + debitD) * 10000) / 10000
+            : Math.round((longStrike - debitD) * 10000) / 10000
+          // Signed distance SPY must still travel to reach breakeven (− = already past it).
+          const distanceToBreakeven = spyD != null
+            ? Math.round((direction === 'call' ? breakevenD - spyD : spyD - breakevenD) * 100) / 100
+            : null
+          // Profit captured toward max profit: (value − debit) / (width − debit).
+          const pctOfMaxProfit = hasQ && widthD - debitD > 0
+            ? Math.round(((currentValue! - debitD) / (widthD - debitD)) * 10000) / 100
+            : null
+          const riskReward = maxLossD > 0 ? Math.round((maxProfitD / maxLossD) * 100) / 100 : null
+
+          const ptPct = directionalThresholds(bot).ptPct
+          const ptTargetValue = Math.round(debitD * (1 + ptPct / 100) * 10000) / 10000
+
+          const dirLegs = [
+            { type: 'long' as const, label: 'Long', strike: longStrike, option_type: optType, side: 'buy' as const, occ: longSym, quantity: contractsD, current_bid: lq?.bid ?? null, current_ask: lq?.ask ?? null, current_mid: lq?.mid ?? null },
+            { type: 'short' as const, label: 'Short', strike: shortStrike, option_type: optType, side: 'sell' as const, occ: shortSym, quantity: contractsD, current_bid: sq2?.bid ?? null, current_ask: sq2?.ask ?? null, current_mid: sq2?.mid ?? null },
+          ]
+
+          const paperAccountD = {
+            name: 'Paper', order_id: null, contracts: contractsD,
+            entry_debit_total: Math.round(debitD * 100 * contractsD * 100) / 100,
+            current_value_total: currentValue != null ? Math.round(currentValue * 100 * contractsD * 100) / 100 : null,
+            calculated_pnl: paperPnlD,
+            tradier_pnl: null,
+          }
+
+          return {
+            position_id: r.position_id, ticker: tickerD, expiration: expirationD,
+            directional: true,
+            setup_type: r.setup_type || null,
+            direction, long_strike: longStrike, short_strike: shortStrike,
+            contracts: contractsD, spread_width: widthD,
+            debit: debitD, current_value: currentValue, close_value_worst: closeValueWorst,
+            spy_price: spyD, legs: dirLegs,
+            paper_pnl: paperPnlD, pnl_pct: pnlPctD,
+            max_profit: maxProfitD, max_loss: maxLossD,
+            breakeven: breakevenD, distance_to_breakeven: distanceToBreakeven,
+            needs_direction: direction === 'call' ? 'up' : 'down',
+            pct_of_max_profit: pctOfMaxProfit, risk_reward: riskReward,
+            pt_pct: ptPct, pt_target_value: ptTargetValue,
+            // Progress in per-contract VALUE terms: 0 (max loss) → width (max profit).
+            progress: { zero_value: 0, debit: debitD, current: currentValue, pt_target: ptTargetValue, max_value: widthD },
+            accounts: [paperAccountD],
+          }
+        }
+
         const ps = num(r.put_short_strike)
         const pl = num(r.put_long_strike)
         const cs = num(r.call_short_strike)

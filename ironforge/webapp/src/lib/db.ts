@@ -1107,6 +1107,27 @@ export function validateBot(bot: string): string | null {
   return b
 }
 
+/**
+ * Directional bots trade a 2-leg vertical DEBIT spread (long + short, one option
+ * type), not a 4-leg Iron Condor. BLAZE (1DTE) and FLARE (0DTE) are siblings.
+ * Their economics are debit-based (max loss = debit paid, max profit = width −
+ * debit, single breakeven) so the position cards/routes render them differently
+ * from the IC bots (FLAME/SPARK/INFERNO). Use this instead of `bot === 'blaze'`.
+ */
+export function isDirectionalBot(bot: string): boolean {
+  return bot === 'blaze' || bot === 'flare'
+}
+
+/**
+ * Debit-spread exit thresholds per directional bot, mirroring DEFAULT_*_CONFIG
+ * in lib/blaze/types.ts (PT 20%) and lib/flare/types.ts (SL 100% vs BLAZE 30%).
+ * PT/SL are percentages of the debit paid: value rises to PT, falls to SL.
+ */
+export function directionalThresholds(bot: string): { ptPct: number; slPct: number } {
+  if (bot === 'flare') return { ptPct: 20, slPct: 100 }
+  return { ptPct: 20, slPct: 30 } // blaze
+}
+
 // ---- Databricks-compatible aliases ----
 // These match the export names from the old databricks-sql.ts client
 // so API route files only need an import path change.
