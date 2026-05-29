@@ -438,6 +438,11 @@ CREATE TABLE IF NOT EXISTS spark_market_briefs (
   vix3m NUMERIC(8,3),
   term_structure NUMERIC(8,4),
   model TEXT,
+  gex_regime TEXT,
+  gex_flip NUMERIC(10,4),
+  gex_call_wall NUMERIC(10,4),
+  gex_put_wall NUMERIC(10,4),
+  gex_net_gex NUMERIC(20,2),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_spark_market_briefs_date ON spark_market_briefs(brief_date DESC, brief_time DESC);
@@ -644,9 +649,10 @@ async function ensureTables(): Promise<void> {
     } catch { /* column already exists or table doesn't exist yet */ }
 
     // Per-bot market_briefs tables. Originally `spark_market_briefs`;
-    // FLAME and INFERNO get their own tables so each bot's Market-Risk
-    // Brief card has somewhere to land. Schema mirrors spark_market_briefs.
-    for (const bot of ['flame', 'inferno']) {
+    // FLAME, INFERNO and the directional bots BLAZE/FLARE get their own tables
+    // so each bot's Market-Risk Brief card has somewhere to land. Schema
+    // mirrors spark_market_briefs (incl. the GEX profile columns).
+    for (const bot of ['flame', 'inferno', 'blaze', 'flare']) {
       try {
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${bot}_market_briefs (
@@ -663,6 +669,11 @@ async function ensureTables(): Promise<void> {
             vix3m NUMERIC(8,3),
             term_structure NUMERIC(8,4),
             model TEXT,
+            gex_regime TEXT,
+            gex_flip NUMERIC(10,4),
+            gex_call_wall NUMERIC(10,4),
+            gex_put_wall NUMERIC(10,4),
+            gex_net_gex NUMERIC(20,2),
             created_at TIMESTAMPTZ DEFAULT NOW()
           )
         `)
@@ -671,6 +682,23 @@ async function ensureTables(): Promise<void> {
            ON ${bot}_market_briefs(brief_date DESC, brief_time DESC)`,
         )
       } catch { /* table already exists or some other transient — caller logs */ }
+    }
+
+    // Migrate the GEX profile columns onto any pre-existing market_briefs
+    // tables (spark/flame/inferno were created before these columns). Additive
+    // ALTERs — safe to run every boot.
+    for (const bot of ['spark', 'flame', 'inferno', 'blaze', 'flare']) {
+      for (const col of [
+        'gex_regime TEXT',
+        'gex_flip NUMERIC(10,4)',
+        'gex_call_wall NUMERIC(10,4)',
+        'gex_put_wall NUMERIC(10,4)',
+        'gex_net_gex NUMERIC(20,2)',
+      ]) {
+        try {
+          await client.query(`ALTER TABLE ${bot}_market_briefs ADD COLUMN IF NOT EXISTS ${col}`)
+        } catch { /* table not created yet or column exists — non-fatal */ }
+      }
     }
 
     // Add missing columns to ironforge_accounts (needed for production trading)

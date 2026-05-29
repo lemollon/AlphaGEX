@@ -36,6 +36,7 @@
  */
 import { dbQuery, dbExecute, num, botTable, dteMode } from './db'
 import { getRawQuotes, isConfigured as isTradierConfigured } from './tradier'
+import { fetchGexSnapshot } from './blaze/gex-client'
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -64,6 +65,38 @@ export interface MarketState {
   term_structure_label: 'contango' | 'backwardation' | 'flat' | 'unknown'
 }
 
+/**
+ * GEX (gamma-exposure) profile snapshot from the AlphaGEX backend — the same
+ * feed BLAZE/FLARE trade off. Used by every brief so the language reflects
+ * where dealer gamma is pinning or accelerating SPY today.
+ *
+ *   positive gamma  → dealers dampen moves  → range-bound / mean-reverting
+ *                     (friendly to Iron Condors / premium selling,
+ *                      hostile to directional debit spreads — they pin)
+ *   negative gamma  → dealers amplify moves → trending / momentum
+ *                     (dangerous for ICs, friendly to directional breakouts)
+ */
+export interface GexState {
+  available: boolean
+  spot: number | null
+  net_gex: number | null
+  flip_point: number | null
+  call_wall: number | null
+  put_wall: number | null
+  /** raw upstream regime label, e.g. MODERATE_POSITIVE / HIGH_NEGATIVE / NEUTRAL */
+  regime: string | null
+  /** collapsed sign of the regime for prompt/footer logic */
+  regime_kind: 'positive' | 'negative' | 'neutral' | 'unknown'
+  /** 1-day 1-sigma expected move in dollars */
+  sigma_1d: number | null
+  /** (call_wall - spot) / spot * 100 — how much room up to the call wall */
+  pct_to_call_wall: number | null
+  /** (spot - put_wall) / spot * 100 — how much room down to the put wall */
+  pct_to_put_wall: number | null
+  /** where spot sits relative to the gamma flip point */
+  spot_vs_flip: 'above' | 'below' | 'at' | 'unknown'
+}
+
 export interface PositionState {
   has_open_ic: boolean
   ticker: string | null
@@ -81,6 +114,20 @@ export interface PositionState {
   pct_to_short_put: number | null
   /** distance from spot to short call as % of spot */
   pct_to_short_call: number | null
+
+  // ── Directional debit-spread fields (BLAZE / FLARE only) ──────────────
+  /** true when the open position is a directional vertical debit spread */
+  is_directional: boolean
+  /** which GEX setup fired the trade: wall_fade | wall_break | flip_cross */
+  setup_type: string | null
+  /** 'call' = bull call debit (bullish), 'put' = bear put debit (bearish) */
+  spread_side: 'call' | 'put' | null
+  /** plain-English directional bias */
+  bias: 'bullish' | 'bearish' | null
+  long_strike: number | null
+  short_strike: number | null
+  /** debit paid per contract (this IS the max loss for a debit spread) */
+  debit: number | null
 }
 
 export interface RecentTrade {
@@ -96,6 +143,7 @@ export interface BriefInputs {
   ct_timestamp: string
   ct_hhmm: string
   market_state: MarketState
+  gex_state: GexState
   position_state: PositionState
   recent_trades: RecentTrade[]
 }
@@ -157,7 +205,66 @@ async function gatherMarketState(): Promise<MarketState> {
   }
 }
 
+function emptyGexState(): GexState {
+  return {
+    available: false, spot: null, net_gex: null, flip_point: null,
+    call_wall: null, put_wall: null, regime: null, regime_kind: 'unknown',
+    sigma_1d: null, pct_to_call_wall: null, pct_to_put_wall: null, spot_vs_flip: 'unknown',
+  }
+}
+
+/** Collapse the upstream regime string (MODERATE_POSITIVE, HIGH_NEGATIVE, …)
+ * into a plain sign the prompt and footer can reason about. */
+function regimeKind(regime: string | null): GexState['regime_kind'] {
+  if (!regime) return 'unknown'
+  const u = regime.toUpperCase()
+  if (u.includes('POSITIVE')) return 'positive'
+  if (u.includes('NEGATIVE')) return 'negative'
+  if (u.includes('NEUTRAL')) return 'neutral'
+  return 'unknown'
+}
+
+/**
+ * Fetch the SPY GEX profile. Uses a generous 30-min freshness window (vs the
+ * live trader's strict 90s) because a brief only needs a recent-ish picture,
+ * not a tick-accurate one. Any fetch/stale/parse error degrades gracefully to
+ * an "unavailable" GexState so the brief still generates.
+ */
+async function gatherGexState(): Promise<GexState> {
+  try {
+    const s = await fetchGexSnapshot('SPY', 1800)
+    const spot = Number.isFinite(s.spot) && s.spot > 0 ? s.spot : null
+    const callWall = Number.isFinite(s.call_wall) && s.call_wall > 0 ? s.call_wall : null
+    const putWall = Number.isFinite(s.put_wall) && s.put_wall > 0 ? s.put_wall : null
+    const flip = Number.isFinite(s.flip_point) && s.flip_point > 0 ? s.flip_point : null
+    const pctToCall = spot && callWall ? Math.round(((callWall - spot) / spot) * 10000) / 100 : null
+    const pctToPut = spot && putWall ? Math.round(((spot - putWall) / spot) * 10000) / 100 : null
+    const spotVsFlip: GexState['spot_vs_flip'] =
+      spot && flip ? (spot > flip * 1.0005 ? 'above' : spot < flip * 0.9995 ? 'below' : 'at') : 'unknown'
+    return {
+      available: true,
+      spot,
+      net_gex: Number.isFinite(s.net_gex) ? s.net_gex : null,
+      flip_point: flip,
+      call_wall: callWall,
+      put_wall: putWall,
+      regime: s.regime || null,
+      regime_kind: regimeKind(s.regime),
+      sigma_1d: Number.isFinite(s.sigma_1d_band_width) && s.sigma_1d_band_width > 0 ? s.sigma_1d_band_width : null,
+      pct_to_call_wall: pctToCall,
+      pct_to_put_wall: pctToPut,
+      spot_vs_flip: spotVsFlip,
+    }
+  } catch {
+    return emptyGexState()
+  }
+}
+
 async function gatherPositionState(bot: string, spotPrice: number | null): Promise<PositionState> {
+  const profile = botProfile(bot)
+  if (profile.kind === 'debit_spread') {
+    return gatherDirectionalPositionState(bot, spotPrice)
+  }
   // Production positions only — paper/sandbox contract counts don't represent
   // real-money risk and were polluting the brief (e.g. brief warned about a
   // 143-contract sandbox position when production held far less).
@@ -183,6 +290,8 @@ async function gatherPositionState(bot: string, spotPrice: number | null): Promi
       contracts: null, entry_credit: null,
       open_time: null, person: null, account_type: null,
       pct_to_short_put: null, pct_to_short_call: null,
+      is_directional: false, setup_type: null, spread_side: null, bias: null,
+      long_strike: null, short_strike: null, debit: null,
     }
   }
   const r = rows[0]
@@ -219,6 +328,74 @@ async function gatherPositionState(bot: string, spotPrice: number | null): Promi
     account_type: r.account_type ?? null,
     pct_to_short_put: pctToShortPut,
     pct_to_short_call: pctToShortCall,
+    is_directional: false, setup_type: null, spread_side: null, bias: null,
+    long_strike: null, short_strike: null, debit: null,
+  }
+}
+
+/**
+ * Position gatherer for the directional debit-spread bots (BLAZE / FLARE).
+ * Their {bot}_positions rows reuse the IC schema with the unused side zeroed;
+ * the live spread lives in the directional columns (setup_type, direction,
+ * long_strike, short_strike, debit). BLAZE/FLARE are paper-only, so we scope
+ * to the sandbox account (matching their own db reader).
+ */
+async function gatherDirectionalPositionState(bot: string, spotPrice: number | null): Promise<PositionState> {
+  const dte = dteMode(bot)
+  const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
+  const rows = await dbQuery(
+    `SELECT setup_type, direction, long_strike, short_strike, debit,
+            contracts, ticker, expiration, open_time, person, account_type
+     FROM ${botTable(bot, 'positions')}
+     WHERE status = 'open' ${dteFilter}
+       AND COALESCE(account_type, 'sandbox') = 'sandbox'
+     ORDER BY open_time DESC NULLS LAST`,
+  )
+  if (rows.length === 0) {
+    return {
+      has_open_ic: false,
+      ticker: null, expiration: null,
+      put_long: null, put_short: null, call_short: null, call_long: null,
+      contracts: null, entry_credit: null,
+      open_time: null, person: null, account_type: null,
+      pct_to_short_put: null, pct_to_short_call: null,
+      is_directional: true, setup_type: null, spread_side: null, bias: null,
+      long_strike: null, short_strike: null, debit: null,
+    }
+  }
+  const r = rows[0]
+  const exp = r.expiration instanceof Date
+    ? r.expiration.toISOString().slice(0, 10)
+    : String(r.expiration).slice(0, 10)
+  const side: 'call' | 'put' = r.direction === 'put' ? 'put' : 'call'
+  const totalContracts = rows.reduce((sum, row) => sum + (Number(row.contracts) || 0), 0)
+  const totalDebitWeighted = rows.reduce(
+    (sum, row) => sum + (num(row.debit) * (Number(row.contracts) || 0)),
+    0,
+  )
+  const avgDebit = totalContracts > 0 ? totalDebitWeighted / totalContracts : num(r.debit)
+  const longStrike = num(r.long_strike)
+  // % move still needed for the spread to push the long leg in-the-money.
+  // Bull call: needs spot to rise toward the long strike; bear put: needs spot
+  // to fall toward it. Expressed as signed distance in the favorable direction.
+  return {
+    has_open_ic: true,
+    ticker: r.ticker || 'SPY',
+    expiration: exp,
+    put_long: null, put_short: null, call_short: null, call_long: null,
+    contracts: totalContracts,
+    entry_credit: null,
+    open_time: r.open_time ? new Date(r.open_time).toISOString() : null,
+    person: r.person ?? null,
+    account_type: r.account_type ?? null,
+    pct_to_short_put: null, pct_to_short_call: null,
+    is_directional: true,
+    setup_type: r.setup_type ? String(r.setup_type) : null,
+    spread_side: side,
+    bias: side === 'call' ? 'bullish' : 'bearish',
+    long_strike: longStrike || null,
+    short_strike: num(r.short_strike) || null,
+    debit: avgDebit || null,
   }
 }
 
@@ -226,8 +403,10 @@ async function gatherRecentTrades(bot: string): Promise<RecentTrade[]> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${dte}'` : ''
   const accountFilter = bot === 'spark' ? `AND account_type = 'production'` : ''
+  // Directional bots (BLAZE/FLARE) record the size as `debit`, not `total_credit`.
+  const sizeCol = botProfile(bot).kind === 'debit_spread' ? 'debit' : 'total_credit'
   const rows = await dbQuery(
-    `SELECT close_time, realized_pnl, close_reason, contracts, total_credit
+    `SELECT close_time, realized_pnl, close_reason, contracts, ${sizeCol} AS size_amt
      FROM ${botTable(bot, 'positions')}
      WHERE status IN ('closed', 'expired')
        ${dteFilter}
@@ -242,19 +421,23 @@ async function gatherRecentTrades(bot: string): Promise<RecentTrade[]> {
     realized_pnl: num(r.realized_pnl),
     close_reason: r.close_reason || 'unknown',
     contracts: Number(r.contracts) || 0,
-    credit: num(r.total_credit),
+    credit: num(r.size_amt),
   }))
 }
 
 export async function gatherInputs(bot: string, briefType: BriefType): Promise<BriefInputs> {
   const marketState = await gatherMarketState()
-  const positionState = await gatherPositionState(bot, marketState.spy_price)
+  const gexState = await gatherGexState()
+  // GEX carries a fresher spot than Tradier's last when SPY quote is stale/null.
+  const spotForPosition = marketState.spy_price ?? gexState.spot
+  const positionState = await gatherPositionState(bot, spotForPosition)
   const recentTrades = await gatherRecentTrades(bot)
   return {
     brief_type: briefType,
     ct_timestamp: ctNow().toISOString(),
     ct_hhmm: ctHHMM(),
     market_state: marketState,
+    gex_state: gexState,
     position_state: positionState,
     recent_trades: recentTrades,
   }
@@ -262,11 +445,22 @@ export async function gatherInputs(bot: string, briefType: BriefType): Promise<B
 
 // ── Prompt builders ────────────────────────────────────────────────────
 
+/**
+ * kind drives the entire framing of the brief:
+ *   - iron_condor / put_credit_spread → PREMIUM-SELLING bots. They WANT SPY to
+ *     stay in a range (or not drop hard). Risk = a big move. Positive-gamma GEX
+ *     is friendly (dealers pin); negative-gamma is dangerous.
+ *   - debit_spread → DIRECTIONAL bots (BLAZE/FLARE). They WANT a move in their
+ *     favor. Risk = chop / pinning / reversal. Negative-gamma GEX is friendly
+ *     (dealers amplify); positive-gamma pins them and is hostile.
+ */
+type BotKind = 'iron_condor' | 'put_credit_spread' | 'debit_spread'
+
 interface BotProfile {
   name: string
   strategy: string
   dte_label: string
-  is_put_credit_spread: boolean
+  kind: BotKind
 }
 
 const BOT_PROFILES: Record<string, BotProfile> = {
@@ -274,19 +468,31 @@ const BOT_PROFILES: Record<string, BotProfile> = {
     name: 'SPARK',
     strategy: '1DTE Iron Condor on SPY',
     dte_label: '1DTE',
-    is_put_credit_spread: false,
+    kind: 'iron_condor',
   },
   flame: {
     name: 'FLAME',
     strategy: '2DTE Put Credit Spread on SPY',
     dte_label: '2DTE',
-    is_put_credit_spread: true,
+    kind: 'put_credit_spread',
   },
   inferno: {
     name: 'INFERNO',
     strategy: '0DTE Iron Condor on SPY (FORTRESS-style aggressive)',
     dte_label: '0DTE',
-    is_put_credit_spread: false,
+    kind: 'iron_condor',
+  },
+  blaze: {
+    name: 'BLAZE',
+    strategy: '1DTE directional vertical DEBIT spread on SPY (bull-call or bear-put)',
+    dte_label: '1DTE',
+    kind: 'debit_spread',
+  },
+  flare: {
+    name: 'FLARE',
+    strategy: '0DTE directional vertical DEBIT spread on SPY (bull-call or bear-put)',
+    dte_label: '0DTE',
+    kind: 'debit_spread',
   },
 }
 
@@ -296,57 +502,86 @@ function botProfile(bot: string): BotProfile {
 
 function buildSystemPrompt(bot: string): string {
   const p = botProfile(bot)
-  const structureNoun = p.is_put_credit_spread ? 'Put Credit Spread' : 'Iron Condor'
+  const directional = p.kind === 'debit_spread'
+
   const accountScope = bot === 'spark'
-    ? `ACCOUNT SCOPE: The "OPEN POSITION" and "RECENT TRADES" sections describe the LIVE PRODUCTION (real-money) account only. Do NOT speculate about, mention, or include contract counts from paper, sandbox, or any other account. If the prompt says no open production position, do not invent one.`
+    ? `ACCOUNT SCOPE: The "OPEN POSITION" and "RECENT TRADES" sections describe the LIVE PRODUCTION (real-money) account only. Do NOT speculate about, mention, or include contract counts from paper, sandbox, or any other account. If the prompt says no open position, do not invent one.`
     : `ACCOUNT SCOPE: ${p.name} is paper-only. The "OPEN POSITION" and "RECENT TRADES" sections describe the paper account. Do not speculate about a real-money account.`
-  return `You are a risk advisor for a ${p.strategy} bot called ${p.name}. The brief serves TWO audiences side by side: a non-trader who needs the everyday-language story, and an options trader who needs the technical detail.
+
+  // What does the bot WANT, and what does the 0-10 score mean for it?
+  const goalAndScore = directional
+    ? `WHAT ${p.name} WANTS: ${p.name} buys a directional debit spread — a bet that SPY MOVES in one direction (a bull-call spread profits if SPY rises, a bear-put spread profits if SPY falls). It WANTS a clean move in its favor; it gets hurt by chop, pinning, or a reversal.
+RISK_SCORE MEANING (0-10): how HOSTILE the tape is to today's directional setup. 0 = clean trend with a clear gamma edge in the bot's favor; 10 = choppy/pinned tape likely to stall or reverse the trade. Higher = worse.`
+    : `WHAT ${p.name} WANTS: ${p.name} sells premium — it WANTS SPY to stay calm and ${p.kind === 'put_credit_spread' ? 'not drop hard' : 'stay inside a range'}. It gets hurt by a big move (in either direction for an iron condor; a sharp drop for a put credit spread).
+RISK_SCORE MEANING (0-10): how much today's conditions THREATEN that calm. 0 = quiet, range-bound, friendly; 10 = a big move looks likely. Higher = worse.`
+
+  // How to read the GEX profile for THIS kind of bot.
+  const gexGuidance = directional
+    ? `HOW TO READ GEX FOR A DIRECTIONAL BOT:
+- "Negative gamma" = dealers amplify moves = trending/momentum tape = GOOD for a directional bet (it can run). "Positive gamma" = dealers dampen moves = range-bound/pinning tape = BAD (the move stalls and the spread bleeds out).
+- The call wall acts as a ceiling/magnet above price; the put wall acts as a floor/magnet below. A bull-call spread wants room UP to the call wall; a bear-put spread wants room DOWN to the put wall. If price is pinned right at a wall, the directional move is unlikely.
+- The flip point is the bull/bear pivot: above it leans positive-gamma (calmer), below it leans negative-gamma (more volatile).`
+    : `HOW TO READ GEX FOR A PREMIUM-SELLING BOT:
+- "Positive gamma" = dealers dampen moves = range-bound/mean-reverting tape = GOOD (SPY stays pinned, premium decays safely). "Negative gamma" = dealers amplify moves = trending tape = DANGEROUS (a move can run through your strikes).
+- The call wall and put wall are the natural guardrails of the range — they often act as the edges SPY respects. If your short strikes sit beyond the walls, that's safer; inside them is more exposed.
+- The flip point is where dealer hedging flips from dampening to amplifying. SPY sitting comfortably in positive-gamma territory (above the flip) is the calmest backdrop for selling premium.`
+
+  return `You are a market advisor for ${p.name}, a ${p.strategy} bot. Write a SHORT, plain-English brief that a complete beginner can understand at a glance, while still giving a trader the key numbers. Be concise — make every sentence earn its place. Do not pad.
 
 ${accountScope}
 
+${goalAndScore}
+
+${gexGuidance}
+
 OUTPUT FORMATTING — STRICT:
-- Plain text only. NO markdown formatting at all.
-- Do NOT use **bold**, *italics*, _underscores_, backticks, or "---" separators.
-- Do NOT wrap titles or numbers in asterisks. Write "Term Structure Contango" not "**Term Structure Contango**".
-- Use em dashes ( — ) or plain hyphens for separators between title and detail.
+- Plain text only. NO markdown: no **bold**, *italics*, _underscores_, backticks, or "---" lines.
+- Use a plain hyphen or em dash ( — ) between a factor title and its detail.
 
-DUAL-AUDIENCE SUMMARY — REQUIRED:
-The SUMMARY section MUST contain two clearly labeled sub-sections in this exact order:
-  1. "PLAIN ENGLISH:" — 2-3 sentences a non-trader can follow. Avoid jargon entirely. No "iron condor", "delta", "VIX", "spread", "credit", etc. Translate: an iron condor becomes "a bet the market stays in a range"; a put credit spread becomes "a bet that the market doesn't drop hard"; high VIX becomes "the market expects bigger moves"; profit target hit becomes "we banked a win". Tell them what the bot is doing today, what could go right, and what could go wrong, in everyday terms.
-  2. "FOR TRADERS:" — 2-4 sentences with the full technical picture. Use the precise terms (strikes, deltas, VIX/VVIX/term-structure, GEX, regime, etc.) and tie each to the open position. This is for someone who already trades options.
+SUMMARY — REQUIRED, in this exact order:
+PLAIN ENGLISH:
+<2-3 short sentences, ZERO jargon. No "iron condor", "debit spread", "delta", "VIX", "gamma", "GEX", "flip point", "strike". Translate everything: a directional debit spread becomes "a bet that the market moves ${directional ? 'in our chosen direction' : '...'}"; selling premium becomes "a bet the market stays calm"; negative gamma becomes "conditions that let moves run"; positive gamma becomes "conditions that keep the market pinned in place"; high VIX becomes "the market expects bigger swings". Say what the bot is doing today, and the single biggest thing that could help or hurt it.>
+FOR TRADERS:
+<ONE tight sentence (two only if truly needed) with the precise read — name the regime/net-gamma, flip point, the relevant wall, VIX/term-structure, and tie it to the open position's strikes when one exists.>
 
-For each risk factor you identify:
-  1. State the factor as a short title that's understandable on its own (no jargon in the title)
-  2. In the detail, define any technical term inline the first time you use it
-  3. Explain WHY it matters and tie it to the user's open position when one exists
+FACTORS — the 2-3 things that matter most today (most important first):
+1. <plain-language title> — <one-sentence why it matters; define any term inline; tie to the open position when there is one and to the GEX profile when relevant>
+2. <title> — <detail>
+3. <title> — <detail>   (only if it genuinely adds something)
 
-Your response MUST follow this exact format:
+WATCH_NEXT_HOUR:
+<one sentence, understandable to a beginner, on the single thing to watch next.>
+
+Your response MUST follow this exact structure:
 
 RISK_SCORE: <integer 0-10>
 
 FACTORS:
-1. <short title> — <detail; define jargon inline; tie to position when relevant>
-2. <short title> — <detail>
-3. <short title> — <detail>
+1. <title> — <detail>
+2. <title> — <detail>
 
 SUMMARY:
 PLAIN ENGLISH:
-<2-3 sentences for a non-trader; no options jargon at all>
+<...>
 
 FOR TRADERS:
-<2-4 sentences with technical detail and precise terminology>
+<...>
 
 WATCH_NEXT_HOUR:
-<one sentence of what to watch for next hour, written so both audiences understand it>
+<...>
 
-Keep the total under 700 words. Plain text only.`
+Keep the whole thing under 320 words. Plain text only.`
 }
 
 function formatInputsForPrompt(bot: string, i: BriefInputs): string {
   const profile = botProfile(bot)
-  const structureLabel = profile.is_put_credit_spread ? 'PUT CREDIT SPREAD' : 'IRON CONDOR'
-  const tradesLabel = profile.is_put_credit_spread ? 'spread' : 'IC'
+  const directional = profile.kind === 'debit_spread'
+  const structureLabel = directional
+    ? 'DIRECTIONAL DEBIT SPREAD'
+    : profile.kind === 'put_credit_spread' ? 'PUT CREDIT SPREAD' : 'IRON CONDOR'
+  const tradesLabel = directional ? 'spread' : (profile.kind === 'put_credit_spread' ? 'spread' : 'IC')
   const m = i.market_state
+  const g = i.gex_state
   const p = i.position_state
   const lines: string[] = []
   lines.push(`BRIEF TYPE: ${i.brief_type}`)
@@ -359,22 +594,51 @@ function formatInputsForPrompt(bot: string, i: BriefInputs): string {
   lines.push(`  VIX9D: ${m.vix9d != null ? m.vix9d.toFixed(2) : 'n/a'}  VIX3M: ${m.vix3m != null ? m.vix3m.toFixed(2) : 'n/a'}`)
   lines.push(`  Term structure: ${m.term_structure != null ? (m.term_structure * 100).toFixed(2) + '%' : 'n/a'} (${m.term_structure_label})`)
   lines.push('')
-  if (p.has_open_ic) {
+
+  // GEX PROFILE — fed to every bot; framing differs by kind (see system prompt).
+  lines.push('GEX PROFILE (SPY dealer gamma):')
+  if (!g.available) {
+    lines.push('  (GEX feed unavailable right now — do not invent gamma levels; note the gap briefly and lean on VIX/term-structure instead.)')
+  } else {
+    const regimeWord =
+      g.regime_kind === 'positive' ? 'POSITIVE gamma (dealers dampen moves → range-bound / pinning)'
+      : g.regime_kind === 'negative' ? 'NEGATIVE gamma (dealers amplify moves → trending / momentum)'
+      : g.regime_kind === 'neutral' ? 'NEUTRAL gamma (no strong dealer bias)'
+      : 'unknown gamma regime'
+    lines.push(`  Regime: ${g.regime ?? 'n/a'} — ${regimeWord}`)
+    lines.push(`  Net GEX: ${g.net_gex != null ? (g.net_gex / 1e9).toFixed(2) + ' Bn' : 'n/a'}`)
+    lines.push(`  Flip point: ${g.flip_point != null ? '$' + g.flip_point.toFixed(2) : 'n/a'} (spot is ${g.spot_vs_flip} the flip)`)
+    lines.push(`  Call wall: ${g.call_wall != null ? '$' + g.call_wall.toFixed(2) : 'n/a'}${g.pct_to_call_wall != null ? ` (${g.pct_to_call_wall >= 0 ? '+' : ''}${g.pct_to_call_wall.toFixed(2)}% from spot)` : ''}`)
+    lines.push(`  Put wall: ${g.put_wall != null ? '$' + g.put_wall.toFixed(2) : 'n/a'}${g.pct_to_put_wall != null ? ` (${g.pct_to_put_wall.toFixed(2)}% below spot)` : ''}`)
+    lines.push(`  1-sigma 1-day move: ${g.sigma_1d != null ? '$' + g.sigma_1d.toFixed(2) : 'n/a'}`)
+  }
+  lines.push('')
+
+  if (p.has_open_ic && directional) {
+    lines.push(`OPEN ${structureLabel}:`)
+    lines.push(`  ${p.contracts}x ${p.ticker} exp ${p.expiration} — ${p.bias?.toUpperCase()} (${p.spread_side === 'call' ? 'bull-call' : 'bear-put'} debit)`)
+    if (p.setup_type) lines.push(`  Setup: ${p.setup_type}`)
+    lines.push(`  Long ${p.long_strike} / Short ${p.short_strike}  (width $${p.long_strike != null && p.short_strike != null ? Math.abs(p.long_strike - p.short_strike).toFixed(0) : '?'})`)
+    lines.push(`  Debit paid: $${(p.debit ?? 0).toFixed(2)}/contract (this is the max loss per contract)`)
+    lines.push(`  Account: ${p.person ?? '?'} / ${p.account_type ?? 'sandbox'} (paper)`)
+  } else if (p.has_open_ic) {
     lines.push(`OPEN ${structureLabel}:`)
     lines.push(`  ${p.contracts}x ${p.ticker} exp ${p.expiration}`)
-    if (profile.is_put_credit_spread) {
+    if (profile.kind === 'put_credit_spread') {
       lines.push(`  Put wing: ${p.put_long} / ${p.put_short}`)
     } else {
       lines.push(`  Put wing: ${p.put_long} / ${p.put_short}  Call wing: ${p.call_short} / ${p.call_long}`)
     }
     lines.push(`  Entry credit: $${(p.entry_credit ?? 0).toFixed(2)}/contract`)
-    if (p.pct_to_short_put != null && (profile.is_put_credit_spread || p.pct_to_short_call != null)) {
-      const callPart = profile.is_put_credit_spread
+    if (p.pct_to_short_put != null && (profile.kind === 'put_credit_spread' || p.pct_to_short_call != null)) {
+      const callPart = profile.kind === 'put_credit_spread'
         ? ''
         : `  Distance to short call: ${(p.pct_to_short_call ?? 0).toFixed(2)}%`
       lines.push(`  Distance to short put: ${p.pct_to_short_put.toFixed(2)}%${callPart}`)
     }
     lines.push(`  Account: ${p.person ?? '?'} / ${p.account_type ?? '?'}`)
+  } else if (directional) {
+    lines.push(`OPEN ${structureLabel}: none right now. ${profile.name} is scanning for a directional setup today — describe what the GEX profile implies it would be hunting (a bullish bet if there's room up to the call wall in a momentum/negative-gamma tape, a bearish bet if there's room down to the put wall), and how favorable conditions look.`)
   } else {
     lines.push(`OPEN ${structureLabel}: none (no open ${profile.name} position right now)`)
   }
@@ -385,11 +649,14 @@ function formatInputsForPrompt(bot: string, i: BriefInputs): string {
   } else {
     for (const t of i.recent_trades.slice(0, 7)) {
       const date = t.closed_at.slice(0, 10)
-      lines.push(`  ${date}: ${t.contracts}x ${tradesLabel}, credit $${t.credit.toFixed(2)} → ${t.realized_pnl >= 0 ? '+' : ''}$${t.realized_pnl.toFixed(2)} (${t.close_reason})`)
+      const sizeNote = directional
+        ? `debit $${t.credit.toFixed(2)}`
+        : `credit $${t.credit.toFixed(2)}`
+      lines.push(`  ${date}: ${t.contracts}x ${tradesLabel}, ${sizeNote} → ${t.realized_pnl >= 0 ? '+' : ''}$${t.realized_pnl.toFixed(2)} (${t.close_reason})`)
     }
   }
   lines.push('')
-  lines.push(`STRATEGY REMINDER: ${profile.name} runs the ${profile.strategy} strategy. Brief should highlight what a beginner needs to watch for that affects this specific structure today.`)
+  lines.push(`STRATEGY REMINDER: ${profile.name} runs the ${profile.strategy} strategy. The brief must highlight what a beginner needs to watch today for THIS specific structure, using the GEX profile above through the right lens (${directional ? 'directional: it wants a move, negative-gamma helps, pinning hurts' : 'premium-selling: it wants calm, positive-gamma helps, a big move hurts'}).`)
   return lines.join('\n')
 }
 
@@ -493,11 +760,14 @@ export async function storeBrief(bot: string, parsed: ParsedBrief, inputs: Brief
   const ct = new Date(inputs.ct_timestamp)
   const briefDate = new Date(ct.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
     .toISOString().slice(0, 10)
+  const g = inputs.gex_state
   const rows = await dbQuery(
     `INSERT INTO ${botTable(bot, 'market_briefs')}
       (brief_date, brief_type, risk_score, summary, factors_json, raw_inputs_json,
-       spy_price, vix, vix3m, term_structure, model)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11)
+       spy_price, vix, vix3m, term_structure, model,
+       gex_regime, gex_flip, gex_call_wall, gex_put_wall, gex_net_gex)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9, $10, $11,
+             $12, $13, $14, $15, $16)
      RETURNING id`,
     [
       briefDate,
@@ -511,6 +781,11 @@ export async function storeBrief(bot: string, parsed: ParsedBrief, inputs: Brief
       inputs.market_state.vix3m,
       inputs.market_state.term_structure,
       model,
+      g.available ? g.regime : null,
+      g.available ? g.flip_point : null,
+      g.available ? g.call_wall : null,
+      g.available ? g.put_wall : null,
+      g.available ? g.net_gex : null,
     ],
   )
   return Number(rows[0]?.id ?? 0)

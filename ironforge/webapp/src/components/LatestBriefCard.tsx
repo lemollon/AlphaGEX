@@ -29,6 +29,21 @@ interface Brief {
   vix3m: number | null
   term_structure: number | null
   model: string | null
+  gex_regime: string | null
+  gex_flip: number | null
+  gex_call_wall: number | null
+  gex_put_wall: number | null
+  gex_net_gex: number | null
+}
+
+/** Plain-English label for the dealer-gamma regime shown in the footer. */
+function regimeLabel(regime: string | null): { text: string; cls: string } | null {
+  if (!regime) return null
+  const u = regime.toUpperCase()
+  if (u.includes('POSITIVE')) return { text: 'Positive gamma · range-bound', cls: 'text-emerald-400/80' }
+  if (u.includes('NEGATIVE')) return { text: 'Negative gamma · trending', cls: 'text-red-400/80' }
+  if (u.includes('NEUTRAL')) return { text: 'Neutral gamma', cls: 'text-forge-muted' }
+  return { text: regime, cls: 'text-forge-muted' }
 }
 
 const BRIEF_REFRESH_MS = 60_000
@@ -164,6 +179,22 @@ export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inf
               <p className="text-xs text-amber-200">{stripMarkdown(watchNextHour)}</p>
             </div>
           )}
+
+          {/* GEX profile line — dealer gamma regime + key walls (the feed the
+              directional bots trade off; woven into the brief text above too). */}
+          {(() => {
+            const rl = regimeLabel(brief.gex_regime)
+            if (!rl && brief.gex_call_wall == null && brief.gex_put_wall == null) return null
+            return (
+              <div className="flex gap-3 flex-wrap items-center text-[10px] text-forge-muted border-t border-forge-border/50 pt-3">
+                <span className="uppercase tracking-wider text-forge-muted/70">GEX</span>
+                {rl && <span className={rl.cls}>{rl.text}</span>}
+                {brief.gex_call_wall != null && <span>Call wall {brief.gex_call_wall.toFixed(0)}</span>}
+                {brief.gex_put_wall != null && <span>Put wall {brief.gex_put_wall.toFixed(0)}</span>}
+                {brief.gex_flip != null && <span>Flip {brief.gex_flip.toFixed(0)}</span>}
+              </div>
+            )
+          })()}
 
           {/* Market state footer */}
           <div className="flex gap-4 flex-wrap text-[10px] text-forge-muted border-t border-forge-border/50 pt-3">

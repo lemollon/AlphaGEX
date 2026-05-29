@@ -30,7 +30,8 @@ export async function GET(
     const rows = await dbQuery(
       `SELECT id, brief_date, brief_time, brief_type,
               risk_score, summary, factors_json,
-              spy_price, vix, vix3m, term_structure, model, created_at
+              spy_price, vix, vix3m, term_structure, model, created_at,
+              gex_regime, gex_flip, gex_call_wall, gex_put_wall, gex_net_gex
        FROM ${botTable(bot, 'market_briefs')}
        ${dateFilter}
        ORDER BY brief_time DESC
@@ -52,6 +53,11 @@ export async function GET(
         vix3m: r.vix3m != null ? Number(r.vix3m) : null,
         term_structure: r.term_structure != null ? Number(r.term_structure) : null,
         model: r.model ?? null,
+        gex_regime: r.gex_regime ?? null,
+        gex_flip: r.gex_flip != null ? Number(r.gex_flip) : null,
+        gex_call_wall: r.gex_call_wall != null ? Number(r.gex_call_wall) : null,
+        gex_put_wall: r.gex_put_wall != null ? Number(r.gex_put_wall) : null,
+        gex_net_gex: r.gex_net_gex != null ? Number(r.gex_net_gex) : null,
       })),
     })
   } catch (err: unknown) {

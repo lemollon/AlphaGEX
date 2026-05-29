@@ -4462,11 +4462,11 @@ const _lastBriefHourFired: { [key: string]: boolean } = {}
  *   - 15 (3:00–3:30 PM CT)            → 'eod_debrief'
  *
  * Each call to generateBrief() costs ~$0.02–0.05 against the Claude API.
- * At ~7 fires/day per bot × 3 bots = ~$0.60/day max. Failures (missing
+ * At ≤3 fires/day per bot × 5 bots = ~$0.75/day max. Failures (missing
  * CLAUDE_API_KEY, upstream 5xx, parse error) are logged and swallowed —
  * the scan loop never breaks on a brief failure.
  */
-async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno', ct: Date): Promise<void> {
+async function maybeGenerateHourlyBrief(bot: 'spark' | 'flame' | 'inferno' | 'blaze' | 'flare', ct: Date): Promise<void> {
   // Brief cadence policy 2026-05-11 (operator): no more hourly briefs. Three
   // triggers per bot per day, max:
   //   1. POST-OPEN (type=morning) — fires once after the day's first position
@@ -5779,10 +5779,11 @@ async function runAllScans(): Promise<void> {
     }
   }
 
-  // Hourly market brief auto-generation for all three bots. Fires at most
-  // once per hour bucket per bot during 8:30 AM – 3:30 PM CT on weekdays.
-  // See helper for details. Each bot has its own *_market_briefs table.
-  for (const briefBot of ['flame', 'spark', 'inferno'] as const) {
+  // Market brief auto-generation for all five bots (3 premium-selling +
+  // BLAZE/FLARE directional). Fires at most once per type bucket per bot per
+  // day during 8:30 AM – 3:30 PM CT on weekdays. See helper for details.
+  // Each bot has its own *_market_briefs table.
+  for (const briefBot of ['flame', 'spark', 'inferno', 'blaze', 'flare'] as const) {
     try {
       await maybeGenerateHourlyBrief(briefBot, ct)
     } catch (err: unknown) {

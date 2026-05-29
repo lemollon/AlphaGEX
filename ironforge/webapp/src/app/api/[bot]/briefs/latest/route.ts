@@ -18,12 +18,13 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
   try {
-    // Bot dashboards (FLAME / SPARK / INFERNO) show INTRADAY briefs only.
-    // EOD debriefs surface on /briefings instead — operator policy 2026-05-10.
+    // Bot dashboards show INTRADAY briefs only (morning + intraday). EOD
+    // debriefs surface on /briefings instead — operator policy 2026-05-10.
     const rows = await dbQuery(
       `SELECT id, brief_date, brief_time, brief_type,
               risk_score, summary, factors_json,
-              spy_price, vix, vix3m, term_structure, model
+              spy_price, vix, vix3m, term_structure, model,
+              gex_regime, gex_flip, gex_call_wall, gex_put_wall, gex_net_gex
        FROM ${botTable(bot, 'market_briefs')}
        WHERE brief_type IN ('morning', 'intraday')
        ORDER BY brief_time DESC
@@ -47,6 +48,11 @@ export async function GET(
         vix3m: r.vix3m != null ? Number(r.vix3m) : null,
         term_structure: r.term_structure != null ? Number(r.term_structure) : null,
         model: r.model ?? null,
+        gex_regime: r.gex_regime ?? null,
+        gex_flip: r.gex_flip != null ? Number(r.gex_flip) : null,
+        gex_call_wall: r.gex_call_wall != null ? Number(r.gex_call_wall) : null,
+        gex_put_wall: r.gex_put_wall != null ? Number(r.gex_put_wall) : null,
+        gex_net_gex: r.gex_net_gex != null ? Number(r.gex_net_gex) : null,
       },
     })
   } catch (err: unknown) {
