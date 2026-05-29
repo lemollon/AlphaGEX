@@ -2374,7 +2374,8 @@ async function closePosition(
  *
  * Rules (matches /api/flame/preview-put-spread):
  *   - Short put at 1.0 SD OTM (16-delta proxy), $5 wing
- *   - Size 10% of Tradier User sandbox balance at risk
+ *   - Size at buying_power_usage_pct of Tradier User sandbox balance at risk
+ *     (the editable "% BP" config knob; default 0.85)
  *   - 50% profit target, 200% stop loss (applied later in monitorSinglePosition)
  *   - 1 trade/day max
  *
@@ -2392,8 +2393,12 @@ async function closePosition(
 async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Promise<string> {
   const SD_MULT = 1.0
   const WIDTH = 5
-  const RISK_PCT = 0.10
   const MIN_DTE = 2
+  // Sizing is driven by the editable buying_power_usage_pct config knob
+  // (the "% BP" badge on the FLAME card). For a put credit spread, BP used =
+  // collateral = max loss, so this is the fraction of the live Tradier balance
+  // put at risk per trade. Defaults to 0.85 (DEFAULT_CONFIG.flame.bp_pct).
+  const RISK_PCT = cfg(bot).bp_pct
 
   // --- Gates ---
   // Already traded today?
@@ -2457,7 +2462,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   if (!creditRes) return 'skip:no_put_quotes'
   const putCredit = creditRes.putCredit
 
-  // --- Sizing (10% account risk) ---
+  // --- Sizing (RISK_PCT of account balance at risk; see RISK_PCT above) ---
   const maxLossPerContract = Math.round((WIDTH - putCredit) * 100 * 100) / 100
   if (maxLossPerContract <= 0) return 'skip:invalid_max_loss'
   const contracts = Math.floor((accountBalance * RISK_PCT) / maxLossPerContract)
