@@ -31,6 +31,10 @@ export default function RecommendationCard({
 }) {
   const win = windowText(timing)
   const dte = dteText(timing)
+  const hasDte =
+    timing?.suggested_dte !== null &&
+    timing?.suggested_dte !== undefined &&
+    !Number.isNaN(timing.suggested_dte)
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-5">
@@ -59,16 +63,18 @@ export default function RecommendationCard({
         </p>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-forge-border bg-forge-bg/40 px-3 py-2">
-          <div className={LABEL}>Expected window</div>
-          <div className="mt-1 font-mono text-sm text-white">{win || '—'}</div>
+      {hasDte && (
+        <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="rounded-lg border border-forge-border bg-forge-bg/40 px-3 py-2">
+            <div className={LABEL}>Expected window</div>
+            <div className="mt-1 font-mono text-sm text-white">{win || '—'}</div>
+          </div>
+          <div className="rounded-lg border border-forge-border bg-forge-bg/40 px-3 py-2">
+            <div className={LABEL}>Target expiration</div>
+            <div className="mt-1 font-mono text-sm text-white">{dte || '—'}</div>
+          </div>
         </div>
-        <div className="rounded-lg border border-forge-border bg-forge-bg/40 px-3 py-2">
-          <div className={LABEL}>Target expiration</div>
-          <div className="mt-1 font-mono text-sm text-white">{dte || '—'}</div>
-        </div>
-      </div>
+      )}
 
       {timing?.structure_note && (
         <p className="mt-3 text-xs text-forge-muted">{timing.structure_note}</p>

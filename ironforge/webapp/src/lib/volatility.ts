@@ -14,6 +14,18 @@ export interface AdvisorRecommendation {
   rationale: string
 }
 
+/**
+ * The advice layer — direct, plain-English "what to do" derived by the backend
+ * from the regime + signals. Rendered prominently by the hero ActionCard.
+ */
+export interface AdvisorAction {
+  headline: string // e.g. "No directional trade — sell premium or sit out"
+  do: string // e.g. "Sell SPY iron condors / credit spreads, or hold cash"
+  dte_text: string // e.g. "~13 DTE" or "~2 weeks out (10–14 DTE)"
+  plain: string // 2-4 sentences of direct advice (the main thing to render)
+  watch?: string | null // closest-setup note, or null when nothing is near firing
+}
+
 export interface AdvisorOutlook {
   // ratios (e.g. -0.084), NOT percents — scale x100 at render if ever displayed
   fwd_spy_5_ratio?: number
@@ -77,6 +89,8 @@ export interface AdvisorReport {
   // Enriched fields (backend update).
   summary?: string
   series?: VolSeriesPoint[]
+  // Advice layer (backend update) — the "what to do" hero content.
+  action?: AdvisorAction
 }
 
 export interface AdvisorLiveRecord {
@@ -443,6 +457,25 @@ export function directionClass(direction?: SignalDirection | string | null): str
       return 'text-red-400'
     default:
       return 'text-forge-muted'
+  }
+}
+
+/** Accent classes for the hero ActionCard's left border, derived from stance.
+ * buy_the_bounce/lean_calls → emerald, lean_puts → red, neutral/other → violet. */
+export interface ActionAccent {
+  border: string
+  text: string
+}
+
+export function actionAccentClass(stance?: Stance | string | null): ActionAccent {
+  switch (stance) {
+    case 'buy_the_bounce':
+    case 'lean_calls':
+      return { border: 'border-l-emerald-500', text: 'text-emerald-400' }
+    case 'lean_puts':
+      return { border: 'border-l-red-500', text: 'text-red-400' }
+    default:
+      return { border: 'border-l-violet-500', text: 'text-violet-400' }
   }
 }
 

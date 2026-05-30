@@ -7,6 +7,7 @@ import {
   type AdvisorPayload,
   type AdvisorHistoryRow,
 } from '@/lib/volatility'
+import ActionCard from '@/components/vol/ActionCard'
 import RecommendationCard from '@/components/vol/RecommendationCard'
 import OutlookCard from '@/components/vol/OutlookCard'
 import SignalsPanel from '@/components/vol/SignalsPanel'
@@ -71,9 +72,9 @@ export default function VolatilityPage() {
   const { inputs, recommendation, timing, signals, outlook } = report
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
       {/* Header */}
-      <header className="mb-6">
+      <header className="mb-4">
         <h1 className="text-lg font-semibold text-white">Volatility Regime</h1>
         <p className="mt-1 font-mono text-xs text-forge-muted">
           {regimeLabel(report.regime_label)} · VIX {fmtNum(inputs?.vix)} · VVIX{' '}
@@ -82,12 +83,14 @@ export default function VolatilityPage() {
         </p>
       </header>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
+        <ActionCard action={report.action} recommendation={recommendation} />
+
         <OutlookCard summary={report.summary} outlook={outlook} />
 
         <RecommendationCard recommendation={recommendation} timing={timing} />
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <TermStructureCurve inputs={inputs} />
           <VixVvixChart series={report.series} />
         </div>
