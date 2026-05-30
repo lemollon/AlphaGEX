@@ -64,10 +64,43 @@ export interface AdvisorLiveRecord {
   in_window_rate: number | null
 }
 
+/** Per-signal evidence stats from backtest/vvix_vix_analysis/evidence.json.
+ * Forward-return fields (fwd_*) are decimals/ratios, NOT pre-multiplied
+ * percentages (e.g. -0.084 means -8.4%). */
+export interface AdvisorEvidenceSignal {
+  n?: number
+  hit_rate?: number
+  fwd_vix_5?: number
+  fwd_spy_5?: number
+  timing_median?: number
+}
+
+export interface AdvisorEvidence {
+  signals: Record<string, AdvisorEvidenceSignal>
+}
+
 export interface AdvisorPayload {
   report: AdvisorReport
-  evidence: { signals: Record<string, any> }
+  evidence: AdvisorEvidence
   live_record: AdvisorLiveRecord
+}
+
+/** One row of /api/volatility/history `rows[]`. All fields may be null. */
+export interface AdvisorHistoryRow {
+  log_date: string
+  vix: number | null
+  vvix: number | null
+  regime_label: string | null
+  stance: string | null
+  conviction: string | null
+  predicted_dir: string | null
+  horizon_days: number | null
+  window_p75_days: number | null
+  realized_vix_chg: number | null
+  realized_spy_ret: number | null
+  event_landed_day: number | null
+  correct: boolean | null
+  in_window: boolean | null
 }
 
 /**
@@ -151,4 +184,167 @@ export function dteText(timing?: AdvisorTiming | null): string {
   const dte = timing.suggested_dte
   if (dte === null || dte === undefined || Number.isNaN(dte)) return ''
   return `~${dte} DTE`
+}
+
+/* ------------------------------------------------------------------ */
+/*  3B chart / table transforms (pure, unit-tested)                    */
+/* ------------------------------------------------------------------ */
+
+/** A single point on the VIX term-structure curve. */
+export interface TermPoint {
+  label: string
+  vol: number
+}
+
+/**
+ * Build the VIX term-structure curve points from advisor inputs, in
+ * tenor order [9D, 30D, 3M, 6M]. Null/undefined/NaN tenors are dropped so
+ * the recharts line never breaks on a missing node.
+ */
+export function termStructurePoints(inputs?: AdvisorInputs | null): TermPoint[] {
+  if (!inputs) return []
+  const raw: TermPoint[] = [
+    { label: '9D', vol: inputs.vix9d as number },
+    { label: '30D', vol: inputs.vix as number },
+    { label: '3M', vol: inputs.vix3m as number },
+    { label: '6M', vol: inputs.vix6m as number },
+  ]
+  return raw.filter(
+    (p) => p.vol !== null && p.vol !== undefined && !Number.isNaN(p.vol),
+  )
+}
+
+/**
+ * Backwardation = front-month fear above 3-month, i.e. VIX > VIX3M.
+ * Returns false when either tenor is missing.
+ */
+export function isBackwardation(inputs?: AdvisorInputs | null): boolean {
+  if (!inputs) return false
+  const { vix, vix3m } = inputs
+  if (vix === null || vix === undefined || Number.isNaN(vix)) return false
+  if (vix3m === null || vix3m === undefined || Number.isNaN(vix3m)) return false
+  return vix > vix3m
+}
+
+/** A single point on the timing cumulative-probability area chart. */
+export interface TimingPoint {
+  day: number
+  pct: number
+}
+
+/**
+ * Convert a timing CDF (probabilities in [0,1], indexed by day-1) into
+ * day/percent points for the area chart: day starts at 1, pct = cdf*100.
+ * Empty/missing CDF → [].
+ */
+export function timingAreaData(cdf?: number[] | null): TimingPoint[] {
+  if (!cdf || cdf.length === 0) return []
+  return cdf.map((p, i) => ({
+    day: i + 1,
+    pct: (p ?? 0) * 100,
+  }))
+}
+
+/** Ordered list of advisor signal keys (display order). */
+export const SIGNAL_KEYS = [
+  'backwardation',
+  'ts_flattening',
+  'exhaustion',
+  'double_floor',
+  'divergence',
+] as const
+
+export type SignalKey = (typeof SIGNAL_KEYS)[number]
+
+/** Human-readable name for a signal key. Unknown → the raw key. */
+export function signalDisplayName(key: string): string {
+  switch (key) {
+    case 'backwardation':
+      return 'Backwardation'
+    case 'ts_flattening':
+      return 'TS flattening'
+    case 'exhaustion':
+      return 'Exhaustion'
+    case 'double_floor':
+      return 'Double floor'
+    case 'divergence':
+      return 'VVIX divergence'
+    default:
+      return key
+  }
+}
+
+/**
+ * Format a hit-rate ratio in [0,1] as a whole-percent string, e.g.
+ * 0.6388 → '64%'. Null/undefined/NaN → '—'.
+ */
+export function hitRateText(x?: number | null): string {
+  if (x === null || x === undefined || Number.isNaN(x)) return '—'
+  return `${Math.round(x * 100)}%`
+}
+
+/** A formatted evidence-table row, one per signal key. */
+export interface EvidenceRow {
+  key: string
+  name: string
+  n: string
+  hitRate: string
+  fwdVix5: string
+  fwdSpy5: string
+  timing: string
+}
+
+/**
+ * Build the evidence table rows in SIGNAL_KEYS order. fwd_* are ratios in
+ * the source data, so they are scaled ×100 before fmtPct. Missing signals
+ * render em-dashes rather than being dropped.
+ */
+export function evidenceRows(evidence?: AdvisorEvidence | null): EvidenceRow[] {
+  const signals = evidence?.signals ?? {}
+  return SIGNAL_KEYS.map((key) => {
+    const s = signals[key] as AdvisorEvidenceSignal | undefined
+    const n = s?.n
+    const med = s?.timing_median
+    return {
+      key,
+      name: signalDisplayName(key),
+      n: n === null || n === undefined || Number.isNaN(n) ? '—' : String(n),
+      hitRate: hitRateText(s?.hit_rate),
+      fwdVix5: fmtPct(s?.fwd_vix_5 === null || s?.fwd_vix_5 === undefined ? null : s.fwd_vix_5 * 100),
+      fwdSpy5: fmtPct(s?.fwd_spy_5 === null || s?.fwd_spy_5 === undefined ? null : s.fwd_spy_5 * 100),
+      timing: med === null || med === undefined || Number.isNaN(med) ? '—' : `${med}d`,
+    }
+  })
+}
+
+/**
+ * Map a live-record `correct` flag to a result mark.
+ * true → '✓', false → '✗', null/undefined → 'pending'.
+ */
+export function resultMark(correct?: boolean | null): string {
+  if (correct === true) return '✓'
+  if (correct === false) return '✗'
+  return 'pending'
+}
+
+/**
+ * Headline summarizing the live track record.
+ *   n_scored>0 → '64% over 25 scored calls' (+ ' · 72% in-window' if present)
+ *   else       → 'No scored calls yet — accruing daily.'
+ */
+export function liveHeadline(record?: AdvisorLiveRecord | null): string {
+  if (!record || !record.n_scored || record.n_scored <= 0) {
+    return 'No scored calls yet — accruing daily.'
+  }
+  const acc = record.overall_accuracy
+  const accTxt =
+    acc === null || acc === undefined || Number.isNaN(acc)
+      ? '—'
+      : `${Math.round(acc * 100)}%`
+  let out = `${accTxt} over ${record.n_scored} scored call${record.n_scored === 1 ? '' : 's'}`
+  const inw = record.in_window_rate
+  if (inw !== null && inw !== undefined && !Number.isNaN(inw)) {
+    out += ` · ${Math.round(inw * 100)}% in-window`
+  }
+  return out
 }
