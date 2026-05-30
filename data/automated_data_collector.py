@@ -1336,6 +1336,25 @@ def run_gamma_daily_summary():
         log_collection('gamma_daily_summary', 'gamma_daily_summary', False, str(e), tb)
 
 
+def run_vol_advisor():
+    """Snapshot today's vol-regime recommendation and score matured ones -> vol_advisor_log"""
+    if not is_after_market_close():
+        return
+    print(f"🌪️ Vol Regime Advisor - {datetime.now(CENTRAL_TZ).strftime('%H:%M:%S')}")
+    try:
+        from core.vol_regime_advisor import get_regime_report
+        from services.vol_advisor_tracker import snapshot_today, score_matured
+        report = get_regime_report()
+        snapped = snapshot_today(report)
+        scored = score_matured()
+        print(f"  ✅ vol_advisor_log (snapshot={'ok' if snapped else 'skip'}, scored={scored})")
+        log_collection('vol_advisor', 'vol_advisor_log', True)
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"  ❌ vol_advisor failed: {e}\n{tb}")
+        log_collection('vol_advisor', 'vol_advisor_log', False, str(e), tb)
+
+
 def run_discernment_outcome_tracking():
     """
     Run Discernment outcome tracking (end of day) -> discernment_outcomes table
@@ -1423,6 +1442,7 @@ def setup_schedule():
     # === END OF DAY (Run every 5 min, but only executes after market close) ===
     schedule.every(5).minutes.do(run_daily_performance)    # performance
     schedule.every(5).minutes.do(run_gamma_daily_summary)  # gamma_daily_summary
+    schedule.every(5).minutes.do(run_vol_advisor)          # vol_advisor_log (NEW)
     schedule.every(5).minutes.do(run_position_sizing)      # position_sizing_history (NEW)
     schedule.every(5).minutes.do(run_probability_calibration)  # probability_weights, calibration_history (NEW)
     schedule.every(5).minutes.do(run_discernment_outcome_tracking)  # discernment_outcomes (FIX: Jan 2026)
