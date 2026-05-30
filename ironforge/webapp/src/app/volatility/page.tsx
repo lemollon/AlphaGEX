@@ -17,6 +17,7 @@ import TimingChart from '@/components/vol/TimingChart'
 import TriggerWatch from '@/components/vol/TriggerWatch'
 import EvidenceTable from '@/components/vol/EvidenceTable'
 import LiveTrackRecord from '@/components/vol/LiveTrackRecord'
+import AlertsFeed from '@/components/vol/AlertsFeed'
 
 const REFRESH = 60_000
 
@@ -85,6 +86,8 @@ export default function VolatilityPage() {
 
       <div className="space-y-3">
         <ActionCard action={report.action} recommendation={recommendation} />
+
+        <AlertsFeed />
 
         <OutlookCard summary={report.summary} outlook={outlook} />
 

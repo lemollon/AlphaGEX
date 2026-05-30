@@ -3,7 +3,44 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
+import useSWR from 'swr'
+import { fetcher } from '@/lib/fetcher'
+import type { VolAlert } from '@/lib/volAlerts'
 import AuthControls from './AuthControls'
+
+/**
+ * Unobtrusive bell + count of active volatility alerts, linking to /volatility.
+ * Hidden entirely when the count is 0. Refreshes every 60s.
+ */
+function VolAlertBadge() {
+  const { data } = useSWR<{ alerts: VolAlert[] }>(
+    '/api/vol-alerts?status=active',
+    fetcher,
+    { refreshInterval: 60_000 },
+  )
+  const count = data?.alerts?.length ?? 0
+  if (count <= 0) return null
+  return (
+    <Link
+      href="/volatility"
+      title={`${count} active volatility alert${count === 1 ? '' : 's'}`}
+      className="relative inline-flex items-center text-violet-400 hover:text-violet-300 transition-colors"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path
+          d="M8 2a3 3 0 0 0-3 3c0 3-1.2 4.2-2 5h10c-0.8-0.8-2-2-2-5a3 3 0 0 0-3-3Z"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+        />
+        <path d="M6.5 13a1.5 1.5 0 0 0 3 0" stroke="currentColor" strokeWidth="1.2" />
+      </svg>
+      <span className="ml-0.5 min-w-[16px] rounded-full bg-violet-500/25 px-1 text-[10px] font-semibold leading-4 text-violet-200 text-center">
+        {count}
+      </span>
+    </Link>
+  )
+}
 
 const botIcons: Record<string, React.ReactNode> = {
   FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
@@ -146,6 +183,8 @@ export default function Nav() {
           {primaryLinks.map((link) => (
             <NavLinkItem key={link.href} link={link} pathname={pathname} />
           ))}
+
+          <VolAlertBadge />
 
           <div ref={moreRef} className="relative">
             <button
