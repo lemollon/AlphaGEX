@@ -65,6 +65,8 @@ import {
   type SandboxCloseInfo,
   type IcMtmResult,
 } from './tradier'
+import { diffVolAlerts, isAlertingKey } from './volAlerts'
+import { ensureVolAlertsTable } from './volAlerts.server'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -5508,6 +5510,117 @@ function safeInfernoFastMonitor(): void {
     .finally(() => { _infernoFastMonitorRunning = false })
 }
 
+/* ------------------------------------------------------------------ */
+/*  Volatility regime alerts — NON-TRADING side channel                */
+/* ------------------------------------------------------------------ */
+//
+// SAFETY: This is completely isolated from the trade loop. It runs on its
+// OWN 5-minute interval, never from inside safeRunAllScans/scanBot, never
+// touches positions/orders/monitorPosition, and its entire body is wrapped
+// in try/catch + a 5s fetch timeout so it can NEVER throw into or block the
+// trading loop. Worst case on any failure: no new alert rows this tick.
+
+const VOL_ALERTS_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
+let _volAlertsRunning = false
+
+const ALPHAGEX_API_BASE = (
+  process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com'
+).replace(/\/$/, '')
+const VOL_ADVISOR_FETCH_TIMEOUT_MS = 5_000
+
+/**
+ * Poll the AlphaGEX vol-regime advisor and reconcile the `vol_alerts` table:
+ * INSERT a new 'active' row for each directional signal that just went
+ * inactive→active, and mark resolved any open alert whose signal is no longer
+ * active. Idempotent — never double-inserts an open alert for the same key.
+ *
+ * Standalone and read-only with respect to all trading state. Never throws.
+ */
+async function checkVolAlerts(): Promise<void> {
+  try {
+    await ensureVolAlertsTable()
+
+    // Fetch the advisor with a hard 5s timeout so a hung upstream can't stall.
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), VOL_ADVISOR_FETCH_TIMEOUT_MS)
+    let payload: any
+    try {
+      const resp = await fetch(`${ALPHAGEX_API_BASE}/api/vix/regime-advisor`, {
+        signal: controller.signal,
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      payload = await resp.json()
+    } finally {
+      clearTimeout(timer)
+    }
+
+    const report = payload?.report
+    const signals: Record<string, any> = report?.signals || {}
+
+    // Currently-active DIRECTIONAL alerting keys (excludes divergence/double_floor).
+    const activeKeys: string[] = Object.entries(signals)
+      .filter(([key, sig]) => {
+        if (!sig || !sig.active) return false
+        if (!isAlertingKey(key)) return false
+        const dir = sig.direction
+        return dir === 'bullish' || dir === 'bearish'
+      })
+      .map(([key]) => key)
+
+    // Keys that already have an OPEN alert row.
+    const openRows = await query<{ signal_key: string }>(
+      `SELECT signal_key FROM vol_alerts WHERE status = 'active'`,
+    )
+    const openKeys = openRows.map((r) => r.signal_key)
+
+    const { toOpen, toResolve } = diffVolAlerts(activeKeys, openKeys)
+
+    const headline: string | null = report?.action?.headline ?? null
+    const message: string | null = report?.action?.plain ?? report?.summary ?? null
+    const regimeLabel: string | null = report?.regime_label ?? null
+    const vix: number | null = report?.inputs?.vix ?? null
+    const vvix: number | null = report?.inputs?.vvix ?? null
+
+    for (const key of toOpen) {
+      const direction: string | null = signals[key]?.direction ?? null
+      await query(
+        `INSERT INTO vol_alerts
+           (signal_key, direction, status, headline, message, regime_label, vix, vvix)
+         VALUES ($1, $2, 'active', $3, $4, $5, $6, $7)`,
+        [key, direction, headline, message, regimeLabel, vix, vvix],
+      )
+      console.log(`[scanner] vol-alert OPEN: ${key} (${direction || '?'}) — ${headline || ''}`)
+    }
+
+    if (toResolve.length > 0) {
+      await query(
+        `UPDATE vol_alerts
+            SET status = 'resolved', resolved_at = NOW()
+          WHERE status = 'active' AND signal_key = ANY($1)`,
+        [toResolve],
+      )
+      console.log(`[scanner] vol-alert RESOLVE: ${toResolve.join(', ')}`)
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[scanner] checkVolAlerts error (non-fatal): ${msg}`)
+  }
+}
+
+/** Fire-and-forget wrapper — re-entrancy guard + can never throw. Mirrors
+ *  safeRunAllScans's shape but is fully independent of the trade loop. */
+function safeCheckVolAlerts(): void {
+  if (_volAlertsRunning) return
+  _volAlertsRunning = true
+  checkVolAlerts()
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeCheckVolAlerts error: ${msg}`)
+    })
+    .finally(() => { _volAlertsRunning = false })
+}
+
 export function startScanner(): void {
   if (_started) return
   _started = true
@@ -5523,10 +5636,17 @@ export function startScanner(): void {
   _sparkFastMonitorIntervalId = setInterval(safeSparkFastMonitor, SPARK_FAST_MONITOR_INTERVAL_MS)
   _infernoFastMonitorIntervalId = setInterval(safeInfernoFastMonitor, INFERNO_FAST_MONITOR_INTERVAL_MS)
 
+  // Volatility regime alerts — own 5-min interval, fully isolated from the
+  // trade loop. Kick one run shortly after startup (10s) so the feed/badge
+  // populate without waiting a full interval.
+  _volAlertsIntervalId = setInterval(safeCheckVolAlerts, VOL_ALERTS_INTERVAL_MS)
+  setTimeout(safeCheckVolAlerts, 10_000)
+
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
   console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
+  console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */

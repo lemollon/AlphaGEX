@@ -21,6 +21,7 @@ import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
 import BlazeDirectionalChart from './BlazeDirectionalChart'
 import GexSummaryBanner from './gex/GexSummaryBanner'
+import VolRegimeBanner from './vol/VolRegimeBanner'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -343,6 +344,12 @@ export default function BotDashboard({
 
   return (
     <div className="space-y-6">
+      {/* Volatility regime banner — renders only when a relevant directional
+          vol alert is active for this bot kind. Tailored tone/message. */}
+      <ComponentErrorBoundary fallback="Vol banner error">
+        <VolRegimeBanner bot={bot} />
+      </ComponentErrorBoundary>
+
       {/* Title + Paper/Live Toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-baseline gap-2">
