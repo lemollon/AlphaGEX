@@ -40,8 +40,25 @@ SIGNAL_BLURB = {
     "divergence": "VVIX elevated while VIX calm. NOTE: 20-yr study shows this is statistically noise — low confidence.",
 }
 
+# What each signal implies for the equity stance.
+SIGNAL_DIRECTION = {
+    "backwardation": "bullish", "exhaustion": "bullish",
+    "ts_flattening": "bearish", "double_floor": "neutral", "divergence": "bearish",
+}
+# Plain-English firing condition, shown next to a "how close" gauge.
+SIGNAL_TRIGGER = {
+    "backwardation": "Fires when VIX > VIX3M (ratio > 1.00)",
+    "ts_flattening": "Fires when VIX/VIX3M > 0.95 and was < 0.90 about 20 days ago",
+    "exhaustion": "Fires when VIX hits a 10-day high, VVIX does NOT confirm, and VIX is in its top quintile",
+    "double_floor": "Fires when VVIX < 85 and VIX < 14",
+    "divergence": "Fires when VVIX z-score > 1 while VIX z-score < 0 (low confidence)",
+}
+
 def _z(s, w=60):
     return (s - s.rolling(w).mean()) / s.rolling(w).std()
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
 
 def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
     """history: DataFrame indexed by date with columns vix,vvix,vix3m,vix9d; last row = today."""
@@ -70,9 +87,30 @@ def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
         "exhaustion": _num(r["vix_pct"]), "double_floor": _num(r["vvix"]),
         "divergence": _num(r["vvix_z"]),
     }
+    # Live readings used for the per-signal "current vs trigger" gauge.
+    ts3m = _num(r["ts_3m"]); vixv = _num(r["vix"]); vvixv = _num(r["vvix"])
+    vixpct = _num(r["vix_pct"]); vvixz = _num(r["vvix_z"]); vixz = _num(r["vix_z"])
+    # proximity in [0,1]: progress of the binding metric toward its trigger (1 = firing).
+    proximity = {
+        "backwardation": _clamp01(ts3m / 1.0),
+        "ts_flattening": _clamp01(ts3m / 0.95),
+        "exhaustion": _clamp01(vixpct / 0.80),
+        # double_floor fires as VIX→14 and VVIX→85 from above; closer = higher.
+        "double_floor": _clamp01(min((28.0 - vixv) / 14.0, (115.0 - vvixv) / 30.0)) if vixv and vvixv else 0.0,
+        "divergence": _clamp01(vvixz / 1.0) if vvixz > 0 else 0.0,
+    }
+    current_text = {
+        "backwardation": f"VIX/VIX3M = {ts3m:.2f}",
+        "ts_flattening": f"VIX/VIX3M = {ts3m:.2f}",
+        "exhaustion": f"VIX percentile {vixpct * 100:.0f}%, VVIX {'confirming' if bool(r['vvix_hi10']) else 'not confirming'}",
+        "double_floor": f"VVIX {vvixv:.0f}, VIX {vixv:.1f}",
+        "divergence": f"VVIX z {vvixz:+.2f}, VIX z {vixz:+.2f}",
+    }
     return {
         key: {"active": raw[key], "value": round(values[key], 4),
-              "confidence": SIGNAL_CONFIDENCE[key], "blurb": SIGNAL_BLURB[key]}
+              "confidence": SIGNAL_CONFIDENCE[key], "blurb": SIGNAL_BLURB[key],
+              "direction": SIGNAL_DIRECTION[key], "trigger_text": SIGNAL_TRIGGER[key],
+              "current_text": current_text[key], "proximity": round(proximity[key], 3)}
         for key in raw
     }
 
@@ -134,11 +172,53 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
     return {
         "regime_label": _regime_label(signals),
         "recommendation": rec,
+        "summary": _summary(signals, curve),
         "outlook": outlook,
         "timing": timing,
         "signals": signals,
         "inputs": curve,
     }
+
+def _fmt(x, d=1):
+    """Safe number format for the narrative (handles None/NaN)."""
+    v = _num(x)
+    return f"{v:.{d}f}" if v else "—"
+
+def _summary(signals: Dict[str, dict], curve: dict) -> str:
+    """Always-present plain-English read of the current regime + what to watch."""
+    vix, vix3m, vvix = curve.get("vix"), curve.get("vix3m"), curve.get("vvix")
+    if signals["backwardation"]["active"]:
+        return (f"Stress is here — VIX ({_fmt(vix)}) is above VIX3M ({_fmt(vix3m)}), a backwardated curve. "
+                "Historically vol fades and SPY recovers from here, so the bias is contrarian-bullish — "
+                "but the spike is real, so size carefully.")
+    if signals["exhaustion"]["active"]:
+        return ("VIX is elevated but VVIX won't confirm the move — a classic exhaustion setup. "
+                "Vol tends to fade and SPY bounce over the next few days; the lean is long / calls.")
+    if signals["ts_flattening"]["active"]:
+        return ("The term structure is flattening out of contango — an early warning that vol may be building. "
+                "Favor downside protection / puts and trim short-premium risk.")
+    if signals["double_floor"]["active"]:
+        return (f"Both VIX ({_fmt(vix)}) and VVIX ({_fmt(vvix, 0)}) are pinned at the floor — a complacent tape. "
+                "Vol is cheap and tends to drift up slowly; owning optionality is favored, but there's no urgent "
+                "directional edge.")
+    return (f"Volatility is calm and in contango (VIX {_fmt(vix)} < VIX3M {_fmt(vix3m)}). "
+            "No high-confidence signal is active — a premium-selling regime. Watch for VIX rising above VIX3M "
+            "(bearish flip / buy puts) or a VIX spike that VVIX won't confirm (bullish exhaustion / buy the bounce).")
+
+def build_series(history: pd.DataFrame, n: int = 90) -> list:
+    """Last n trading days of normalized VIX/VVIX for the overlay chart."""
+    df = history.copy()
+    df["vix_z"] = _z(df["vix"]); df["vvix_z"] = _z(df["vvix"])
+    df["ratio"] = df["vvix"] / df["vix"]
+    out = []
+    for idx, row in df.tail(n).iterrows():
+        out.append({
+            "d": str(idx.date()) if hasattr(idx, "date") else str(idx),
+            "vix": round(_num(row["vix"]), 2), "vvix": round(_num(row["vvix"]), 2),
+            "vix_z": round(_num(row["vix_z"]), 3), "vvix_z": round(_num(row["vvix_z"]), 3),
+            "ratio": round(_num(row["ratio"]), 3),
+        })
+    return out
 
 def _structure_note(stance: str, vix: Optional[float]) -> str:
     if stance in ("buy_the_bounce", "lean_calls") and vix and vix >= 22:
@@ -214,6 +294,7 @@ def get_regime_report() -> dict:
         hist = pd.concat([hist.iloc[:-1], pd.DataFrame([last], index=[hist.index[-1]])])
         signals = compute_signals(hist)
         rep = compute_report(signals, curve, _load_evidence())
+        rep["series"] = build_series(hist)
         rep["as_of"] = str(hist.index[-1].date())
         rep["ok"] = True
         return rep
