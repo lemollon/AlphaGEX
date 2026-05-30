@@ -13,6 +13,8 @@ Features:
 
 import logging
 import os
+import json as _json
+import os as _os
 import time
 import uuid
 import threading
@@ -1536,3 +1538,71 @@ async def test_vix_sources():
 
     RequestContext.clear()
     return results
+
+
+# ============================================================================
+# VOLATILITY REGIME ADVISOR
+# ============================================================================
+
+def _advisor_report():
+    from core.vol_regime_advisor import get_regime_report
+    return get_regime_report()
+
+
+def _advisor_evidence():
+    try:
+        p = _os.path.join(_os.path.dirname(__file__), "..", "..", "..",
+                          "backtest", "vvix_vix_analysis", "evidence.json")
+        with open(_os.path.normpath(p)) as f:
+            return _json.load(f)
+    except Exception:
+        return {"signals": {}}
+
+
+def _advisor_live_record():
+    """Aggregate accuracy from vol_advisor_log. Returns nulls if unavailable."""
+    try:
+        from database_adapter import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""SELECT COUNT(*) FILTER (WHERE correct IS NOT NULL),
+                            AVG(CASE WHEN correct THEN 1.0 ELSE 0.0 END) FILTER (WHERE correct IS NOT NULL),
+                            AVG(CASE WHEN in_window THEN 1.0 ELSE 0.0 END) FILTER (WHERE in_window IS NOT NULL)
+                     FROM vol_advisor_log""")
+        row = c.fetchone(); conn.close()
+        return {"n_scored": int(row[0] or 0),
+                "overall_accuracy": float(row[1]) if row[1] is not None else None,
+                "in_window_rate": float(row[2]) if row[2] is not None else None}
+    except Exception:
+        return {"n_scored": 0, "overall_accuracy": None, "in_window_rate": None}
+
+
+@router.get("/regime-advisor")
+async def get_regime_advisor():
+    return {"report": _advisor_report(),
+            "evidence": _advisor_evidence(),
+            "live_record": _advisor_live_record()}
+
+
+def _advisor_history(days: int):
+    try:
+        from database_adapter import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""SELECT log_date, vix, vvix, regime_label, stance, conviction,
+                            predicted_dir, horizon_days, window_p75_days,
+                            realized_vix_chg, realized_spy_ret, event_landed_day, correct, in_window
+                     FROM vol_advisor_log
+                     WHERE log_date >= (CURRENT_DATE - %s::int)
+                     ORDER BY log_date DESC""", (days,))
+        cols = [d[0] for d in c.description]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        for r in rows:
+            r["log_date"] = str(r["log_date"])
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+@router.get("/regime-advisor/history")
+async def get_regime_advisor_history(days: int = 180):
+    return {"rows": _advisor_history(days)}

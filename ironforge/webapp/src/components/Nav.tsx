@@ -36,6 +36,7 @@ const primaryLinks: NavLink[] = [
   { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
   { href: '/flare', label: 'FLARE', className: 'text-fuchsia-400 hover:text-fuchsia-300' },
   { href: '/gex', label: 'GEX Profile', className: 'text-cyan-400 hover:text-cyan-300' },
+  { href: '/volatility', label: 'Volatility', className: 'text-violet-400 hover:text-violet-300' },
   { href: '/compare', label: 'Compare' },
 ]
 
