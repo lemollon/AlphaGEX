@@ -15,8 +15,9 @@ export interface AdvisorRecommendation {
 }
 
 export interface AdvisorOutlook {
-  fwd_spy_5_pct?: number
-  fwd_vix_5_pct?: number
+  // ratios (e.g. -0.084), NOT percents — scale x100 at render if ever displayed
+  fwd_spy_5_ratio?: number
+  fwd_vix_5_ratio?: number
   hit_rate?: number
   sample_n?: number
 }

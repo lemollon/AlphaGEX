@@ -122,8 +122,9 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
         "structure_note": _structure_note(rec["stance"], curve.get("vix")),
     }
     outlook = {
-        "fwd_spy_5_pct": ev_sig.get("fwd_spy_5"),
-        "fwd_vix_5_pct": ev_sig.get("fwd_vix_5"),
+        # NOTE: these are RATIOS (e.g. -0.084), not percents — scale x100 at render.
+        "fwd_spy_5_ratio": ev_sig.get("fwd_spy_5"),
+        "fwd_vix_5_ratio": ev_sig.get("fwd_vix_5"),
         "hit_rate": ev_sig.get("hit_rate"),
         "sample_n": ev_sig.get("n"),
     }
