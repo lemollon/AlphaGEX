@@ -10,6 +10,22 @@
 
 ---
 
+## PHASE 3–4 REVISION (post-discovery, Task 10 findings — these OVERRIDE the Phase 3/4 task code below)
+
+Discovery of the real IronForge conventions changed the frontend approach. Build Phase 3/4 with these, not the original Task 11–17 assumptions:
+
+- **AlphaGEX access = same-origin proxy route.** Client never calls AlphaGEX directly. Create `ironforge/webapp/src/app/api/volatility/route.ts` with `export const dynamic = 'force-dynamic'`, a 5s `AbortController`, fetching `${(process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com').replace(/\/$/,'')}/api/vix/regime-advisor`, returning `NextResponse.json(...)` (502 on error). Add a second proxy `src/app/api/volatility/history/route.ts` → `/api/vix/regime-advisor/history?days=...`. (Pattern mirrors `src/app/api/blaze/gex-context/route.ts`.)
+- **Page = `'use client'` + SWR**, not a server component. `src/app/volatility/page.tsx` fetches `/api/volatility` (+ `/api/volatility/history`) via SWR with the shared `@/lib/fetcher`. (Reference: `src/app/blaze/page.tsx` + `BlazeDirectionalChart.tsx` SWR usage.)
+- **Styling = `forge-*` tokens** (`bg-forge-card/80`, `border-forge-border`, `text-forge-muted`, `bg-forge-bg`), accents via Tailwind (`text-emerald-400`/`text-red-400`/`text-violet-400`). Card chrome: `rounded-xl border border-forge-border bg-forge-card/80 px-4 py-3`. Replace all `neutral-*` classes in the Phase 3 component code with these.
+- **Charts = recharts inline**, copy idiom from `src/components/EquityChart.tsx`. Colors: axis stroke `#44403c`, tick text `#a8a29e`, tooltip bg `#1c1917` border `#292524`; series emerald `#10b981`/red `#ef4444`/blue `#3b82f6`/violet `#a78bfa`; target line `#f59e0b`.
+- **Tests = pure-logic only** (vitest `environment: 'node'`, no jsdom/ResizeObserver). Do NOT use `@testing-library/react` `render()`. Extract display/format/classify helpers (e.g. stance label, regime label, pct formatting, DTE text) into plain functions and unit-test those (`src/.../*.test.ts`). Verify JSX via `npx tsc --noEmit` + `npm run build`.
+- **Nav** = append one object to the `links` array in `src/components/Nav.tsx`.
+- **Daily brief line** = add a `lines.push(...)` in `src/lib/market-brief.ts` `formatInputsForPrompt()` MARKET STATE block (~L355-360). That file already fetches the VIX family (`QUOTE_SYMBOLS=['SPY','VIX','VVIX','VIX9D','VIX3M','VIX6M']`) and computes a term-structure label — fetch the advisor (`${ALPHAGEX_API_BASE}/api/vix/regime-advisor`) for the regime+stance+DTE, with graceful fallback to a locally-derived contango/backwardation label if the fetch fails. `BriefingMacroRibbon.tsx` is prop-driven (optional second surface, not required).
+
+Revised frontend task grouping (executed by controller): **3A** proxy routes + types + working `'use client'` page shell (SWR); **3B** components + charts (forge-styled) wired into the page; **3C** nav link + brief line. The component CODE in Tasks 11–14 below is a starting point — reuse the structure, apply the overrides above.
+
+---
+
 ## Conventions to follow (from the existing codebase)
 
 - **DB access (Python):** `from database_adapter import get_connection` → `conn.cursor()`, `%s` params, `conn.commit()`, `conn.close()`. Postgres.
