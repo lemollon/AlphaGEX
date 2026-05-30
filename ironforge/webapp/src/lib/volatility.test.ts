@@ -14,9 +14,27 @@ import {
   resultMark,
   liveHeadline,
   formatVolRegime,
+  proximityPct,
+  directionClass,
+  sortedSignalEntries,
+  triggerGroups,
+  seriesForChart,
   type AdvisorTiming,
   type AdvisorReport,
+  type AdvisorSignal,
 } from './volatility'
+
+/** Minimal signal factory for the per-signal helpers. */
+function mkSignal(over: Partial<AdvisorSignal> = {}): AdvisorSignal {
+  return {
+    active: false,
+    value: 0,
+    confidence: 'high',
+    blurb: '',
+    hit_rate: null,
+    ...over,
+  }
+}
 
 describe('stanceLabel', () => {
   it('maps known stances', () => {
@@ -241,6 +259,110 @@ describe('resultMark', () => {
     expect(resultMark(false)).toBe('✗')
     expect(resultMark(null)).toBe('pending')
     expect(resultMark(undefined)).toBe('pending')
+  })
+})
+
+describe('proximityPct', () => {
+  it('scales proximity ratio to a clamped whole percent', () => {
+    expect(proximityPct(mkSignal({ proximity: 0.42 }))).toBe(42)
+    expect(proximityPct(mkSignal({ proximity: 0 }))).toBe(0)
+    expect(proximityPct(mkSignal({ proximity: 1 }))).toBe(100)
+  })
+
+  it('clamps out-of-range proximity into [0,100]', () => {
+    expect(proximityPct(mkSignal({ proximity: 1.5 }))).toBe(100)
+    expect(proximityPct(mkSignal({ proximity: -0.2 }))).toBe(0)
+  })
+
+  it('active always reports 100 regardless of proximity', () => {
+    expect(proximityPct(mkSignal({ active: true, proximity: 0.1 }))).toBe(100)
+    expect(proximityPct(mkSignal({ active: true }))).toBe(100)
+  })
+
+  it('falls back to 0 on missing/NaN', () => {
+    expect(proximityPct(mkSignal())).toBe(0)
+    expect(proximityPct(mkSignal({ proximity: NaN }))).toBe(0)
+    expect(proximityPct(null)).toBe(0)
+    expect(proximityPct(undefined)).toBe(0)
+  })
+})
+
+describe('directionClass', () => {
+  it('maps direction to a tailwind color class', () => {
+    expect(directionClass('bullish')).toBe('text-emerald-400')
+    expect(directionClass('bearish')).toBe('text-red-400')
+    expect(directionClass('neutral')).toBe('text-forge-muted')
+  })
+
+  it('falls back to muted on missing/unknown', () => {
+    expect(directionClass(undefined)).toBe('text-forge-muted')
+    expect(directionClass(null)).toBe('text-forge-muted')
+    expect(directionClass('mystery')).toBe('text-forge-muted')
+  })
+})
+
+describe('sortedSignalEntries', () => {
+  it('sorts active first, then proximity descending', () => {
+    const entries = sortedSignalEntries({
+      armed_low: mkSignal({ proximity: 0.2 }),
+      active_one: mkSignal({ active: true, proximity: 0.1 }),
+      armed_high: mkSignal({ proximity: 0.8 }),
+    })
+    expect(entries.map((e) => e.key)).toEqual(['active_one', 'armed_high', 'armed_low'])
+  })
+
+  it('returns empty for missing signals', () => {
+    expect(sortedSignalEntries(null)).toEqual([])
+    expect(sortedSignalEntries(undefined)).toEqual([])
+    expect(sortedSignalEntries({})).toEqual([])
+  })
+})
+
+describe('triggerGroups', () => {
+  it('splits by direction, omitting neutral, each proximity-sorted', () => {
+    const groups = triggerGroups({
+      backwardation: mkSignal({ direction: 'bullish', proximity: 0.3 }),
+      exhaustion: mkSignal({ direction: 'bullish', active: true, proximity: 0.1 }),
+      ts_flattening: mkSignal({ direction: 'bearish', proximity: 0.6 }),
+      double_floor: mkSignal({ direction: 'neutral', proximity: 0.9 }),
+    })
+    expect(groups.bullish.map((e) => e.key)).toEqual(['exhaustion', 'backwardation'])
+    expect(groups.bearish.map((e) => e.key)).toEqual(['ts_flattening'])
+  })
+
+  it('returns empty groups for missing signals', () => {
+    expect(triggerGroups(null)).toEqual({ bullish: [], bearish: [] })
+    expect(triggerGroups(undefined)).toEqual({ bullish: [], bearish: [] })
+    expect(triggerGroups({})).toEqual({ bullish: [], bearish: [] })
+  })
+})
+
+describe('seriesForChart', () => {
+  it('projects to {d, vix_z, vvix_z}', () => {
+    const pts = seriesForChart([
+      { d: '2026-05-01', vix: 18, vvix: 95, vix_z: -0.5, vvix_z: 0.2, ratio: 5.2 },
+      { d: '2026-05-02', vix: 20, vvix: 100, vix_z: 0.1, vvix_z: 0.4, ratio: 5.0 },
+    ])
+    expect(pts).toEqual([
+      { d: '2026-05-01', vix_z: -0.5, vvix_z: 0.2 },
+      { d: '2026-05-02', vix_z: 0.1, vvix_z: 0.4 },
+    ])
+  })
+
+  it('drops rows with missing date or non-finite z-scores', () => {
+    const pts = seriesForChart([
+      { d: '2026-05-01', vix: 18, vvix: 95, vix_z: 0.5, vvix_z: 0.2, ratio: 5 },
+      { d: '', vix: 18, vvix: 95, vix_z: 0.5, vvix_z: 0.2, ratio: 5 },
+      { d: '2026-05-03', vix: 18, vvix: 95, vix_z: NaN, vvix_z: 0.2, ratio: 5 },
+      { d: '2026-05-04', vix: 18, vvix: 95, vix_z: 0.5, vvix_z: NaN as any, ratio: 5 },
+    ])
+    expect(pts).toEqual([{ d: '2026-05-01', vix_z: 0.5, vvix_z: 0.2 }])
+  })
+
+  it('returns empty for missing/empty series', () => {
+    expect(seriesForChart(null)).toEqual([])
+    expect(seriesForChart(undefined)).toEqual([])
+    expect(seriesForChart([])).toEqual([])
   })
 })
 
