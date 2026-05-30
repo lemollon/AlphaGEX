@@ -1581,3 +1581,28 @@ async def get_regime_advisor():
     return {"report": _advisor_report(),
             "evidence": _advisor_evidence(),
             "live_record": _advisor_live_record()}
+
+
+def _advisor_history(days: int):
+    try:
+        from database_adapter import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""SELECT log_date, vix, vvix, regime_label, stance, conviction,
+                            predicted_dir, horizon_days, window_p75_days,
+                            realized_vix_chg, realized_spy_ret, event_landed_day, correct, in_window
+                     FROM vol_advisor_log
+                     WHERE log_date >= (CURRENT_DATE - %s::int)
+                     ORDER BY log_date DESC""", (days,))
+        cols = [d[0] for d in c.description]
+        rows = [dict(zip(cols, r)) for r in c.fetchall()]
+        for r in rows:
+            r["log_date"] = str(r["log_date"])
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+@router.get("/regime-advisor/history")
+async def get_regime_advisor_history(days: int = 180):
+    return {"rows": _advisor_history(days)}

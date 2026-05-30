@@ -19,3 +19,12 @@ def test_regime_advisor_returns_report(monkeypatch):
     body = r.json()
     assert body["report"]["regime_label"] == "exhaustion"
     assert "evidence" in body and "live_record" in body
+
+
+def test_regime_advisor_history(monkeypatch):
+    monkeypatch.setattr(vr, "_advisor_history", lambda days: [
+        {"log_date": "2026-05-20", "stance": "buy_the_bounce", "correct": True, "in_window": True}])
+    c = TestClient(_app())
+    r = c.get("/api/vix/regime-advisor/history?days=30")
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["correct"] is True
