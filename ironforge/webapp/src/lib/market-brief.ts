@@ -36,6 +36,9 @@
  */
 import { dbQuery, dbExecute, num, botTable, dteMode } from './db'
 import { getRawQuotes, isConfigured as isTradierConfigured } from './tradier'
+import { formatVolRegime, type AdvisorReport } from './volatility'
+
+const ALPHAGEX_API_BASE = (process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com').replace(/\/$/, '')
 
 // ── Constants ──────────────────────────────────────────────────────────
 
@@ -62,6 +65,10 @@ export interface MarketState {
   term_structure: number | null
   /** Convenience: label the structure regime in plain English for the prompt. */
   term_structure_label: 'contango' | 'backwardation' | 'flat' | 'unknown'
+  /** One-line volatility-regime advisory (from AlphaGEX /api/vix/regime-advisor),
+   * e.g. "Exhaustion — lean long / buy the bounce, ~13 DTE over 3–8 trading days".
+   * Optional — omitted when the advisor is unreachable AND no local fallback applies. */
+  vol_regime?: string
 }
 
 export interface PositionState {
@@ -157,6 +164,41 @@ async function gatherMarketState(): Promise<MarketState> {
   }
 }
 
+/**
+ * Fetch the AlphaGEX volatility-regime advisor and format its one-line summary.
+ * Graceful + total: returns null on any failure (timeout, non-200, no usable
+ * report) so the brief still generates. NEVER throws.
+ */
+async function gatherVolRegime(market: MarketState): Promise<string | null> {
+  // 1) Try the advisor endpoint with a short timeout.
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+    try {
+      const resp = await fetch(`${ALPHAGEX_API_BASE}/api/vix/regime-advisor`, {
+        signal: controller.signal,
+      })
+      if (resp.ok) {
+        const data = await resp.json().catch(() => null)
+        const report = (data?.report ?? null) as Partial<AdvisorReport> | null
+        const line = formatVolRegime(report)
+        if (line) return line
+      }
+    } finally {
+      clearTimeout(timeout)
+    }
+  } catch {
+    /* fall through to local fallback */
+  }
+  // 2) Local fallback from the already-fetched VIX family.
+  const { vix, vix3m } = market
+  if (vix != null && vix3m != null) {
+    return vix > vix3m ? 'Backwardation (stressed)' : 'Contango'
+  }
+  // 3) Nothing usable — omit the line entirely.
+  return null
+}
+
 async function gatherPositionState(bot: string, spotPrice: number | null): Promise<PositionState> {
   // Production positions only — paper/sandbox contract counts don't represent
   // real-money risk and were polluting the brief (e.g. brief warned about a
@@ -248,6 +290,8 @@ async function gatherRecentTrades(bot: string): Promise<RecentTrade[]> {
 
 export async function gatherInputs(bot: string, briefType: BriefType): Promise<BriefInputs> {
   const marketState = await gatherMarketState()
+  // Best-effort vol-regime advisory line (never throws; null → omitted).
+  marketState.vol_regime = (await gatherVolRegime(marketState).catch(() => null)) ?? undefined
   const positionState = await gatherPositionState(bot, marketState.spy_price)
   const recentTrades = await gatherRecentTrades(bot)
   return {
@@ -358,6 +402,7 @@ function formatInputsForPrompt(bot: string, i: BriefInputs): string {
   lines.push(`  VVIX: ${m.vvix != null ? m.vvix.toFixed(2) : 'n/a'} (vol of vol)`)
   lines.push(`  VIX9D: ${m.vix9d != null ? m.vix9d.toFixed(2) : 'n/a'}  VIX3M: ${m.vix3m != null ? m.vix3m.toFixed(2) : 'n/a'}`)
   lines.push(`  Term structure: ${m.term_structure != null ? (m.term_structure * 100).toFixed(2) + '%' : 'n/a'} (${m.term_structure_label})`)
+  if (m.vol_regime) lines.push(`  Volatility regime: ${m.vol_regime}`)
   lines.push('')
   if (p.has_open_ic) {
     lines.push(`OPEN ${structureLabel}:`)

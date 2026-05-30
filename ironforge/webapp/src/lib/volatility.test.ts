@@ -13,7 +13,9 @@ import {
   evidenceRows,
   resultMark,
   liveHeadline,
+  formatVolRegime,
   type AdvisorTiming,
+  type AdvisorReport,
 } from './volatility'
 
 describe('stanceLabel', () => {
@@ -261,5 +263,62 @@ describe('liveHeadline', () => {
     )
     expect(liveHeadline(null)).toBe('No scored calls yet — accruing daily.')
     expect(liveHeadline(undefined)).toBe('No scored calls yet — accruing daily.')
+  })
+})
+
+describe('formatVolRegime', () => {
+  it('builds the full sentence with stance, DTE, and range', () => {
+    const report: Partial<AdvisorReport> = {
+      regime_label: 'exhaustion',
+      recommendation: { stance: 'buy_the_bounce', conviction: 'high', rationale: '' },
+      timing: { suggested_dte: 13, p25_days: 3, p75_days: 8 },
+    }
+    expect(formatVolRegime(report)).toBe(
+      'Exhaustion — lean long / buy the bounce, ~13 DTE over 3–8 trading days',
+    )
+  })
+
+  it('maps each regime label to readable text', () => {
+    const mk = (regime_label: string): Partial<AdvisorReport> => ({ regime_label })
+    expect(formatVolRegime(mk('backwardation_stressed'))).toBe('Backwardation (stressed)')
+    expect(formatVolRegime(mk('floor_complacent'))).toBe('Floor / complacent')
+    expect(formatVolRegime(mk('contango_flattening'))).toBe('Contango, flattening')
+    expect(formatVolRegime(mk('contango_calm'))).toBe('Contango (calm)')
+  })
+
+  it('maps each stance to readable text', () => {
+    const mk = (stance: string): Partial<AdvisorReport> => ({
+      regime_label: 'exhaustion',
+      recommendation: { stance: stance as any, conviction: '', rationale: '' },
+    })
+    expect(formatVolRegime(mk('lean_calls'))).toBe('Exhaustion — lean calls')
+    expect(formatVolRegime(mk('lean_puts'))).toBe('Exhaustion — lean puts')
+    expect(formatVolRegime(mk('neutral'))).toBe('Exhaustion — neutral')
+  })
+
+  it('omits DTE and range parts when timing fields are missing', () => {
+    expect(
+      formatVolRegime({
+        regime_label: 'contango_calm',
+        recommendation: { stance: 'neutral', conviction: '', rationale: '' },
+        timing: {},
+      }),
+    ).toBe('Contango (calm) — neutral')
+  })
+
+  it('omits the range when only one endpoint is present', () => {
+    expect(
+      formatVolRegime({
+        regime_label: 'exhaustion',
+        timing: { suggested_dte: 5, p25_days: 3 },
+      }),
+    ).toBe('Exhaustion, ~5 DTE')
+  })
+
+  it('returns null when the report or regime label is unusable', () => {
+    expect(formatVolRegime(null)).toBeNull()
+    expect(formatVolRegime(undefined)).toBeNull()
+    expect(formatVolRegime({})).toBeNull()
+    expect(formatVolRegime({ regime_label: 'not_a_regime' })).toBeNull()
   })
 })

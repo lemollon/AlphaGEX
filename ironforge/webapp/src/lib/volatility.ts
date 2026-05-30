@@ -327,6 +327,73 @@ export function resultMark(correct?: boolean | null): string {
   return 'pending'
 }
 
+/* ------------------------------------------------------------------ */
+/*  Daily-brief one-liner (pure, unit-tested)                          */
+/* ------------------------------------------------------------------ */
+
+/** Brief-flavored regime label (sentence form, slightly different wording
+ * than the dashboard `regimeLabel`). Unknown → '' so the caller can fall
+ * back to a locally-derived label. */
+function briefRegimeText(key?: string | null): string {
+  switch (key) {
+    case 'backwardation_stressed':
+      return 'Backwardation (stressed)'
+    case 'exhaustion':
+      return 'Exhaustion'
+    case 'floor_complacent':
+      return 'Floor / complacent'
+    case 'contango_flattening':
+      return 'Contango, flattening'
+    case 'contango_calm':
+      return 'Contango (calm)'
+    default:
+      return ''
+  }
+}
+
+/** Brief-flavored stance text. Unknown → ''. */
+function briefStanceText(stance?: string | null): string {
+  switch (stance) {
+    case 'buy_the_bounce':
+      return 'lean long / buy the bounce'
+    case 'lean_calls':
+      return 'lean calls'
+    case 'lean_puts':
+      return 'lean puts'
+    case 'neutral':
+      return 'neutral'
+    default:
+      return ''
+  }
+}
+
+/**
+ * Build the single daily-brief volatility-regime line from an advisor report,
+ * e.g. "Exhaustion — lean long / buy the bounce, ~13 DTE over 3–8 trading days".
+ *
+ * Pure + total: returns null when the report is missing or has no usable
+ * regime label, so the caller can fall back to a locally-derived label or
+ * omit the line. Never throws.
+ */
+export function formatVolRegime(report?: Partial<AdvisorReport> | null): string | null {
+  if (!report) return null
+  const regime = briefRegimeText(report.regime_label)
+  if (!regime) return null
+  const stance = briefStanceText(report.recommendation?.stance)
+  const timing = report.timing
+  const dte = timing?.suggested_dte
+  const dtePart =
+    dte === null || dte === undefined || Number.isNaN(dte) ? '' : `, ~${dte} DTE`
+  const p25 = timing?.p25_days
+  const p75 = timing?.p75_days
+  const hasRange =
+    p25 !== null && p25 !== undefined && !Number.isNaN(p25) &&
+    p75 !== null && p75 !== undefined && !Number.isNaN(p75)
+  const rangePart = hasRange ? ` over ${p25}–${p75} trading days` : ''
+  const stancePart = stance ? ` — ${stance}` : ''
+  return `${regime}${stancePart}${dtePart}${rangePart}`
+}
+
 /**
  * Headline summarizing the live track record.
  *   n_scored>0 → '64% over 25 scored calls' (+ ' · 72% in-window' if present)

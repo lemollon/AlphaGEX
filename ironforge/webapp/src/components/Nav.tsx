@@ -30,6 +30,7 @@ const links: NavLink[] = [
   { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
   { href: '/compare', label: 'Compare' },
   { href: '/calendar', label: 'Calendar', className: 'text-gray-400 hover:text-gray-200' },
+  { href: '/volatility', label: 'Volatility', className: 'text-violet-400 hover:text-violet-300' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-400 hover:text-gray-200' },
   { href: '/forge', label: 'Forge', className: 'text-orange-400 hover:text-orange-300', external: true },
