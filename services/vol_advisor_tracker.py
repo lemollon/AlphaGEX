@@ -80,37 +80,48 @@ def snapshot_today(report: dict) -> bool:
         logger.error(f"snapshot_today failed: {e}")
         return False
 
+def _build_fwd(hist: pd.DataFrame, spy: pd.Series, log_date, horizon) -> Optional[pd.DataFrame]:
+    """Forward (vix, spy) frame for trading days strictly after log_date.
+
+    hist is Timestamp-indexed (CBOE history, 'vix' col); spy is date-indexed
+    (Yahoo daily closes). The two index types must be bridged via `.date()` —
+    a Timestamp never equals a date in `in`/`.loc`, so without this the SPY
+    column comes back all-NaN and nothing scores. Returns None if the horizon
+    has not fully elapsed yet.
+    """
+    fwd_idx = hist.index[hist.index > pd.Timestamp(log_date)]
+    if len(fwd_idx) < (horizon or 5):
+        return None  # not matured yet
+    spy_vals = [float(spy.loc[d.date()]) if d.date() in spy.index else float("nan")
+                for d in fwd_idx]
+    return pd.DataFrame({"vix": hist.loc[fwd_idx, "vix"].values, "spy": spy_vals},
+                        index=fwd_idx).dropna()
+
 def score_matured() -> int:
     """Score all unscored rows whose horizon has fully elapsed. Returns # scored."""
     try:
         from database_adapter import get_connection
         from core.vol_regime_advisor import fetch_cboe_history
-        from data.unified_data_provider import get_data_provider
         hist = fetch_cboe_history()
         spy = _spy_history()
         conn = get_connection(); c = conn.cursor()
-        c.execute("""SELECT id, log_date, vix, spy_close, stance, predicted_dir,
-                            horizon_days, window_p75_days FROM (
-                       SELECT l.*, NULL::real AS spy_close FROM vol_advisor_log l
-                     ) q WHERE scored_at IS NULL ORDER BY log_date""")
-        # NOTE: spy close is taken from spy history by date below
+        c.execute("""SELECT id, log_date, vix, stance, predicted_dir,
+                            horizon_days, window_p75_days FROM vol_advisor_log
+                     WHERE scored_at IS NULL ORDER BY log_date""")
         rows = c.fetchall()
         scored = 0
         for r in rows:
-            rid, log_date = r[0], r[1]
-            base_vix = r[2]
+            rid, log_date, base_vix = r[0], r[1], r[2]
+            stance, predicted_dir, horizon, window = r[3], r[4], r[5], r[6]
             if log_date not in spy.index:
                 continue
             base_spy = float(spy.loc[log_date])
-            fwd_idx = hist.index[hist.index > pd.Timestamp(log_date)]
-            if len(fwd_idx) < (r[6] or 5):
-                continue  # not matured yet
-            fwd = pd.DataFrame({
-                "vix": hist.loc[fwd_idx, "vix"].values,
-                "spy": [float(spy.loc[d]) if d in spy.index else float("nan") for d in fwd_idx],
-            }, index=fwd_idx).dropna()
-            res = score_row({"stance": r[4], "predicted_dir": r[5], "horizon_days": r[6],
-                             "window_p75_days": r[7], "vix": base_vix, "spy": base_spy}, fwd)
+            fwd = _build_fwd(hist, spy, log_date, horizon)
+            if fwd is None or fwd.empty:
+                continue
+            res = score_row({"stance": stance, "predicted_dir": predicted_dir,
+                             "horizon_days": horizon, "window_p75_days": window,
+                             "vix": base_vix, "spy": base_spy}, fwd)
             c.execute("""UPDATE vol_advisor_log SET realized_vix_chg=%s, realized_spy_ret=%s,
                          event_landed_day=%s, correct=%s, in_window=%s, scored_at=NOW()
                          WHERE id=%s""",
