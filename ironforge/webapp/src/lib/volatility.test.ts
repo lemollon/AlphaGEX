@@ -16,6 +16,7 @@ import {
   formatVolRegime,
   proximityPct,
   directionClass,
+  actionAccentClass,
   sortedSignalEntries,
   triggerGroups,
   seriesForChart,
@@ -298,6 +299,34 @@ describe('directionClass', () => {
     expect(directionClass(undefined)).toBe('text-forge-muted')
     expect(directionClass(null)).toBe('text-forge-muted')
     expect(directionClass('mystery')).toBe('text-forge-muted')
+  })
+})
+
+describe('actionAccentClass', () => {
+  it('maps bullish stances to emerald', () => {
+    expect(actionAccentClass('buy_the_bounce')).toEqual({
+      border: 'border-l-emerald-500',
+      text: 'text-emerald-400',
+    })
+    expect(actionAccentClass('lean_calls')).toEqual({
+      border: 'border-l-emerald-500',
+      text: 'text-emerald-400',
+    })
+  })
+
+  it('maps lean_puts to red', () => {
+    expect(actionAccentClass('lean_puts')).toEqual({
+      border: 'border-l-red-500',
+      text: 'text-red-400',
+    })
+  })
+
+  it('falls back to violet for neutral/unknown/missing', () => {
+    const violet = { border: 'border-l-violet-500', text: 'text-violet-400' }
+    expect(actionAccentClass('neutral')).toEqual(violet)
+    expect(actionAccentClass(undefined)).toEqual(violet)
+    expect(actionAccentClass(null)).toEqual(violet)
+    expect(actionAccentClass('mystery')).toEqual(violet)
   })
 })
 
