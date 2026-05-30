@@ -75,9 +75,42 @@ def test_report_has_required_keys():
                          evidence={"signals":{"exhaustion":{"hit_rate":0.6,"timing_median":5,
                             "timing_p25":3,"timing_p75":8,"suggested_dte":13,"timing_cdf":[0.1]*21,
                             "fwd_spy_5":0.009,"fwd_vix_5":-0.07,"n":91}}})
-    for k in ("regime_label","recommendation","outlook","timing","signals","inputs"):
+    for k in ("regime_label","recommendation","summary","outlook","timing","signals","inputs"):
         assert k in rep
     assert rep["timing"]["suggested_dte"] == 13
+    assert isinstance(rep["summary"], str) and len(rep["summary"]) > 0
+
+def test_signals_carry_direction_trigger_and_proximity():
+    import pandas as pd
+    idx = pd.date_range("2024-01-01", periods=300, freq="B")
+    df = pd.DataFrame({"vix": 15.0, "vvix": 90.0, "vix3m": 18.0, "vix9d": 13.0}, index=idx)
+    df.iloc[-1, df.columns.get_loc("vix")] = 25.0
+    df.iloc[-1, df.columns.get_loc("vix3m")] = 20.0  # backwardation: 25/20 = 1.25
+    sigs = compute_signals(df)
+    b = sigs["backwardation"]
+    assert b["direction"] == "bullish"
+    assert "VIX > VIX3M" in b["trigger_text"]
+    assert "VIX/VIX3M" in b["current_text"]
+    assert b["proximity"] == 1.0            # 1.25 clamped to 1.0 (firing)
+    assert 0.0 <= sigs["ts_flattening"]["proximity"] <= 1.0
+
+def test_summary_present_and_describes_calm_regime():
+    from core.vol_regime_advisor import _summary
+    s = _summary(_sigs([]), {"vix": 15.3, "vix3m": 18.7, "vvix": 86})
+    assert "contango" in s.lower()
+    assert "exhaustion" in s.lower()        # tells the user what would flip it bullish
+
+def test_build_series_shape():
+    import pandas as pd
+    from core.vol_regime_advisor import build_series
+    idx = pd.date_range("2024-01-01", periods=120, freq="B")
+    df = pd.DataFrame({"vix": 15.0, "vvix": 90.0, "vix3m": 18.0, "vix9d": 13.0}, index=idx)
+    ser = build_series(df, n=90)
+    assert len(ser) == 90
+    for row in ser:
+        for k in ("d", "vix", "vvix", "vix_z", "vvix_z", "ratio"):
+            assert k in row
+        assert isinstance(row["ratio"], float)
 
 import core.vol_regime_advisor as adv
 

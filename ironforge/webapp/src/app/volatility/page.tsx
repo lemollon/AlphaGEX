@@ -8,9 +8,12 @@ import {
   type AdvisorHistoryRow,
 } from '@/lib/volatility'
 import RecommendationCard from '@/components/vol/RecommendationCard'
+import OutlookCard from '@/components/vol/OutlookCard'
 import SignalsPanel from '@/components/vol/SignalsPanel'
 import TermStructureCurve from '@/components/vol/TermStructureCurve'
+import VixVvixChart from '@/components/vol/VixVvixChart'
 import TimingChart from '@/components/vol/TimingChart'
+import TriggerWatch from '@/components/vol/TriggerWatch'
 import EvidenceTable from '@/components/vol/EvidenceTable'
 import LiveTrackRecord from '@/components/vol/LiveTrackRecord'
 
@@ -65,7 +68,7 @@ export default function VolatilityPage() {
     )
   }
 
-  const { inputs, recommendation, timing, signals } = report
+  const { inputs, recommendation, timing, signals, outlook } = report
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
@@ -80,12 +83,20 @@ export default function VolatilityPage() {
       </header>
 
       <div className="space-y-4">
+        <OutlookCard summary={report.summary} outlook={outlook} />
+
         <RecommendationCard recommendation={recommendation} timing={timing} />
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <TermStructureCurve inputs={inputs} />
-          <TimingChart cdf={timing?.cdf} p75={timing?.p75_days} />
+          <VixVvixChart series={report.series} />
         </div>
+
+        {timing?.cdf && timing.cdf.length > 0 && (
+          <TimingChart cdf={timing.cdf} p75={timing?.p75_days} />
+        )}
+
+        <TriggerWatch signals={signals} />
 
         <SignalsPanel signals={signals} />
 

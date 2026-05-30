@@ -32,12 +32,29 @@ export interface AdvisorTiming {
   structure_note?: string
 }
 
+export type SignalDirection = 'bullish' | 'bearish' | 'neutral'
+
 export interface AdvisorSignal {
   active: boolean
   value: number
   confidence: string
   blurb: string
   hit_rate: number | null
+  // Enriched fields (backend update). Optional so older payloads still type-check.
+  direction?: SignalDirection
+  trigger_text?: string
+  current_text?: string
+  proximity?: number // 0..1, how close to firing; 1 = firing
+}
+
+/** One day of VIX-vs-VVIX history for the overlay chart. */
+export interface VolSeriesPoint {
+  d: string
+  vix: number
+  vvix: number
+  vix_z: number
+  vvix_z: number
+  ratio: number
 }
 
 export interface AdvisorInputs {
@@ -57,6 +74,9 @@ export interface AdvisorReport {
   timing: AdvisorTiming
   signals: Record<string, AdvisorSignal>
   inputs: AdvisorInputs
+  // Enriched fields (backend update).
+  summary?: string
+  series?: VolSeriesPoint[]
 }
 
 export interface AdvisorLiveRecord {
@@ -393,6 +413,113 @@ export function formatVolRegime(report?: Partial<AdvisorReport> | null): string 
   const rangePart = hasRange ? ` over ${p25}–${p75} trading days` : ''
   const stancePart = stance ? ` — ${stance}` : ''
   return `${regime}${stancePart}${dtePart}${rangePart}`
+}
+
+/* ------------------------------------------------------------------ */
+/*  Per-signal depth + trigger-watch helpers (pure, unit-tested)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Proximity (0..1) → a clamped whole-percent in [0,100], e.g. 0.42 → 42.
+ * Active signals report 100 regardless of the raw proximity. Missing/NaN → 0.
+ */
+export function proximityPct(sig?: Pick<AdvisorSignal, 'active' | 'proximity'> | null): number {
+  if (!sig) return 0
+  if (sig.active) return 100
+  const p = sig.proximity
+  if (p === null || p === undefined || Number.isNaN(p)) return 0
+  return Math.max(0, Math.min(100, Math.round(p * 100)))
+}
+
+/**
+ * Tailwind text-color class for a signal direction.
+ * bullish → emerald, bearish → red, neutral/missing → muted.
+ */
+export function directionClass(direction?: SignalDirection | string | null): string {
+  switch (direction) {
+    case 'bullish':
+      return 'text-emerald-400'
+    case 'bearish':
+      return 'text-red-400'
+    default:
+      return 'text-forge-muted'
+  }
+}
+
+/** A signal entry paired with its key, for sorting/grouping. */
+export interface SignalEntry {
+  key: string
+  signal: AdvisorSignal
+}
+
+/**
+ * Flatten a signals record into entries sorted active-first, then by
+ * proximity descending (so the closest-to-firing armed signals lead).
+ * Stable for ties via signal-key order. Missing → [].
+ */
+export function sortedSignalEntries(
+  signals?: Record<string, AdvisorSignal> | null,
+): SignalEntry[] {
+  if (!signals) return []
+  const entries: SignalEntry[] = Object.entries(signals).map(([key, signal]) => ({
+    key,
+    signal,
+  }))
+  return entries.sort((a, b) => {
+    if (a.signal.active !== b.signal.active) return a.signal.active ? -1 : 1
+    return proximityPct(b.signal) - proximityPct(a.signal)
+  })
+}
+
+/** Bullish + bearish trigger-watch columns, each in proximity-desc order. */
+export interface TriggerGroups {
+  bullish: SignalEntry[]
+  bearish: SignalEntry[]
+}
+
+/**
+ * Group signals by direction into bullish/bearish columns for the
+ * "what would flip it" panel. Neutral-direction signals are omitted.
+ * Within each column: active first, then proximity desc. Missing → empty groups.
+ */
+export function triggerGroups(
+  signals?: Record<string, AdvisorSignal> | null,
+): TriggerGroups {
+  const sorted = sortedSignalEntries(signals)
+  return {
+    bullish: sorted.filter((e) => e.signal.direction === 'bullish'),
+    bearish: sorted.filter((e) => e.signal.direction === 'bearish'),
+  }
+}
+
+/** A normalized VIX/VVIX z-score chart point. */
+export interface VixVvixPoint {
+  d: string
+  vix_z: number
+  vvix_z: number
+}
+
+/**
+ * Project the advisor `series` to the {d, vix_z, vvix_z} points the overlay
+ * chart needs, dropping rows with a non-finite date or either z-score so the
+ * recharts lines never break. Missing/short series → [].
+ */
+export function seriesForChart(series?: VolSeriesPoint[] | null): VixVvixPoint[] {
+  if (!series || series.length === 0) return []
+  return series
+    .filter(
+      (p) =>
+        p &&
+        typeof p.d === 'string' &&
+        p.d.length > 0 &&
+        p.vix_z !== null &&
+        p.vix_z !== undefined &&
+        !Number.isNaN(p.vix_z) &&
+        p.vvix_z !== null &&
+        p.vvix_z !== undefined &&
+        !Number.isNaN(p.vvix_z),
+    )
+    .map((p) => ({ d: p.d, vix_z: p.vix_z, vvix_z: p.vvix_z }))
 }
 
 /**
