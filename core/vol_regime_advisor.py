@@ -172,11 +172,96 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
     return {
         "regime_label": _regime_label(signals),
         "recommendation": rec,
+        "action": _build_action(signals, rec, timing, curve),
         "summary": _summary(signals, curve),
         "outlook": outlook,
         "timing": timing,
         "signals": signals,
         "inputs": curve,
+    }
+
+def _nearest_trigger(signals: Dict[str, dict]) -> Optional[tuple]:
+    """The inactive DIRECTIONAL signal closest to firing — what to actually watch.
+    Skips neutral 'double_floor' and low-confidence 'divergence' (they aren't tradeable cues)."""
+    cands = [(k, s) for k, s in signals.items()
+             if not s.get("active") and k not in ("divergence", "double_floor")
+             and s.get("direction") in ("bullish", "bearish") and s.get("proximity") is not None]
+    if not cands:
+        return None
+    return max(cands, key=lambda kv: kv[1].get("proximity") or 0.0)
+
+def _watch_line(signals: Dict[str, dict], dte_txt: str) -> Optional[str]:
+    nt = _nearest_trigger(signals)
+    if not nt:
+        return None
+    k, s = nt
+    pct = round((s.get("proximity") or 0.0) * 100)
+    name = k.replace("_", " ")
+    if s.get("direction") == "bearish":
+        return (f"Closest setup is bearish — {pct}% of the way to {name} ({s.get('current_text')}). "
+                f"If it fires, buy SPY puts or a put debit spread {dte_txt} and cut short-premium risk.")
+    if s.get("direction") == "bullish":
+        return (f"Closest setup is bullish — {pct}% of the way to {name} ({s.get('current_text')}). "
+                f"If it fires, buy SPY calls or a call debit spread {dte_txt}.")
+    return None
+
+def _build_action(signals: Dict[str, dict], recommendation: dict, timing: dict, curve: dict) -> dict:
+    """Blunt, plain-English 'what to do' — the advice layer. NOT financial advice,
+    but no hedging: it states a concrete trade, structure, DTE, and what to watch."""
+    stance = recommendation.get("stance", "neutral")
+    vix = curve.get("vix")
+    dte = timing.get("suggested_dte")
+    dte_txt = f"~{dte} DTE" if dte else "~2 weeks out (10–14 DTE)"
+    watch = _watch_line(signals, dte_txt)
+    iv_note = ("VIX is elevated, so use a call DEBIT SPREAD (buy 1 ATM, sell 1 OTM) rather than naked "
+               "long calls — it blunts the IV crush when vol falls."
+               if (_num(vix) >= 22) else "Long calls or a call debit spread both work here.")
+
+    if stance == "lean_puts":
+        return {
+            "headline": "Buy downside protection now",
+            "do": "Buy SPY puts or a put debit spread",
+            "dte_text": dte_txt,
+            "plain": (f"The VIX curve is flattening out of contango — the earliest warning that volatility is "
+                      f"building. Act on it: buy SPY puts or a put debit spread {dte_txt}, and trim/close any "
+                      f"short-premium positions (iron condors, credit spreads). Do NOT open new premium-selling "
+                      f"trades here — you'd be short vol right as it turns up."),
+            "watch": watch,
+        }
+    if stance in ("buy_the_bounce", "lean_calls"):
+        if signals["backwardation"]["active"]:
+            return {
+                "headline": "Fade the spike — go long, size small",
+                "do": "Buy SPY calls or a call debit spread (small size)",
+                "dte_text": dte_txt,
+                "plain": (f"The curve is in backwardation — historically the spike is near its peak and vol fades "
+                          f"while SPY recovers (+0.9%/5d, 64% hit). Go long: buy SPY calls or a call debit spread "
+                          f"{dte_txt}, but keep size SMALL — the stress is real and you can't pick the exact bottom. "
+                          f"Do NOT sell premium into this. {iv_note}"),
+                "watch": watch,
+            }
+        return {
+            "headline": "Buy the bounce — go long",
+            "do": "Buy SPY calls or a call debit spread",
+            "dte_text": dte_txt,
+            "plain": (f"VIX is high but VVIX won't confirm the move — a classic exhaustion. Vol tends to fade and "
+                      f"SPY bounces over the next few days (67% hit). Buy SPY calls or a call debit spread {dte_txt}. "
+                      f"{iv_note}"),
+            "watch": watch,
+        }
+    # neutral / calm
+    plain = (f"There is no high-conviction directional trade right now. Volatility is calm and in contango "
+             f"(VIX {_fmt(vix)}), which is the sweet spot for SELLING premium — SPY iron condors or credit "
+             f"spreads are favored while vol stays low and stable. If you only trade direction, the honest call "
+             f"is to sit in cash and wait; don't force a trade.")
+    if watch:
+        plain += " " + watch
+    return {
+        "headline": "No directional trade — sell premium or sit out",
+        "do": "Sell SPY iron condors / credit spreads, or hold cash",
+        "dte_text": dte_txt,
+        "plain": plain,
+        "watch": watch,
     }
 
 def _fmt(x, d=1):

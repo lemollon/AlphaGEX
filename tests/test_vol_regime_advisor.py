@@ -80,6 +80,27 @@ def test_report_has_required_keys():
     assert rep["timing"]["suggested_dte"] == 13
     assert isinstance(rep["summary"], str) and len(rep["summary"]) > 0
 
+def test_action_gives_concrete_advice_per_stance():
+    from core.vol_regime_advisor import _build_action
+    curve = {"vix": 15.3, "vix3m": 18.7, "vvix": 86}
+    # neutral → sell premium / sit out
+    a = _build_action(_sigs([]), {"stance": "neutral"}, {"suggested_dte": None}, curve)
+    assert a["headline"] and a["do"] and a["plain"]
+    assert "premium" in a["plain"].lower() or "cash" in a["plain"].lower()
+    # lean_puts → buy downside
+    a = _build_action(_sigs(["ts_flattening"]), {"stance": "lean_puts"}, {"suggested_dte": 12}, curve)
+    assert "put" in a["do"].lower() and "~12 DTE" in a["dte_text"]
+    # exhaustion → buy calls
+    a = _build_action(_sigs(["exhaustion"]), {"stance": "buy_the_bounce"}, {"suggested_dte": 13},
+                      {"vix": 30, "vix3m": 26, "vvix": 110})
+    assert "call" in a["do"].lower()
+    assert "debit spread" in a["plain"].lower()   # high VIX → debit-spread guidance
+
+def test_report_includes_action():
+    rep = compute_report(_sigs([]), curve={"vix": 15.3, "vvix": 86, "vix3m": 18.7},
+                         evidence={"signals": {}})
+    assert "action" in rep and rep["action"]["headline"]
+
 def test_signals_carry_direction_trigger_and_proximity():
     import pandas as pd
     idx = pd.date_range("2024-01-01", periods=300, freq="B")
