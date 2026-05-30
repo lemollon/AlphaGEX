@@ -1426,6 +1426,29 @@ def init_database():
         )
     ''')
 
+    # Volatility Regime Advisor - daily advisory log + outcome scoring
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS vol_advisor_log (
+            id SERIAL PRIMARY KEY,
+            log_date DATE UNIQUE NOT NULL,
+            vix REAL, vvix REAL, vix9d REAL, vix3m REAL, vix6m REAL,
+            regime_label TEXT,
+            stance TEXT,
+            conviction TEXT,
+            active_signals JSONB,
+            predicted_dir TEXT,
+            horizon_days INT,
+            window_p75_days INT,
+            realized_vix_chg REAL,
+            realized_spy_ret REAL,
+            event_landed_day INT,
+            correct BOOLEAN,
+            in_window BOOLEAN,
+            scored_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        )
+    ''')
+
     # Options Flow/Volume - Capture unusual activity for ML sentiment
     # Previously: Used for GEX calc then discarded - now stored
     c.execute('''
