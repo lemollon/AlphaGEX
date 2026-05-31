@@ -294,7 +294,7 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
       </div>
 
       {/* Column headers */}
-      <div className="grid grid-cols-[52px_repeat(5,1fr)] gap-1 mb-1">
+      <div className="grid grid-cols-[36px_repeat(5,1fr)] sm:grid-cols-[52px_repeat(5,1fr)] gap-1 mb-1">
         <div />
         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(d => (
           <div key={d} className="text-center text-[10px] text-forge-muted font-medium">
@@ -309,7 +309,7 @@ export default function PdtCalendar({ status }: { status: PdtStatus }) {
         return (
           <div
             key={wi}
-            className={`grid grid-cols-[52px_repeat(5,1fr)] gap-1 mb-1 ${
+            className={`grid grid-cols-[36px_repeat(5,1fr)] sm:grid-cols-[52px_repeat(5,1fr)] gap-1 mb-1 ${
               isThisWeek ? 'bg-white/[0.02] rounded-lg py-0.5' : ''
             }`}
           >

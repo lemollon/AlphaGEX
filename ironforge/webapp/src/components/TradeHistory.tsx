@@ -77,15 +77,15 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
             <th className="text-left p-3">Strikes</th>
             <th className="text-right p-3">Qty</th>
             <th className="text-right p-3" title="Credit (IC) or Debit (BLAZE) paid/received at open">Entry</th>
-            <th className="text-right p-3">Close $</th>
+            <th className="hidden sm:table-cell text-right p-3">Close $</th>
             <th className="text-right p-3">P&L<div className="text-[10px] font-normal normal-case text-forge-muted">actual</div></th>
             {showHypo && (
-              <th className="text-right p-3" title="Counterfactual: P&L if the bot had held to 2:59 PM CT instead of exiting via PT tier">
+              <th className="hidden md:table-cell text-right p-3" title="Counterfactual: P&L if the bot had held to 2:59 PM CT instead of exiting via PT tier">
                 Hypo @ 2:59<div className="text-[10px] font-normal normal-case text-forge-muted">if held</div>
               </th>
             )}
             {showHypo && (
-              <th className="text-right p-3" title="Hypo − P&L. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold">
+              <th className="hidden md:table-cell text-right p-3" title="Hypo − P&L. Positive = money left on the table by exiting early; negative = early exit beat the late-day hold">
                 Δ vs Hypo<div className="text-[10px] font-normal normal-case text-forge-muted">Hypo − P&L</div>
               </th>
             )}
@@ -144,17 +144,17 @@ export default function TradeHistory({ trades, bot }: { trades: Trade[]; bot?: s
                     ? `−$${(trade.debit ?? 0).toFixed(2)}`
                     : `$${trade.total_credit.toFixed(2)}`}
                 </td>
-                <td className="p-3 text-right">${trade.close_price.toFixed(4)}</td>
+                <td className="hidden sm:table-cell p-3 text-right">${trade.close_price.toFixed(4)}</td>
                 <td className={`p-3 text-right font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>
                 {showHypo && (
-                  <td className={`p-3 text-right font-mono ${hypoAvailable ? (hypo! >= 0 ? 'text-emerald-300' : 'text-red-300') : 'text-forge-muted'}`}>
+                  <td className={`hidden md:table-cell p-3 text-right font-mono ${hypoAvailable ? (hypo! >= 0 ? 'text-emerald-300' : 'text-red-300') : 'text-forge-muted'}`}>
                     {hypoAvailable ? `${hypo! >= 0 ? '+' : ''}$${hypo!.toFixed(2)}` : '—'}
                   </td>
                 )}
                 {showHypo && (
-                  <td className={`p-3 text-right font-mono ${deltaColor}`}>
+                  <td className={`hidden md:table-cell p-3 text-right font-mono ${deltaColor}`}>
                     {delta == null ? '—' : `${delta >= 0 ? '+' : ''}$${delta.toFixed(2)}`}
                   </td>
                 )}

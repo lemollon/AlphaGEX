@@ -132,6 +132,7 @@ function NavLinkItem({
 export default function Nav() {
   const pathname = usePathname()
   const [moreOpen, setMoreOpen] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const moreRef = useRef<HTMLDivElement>(null)
 
   // Close the More dropdown on outside click / Escape.
@@ -151,6 +152,11 @@ export default function Nav() {
     }
   }, [moreOpen])
 
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [pathname])
+
   return (
     <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
@@ -161,7 +167,9 @@ export default function Nav() {
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>
           </Link>
+          {/* Proverbs verse — hidden on small screens to keep the bar compact */}
           <span
+            className="hidden lg:block"
             style={{
               color: '#FCD34D',
               fontSize: '0.75rem',
@@ -178,54 +186,98 @@ export default function Nav() {
           </span>
         </div>
 
-        {/* Primary links + More dropdown */}
-        <div className="flex gap-6 items-center">
-          {primaryLinks.map((link) => (
-            <NavLinkItem key={link.href} link={link} pathname={pathname} />
-          ))}
+        {/* Desktop links + auth — hidden below md, where the hamburger takes over */}
+        <div className="hidden md:flex flex-1 items-center gap-8">
+          <div className="flex gap-6 items-center">
+            {primaryLinks.map((link) => (
+              <NavLinkItem key={link.href} link={link} pathname={pathname} />
+            ))}
 
-          <VolAlertBadge />
+            <VolAlertBadge />
 
-          <div ref={moreRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setMoreOpen((o) => !o)}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              className="text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
-            >
-              More
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 10 10"
-                aria-hidden="true"
-                className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`}
+            <div ref={moreRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setMoreOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                className="text-sm font-medium text-gray-400 hover:text-gray-200 transition-colors flex items-center gap-1"
               >
-                <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.2" fill="none" />
-              </svg>
-            </button>
-            {moreOpen && (
-              <div
-                role="menu"
-                className="absolute right-0 top-full mt-2 min-w-[180px] border border-amber-900/40 bg-forge-bg/95 backdrop-blur-sm py-2 shadow-2xl z-50"
-              >
-                {moreLinks.map((link) => (
-                  <NavLinkItem
-                    key={link.href}
-                    link={link}
-                    pathname={pathname}
-                    block
-                    onClick={() => setMoreOpen(false)}
-                  />
-                ))}
-              </div>
-            )}
+                More
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  aria-hidden="true"
+                  className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`}
+                >
+                  <path d="M2 4 L5 7 L8 4" stroke="currentColor" strokeWidth="1.2" fill="none" />
+                </svg>
+              </button>
+              {moreOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-2 min-w-[180px] border border-amber-900/40 bg-forge-bg/95 backdrop-blur-sm py-2 shadow-2xl z-50"
+                >
+                  {moreLinks.map((link) => (
+                    <NavLinkItem
+                      key={link.href}
+                      link={link}
+                      pathname={pathname}
+                      block
+                      onClick={() => setMoreOpen(false)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+
+          <AuthControls />
         </div>
 
-        <AuthControls />
+        {/* Mobile hamburger — only below md */}
+        <button
+          type="button"
+          onClick={() => setMobileOpen((o) => !o)}
+          aria-label="Toggle navigation menu"
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav"
+          className="md:hidden ml-auto inline-flex items-center justify-center w-10 h-10 rounded-md text-gray-300 hover:text-white hover:bg-amber-900/20 transition-colors"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            {mobileOpen ? (
+              <path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            ) : (
+              <path d="M4 7 H20 M4 12 H20 M4 17 H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            )}
+          </svg>
+        </button>
       </div>
+
+      {/* Mobile drawer — stacked links, only below md */}
+      {mobileOpen && (
+        <div
+          id="mobile-nav"
+          className="md:hidden border-t border-amber-900/30 bg-forge-bg/98 backdrop-blur-sm px-2 py-2"
+        >
+          <div className="flex flex-col">
+            {[...primaryLinks, ...moreLinks].map((link) => (
+              <NavLinkItem
+                key={link.href}
+                link={link}
+                pathname={pathname}
+                block
+                onClick={() => setMobileOpen(false)}
+              />
+            ))}
+          </div>
+          <div className="mt-2 pt-2 border-t border-amber-900/20 px-2 flex items-center justify-between">
+            <VolAlertBadge />
+            <AuthControls />
+          </div>
+        </div>
+      )}
     </nav>
   )
 }

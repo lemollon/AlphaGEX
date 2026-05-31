@@ -32,9 +32,9 @@ export default function SignalsTable({ signals }: { signals: Signal[] }) {
           <tr className="border-b border-forge-border text-forge-muted text-xs">
             <th className="text-left p-3">Time</th>
             <th className="text-right p-3">SPY</th>
-            <th className="text-right p-3">VIX</th>
+            <th className="hidden sm:table-cell text-right p-3">VIX</th>
             <th className="text-center p-3">Strikes</th>
-            <th className="text-right p-3">Credit</th>
+            <th className="hidden sm:table-cell text-right p-3">Credit</th>
             <th className="text-center p-3">Status</th>
             <th className="text-left p-3">Reason</th>
           </tr>
@@ -55,14 +55,14 @@ export default function SignalsTable({ signals }: { signals: Signal[] }) {
                   : '—'}
               </td>
               <td className="p-3 text-right font-mono">${s.spot_price.toFixed(2)}</td>
-              <td className="p-3 text-right font-mono">{s.vix.toFixed(1)}</td>
+              <td className="hidden sm:table-cell p-3 text-right font-mono">{s.vix.toFixed(1)}</td>
               <td className="p-3 text-center font-mono text-xs">
                 {s.put_long}/{s.put_short}P {s.call_short}/{s.call_long}C
                 {s.wings_adjusted && (
                   <span className="ml-1 text-amber-400" title="Wings adjusted">*</span>
                 )}
               </td>
-              <td className="p-3 text-right font-mono">${s.total_credit.toFixed(4)}</td>
+              <td className="hidden sm:table-cell p-3 text-right font-mono">${s.total_credit.toFixed(4)}</td>
               <td className="p-3 text-center">
                 <span
                   className={`text-xs px-2 py-0.5 rounded ${
