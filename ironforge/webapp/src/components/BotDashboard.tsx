@@ -351,14 +351,14 @@ export default function BotDashboard({
       </ComponentErrorBoundary>
 
       {/* Title + Paper/Live Toggle */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <h1
-            className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'}`}
+            className={`text-xl sm:text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'}`}
           >
             {bot.toUpperCase()}
           </h1>
-          <span className="text-forge-muted">
+          <span className="text-sm sm:text-base text-forge-muted">
             {bot === 'flame'
               ? '2DTE Put Credit Spread'
               : bot === 'blaze'
@@ -514,8 +514,8 @@ export default function BotDashboard({
         <PTTimeline bot={bot} />
       </ComponentErrorBoundary>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-forge-border">
+      {/* Tabs — horizontal scroll on mobile so the strip never overflows the viewport */}
+      <div className="flex gap-1 border-b border-forge-border overflow-x-auto whitespace-nowrap -mx-4 px-4 sm:mx-0 sm:px-0">
         {ALL_TABS.filter(t =>
           (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts)
           && (t !== 'PDT' || PDT_BOTS.has(bot))
@@ -525,7 +525,7 @@ export default function BotDashboard({
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`shrink-0 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === t
                 ? accentActive
                 : 'border-transparent text-gray-500 hover:text-gray-300'

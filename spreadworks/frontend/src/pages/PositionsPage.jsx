@@ -49,8 +49,8 @@ export default function PositionsPage() {
   };
 
   return (
-    <div className="flex-1 px-6 py-5 overflow-y-auto font-[var(--font-ui)] text-text-primary bg-bg-base">
-      <div className="flex justify-between items-center mb-4">
+    <div className="flex-1 px-4 md:px-6 py-5 overflow-y-auto font-[var(--font-ui)] text-text-primary bg-bg-base">
+      <div className="flex flex-wrap justify-between items-center gap-y-2 mb-4">
         <span className="text-white text-xl font-extrabold tracking-tight">Positions</span>
         <div className="flex gap-2 items-center">
           <button
@@ -118,7 +118,7 @@ export default function PositionsPage() {
           </span>
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(520px,1fr))] gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[repeat(auto-fill,minmax(520px,1fr))] gap-4">
           {visiblePositions.map((pos) => (
             pos.status === 'open' ? (
               <PositionCardHero

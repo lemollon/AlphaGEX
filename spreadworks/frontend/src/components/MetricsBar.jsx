@@ -108,7 +108,7 @@ export default function MetricsBar({ calcResult }) {
   return (
     <div>
       {/* Row 1: P&L Metrics */}
-      <div className="flex gap-0.5 px-2.5 py-1.5 border-t border-white/5 bg-bg-base font-[var(--font-ui)] text-xs">
+      <div className="flex flex-wrap gap-0.5 px-2.5 py-1.5 border-t border-white/5 bg-bg-base font-[var(--font-ui)] text-xs">
         <div className={cellCls(0)} onMouseEnter={() => setHoveredIdx(0)} onMouseLeave={() => setHoveredIdx(-1)}>
           <div className="flex items-center gap-1.5">
             <span className="sw-label">{creditLabel}</span>
@@ -143,7 +143,7 @@ export default function MetricsBar({ calcResult }) {
         </div>
       </div>
       {/* Row 2: Greeks */}
-      <div className="flex gap-0.5 px-2.5 py-1.5 bg-bg-base font-[var(--font-ui)] text-xs">
+      <div className="flex flex-wrap gap-0.5 px-2.5 py-1.5 bg-bg-base font-[var(--font-ui)] text-xs">
         <GreekCell label="Delta" symbol={'\u0394'} value={formatGreek(g.delta)} color={deltaColor(g.delta)} tooltip={GREEK_TOOLTIPS.delta} />
         <GreekCell label="Gamma" symbol={'\u0393'} value={formatGreek(g.gamma, 5)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.gamma} />
         <GreekCell label="Theta" symbol={'\u0398'} value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'} color={thetaColor(g.theta)} tooltip={GREEK_TOOLTIPS.theta} />

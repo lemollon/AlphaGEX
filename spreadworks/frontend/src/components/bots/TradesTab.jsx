@@ -69,7 +69,9 @@ export default function TradesTab({ bot }) {
   }
 
   return (
-    <div>
+    <div className="overflow-x-auto">
+      {/* min-w keeps the 6 columns aligned; the wrapper scrolls horizontally on mobile */}
+      <div className="min-w-[560px]">
       <div
         className="grid grid-cols-[120px_64px_1fr_80px_100px_70px] gap-3 px-5 py-2.5 text-[10px] uppercase tracking-wider font-semibold text-text-tertiary"
         style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
@@ -124,6 +126,7 @@ export default function TradesTab({ bot }) {
             </div>
           );
         })}
+      </div>
       </div>
     </div>
   );

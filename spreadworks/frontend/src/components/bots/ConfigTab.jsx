@@ -114,7 +114,7 @@ const EDIT_SECTIONS = [
 
 function EditableForm({ cfg, onChange, onCancel, onSave, saving }) {
   return (
-    <div className="px-5 py-5 grid grid-cols-2 gap-x-10 gap-y-7">
+    <div className="px-5 py-5 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-7">
       {EDIT_SECTIONS.map(section => (
         <div key={section.label} className="col-span-1">
           <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-text-tertiary mb-3">
@@ -238,7 +238,7 @@ export default function ConfigTab({ bot }) {
 
   const sections = buildSections(bot, cfg);
   return (
-    <div className="px-5 py-5 grid grid-cols-2 gap-x-10 gap-y-7">
+    <div className="px-5 py-5 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-7">
       {sections.map((s, i) => (
         <ReadOnlySection key={i} section={s} />
       ))}

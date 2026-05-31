@@ -88,8 +88,8 @@ export default function LogsTab({ bot }) {
     : '';
 
   return (
-    <div className="px-1 py-2 max-h-[400px] overflow-y-auto">
-      <div className="font-mono space-y-0">
+    <div className="px-1 py-2 max-h-[400px] overflow-y-auto overflow-x-auto">
+      <div className="font-mono space-y-0 min-w-[420px]">
         {rows.map(r => {
           const level = outcomeLevel(r.outcome);
           const color = LEVEL_COLORS[level];

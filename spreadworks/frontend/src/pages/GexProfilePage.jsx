@@ -305,7 +305,7 @@ export default function GexProfilePage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+      <div className="min-h-screen bg-bg-base px-4 md:px-6 py-5 font-[var(--font-ui)]">
         <div className="flex items-center justify-center h-[60vh] text-text-muted gap-2.5 text-sm">
           <span className="inline-block animate-[sw-spin_1s_linear_infinite]">&#8635;</span>
           Loading GEX data...
@@ -315,7 +315,7 @@ export default function GexProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-base px-6 py-5 font-[var(--font-ui)]">
+    <div className="min-h-screen bg-bg-base px-4 md:px-6 py-5 font-[var(--font-ui)]">
       {/* Title */}
       <div className="flex items-center gap-2.5 text-[22px] font-extrabold text-white tracking-tight mb-1">
         <Activity size={28} className="text-accent" />
@@ -798,7 +798,7 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
 
   return (
     <>
-      <div className="h-[550px]">
+      <div className="h-[360px] md:h-[550px]">
         <Plot
           data={plotData.traces}
           layout={{
@@ -875,7 +875,7 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
 
   return (
     <>
-      <div className="h-[550px] overflow-y-auto">
+      <div className="h-[360px] md:h-[550px] overflow-y-auto">
         {sortedStrikes.map((entry, i) => {
           const pct = (entry.abs_net_gamma / maxGamma) * 100;
           const pos = entry.net_gamma >= 0;
@@ -971,7 +971,7 @@ function NetGexView({ sortedStrikes, data, hoveredStrike, setHoveredStrike }) {
 function CallVsPutView({ sortedStrikes, data }) {
   return (
     <>
-      <div className="h-[550px]">
+      <div className="h-[360px] md:h-[550px]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 90, left: 60, bottom: 5 }}>
             <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 10 }} tickFormatter={v => formatGex(v, 4)} axisLine={{ stroke: '#1a1a2e' }} />
