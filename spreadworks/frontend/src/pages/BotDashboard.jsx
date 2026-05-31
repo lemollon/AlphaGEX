@@ -101,10 +101,10 @@ function KpiTile({ label, value, sub, mono = true, accent }) {
 function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, onForceTrade }) {
   return (
     <div
-      className="px-8 pt-7 pb-6"
+      className="px-4 md:px-8 pt-7 pb-6"
       style={{ borderBottom: '1px solid rgba(125,211,252,0.18)' }}
     >
-      <div className="flex items-start justify-between gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex items-center gap-5 min-w-0">
           {/* Glyph tile */}
           <div
@@ -121,9 +121,8 @@ function BotHeader({ meta, theme, status, enabled, toggling, forcing, onToggle, 
           {/* Nameplate */}
           <div className="min-w-0">
             <h1
-              className="font-black tracking-[0.04em] leading-none"
+              className="font-black tracking-[0.04em] leading-none text-[28px] md:text-[44px]"
               style={{
-                fontSize: 44,
                 color: theme.primary,
                 textShadow: `0 0 24px ${theme.glow}`,
               }}
@@ -250,7 +249,7 @@ function KpiGrid({ bot, status, perf, theme }) {
       : null;
 
   return (
-    <div className="grid grid-cols-4 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
       <KpiTile
         label="Account Equity"
         value={equity != null ? money(equity, { decimals: 2 }) : '…'}
@@ -627,9 +626,9 @@ function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }
       className="rounded-lg sw-glass"
       style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
     >
-      {/* Tab bar */}
+      {/* Tab bar — scrolls horizontally on mobile so the 5 tabs never overflow */}
       <div
-        className="flex items-center gap-1 px-3 pt-3"
+        className="flex items-center gap-1 px-3 pt-3 overflow-x-auto whitespace-nowrap"
         style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
       >
         {tabs.map(t => {
@@ -638,7 +637,7 @@ function ActivityTabs({ bot, theme, openCount, tradeCount, lastScanAt, enabled }
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className="relative inline-flex items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold transition-colors"
+              className="relative shrink-0 inline-flex items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold transition-colors"
               style={{ color: active ? theme.primary : 'var(--color-text-secondary)' }}
             >
               <t.Icon size={13} />
@@ -727,7 +726,7 @@ export default function BotDashboard() {
 
   if (!meta || !theme) {
     return (
-      <div className="flex-1 px-6 py-5 bg-bg-base text-text-secondary text-[13px]">
+      <div className="flex-1 px-4 md:px-6 py-5 bg-bg-base text-text-secondary text-[13px]">
         Unknown bot: {bot}
       </div>
     );
@@ -735,7 +734,7 @@ export default function BotDashboard() {
 
   if (statusErr && !status) {
     return (
-      <div className="flex-1 px-6 py-5 bg-bg-base">
+      <div className="flex-1 px-4 md:px-6 py-5 bg-bg-base">
         <div className="sw-card p-4 border-sw-red/30 bg-sw-red-dim text-sw-red text-[13px]">
           Failed to load {bot.toUpperCase()} status: {statusErr.message}
         </div>
@@ -760,7 +759,7 @@ export default function BotDashboard() {
         onForceTrade={onForceTrade}
       />
 
-      <div className="px-8 py-6 space-y-5">
+      <div className="px-4 md:px-8 py-6 space-y-5">
         <KpiGrid bot={bot} status={status} perf={perf} theme={theme} />
 
         <EquityCurveCard

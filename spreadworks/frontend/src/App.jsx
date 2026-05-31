@@ -293,7 +293,7 @@ function NavBar() {
 
   return (
     <header
-      className="relative flex items-center justify-between"
+      className="relative flex items-center justify-between flex-wrap gap-y-2"
       style={{
         paddingLeft: 28,
         paddingRight: 28,
@@ -309,6 +309,7 @@ function NavBar() {
         style={{
           display: 'flex',
           alignItems: 'center',
+          flexWrap: 'wrap',
           gap: 4,
           paddingLeft: 8,
           paddingRight: 8,
@@ -348,7 +349,7 @@ function NavBar() {
         />
 
         {/* Routes */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <nav style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
           <RouteBtn to="/"            end icon={<Layers size={14} />}    label="Builder" />
           <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
           <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
@@ -357,12 +358,15 @@ function NavBar() {
       </div>
 
       {/* ═══════════ CENTER · CLOCK ═══════════ */}
+      {/* Hidden below md: the absolute-centered pill would overlap the wrapped
+          nav/bot cards on narrow screens. Display is class-controlled so the
+          Tailwind `hidden md:flex` actually wins (an inline display would not). */}
       <div
+        className="hidden md:flex"
         style={{
           position: 'absolute',
           left: '50%',
           transform: 'translateX(-50%)',
-          display: 'flex',
           alignItems: 'center',
           gap: 12,
           paddingLeft: 16,
@@ -525,7 +529,7 @@ function BuilderPage() {
   };
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden">
       {sidebarOpen && (
         <StrategyPanel
           symbol={symbol}
@@ -541,7 +545,7 @@ function BuilderPage() {
           onManualSpotChange={setManualSpot}
         />
       )}
-      <div className="flex-1 flex flex-col min-w-0 overflow-auto">
+      <div className="flex-1 flex flex-col min-w-0 overflow-visible md:overflow-auto">
         {/* Chart Header */}
         <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
           <button
