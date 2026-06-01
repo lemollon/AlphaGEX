@@ -34,6 +34,64 @@ from .margin_manager import (
 
 logger = logging.getLogger(__name__)
 
+
+def rty_regime_gate_decision(
+    ticker: str, signal: FuturesSignal, config: ValorConfig
+) -> Tuple[bool, str]:
+    """
+    RTY regime-conviction entry gate (PAPER data-collection filter).
+
+    Backtest of 35,686 closed VALOR trades showed RTY (/M2K) bleeds because the
+    strategy takes BOTH directions in every gamma regime. Replaying the recorded
+    fills with a regime + win-probability filter isolates the only profitable
+    subset:
+
+      * Right side of the regime:
+          NEGATIVE gamma -> LONG, POSITIVE gamma -> SHORT, NEUTRAL -> LONG.
+        The wrong-side buckets (NEG-SHORT, POS-LONG) lose ~ -$118K and validate
+        as losers across BOTH the current /M2KM6 and the prior /M2KH6 contract.
+      * Conviction sweet-spot: win_probability in [0.50, 0.60] OR >= 0.70.
+        The bot's own 0.60-0.674 band is mis-calibrated -- its single worst money
+        loser (-$95K net @ $1/contract round-turn). Excluding it leaves +$58.7K
+        net of costs (in-sample, single period -> paper is the out-of-sample test).
+
+    Returns (allowed, reason). Only applies to ticker == "RTY" when enabled;
+    every other ticker is always allowed and returns (True, "").
+    """
+    if not config.rty_regime_gate_enabled or ticker != "RTY":
+        return True, ""
+
+    regime = signal.gamma_regime
+    direction = signal.direction
+    wp = signal.win_probability
+
+    # 1) Regime-aligned direction ("right side")
+    right_side = (
+        (regime == GammaRegime.NEGATIVE and direction == TradeDirection.LONG)
+        or (regime == GammaRegime.POSITIVE and direction == TradeDirection.SHORT)
+        or (regime == GammaRegime.NEUTRAL and direction == TradeDirection.LONG)
+    )
+    if not right_side:
+        return False, (
+            f"RTY gate: wrong side of regime ({regime.value} {direction.value}) "
+            f"- backtest-negative bucket"
+        )
+
+    # 2) Conviction sweet-spot (mis-calibration aware)
+    wp_ok = (
+        (config.rty_gate_wp_low_min <= wp <= config.rty_gate_wp_low_max)
+        or (wp >= config.rty_gate_wp_high_min)
+    )
+    if not wp_ok:
+        return False, (
+            f"RTY gate: win_prob {wp:.2%} outside profitable bands "
+            f"[{config.rty_gate_wp_low_min:.2f}-{config.rty_gate_wp_low_max:.2f}] "
+            f"or >={config.rty_gate_wp_high_min:.2f}"
+        )
+
+    return True, ""
+
+
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -498,6 +556,19 @@ class ValorTrader:
                     f"confidence={signal.confidence:.2%}, win_prob={signal.win_probability:.2%}, "
                     f"contracts={signal.contracts}"
                 )
+
+                # ============================================================
+                # GATE 5.5: RTY regime-conviction filter (PAPER data-collection)
+                # Suppresses RTY's backtest-negative regime/conviction buckets.
+                # No-op for every other ticker. See rty_regime_gate_decision().
+                # ============================================================
+                rty_allowed, rty_reason = rty_regime_gate_decision(ticker, signal, self.config)
+                if not rty_allowed:
+                    logger.info(f"VALOR [{ticker}] GATE 5.5 BLOCKED: {rty_reason}")
+                    self.db.save_signal(signal, was_executed=False, skip_reason=rty_reason, ticker=ticker)
+                    self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                           skip_reason=rty_reason, ticker=ticker)
+                    return scan_result
 
                 # ============================================================
                 # GATE 6: Signal Validation
