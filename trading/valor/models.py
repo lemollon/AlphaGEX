@@ -802,6 +802,24 @@ class ValorConfig:
     prior_win_rate: float = 0.50  # Bayesian prior
     learning_rate: float = 0.1  # How fast to update estimates
 
+    # ── RTY REGIME-CONVICTION GATE (added 2026-05-31) ──────────────────────────
+    # Backtest of 35,686 closed VALOR trades: RTY (/M2K) is the only equity-index
+    # micro with sub-parity payoff (avg win < avg loss). It bleeds because the
+    # strategy takes BOTH directions in every gamma regime. Replaying the recorded
+    # fills with a regime + conviction filter isolates the only profitable subset:
+    #   • Right side of regime:  NEGATIVE→LONG, POSITIVE→SHORT (NEUTRAL→LONG).
+    #     Wrong-side buckets (NEG-SHORT, POS-LONG) lose ≈ −$118K and validate as
+    #     losers across BOTH the current /M2KM6 and the prior /M2KH6 contract.
+    #   • Conviction sweet-spot: win_probability ∈ [0.50, 0.60] OR ≥ 0.70.
+    #     The bot's own 0.60–0.674 band is MIS-CALIBRATED — its single worst money
+    #     loser (−$95K net @ $1/contract round-turn). Excluding it leaves +$58.7K
+    #     net of costs (in-sample, single period → paper is the out-of-sample test).
+    # PAPER-ONLY data-collection gate. RTY-only; all other tickers untouched.
+    rty_regime_gate_enabled: bool = True  # Apply the gate to ticker == "RTY"
+    rty_gate_wp_low_min: float = 0.50     # keep win_prob in [low_min, low_max] …
+    rty_gate_wp_low_max: float = 0.60
+    rty_gate_wp_high_min: float = 0.70    # … OR win_prob ≥ high_min
+
     # Trading hours (24/5 - futures trade nearly 24 hours)
     # Futures trade Sun 5pm CT - Fri 4pm CT with daily 4pm-5pm CT break
     trade_overnight: bool = True  # Allow overnight trading (futures trade 24/5)
