@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import Shell from '@/components/Shell'
+import ScrollToTop from '@/components/ScrollToTop'
 
 export const metadata: Metadata = {
   title: 'IronForge',
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="font-sans antialiased min-h-screen">
+        <ScrollToTop />
         <Shell>{children}</Shell>
       </body>
     </html>
