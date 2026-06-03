@@ -17,7 +17,7 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      className={`flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 relative cursor-default bg-bg-card ${
+      className={`flex-1 min-w-[140px] flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 relative cursor-default bg-bg-card ${
         hovered ? 'border-border-default' : 'border-white/5'
       }`}
       onMouseEnter={() => setHovered(true)}
@@ -101,7 +101,7 @@ export default function MetricsBar({ calcResult }) {
   const beUpper = r.upper_breakeven != null ? r.upper_breakeven.toFixed(2) : '--';
   const iv = r.implied_vol != null ? formatPct(r.implied_vol) : '--';
 
-  const cellCls = (idx) => `flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 bg-bg-card ${
+  const cellCls = (idx) => `flex-1 min-w-[148px] flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 bg-bg-card ${
     hoveredIdx === idx ? 'border-border-default' : 'border-white/5'
   }`;
 
