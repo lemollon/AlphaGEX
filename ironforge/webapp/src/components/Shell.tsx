@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import ClientNav from './ClientNav'
+import ScrollToTop from './ScrollToTop'
 
 /**
  * App chrome wrapper. Every route gets the global nav.
@@ -13,20 +14,13 @@ import ClientNav from './ClientNav'
  */
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-
-  if (pathname === '/') {
-    return (
-      <>
-        <ClientNav />
-        {children}
-      </>
-    )
-  }
+  const isLanding = pathname === '/'
 
   return (
     <>
+      <ScrollToTop />
       <ClientNav />
-      <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
+      {isLanding ? children : <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>}
     </>
   )
 }
