@@ -104,13 +104,17 @@ def collect_option_snapshot(
         logger.info(f"Collecting options for {symbol} @ ${spot:.2f}")
         logger.info(f"Strike range: ${min_strike:.2f} - ${max_strike:.2f}")
 
-        # Get option chain from Polygon
+        # Get option chain from Polygon.
+        # get_options_chain() returns Optional[pd.DataFrame], NOT a dict — using
+        # `not chain` / `'options' not in chain` on a DataFrame raises
+        # "The truth value of a DataFrame is ambiguous". Convert each row to a
+        # dict so the rest of the loop (which uses opt.get(...)) works unchanged.
         chain = polygon_fetcher.get_options_chain(symbol)
 
-        if not chain or 'options' not in chain:
+        if chain is None or chain.empty:
             raise ValueError(f"Could not get options chain for {symbol}")
 
-        options = chain.get('options', [])
+        options = chain.to_dict('records')
         logger.info(f"Retrieved {len(options)} option contracts")
 
         # Filter and store options
