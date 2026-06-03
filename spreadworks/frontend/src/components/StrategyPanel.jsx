@@ -880,7 +880,7 @@ export default function StrategyPanel({
 
   return (
     <div
-      className="w-full md:w-[312px] md:min-w-[312px] px-4 py-5 overflow-visible md:overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-4 h-auto md:h-full border-b border-white/[0.06] md:border-b-0"
+      className="w-full lg:w-[312px] lg:min-w-[312px] px-4 py-5 overflow-visible lg:overflow-y-auto font-[var(--font-ui)] text-[13px] text-text-primary flex flex-col gap-4 h-auto lg:h-full border-b border-white/[0.06] lg:border-b-0"
       style={{
         background: 'rgba(13,28,46,0.45)',
         backdropFilter: 'blur(16px) saturate(140%)',
