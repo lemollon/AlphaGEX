@@ -410,9 +410,6 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
     </a>
   </div>
 </section>
-    </div>
-  </div>
-</section>
 
 <!-- ============ STRATEGY COMPARISON TABLE ============ -->
 
