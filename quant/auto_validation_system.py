@@ -868,6 +868,10 @@ class AutoValidationSystem:
         self.retrain_triggers: List[RetrainTrigger] = []
         self.allocation_history: List[CapitalAllocation] = []
 
+        # Ensure required tables exist (migration 021 did not run on every env —
+        # prod was missing thompson_trade_outcomes, dropping every trade outcome).
+        self._ensure_tables()
+
         # Load state from database
         self._load_state()
 
@@ -877,6 +881,47 @@ class AutoValidationSystem:
             f"threshold={degradation_threshold:.0%}, "
             f"auto_retrain={auto_retrain}"
         )
+
+    def _ensure_tables(self):
+        """
+        Idempotently create tables this system writes to.
+
+        Migration 021_auto_validation_system.sql is the source of truth, but it
+        was never applied on some environments (production was missing
+        thompson_trade_outcomes), so auto_validation silently lost every trade
+        outcome with 'relation "thompson_trade_outcomes" does not exist'. Per the
+        repo convention (auto-create tables on first use), recreate it here.
+        Never fatal — log and continue if the DB is unavailable.
+        """
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS thompson_trade_outcomes (
+                    id SERIAL PRIMARY KEY,
+                    bot_name VARCHAR(50) NOT NULL,
+                    trade_time TIMESTAMPTZ DEFAULT NOW(),
+                    win BOOLEAN NOT NULL,
+                    pnl DECIMAL(15,2) DEFAULT 0.0,
+                    trade_type VARCHAR(50),
+                    symbol VARCHAR(10) DEFAULT 'SPY',
+                    alpha_before DECIMAL(10,4),
+                    beta_before DECIMAL(10,4),
+                    alpha_after DECIMAL(10,4),
+                    beta_after DECIMAL(10,4),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            c.execute("CREATE INDEX IF NOT EXISTS idx_thompson_outcomes_bot ON thompson_trade_outcomes(bot_name)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_thompson_outcomes_time ON thompson_trade_outcomes(trade_time DESC)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_thompson_outcomes_win ON thompson_trade_outcomes(win)")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Could not ensure thompson_trade_outcomes table: {e}")
 
     def _load_state(self):
         """Load state from database"""
