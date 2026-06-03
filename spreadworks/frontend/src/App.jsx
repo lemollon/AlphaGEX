@@ -358,15 +358,25 @@ function NavBar() {
       </div>
 
       {/* ═══════════ CENTER · CLOCK ═══════════ */}
-      {/* Hidden below md: the absolute-centered pill would overlap the wrapped
-          nav/bot cards on narrow screens. Display is class-controlled so the
-          Tailwind `hidden md:flex` actually wins (an inline display would not). */}
+      {/* Absolute-centered pill. Two safeguards keep it from blocking the nav:
+          1. pointerEvents: 'none' — the clock is display-only, so even if it
+             visually overlaps the "Bots" / nav buttons on a narrower window,
+             clicks pass straight through to the buttons beneath it. (Without
+             this it was painting on top of the left nav card and swallowing
+             clicks on the Bots button.)
+          2. hidden 2xl:flex — only render it once the viewport is wide enough
+             (≥1536px) that a 50%-centered pill clears the left nav card; below
+             that it would slide left over the nav, so we simply hide it (market
+             status is still shown in the Builder's controls bar).
+          Display is class-controlled so the Tailwind `2xl:flex` wins over an
+          inline display value. */}
       <div
-        className="hidden md:flex"
+        className="hidden 2xl:flex"
         style={{
           position: 'absolute',
           left: '50%',
           transform: 'translateX(-50%)',
+          pointerEvents: 'none',
           alignItems: 'center',
           gap: 12,
           paddingLeft: 16,
@@ -529,7 +539,7 @@ function BuilderPage() {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row flex-1 overflow-y-auto lg:overflow-hidden">
+    <div className="flex flex-col md:flex-row flex-1 overflow-y-auto md:overflow-hidden">
       {sidebarOpen && (
         <StrategyPanel
           symbol={symbol}
@@ -545,7 +555,7 @@ function BuilderPage() {
           onManualSpotChange={setManualSpot}
         />
       )}
-      <div className="flex-1 flex flex-col min-w-0 overflow-visible lg:overflow-auto">
+      <div className="flex-1 flex flex-col min-w-0 overflow-visible md:overflow-auto">
         {/* Chart Header */}
         <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/5 bg-bg-base font-[var(--font-ui)] text-[13px]">
           <button
