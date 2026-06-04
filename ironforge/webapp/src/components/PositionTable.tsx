@@ -273,17 +273,21 @@ function PositionCard({
 
   // Progress bar. IC: cost-to-close travels PT (left/good) → SL (right/bad).
   // Directional: value travels SL (left/bad) → PT (right/good).
+  // Before the first live quote a directional position falls back to its entry
+  // debit (where the value starts) so the bar still renders at the entry marker;
+  // IC keeps requiring live MTM (no meaningful pre-quote cost-to-close).
+  const barValue = pos.current_cost_to_close ?? (isDirectional ? entryDebit : null)
   let progressPct: number | null = null
-  if (pos.current_cost_to_close != null) {
+  if (barValue != null) {
     if (isDirectional) {
       const range = ptPrice - slPrice
       if (range > 0) {
-        progressPct = Math.max(0, Math.min(100, ((pos.current_cost_to_close - slPrice) / range) * 100))
+        progressPct = Math.max(0, Math.min(100, ((barValue - slPrice) / range) * 100))
       }
     } else {
       const range = slPrice - ptPrice
       if (range > 0) {
-        progressPct = Math.max(0, Math.min(100, ((pos.current_cost_to_close - ptPrice) / range) * 100))
+        progressPct = Math.max(0, Math.min(100, ((barValue - ptPrice) / range) * 100))
       }
     }
   }
@@ -460,9 +464,12 @@ function PositionCard({
             ) : (
               <span className={ptClr}>PT ${ptPrice.toFixed(2)}</span>
             )}
-            {pos.current_cost_to_close != null && (
+            {barValue != null && (
               <span className="text-gray-300">
-                ${pos.current_cost_to_close.toFixed(4)}
+                ${barValue.toFixed(4)}
+                {pos.current_cost_to_close == null && (
+                  <span className="text-forge-muted"> entry</span>
+                )}
               </span>
             )}
             {isDirectional ? (
