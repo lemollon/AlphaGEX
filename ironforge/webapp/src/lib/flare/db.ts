@@ -213,6 +213,67 @@ export async function getPaperBalance(): Promise<number> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-direction risk halt. When runMonitorCycle force-closes one side (its
+// aggregate unrealized P&L breached -perdir_force_close_pct * balance), it
+// records a halt row so runEntryCycle stops opening that side for the rest of
+// the day. Persisted in DB (not module memory) so a scanner restart can't
+// silently un-halt a side that's getting run over by a trend.
+// ---------------------------------------------------------------------------
+let _riskHaltEnsured = false
+async function ensureRiskHaltTable(): Promise<void> {
+  if (_riskHaltEnsured) return
+  try {
+    await query(
+      `CREATE TABLE IF NOT EXISTS flare_risk_halts (
+         trade_date DATE NOT NULL,
+         direction  TEXT NOT NULL,
+         reason     TEXT,
+         halted_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         PRIMARY KEY (trade_date, direction)
+       )`,
+    )
+    _riskHaltEnsured = true
+  } catch { /* non-fatal — fail open (no halt) rather than block the scanner */ }
+}
+
+export async function isDirectionHalted(
+  direction: 'call' | 'put',
+  date?: string,
+): Promise<boolean> {
+  await ensureRiskHaltTable()
+  if (!_riskHaltEnsured) return false
+  const trade_date = date || ctTodayStr()
+  try {
+    const res = await query(
+      `SELECT 1 FROM flare_risk_halts WHERE trade_date = $1 AND direction = $2 LIMIT 1`,
+      [trade_date, direction],
+    )
+    return res.length > 0
+  } catch {
+    return false
+  }
+}
+
+export async function setDirectionHalted(
+  direction: 'call' | 'put',
+  reason: string,
+  date?: string,
+): Promise<void> {
+  await ensureRiskHaltTable()
+  if (!_riskHaltEnsured) return
+  const trade_date = date || ctTodayStr()
+  try {
+    await query(
+      `INSERT INTO flare_risk_halts (trade_date, direction, reason)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (trade_date, direction) DO UPDATE SET
+         reason = EXCLUDED.reason, halted_at = NOW()`,
+      [trade_date, direction, reason.substring(0, 300)],
+    )
+  } catch { /* non-fatal */ }
+}
+
 export async function insertSignalActivity(args: {
   outcome: string  // 'TRADE' | 'NO_TRADE' | 'SKIP' | 'ERROR'
   detail: string
