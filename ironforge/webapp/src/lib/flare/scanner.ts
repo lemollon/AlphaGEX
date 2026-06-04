@@ -10,7 +10,7 @@
  */
 import { query } from '../db'
 import { getOptionQuote } from '../tradier'
-import { closeFlarePosition, getOpenFlarePositions, insertSignalActivity, loadDailyState, bumpDailyState } from './db'
+import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, insertSignalActivity, isDirectionHalted, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
 import { openVertical } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
@@ -64,10 +64,22 @@ async function isFlareEnabled(): Promise<boolean> {
   }
 }
 
+/** Arm the (setup,direction) signal-reset gate after any close. */
+function armResetGate(setup: string, direction: string): void {
+  const gateKey = `${setup}_${direction}`
+  _closedAtByKey.set(gateKey, Date.now())
+  _triggerOffSeenByKey.set(gateKey, false)
+}
+
 export async function runMonitorCycle(): Promise<void> {
   const positions = await getOpenFlarePositions()
   if (!positions.length) return
   const ct = ctNow()
+  const balance = await getPaperBalance()
+
+  // Positions that survive this tick's individual PT/SL/TIME_STOP exits, with
+  // their live MTM — fed into the per-direction force-close stop below.
+  const survivors: { pos: (typeof positions)[number]; markToClose: number; unrealized: number }[] = []
 
   for (const pos of positions) {
     let longMid: number | null = null
@@ -98,22 +110,52 @@ export async function runMonitorCycle(): Promise<void> {
       quotes_unavail_streak: _streakByPos[pos.id] || 0,
       config: DEFAULT_FLARE_CONFIG,
     })
-    if (!decision.should_exit || !decision.reason) continue
+    if (decision.should_exit && decision.reason) {
+      const realized_pnl = (markToClose - pos.debit) * 100 * pos.contracts
+      await closeFlarePosition(pos.id, {
+        mark_to_close: markToClose,
+        exit_reason: decision.reason,
+        realized_pnl,
+      })
+      delete _streakByPos[pos.id]
+      armResetGate(pos.setup_type, pos.direction)
+      await insertSignalActivity({
+        outcome: 'TRADE',
+        detail: `close ${pos.setup_type} ${pos.direction} ${decision.reason} pnl=${realized_pnl.toFixed(2)}`,
+      })
+      continue
+    }
 
-    const realized_pnl = (markToClose - pos.debit) * 100 * pos.contracts
-    await closeFlarePosition(pos.id, {
-      mark_to_close: markToClose,
-      exit_reason: decision.reason,
-      realized_pnl,
-    })
-    delete _streakByPos[pos.id]
-    // Arm signal-reset gate for this (setup,direction).
-    const gateKey = `${pos.setup_type}_${pos.direction}`
-    _closedAtByKey.set(gateKey, Date.now())
-    _triggerOffSeenByKey.set(gateKey, false)
+    survivors.push({ pos, markToClose, unrealized: (markToClose - pos.debit) * 100 * pos.contracts })
+  }
+
+  // Per-direction force-close stop. If one side's aggregate UNREALIZED P&L is
+  // below -perdir_force_close_pct * balance, guillotine that whole side and halt
+  // it for the rest of the day. This is the lever that converts FLARE from
+  // ruin (-$30k/PF 0.54) to profitable (+$12.8k/PF 3.15) on its own tape.
+  const riskBase = Math.max(balance, 0)
+  const threshold = -DEFAULT_FLARE_CONFIG.perdir_force_close_pct * riskBase
+  for (const dir of ['call', 'put'] as const) {
+    const side = survivors.filter((s) => s.pos.direction === dir)
+    if (!side.length) continue
+    const sideUnreal = side.reduce((a, s) => a + s.unrealized, 0)
+    if (sideUnreal >= threshold) continue
+    for (const s of side) {
+      await closeFlarePosition(s.pos.id, {
+        mark_to_close: s.markToClose,
+        exit_reason: 'RISK_FORCE_CLOSE',
+        realized_pnl: s.unrealized,
+      })
+      delete _streakByPos[s.pos.id]
+      armResetGate(s.pos.setup_type, dir)
+    }
+    const reason =
+      `aggregate ${dir} unrealized $${sideUnreal.toFixed(0)} < $${threshold.toFixed(0)} ` +
+      `(${(DEFAULT_FLARE_CONFIG.perdir_force_close_pct * 100).toFixed(0)}% of $${balance.toFixed(0)})`
+    await setDirectionHalted(dir, reason)
     await insertSignalActivity({
       outcome: 'TRADE',
-      detail: `close ${pos.setup_type} ${pos.direction} ${decision.reason} pnl=${realized_pnl.toFixed(2)}`,
+      detail: `RISK_FORCE_CLOSE ${dir} x${side.length} pnl=${sideUnreal.toFixed(2)} halt_rest_of_day [${reason}]`,
     })
   }
 }
@@ -166,6 +208,26 @@ async function runEntryCycle(): Promise<void> {
     await insertSignalActivity({
       outcome: 'NO_TRADE',
       detail: `regime=${snap.regime} spot=${snap.spot.toFixed(2)} cw=${snap.call_wall} pw=${snap.put_wall}`,
+    })
+    return
+  }
+
+  // Per-direction risk halt: if this side was force-closed earlier today
+  // (aggregate unrealized breached the force-close stop), no new entries on it
+  // for the rest of the session.
+  if (await isDirectionHalted(action.direction)) {
+    await insertSignalActivity({ outcome: 'SKIP', detail: `dir_halted_${action.direction}` })
+    return
+  }
+
+  // Per-direction concurrency cap: bound simultaneous same-side exposure so a
+  // single bad side can't pile up unbounded before the force-close stop trips.
+  const openNow = await getOpenFlarePositions()
+  const sameDirOpen = openNow.filter((p) => p.direction === action.direction).length
+  if (sameDirOpen >= DEFAULT_FLARE_CONFIG.max_concurrent_per_direction) {
+    await insertSignalActivity({
+      outcome: 'SKIP',
+      detail: `max_concurrent_${action.direction}=${sameDirOpen}/${DEFAULT_FLARE_CONFIG.max_concurrent_per_direction}`,
     })
     return
   }

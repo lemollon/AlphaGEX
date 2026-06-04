@@ -9,7 +9,28 @@
 export * from '../blaze/types'
 import { DEFAULT_BLAZE_CONFIG, BlazeConfig } from '../blaze/types'
 
-export type FlareConfig = BlazeConfig
+export interface FlareConfig extends BlazeConfig {
+  // Per-direction force-close stop. When the aggregate UNREALIZED P&L of one
+  // side (all open call OR all open put debit spreads) drops below
+  //   -perdir_force_close_pct * current_account_balance,
+  // force-close that entire side AND halt new entries on it for the rest of the
+  // session. Evaluated every scan tick by runMonitorCycle.
+  //
+  // Why per-side + force-close (not an account-level entry halt): FLARE's blow-ups
+  // were always one-directional — it stacked the wrong side into a trend (6/04:
+  // 138 put fades, 3 wins, -$52k). A realized-PnL daily stop never fired (loss was
+  // unrealized until the 14:45 time-stop guillotine), and an account-level halt
+  // still let already-open losers ride. A per-side force-close checked on the
+  // timer guillotines the bleeding side fast — whether it bleeds quick (6/04) or
+  // slow (6/03) — while a healthy side keeps running.
+  // Backtest on FLARE's own 8-day live tape (reset $10k, flat 5%/trade):
+  //   baseline   -$30,451  PF 0.54  maxDD 570%
+  //   per-dir FC 5% + cap20  +$12,790  PF 3.15  maxDD 33%  worst day -$618
+  perdir_force_close_pct: number
+  // Hard ceiling on simultaneously-open positions per direction. Bounds the
+  // intraday swing / blast radius independent of the force-close stop.
+  max_concurrent_per_direction: number
+}
 
 // FLARE = 0DTE, validated config: PT 20% / SL 100% of debit (vs BLAZE's SL 30%).
 //
@@ -27,6 +48,10 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   stop_loss_pct: 100.0,
   risk_per_trade_pct: 0.05,
   max_trades_per_setup_per_day: 999,
+  // Per-direction risk controls (see FlareConfig doc above). 5% per-side
+  // force-close + 20 concurrent-per-side cap = the backtested equilibrium.
+  perdir_force_close_pct: 0.05,
+  max_concurrent_per_direction: 20,
   // 0DTE timing override (vs BLAZE's 1DTE 15:55).
   //   - Entries cut off at 14:30 in scanner.ts:isMarketHours.
   //   - 14:45 TIME_STOP closes anything still open 15min before 15:00 settlement.

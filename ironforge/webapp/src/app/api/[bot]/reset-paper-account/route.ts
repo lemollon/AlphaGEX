@@ -40,7 +40,10 @@ import { getSandboxAccountBalances } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
-const SUPPORTED_BOTS = new Set(['flame'])
+// FLAME: reconcile to Tradier sandbox equity. FLARE: hard reset to a fixed
+// paper base (pass ?starting_capital=10000) after the 2026-06-04 blow-up;
+// archives the old -$47k tape via dte_mode rename so the equity curve restarts.
+const SUPPORTED_BOTS = new Set(['flame', 'flare'])
 const ARCHIVED_SUFFIX = 'ARCHIVED_'
 
 interface ResetPreview {
