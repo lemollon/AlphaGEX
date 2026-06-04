@@ -246,22 +246,45 @@ function PositionCard({
     return () => clearInterval(timer)
   }, [bot])
 
+  // ---- Directional debit spread (BLAZE/FLARE) vs IC (FLAME/SPARK/INFERNO) ----
+  // A debit spread's VALUE rises toward the profit target (debit × (1+pt%)) and
+  // falls toward the stop (debit × (1−sl%)) — the opposite direction from an
+  // IC's cost-to-close. It also has no time-of-day PT tier, so the IC
+  // MORNING/MIDDAY/AFTERNOON label must not leak into the directional card.
+  const isDirectional = !!(pos.direction && (pos.debit ?? 0) > 0)
+  const entryDebit = pos.debit ?? 0
+
   // Use API PT data if available, fall back to client-side calculation
   const ptPct = pos.profit_target_pct ?? ptTier.pct
   const ptLabel = pos.profit_target_tier ?? ptTier.label
   const ptClr = tierColor(pos.profit_target_tier, ptTier)
-  const ptPrice = pos.profit_target_price ?? pos.total_credit * (1 - ptPct)
-  const slPrice = pos.stop_loss_price ?? pos.total_credit * 2
+  const ptPrice = isDirectional
+    ? (pos.profit_target_price ?? entryDebit * 1.2)
+    : (pos.profit_target_price ?? pos.total_credit * (1 - ptPct))
+  const slPrice = isDirectional
+    ? (pos.stop_loss_price ?? entryDebit * (bot === 'flare' ? 0 : 0.7))
+    : (pos.stop_loss_price ?? pos.total_credit * 2)
 
-  // Progress bar: how far between profit target (left=0%) and stop loss (right=100%)
+  // Directional PT/SL as a percentage of the debit paid, derived from the live
+  // prices so they always match the active thresholds (fall back to canonical
+  // values: PT +20%; SL −100% FLARE / −30% BLAZE).
+  const dirPtPct = entryDebit > 0 ? Math.round((ptPrice / entryDebit - 1) * 100) : 20
+  const dirSlPct = entryDebit > 0 ? Math.round((1 - slPrice / entryDebit) * 100) : (bot === 'flare' ? 100 : 30)
+
+  // Progress bar. IC: cost-to-close travels PT (left/good) → SL (right/bad).
+  // Directional: value travels SL (left/bad) → PT (right/good).
   let progressPct: number | null = null
   if (pos.current_cost_to_close != null) {
-    const range = slPrice - ptPrice
-    if (range > 0) {
-      progressPct = Math.max(
-        0,
-        Math.min(100, ((pos.current_cost_to_close - ptPrice) / range) * 100),
-      )
+    if (isDirectional) {
+      const range = ptPrice - slPrice
+      if (range > 0) {
+        progressPct = Math.max(0, Math.min(100, ((pos.current_cost_to_close - slPrice) / range) * 100))
+      }
+    } else {
+      const range = slPrice - ptPrice
+      if (range > 0) {
+        progressPct = Math.max(0, Math.min(100, ((pos.current_cost_to_close - ptPrice) / range) * 100))
+      }
     }
   }
 
@@ -408,10 +431,10 @@ function PositionCard({
           </div>
           <div>
             <p className="text-xs text-forge-muted">Profit Target</p>
-            <p className={`font-mono ${ptClr}`}>
+            <p className={`font-mono ${isDirectional ? 'text-emerald-400' : ptClr}`}>
               ${ptPrice.toFixed(4)}{' '}
               <span className="text-[10px] opacity-75">
-                ({Math.round(ptPct * 100)}% {ptLabel})
+                {isDirectional ? `(+${dirPtPct}%)` : `(${Math.round(ptPct * 100)}% ${ptLabel})`}
               </span>
             </p>
           </div>
@@ -419,6 +442,9 @@ function PositionCard({
             <p className="text-xs text-forge-muted">Stop Loss</p>
             <p className="font-mono text-red-400/70">
               ${slPrice.toFixed(4)}
+              {isDirectional && (
+                <span className="text-[10px] opacity-75"> (−{dirSlPct}%)</span>
+              )}
             </p>
           </div>
         </div>
@@ -428,27 +454,34 @@ function PositionCard({
       {progressPct != null && (
         <div className="space-y-1">
           <div className="flex justify-between text-[10px] text-forge-muted font-mono">
-            <span className={ptClr}>PT ${ptPrice.toFixed(2)}</span>
+            {/* Left end: PT for IC (low cost = good), SL for directional (low value = bad) */}
+            {isDirectional ? (
+              <span className="text-red-400">SL ${slPrice.toFixed(2)}</span>
+            ) : (
+              <span className={ptClr}>PT ${ptPrice.toFixed(2)}</span>
+            )}
             {pos.current_cost_to_close != null && (
               <span className="text-gray-300">
                 ${pos.current_cost_to_close.toFixed(4)}
               </span>
             )}
-            <span className="text-red-400">SL ${slPrice.toFixed(2)}</span>
+            {isDirectional ? (
+              <span className="text-emerald-400">PT ${ptPrice.toFixed(2)}</span>
+            ) : (
+              <span className="text-red-400">SL ${slPrice.toFixed(2)}</span>
+            )}
           </div>
           <div className="h-2.5 bg-forge-border rounded-full overflow-hidden relative">
-            {/* Green zone (left 30%) */}
-            <div className="absolute inset-y-0 left-0 bg-emerald-500/20" style={{ width: '30%' }} />
-            {/* Yellow zone (middle 40%) */}
+            {/* Zones mirror by direction: good end is left (PT) for IC, right (PT) for directional. */}
+            <div className={`absolute inset-y-0 left-0 ${isDirectional ? 'bg-red-500/20' : 'bg-emerald-500/20'}`} style={{ width: '30%' }} />
             <div className="absolute inset-y-0 left-[30%] bg-yellow-500/10" style={{ width: '40%' }} />
-            {/* Red zone (right 30%) */}
-            <div className="absolute inset-y-0 right-0 bg-red-500/20" style={{ width: '30%' }} />
-            {/* Marker */}
+            <div className={`absolute inset-y-0 right-0 ${isDirectional ? 'bg-emerald-500/20' : 'bg-red-500/20'}`} style={{ width: '30%' }} />
+            {/* Marker — color by "goodness" (proximity to PT), which flips by direction. */}
             <div
               className={`absolute top-0 h-full w-1.5 rounded ${
-                progressPct < 30
+                (isDirectional ? progressPct : 100 - progressPct) > 70
                   ? 'bg-emerald-400'
-                  : progressPct > 70
+                  : (isDirectional ? progressPct : 100 - progressPct) < 30
                     ? 'bg-red-400'
                     : 'bg-yellow-400'
               }`}
