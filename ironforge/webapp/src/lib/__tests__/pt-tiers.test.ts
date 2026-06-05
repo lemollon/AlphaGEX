@@ -9,6 +9,9 @@ import {
   getCurrentPTTier,
   secondsUntilNextTier,
   formatCloseReason,
+  eodCutoffMinutesCT,
+  formatCTClock,
+  DEFAULT_EOD_CUTOFF_MIN,
 } from '../pt-tiers'
 
 /* ================================================================== */
@@ -147,10 +150,69 @@ describe('secondsUntilNextTier', () => {
     expect(result!.seconds).toBe(2700)
   })
 
-  it('returns null after 2:45 PM', () => {
+  it('returns null after the default 2:45 PM cutoff', () => {
     const d = new Date('2026-03-16T14:50:00')
     const result = secondsUntilNextTier(d)
     expect(result).toBeNull()
+  })
+
+  it('honors a custom (config-driven) EOD cutoff', () => {
+    // INFERNO-style 2:30 PM cutoff (eodCutoffMin = 870). At 2:00 PM the
+    // countdown should target 2:30, not the 2:45 default.
+    const d = new Date('2026-03-16T14:00:00')
+    const result = secondsUntilNextTier(d, undefined, 870)
+    expect(result).not.toBeNull()
+    expect(result!.nextLabel).toBe('EOD cutoff')
+    expect(result!.seconds).toBe(1800) // 14:00 → 14:30 = 30 min
+    // At 2:31 PM (past the 2:30 cutoff) it returns null.
+    expect(secondsUntilNextTier(new Date('2026-03-16T14:31:00'), undefined, 870)).toBeNull()
+  })
+})
+
+/* ================================================================== */
+/*  eodCutoffMinutesCT — Central-time parse (no ET shift)             */
+/* ================================================================== */
+
+describe('eodCutoffMinutesCT', () => {
+  it('parses "14:45" as 2:45 PM CT (885 min) — no timezone shift', () => {
+    expect(eodCutoffMinutesCT('14:45')).toBe(14 * 60 + 45)
+  })
+
+  it('parses "14:50" as 2:50 PM CT (890 min), NOT 1:50 PM', () => {
+    expect(eodCutoffMinutesCT('14:50')).toBe(14 * 60 + 50)
+  })
+
+  it('parses "15:45" as 3:45 PM CT — proves the value is Central, not Eastern', () => {
+    expect(eodCutoffMinutesCT('15:45')).toBe(15 * 60 + 45)
+  })
+
+  it('falls back to the 2:45 PM CT default for missing/invalid input', () => {
+    expect(eodCutoffMinutesCT(undefined)).toBe(DEFAULT_EOD_CUTOFF_MIN)
+    expect(eodCutoffMinutesCT(null)).toBe(DEFAULT_EOD_CUTOFF_MIN)
+    expect(eodCutoffMinutesCT('')).toBe(DEFAULT_EOD_CUTOFF_MIN)
+    expect(eodCutoffMinutesCT('nonsense')).toBe(DEFAULT_EOD_CUTOFF_MIN)
+    expect(eodCutoffMinutesCT('25:00')).toBe(DEFAULT_EOD_CUTOFF_MIN)
+    expect(DEFAULT_EOD_CUTOFF_MIN).toBe(14 * 60 + 45)
+  })
+})
+
+/* ================================================================== */
+/*  formatCTClock                                                      */
+/* ================================================================== */
+
+describe('formatCTClock', () => {
+  it('formats afternoon minutes with meridiem', () => {
+    expect(formatCTClock(14 * 60 + 45)).toBe('2:45 PM')
+    expect(formatCTClock(14 * 60 + 50)).toBe('2:50 PM')
+  })
+
+  it('formats without meridiem when requested (compact axis label)', () => {
+    expect(formatCTClock(14 * 60 + 45, false)).toBe('2:45')
+  })
+
+  it('handles noon and morning correctly', () => {
+    expect(formatCTClock(12 * 60)).toBe('12:00 PM')
+    expect(formatCTClock(8 * 60 + 30)).toBe('8:30 AM')
   })
 })
 

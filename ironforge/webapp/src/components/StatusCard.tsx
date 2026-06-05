@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow, formatCloseReason } from '@/lib/pt-tiers'
+import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow, formatCloseReason, eodCutoffMinutesCT } from '@/lib/pt-tiers'
 
 interface SandboxAccount {
   name: string
@@ -56,6 +56,7 @@ interface ConfigData {
   vix_skip?: number
   max_contracts?: number
   starting_capital?: number
+  eod_cutoff_et?: string
 }
 
 const SCAN_INTERVAL_SEC = 60 // 1 minute
@@ -244,21 +245,24 @@ export default function StatusCard({
     setCountdown(getSecondsUntilNextScan(data.last_scan))
   }, [data.last_scan])
 
-  // Initialize PT state + unified 1-second tick
+  // Initialize PT state + unified 1-second tick. The EOD-cutoff countdown reads
+  // the bot's real cutoff from config (Central time) so it matches the scanner's
+  // actual force-close time rather than a hardcoded 2:45.
+  const eodCutoffMin = eodCutoffMinutesCT(config?.eod_cutoff_et)
   useEffect(() => {
     function tick() {
       setCountdown((c) => (c !== null && c > 0 ? c - 1 : 0))
       const ctNow = getCTNow()
       setPtState({
         tier: getCurrentPTTier(ctNow, bot),
-        next: secondsUntilNextTier(ctNow, bot),
+        next: secondsUntilNextTier(ctNow, bot, eodCutoffMin),
         open: isMarketOpen(ctNow),
       })
     }
     tick() // immediate first tick to initialize
     const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
-  }, [bot])
+  }, [bot, eodCutoffMin])
 
   /* ---- Scanner health ---- */
   const ageMin = scanAgeMinutes(data.last_scan)

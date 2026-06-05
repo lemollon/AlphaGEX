@@ -84,6 +84,39 @@ export function morningEndMinutes(bot?: string): number {
   return bot === 'spark' ? 720 : 630 // 12:00 PM CT for SPARK, else 10:30 AM CT
 }
 
+/** Default EOD cutoff in minutes-since-midnight CT (2:45 PM) — mirrors scanner
+ *  DEFAULT_CONFIG.eod_cutoff_hhmm_ct = 1445. Used when config is unavailable. */
+export const DEFAULT_EOD_CUTOFF_MIN = 14 * 60 + 45 // 885
+
+/**
+ * Convert a stored `eod_cutoff_et` value ("HH:MM") to minutes-since-midnight CT.
+ * The value is CENTRAL time (the `_et` suffix is a legacy misnomer — all
+ * IronForge times are CT), so it is parsed as-is with NO timezone shift,
+ * exactly mirroring scanner.ts's config loader. Missing/invalid input falls
+ * back to DEFAULT_EOD_CUTOFF_MIN (2:45 PM CT).
+ */
+export function eodCutoffMinutesCT(eodCutoffEt?: string | null): number {
+  if (!eodCutoffEt || typeof eodCutoffEt !== 'string' || !eodCutoffEt.includes(':')) {
+    return DEFAULT_EOD_CUTOFF_MIN
+  }
+  const [h, m] = eodCutoffEt.split(':').map(Number)
+  if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+    return DEFAULT_EOD_CUTOFF_MIN
+  }
+  return h * 60 + m
+}
+
+/** Format minutes-since-midnight CT as a clock string, e.g. 885 → "2:45 PM". */
+export function formatCTClock(minsSinceMidnight: number, withMeridiem = true): string {
+  const h24 = Math.floor(minsSinceMidnight / 60)
+  const m = minsSinceMidnight % 60
+  const meridiem = h24 >= 12 ? 'PM' : 'AM'
+  let h12 = h24 % 12
+  if (h12 === 0) h12 = 12
+  const core = `${h12}:${String(m).padStart(2, '0')}`
+  return withMeridiem ? `${core} ${meridiem}` : core
+}
+
 /** Get the active PT tier based on current CT time and bot. */
 export function getCurrentPTTier(ctDate?: Date, bot?: string): PTTier {
   const mins = getCTMinutes(ctDate)
@@ -96,7 +129,11 @@ export function getCurrentPTTier(ctDate?: Date, bot?: string): PTTier {
  * Seconds until the next PT tier change.
  * Returns null if market is past 2:45 PM or closed.
  */
-export function secondsUntilNextTier(ctDate?: Date, bot?: string): { seconds: number; nextLabel: string } | null {
+export function secondsUntilNextTier(
+  ctDate?: Date,
+  bot?: string,
+  eodCutoffMin: number = DEFAULT_EOD_CUTOFF_MIN,
+): { seconds: number; nextLabel: string } | null {
   const d = ctDate ?? getCTNow()
   const mins = getCTMinutes(d)
   const secs = d.getSeconds()
@@ -111,9 +148,11 @@ export function secondsUntilNextTier(ctDate?: Date, bot?: string): { seconds: nu
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
     return { seconds: 46800 - totalSecs, nextLabel: '15% Afternoon' }
   }
-  if (mins < 885) {
-    // Afternoon → EOD at 2:45 PM (885 min = 53100 sec)
-    return { seconds: 53100 - totalSecs, nextLabel: 'EOD cutoff' }
+  if (mins < eodCutoffMin) {
+    // Afternoon → EOD at the configured cutoff (Central time). Defaults to
+    // 2:45 PM CT; callers pass the bot's real eod_cutoff so the countdown
+    // never diverges from the scanner's actual force-close time.
+    return { seconds: eodCutoffMin * 60 - totalSecs, nextLabel: 'EOD cutoff' }
   }
   return null
 }

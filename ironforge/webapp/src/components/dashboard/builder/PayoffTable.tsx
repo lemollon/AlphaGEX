@@ -4,16 +4,17 @@
  * PayoffTable — numeric "what does the bot target" view.
  *
  * Replaces the generic price-grid table with exit-scenario rows that
- * match SPARK's actual same-day exit behavior. The bot closes by 2:50 PM
- * on day T — it does NOT hold to next-day expiration — so the theoretical
- * max profit is unreachable. The table makes that distinction explicit:
+ * match SPARK's actual same-day exit behavior. The bot closes by its EOD
+ * cutoff on day T (read from config, Central time) — it does NOT hold to
+ * next-day expiration — so the theoretical max profit is unreachable. The
+ * table makes that distinction explicit:
  *
  *   SAME-DAY EXITS  (what the bot actually targets — FLAME/SPARK 50/30/20)
  *     - Now (Live)        → current MTM, interpolated from pnl_curve at spot
  *     - Morning PT 50%    → credit × 0.50 × 100 × contracts (keep 50% of credit)
  *     - Midday PT 30%     → credit × 0.70 × 100 × contracts (keep 70% of credit)
  *     - PM PT 20%         → credit × 0.80 × 100 × contracts (keep 80% of credit)
- *     - EOD Force 2:50 PM → "varies" (backstop, P&L unknowable until close)
+ *     - EOD Force {cutoff}→ "varies" (backstop, P&L unknowable until close)
  *
  *   THEORETICAL CEILING  (not reached by SPARK)
  *     - At Expiration     → max_profit (what would be retained if held to T+1 close)
@@ -34,7 +35,7 @@
  *              relative to the credit captured.
  */
 import type { PnlPoint } from '@/lib/payoff-shape'
-import { getCurrentPTTier } from '@/lib/pt-tiers'
+import { getCurrentPTTier, eodCutoffMinutesCT, formatCTClock } from '@/lib/pt-tiers'
 
 interface PayoffTableProps {
   pnlCurve: PnlPoint[] | null | undefined
@@ -45,6 +46,9 @@ interface PayoffTableProps {
   netCredit?: number | null
   contracts?: number | null
   pnlMode: 'dollar' | 'percent'
+  /** Bot's EOD force-close cutoff ("HH:MM" Central). Drives the EOD row label
+   *  so it matches the scanner's real cutoff instead of a hardcoded time. */
+  eodCutoffEt?: string | null
 }
 
 function fmtDollar(v: number): string {
@@ -92,7 +96,10 @@ export default function PayoffTable({
   netCredit,
   contracts,
   pnlMode,
+  eodCutoffEt,
 }: PayoffTableProps) {
+  // EOD force-close clock (Central) — read from config so it matches the scanner.
+  const eodClock = formatCTClock(eodCutoffMinutesCT(eodCutoffEt)) // e.g. "2:45 PM"
   if (!pnlCurve || pnlCurve.length === 0) {
     return (
       <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
@@ -167,7 +174,7 @@ export default function PayoffTable({
     {
       kind: 'afternoon',
       label: 'PM PT (20%)',
-      sublabel: '1:00 PM – 2:45 PM CT',
+      sublabel: `1:00 PM – ${eodClock} CT`,
       pnl: pnlAtTier(0.20),
       pctOfMax: 80,
       barPct: 80,
@@ -176,7 +183,7 @@ export default function PayoffTable({
     },
     {
       kind: 'eod',
-      label: 'EOD Force (2:50 PM)',
+      label: `EOD Force (${eodClock})`,
       sublabel: 'backstop — depends on market',
       pnl: null,
       pctOfMax: null,
@@ -286,7 +293,7 @@ export default function PayoffTable({
             <tr>
               <td colSpan={3} className="px-4 py-3 text-[10px] text-forge-muted leading-relaxed">
                 SPARK exits same-day (T). The position is 1DTE, but the bot closes before
-                expiration (T+1) via PT tiers or EOD at 2:50 PM CT. The theoretical max
+                expiration (T+1) via PT tiers or EOD at {eodClock} CT. The theoretical max
                 profit is only realized by holding overnight to expiration close, which
                 SPARK is not designed to do.
               </td>

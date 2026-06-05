@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/pt-tiers'
+import useSWR from 'swr'
+import { fetcher } from '@/lib/fetcher'
+import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes, eodCutoffMinutesCT, formatCTClock } from '@/lib/pt-tiers'
 
 /**
  * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
@@ -9,8 +11,11 @@ import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/p
  * Zones (CT) — FLAME / SPARK:
  *   Morning  30%  8:30 – 10:30 (FLAME) or 8:30 – 12:00 (SPARK)
  *   Midday   20%  → 1:00
- *   PM       15%  1:00 – 2:45
- *   EOD            2:45 – 3:00
+ *   PM       15%  1:00 – {eod cutoff}
+ *   EOD            {eod cutoff} – 3:00
+ *
+ * The EOD boundary is read live from `{bot}_config.eod_cutoff_et` (Central
+ * time) so the strip always matches the scanner's real force-close time.
  *
  * INFERNO and BLAZE do NOT use tier-based exits and the timeline is
  * suppressed for them (return null). INFERNO is HOLD_TO_EOD only after
@@ -23,7 +28,6 @@ import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes } from '@/lib/p
 
 const MARKET_OPEN = 510     // 8:30 AM
 const AFTERNOON_START = 780 // 1:00 PM
-const EOD_START = 885       // 2:45 PM
 const MARKET_CLOSE = 900    // 3:00 PM
 const TOTAL = MARKET_CLOSE - MARKET_OPEN // 390 min
 
@@ -35,10 +39,30 @@ function widthPct(startMin: number, endMin: number): string {
   return `${((endMin - startMin) / TOTAL) * 100}%`
 }
 
-export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' }) {
+export default function PTTimeline({
+  bot,
+  accountType = 'sandbox',
+}: {
+  bot?: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+  accountType?: 'sandbox' | 'production'
+}) {
   // INFERNO (HOLD_TO_EOD after PR #2289) and BLAZE (directional, single
   // fixed PT/SL) don't use tier-based exits — suppress the strip entirely.
   if (bot === 'inferno' || bot === 'blaze') return null
+
+  // Read the bot's real EOD cutoff from config so the timeline can never
+  // silently diverge from the scanner's actual force-close time. eod_cutoff_et
+  // is Central time; eodCutoffMinutesCT parses it (no shift) with a 2:45 PM CT
+  // fallback. Clamped into the visible bar between 1:00 PM and the 3:00 close.
+  const { data: cfg } = useSWR<{ eod_cutoff_et?: string }>(
+    bot ? `/api/${bot}/config?account_type=${accountType}` : null,
+    fetcher,
+  )
+  const EOD_START = Math.min(
+    MARKET_CLOSE,
+    Math.max(AFTERNOON_START + 1, eodCutoffMinutesCT(cfg?.eod_cutoff_et)),
+  )
+  const eodLabel = formatCTClock(EOD_START, false) // e.g. "2:45"
 
   const MIDDAY_START = morningEndMinutes(bot) // SPARK: 720 (12:00 PM); else 630 (10:30 AM)
   const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
@@ -149,7 +173,7 @@ export default function PTTimeline({ bot }: { bot?: 'flame' | 'spark' | 'inferno
         <span className="absolute" style={{ left: '0%' }}>8:30</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(MIDDAY_START) }}>{middayLabelTime}</span>
         <span className="absolute -translate-x-1/2" style={{ left: pct(AFTERNOON_START) }}>1:00</span>
-        <span className="absolute -translate-x-1/2" style={{ left: pct(EOD_START) }}>2:45</span>
+        <span className="absolute -translate-x-1/2" style={{ left: pct(EOD_START) }}>{eodLabel}</span>
         <span className="absolute right-0">3:00</span>
       </div>
 

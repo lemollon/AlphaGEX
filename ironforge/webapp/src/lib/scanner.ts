@@ -132,7 +132,7 @@ interface BotConfig {
   bp_pct: number
   starting_capital: number
   min_credit: number // minimum credit per contract to open a trade
-  eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from `eod_cutoff_et` config column (parsed as ET, converted to CT). Default 1450 = 2:50 PM CT (= 3:50 PM ET).
+  eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from the `eod_cutoff_et` config column, which is now interpreted as CENTRAL time (the legacy `_et` suffix is a misnomer — all IronForge times are CT). Default 1445 = 2:45 PM CT.
   trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
 }
 
@@ -143,9 +143,9 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // combo bid/ask spread — 9 sequential PT limits failed and the kill switch
   // closed it at break-even. With a $0.25 floor the bot tightens strikes
   // (lower SD) to reach acceptable credit or skips the day entirely.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1450, trailing_retrace_dollars: 0.05 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -243,16 +243,17 @@ async function loadConfigOverrides(): Promise<void> {
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
 
-      // eod_cutoff_et stored as "HH:MM" string in EASTERN time. Convert to CT HHMM.
-      // ET is always 1 hour ahead of CT (both observe DST), so subtract 1 from hours.
-      // Out-of-range values fall back to DEFAULT_CONFIG's 1450 CT (= 14:50 ET... wait, see comment below).
-      // Default 1450 CT = 15:50 ET preserves the historical hardcoded behavior pre-fix.
-      const eodEtStr = row.eod_cutoff_et
-      if (eodEtStr && typeof eodEtStr === 'string' && eodEtStr.includes(':')) {
-        const [eh, em] = eodEtStr.split(':').map(Number)
-        if (!isNaN(eh) && !isNaN(em) && eh >= 1 && eh <= 23 && em >= 0 && em < 60) {
-          const ctH = eh - 1  // ET → CT
-          merged.eod_cutoff_hhmm_ct = ctH * 100 + em
+      // eod_cutoff_et is a "HH:MM" string in CENTRAL time. The `_et` suffix is a
+      // legacy misnomer — all IronForge times are CT (matching entry_end above),
+      // so it is parsed as-is with NO timezone shift. Invalid values fall back to
+      // DEFAULT_CONFIG's 1445 CT (2:45 PM). (Previously this subtracted 1 hour
+      // treating the value as Eastern, which silently force-closed every bot an
+      // hour early — e.g. a "14:50" value fired at 1:50 PM CT.)
+      const eodCtStr = row.eod_cutoff_et
+      if (eodCtStr && typeof eodCtStr === 'string' && eodCtStr.includes(':')) {
+        const [eh, em] = eodCtStr.split(':').map(Number)
+        if (!isNaN(eh) && !isNaN(em) && eh >= 0 && eh <= 23 && em >= 0 && em < 60) {
+          merged.eod_cutoff_hhmm_ct = eh * 100 + em
         }
       }
       const trailingDb = row.trailing_retrace_dollars
@@ -328,11 +329,12 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
       const [h, m] = entryEndStr.split(':').map(Number)
       if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
     }
-    const eodEtStr = row.eod_cutoff_et
-    if (eodEtStr && typeof eodEtStr === 'string' && eodEtStr.includes(':')) {
-      const [eh, em] = eodEtStr.split(':').map(Number)
-      if (!isNaN(eh) && !isNaN(em) && eh >= 1 && eh <= 23 && em >= 0 && em < 60) {
-        merged.eod_cutoff_hhmm_ct = (eh - 1) * 100 + em
+    // eod_cutoff_et is Central time (legacy `_et` name); parsed as-is, no shift.
+    const eodCtStr = row.eod_cutoff_et
+    if (eodCtStr && typeof eodCtStr === 'string' && eodCtStr.includes(':')) {
+      const [eh, em] = eodCtStr.split(':').map(Number)
+      if (!isNaN(eh) && !isNaN(em) && eh >= 0 && eh <= 23 && em >= 0 && em < 60) {
+        merged.eod_cutoff_hhmm_ct = eh * 100 + em
       }
     }
     const trailingDb = row.trailing_retrace_dollars
@@ -580,9 +582,9 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
 
 /**
  * EOD force-close cutoff. Configurable per-bot via `{bot}_config.eod_cutoff_et`
- * (parsed as ET, converted to CT at config-load time and stored on
- * BotConfig.eod_cutoff_hhmm_ct). Falls back to 1450 CT (= 1550 ET) if config
- * missing — historical default before the column was wired up.
+ * (a Central-time "HH:MM" value — the `_et` suffix is a legacy misnomer — parsed
+ * as-is at config-load time and stored on BotConfig.eod_cutoff_hhmm_ct). Falls
+ * back to 1445 CT (2:45 PM) if config is missing or invalid.
  */
 function isAfterEodCutoff(ct: Date, bot: BotDef): boolean {
   return ctHHMM(ct) >= cfg(bot).eod_cutoff_hhmm_ct
