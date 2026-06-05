@@ -173,25 +173,26 @@ describe('Market Hours', () => {
   })
 
   describe('isAfterEodCutoff (Fix 6)', () => {
-    // Default eod_cutoff_hhmm_ct = 1450 (= 14:50 CT, the historical hardcoded
-    // value). After the eod_cutoff_et fix the cutoff is per-bot from config.
+    // Default eod_cutoff_hhmm_ct = 1445 (2:45 PM CT). The eod_cutoff_et config
+    // column is now Central time (no ET→CT shift); the cutoff is per-bot from
+    // config and falls back to this 2:45 PM CT default.
     const flame = BOTS[0]
-    it('returns true at 14:50 CT and after', () => {
-      expect(isAfterEodCutoff(makeCT(14, 50), flame)).toBe(true)
+    it('returns true at 14:45 CT and after', () => {
+      expect(isAfterEodCutoff(makeCT(14, 45), flame)).toBe(true)
       expect(isAfterEodCutoff(makeCT(15, 0), flame)).toBe(true)
       expect(isAfterEodCutoff(makeCT(15, 45), flame)).toBe(true)
     })
 
-    it('returns false before 14:50 CT', () => {
-      expect(isAfterEodCutoff(makeCT(14, 49), flame)).toBe(false)
+    it('returns false before 14:45 CT', () => {
+      expect(isAfterEodCutoff(makeCT(14, 44), flame)).toBe(false)
       expect(isAfterEodCutoff(makeCT(14, 0), flame)).toBe(false)
       expect(isAfterEodCutoff(makeCT(8, 30), flame)).toBe(false)
     })
 
-    it('default cutoff stays at 14:50 CT (preserves pre-fix behavior)', () => {
+    it('default cutoff is 2:45 PM CT (Central, no ET shift)', () => {
       expect(isAfterEodCutoff(makeCT(15, 45), flame)).toBe(true)
-      expect(isAfterEodCutoff(makeCT(14, 50), flame)).toBe(true)
-      expect(isAfterEodCutoff(makeCT(14, 49), flame)).toBe(false)
+      expect(isAfterEodCutoff(makeCT(14, 45), flame)).toBe(true)
+      expect(isAfterEodCutoff(makeCT(14, 44), flame)).toBe(false)
     })
   })
 

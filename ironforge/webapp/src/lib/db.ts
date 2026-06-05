@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_config (
   min_win_probability NUMERIC(5,4) DEFAULT 0.42,
   entry_start TEXT DEFAULT '08:30',
   entry_end TEXT DEFAULT '14:00',
-  eod_cutoff_et TEXT DEFAULT '15:45',
+  eod_cutoff_et TEXT DEFAULT '14:45',  -- Central time (legacy _et name is a misnomer); 2:45 PM CT EOD force-close
   pdt_max_day_trades INT DEFAULT 4,
   starting_capital NUMERIC(12,2) DEFAULT 10000.0,
   created_at TIMESTAMPTZ DEFAULT NOW(),

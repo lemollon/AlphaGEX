@@ -127,6 +127,12 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
     fetcher,
     { refreshInterval: CANDLES_REFRESH_MS },
   )
+  // EOD cutoff (Central time) for the scope being viewed — drives PayoffTable's
+  // "EOD Force" row so it matches the scanner's real force-close time.
+  const { data: cfg } = useSWR<{ eod_cutoff_et?: string }>(
+    `/api/${bot}/config?account_type=${accountType}`,
+    fetcher,
+  )
 
   // View + pnl mode toggles (SpreadWorks parity). viewMode controls whether
   // the main area renders the candle+payoff chart ("graph") or the numeric
@@ -368,6 +374,7 @@ export default function BuilderTab({ bot, accountType }: BuilderTabProps) {
           netCredit={p.entry_credit}
           contracts={p.contracts}
           pnlMode={pnlMode}
+          eodCutoffEt={cfg?.eod_cutoff_et}
         />
       )}
 
