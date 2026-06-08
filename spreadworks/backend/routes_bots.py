@@ -340,6 +340,45 @@ def post_force_close(bot: str, position_id: str):
     return {"position_id": position_id, "realized_pnl": realized}
 
 
+@router.post("/{bot}/reset")
+def post_reset(bot: str, confirm: bool = False):
+    """Wipe a paper bot's trade data back to its starting-capital baseline.
+
+    Deletes ALL rows from {bot}_positions, {bot}_closed_trades, and
+    {bot}_equity_snapshots. The config row ({bot}_config) and the scanner
+    activity log ({bot}_scan_activity) are preserved. Equity is computed as
+    starting_capital + realized + unrealized, so clearing positions and
+    closed trades returns the account to starting_capital automatically.
+
+    Guarded by confirm=true. These are paper-only bots, so there are no
+    broker side effects — but this is destructive (mirrors common-mistakes
+    rule #19: prefer reconcile over reset), hence the explicit gate.
+    """
+    _validate(bot)
+    if not confirm:
+        raise HTTPException(
+            400,
+            "Pass confirm=true to reset. Destructive: wipes all positions, "
+            "closed trades, and equity snapshots (config + scan log kept).",
+        )
+    deleted: dict[str, int] = {}
+    with ENGINE.begin() as conn:
+        for short in ("positions", "closed_trades", "equity_snapshots"):
+            t = bot_table(bot, short)
+            res = conn.execute(text(f"DELETE FROM {t}"))
+            deleted[short] = int(res.rowcount or 0)
+    cfg = load_config(ENGINE, bot)
+    equity = account_equity(ENGINE, bot)
+    logger.info("RESET %s — deleted %s, equity now %.2f", bot, deleted, float(equity))
+    return {
+        "bot": bot,
+        "reset": True,
+        "deleted": deleted,
+        "starting_capital": float(cfg["starting_capital"]),
+        "equity": float(equity),
+    }
+
+
 @router.get("/{bot}/positions/{position_id}/payoff")
 def get_position_payoff(bot: str, position_id: str):
     """At-expiration (or modeled, for time-dependent strategies) payoff curve
