@@ -237,3 +237,64 @@ def test_adjust_404_on_unknown_position(client):
         json={"pt_target_pnl": 50.0},
     )
     assert r.status_code == 404
+
+
+def _seed_closed_trade(engine, bot: str, position_id: str, realized_pnl: float):
+    """Insert one realized trade into {bot}_closed_trades."""
+    import json
+    from datetime import datetime
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {bot}_closed_trades ("
+            "position_id, close_price, close_time, close_reason, realized_pnl, "
+            "contracts, legs, entry_price, entry_time, ticker, strategy"
+            ") VALUES ("
+            ":pid, 1.0, :ct, 'PT', :pnl, 1, :legs, 0.75, :et, 'SPY', 'long_butterfly')"
+        ), {
+            "pid": position_id, "ct": datetime.now(), "pnl": realized_pnl,
+            "legs": json.dumps([]), "et": datetime.now(),
+        })
+
+
+def test_reset_requires_confirm(client):
+    r = client.post("/api/spreadworks/bots/river/reset")
+    assert r.status_code == 400
+    assert "confirm" in r.text.lower()
+
+
+def test_reset_404_on_unknown_bot(client):
+    r = client.post("/api/spreadworks/bots/notabot/reset?confirm=true")
+    assert r.status_code == 404
+
+
+def test_reset_wipes_data_and_restores_starting_capital(client):
+    from backend import routes_bots
+    eng = routes_bots.ENGINE
+    # Seed an open position AND a couple of closed trades so equity is moved.
+    _seed_bot_position(
+        eng, "river", "river-reset-open", "long_butterfly",
+        [{"side": "long", "type": "call", "strike": 498, "expiration": "2099-01-15"}],
+        0.75,
+    )
+    _seed_closed_trade(eng, "river", "river-reset-c1", 120.0)
+    _seed_closed_trade(eng, "river", "river-reset-c2", -45.0)
+
+    before = client.get("/api/spreadworks/bots/river/status").json()
+    assert before["open_positions"] == 1
+    assert before["equity"] != before["starting_capital"]
+
+    r = client.post("/api/spreadworks/bots/river/reset?confirm=true")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["reset"] is True
+    assert d["deleted"]["positions"] == 1
+    assert d["deleted"]["closed_trades"] == 2
+    assert d["equity"] == pytest.approx(d["starting_capital"])
+
+    after = client.get("/api/spreadworks/bots/river/status").json()
+    assert after["open_positions"] == 0
+    assert after["equity"] == pytest.approx(after["starting_capital"])
+    # Trade history and equity curve are empty after the wipe.
+    assert client.get("/api/spreadworks/bots/river/trades").json()["trades"] == []
+    assert client.get("/api/spreadworks/bots/river/equity-curve").json()["curve"] == []
