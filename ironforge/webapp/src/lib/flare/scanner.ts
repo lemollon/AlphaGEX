@@ -10,7 +10,7 @@
  */
 import { query } from '../db'
 import { getOptionQuote } from '../tradier'
-import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, insertSignalActivity, isDirectionHalted, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
+import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
 import { openVertical } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
@@ -130,9 +130,10 @@ export async function runMonitorCycle(): Promise<void> {
   }
 
   // Per-direction force-close stop. If one side's aggregate UNREALIZED P&L is
-  // below -perdir_force_close_pct * balance, guillotine that whole side and halt
-  // it for the rest of the day. This is the lever that converts FLARE from
-  // ruin (-$30k/PF 0.54) to profitable (+$12.8k/PF 3.15) on its own tape.
+  // below -perdir_force_close_pct * balance, guillotine that whole side and put
+  // it on a perdir_cooldown_minutes cooldown (it resumes after — NOT a day-halt;
+  // the operator wants all-day trading). The force-close is the lever that
+  // converts FLARE from ruin (-$30k/PF 0.54) to profitable on its own tape.
   const riskBase = Math.max(balance, 0)
   const threshold = -DEFAULT_FLARE_CONFIG.perdir_force_close_pct * riskBase
   for (const dir of ['call', 'put'] as const) {
@@ -155,7 +156,7 @@ export async function runMonitorCycle(): Promise<void> {
     await setDirectionHalted(dir, reason)
     await insertSignalActivity({
       outcome: 'TRADE',
-      detail: `RISK_FORCE_CLOSE ${dir} x${side.length} pnl=${sideUnreal.toFixed(2)} halt_rest_of_day [${reason}]`,
+      detail: `RISK_FORCE_CLOSE ${dir} x${side.length} pnl=${sideUnreal.toFixed(2)} cooldown_${DEFAULT_FLARE_CONFIG.perdir_cooldown_minutes}min [${reason}]`,
     })
   }
 }
@@ -212,11 +213,12 @@ async function runEntryCycle(): Promise<void> {
     return
   }
 
-  // Per-direction risk halt: if this side was force-closed earlier today
-  // (aggregate unrealized breached the force-close stop), no new entries on it
-  // for the rest of the session.
-  if (await isDirectionHalted(action.direction)) {
-    await insertSignalActivity({ outcome: 'SKIP', detail: `dir_halted_${action.direction}` })
+  // Per-direction cooldown: if this side was force-closed within the last
+  // perdir_cooldown_minutes (aggregate unrealized breached the force-close
+  // stop), hold off new entries on it until the cooldown elapses — then resume.
+  // This replaced the old rest-of-day halt so FLARE keeps trading all day.
+  if (await isDirectionInCooldown(action.direction, DEFAULT_FLARE_CONFIG.perdir_cooldown_minutes)) {
+    await insertSignalActivity({ outcome: 'SKIP', detail: `dir_cooldown_${action.direction}` })
     return
   }
 
