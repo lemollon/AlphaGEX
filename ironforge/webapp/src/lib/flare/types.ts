@@ -13,8 +13,9 @@ export interface FlareConfig extends BlazeConfig {
   // Per-direction force-close stop. When the aggregate UNREALIZED P&L of one
   // side (all open call OR all open put debit spreads) drops below
   //   -perdir_force_close_pct * current_account_balance,
-  // force-close that entire side AND halt new entries on it for the rest of the
-  // session. Evaluated every scan tick by runMonitorCycle.
+  // force-close that entire side, then COOL DOWN new entries on it for
+  // perdir_cooldown_minutes (NOT the rest of the session — the operator wants
+  // FLARE to keep trading all day). Evaluated every scan tick by runMonitorCycle.
   //
   // Why per-side + force-close (not an account-level entry halt): FLARE's blow-ups
   // were always one-directional — it stacked the wrong side into a trend (6/04:
@@ -27,6 +28,10 @@ export interface FlareConfig extends BlazeConfig {
   //   baseline   -$30,451  PF 0.54  maxDD 570%
   //   per-dir FC 5% + cap20  +$12,790  PF 3.15  maxDD 33%  worst day -$618
   perdir_force_close_pct: number
+  // Minutes a side is blocked from re-entry after a force-close. Replaces the
+  // old permanent day-halt so the side resumes trading once the transient
+  // adverse move has had time to clear, instead of shutting down till tomorrow.
+  perdir_cooldown_minutes: number
   // Hard ceiling on simultaneously-open positions per direction. Bounds the
   // intraday swing / blast radius independent of the force-close stop.
   max_concurrent_per_direction: number
@@ -49,8 +54,15 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   risk_per_trade_pct: 0.05,
   max_trades_per_setup_per_day: 999,
   // Per-direction risk controls (see FlareConfig doc above). 5% per-side
-  // force-close + 20 concurrent-per-side cap = the backtested equilibrium.
+  // force-close caps each adverse cluster; a 45-min cooldown (not a day-halt)
+  // lets the side resume so FLARE trades all day; 20 concurrent-per-side cap
+  // bounds the blast radius. Validated on FLARE's own 8-day tape
+  // (flare_sim_cooldown.py, flat $500/trade): FC5% + cooldown45 + cap20 =
+  //   +$14,128  PF 2.85  maxDD 50%  worst day -$2,073  (~37 trades/day)
+  // vs the old permanent-halt (+$12,790 / PF 3.15 / 31/day) — more trades and
+  // more P&L for a deeper worst-day. Loosening FC% (6/7%) was strictly worse.
   perdir_force_close_pct: 0.05,
+  perdir_cooldown_minutes: 45,
   max_concurrent_per_direction: 20,
   // 0DTE timing override (vs BLAZE's 1DTE 15:55).
   //   - Entries cut off at 14:30 in scanner.ts:isMarketHours.

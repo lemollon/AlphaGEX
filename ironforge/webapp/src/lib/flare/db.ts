@@ -237,8 +237,21 @@ async function ensureRiskHaltTable(): Promise<void> {
   } catch { /* non-fatal — fail open (no halt) rather than block the scanner */ }
 }
 
-export async function isDirectionHalted(
+/**
+ * True if `direction` was force-closed within the last `cooldownMinutes`.
+ *
+ * The per-direction force-close used to halt a side for the REST OF THE DAY,
+ * which turned a single adverse cluster into an all-day shutdown (operator wants
+ * FLARE to keep trading all day). It now applies a timed COOLDOWN instead: the
+ * side resumes once `cooldownMinutes` have elapsed since the last force-close.
+ *
+ * No schema change — the flare_risk_halts row (refreshed on every force-close
+ * via setDirectionHalted's ON CONFLICT) doubles as the cooldown marker; we just
+ * check how recent `halted_at` is. The row still persists all day for audit.
+ */
+export async function isDirectionInCooldown(
   direction: 'call' | 'put',
+  cooldownMinutes: number,
   date?: string,
 ): Promise<boolean> {
   await ensureRiskHaltTable()
@@ -246,8 +259,11 @@ export async function isDirectionHalted(
   const trade_date = date || ctTodayStr()
   try {
     const res = await query(
-      `SELECT 1 FROM flare_risk_halts WHERE trade_date = $1 AND direction = $2 LIMIT 1`,
-      [trade_date, direction],
+      `SELECT 1 FROM flare_risk_halts
+        WHERE trade_date = $1 AND direction = $2
+          AND halted_at > NOW() - (INTERVAL '1 minute' * $3)
+        LIMIT 1`,
+      [trade_date, direction, cooldownMinutes],
     )
     return res.length > 0
   } catch {
