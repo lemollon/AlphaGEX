@@ -71,8 +71,15 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   //     worst day -$1,967  (~41 trades/day, NEVER halts a direction)
   // vs permanent-halt (+$12,790 / 31/day / -$618) and flat-45m cooldown
   //   (+$14,128 / 37/day / -$2,073 / DD50%). Size-down = most all-day trading
-  //   with the lowest drawdown of any >=40/day policy. Loosening FC% was worse.
-  perdir_force_close_pct: 0.05,
+  //   with the lowest drawdown of any >=40/day policy. Loosening FC% was worse
+  //   on that (blow-up) tape.
+  //
+  // 2026-06-08 (operator): loosened 0.05 -> 0.10 after the post-6/04 live tape
+  // showed the 5% guillotine doing 15/16 exits, ALL losses (-$1,757), tripping
+  // on choppy-regime noise before positions could revert to PT (only 1 PT in 16).
+  // The blow-up brake still fires at half the 6/04 damage; size-down + cap20 keep
+  // the blast radius bounded. Revisit if a one-way trend day reappears.
+  perdir_force_close_pct: 0.10,
   perdir_cooldown_minutes: 15,
   perdir_size_mult_after_fc: 0.33,
   max_concurrent_per_direction: 20,
