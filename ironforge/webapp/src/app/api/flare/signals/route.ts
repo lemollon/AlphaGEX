@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
  *   "dir_cooldown_call"                                    (SKIP)
  *   "max_concurrent_call=20/20"                            (SKIP)
  *   "gex_stale:gex snapshot age=274.2s > 90s"              (SKIP)
- *   "RISK_FORCE_CLOSE call x4 pnl=-694.00 cooldown_45min"  (TRADE/force-close)
+ *   "RISK_FORCE_CLOSE call x4 pnl=-694.00 cooldown_15min"  (TRADE/force-close)
  */
 export async function GET(req: NextRequest) {
   const url = new URL(req.url)
