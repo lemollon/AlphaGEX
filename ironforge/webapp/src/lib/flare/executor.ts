@@ -6,7 +6,7 @@
  * not the next trading day.
  */
 import { buildOccSymbol, getOptionQuote } from '../tradier'
-import { insertFlarePosition, getPaperBalance } from './db'
+import { insertFlarePosition, getPaperBalance, getDirectionForceCloseCount } from './db'
 import { FlareConfig, GexSnapshot, SetupAction } from './types'
 
 export interface OpenResult {
@@ -47,9 +47,13 @@ export async function openVertical(
   const debit = longQ.ask - shortQ.bid
   if (debit <= 0 || debit >= config.spread_width) return null
 
-  // Kelly cap × BP usage on current balance
+  // Risk-% × BP usage on current balance, then SIZE-DOWN by 0.33^(force-closes
+  // today on this side): a repeatedly-stopped side keeps trading all day but at
+  // rapidly shrinking size so a one-way trend can't run away. Resets each AM.
   const balance = await getPaperBalance()
-  const capitalAtRisk = balance * config.risk_per_trade_pct * config.buying_power_usage_pct
+  const fcCount = await getDirectionForceCloseCount(action.direction)
+  const sizeMult = Math.pow(config.perdir_size_mult_after_fc, fcCount)
+  const capitalAtRisk = balance * config.risk_per_trade_pct * config.buying_power_usage_pct * sizeMult
   const costPerContract = debit * 100
   const contracts = Math.max(1, Math.floor(capitalAtRisk / costPerContract))
 

@@ -233,6 +233,11 @@ async function ensureRiskHaltTable(): Promise<void> {
          PRIMARY KEY (trade_date, direction)
        )`,
     )
+    // Additive: per-(day,direction) count of force-closes, drives the post-FC
+    // size-down. Safe IF NOT EXISTS migration on an internal risk-tracking table.
+    await query(
+      `ALTER TABLE flare_risk_halts ADD COLUMN IF NOT EXISTS fc_count INTEGER NOT NULL DEFAULT 0`,
+    )
     _riskHaltEnsured = true
   } catch { /* non-fatal — fail open (no halt) rather than block the scanner */ }
 }
@@ -281,13 +286,37 @@ export async function setDirectionHalted(
   const trade_date = date || ctTodayStr()
   try {
     await query(
-      `INSERT INTO flare_risk_halts (trade_date, direction, reason)
-       VALUES ($1, $2, $3)
+      `INSERT INTO flare_risk_halts (trade_date, direction, reason, fc_count)
+       VALUES ($1, $2, $3, 1)
        ON CONFLICT (trade_date, direction) DO UPDATE SET
-         reason = EXCLUDED.reason, halted_at = NOW()`,
+         reason = EXCLUDED.reason, halted_at = NOW(),
+         fc_count = flare_risk_halts.fc_count + 1`,
       [trade_date, direction, reason.substring(0, 300)],
     )
   } catch { /* non-fatal */ }
+}
+
+/**
+ * How many times `direction` has been force-closed today. Drives the post-FC
+ * size-down (size multiplier = perdir_size_mult_after_fc ^ count). Returns 0 if
+ * the side has not been force-closed today (full size).
+ */
+export async function getDirectionForceCloseCount(
+  direction: 'call' | 'put',
+  date?: string,
+): Promise<number> {
+  await ensureRiskHaltTable()
+  if (!_riskHaltEnsured) return 0
+  const trade_date = date || ctTodayStr()
+  try {
+    const res = await query(
+      `SELECT fc_count FROM flare_risk_halts WHERE trade_date = $1 AND direction = $2 LIMIT 1`,
+      [trade_date, direction],
+    )
+    return res.length > 0 ? Number(res[0].fc_count) || 0 : 0
+  } catch {
+    return 0
+  }
 }
 
 export async function insertSignalActivity(args: {
