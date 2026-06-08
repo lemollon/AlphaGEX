@@ -214,24 +214,12 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
 
     errors = []
 
-    # PRIMARY: Try Tradier direct (real-time live data)
-    logger.debug(f"Trying Tradier direct for {symbol}...")
-    tradier_direct = get_gex_from_tradier_direct(symbol)
-    if tradier_direct:
-        # Store data for ML/AI analysis
-        if DATA_COLLECTOR_AVAILABLE:
-            try:
-                DataCollector.store_gex(tradier_direct, source='tradier_live')
-            except Exception as e:
-                logger.warning(f"Failed to store Tradier GEX data: {e}")
-        # Cache the response
-        if CACHE_AVAILABLE:
-            response_cache.set(f"gex_data_{symbol}", tradier_direct, APIResponseCache.TTL_GEX)
-        return tradier_direct
-    else:
-        errors.append("Tradier direct: Not available or failed")
-
-    # FALLBACK 1: Try TradingVolatilityAPI (fastest, pre-calculated)
+    # PRIMARY: TradingVolatility — stable, pre-calculated net gamma already on the
+    # canonical per-1%-move USD scale. Preferred over the Tradier chain calc, whose
+    # full-chain net_gex sign-flips minute-to-minute (a difference of two large
+    # near-equal sums) on a ~100x scale that reads perpetually EXTREME. When TV is
+    # stale (freshness gate below) or unavailable we fall through to Tradier-direct
+    # (FALLBACK 1), which the endpoint handler normalizes to the same scale.
     try:
         from core_classes_and_engines import TradingVolatilityAPI
         api = TradingVolatilityAPI()
@@ -301,6 +289,22 @@ def get_gex_data_with_fallback(symbol: str) -> Dict[str, Any]:
     except Exception as e:
         errors.append(f"TradingVolatilityAPI error: {e}")
 
+    # FALLBACK 1: Tradier direct (real-time live options chain). net_gex here is the
+    # RAW dollar-gamma scale; the endpoint handler normalizes it (data_source='tradier_live').
+    logger.debug(f"Trying Tradier direct for {symbol}...")
+    tradier_direct = get_gex_from_tradier_direct(symbol)
+    if tradier_direct:
+        if DATA_COLLECTOR_AVAILABLE:
+            try:
+                DataCollector.store_gex(tradier_direct, source='tradier_live')
+            except Exception as e:
+                logger.warning(f"Failed to store Tradier GEX data: {e}")
+        if CACHE_AVAILABLE:
+            response_cache.set(f"gex_data_{symbol}", tradier_direct, APIResponseCache.TTL_GEX)
+        return tradier_direct
+    else:
+        errors.append("Tradier direct: Not available or failed")
+
     # FALLBACK 2: Calculate from Tradier options chain (real-time)
     logger.debug(f"TradingVolatilityAPI failed for {symbol}, trying Tradier calculation...")
     tradier_data = get_gex_from_tradier_calculation(symbol)
@@ -361,6 +365,16 @@ async def get_gex_data(symbol: str):
 
         # Calculate regime
         net_gex = data.get('net_gex', 0) or 0
+        # Normalize net_gex to the canonical per-1%-move USD scale BEFORE classifying.
+        # TradingVolatility (live_api) and the gex_history DB already emit this scale
+        # (gamma_notional_per_1pct_move_usd, ~1e9 for major indices) — which the regime
+        # thresholds below are calibrated for. The Tradier chain calcs emit the RAW
+        # dollar-gamma sum (gamma*OI*100*spot^2): ~100x larger and per-$1-move, not
+        # per-1%-move. Without this divide, every Tradier-sourced response reads EXTREME
+        # and the regime flips with the data SOURCE, not the market. Sign is preserved,
+        # so mm_state (below) and downstream sign-based gates are unaffected.
+        if data.get('data_source') in ('tradier_live', 'tradier_calculated'):
+            net_gex = net_gex / 100.0
         if net_gex <= -3e9:
             regime = 'EXTREME_NEGATIVE'
         elif net_gex <= -2e9:
