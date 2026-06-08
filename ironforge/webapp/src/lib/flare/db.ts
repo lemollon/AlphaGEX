@@ -120,6 +120,14 @@ export interface InsertPositionInput {
   contracts: number
   expiration: string  // YYYY-MM-DD
   spot_at_entry: number
+  // GEX context at entry — stamped so trades become regime-gateable later
+  // (these columns exist on flare_positions but were always written NULL).
+  gex_regime?: string | null
+  net_gex?: number | null
+  call_wall?: number | null
+  put_wall?: number | null
+  flip_point?: number | null
+  vix?: number | null
 }
 
 export async function insertFlarePosition(input: InsertPositionInput): Promise<number> {
@@ -145,6 +153,7 @@ export async function insertFlarePosition(input: InsertPositionInput): Promise<n
        spread_width, max_loss, max_profit,
        setup_type, direction, long_strike, short_strike,
        long_symbol, short_symbol, debit, contracts,
+       gex_regime, net_gex, call_wall, put_wall, flip_point, vix_at_entry,
        status, open_time, open_date, account_type, person, dte_mode
      ) VALUES (
        $1, 'SPY', $2,
@@ -154,6 +163,7 @@ export async function insertFlarePosition(input: InsertPositionInput): Promise<n
        $8, $9, $10,
        $11, $12, $13, $14,
        $15, $16, $17, $18,
+       $19, $20, $21, $22, $23, $24,
        'open', NOW(), (NOW() AT TIME ZONE 'America/Chicago')::date, 'sandbox', 'User', '0DTE'
      )
      RETURNING id`,
@@ -165,6 +175,9 @@ export async function insertFlarePosition(input: InsertPositionInput): Promise<n
       spreadWidth, maxLoss, maxProfit,
       input.setup_type, input.direction, input.long_strike, input.short_strike,
       input.long_symbol, input.short_symbol, input.debit, input.contracts,
+      input.gex_regime ?? null, input.net_gex ?? null,
+      input.call_wall ?? null, input.put_wall ?? null,
+      input.flip_point ?? null, input.vix ?? null,
     ],
   )
   return Number(res[0]?.id || 0)

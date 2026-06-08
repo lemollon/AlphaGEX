@@ -68,6 +68,14 @@ export async function openVertical(
     contracts,
     expiration,
     spot_at_entry: snap.spot,
+    // Stamp GEX context at entry so every trade is regime-gateable later
+    // (previously NULL — the gate work was blind to regime/walls).
+    gex_regime: snap.regime,
+    net_gex: snap.net_gex,
+    call_wall: snap.call_wall,
+    put_wall: snap.put_wall,
+    flip_point: snap.flip_point,
+    vix: snap.vix,
   })
 
   if (!position_id) return null
