@@ -344,8 +344,8 @@ export default function BotDashboard({
 
   return (
     <div className="space-y-6">
-      {/* Volatility regime banner — renders only when a relevant directional
-          vol alert is active for this bot kind. Tailored tone/message. */}
+      {/* Volatility regime banner — ALWAYS shown (sticky at top, persistent across regime
+          changes): the active directional alert when present, else a neutral note. */}
       <ComponentErrorBoundary fallback="Vol banner error">
         <VolRegimeBanner bot={bot} />
       </ComponentErrorBoundary>
