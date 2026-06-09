@@ -18,6 +18,7 @@ import TriggerWatch from '@/components/vol/TriggerWatch'
 import EvidenceTable from '@/components/vol/EvidenceTable'
 import LiveTrackRecord from '@/components/vol/LiveTrackRecord'
 import AlertsFeed from '@/components/vol/AlertsFeed'
+import GexSummaryBanner from '@/components/gex/GexSummaryBanner'
 
 const REFRESH = 60_000
 
@@ -74,6 +75,11 @@ export default function VolatilityPage() {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
+      {/* SPY GEX context strip — same banner the bot dashboards carry, links to GEX Profile. */}
+      <div className="mb-4">
+        <GexSummaryBanner symbol="SPY" />
+      </div>
+
       {/* Header */}
       <header className="mb-4">
         <h1 className="text-lg font-semibold text-white">Volatility Regime</h1>

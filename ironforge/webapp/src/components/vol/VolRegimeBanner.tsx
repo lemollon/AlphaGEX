@@ -27,11 +27,13 @@ const TONE_LABEL: Record<VolTone, string> = {
 }
 
 /**
- * Thin, full-width volatility-regime banner tailored to the bot. Renders
- * nothing unless a relevant directional alert is active for this bot kind.
+ * Thin, full-width volatility-regime banner. ALWAYS renders the live regime
+ * headline; when a `bot` is supplied, a directional alert relevant to that bot
+ * kind takes priority over the headline. Omit `bot` on non-bot pages (GEX
+ * Profile, Volatility) to show the bot-agnostic regime headline.
  * Links to /volatility for the full picture.
  */
-export default function VolRegimeBanner({ bot }: { bot: VolBot }) {
+export default function VolRegimeBanner({ bot }: { bot?: VolBot }) {
   const { data } = useSWR<AlertsPayload>('/api/vol-alerts?status=active', fetcher, {
     refreshInterval: REFRESH,
   })
@@ -40,14 +42,14 @@ export default function VolRegimeBanner({ bot }: { bot: VolBot }) {
     refreshInterval: REFRESH,
   })
 
-  // ALWAYS render so the vol status is persistent on every bot page (sticky at the top, never
+  // ALWAYS render so the vol status is persistent on every page (sticky at the top, never
   // absent — it stays put when the regime changes). Priority:
-  //   1. an active directional alert tailored to this bot (warn/bull/bear), else
+  //   1. an active directional alert tailored to this bot (warn/bull/bear) — bot pages only, else
   //   2. the live regime headline (regime + term structure + stance), else
   //   3. a neutral "conditions normal" note (first-fetch / feed unavailable).
   const regimeText = regimeBannerText(vol?.report)
   const msg: { tone: VolTone; text: string } =
-    botVolMessage(bot, data?.alerts)
+    (bot ? botVolMessage(bot, data?.alerts) : null)
     ?? (regimeText
       ? { tone: 'info', text: regimeText }
       : { tone: 'info', text: 'No active vol-regime alert — conditions normal.' })

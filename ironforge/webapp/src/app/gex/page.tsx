@@ -12,6 +12,7 @@ import PositioningRegime from '@/components/gex/PositioningRegime'
 import StructureBalanceCard from '@/components/gex/StructureBalance'
 import FlowDiagnostics from '@/components/gex/FlowDiagnostics'
 import SkewMeasures from '@/components/gex/SkewMeasures'
+import VolRegimeBanner from '@/components/vol/VolRegimeBanner'
 
 // Market hours gate (ET) — only auto-refresh while open.
 function isMarketOpen(): boolean {
@@ -82,6 +83,9 @@ export default function GexProfilePage() {
 
   return (
     <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      {/* Volatility-regime headline — bot-agnostic context strip, same banner the bot dashboards carry. */}
+      <VolRegimeBanner />
+
       <div className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">GEX Profile <span className="text-amber-400">{symbol}</span></h1>
