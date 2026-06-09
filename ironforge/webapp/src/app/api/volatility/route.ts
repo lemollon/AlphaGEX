@@ -18,7 +18,9 @@ export async function GET() {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
     const url = `${ALPHAGEX_BASE.replace(/\/$/, '')}/api/vix/regime-advisor`
-    const resp = await fetch(url, { signal: controller.signal })
+    // no-store: the upstream regime feed updates intraday; without this Next's
+    // data cache freezes the first response and the UI shows a stale as_of/VIX.
+    const resp = await fetch(url, { signal: controller.signal, cache: 'no-store' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const payload = await resp.json()
     return NextResponse.json(payload)
