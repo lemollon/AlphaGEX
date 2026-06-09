@@ -42,6 +42,28 @@ export interface FlareConfig extends BlazeConfig {
   // Hard ceiling on simultaneously-open positions per direction. Bounds the
   // intraday swing / blast radius independent of the force-close stop.
   max_concurrent_per_direction: number
+  // ---- wall-break entry gate (wall_fade only) ----
+  // FLARE's whole loss was one failure mode: it FADED A WALL while price was
+  // breaking THROUGH it (6/04: 142 put fades as SPY ground up through the call
+  // wall). The wall_fade trigger fires when price is NEAR the faded wall — but
+  // "near" includes "right at / already through it", which is exactly the trap.
+  // These two filters add a guard band:
+  //   * wall_fade_min_room: refuse the fade unless price still has >= this many
+  //     points of ROOM to the faded wall (put fade: call_wall - spot; call fade:
+  //     spot - put_wall). Fades with <1pt room were 51-54% WR / big losers on the
+  //     tape; >=1pt room was 71% WR.
+  //   * wall_fade_max_adverse_trend: refuse the fade if price is TRENDING INTO the
+  //     faded wall — i.e. moved >= this many points toward it over the last
+  //     wall_fade_trend_lookback_minutes (put fade: spot rose; call fade: fell).
+  // Backtest on FLARE's own 581-trade / 10-day tape (flare_gate_sim.py, flat
+  // $500/trade): room>=1 AND adverse<0.5 took the tape from -$28,473 to +$4,168,
+  // 58%->77% WR, worst day -$40,603 -> -$2,043, maxDD 592%->53% (kept the chop-day
+  // winners 5/29 + 6/08; killed 141 of 142 fades on the 6/04 trend day). Primary
+  // value is TAIL PROTECTION (makes a 6/04 structurally impossible), measured on a
+  // 10-day sample so the marginal-edge number is directional, not a sign-off.
+  wall_fade_min_room: number
+  wall_fade_trend_lookback_minutes: number
+  wall_fade_max_adverse_trend: number
 }
 
 // FLARE = 0DTE, validated config: PT 20% / SL 100% of debit (vs BLAZE's SL 30%).
@@ -83,6 +105,11 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   perdir_cooldown_minutes: 15,
   perdir_size_mult_after_fc: 0.33,
   max_concurrent_per_direction: 20,
+  // Wall-break gate (operator decision 2026-06-09, flare_gate_sim.py — see
+  // FlareConfig doc above). room>=1pt + don't-fade-into-a->=0.5pt/15min trend.
+  wall_fade_min_room: 1.0,
+  wall_fade_trend_lookback_minutes: 15,
+  wall_fade_max_adverse_trend: 0.5,
   // 0DTE timing override (vs BLAZE's 1DTE 15:55).
   //   - Entries cut off at 14:30 in scanner.ts:isMarketHours.
   //   - 14:45 TIME_STOP closes anything still open 15min before 15:00 settlement.
