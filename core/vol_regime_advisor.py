@@ -366,17 +366,44 @@ def _load_evidence() -> dict:
         logger.warning(f"evidence.json unavailable: {e}")
         return {"signals": {}}
 
+def overlay_live_curve(history: pd.DataFrame, curve: dict, today: pd.Timestamp) -> pd.DataFrame:
+    """Overlay the live intraday curve as the most-recent row of the history.
+
+    The CBOE daily history file only updates after the session closes, so during
+    a live session its last row is the PRIOR session. When `today` is a later
+    trading day than the last history row (and we have a live VIX), append the
+    live curve as a new, correctly-dated row — so `as_of`, the series, and the
+    rolling lookbacks all reflect the current session instead of mislabeling
+    today's intraday values with yesterday's date. Otherwise (same date, no live
+    VIX, or a weekend) refresh the existing last row in place.
+
+    Pure: operates on the injected frame, never touches the network. `today`
+    must be a tz-naive trade date (Eastern).
+    """
+    if history is None or history.empty:
+        return history
+    last = history.iloc[-1].copy()
+    for c in ("vix", "vvix", "vix3m", "vix9d"):
+        v = curve.get(c)
+        if v:
+            last[c] = v
+    today = pd.Timestamp(today).normalize()
+    last_date = history.index[-1].normalize()
+    is_trading_day = today.weekday() < 5  # Mon–Fri (holidays carry live last-close; rare, low impact)
+    has_live_vix = bool(curve.get("vix"))
+    if today > last_date and is_trading_day and has_live_vix:
+        return pd.concat([history, pd.DataFrame([last], index=[today])])
+    return pd.concat([history.iloc[:-1], pd.DataFrame([last], index=[history.index[-1]])])
+
 def get_regime_report() -> dict:
     """Live report. Never raises; degrades to neutral if data is missing."""
     try:
         hist = fetch_cboe_history()
         curve = _live_curve()
-        # ensure today's live curve is the last row so signals reflect intraday-latest
-        last = hist.iloc[-1].copy()
-        for c in ("vix", "vvix", "vix3m", "vix9d"):
-            v = curve.get(c)
-            if v: last[c] = v
-        hist = pd.concat([hist.iloc[:-1], pd.DataFrame([last], index=[hist.index[-1]])])
+        # Overlay today's live curve so signals + as_of reflect the current
+        # session (CBOE's daily file lags until after the close).
+        today_et = pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+        hist = overlay_live_curve(hist, curve, today_et)
         signals = compute_signals(hist)
         rep = compute_report(signals, curve, _load_evidence())
         rep["series"] = build_series(hist)

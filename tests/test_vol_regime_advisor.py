@@ -146,3 +146,43 @@ def test_get_regime_report_uses_injected_history(monkeypatch):
     rep = adv.get_regime_report()
     assert rep["regime_label"] == "backwardation_stressed"
     assert rep["recommendation"]["stance"] == "buy_the_bounce"
+
+def test_overlay_live_curve_appends_today_dated_row_on_new_session():
+    # Intraday on a later trading day: CBOE history lags to the prior session,
+    # so the live curve must land on a NEW row dated today (not overwrite y'day).
+    import pandas as pd
+    from core.vol_regime_advisor import overlay_live_curve
+    idx = pd.to_datetime(["2026-06-05", "2026-06-08"])  # Fri, Mon closes
+    hist = pd.DataFrame({"vix": [16.0, 20.26], "vvix": [90.0, 97.33],
+                         "vix3m": [21.0, 21.65], "vix9d": [15.0, 22.37]}, index=idx)
+    curve = {"vix": 19.95, "vvix": 96.72, "vix3m": 21.49, "vix9d": 22.71}
+    out = overlay_live_curve(hist, curve, pd.Timestamp("2026-06-09"))  # Tue
+    assert str(out.index[-1].date()) == "2026-06-09"          # stamped today
+    assert out.iloc[-1]["vix"] == 19.95                       # live value
+    assert out.iloc[-2]["vix"] == 20.26                       # y'day close preserved
+    assert len(out) == 3                                      # appended, not overwritten
+
+def test_overlay_live_curve_refreshes_in_place_on_weekend():
+    # Saturday: no new trading session — refresh last row in place, keep its date.
+    import pandas as pd
+    from core.vol_regime_advisor import overlay_live_curve
+    idx = pd.to_datetime(["2026-06-04", "2026-06-05"])  # Thu, Fri
+    hist = pd.DataFrame({"vix": [16.0, 17.0], "vvix": [90.0, 91.0],
+                         "vix3m": [21.0, 21.0], "vix9d": [15.0, 15.0]}, index=idx)
+    curve = {"vix": 17.5, "vvix": 92.0, "vix3m": 21.0, "vix9d": 15.0}
+    out = overlay_live_curve(hist, curve, pd.Timestamp("2026-06-06"))  # Sat
+    assert str(out.index[-1].date()) == "2026-06-05"          # no Saturday row
+    assert out.iloc[-1]["vix"] == 17.5                        # still refreshed live
+    assert len(out) == 2
+
+def test_overlay_live_curve_no_live_vix_keeps_last_date():
+    # Missing live VIX (fetch failed): never invent a today row.
+    import pandas as pd
+    from core.vol_regime_advisor import overlay_live_curve
+    idx = pd.to_datetime(["2026-06-05", "2026-06-08"])
+    hist = pd.DataFrame({"vix": [16.0, 20.0], "vvix": [90.0, 97.0],
+                         "vix3m": [21.0, 21.5], "vix9d": [15.0, 22.0]}, index=idx)
+    out = overlay_live_curve(hist, {"vix": None, "vvix": 96.0}, pd.Timestamp("2026-06-09"))
+    assert str(out.index[-1].date()) == "2026-06-08"
+    assert out.iloc[-1]["vvix"] == 96.0                       # other live fields still applied
+    assert len(out) == 2
