@@ -398,12 +398,12 @@ export default function BotDashboard({
         )}
       </div>
 
-      {/* Production pause banner — production bot only. Rendered even in
-          Paper view (as a compact info card) so an operator toggling back
-          to Live can immediately see the current state. Prominent red card
-          with resume button when paused; muted strip with pause button when
-          live. */}
-      {hasAccounts && pauseState && (
+      {/* Production pause banner — production bot only, and ONLY in the Live
+          Trading view. The Paper dashboard never shows production state, since
+          pausing live has no bearing on paper/sandbox trading. Prominent red
+          card with resume button when paused; muted strip with pause button
+          when active. */}
+      {hasAccounts && pauseState && viewMode === 'live' && (
         <div>
           {pauseState.paused ? (
             <div className="rounded-xl border-2 border-red-500/60 bg-red-500/15 p-4">
@@ -444,7 +444,7 @@ export default function BotDashboard({
                 <p className="text-xs text-red-400 mt-2">Toggle failed: {pauseErr}</p>
               )}
             </div>
-          ) : viewMode === 'live' ? (
+          ) : (
             <div className="rounded-xl border border-forge-border bg-forge-card/60 px-3 py-2 flex items-center justify-between">
               <span className="text-[11px] uppercase tracking-wider text-forge-muted">
                 Production trading: <span className="text-emerald-400 font-semibold">ACTIVE</span>
@@ -461,7 +461,7 @@ export default function BotDashboard({
                 {pauseBusy ? 'Working...' : 'Pause Production'}
               </button>
             </div>
-          ) : null}
+          )}
         </div>
       )}
 
