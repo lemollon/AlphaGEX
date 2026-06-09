@@ -35,13 +35,16 @@ export default function VolRegimeBanner({ bot }: { bot: VolBot }) {
     refreshInterval: REFRESH,
   })
 
+  // ALWAYS render so the vol status is persistent on every bot page (sticky at the top, never
+  // absent — it stays put when the regime changes). Active directional alert when present, else
+  // a neutral "conditions normal" note (also shown while the first fetch is in flight).
   const msg = botVolMessage(bot, data?.alerts)
-  if (!msg) return null
+    ?? { tone: 'info' as VolTone, text: 'No active vol-regime alert — conditions normal.' }
 
   return (
     <a
       href="/volatility"
-      className={`block rounded-lg border px-3 py-2 text-xs transition-opacity hover:opacity-90 ${TONE_CLASS[msg.tone]}`}
+      className={`sticky top-0 z-30 block rounded-lg border px-3 py-2 text-xs backdrop-blur-sm transition-opacity hover:opacity-90 ${TONE_CLASS[msg.tone]}`}
     >
       <span className="font-semibold uppercase tracking-wider">{TONE_LABEL[msg.tone]}</span>
       <span className="mx-2 opacity-40">·</span>
