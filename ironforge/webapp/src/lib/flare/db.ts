@@ -36,6 +36,34 @@ const BLANK_STATE = (trade_date: string): DailyState => ({
   last_signal_minute: null,
 })
 
+/**
+ * SPY spot price ~`minutes` ago, read from flare_gex_history (the scanner writes
+ * a snapshot every cycle). Returns the newest snapshot that is AT LEAST `minutes`
+ * old but no more than `minutes + 6` old, so it can't silently reach back to a
+ * prior session across an overnight gap. null = not enough history yet (e.g. the
+ * first ~15 min of a session) — callers should fail-open on the trend check.
+ * Used by the wall_fade trend gate (don't fade a wall price is trending into).
+ */
+export async function getSpotMinutesAgo(minutes: number): Promise<number | null> {
+  try {
+    const res = await query(
+      `SELECT spot_price::float8 AS spot
+       FROM flare_gex_history
+       WHERE spot_price IS NOT NULL
+         AND snapshot_time <= NOW() - make_interval(mins => $1)
+         AND snapshot_time >= NOW() - make_interval(mins => $1 + 6)
+       ORDER BY snapshot_time DESC
+       LIMIT 1`,
+      [minutes],
+    )
+    if (!res.length || res[0].spot == null) return null
+    const s = Number(res[0].spot)
+    return Number.isFinite(s) && s > 0 ? s : null
+  } catch {
+    return null
+  }
+}
+
 export async function loadDailyState(date?: string): Promise<DailyState> {
   const trade_date = date || ctTodayStr()
   try {

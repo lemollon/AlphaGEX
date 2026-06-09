@@ -10,7 +10,7 @@
  */
 import { query } from '../db'
 import { getOptionQuote } from '../tradier'
-import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
+import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
 import { openVertical } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
@@ -211,6 +211,48 @@ async function runEntryCycle(): Promise<void> {
       detail: `regime=${snap.regime} spot=${snap.spot.toFixed(2)} cw=${snap.call_wall} pw=${snap.put_wall}`,
     })
     return
+  }
+
+  // ---- wall-break entry gate (wall_fade only) ----
+  // Refuse to FADE a wall that price is sitting at / breaking through. The
+  // wall_fade trigger fires whenever price is NEAR the faded wall, and "near"
+  // includes "already at/through it" — the exact 6/04 trap (142 put fades as SPY
+  // ground up through the call wall, -$40.6k). Two filters (flare_gate_sim.py):
+  //   (a) require >= wall_fade_min_room points of ROOM to the faded wall, and
+  //   (b) refuse if price is TRENDING INTO that wall over the lookback window.
+  // Applied to wall_fade ONLY — wall_break intentionally trades the break, so the
+  // same geometry would be backwards for it.
+  if (action.setup === 'wall_fade') {
+    const cfg = DEFAULT_FLARE_CONFIG
+    // Faded wall: a put fade fades the CALL wall (overhead); a call fade fades the
+    // PUT wall (below). evaluateWallFade guarantees the relevant wall is > 0 and
+    // on the correct side, so room is well-defined and positive when it fires.
+    const room = action.direction === 'put'
+      ? snap.call_wall - snap.spot
+      : snap.spot - snap.put_wall
+    if (!(room >= cfg.wall_fade_min_room)) {
+      await insertSignalActivity({
+        outcome: 'SKIP',
+        detail: `wall_break_gate ${action.direction} room=${room.toFixed(2)}<${cfg.wall_fade_min_room} (price at/through faded wall)`,
+      })
+      return
+    }
+    // Trend INTO the faded wall over the lookback: a put fade fails on an up-move,
+    // a call fade on a down-move. Fail-open (allow) when history is too thin to
+    // measure (e.g. the first ~15 min of a session) — the room floor still applies.
+    const pastSpot = await getSpotMinutesAgo(cfg.wall_fade_trend_lookback_minutes)
+    if (pastSpot != null) {
+      const adverse = action.direction === 'put'
+        ? snap.spot - pastSpot      // rising pushes up through the call wall
+        : pastSpot - snap.spot      // falling pushes down through the put wall
+      if (adverse >= cfg.wall_fade_max_adverse_trend) {
+        await insertSignalActivity({
+          outcome: 'SKIP',
+          detail: `wall_break_gate ${action.direction} adverse=${adverse.toFixed(2)}>=${cfg.wall_fade_max_adverse_trend} /${cfg.wall_fade_trend_lookback_minutes}min (trending into faded wall)`,
+        })
+        return
+      }
+    }
   }
 
   // Per-direction cooldown: if this side was force-closed within the last
