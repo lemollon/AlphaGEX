@@ -20,7 +20,8 @@ export async function GET(request: NextRequest) {
     const daysParam = request.nextUrl.searchParams.get('days')
     const days = daysParam && Number.isFinite(Number(daysParam)) ? Number(daysParam) : 180
     const url = `${ALPHAGEX_BASE.replace(/\/$/, '')}/api/vix/regime-advisor/history?days=${days}`
-    const resp = await fetch(url, { signal: controller.signal })
+    // no-store: keep the proxy from freezing a stale upstream response in Next's data cache.
+    const resp = await fetch(url, { signal: controller.signal, cache: 'no-store' })
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
     const payload = await resp.json()
     return NextResponse.json(payload)
