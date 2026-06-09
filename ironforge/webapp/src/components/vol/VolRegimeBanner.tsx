@@ -3,6 +3,7 @@
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { botVolMessage, type VolAlert, type VolBot, type VolTone } from '@/lib/volAlerts'
+import { regimeBannerText, type AdvisorPayload } from '@/lib/volatility'
 
 const REFRESH = 60_000
 
@@ -34,12 +35,22 @@ export default function VolRegimeBanner({ bot }: { bot: VolBot }) {
   const { data } = useSWR<AlertsPayload>('/api/vol-alerts?status=active', fetcher, {
     refreshInterval: REFRESH,
   })
+  // Live regime feed — drives the always-on headline when no alert is firing.
+  const { data: vol } = useSWR<AdvisorPayload>('/api/volatility', fetcher, {
+    refreshInterval: REFRESH,
+  })
 
   // ALWAYS render so the vol status is persistent on every bot page (sticky at the top, never
-  // absent — it stays put when the regime changes). Active directional alert when present, else
-  // a neutral "conditions normal" note (also shown while the first fetch is in flight).
-  const msg = botVolMessage(bot, data?.alerts)
-    ?? { tone: 'info' as VolTone, text: 'No active vol-regime alert — conditions normal.' }
+  // absent — it stays put when the regime changes). Priority:
+  //   1. an active directional alert tailored to this bot (warn/bull/bear), else
+  //   2. the live regime headline (regime + term structure + stance), else
+  //   3. a neutral "conditions normal" note (first-fetch / feed unavailable).
+  const regimeText = regimeBannerText(vol?.report)
+  const msg: { tone: VolTone; text: string } =
+    botVolMessage(bot, data?.alerts)
+    ?? (regimeText
+      ? { tone: 'info', text: regimeText }
+      : { tone: 'info', text: 'No active vol-regime alert — conditions normal.' })
 
   return (
     <a

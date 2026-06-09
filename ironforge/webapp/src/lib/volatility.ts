@@ -429,6 +429,46 @@ export function formatVolRegime(report?: Partial<AdvisorReport> | null): string 
   return `${regime}${stancePart}${dtePart}${rangePart}`
 }
 
+/**
+ * Build an always-on, one-line volatility headline for the bot-page banner
+ * from an advisor report — used when NO directional alert is firing so the
+ * banner still surfaces the live regime instead of a bland "conditions normal".
+ *
+ * Shape: "<Regime> — VIX <x> <cmp> VIX3M <y> · <action headline>", e.g.
+ *   "Contango (calm) — VIX 20.3 < VIX3M 21.6 · No directional trade — sell premium or sit out"
+ *
+ * The term-structure clause is dropped when VIX/VIX3M are missing; the action
+ * clause is dropped when no headline is present. Pure + total: returns null
+ * when the report is missing or carries no recognizable regime label, so the
+ * caller can fall back to its own neutral note. Never throws.
+ */
+export function regimeBannerText(report?: Partial<AdvisorReport> | null): string | null {
+  if (!report) return null
+  const label = regimeLabel(report.regime_label)
+  if (label === 'Unknown') return null
+
+  const inputs = report.inputs
+  let termClause = ''
+  if (inputs) {
+    const { vix, vix3m } = inputs
+    const haveVix = typeof vix === 'number' && !Number.isNaN(vix)
+    const haveVix3m = typeof vix3m === 'number' && !Number.isNaN(vix3m)
+    if (haveVix && haveVix3m) {
+      const v = vix as number
+      const v3 = vix3m as number
+      const cmp = v > v3 ? '>' : v < v3 ? '<' : '≈'
+      termClause = `VIX ${v.toFixed(1)} ${cmp} VIX3M ${v3.toFixed(1)}`
+    }
+  }
+
+  const headline =
+    typeof report.action?.headline === 'string' ? report.action.headline.trim() : ''
+
+  let text = termClause ? `${label} — ${termClause}` : label
+  if (headline) text += ` · ${headline}`
+  return text
+}
+
 /* ------------------------------------------------------------------ */
 /*  Per-signal depth + trigger-watch helpers (pure, unit-tested)       */
 /* ------------------------------------------------------------------ */

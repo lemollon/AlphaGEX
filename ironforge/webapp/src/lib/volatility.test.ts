@@ -20,6 +20,7 @@ import {
   sortedSignalEntries,
   triggerGroups,
   seriesForChart,
+  regimeBannerText,
   type AdvisorTiming,
   type AdvisorReport,
   type AdvisorSignal,
@@ -471,5 +472,49 @@ describe('formatVolRegime', () => {
     expect(formatVolRegime(undefined)).toBeNull()
     expect(formatVolRegime({})).toBeNull()
     expect(formatVolRegime({ regime_label: 'not_a_regime' })).toBeNull()
+  })
+})
+
+describe('regimeBannerText', () => {
+  it('builds regime + contango term structure + action headline', () => {
+    expect(
+      regimeBannerText({
+        regime_label: 'contango_calm',
+        inputs: { vix: 20.26, vix3m: 21.65 },
+        action: {
+          headline: 'No directional trade — sell premium or sit out',
+          do: '', dte_text: '', plain: '',
+        },
+      }),
+    ).toBe('Contango (calm) — VIX 20.3 < VIX3M 21.6 · No directional trade — sell premium or sit out')
+  })
+
+  it('uses > when the front month is above VIX3M (backwardation)', () => {
+    expect(
+      regimeBannerText({
+        regime_label: 'backwardation_stressed',
+        inputs: { vix: 28.4, vix3m: 23.1 },
+      }),
+    ).toBe('Backwardation (stressed) — VIX 28.4 > VIX3M 23.1')
+  })
+
+  it('drops the term clause when VIX/VIX3M are missing, keeps the headline', () => {
+    expect(
+      regimeBannerText({
+        regime_label: 'contango_calm',
+        action: { headline: 'Sit out', do: '', dte_text: '', plain: '' },
+      }),
+    ).toBe('Contango (calm) · Sit out')
+  })
+
+  it('returns just the label when only the regime is present', () => {
+    expect(regimeBannerText({ regime_label: 'contango_calm' })).toBe('Contango (calm)')
+  })
+
+  it('returns null for missing report or unrecognized regime', () => {
+    expect(regimeBannerText(null)).toBeNull()
+    expect(regimeBannerText(undefined)).toBeNull()
+    expect(regimeBannerText({})).toBeNull()
+    expect(regimeBannerText({ regime_label: 'not_a_regime' })).toBeNull()
   })
 })
