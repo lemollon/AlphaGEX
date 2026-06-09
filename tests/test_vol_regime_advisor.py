@@ -186,3 +186,45 @@ def test_overlay_live_curve_no_live_vix_keeps_last_date():
     assert str(out.index[-1].date()) == "2026-06-08"
     assert out.iloc[-1]["vvix"] == 96.0                       # other live fields still applied
     assert len(out) == 2
+
+from core.vol_regime_advisor import compute_elevation_watch
+
+def _sig_prox(**prox):
+    base = {k: {"active": False, "value": 0.0, "confidence": "low", "blurb": "",
+                "direction": "neutral", "proximity": 0.0}
+            for k in ("backwardation","ts_flattening","exhaustion","double_floor","divergence")}
+    for k, p in prox.items():
+        base[k]["proximity"] = p
+    base["ts_flattening"]["direction"] = "bearish"
+    base["divergence"]["direction"] = "bearish"
+    return base
+
+_EV = {"signals": {"ts_flattening": {"timing_p25": 2, "timing_median": 5, "timing_p75": 11}}}
+
+def test_elevation_calm_in_healthy_contango():
+    curve = {"vix": 15.0, "vix3m": 20.0, "vix9d": 14.0, "vvix": 95.0}  # vvix not at floor
+    w = compute_elevation_watch(curve, _sig_prox(ts_flattening=0.2), _EV)
+    assert w["level"] == "CALM"
+    assert w["score"] < 25
+
+def test_elevation_watch_when_spring_loaded():
+    # Both VIX and VVIX at the floor, but no expansion yet -> WATCH, capped, with the
+    # honest "timing not predictable" note (this is the 6/04-style complacent setup).
+    curve = {"vix": 13.0, "vix3m": 17.0, "vix9d": 12.5, "vvix": 80.0}
+    w = compute_elevation_watch(curve, _sig_prox(ts_flattening=0.2), _EV)
+    assert w["level"] == "WATCH"
+    assert w["components"]["complacency"] >= 0.5
+    assert "not predictable" in w["note"]
+
+def test_elevation_high_when_armed_and_compressing():
+    # ts_flattening at 0.98 + ratio 0.94 + 9D kink -> HIGH (today's 6/09 setup).
+    curve = {"vix": 19.87, "vix3m": 21.31, "vix9d": 22.14, "vvix": 95.81}
+    w = compute_elevation_watch(curve, _sig_prox(ts_flattening=0.98), _EV)
+    assert w["level"] == "HIGH"
+    assert w["expected_window"]["median_days"] == 5      # pulled from evidence timing
+    assert any("armed" in d for d in w["drivers"])
+
+def test_elevation_never_raises_on_empty():
+    w = compute_elevation_watch({}, _sig_prox(), {})
+    assert w["level"] in ("CALM", "WATCH", "ELEVATED", "HIGH")
+    assert isinstance(w["score"], int)

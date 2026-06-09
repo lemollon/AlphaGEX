@@ -178,6 +178,110 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
         "timing": timing,
         "signals": signals,
         "inputs": curve,
+        "elevation_watch": compute_elevation_watch(curve, signals, evidence),
+    }
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, x))
+
+def compute_elevation_watch(curve: dict, signals: Dict[str, dict], evidence: dict) -> dict:
+    """Forward-looking 'volatility about to pick up / stay elevated' read.
+
+    This is deliberately an EARLY, leading composite — it does not wait for
+    backwardation/ts_flattening to actually fire (which only happens once vol is
+    already rising). It blends four reads from data we already have:
+
+      * compression   — VIX/VIX3M climbing toward the 0.95 flattening line
+      * front_kink     — VIX9D above 30-day VIX (near-term stress building)
+      * proximity      — how close the bearish vol signals are to firing (0..1)
+      * complacency    — VIX *and* VVIX both at the floor = spring-loaded; a
+                         spike from here is violent but its TIMING is not
+                         predictable, so complacency alone never exceeds WATCH.
+
+    Returns a level (CALM/WATCH/ELEVATED/HIGH), a 0–100 score, the human-readable
+    drivers, the expected resolution window (from the armed signal's historical
+    timing), and an honest plain-English note. Pure + total; never raises.
+
+    HONESTY: this flags ELEVATED RISK, not a dated prediction. Vol spikes from a
+    dead-calm base are largely unpredictable from vol data alone; the value here
+    is an early, persistent caution + a probabilistic window, not a crystal ball.
+    """
+    vix = curve.get("vix") or 0.0
+    vix3m = curve.get("vix3m") or 0.0
+    vix9d = curve.get("vix9d") or 0.0
+    vvix = curve.get("vvix") or 0.0
+
+    ratio = (vix / vix3m) if (vix and vix3m) else None
+    compression = _clamp01((ratio - 0.85) / 0.15) if ratio is not None else 0.0  # 1.0 at ratio>=1.00
+    front_kink = _clamp01(((vix9d / vix) - 1.0) / 0.10) if (vix and vix9d) else 0.0  # 1.0 at 9D>=10% over 30D
+    vix_fuel = _clamp01((18.0 - vix) / 6.0) if vix else 0.0    # full at VIX<=12
+    vvix_fuel = _clamp01((92.0 - vvix) / 12.0) if vvix else 0.0  # full at VVIX<=80
+    complacency = min(vix_fuel, vvix_fuel)                      # need BOTH at the floor
+    bear_prox = max(
+        (signals.get("ts_flattening", {}) or {}).get("proximity") or 0.0,
+        (signals.get("divergence", {}) or {}).get("proximity") or 0.0,
+    )
+
+    # Expansion track: vol is actively building. Proximity carries the most
+    # weight (it's the validated machinery), term structure confirms.
+    expansion = 0.5 * bear_prox + 0.3 * compression + 0.2 * front_kink
+    score = round(100 * max(expansion, 0.5 * complacency))
+
+    if expansion >= 0.75:
+        level = "HIGH"
+    elif expansion >= 0.50:
+        level = "ELEVATED"
+    elif complacency >= 0.5 or expansion >= 0.30:
+        level = "WATCH"
+    else:
+        level = "CALM"
+
+    drivers = []
+    if bear_prox >= 0.85:
+        drivers.append(f"bearish vol signal armed ({round(bear_prox * 100)}% to firing)")
+    if compression >= 0.5 and ratio is not None:
+        drivers.append(f"term structure compressing (VIX/VIX3M {ratio:.2f}, toward 0.95)")
+    if front_kink >= 0.5:
+        drivers.append(f"near-term kink (VIX9D {vix9d:.1f} > VIX {vix:.1f})")
+    if complacency >= 0.5:
+        drivers.append(f"spring-loaded: VIX {vix:.1f} & VVIX {vvix:.0f} both at the floor")
+
+    # Expected resolution window — from the armed bearish signal's evidence timing.
+    armed_key = "ts_flattening" if (signals.get("ts_flattening", {}) or {}).get("proximity", 0) >= bear_prox else "divergence"
+    ev = (evidence.get("signals", {}) or {}).get(armed_key, {}) if evidence else {}
+    window = {
+        "signal": armed_key,
+        "p25_days": ev.get("timing_p25"),
+        "median_days": ev.get("timing_median"),
+        "p75_days": ev.get("timing_p75"),
+    }
+
+    if level == "HIGH":
+        note = ("Vol is elevated and fragile — expect continued chop/expansion before it calms. "
+                "Cut/avoid short premium until the term structure normalizes.")
+    elif level == "ELEVATED":
+        note = "Vol is building — risk of a pickup is rising; tighten or stand down short premium."
+    elif level == "WATCH" and complacency >= 0.5 and expansion < 0.30:
+        note = ("Spring-loaded: VIX and VVIX are both at the floor. A spike from here would be violent, "
+                "but the timing is not predictable — treat premium as thin and size down.")
+    elif level == "WATCH":
+        note = "Early warning — the term structure is starting to compress; watch for it to accelerate."
+    else:
+        note = "Conditions calm — no elevation building."
+
+    return {
+        "level": level,
+        "score": score,
+        "drivers": drivers,
+        "expected_window": window,
+        "note": note,
+        "components": {
+            "expansion": round(expansion, 3),
+            "compression": round(compression, 3),
+            "front_kink": round(front_kink, 3),
+            "complacency": round(complacency, 3),
+            "bear_proximity": round(bear_prox, 3),
+        },
     }
 
 def _nearest_trigger(signals: Dict[str, dict]) -> Optional[tuple]:
