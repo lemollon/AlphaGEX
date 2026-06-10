@@ -9,6 +9,7 @@ export const BOT_REGISTRY = {
   meadow: { display: 'MEADOW', strategy: 'double_diagonal_credit', ticker: 'SPY', version: 'v1.0' },
   river:  { display: 'RIVER',  strategy: 'long_butterfly',  ticker: 'SPY', version: 'v1.0' },
   undertow: { display: 'UNDERTOW', strategy: 'vertical_debit', ticker: 'multi', version: 'v1.0' },
+  delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -82,5 +83,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(129,140,248,0.30)',
     glow:        'rgba(129,140,248,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(129,140,248,0.22) 0%, rgba(129,140,248,0.03) 100%)',
+  },
+  delta: {
+    glyph:       'wave',
+    primary:     '#14b8a6',                    // teal-500
+    primarySoft: 'rgba(20,184,166,0.10)',
+    primaryRing: 'rgba(20,184,166,0.30)',
+    glow:        'rgba(20,184,166,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(20,184,166,0.22) 0%, rgba(20,184,166,0.03) 100%)',
   },
 };

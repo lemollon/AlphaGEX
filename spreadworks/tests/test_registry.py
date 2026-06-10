@@ -2,7 +2,7 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow", "meadow", "river", "undertow"}
+    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow", "meadow", "river", "undertow", "delta"}
 
 
 def test_breeze_defaults():
@@ -95,7 +95,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["breeze", "drift", "flow", "meadow", "river", "tide", "undertow"]
+    assert sorted(list_bots()) == ["breeze", "delta", "drift", "flow", "meadow", "river", "tide", "undertow"]
 
 
 def test_undertow_registered():
@@ -126,3 +126,15 @@ def test_undertow_tables_autocreate(db_session):
     ).mappings().first()
     assert row is not None
     assert bool(row["enabled"]) is False
+
+
+def test_delta_registered_credit(db_session):
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    m = get_bot("delta")
+    assert m["display"] == "DELTA" and m["vertical_mode"] == "credit"
+    assert m["params"]["min_credit"] == 0.20
+    assert m["defaults"]["enabled"] is False and m["defaults"]["sl_pct"] == 1.5
+    eng = db_session.get_bind()
+    row = eng.connect().execute(text("SELECT enabled FROM delta_config WHERE id=1")).first()
+    assert row is not None

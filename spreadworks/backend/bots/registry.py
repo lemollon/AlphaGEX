@@ -173,6 +173,34 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 5,
         },
     },
+    # DELTA — directional credit spreads on the UNDERTOW universe. Sells a put
+    # credit spread on the bullish (oversold-dip) setup and a call credit spread
+    # on the bearish (overbought-rip) setup. Defined risk = width - credit.
+    # Paper-only, ships disabled.
+    "delta": {
+        "display": "DELTA",
+        "strategy": "vertical_credit",
+        "vertical_mode": "credit",
+        "ticker": "SPY",
+        "universe": ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD", "META"],
+        "front_dte": 10,
+        "back_dte": None,
+        "params": {
+            "lookback_n": 5, "dip_threshold": 0.03,
+            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
+            "short_otm_pct": 0.03, "spread_pct": 0.04, "max_spread_pct": 0.15,
+            "min_option_price": 0.20, "min_credit": 0.20,
+            "earnings_exclude_days": 3, "hold_days": 2,
+        },
+        "defaults": {
+            "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
+            "bp_pct": 0.02, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
+            "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
+            "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
+            "max_concurrent_positions": 5,
+        },
+    },
     # MEADOW — SPY Credit Double Diagonal. The credit-side sibling of DRIFT:
     # sell the near-dated (6 DTE) strangle close to the money, buy a slightly-
     # longer-dated (9 DTE) strangle $5 further OTM, for a net credit. Short
