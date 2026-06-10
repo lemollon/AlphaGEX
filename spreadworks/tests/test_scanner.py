@@ -564,3 +564,21 @@ def test_undertow_opens_bull_call_spread_on_dip(db_session):
     assert pos["strategy"] == "bull_call_spread"
     legs = _j.loads(pos["legs"])
     assert len(legs) == 2 and all(l["type"] == "call" for l in legs)
+
+
+def test_undertow_writes_ai_rationale(db_session, monkeypatch):
+    import backend.bots.ai_rationale as air
+    monkeypatch.setattr(air, "generate_entry_rationale",
+                        lambda *, bot, signal_context: "Test rationale.")
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()})
+    run_scan_cycle(engine=eng, bot="undertow",
+                   now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                   chain_provider=provider, event_blackout=False)
+    notes = _j.loads(list_open_positions(eng, "undertow")[0]["notes"])
+    assert notes["rationale"] == "Test rationale."

@@ -35,6 +35,7 @@ from .strategies.double_diagonal_credit import build_double_diagonal_credit_sign
 from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
 from .strategies.setups import detect_setup, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
+from . import ai_rationale
 
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
@@ -272,11 +273,23 @@ def _evaluate_universe_entry(
 
     candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip/rip wins
     _mag, signal, setup = candidates[0]
+    rationale = ai_rationale.generate_entry_rationale(
+        bot=bot,
+        signal_context={
+            "ticker": signal.ticker, "kind": signal.kind, "direction": setup.direction,
+            "setup": setup.setup, "magnitude_pct": setup.magnitude_pct,
+            "reference_level": setup.reference_level, "rsi": setup.rsi_value,
+            "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
+            "max_profit": signal.max_profit, "max_loss": signal.max_loss,
+            "pt_target_pnl": signal.pt_target_pnl, "sl_target_pnl": signal.sl_target_pnl,
+        },
+    )
     notes = json.dumps({
         "ticker": signal.ticker, "kind": signal.kind, "direction": setup.direction,
         "setup": setup.setup, "magnitude_pct": setup.magnitude_pct,
         "reference_level": setup.reference_level, "rsi": setup.rsi_value,
         "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
+        "rationale": rationale,
     })
     pid = open_position(engine, bot, signal.kind, signal, now_ct, notes=notes)
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
