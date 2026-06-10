@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
+import { sendVerificationEmail } from '@/lib/email'
 import {
   isCustomersDbConfigured,
   customerQuery,
@@ -149,7 +150,19 @@ export async function POST(req: NextRequest) {
       electronic_comm_consent: payload.electronicCommConsent,
     })
 
-    // TODO(D): send verification email with rawToken (+ resend).
+    // Send the verification email (non-blocking: failure never blocks the account).
+    const verifyUrl = `${req.nextUrl.origin}/api/auth/verify?token=${encodeURIComponent(rawToken)}`
+    try {
+      const emailRes = await sendVerificationEmail({ to: n.email, verifyUrl, firstName: n.firstName })
+      if (emailRes.sent) {
+        await writeAudit(userId, 'EMAIL_VERIFICATION_SENT', ip, ua, { email_masked: maskEmail(n.email) })
+      } else if (emailRes.error) {
+        console.error('[signup] verification email failed:', emailRes.error)
+      }
+    } catch (e) {
+      console.error('[signup] verification email threw:', e)
+    }
+
     // TODO(E): create/update Attio contact (queue + ATTIO_SYNC_FAILED on error).
     const resBody: { ok: true; verifyUrl?: string } = { ok: true }
     if (process.env.NODE_ENV !== 'production') {
