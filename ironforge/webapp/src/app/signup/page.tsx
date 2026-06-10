@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
+import { Wordmark } from '@/components/Brand'
 import {
   checkPassword,
   validateSignup,
@@ -10,42 +11,6 @@ import {
 } from '@/lib/signup-validation'
 
 /* ── Inline glyphs (custom SVG, no emojis/stock icons) ─────────────── */
-
-function IFMark({ className = 'h-9 w-9' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 512 512" className={className} role="img" aria-label="IronForge">
-      <defs>
-        <linearGradient id="lockup-f" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#FB7A3D" />
-          <stop offset="0.55" stopColor="#E8531F" />
-          <stop offset="1" stopColor="#C2410C" />
-        </linearGradient>
-      </defs>
-      <g fill="#F5F5F4">
-        <rect x="92" y="124" width="64" height="264" />
-        <rect x="64" y="124" width="120" height="34" />
-        <rect x="64" y="354" width="120" height="34" />
-      </g>
-      <g fill="url(#lockup-f)">
-        <rect x="236" y="124" width="64" height="264" />
-        <rect x="236" y="124" width="172" height="52" />
-        <rect x="236" y="232" width="132" height="50" />
-      </g>
-    </svg>
-  )
-}
-
-function Wordmark() {
-  return (
-    <div className="flex items-center gap-2.5">
-      <IFMark className="h-8 w-8" />
-      <span className="text-xl font-bold tracking-tight">
-        <span className="text-white">IRON</span>
-        <span className="text-amber-500">FORGE</span>
-      </span>
-    </div>
-  )
-}
 
 const iconBase = 'h-4 w-4'
 

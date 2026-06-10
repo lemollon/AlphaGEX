@@ -15,14 +15,14 @@ import ScrollToTop from './ScrollToTop'
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const isLanding = pathname === '/'
-  // Standalone auth screen: full-bleed, no app nav (matches the signup mockup).
-  const isAuthScreen = pathname === '/signup'
+  // Standalone full-bleed marketing/auth screens: no app nav, own chrome.
+  const isStandalone = pathname === '/signup' || pathname === '/pricing'
 
   return (
     <>
       <ScrollToTop />
-      {!isAuthScreen && <ClientNav />}
-      {isLanding || isAuthScreen ? children : <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>}
+      {!isStandalone && <ClientNav />}
+      {isLanding || isStandalone ? children : <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>}
     </>
   )
 }
