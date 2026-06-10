@@ -119,6 +119,17 @@ if __name__ == "__main__":
     # Run config migrations first
     ensure_config()
 
-    # Then ensure models exist
+    # Then ensure models exist (best-effort).
+    #
+    # The GEX ML model is OPTIONAL: STARS/WATCHTOWER fall back to distance-based
+    # probability when it's absent, and PROPHET (the actual trade authority) is
+    # independent of it. The start command chains this script with `&& ./start.sh`,
+    # so a non-zero exit here would prevent the API (and all trading bots) from
+    # booting. A transient/optional-data failure — e.g. the ORAT backtest DB being
+    # unreachable or suspended — must NEVER block startup. Always exit 0; downstream
+    # code already handles a missing model gracefully.
     success = ensure_models()
-    sys.exit(0 if success else 1)
+    if not success:
+        print("[ensure_models] Model unavailable — continuing startup with "
+              "Prophet/distance fallback (model is optional).")
+    sys.exit(0)
