@@ -134,6 +134,49 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
+    # UNDERTOW — single-leg long-call dip-buyer across an ETF + mega-cap
+    # universe. Buys an ATM ~10-DTE call when a name pulls back >= 3% from its
+    # 5-day high, oversold (RSI(2)<10) and still above its 20-day SMA. Exits
+    # all-or-nothing: PT +40% / SL -50% of premium / 2-day time-stop / never
+    # hold to expiry. Paper-only, ships disabled. dip/exit params live here in
+    # `params` (swept later); only universal knobs sit in undertow_config.
+    "undertow": {
+        "display": "UNDERTOW",
+        "strategy": "dip_buy",
+        "ticker": "SPY",  # nominal; real scanning iterates `universe`
+        "universe": ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD", "META"],
+        "front_dte": 10,
+        "back_dte": None,
+        "params": {
+            "lookback_n": 5,
+            "dip_threshold": 0.03,
+            "use_rsi_confirm": True,
+            "rsi_period": 2,
+            "rsi_max": 10,
+            "use_trend_gate": True,
+            "sma_period": 20,
+            "max_spread_pct": 0.15,
+            "min_option_price": 0.20,
+            "earnings_exclude_days": 3,
+            "hold_days": 2,
+        },
+        "defaults": {
+            "starting_capital": 25000.0,
+            "enabled": False,
+            "max_contracts": 10,
+            "bp_pct": 0.02,
+            "sd_mult": 1.0,
+            "pt_pct": 0.40,
+            "sl_pct": 0.50,
+            "entry_start_ct": "08:35",
+            "entry_end_ct": "14:30",
+            "eod_close_ct": "14:45",
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "max_concurrent_positions": 5,
+        },
+    },
     # MEADOW — SPY Credit Double Diagonal. The credit-side sibling of DRIFT:
     # sell the near-dated (6 DTE) strangle close to the money, buy a slightly-
     # longer-dated (9 DTE) strangle $5 further OTM, for a net credit. Short
