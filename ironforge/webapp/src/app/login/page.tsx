@@ -47,6 +47,16 @@ function LoginForm() {
           <span className="text-white">Iron</span><span className="text-amber-400">Forge</span>
         </span>
       </div>
+      {params.get('verified') === '1' && (
+        <p className="mb-4 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-center text-sm text-amber-300">
+          Email verified — you can sign in now.
+        </p>
+      )}
+      {params.get('verifyError') === '1' && (
+        <p className="mb-4 rounded border border-red-700/40 bg-red-950/30 px-3 py-2 text-center text-sm text-red-300">
+          That verification link is invalid or has expired. Please request a new one.
+        </p>
+      )}
       <form onSubmit={onSubmit} className="bg-forge-card border border-amber-900/30 rounded-lg p-6 space-y-4">
         <h1 className="text-lg font-semibold text-gray-100">Sign in</h1>
         <div className="space-y-1">
