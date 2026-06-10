@@ -26,11 +26,14 @@ def test_should_run_scan_loop(dt, is_holiday, expected):
 
 class FakeChainProvider(ChainProvider):
     def __init__(self, *, chain_0dte=None, chain_1dte=None, chain_14dte=None,
-                 chain_6dte=None, chain_9dte=None):
+                 chain_6dte=None, chain_9dte=None, daily_history=None,
+                 chains_by_ticker=None):
         self.c0 = chain_0dte; self.c1 = chain_1dte; self.c14 = chain_14dte
         self.c6 = chain_6dte; self.c9 = chain_9dte
         self.calls = 0
         self.leg_mid_overrides = None  # if set, get_leg_mids returns this
+        self.daily_history = daily_history or {}        # ticker -> list[bar]
+        self.chains_by_ticker = chains_by_ticker or {}  # ticker -> chain dict
 
     def get_chain(self, *, ticker, dte, today):
         self.calls += 1
@@ -45,6 +48,17 @@ class FakeChainProvider(ChainProvider):
         if self.leg_mid_overrides is not None:
             return self.leg_mid_overrides
         return [leg["entry_price"] for leg in legs]
+
+    def get_daily_history(self, *, ticker, days):
+        return list(self.daily_history.get(ticker, []))
+
+
+def test_fake_provider_returns_daily_history():
+    p = FakeChainProvider(daily_history={"NVDA": [{"date": "2026-06-09",
+        "open": 1, "high": 2, "low": 1, "close": 2}]})
+    bars = p.get_daily_history(ticker="NVDA", days=40)
+    assert len(bars) == 1 and bars[0]["date"] == "2026-06-09"
+    assert p.get_daily_history(ticker="MSFT", days=40) == []
 
 
 def _enable_bot(engine, bot):
