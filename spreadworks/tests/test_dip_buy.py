@@ -157,3 +157,54 @@ def test_sizing_below_one_rejected():
     )
     assert sig is None
     assert "sizing_below_one" in diag[0]
+
+
+def _recovering_history():
+    """Reference high of 150 in the last 5 bars, but the most recent closes
+    are RISING (140 -> 142 -> 143) so RSI(2) reads ~100 (NOT oversold), while
+    price still sits >3% below the 150 high. Isolates the rsi_not_oversold gate.
+    """
+    from datetime import timedelta
+    bars = []
+    base = date(2026, 4, 1)
+    for i in range(36):
+        price = 101 + i
+        d = base + timedelta(days=i)
+        bars.append({"date": d.isoformat(), "open": price, "high": price,
+                     "low": price, "close": price})
+    bars.append({"date": (base + timedelta(days=36)).isoformat(),
+                 "open": 139, "high": 150, "low": 138, "close": 138})
+    bars.append({"date": (base + timedelta(days=37)).isoformat(),
+                 "open": 139, "high": 141, "low": 138, "close": 140})
+    bars.append({"date": (base + timedelta(days=38)).isoformat(),
+                 "open": 141, "high": 143, "low": 140, "close": 142})
+    bars.append({"date": (base + timedelta(days=39)).isoformat(),
+                 "open": 142, "high": 144, "low": 141, "close": 143})
+    return bars
+
+
+def test_rsi_not_oversold_rejected():
+    diag = []
+    # spot 144: dip vs 150 high = 4% (passes dip gate), but recent closes are
+    # rising so RSI(2) ~ 100 -> rsi_not_oversold fires before the trend gate.
+    sig = build_dip_buy_signal(
+        chain=_chain(spot=144.0), history=_recovering_history(),
+        today=date(2026, 6, 10), params=_params(), config={"bp_pct": 0.02,
+        "pt_pct": 0.40, "sl_pct": 0.50, "max_contracts": 10}, equity=25000.0,
+        diag=diag,
+    )
+    assert sig is None
+    assert "rsi_not_oversold" in diag[0]
+
+
+def test_price_too_low_rejected():
+    diag = []
+    # qualifying dip/RSI/trend, but the ATM call mid is $0.10 < min_option_price 0.20
+    sig = build_dip_buy_signal(
+        chain=_chain(spot=140.0, bid=0.10, ask=0.10), history=_uptrend_history(),
+        today=date(2026, 6, 10), params=_params(), config={"bp_pct": 0.02,
+        "pt_pct": 0.40, "sl_pct": 0.50, "max_contracts": 10}, equity=25000.0,
+        diag=diag,
+    )
+    assert sig is None
+    assert "price_too_low" in diag[0]

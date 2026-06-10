@@ -511,3 +511,27 @@ def test_undertow_journals_dip_context(db_session):
     assert notes["ticker"] == "NVDA"
     assert notes["dip_pct"] > 0.03
     assert notes["reference_high"] == 150.0
+
+
+def test_undertow_earnings_window_excludes_ticker(db_session, monkeypatch):
+    """A universe ticker inside its earnings window is skipped (no open),
+    even though it has a qualifying dip. Companion to test_undertow_opens_deepest_dip
+    which proves NVDA DOES open when not in an earnings window."""
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import backend.earnings_calendar as ec
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()},
+    )
+    # Stub the calendar so NVDA is reported as having upcoming earnings.
+    monkeypatch.setattr(ec, "get_upcoming_earnings",
+                        lambda from_date=None, days=30: [
+                            {"name": "📊 NVDA Earnings (Q1)", "datetime": None}])
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
+                   chain_provider=provider, event_blackout=False)
+    # NVDA was the only ticker with a chain, and it's earnings-excluded -> nothing opened.
+    assert len(list_open_positions(eng, "undertow")) == 0
