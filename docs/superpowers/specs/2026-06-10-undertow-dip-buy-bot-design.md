@@ -86,6 +86,12 @@ gates in order. First failing gate produces a `diag` reason for `scan_activity.r
    - **earnings-window exclusion** via existing `earnings_calendar.py` — skip a ticker
      within the configured days of its next earnings; **graceful pass** if the calendar is
      unavailable for that name.
+     > **Known limitation:** `earnings_calendar.py` is a hardcoded marquee list (AAPL,
+     > META, NVDA, TSLA, … big-caps) that goes stale each quarter and does **not** cover
+     > every universe name — notably **AMD has no coverage**, so UNDERTOW can buy AMD
+     > calls into an earnings print. The gate is best-effort and fail-open by design; a
+     > real per-ticker earnings feed (or dropping uncovered names from the universe) is a
+     > v2 hardening item.
 
 `spot`, option bid/ask, and the chain come from the existing `get_chain`. Daily closes/highs
 for the reference high, RSI(2), and SMA come from the new `get_daily_history`.
