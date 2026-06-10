@@ -12,7 +12,8 @@ class ExitDecision:
 
 
 MULTI_DAY_STRATEGIES = frozenset(
-    {"dip_buy", "bull_call_spread", "bear_put_spread", "bull_put_spread", "bear_call_spread"}
+    {"dip_buy", "vertical_debit", "vertical_credit",
+     "bull_call_spread", "bear_put_spread", "bull_put_spread", "bear_call_spread"}
 )
 
 

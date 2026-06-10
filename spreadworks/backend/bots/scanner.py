@@ -237,6 +237,8 @@ def _evaluate_universe_entry(
             front_dte=meta["front_dte"], back_dte=None, diag=diag,
             diag_params=params,
         )
+        # NOTE: dip detection always uses the dip_buy builder regardless of
+        # vertical_mode — Task 6 will wrap the signal in a vertical spread.
         if signal is None:
             last_reason = diag[0] if diag else f"no_signal: {ticker}"
             continue
@@ -253,7 +255,7 @@ def _evaluate_universe_entry(
         "strike": signal.strike, "expiration": signal.expiration,
         "debit": signal.debit,
     })
-    pid = open_position(engine, bot, "dip_buy", signal, now_ct, notes=notes)
+    pid = open_position(engine, bot, meta["strategy"], signal, now_ct, notes=notes)
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
 
 
@@ -289,11 +291,12 @@ def _evaluate_entry(
         return {"outcome": "BLOCKED_MAX_CONCURRENT",
                 "reason": f"max_concurrent_reached: open={open_count} cap={max_concurrent}"}
 
-    # Universe bots (UNDERTOW dip-buy) scan multiple tickers and open the
-    # deepest qualifying dip on a non-held name. Window + concurrent-cap gates
-    # above already ran; the per-ticker skip + earnings exclusion live inside.
+    # Universe bots (UNDERTOW dip-buy / vertical_debit) scan multiple tickers
+    # and open the deepest qualifying dip on a non-held name. Window +
+    # concurrent-cap gates above already ran; per-ticker skip + earnings
+    # exclusion live inside.
     universe = meta.get("universe")
-    if universe and meta["strategy"] == "dip_buy":
+    if universe and meta["strategy"] in ("dip_buy", "vertical_debit"):
         return _evaluate_universe_entry(
             engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
             chain_provider=chain_provider, opens=opens,
@@ -399,7 +402,7 @@ def run_scan_cycle(
 
             dip_hold_days = None
             dip_entry_time = None
-            if pos["strategy"] == "dip_buy":
+            if pos["strategy"] in ("dip_buy", "vertical_debit"):
                 dip_hold_days = int((meta.get("params") or {}).get("hold_days", 2))
                 dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
                     else datetime.fromisoformat(str(pos["entry_time"]))
