@@ -124,6 +124,40 @@ class LiveTradierChainProvider:
             out.append((bid + ask) / 2.0)
         return out
 
+    def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]:
+        """Daily OHLC bars for the last `days` calendar days (Tradier history).
+
+        Returns a list of {date, open, high, low, close} ascending by date.
+        Empty list on any failure — the dip detector treats that as
+        insufficient_history and simply skips the ticker.
+        """
+        from datetime import date as _date, timedelta as _td
+        end = _date.today()
+        start = end - _td(days=days)
+        try:
+            resp = self._client.get(
+                f"{TRADIER_BASE}/markets/history",
+                params={"symbol": ticker, "interval": "daily",
+                        "start": start.isoformat(), "end": end.isoformat()},
+                headers=_headers(),
+            )
+            if resp.status_code != 200:
+                logger.warning(f"history fetch failed {resp.status_code} for {ticker}")
+                return []
+            days_node = (resp.json().get("history") or {}).get("day", []) or []
+            if isinstance(days_node, dict):
+                days_node = [days_node]
+            out = [
+                {"date": d["date"], "open": d.get("open"), "high": d.get("high"),
+                 "low": d.get("low"), "close": d.get("close")}
+                for d in days_node if d.get("date")
+            ]
+            out.sort(key=lambda b: str(b["date"]))
+            return out
+        except Exception as e:
+            logger.warning(f"history fetch error for {ticker}: {e}")
+            return []
+
     # ---- helpers ----
     def _nearest_expiration_on_or_after(self, ticker: str, target: date) -> str | None:
         resp = self._client.get(

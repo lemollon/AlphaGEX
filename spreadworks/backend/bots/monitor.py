@@ -68,6 +68,8 @@ def decide_exit(
     front_expiration: date,
     eod_close_ct: time,
     event_blackout: bool,
+    entry_time: datetime | None = None,
+    hold_days: int | None = None,
 ) -> ExitDecision:
     if event_blackout:
         return ExitDecision(True, "EVENT_HALT")
@@ -76,6 +78,17 @@ def decide_exit(
         return ExitDecision(True, "PT")
     if mtm_pnl <= -abs(sl_target_pnl):
         return ExitDecision(True, "SL")
+
+    if strategy == "dip_buy":
+        # Multi-day long-call hold: no same-day EOD close. Exit on a hard
+        # time-stop (kills post-peak decay) and never hold into expiry.
+        if entry_time is not None and hold_days is not None:
+            held_days = (now_ct.date() - entry_time.date()).days
+            if held_days >= int(hold_days):
+                return ExitDecision(True, "TIME_STOP")
+        if now_ct.date() >= front_expiration:
+            return ExitDecision(True, "PRE_EXPIRY")
+        return ExitDecision(False, None)
 
     eod = eod_close_time_for_strategy(strategy, eod_close_ct)
     if strategy in ("iron_butterfly", "long_butterfly"):

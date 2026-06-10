@@ -96,3 +96,43 @@ def test_pt_ladder_morning_midday_afternoon():
     assert (pt_pct_for_time_of_day(time(9, 0))
             >= pt_pct_for_time_of_day(time(11, 30))
             >= pt_pct_for_time_of_day(time(13, 30)))
+
+
+# ---------------------------------------------------------------------------
+# dip_buy branch: TIME_STOP + PRE_EXPIRY
+# ---------------------------------------------------------------------------
+
+def _call(now, *, entry, hold_days=2, exp="2026-06-22", mtm=0.0):
+    return decide_exit(
+        strategy="dip_buy", mtm_pnl=mtm, pt_target_pnl=200.0,
+        sl_target_pnl=250.0, now_ct=now, front_expiration=date.fromisoformat(exp),
+        eod_close_ct=time(14, 45), event_blackout=False,
+        entry_time=entry, hold_days=hold_days,
+    )
+
+
+def test_dip_buy_pt_fires():
+    d = _call(datetime(2026, 6, 10, 10, 0), entry=datetime(2026, 6, 10, 9, 0), mtm=250.0)
+    assert d.should_close and d.reason == "PT"
+
+
+def test_dip_buy_sl_fires():
+    d = _call(datetime(2026, 6, 10, 10, 0), entry=datetime(2026, 6, 10, 9, 0), mtm=-300.0)
+    assert d.should_close and d.reason == "SL"
+
+
+def test_dip_buy_time_stop_fires_after_hold_days():
+    # entered 2026-06-08, now 2026-06-10 -> 2 calendar days held >= hold_days 2
+    d = _call(datetime(2026, 6, 10, 9, 0), entry=datetime(2026, 6, 8, 9, 0))
+    assert d.should_close and d.reason == "TIME_STOP"
+
+
+def test_dip_buy_holds_before_time_stop():
+    d = _call(datetime(2026, 6, 9, 9, 0), entry=datetime(2026, 6, 8, 9, 0))
+    assert not d.should_close
+
+
+def test_dip_buy_pre_expiry_force_close():
+    d = _call(datetime(2026, 6, 22, 9, 0), entry=datetime(2026, 6, 21, 9, 0),
+              hold_days=99, exp="2026-06-22")
+    assert d.should_close and d.reason == "PRE_EXPIRY"

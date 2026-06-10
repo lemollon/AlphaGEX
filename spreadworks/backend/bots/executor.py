@@ -41,6 +41,7 @@ def open_position(
     strategy: str,
     signal: Any,
     now: datetime,
+    notes: str | None = None,
 ) -> str:
     """Insert one OPEN row into {bot}_positions, return position_id."""
     pid = _new_position_id(bot, now)
@@ -54,10 +55,10 @@ def open_position(
             f"INSERT INTO {t} ("
             "position_id, ticker, strategy, legs, entry_price, contracts, entry_time, "
             "status, mtm_value, mtm_pnl, mtm_updated_at, pt_target_pnl, sl_target_pnl, "
-            "max_profit, max_loss, account_label"
+            "max_profit, max_loss, account_label, notes"
             ") VALUES ("
             ":pid, :tk, :st, :legs, :ep, :ct, :et, 'OPEN', :mv, 0, :et, "
-            ":pt, :sl, :mp, :ml, 'paper'"
+            ":pt, :sl, :mp, :ml, 'paper', :notes"
             ")"
         ), {
             "pid": pid, "tk": signal.ticker, "st": strategy, "legs": legs_json,
@@ -66,6 +67,7 @@ def open_position(
             "pt": signal.pt_target_pnl, "sl": signal.sl_target_pnl,
             "mp": signal.max_profit * signal.contracts,
             "ml": signal.max_loss * signal.contracts,
+            "notes": notes,
         })
     logger.info(f"[{bot}] opened {pid} {strategy} entry={entry_price} contracts={signal.contracts}")
     return pid
