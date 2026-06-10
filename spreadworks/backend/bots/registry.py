@@ -134,31 +134,27 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
-    # UNDERTOW — single-leg long-call dip-buyer across an ETF + mega-cap
-    # universe. Buys an ATM ~10-DTE call when a name pulls back >= 3% from its
-    # 5-day high, oversold (RSI(2)<10) and still above its 20-day SMA. Exits
-    # all-or-nothing: PT +40% / SL -50% of premium / 2-day time-stop / never
-    # hold to expiry. Paper-only, ships disabled. dip/exit params live here in
-    # `params` (swept later); only universal knobs sit in undertow_config.
+    # UNDERTOW — directional debit vertical across an ETF + mega-cap universe.
+    # Buys an ATM ~10-DTE vertical call debit spread when a name pulls back
+    # >= 3% from its 5-day high, oversold (RSI(2)<10) and still above its
+    # 20-day SMA. The spread_pct wing width limits max loss to the debit paid.
+    # Exits: PT +50% / SL -50% of debit / 2-day time-stop. Paper-only, ships
+    # disabled. dip/spread params live here in `params`; universal knobs sit
+    # in undertow_config.
     "undertow": {
         "display": "UNDERTOW",
-        "strategy": "dip_buy",
+        "strategy": "vertical_debit",
+        "vertical_mode": "debit",
         "ticker": "SPY",  # nominal; real scanning iterates `universe`
         "universe": ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD", "META"],
         "front_dte": 10,
         "back_dte": None,
         "params": {
-            "lookback_n": 5,
-            "dip_threshold": 0.03,
-            "use_rsi_confirm": True,
-            "rsi_period": 2,
-            "rsi_max": 10,
-            "use_trend_gate": True,
-            "sma_period": 20,
-            "max_spread_pct": 0.15,
-            "min_option_price": 0.20,
-            "earnings_exclude_days": 3,
-            "hold_days": 2,
+            "lookback_n": 5, "dip_threshold": 0.03,
+            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
+            "spread_pct": 0.04, "max_spread_pct": 0.15, "min_option_price": 0.20,
+            "earnings_exclude_days": 3, "hold_days": 2,
         },
         "defaults": {
             "starting_capital": 25000.0,
@@ -166,7 +162,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_contracts": 10,
             "bp_pct": 0.02,
             "sd_mult": 1.0,
-            "pt_pct": 0.40,
+            "pt_pct": 0.50,
             "sl_pct": 0.50,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:30",
@@ -174,6 +170,34 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "discord_alerts": False,
             "delta_skew": 0,
             "use_gex_walls": False,
+            "max_concurrent_positions": 5,
+        },
+    },
+    # DELTA — directional credit spreads on the UNDERTOW universe. Sells a put
+    # credit spread on the bullish (oversold-dip) setup and a call credit spread
+    # on the bearish (overbought-rip) setup. Defined risk = width - credit.
+    # Paper-only, ships disabled.
+    "delta": {
+        "display": "DELTA",
+        "strategy": "vertical_credit",
+        "vertical_mode": "credit",
+        "ticker": "SPY",
+        "universe": ["SPY", "QQQ", "IWM", "AAPL", "NVDA", "TSLA", "AMD", "META"],
+        "front_dte": 10,
+        "back_dte": None,
+        "params": {
+            "lookback_n": 5, "dip_threshold": 0.03,
+            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
+            "short_otm_pct": 0.03, "spread_pct": 0.04, "max_spread_pct": 0.15,
+            "min_option_price": 0.20, "min_credit": 0.20,
+            "earnings_exclude_days": 3, "hold_days": 2,
+        },
+        "defaults": {
+            "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
+            "bp_pct": 0.02, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
+            "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
+            "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
             "max_concurrent_positions": 5,
         },
     },

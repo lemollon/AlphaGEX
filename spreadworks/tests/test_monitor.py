@@ -136,3 +136,26 @@ def test_dip_buy_pre_expiry_force_close():
     d = _call(datetime(2026, 6, 22, 9, 0), entry=datetime(2026, 6, 21, 9, 0),
               hold_days=99, exp="2026-06-22")
     assert d.should_close and d.reason == "PRE_EXPIRY"
+
+
+# ---------------------------------------------------------------------------
+# vertical spread strategies: same multi-day branch as dip_buy
+# ---------------------------------------------------------------------------
+
+from datetime import date as _d, datetime as _dt, time as _t
+
+
+def _vc(now, *, entry, hold_days=2, exp="2026-06-22", mtm=0.0, strat="bull_call_spread"):
+    return decide_exit(strategy=strat, mtm_pnl=mtm, pt_target_pnl=200.0, sl_target_pnl=250.0,
+                       now_ct=now, front_expiration=_d.fromisoformat(exp), eod_close_ct=_t(14, 45),
+                       event_blackout=False, entry_time=entry, hold_days=hold_days)
+
+
+def test_vertical_pt_sl_time_stop():
+    assert _vc(_dt(2026, 6, 10, 10, 0), entry=_dt(2026, 6, 10, 9, 0), mtm=250.0).reason == "PT"
+    assert _vc(_dt(2026, 6, 10, 10, 0), entry=_dt(2026, 6, 10, 9, 0), mtm=-300.0).reason == "SL"
+    d = _vc(_dt(2026, 6, 10, 9, 0), entry=_dt(2026, 6, 8, 9, 0))
+    assert d.should_close and d.reason == "TIME_STOP"
+    d2 = _vc(_dt(2026, 6, 22, 9, 0), entry=_dt(2026, 6, 21, 9, 0), hold_days=99,
+             strat="bull_put_spread")
+    assert d2.reason == "PRE_EXPIRY"

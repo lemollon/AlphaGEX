@@ -416,6 +416,16 @@ def _undertow_chain(ticker, spot):
             "options": opts}
 
 
+def _spread_chain(ticker, spot):
+    opts = []
+    for s in range(100, 201, 5):
+        call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
+        put_mid = max(0.30, (s - spot) * 0.4 + 6.0)
+        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.05, 2), "ask": round(call_mid + 0.05, 2)})
+        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.05, 2), "ask": round(put_mid + 0.05, 2)})
+    return {"spot": spot, "expiration": "2026-06-22", "ticker": ticker, "options": opts}
+
+
 def _enable_undertow(engine):
     from sqlalchemy import text
     with engine.begin() as conn:
@@ -428,8 +438,8 @@ def test_undertow_opens_deepest_dip(db_session):
     _enable_undertow(eng)
     # NVDA dips to 140 (6.7%), AAPL to 145 (3.3%) — NVDA is deeper.
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0),
-                          "AAPL": _undertow_chain("AAPL", 145.0)},
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
+                          "AAPL": _spread_chain("AAPL", 145.0)},
         daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
@@ -450,7 +460,7 @@ def test_undertow_skips_held_ticker_and_respects_concurrent_cap(db_session):
     with eng.begin() as conn:
         conn.execute(text("UPDATE undertow_config SET max_concurrent_positions=1"))
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
         daily_history={"NVDA": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
@@ -472,7 +482,7 @@ def test_undertow_time_stop_closes_position_end_to_end(db_session):
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
         daily_history={"NVDA": _undertow_history()},
     )
     # Open on day 0
@@ -499,7 +509,7 @@ def test_undertow_journals_dip_context(db_session):
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
         daily_history={"NVDA": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
@@ -509,8 +519,9 @@ def test_undertow_journals_dip_context(db_session):
     pos = list_open_positions(eng, "undertow")[0]
     notes = _json.loads(pos["notes"])
     assert notes["ticker"] == "NVDA"
-    assert notes["dip_pct"] > 0.03
-    assert notes["reference_high"] == 150.0
+    assert notes["kind"] == "bull_call_spread"
+    assert notes["magnitude_pct"] > 0.03
+    assert notes["reference_level"] == 150.0
 
 
 def test_undertow_earnings_window_excludes_ticker(db_session, monkeypatch):
@@ -523,7 +534,7 @@ def test_undertow_earnings_window_excludes_ticker(db_session, monkeypatch):
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
         daily_history={"NVDA": _undertow_history()},
     )
     # Stub the calendar so NVDA is reported as having upcoming earnings.
@@ -535,3 +546,95 @@ def test_undertow_earnings_window_excludes_ticker(db_session, monkeypatch):
                    chain_provider=provider, event_blackout=False)
     # NVDA was the only ticker with a chain, and it's earnings-excluded -> nothing opened.
     assert len(list_open_positions(eng, "undertow")) == 0
+
+
+def test_undertow_opens_bull_call_spread_on_dip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()})
+    res = run_scan_cycle(engine=eng, bot="undertow",
+                         now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    pos = list_open_positions(eng, "undertow")[0]
+    assert pos["strategy"] == "bull_call_spread"
+    legs = _j.loads(pos["legs"])
+    assert len(legs) == 2 and all(l["type"] == "call" for l in legs)
+
+
+def test_undertow_writes_ai_rationale(db_session, monkeypatch):
+    import backend.bots.ai_rationale as air
+    monkeypatch.setattr(air, "generate_entry_rationale",
+                        lambda *, bot, signal_context: "Test rationale.")
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()})
+    run_scan_cycle(engine=eng, bot="undertow",
+                   now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                   chain_provider=provider, event_blackout=False)
+    notes = _j.loads(list_open_positions(eng, "undertow")[0]["notes"])
+    assert notes["rationale"] == "Test rationale."
+
+
+def _rip_history_scanner():
+    """Downtrend then a sharp bounce. Pre-computed so the DIP branch does NOT
+    pre-empt: last-5 highs max ~112 (spot 110 -> dip<3%), ref_low ~92
+    (rip ~19%), RSI(2)=100 overbought, SMA(20) ~125 > spot (bearish)."""
+    bars, base = [], date(2026, 4, 1)
+    for i in range(35):                       # 35-bar downtrend 160 -> 126
+        c = 160 - i
+        bars.append({"date": (base + timedelta(days=i)).isoformat(),
+                     "open": c, "high": c, "low": c, "close": c})
+    tail = [(100, 102, 98), (95, 98, 92), (103, 105, 100), (108, 110, 104), (110, 112, 107)]
+    for j, (c, h, l) in enumerate(tail):
+        bars.append({"date": (base + timedelta(days=35 + j)).isoformat(),
+                     "open": c, "high": h, "low": l, "close": c})
+    return bars
+
+
+def _enable_bot(eng, bot):
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text(f"UPDATE {bot}_config SET enabled=1"))
+
+
+def test_delta_opens_put_credit_spread_on_dip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_bot(eng, "delta")
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()})  # dip -> bullish -> put credit
+    res = run_scan_cycle(engine=eng, bot="delta",
+                         now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    pos = list_open_positions(eng, "delta")[0]
+    assert pos["strategy"] == "bull_put_spread"
+    assert all(l["type"] == "put" for l in _j.loads(pos["legs"]))
+
+
+def test_delta_opens_call_credit_spread_on_rip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_bot(eng, "delta")
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 110.0)},
+        daily_history={"NVDA": _rip_history_scanner()})  # rip -> bearish -> call credit
+    res = run_scan_cycle(engine=eng, bot="delta",
+                         now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    pos = list_open_positions(eng, "delta")[0]
+    assert pos["strategy"] == "bear_call_spread"
+    assert all(l["type"] == "call" for l in _j.loads(pos["legs"]))

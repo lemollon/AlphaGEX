@@ -21,7 +21,10 @@ from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
 )
-from .monitor import decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod
+from .monitor import (
+    decide_exit, pt_pct_for_time_of_day, pt_pct_for_iron_condor_tod,
+    MULTI_DAY_STRATEGIES,
+)
 from .registry import BOT_REGISTRY, get_bot
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
@@ -30,6 +33,9 @@ from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
 from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
 from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
+from .strategies.setups import detect_setup, DEFAULT_SETUP_PARAMS
+from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
+from . import ai_rationale
 
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
@@ -211,17 +217,25 @@ def _within_earnings_window(ticker: str, now_ct: datetime, exclude_days: int) ->
         return False
 
 
+def _vertical_kind(mode: str, direction: str) -> str:
+    if mode == "debit":
+        return "bull_call_spread" if direction == "bullish" else "bear_put_spread"
+    return "bull_put_spread" if direction == "bullish" else "bear_call_spread"
+
+
 def _evaluate_universe_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, opens: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Scan the bot's universe; open ONE new position on the deepest qualifying
-    dip. Skips tickers already held open. Earnings-window names are excluded.
-    Window / concurrent-cap gates were already checked by the caller."""
+    """Scan the universe; open ONE vertical spread on the deepest qualifying
+    dip/rip on a non-held name. Debit bots build bull-call/bear-put spreads;
+    credit bots build put-credit/call-credit spreads (resolved by vertical_mode
+    + setup direction). Window / concurrent-cap gates ran in the caller."""
     held = {p["ticker"] for p in opens}
     params = dict(meta.get("params") or {})
     equity = account_equity(engine, bot)
-    candidates: list[tuple[float, Any]] = []
+    mode = meta.get("vertical_mode", "debit")
+    candidates: list[tuple[float, Any, Any]] = []
     last_reason: str | None = None
     for ticker in meta["universe"]:
         if ticker in held:
@@ -230,30 +244,54 @@ def _evaluate_universe_entry(
                                    int(params.get("earnings_exclude_days", 0) or 0)):
             last_reason = f"earnings_excluded: {ticker}"
             continue
-        diag: list[str] = []
-        signal, _chain = _build_signal(
-            bot=bot, strategy="dip_buy", chain_provider=chain_provider,
-            config=cfg, equity=equity, today=now_ct.date(), ticker=ticker,
-            front_dte=meta["front_dte"], back_dte=None, diag=diag,
-            diag_params=params,
-        )
-        if signal is None:
-            last_reason = diag[0] if diag else f"no_signal: {ticker}"
+        chain = chain_provider.get_chain(ticker=ticker, dte=meta["front_dte"], today=now_ct.date())
+        if chain is None:
+            last_reason = f"chain_unavailable: {ticker}"
             continue
-        candidates.append((signal.dip_pct, signal))
+        lookback = max(int(params.get("sma_period", 20)), int(params.get("lookback_n", 5))) + 25
+        history = chain_provider.get_daily_history(ticker=ticker, days=lookback)
+        if not history:
+            last_reason = f"history_unavailable: {ticker}"
+            continue
+        sdiag: list[str] = []
+        setup = detect_setup(spot=float(chain["spot"]), history=history, today=now_ct.date(),
+                             params={**DEFAULT_SETUP_PARAMS, **params}, diag=sdiag)
+        if setup is None:
+            last_reason = sdiag[0] if sdiag else f"no_setup: {ticker}"
+            continue
+        kind = _vertical_kind(mode, setup.direction)
+        vdiag: list[str] = []
+        signal = build_vertical_signal(kind=kind, chain=chain, config=cfg, equity=equity,
+                                       params={**DEFAULT_VERTICAL_PARAMS, **params}, diag=vdiag)
+        if signal is None:
+            last_reason = vdiag[0] if vdiag else f"no_signal: {ticker}"
+            continue
+        candidates.append((setup.magnitude_pct, signal, setup))
 
     if not candidates:
         return {"outcome": "NO_TRADE", "reason": last_reason or "no universe signal"}
 
-    candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip wins
-    signal = candidates[0][1]
+    candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip/rip wins
+    _mag, signal, setup = candidates[0]
+    rationale = ai_rationale.generate_entry_rationale(
+        bot=bot,
+        signal_context={
+            "ticker": signal.ticker, "kind": signal.kind, "direction": setup.direction,
+            "setup": setup.setup, "magnitude_pct": setup.magnitude_pct,
+            "reference_level": setup.reference_level, "rsi": setup.rsi_value,
+            "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
+            "max_profit": signal.max_profit, "max_loss": signal.max_loss,
+            "pt_target_pnl": signal.pt_target_pnl, "sl_target_pnl": signal.sl_target_pnl,
+        },
+    )
     notes = json.dumps({
-        "ticker": signal.ticker, "dip_pct": signal.dip_pct,
-        "reference_high": signal.reference_high, "rsi": signal.rsi_value,
-        "strike": signal.strike, "expiration": signal.expiration,
-        "debit": signal.debit,
+        "ticker": signal.ticker, "kind": signal.kind, "direction": setup.direction,
+        "setup": setup.setup, "magnitude_pct": setup.magnitude_pct,
+        "reference_level": setup.reference_level, "rsi": setup.rsi_value,
+        "width": signal.width, "net": signal.net, "is_credit": signal.is_credit,
+        "rationale": rationale,
     })
-    pid = open_position(engine, bot, "dip_buy", signal, now_ct, notes=notes)
+    pid = open_position(engine, bot, signal.kind, signal, now_ct, notes=notes)
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
 
 
@@ -289,11 +327,12 @@ def _evaluate_entry(
         return {"outcome": "BLOCKED_MAX_CONCURRENT",
                 "reason": f"max_concurrent_reached: open={open_count} cap={max_concurrent}"}
 
-    # Universe bots (UNDERTOW dip-buy) scan multiple tickers and open the
-    # deepest qualifying dip on a non-held name. Window + concurrent-cap gates
-    # above already ran; the per-ticker skip + earnings exclusion live inside.
+    # Universe bots (UNDERTOW dip-buy / vertical_debit) scan multiple tickers
+    # and open the deepest qualifying dip on a non-held name. Window +
+    # concurrent-cap gates above already ran; per-ticker skip + earnings
+    # exclusion live inside.
     universe = meta.get("universe")
-    if universe and meta["strategy"] == "dip_buy":
+    if universe and meta.get("vertical_mode"):
         return _evaluate_universe_entry(
             engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
             chain_provider=chain_provider, opens=opens,
@@ -399,7 +438,7 @@ def run_scan_cycle(
 
             dip_hold_days = None
             dip_entry_time = None
-            if pos["strategy"] == "dip_buy":
+            if pos["strategy"] in MULTI_DAY_STRATEGIES:
                 dip_hold_days = int((meta.get("params") or {}).get("hold_days", 2))
                 dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
                     else datetime.fromisoformat(str(pos["entry_time"]))

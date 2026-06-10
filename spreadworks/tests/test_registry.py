@@ -2,7 +2,7 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow", "meadow", "river", "undertow"}
+    assert set(BOT_REGISTRY.keys()) == {"breeze", "tide", "drift", "flow", "meadow", "river", "undertow", "delta"}
 
 
 def test_breeze_defaults():
@@ -95,18 +95,26 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["breeze", "drift", "flow", "meadow", "river", "tide", "undertow"]
+    assert sorted(list_bots()) == ["breeze", "delta", "drift", "flow", "meadow", "river", "tide", "undertow"]
 
 
 def test_undertow_registered():
     from backend.bots.registry import get_bot
     meta = get_bot("undertow")
     assert meta["display"] == "UNDERTOW"
-    assert meta["strategy"] == "dip_buy"
+    assert meta["strategy"] == "vertical_debit"
     assert "SPY" in meta["universe"] and "NVDA" in meta["universe"]
     assert meta["params"]["lookback_n"] == 5
     assert meta["defaults"]["enabled"] is False
     assert meta["defaults"]["max_concurrent_positions"] == 5
+
+
+def test_undertow_is_vertical_debit():
+    from backend.bots.registry import get_bot
+    m = get_bot("undertow")
+    assert m["vertical_mode"] == "debit"
+    assert m["params"]["spread_pct"] == 0.04
+    assert m["defaults"]["pt_pct"] == 0.50 and m["defaults"]["sl_pct"] == 0.50
 
 
 def test_undertow_tables_autocreate(db_session):
@@ -118,3 +126,15 @@ def test_undertow_tables_autocreate(db_session):
     ).mappings().first()
     assert row is not None
     assert bool(row["enabled"]) is False
+
+
+def test_delta_registered_credit(db_session):
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    m = get_bot("delta")
+    assert m["display"] == "DELTA" and m["vertical_mode"] == "credit"
+    assert m["params"]["min_credit"] == 0.20
+    assert m["defaults"]["enabled"] is False and m["defaults"]["sl_pct"] == 1.5
+    eng = db_session.get_bind()
+    row = eng.connect().execute(text("SELECT enabled FROM delta_config WHERE id=1")).first()
+    assert row is not None
