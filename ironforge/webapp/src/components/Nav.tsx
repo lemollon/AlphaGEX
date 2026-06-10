@@ -159,7 +159,7 @@ export default function Nav() {
   }, [pathname])
 
   return (
-    <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
+    <nav className="relative z-[60] border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
