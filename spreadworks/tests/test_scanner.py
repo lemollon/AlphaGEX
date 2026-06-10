@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -37,6 +37,8 @@ class FakeChainProvider(ChainProvider):
 
     def get_chain(self, *, ticker, dte, today):
         self.calls += 1
+        if self.chains_by_ticker:
+            return self.chains_by_ticker.get(ticker)
         if dte == 0: return self.c0
         if dte == 1: return self.c1
         if dte == 6: return self.c6
@@ -382,3 +384,110 @@ def test_equity_snapshot_written(db_session, fake_chain_0dte):
         )).mappings().all()
     assert len(rows) == 1
     assert float(rows[0]["equity"]) >= 9000  # near starting capital
+
+
+def _undertow_history():
+    # rising trend, spike high to 150, then 3 down days so RSI(2) is oversold
+    # and SMA(20) ~= 131.
+    bars = []
+    base = date(2026, 4, 1)
+    for i in range(36):
+        price = 101 + i
+        d = base + timedelta(days=i)
+        bars.append({"date": d.isoformat(), "open": price, "high": price,
+                     "low": price, "close": price})
+    bars.append({"date": (base + timedelta(days=36)).isoformat(),
+                 "open": 144, "high": 150, "low": 143, "close": 145})
+    bars.append({"date": (base + timedelta(days=37)).isoformat(),
+                 "open": 145, "high": 146, "low": 142, "close": 143})
+    bars.append({"date": (base + timedelta(days=38)).isoformat(),
+                 "open": 143, "high": 143, "low": 140, "close": 141})
+    bars.append({"date": (base + timedelta(days=39)).isoformat(),
+                 "open": 141, "high": 141, "low": 139, "close": 140})
+    return bars
+
+
+def _undertow_chain(ticker, spot):
+    opts = []
+    for s in range(120, 161, 5):
+        opts.append({"strike": s, "type": "call", "bid": 4.8, "ask": 5.2})
+        opts.append({"strike": s, "type": "put", "bid": 4.8, "ask": 5.2})
+    return {"spot": spot, "expiration": "2026-06-22", "ticker": ticker,
+            "options": opts}
+
+
+def _enable_undertow(engine):
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        conn.execute(text("UPDATE undertow_config SET enabled=1"))
+
+
+def test_undertow_opens_deepest_dip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    # NVDA dips to 140 (6.7%), AAPL to 145 (3.3%) — NVDA is deeper.
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0),
+                          "AAPL": _undertow_chain("AAPL", 145.0)},
+        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+    )
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    res = run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    from backend.bots.executor import list_open_positions
+    opens = list_open_positions(eng, "undertow")
+    assert len(opens) == 1
+    assert opens[0]["ticker"] == "NVDA"
+
+
+def test_undertow_skips_held_ticker_and_respects_concurrent_cap(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    from sqlalchemy import text
+    with eng.begin() as conn:
+        conn.execute(text("UPDATE undertow_config SET max_concurrent_positions=1"))
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()},
+    )
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
+                   chain_provider=provider, event_blackout=False)
+    res2 = run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
+                          chain_provider=provider, event_blackout=False)
+    from backend.bots.executor import list_open_positions
+    assert len(list_open_positions(eng, "undertow")) == 1
+    assert res2["outcome"] in ("BLOCKED_MAX_CONCURRENT", "MONITOR")
+
+
+def test_undertow_time_stop_closes_position_end_to_end(db_session):
+    """End-to-end: a position opened 2 days ago is force-closed by TIME_STOP
+    through the scanner's decide_exit wiring (entry_time + hold_days)."""
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    from sqlalchemy import text
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()},
+    )
+    # Open on day 0
+    open_now = datetime(2026, 6, 8, 9, 0, tzinfo=CT)
+    run_scan_cycle(engine=eng, bot="undertow", now_ct=open_now,
+                   chain_provider=provider, event_blackout=False)
+    assert len(list_open_positions(eng, "undertow")) == 1
+    # Two calendar days later -> hold_days=2 reached -> TIME_STOP.
+    # Keep the same provider so get_leg_mids can price the (single) leg.
+    later = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    res = run_scan_cycle(engine=eng, bot="undertow", now_ct=later,
+                         chain_provider=provider, event_blackout=False)
+    assert len(list_open_positions(eng, "undertow")) == 0  # closed
+    # closed_trades has a TIME_STOP row
+    row = eng.connect().execute(text(
+        "SELECT close_reason FROM undertow_closed_trades ORDER BY close_time DESC")
+    ).mappings().first()
+    assert row["close_reason"] == "TIME_STOP"

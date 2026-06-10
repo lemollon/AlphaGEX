@@ -29,6 +29,7 @@ from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
 from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
+from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
 
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
@@ -113,7 +114,8 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
 def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   config: dict, equity: float, today: date,
                   ticker: str, front_dte: int, back_dte: int | None,
-                  diag: list[str] | None = None):
+                  diag: list[str] | None = None,
+                  diag_params: dict | None = None):
     """Build a signal. Returns (signal_or_none, chain_or_none).
 
     `diag` (if provided) collects the rejection reason from the strategy
@@ -144,6 +146,24 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             return None, None
         sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
         return sig, chain
+    if strategy == "dip_buy":
+        params = {**DEFAULT_PARAMS, **(diag_params or {})}
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        lookback_days = max(int(params["sma_period"]), int(params["lookback_n"])) + 25
+        history = chain_provider.get_daily_history(ticker=ticker, days=lookback_days)
+        if not history:
+            if diag is not None:
+                diag.append(f"history_unavailable: ticker={ticker}")
+            return None, None
+        sig = build_dip_buy_signal(
+            chain=chain, history=history, today=today, params=params,
+            config=config, equity=equity, diag=diag,
+        )
+        return sig, chain
     front = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
     back = chain_provider.get_chain(ticker=ticker, dte=back_dte, today=today)
     if front is None or back is None:
@@ -171,10 +191,70 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
     raise ValueError(f"unknown strategy {strategy}")
 
 
+def _within_earnings_window(ticker: str, now_ct: datetime, exclude_days: int) -> bool:
+    """True if `ticker` reports earnings within `exclude_days` of now.
+
+    Uses earnings_calendar.get_upcoming_earnings; matches the ticker as a
+    whitespace token inside the event name (names look like
+    '📊 NVDA Earnings (Q1)'). Fail-open (returns False) on ANY error so a
+    calendar problem never blocks all entries."""
+    if exclude_days <= 0:
+        return False
+    try:
+        from .. import earnings_calendar
+        events = earnings_calendar.get_upcoming_earnings(from_date=now_ct, days=exclude_days)
+        for e in events:
+            if ticker in str(e.get("name", "")).split():
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def _evaluate_universe_entry(
+    *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
+    chain_provider: ChainProvider, opens: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Scan the bot's universe; open ONE new position on the deepest qualifying
+    dip. Skips tickers already held open. Earnings-window names are excluded.
+    Window / concurrent-cap gates were already checked by the caller."""
+    held = {p["ticker"] for p in opens}
+    params = dict(meta.get("params") or {})
+    equity = account_equity(engine, bot)
+    candidates: list[tuple[float, Any]] = []
+    last_reason: str | None = None
+    for ticker in meta["universe"]:
+        if ticker in held:
+            continue
+        if _within_earnings_window(ticker, now_ct,
+                                   int(params.get("earnings_exclude_days", 0) or 0)):
+            last_reason = f"earnings_excluded: {ticker}"
+            continue
+        diag: list[str] = []
+        signal, _chain = _build_signal(
+            bot=bot, strategy="dip_buy", chain_provider=chain_provider,
+            config=cfg, equity=equity, today=now_ct.date(), ticker=ticker,
+            front_dte=meta["front_dte"], back_dte=None, diag=diag,
+            diag_params=params,
+        )
+        if signal is None:
+            last_reason = diag[0] if diag else f"no_signal: {ticker}"
+            continue
+        candidates.append((signal.dip_pct, signal))
+
+    if not candidates:
+        return {"outcome": "NO_TRADE", "reason": last_reason or "no universe signal"}
+
+    candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip wins
+    signal = candidates[0][1]
+    pid = open_position(engine, bot, "dip_buy", signal, now_ct)
+    return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
+
+
 def _evaluate_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, event_blackout: bool, allow_stacking: bool,
-    open_count: int,
+    open_count: int, opens: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Evaluate whether to OPEN a new position. Returns a result dict; never
     opens more than the gates allow. Callers decide whether to invoke this
@@ -202,6 +282,16 @@ def _evaluate_entry(
     if max_concurrent > 0 and open_count >= max_concurrent:
         return {"outcome": "BLOCKED_MAX_CONCURRENT",
                 "reason": f"max_concurrent_reached: open={open_count} cap={max_concurrent}"}
+
+    # Universe bots (UNDERTOW dip-buy) scan multiple tickers and open the
+    # deepest qualifying dip on a non-held name. Window + concurrent-cap gates
+    # above already ran; the per-ticker skip + earnings exclusion live inside.
+    universe = meta.get("universe")
+    if universe and meta["strategy"] == "dip_buy":
+        return _evaluate_universe_entry(
+            engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
+            chain_provider=chain_provider, opens=opens,
+        )
 
     # Stacking bots open at most ONE new position per entry-day. Closed rows
     # stay in {bot}_positions, so an earlier same-day open-then-close counts.
@@ -301,12 +391,20 @@ def run_scan_cycle(
             # placed first in legs[] in both strategy modules.
             front_exp = date.fromisoformat(front_exp_str)
 
+            dip_hold_days = None
+            dip_entry_time = None
+            if pos["strategy"] == "dip_buy":
+                dip_hold_days = int((meta.get("params") or {}).get("hold_days", 2))
+                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
+                    else datetime.fromisoformat(str(pos["entry_time"]))
+
             d = decide_exit(
                 strategy=pos["strategy"], mtm_pnl=mtm_pnl,
                 pt_target_pnl=pt_target, sl_target_pnl=float(pos["sl_target_pnl"]),
                 now_ct=now_ct, front_expiration=front_exp,
                 eod_close_ct=_parse_time(cfg["eod_close_ct"]),
                 event_blackout=event_blackout,
+                entry_time=dip_entry_time, hold_days=dip_hold_days,
             )
             if d.should_close:
                 close_position(engine, bot, pos["position_id"],
@@ -337,12 +435,13 @@ def run_scan_cycle(
         # Legacy (one-at-a-time) bots only open when flat. Stacking bots open
         # on every entry-day even while a position is held (capped to one new
         # entry per entry-day inside _evaluate_entry).
+        is_universe = bool(meta.get("universe"))
         entry_result: dict[str, Any] | None = None
-        if (not opens) or allow_stacking:
+        if (not opens) or allow_stacking or is_universe:
             entry_result = _evaluate_entry(
                 engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
                 chain_provider=chain_provider, event_blackout=event_blackout,
-                allow_stacking=allow_stacking, open_count=len(opens),
+                allow_stacking=allow_stacking, open_count=len(opens), opens=opens,
             )
 
         # --- Headline outcome for logging/return ---
