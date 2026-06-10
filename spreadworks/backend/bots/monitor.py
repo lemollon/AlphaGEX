@@ -11,6 +11,11 @@ class ExitDecision:
     reason: str | None  # PT | SL | EOD | EVENT_HALT | None
 
 
+MULTI_DAY_STRATEGIES = frozenset(
+    {"dip_buy", "bull_call_spread", "bear_put_spread", "bull_put_spread", "bear_call_spread"}
+)
+
+
 def pt_pct_for_time_of_day(now_ct_time: time) -> float:
     """Single-expiration butterfly profit-target ladder (BREEZE + RIVER).
 
@@ -79,7 +84,7 @@ def decide_exit(
     if mtm_pnl <= -abs(sl_target_pnl):
         return ExitDecision(True, "SL")
 
-    if strategy == "dip_buy":
+    if strategy in MULTI_DAY_STRATEGIES:
         # Multi-day long-call hold: no same-day EOD close. Exit on a hard
         # time-stop (kills post-peak decay) and never hold into expiry.
         if entry_time is not None and hold_days is not None:
