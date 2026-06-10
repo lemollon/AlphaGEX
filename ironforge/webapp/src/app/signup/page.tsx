@@ -107,6 +107,29 @@ function CheckTick({ ok }: { ok: boolean }) {
   )
 }
 
+function HomeGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+      <path d="M4 11l8-7 8 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6 10v9h12v-9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 19v-5h4v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** Always-available link back to the home page. */
+function HomeLink({ className = '' }: { className?: string }) {
+  return (
+    <Link
+      href="/"
+      className={`inline-flex items-center gap-1.5 font-medium text-gray-400 transition hover:text-amber-400 ${className}`}
+    >
+      <HomeGlyph />
+      Home
+    </Link>
+  )
+}
+
 /* ── Field primitives ──────────────────────────────────────────────── */
 
 interface FieldProps {
@@ -217,7 +240,8 @@ export default function SignupPage() {
   return (
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-8 sm:py-12">
       <div className="mx-auto max-w-5xl">
-        <div className="mb-4 flex justify-end text-sm text-gray-400">
+        <div className="mb-4 flex items-center justify-between text-sm text-gray-400">
+          <HomeLink />
           <span>
             Already have an account?{' '}
             <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Log in</Link>
@@ -451,6 +475,10 @@ function VerifyEmailShell({ email }: { email: string }) {
           Already verified?{' '}
           <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Continue</Link>
         </p>
+
+        <div className="mt-6 flex justify-center border-t border-white/5 pt-4 text-sm">
+          <HomeLink />
+        </div>
       </div>
     </div>
   )
