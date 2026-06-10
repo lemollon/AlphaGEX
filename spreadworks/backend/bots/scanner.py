@@ -247,7 +247,13 @@ def _evaluate_universe_entry(
 
     candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip wins
     signal = candidates[0][1]
-    pid = open_position(engine, bot, "dip_buy", signal, now_ct)
+    notes = json.dumps({
+        "ticker": signal.ticker, "dip_pct": signal.dip_pct,
+        "reference_high": signal.reference_high, "rsi": signal.rsi_value,
+        "strike": signal.strike, "expiration": signal.expiration,
+        "debit": signal.debit,
+    })
+    pid = open_position(engine, bot, "dip_buy", signal, now_ct, notes=notes)
     return {"outcome": "TRADE", "reason": "OPENED", "position_id": pid}
 
 

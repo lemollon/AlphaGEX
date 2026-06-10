@@ -491,3 +491,23 @@ def test_undertow_time_stop_closes_position_end_to_end(db_session):
         "SELECT close_reason FROM undertow_closed_trades ORDER BY close_time DESC")
     ).mappings().first()
     assert row["close_reason"] == "TIME_STOP"
+
+
+def test_undertow_journals_dip_context(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    import json as _json
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _undertow_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()},
+    )
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
+                   chain_provider=provider, event_blackout=False)
+    from backend.bots.executor import list_open_positions
+    pos = list_open_positions(eng, "undertow")[0]
+    notes = _json.loads(pos["notes"])
+    assert notes["ticker"] == "NVDA"
+    assert notes["dip_pct"] > 0.03
+    assert notes["reference_high"] == 150.0
