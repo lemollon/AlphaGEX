@@ -5,6 +5,7 @@ const PUBLIC_EXACT = new Set<string>([
   '/pricing',
   '/api/auth/login',
   '/api/auth/signup',
+  '/api/auth/verify',
   '/api/auth/logout',
   '/api/auth/seed',
   '/api/health',

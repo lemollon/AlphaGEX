@@ -1,26 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
+import { hashPassword } from '@/lib/auth/password'
+import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
+import {
+  isCustomersDbConfigured,
+  customerQuery,
+  customerExecute,
+  customerTransaction,
+} from '@/lib/customers-db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * Account Creation — STUB (Phase B).
- *
- * This endpoint performs SERVER-SIDE VALIDATION ONLY and returns success without
- * persisting anything. It deliberately does NOT:
- *   - create an auth user,
- *   - insert a Postgres `users` / `audit_events` row,
- *   - send a verification email,
- *   - create/update an Attio contact.
- *
- * Those are sub-projects C/D/E and must be wired behind THIS SAME request/response
- * contract so the /signup client form does not change.
- *
- * Request  (application/json): SignupPayload (see @/lib/signup-validation)
- * Response (200): { ok: true }
- * Response (400): { ok: false, error: string, fields?: Partial<Record<field,string>> }
+ * Account Creation (sub-project C) — persists a real prospect into the
+ * `ironforge-customers` DB. Response contract matches the Phase-B stub so the
+ * /signup client form is unchanged. Email send (D) + Attio (E) are deferred.
  */
+
+function clientIp(req: NextRequest): string | null {
+  const xff = req.headers.get('x-forwarded-for')
+  return xff ? xff.split(',')[0].trim() : null
+}
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@')
+  if (!domain) return '***'
+  return `${local.slice(0, 1)}***@${domain}`
+}
+
+async function writeAudit(
+  userId: string | null,
+  eventType: string,
+  ip: string | null,
+  ua: string | null,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  // Best-effort: audit failures must never block the user (doc §5).
+  try {
+    await customerExecute(
+      `INSERT INTO audit_events (user_id, event_type, ip_address, user_agent, metadata)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, eventType, ip, ua, JSON.stringify(metadata)],
+    )
+  } catch (e) {
+    console.error('[signup] audit write failed:', eventType, e)
+  }
+}
+
 export async function POST(req: NextRequest) {
   let body: Partial<SignupPayload>
   try {
@@ -51,7 +78,89 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Stub: no persistence yet. The real pipeline (auth user -> Postgres users ->
-  // Attio -> audit -> verification email) lands in sub-projects C/D/E.
-  return NextResponse.json({ ok: true })
+  if (!isCustomersDbConfigured()) {
+    return NextResponse.json(
+      { ok: false, error: 'Account creation is temporarily unavailable. Please try again shortly.' },
+      { status: 503 },
+    )
+  }
+
+  const ip = clientIp(req)
+  const ua = req.headers.get('user-agent')
+  const n = result.normalized
+
+  try {
+    const existing = await customerQuery<{ id: string }>(
+      `SELECT id FROM users WHERE email = $1 LIMIT 1`,
+      [n.email],
+    )
+    if (existing.length > 0) {
+      await writeAudit(null, 'DUPLICATE_EMAIL_ATTEMPT', ip, ua, { email_masked: maskEmail(n.email) })
+      return NextResponse.json(
+        {
+          ok: false,
+          code: 'duplicate_email',
+          error:
+            'This email is already associated with an IronForge account. Log in or reset your password.',
+        },
+        { status: 409 },
+      )
+    }
+
+    const passwordHash = await hashPassword(payload.password)
+    const { raw: rawToken, hash: tokenHash } = generateToken()
+    const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString()
+
+    const userId = await customerTransaction<string>(async (run) => {
+      const rows = await run(
+        `INSERT INTO users
+           (password_hash, first_name, last_name, email, phone, state, referral_code,
+            age_confirmed, no_advice_acknowledged, electronic_comm_consent)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING id`,
+        [
+          passwordHash,
+          n.firstName,
+          n.lastName,
+          n.email,
+          n.phone,
+          n.state,
+          n.referralCode || null,
+          payload.ageConfirmed,
+          payload.noAdviceAcknowledged,
+          payload.electronicCommConsent,
+        ],
+      )
+      const uid = rows[0].id as string
+      await run(
+        `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at)
+         VALUES ($1,$2,$3)`,
+        [uid, tokenHash, expiresAt],
+      )
+      return uid
+    })
+
+    await writeAudit(userId, 'ACCOUNT_CREATED', ip, ua, {
+      source: 'signup',
+      state: n.state,
+      referral_code: n.referralCode || null,
+      age_confirmed: payload.ageConfirmed,
+      no_advice_acknowledged: payload.noAdviceAcknowledged,
+      electronic_comm_consent: payload.electronicCommConsent,
+    })
+
+    // TODO(D): send verification email with rawToken (+ resend).
+    // TODO(E): create/update Attio contact (queue + ATTIO_SYNC_FAILED on error).
+    const resBody: { ok: true; verifyUrl?: string } = { ok: true }
+    if (process.env.NODE_ENV !== 'production') {
+      resBody.verifyUrl = `/api/auth/verify?token=${encodeURIComponent(rawToken)}`
+    }
+    return NextResponse.json(resBody)
+  } catch (e) {
+    console.error('[signup] account creation failed:', e)
+    return NextResponse.json(
+      { ok: false, error: 'Something went wrong creating your account. Please try again.' },
+      { status: 500 },
+    )
+  }
 }
