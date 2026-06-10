@@ -7,10 +7,11 @@ def _chain(spot, ticker="NVDA"):
     opts = []
     for s in range(100, 201, 5):
         # crude monotonic pricing: calls cheaper as strike rises; puts cheaper as strike falls
+        # Half-spread 0.05 keeps (ask-bid)/mid < max_spread_pct=0.15 even for 0.70 mid options.
         call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
         put_mid = max(0.30, (s - spot) * 0.4 + 6.0)
-        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.2, 2), "ask": round(call_mid + 0.2, 2)})
-        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.2, 2), "ask": round(put_mid + 0.2, 2)})
+        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.05, 2), "ask": round(call_mid + 0.05, 2)})
+        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.05, 2), "ask": round(put_mid + 0.05, 2)})
     return {"spot": spot, "expiration": "2026-06-22", "ticker": ticker, "options": opts}
 
 
@@ -46,3 +47,44 @@ def test_bear_put_spread_is_debit_puts():
     shorts = [l for l in legs if l["side"] == "short"][0]
     assert longs["strike"] > shorts["strike"]
     assert sig.debit > 0
+
+
+from backend.bots.executor import compute_mtm
+
+
+def test_bull_put_spread_is_credit():
+    sig = build_vertical_signal(kind="bull_put_spread", chain=_chain(140.0),
+                                config=_CFG, equity=25000.0, params=_p())
+    assert sig is not None and hasattr(sig, "credit") and not hasattr(sig, "debit")
+    legs = sig.legs()
+    assert all(l["type"] == "put" for l in legs)
+    s = [l for l in legs if l["side"] == "short"][0]
+    lo = [l for l in legs if l["side"] == "long"][0]
+    assert s["strike"] > lo["strike"]
+    assert sig.credit > 0
+    assert sig.max_profit == round(sig.credit * 100, 2)
+
+
+def test_bear_call_spread_is_credit():
+    sig = build_vertical_signal(kind="bear_call_spread", chain=_chain(140.0),
+                                config=_CFG, equity=25000.0, params=_p())
+    assert sig is not None and hasattr(sig, "credit")
+    s = [l for l in sig.legs() if l["side"] == "short"][0]
+    lo = [l for l in sig.legs() if l["side"] == "long"][0]
+    assert s["strike"] < lo["strike"]
+
+
+def test_debit_vertical_mtm_sign():
+    legs = [{"side": "long", "type": "call", "strike": 140, "expiration": "x", "entry_price": 5.0},
+            {"side": "short", "type": "call", "strike": 146, "expiration": "x", "entry_price": 2.0}]
+    _, pnl = compute_mtm(strategy="bull_call_spread", legs=legs, entry_price=3.0,
+                         contracts=1, leg_mids=[7.0, 3.0])
+    assert pnl == 100.0
+
+
+def test_credit_vertical_mtm_sign():
+    legs = [{"side": "long", "type": "put", "strike": 130, "expiration": "x", "entry_price": 1.0},
+            {"side": "short", "type": "put", "strike": 136, "expiration": "x", "entry_price": 3.0}]
+    _, pnl = compute_mtm(strategy="bull_put_spread", legs=legs, entry_price=2.0,
+                         contracts=1, leg_mids=[0.5, 1.5])
+    assert pnl == 100.0

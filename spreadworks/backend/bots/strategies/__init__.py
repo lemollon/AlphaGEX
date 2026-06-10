@@ -8,5 +8,6 @@ credit/debit branch can never drift between the two.
 from __future__ import annotations
 
 CREDIT_STRATEGIES = frozenset(
-    {"iron_condor", "iron_butterfly", "double_diagonal_credit"}
+    {"iron_condor", "iron_butterfly", "double_diagonal_credit",
+     "bull_put_spread", "bear_call_spread"}
 )
