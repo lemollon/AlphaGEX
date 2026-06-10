@@ -24,7 +24,19 @@ export default function AuthControls() {
     router.refresh()
   }
 
-  if (!me?.name) return null
+  if (!me?.name) {
+    return (
+      <div className="ml-auto flex items-center gap-3 shrink-0 text-sm">
+        <a href="/login" className="text-gray-300 hover:text-white transition-colors">Sign in</a>
+        <a
+          href="/signup"
+          className="rounded bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1 transition-colors"
+        >
+          Create account
+        </a>
+      </div>
+    )
+  }
 
   return (
     <div className="ml-auto flex items-center gap-3 shrink-0 text-sm">
