@@ -150,7 +150,7 @@ export default function PricingPage() {
         {/* Header */}
         <header className="mb-10 text-center">
           <div className="flex justify-center">
-            <Wordmark markClass="h-9 w-9" textClass="text-2xl" />
+            <Wordmark markClass="h-10 w-auto" textClass="text-2xl" />
           </div>
           <p className="mt-3 text-xs font-semibold uppercase tracking-[0.25em] text-amber-500">
             Automated Trading. Forged for Performance.

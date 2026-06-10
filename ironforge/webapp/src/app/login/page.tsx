@@ -42,7 +42,7 @@ function LoginForm() {
   return (
     <div className="max-w-sm mx-auto mt-24">
       <div className="flex items-center gap-2 justify-center mb-6">
-        <img src="/ironforge-logo.svg" alt="" className="h-9 w-9" />
+        <img src="/ironforge-mark.png" alt="" className="h-8 w-auto" />
         <span className="text-2xl font-bold">
           <span className="text-white">Iron</span><span className="text-amber-400">Forge</span>
         </span>

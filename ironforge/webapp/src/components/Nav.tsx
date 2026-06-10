@@ -164,7 +164,7 @@ export default function Nav() {
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
           <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
-            <img src="/ironforge-logo.svg" alt="" className="h-8 w-8 inline-block" />
+            <img src="/ironforge-mark.png" alt="" className="h-7 w-auto inline-block" />
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>
           </Link>
