@@ -147,11 +147,24 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-10 sm:py-14">
       <div className="mx-auto max-w-6xl">
+        {/* Top utility bar — standalone page, so it carries its own nav */}
+        <div className="mb-6 flex items-center justify-between text-sm">
+          <Link href="/" className="flex items-center gap-1.5 text-gray-300 transition-colors hover:text-white">
+            <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+              <path d="M10 3l-5 5 5 5" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Home
+          </Link>
+          <Link href="/login" className="font-semibold text-amber-500 transition-colors hover:text-amber-400">
+            Sign in
+          </Link>
+        </div>
+
         {/* Header */}
         <header className="mb-10 text-center">
-          <div className="flex justify-center">
+          <Link href="/" className="inline-flex justify-center" aria-label="IronForge home">
             <Wordmark markClass="h-10 w-auto" textClass="text-2xl" />
-          </div>
+          </Link>
           <p className="mt-3 text-xs font-semibold uppercase tracking-[0.25em] text-amber-500">
             Automated Trading. Forged for Performance.
           </p>
