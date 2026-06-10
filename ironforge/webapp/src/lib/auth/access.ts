@@ -2,6 +2,7 @@
 const PUBLIC_EXACT = new Set<string>([
   '/login',
   '/signup',
+  '/pricing',
   '/api/auth/login',
   '/api/auth/signup',
   '/api/auth/logout',

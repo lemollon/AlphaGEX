@@ -13,6 +13,9 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/signup')).toBe(true)
     expect(isPublicPath('/api/auth/signup')).toBe(true)
   })
+  it('treats the pricing page as public', () => {
+    expect(isPublicPath('/pricing')).toBe(true)
+  })
   it('treats app pages and bot routes as non-public', () => {
     expect(isPublicPath('/')).toBe(false)
     expect(isPublicPath('/spark')).toBe(false)

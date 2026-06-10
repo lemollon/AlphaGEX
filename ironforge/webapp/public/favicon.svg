@@ -1,20 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="IronForge">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="IronForge">
   <defs>
     <linearGradient id="ifF" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#FB7A3D"/>
-      <stop offset="0.55" stop-color="#E8531F"/>
+      <stop offset="0.5" stop-color="#E8531F"/>
       <stop offset="1" stop-color="#C2410C"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="96" fill="#0B0B0D"/>
+  <rect width="120" height="120" rx="22" fill="#0B0B0D"/>
+  <g fill="#7C2D0E" transform="translate(3.5,4)">
+    <polygon points="54,28 76,28 76,92 54,92"/>
+    <polygon points="54,28 102,28 90,48 54,48"/>
+    <polygon points="54,56 88,56 76,74 54,74"/>
+  </g>
   <g fill="#F5F5F4">
-    <rect x="92"  y="124" width="64" height="264"/>
-    <rect x="64"  y="124" width="120" height="34"/>
-    <rect x="64"  y="354" width="120" height="34"/>
+    <rect x="26" y="36" width="20" height="56"/>
+    <rect x="18" y="36" width="36" height="12"/>
+    <rect x="18" y="80" width="36" height="12"/>
   </g>
   <g fill="url(#ifF)">
-    <rect x="236" y="124" width="64" height="264"/>
-    <rect x="236" y="124" width="172" height="52"/>
-    <rect x="236" y="232" width="132" height="50"/>
+    <polygon points="54,28 76,28 76,92 54,92"/>
+    <polygon points="54,28 102,28 90,48 54,48"/>
+    <polygon points="54,56 88,56 76,74 54,74"/>
   </g>
 </svg>
