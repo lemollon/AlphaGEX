@@ -73,6 +73,10 @@ function LoginForm() {
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
+      <p className="mt-4 text-center text-xs text-gray-500">
+        Don&apos;t have an account?{' '}
+        <a href="/signup" className="font-semibold text-amber-500 hover:text-amber-400">Create account</a>
+      </p>
     </div>
   )
 }

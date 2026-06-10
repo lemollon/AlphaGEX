@@ -9,6 +9,10 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/api/auth/seed')).toBe(true)
     expect(isPublicPath('/api/health')).toBe(true)
   })
+  it('treats the signup page and signup endpoint as public', () => {
+    expect(isPublicPath('/signup')).toBe(true)
+    expect(isPublicPath('/api/auth/signup')).toBe(true)
+  })
   it('treats app pages and bot routes as non-public', () => {
     expect(isPublicPath('/')).toBe(false)
     expect(isPublicPath('/spark')).toBe(false)
