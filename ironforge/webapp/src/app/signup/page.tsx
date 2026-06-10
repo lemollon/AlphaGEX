@@ -402,9 +402,25 @@ function LockSmall() {
   )
 }
 
-/* ── Screen 2: Verify email (visual shell — token flow is sub-project D) ── */
+/* ── Screen 2: Verify email ─────────────────────────────────────────── */
 
 function VerifyEmailShell({ email }: { email: string }) {
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  async function resend() {
+    setStatus('sending')
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      setStatus(res.ok ? 'sent' : 'error')
+    } catch {
+      setStatus('error')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-16">
       <div className="mx-auto max-w-md rounded-2xl border border-white/10 bg-forge-card/90 p-8 text-center shadow-2xl">
@@ -421,15 +437,19 @@ function VerifyEmailShell({ email }: { email: string }) {
 
         <button
           type="button"
-          disabled
-          title="Available once email delivery is enabled"
-          className="mt-6 w-full rounded-md border border-white/10 bg-black/30 px-4 py-2.5 text-sm font-medium text-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={resend}
+          disabled={status === 'sending' || status === 'sent'}
+          className="mt-6 w-full rounded-md border border-white/10 bg-black/30 px-4 py-2.5 text-sm font-medium text-gray-300 transition hover:bg-black/50 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Resend Verification Email
+          {status === 'sending' ? 'Sending…' : status === 'sent' ? 'Verification email sent' : 'Resend Verification Email'}
         </button>
+        {status === 'error' && (
+          <p className="mt-2 text-xs text-red-400">Could not resend right now. Please try again shortly.</p>
+        )}
+
         <p className="mt-4 text-xs text-gray-500">
           Already verified?{' '}
-          <span className="text-gray-500" title="Available once email verification is enabled">Continue</span>
+          <Link href="/login" className="font-semibold text-amber-500 hover:text-amber-400">Continue</Link>
         </p>
       </div>
     </div>

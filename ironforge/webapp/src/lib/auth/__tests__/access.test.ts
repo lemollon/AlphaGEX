@@ -19,6 +19,9 @@ describe('isPublicPath', () => {
   it('treats the email-verify callback as public', () => {
     expect(isPublicPath('/api/auth/verify')).toBe(true)
   })
+  it('treats the resend-verification endpoint as public', () => {
+    expect(isPublicPath('/api/auth/resend-verification')).toBe(true)
+  })
   it('treats app pages and bot routes as non-public', () => {
     expect(isPublicPath('/')).toBe(false)
     expect(isPublicPath('/spark')).toBe(false)
