@@ -582,3 +582,59 @@ def test_undertow_writes_ai_rationale(db_session, monkeypatch):
                    chain_provider=provider, event_blackout=False)
     notes = _j.loads(list_open_positions(eng, "undertow")[0]["notes"])
     assert notes["rationale"] == "Test rationale."
+
+
+def _rip_history_scanner():
+    """Downtrend then a sharp bounce. Pre-computed so the DIP branch does NOT
+    pre-empt: last-5 highs max ~112 (spot 110 -> dip<3%), ref_low ~92
+    (rip ~19%), RSI(2)=100 overbought, SMA(20) ~125 > spot (bearish)."""
+    bars, base = [], date(2026, 4, 1)
+    for i in range(35):                       # 35-bar downtrend 160 -> 126
+        c = 160 - i
+        bars.append({"date": (base + timedelta(days=i)).isoformat(),
+                     "open": c, "high": c, "low": c, "close": c})
+    tail = [(100, 102, 98), (95, 98, 92), (103, 105, 100), (108, 110, 104), (110, 112, 107)]
+    for j, (c, h, l) in enumerate(tail):
+        bars.append({"date": (base + timedelta(days=35 + j)).isoformat(),
+                     "open": c, "high": h, "low": l, "close": c})
+    return bars
+
+
+def _enable_bot(eng, bot):
+    from sqlalchemy import text
+    with eng.begin() as c:
+        c.execute(text(f"UPDATE {bot}_config SET enabled=1"))
+
+
+def test_delta_opens_put_credit_spread_on_dip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_bot(eng, "delta")
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()})  # dip -> bullish -> put credit
+    res = run_scan_cycle(engine=eng, bot="delta",
+                         now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    pos = list_open_positions(eng, "delta")[0]
+    assert pos["strategy"] == "bull_put_spread"
+    assert all(l["type"] == "put" for l in _j.loads(pos["legs"]))
+
+
+def test_delta_opens_call_credit_spread_on_rip(db_session):
+    from backend.bots.scanner import run_scan_cycle
+    from backend.bots.executor import list_open_positions
+    import json as _j
+    eng = db_session.get_bind(); _enable_bot(eng, "delta")
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 110.0)},
+        daily_history={"NVDA": _rip_history_scanner()})  # rip -> bearish -> call credit
+    res = run_scan_cycle(engine=eng, bot="delta",
+                         now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    pos = list_open_positions(eng, "delta")[0]
+    assert pos["strategy"] == "bear_call_spread"
+    assert all(l["type"] == "call" for l in _j.loads(pos["legs"]))
