@@ -5,14 +5,14 @@
 body {
   @apply bg-forge-bg text-gray-100;
   background-image:
-    radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.07) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(217,119,6,0.03) 0%, transparent 40%);
+    radial-gradient(ellipse at 50% -10%, rgba(232,83,31,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(184,60,18,0.03) 0%, transparent 40%);
 }
 
 /* Fire divider line */
 .fire-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(245,158,11,0.4), rgba(217,119,6,0.6), rgba(245,158,11,0.4), transparent);
+  background: linear-gradient(90deg, transparent, rgba(238,90,36,0.4), rgba(184,60,18,0.6), rgba(238,90,36,0.4), transparent);
 }
 
 /* ── Launch Countdown — rising ember particles ────────────────── */
@@ -20,9 +20,9 @@ body {
   position: absolute;
   bottom: -4px;
   border-radius: 50%;
-  background: radial-gradient(circle, #fbbf24, #f59e0b, #d97706);
-  box-shadow: 0 0 6px 2px rgba(245, 158, 11, 0.6),
-              0 0 12px 4px rgba(217, 119, 6, 0.3);
+  background: radial-gradient(circle, #FB7A3D, #EE5A24, #B83C12);
+  box-shadow: 0 0 6px 2px rgba(238, 90, 36, 0.6),
+              0 0 12px 4px rgba(184, 60, 18, 0.3);
   pointer-events: none;
   animation: ember-rise linear infinite;
 }
@@ -52,8 +52,8 @@ body {
 .countdown-ember:nth-child(7n)   { --drift: -18px; }
 
 /* ── Heated-metal glow utilities ─────────────────────────────── */
-.glow-amber   { text-shadow: 0 0 8px #F59E0B66, 0 0 20px #F59E0B33; }
-.glow-flame   { text-shadow: 0 0 6px #F59E0B99, 0 0 16px #F59E0B44; }
+.glow-amber   { text-shadow: 0 0 8px #EE5A2466, 0 0 20px #EE5A2433; }
+.glow-flame   { text-shadow: 0 0 6px #EE5A2499, 0 0 16px #EE5A2444; }
 .glow-spark   { text-shadow: 0 0 6px #3B82F699, 0 0 16px #3B82F644; }
 .glow-inferno { text-shadow: 0 0 6px #EF444499, 0 0 16px #EF444444; }
 

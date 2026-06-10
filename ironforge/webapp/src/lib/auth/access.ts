@@ -1,7 +1,9 @@
 /** Paths reachable without a session. */
 const PUBLIC_EXACT = new Set<string>([
   '/login',
+  '/signup',
   '/api/auth/login',
+  '/api/auth/signup',
   '/api/auth/logout',
   '/api/auth/seed',
   '/api/health',
