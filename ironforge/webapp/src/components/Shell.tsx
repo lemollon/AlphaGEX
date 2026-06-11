@@ -17,7 +17,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const isLanding = pathname === '/'
   // Standalone full-bleed marketing/auth/onboarding screens: no app nav, own chrome.
   const isStandalone =
-    pathname === '/signup' || pathname === '/pricing' || pathname.startsWith('/onboarding')
+    pathname === '/signup' ||
+    pathname === '/pricing' ||
+    pathname === '/login' ||
+    pathname === '/ops/login' ||
+    pathname === '/forgot-password' ||
+    pathname === '/reset-password' ||
+    pathname.startsWith('/onboarding')
 
   return (
     <>
