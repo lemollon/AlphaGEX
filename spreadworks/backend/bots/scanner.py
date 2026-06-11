@@ -238,13 +238,17 @@ class TickerEval:
     reason: str | None = None
 
 
-def _evaluate_ticker(*, engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
-                     chain_provider: ChainProvider, ticker: str, held: bool,
-                     equity: float) -> TickerEval:
+def _evaluate_ticker(*, engine: Engine | None, bot: str, meta: dict, cfg: dict,
+                     now_ct: datetime, chain_provider: ChainProvider, ticker: str,
+                     held: bool, equity: float) -> TickerEval:
     """Evaluate ONE universe name. Held names short-circuit WITHOUT fetching
     (preserving the live scanner's skip-held behavior and API cost). For
     non-held names: earnings gate -> chain -> history -> detect_setup ->
-    build_vertical_signal, capturing the first rejection reason for display."""
+    build_vertical_signal, capturing the first rejection reason for display.
+
+    `engine` is not used here (equity is resolved by the caller and passed in);
+    it is part of the signature for symmetry with the rest of the scanner's
+    per-bot helpers and is forwarded by both callers."""
     if held:
         return TickerEval(ticker=ticker, held=True, reason="held")
 

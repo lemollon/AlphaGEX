@@ -641,7 +641,6 @@ def test_delta_opens_call_credit_spread_on_rip(db_session):
 
 
 def test_evaluate_ticker_signal_and_held_and_watching():
-    from datetime import datetime
     from backend.bots.scanner import _evaluate_ticker
     from backend.bots.registry import get_bot
     meta = get_bot("undertow")
