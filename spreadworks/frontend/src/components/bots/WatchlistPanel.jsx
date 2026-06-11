@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { botApi } from '../../lib/botApi';
 
 const REFRESH = 60_000; // ~60s auto-poll (8 chain fetches/poll)
@@ -33,15 +33,15 @@ function StatusBadge({ status, theme }) {
 function CandidateLine({ c }) {
   if (!c) return <span className="text-text-muted">—</span>;
   const net = c.is_credit ? `cr ${num(c.net)}` : `db ${num(c.net)}`;
-  const dir = c.kind.replace(/_/g, ' ');
+  const dir = (c.kind || '').replace(/_/g, ' ');
   return (
     <span className="sw-mono text-[12px]">
       <span className="text-text-primary">{c.long_strike}</span>
-      <span className="text-text-muted">/</span>
+      <span className="text-text-tertiary">/</span>
       <span className="text-text-primary">{c.short_strike}</span>
       <span className="text-text-tertiary"> · {dir} · {net} · ×{c.contracts}</span>
       <span className="text-sw-green"> +{num(c.max_profit, 0)}</span>
-      <span className="text-text-muted">/</span>
+      <span className="text-text-tertiary">/</span>
       <span className="text-sw-red">−{num(c.max_loss, 0)}</span>
     </span>
   );
@@ -50,23 +50,22 @@ function CandidateLine({ c }) {
 export default function WatchlistPanel({ bot, theme }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const mounted = useRef(true);
 
   const fetchWatchlist = useCallback(async () => {
     try {
       const d = await botApi.watchlist(bot);
-      setData(d);
-      setError(null);
+      if (mounted.current) { setData(d); setError(null); }
     } catch (e) {
-      setError(e);
+      if (mounted.current) setError(e);
     }
   }, [bot]);
 
   useEffect(() => {
-    let cancelled = false;
-    const run = async () => { if (!cancelled) await fetchWatchlist(); };
-    run();
-    const h = setInterval(run, REFRESH);
-    return () => { cancelled = true; clearInterval(h); };
+    mounted.current = true;
+    fetchWatchlist();
+    const h = setInterval(fetchWatchlist, REFRESH);
+    return () => { mounted.current = false; clearInterval(h); };
   }, [fetchWatchlist]);
 
   const rows = data?.rows || [];
@@ -116,6 +115,13 @@ export default function WatchlistPanel({ bot, theme }) {
               </tr>
             </thead>
             <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="px-4 py-6 text-center text-text-tertiary text-[13px]">
+                    No tracked names returned.
+                  </td>
+                </tr>
+              )}
               {rows.map((r) => (
                 <tr key={r.ticker} className="border-t border-white/[0.04]">
                   <td className="px-4 py-2.5 sw-mono font-semibold text-white">{r.ticker}</td>
