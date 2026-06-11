@@ -318,6 +318,9 @@ class _WatchlistFakeProvider:
 
 
 def _wl_chain(ticker, spot):
+    # Synthetic option chain priced so a name at this spot yields a buildable
+    # bull-call debit spread (mids well above min_option_price, tight b/a).
+    # Names with no chain entry resolve to None -> WATCHING.
     opts = []
     for s in range(100, 201, 5):
         call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
