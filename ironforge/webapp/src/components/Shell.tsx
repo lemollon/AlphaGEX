@@ -15,8 +15,9 @@ import ScrollToTop from './ScrollToTop'
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const isLanding = pathname === '/'
-  // Standalone full-bleed marketing/auth screens: no app nav, own chrome.
-  const isStandalone = pathname === '/signup' || pathname === '/pricing'
+  // Standalone full-bleed marketing/auth/onboarding screens: no app nav, own chrome.
+  const isStandalone =
+    pathname === '/signup' || pathname === '/pricing' || pathname.startsWith('/onboarding')
 
   return (
     <>

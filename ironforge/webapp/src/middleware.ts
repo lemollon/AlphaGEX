@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getIronSession } from 'iron-session'
 import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/auth/session'
 import { decideAccess } from '@/lib/auth/access'
+import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 
 export async function middleware(req: NextRequest) {
   // Placeholder mode: while public access is on, the login wall is dormant and the
@@ -24,6 +25,24 @@ export async function middleware(req: NextRequest) {
     hasSession = Boolean(session.userId)
   } catch {
     hasSession = false
+  }
+
+  // Onboarding funnel (sub-project F): reachable by a holder of a valid signed
+  // onboarding cookie even though they have no login session yet. Operators (session)
+  // and internal callers (service token) pass too. Everyone else is bounced to login.
+  const isOnboarding =
+    pathname === '/onboarding' ||
+    pathname.startsWith('/onboarding/') ||
+    pathname.startsWith('/api/onboarding/')
+  if (isOnboarding) {
+    if (hasSession || hasServiceToken) return res
+    const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)
+    if (claims) return res
+    if (isApi) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    const url = req.nextUrl.clone()
+    url.pathname = '/login'
+    url.searchParams.set('next', pathname)
+    return NextResponse.redirect(url)
   }
 
   const decision = decideAccess({ pathname, isApi, hasSession, hasServiceToken })
