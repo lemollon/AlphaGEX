@@ -78,3 +78,32 @@ def detect_setup(*, spot: float, history: list[dict[str, Any]], today: date,
                      rsi_value, sma_value, spot)
 
     return _reject(f"no_setup: dip={dip_pct:.3f} rip={rip_pct:.3f} min={thr:.3f}")
+
+
+def compute_indicators(*, spot: float, history: list[dict[str, Any]], today: date,
+                       params: dict[str, Any]) -> dict[str, Any] | None:
+    """Display-only indicator snapshot, computed with the SAME math detect_setup
+    uses. Returns {ref_high, ref_low, dip_pct, rip_pct, rsi, sma} or None when
+    there are not enough closed bars. Pure: no side effects, never raises on
+    normal input. detect_setup is unchanged — this exists so WATCHING rows
+    (setup rejected) can still show the numbers."""
+    n = int(params["lookback_n"]); sma_period = int(params["sma_period"])
+    rsi_period = int(params["rsi_period"])
+    need = max(n, sma_period, rsi_period + 1)
+    bars = closed_bars(history, today)
+    if len(bars) < need or spot <= 0:
+        return None
+    highs = [float(b["high"]) for b in bars]
+    lows = [float(b["low"]) for b in bars]
+    closes = [float(b["close"]) for b in bars]
+    ref_high = max(highs[-n:]); ref_low = min(lows[-n:])
+    dip_pct = (ref_high - spot) / ref_high if ref_high > 0 else 0.0
+    rip_pct = (spot - ref_low) / ref_low if ref_low > 0 else 0.0
+    return {
+        "ref_high": round(ref_high, 4),
+        "ref_low": round(ref_low, 4),
+        "dip_pct": round(max(0.0, dip_pct), 4),
+        "rip_pct": round(max(0.0, rip_pct), 4),
+        "rsi": rsi(closes, rsi_period),
+        "sma": sma(closes, sma_period),
+    }
