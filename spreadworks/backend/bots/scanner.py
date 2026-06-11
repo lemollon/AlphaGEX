@@ -308,9 +308,22 @@ def evaluate_universe_watchlist(*, engine: Engine | None, bot: str, meta: dict,
     ]
 
 
-def ticker_eval_to_row(e: TickerEval) -> dict[str, Any]:
+def pick_would_open(evals: list[TickerEval]) -> TickerEval | None:
+    """The single eval the live scanner would open right now: the deepest-
+    magnitude SIGNAL among non-held names. Shared by the live entry path and
+    the watchlist's would_open marker so the two always agree. Ties resolve to
+    the first in universe order (matches the live path's stable sort)."""
+    candidates = [e for e in evals if e.signal is not None]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda e: e.setup.magnitude_pct)
+
+
+def ticker_eval_to_row(e: TickerEval, would_open: bool = False) -> dict[str, Any]:
     """Serialize a TickerEval to a JSON-safe watchlist row. Candidate spread is
-    present ONLY when a signal is buildable (status SIGNAL)."""
+    present ONLY when a signal is buildable (status SIGNAL). `would_open` marks
+    the one SIGNAL row the live scanner would actually open this scan (deepest
+    dip/rip); only ever True for a SIGNAL row."""
     status = "HELD" if e.held else ("SIGNAL" if e.signal is not None else "WATCHING")
     ind = e.indicators or {}
     row: dict[str, Any] = {
@@ -324,6 +337,7 @@ def ticker_eval_to_row(e: TickerEval) -> dict[str, Any]:
         "rsi": ind.get("rsi"),
         "sma20": ind.get("sma"),
         "reason": e.reason,
+        "would_open": bool(would_open),
         "candidate": None,
     }
     if e.signal is not None and e.setup is not None:
@@ -364,14 +378,12 @@ def _evaluate_universe_entry(
                          equity=equity)
         for t in meta["universe"]
     ]
-    candidates = [e for e in evals if e.signal is not None]
-    if not candidates:
+    best = pick_would_open(evals)  # deepest dip/rip wins — same rule the watchlist marks
+    if best is None:
         # surface the last non-held rejection reason, mirroring the old loop
         last_reason = next((e.reason for e in reversed(evals) if e.reason and not e.held), None)
         return {"outcome": "NO_TRADE", "reason": last_reason or "no universe signal"}
 
-    candidates.sort(key=lambda e: e.setup.magnitude_pct, reverse=True)  # deepest dip/rip wins
-    best = candidates[0]
     signal, setup = best.signal, best.setup
     rationale = ai_rationale.generate_entry_rationale(
         bot=bot,

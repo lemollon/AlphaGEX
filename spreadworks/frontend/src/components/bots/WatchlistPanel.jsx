@@ -123,9 +123,28 @@ export default function WatchlistPanel({ bot, theme }) {
                 </tr>
               )}
               {rows.map((r) => (
-                <tr key={r.ticker} className="border-t border-white/[0.04]">
+                <tr
+                  key={r.ticker}
+                  className="border-t border-white/[0.04]"
+                  style={r.would_open
+                    ? { background: theme.primarySoft, boxShadow: `inset 2px 0 0 ${theme.primary}` }
+                    : undefined}
+                >
                   <td className="px-4 py-2.5 sw-mono font-semibold text-white">{r.ticker}</td>
-                  <td className="px-3 py-2.5"><StatusBadge status={r.status} theme={theme} /></td>
+                  <td className="px-3 py-2.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <StatusBadge status={r.status} theme={theme} />
+                      {r.would_open && (
+                        <span
+                          className="sw-mono text-[9.5px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                          style={{ color: '#0a1726', background: theme.primary }}
+                          title="Deepest signal — the one position the bot would open this scan"
+                        >
+                          ▸ would open
+                        </span>
+                      )}
+                    </span>
+                  </td>
                   <td className="px-3 py-2.5 text-right sw-mono">{num(r.spot)}</td>
                   <td className="px-3 py-2.5 text-right sw-mono">{pctText(r.dip_pct)}</td>
                   <td className="px-3 py-2.5 text-right sw-mono">{pctText(r.rip_pct)}</td>

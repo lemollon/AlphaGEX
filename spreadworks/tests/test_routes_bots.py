@@ -365,6 +365,10 @@ def test_watchlist_returns_rows_for_universe_bot(client, monkeypatch):
     assert by_ticker["NVDA"]["status"] == "SIGNAL"
     assert by_ticker["NVDA"]["candidate"]["kind"] == "bull_call_spread"
     assert by_ticker["SPY"]["status"] == "WATCHING"
+    # NVDA is the only SIGNAL -> it is the one the live scanner would open.
+    assert by_ticker["NVDA"]["would_open"] is True
+    assert by_ticker["SPY"]["would_open"] is False
+    assert sum(1 for row in d["rows"] if row["would_open"]) == 1
 
 
 def test_watchlist_400_for_non_universe_bot(client):
