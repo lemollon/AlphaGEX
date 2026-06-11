@@ -91,6 +91,20 @@ CREATE TABLE IF NOT EXISTS attio_sync_queue (
   synced_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_attio_queue_pending ON attio_sync_queue(status, attempts);
+
+CREATE TABLE IF NOT EXISTS risk_assessments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  answers JSONB NOT NULL,
+  score INT NOT NULL,
+  tier TEXT NOT NULL,
+  recommended_bot TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_risk_assessments_user ON risk_assessments(user_id);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_tier TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS recommended_bot TEXT;
 `
 
 let _ensured: Promise<void> | null = null
