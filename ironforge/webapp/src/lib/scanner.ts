@@ -67,6 +67,7 @@ import {
 } from './tradier'
 import { diffVolAlerts, isAlertingKey } from './volAlerts'
 import { ensureVolAlertsTable } from './volAlerts.server'
+import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -5524,6 +5525,12 @@ function safeInfernoFastMonitor(): void {
 
 const VOL_ALERTS_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
 let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
+
+// Attio CRM retry drain — re-attempts signups that failed to sync to Attio
+// (sub-project E). Fully isolated from the trade loop; this IS the retry "cron".
+const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
+let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
+let _attioRetryRunning = false
 let _volAlertsRunning = false
 
 const ALPHAGEX_API_BASE = (
@@ -5623,6 +5630,25 @@ function safeCheckVolAlerts(): void {
     .finally(() => { _volAlertsRunning = false })
 }
 
+/** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
+ *  no-ops when Attio isn't configured. Independent of the trade loop. */
+function safeDrainAttioQueue(): void {
+  if (_attioRetryRunning) return
+  if (!isAttioConfigured()) return
+  _attioRetryRunning = true
+  drainAttioSyncQueue()
+    .then((r) => {
+      if (r.processed > 0) {
+        console.log(`[scanner] attio retry drain: processed=${r.processed} synced=${r.synced} failed=${r.failed}`)
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDrainAttioQueue error: ${msg}`)
+    })
+    .finally(() => { _attioRetryRunning = false })
+}
+
 export function startScanner(): void {
   if (_started) return
   _started = true
@@ -5644,11 +5670,17 @@ export function startScanner(): void {
   _volAlertsIntervalId = setInterval(safeCheckVolAlerts, VOL_ALERTS_INTERVAL_MS)
   setTimeout(safeCheckVolAlerts, 10_000)
 
+  // Attio CRM retry drain — own 10-min interval, isolated from the trade loop.
+  // Kick one run shortly after startup so a backlog clears without a full wait.
+  _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
+  setTimeout(safeDrainAttioQueue, 30_000)
+
   console.log('[scanner] setInterval registered, id:', _intervalId)
   console.log('[scanner] BLAZE fast monitor registered (15s), id:', _blazeFastMonitorIntervalId)
   console.log('[scanner] SPARK fast monitor registered (20s), id:', _sparkFastMonitorIntervalId)
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
+  console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
 }
 
 /** Called by db.ts ensureTables to start scanner in the API route process */
