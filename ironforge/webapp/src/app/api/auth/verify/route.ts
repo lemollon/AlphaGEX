@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { hashToken, isExpired } from '@/lib/auth/verification-token'
 import {
+  ONBOARDING_COOKIE,
+  onboardingCookieOptions,
+  signOnboardingToken,
+} from '@/lib/auth/onboarding'
+import {
   isCustomersDbConfigured,
   customerQuery,
   customerExecute,
@@ -12,11 +17,9 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Email verification callback (sub-project C). Validates + consumes a token, flips
- * the user to email_verified, writes an EMAIL_VERIFIED audit, and redirects.
- *
- * Redirect target is /login?verified=1 for now; sub-project F switches it to
- * /onboarding/legal and adds the onboarding route guard. The email that delivers
- * this link is sub-project D.
+ * the user to email_verified, writes an EMAIL_VERIFIED audit, then (sub-project F)
+ * issues a signed onboarding cookie and redirects into the onboarding funnel at
+ * /onboarding/legal. The email that delivers this link is sub-project D.
  */
 
 interface TokenRow {
@@ -34,7 +37,6 @@ function clientIp(req: NextRequest): string | null {
 export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin
   const fail = () => NextResponse.redirect(`${origin}/login?verifyError=1`)
-  const ok = () => NextResponse.redirect(`${origin}/login?verified=1`)
 
   const raw = req.nextUrl.searchParams.get('token')
   if (!raw) return fail()
@@ -83,7 +85,18 @@ export async function GET(req: NextRequest) {
       console.error('[verify] audit write failed:', e)
     }
 
-    return ok()
+    // Sub-project F: hand the (now-verified) prospect into the onboarding funnel.
+    // The signed cookie is what the /onboarding/* guard checks — they have no login
+    // session yet. If signing fails (secret unset), fall back to the login screen.
+    try {
+      const token = await signOnboardingToken(row.user_id)
+      const res = NextResponse.redirect(`${origin}/onboarding/legal`)
+      res.cookies.set(ONBOARDING_COOKIE, token, onboardingCookieOptions())
+      return res
+    } catch (e) {
+      console.error('[verify] onboarding token sign failed:', e)
+      return NextResponse.redirect(`${origin}/login?verified=1`)
+    }
   } catch (e) {
     console.error('[verify] verification failed:', e)
     return fail()
