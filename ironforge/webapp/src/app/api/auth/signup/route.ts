@@ -3,6 +3,7 @@ import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
+import { syncContactToAttio, enqueueAttioSync } from '@/lib/attio'
 import {
   isCustomersDbConfigured,
   customerQuery,
@@ -16,7 +17,8 @@ export const dynamic = 'force-dynamic'
 /**
  * Account Creation (sub-project C) — persists a real prospect into the
  * `ironforge-customers` DB. Response contract matches the Phase-B stub so the
- * /signup client form is unchanged. Email send (D) + Attio (E) are deferred.
+ * /signup client form is unchanged. Email send (D) and Attio sync (E) are wired
+ * in below as best-effort steps that never block account creation.
  */
 
 function clientIp(req: NextRequest): string | null {
@@ -163,7 +165,30 @@ export async function POST(req: NextRequest) {
       console.error('[signup] verification email threw:', e)
     }
 
-    // TODO(E): create/update Attio contact (queue + ATTIO_SYNC_FAILED on error).
+    // Sub-project E: mirror the prospect into Attio CRM (best-effort; never blocks
+    // the account). On failure, queue for retry + record an ATTIO_SYNC_FAILED audit.
+    try {
+      const contact = {
+        firstName: n.firstName,
+        lastName: n.lastName,
+        email: n.email,
+        phone: n.phone,
+        state: n.state,
+        referralCode: n.referralCode || undefined,
+      }
+      const attioRes = await syncContactToAttio(contact)
+      if (attioRes.synced) {
+        await writeAudit(userId, 'ATTIO_SYNCED', ip, ua, { record_id: attioRes.recordId ?? null })
+      } else if (!attioRes.skipped) {
+        await enqueueAttioSync(userId, contact, attioRes.error ?? 'unknown')
+        await writeAudit(userId, 'ATTIO_SYNC_FAILED', ip, ua, {
+          error: (attioRes.error ?? '').slice(0, 200),
+        })
+      }
+    } catch (e) {
+      console.error('[signup] attio sync threw:', e)
+    }
+
     const resBody: { ok: true; verifyUrl?: string } = { ok: true }
     if (process.env.NODE_ENV !== 'production') {
       resBody.verifyUrl = `/api/auth/verify?token=${encodeURIComponent(rawToken)}`
