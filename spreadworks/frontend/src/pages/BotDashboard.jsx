@@ -11,6 +11,7 @@ import StrategyChartTab from '../components/bots/StrategyChartTab';
 import TradesTab from '../components/bots/TradesTab';
 import LogsTab from '../components/bots/LogsTab';
 import ConfigTab from '../components/bots/ConfigTab';
+import WatchlistPanel from '../components/bots/WatchlistPanel';
 
 /* ── Constants ──────────────────────────────────────────────────── */
 
@@ -769,6 +770,10 @@ export default function BotDashboard() {
           onPeriodChange={setEquityPeriod}
           curve={equityCurve}
         />
+
+        {meta.ticker === 'multi' && (
+          <WatchlistPanel bot={bot} theme={theme} />
+        )}
 
         <ActivityTabs
           bot={bot}
