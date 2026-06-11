@@ -538,6 +538,33 @@ def get_scan_activity(bot: str, limit: int = 200):
     return {"rows": [dict(r) for r in rows]}
 
 
+@router.get("/{bot}/watchlist")
+def get_watchlist(bot: str):
+    """Read-only universe watchlist for the vertical-spread bots (UNDERTOW /
+    DELTA). Per tracked name: live signal status + the exact candidate spread
+    when a setup is firing. 400 for non-universe bots."""
+    _validate(bot)
+    meta = BOT_REGISTRY[bot]
+    if not (meta.get("universe") and meta.get("vertical_mode")):
+        raise HTTPException(400, f"{bot} is not a universe bot")
+    from .bots.scanner import evaluate_universe_watchlist, ticker_eval_to_row
+    from .bots.routes_helpers import build_live_chain_provider
+    cfg = load_config(ENGINE, bot)
+    now = datetime.now(CT)
+    provider = build_live_chain_provider()
+    evals = evaluate_universe_watchlist(
+        engine=ENGINE, bot=bot, meta=meta, cfg=cfg, now_ct=now,
+        chain_provider=provider,
+    )
+    return {
+        "bot": bot,
+        "mode": meta.get("vertical_mode"),
+        "as_of_ct": now.replace(tzinfo=None).isoformat(timespec="seconds"),
+        "universe": list(meta["universe"]),
+        "rows": [ticker_eval_to_row(e) for e in evals],
+    }
+
+
 @router.get("")
 def list_all_bots():
     """GET /api/spreadworks/bots — overview of all bots."""
