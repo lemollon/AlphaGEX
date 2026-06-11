@@ -547,7 +547,9 @@ def get_watchlist(bot: str):
     meta = BOT_REGISTRY[bot]
     if not (meta.get("universe") and meta.get("vertical_mode")):
         raise HTTPException(400, f"{bot} is not a universe bot")
-    from .bots.scanner import evaluate_universe_watchlist, ticker_eval_to_row
+    from .bots.scanner import (
+        evaluate_universe_watchlist, ticker_eval_to_row, pick_would_open,
+    )
     from .bots.routes_helpers import build_live_chain_provider
     cfg = load_config(ENGINE, bot)
     now = datetime.now(CT)
@@ -556,12 +558,13 @@ def get_watchlist(bot: str):
         engine=ENGINE, bot=bot, meta=meta, cfg=cfg, now_ct=now,
         chain_provider=provider,
     )
+    winner = pick_would_open(evals)  # the one row the live scanner would open
     return {
         "bot": bot,
         "mode": meta.get("vertical_mode"),
         "as_of_ct": now.replace(tzinfo=None).isoformat(timespec="seconds"),
         "universe": list(meta["universe"]),
-        "rows": [ticker_eval_to_row(e) for e in evals],
+        "rows": [ticker_eval_to_row(e, would_open=(e is winner)) for e in evals],
     }
 
 

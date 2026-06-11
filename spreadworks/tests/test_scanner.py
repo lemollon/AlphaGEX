@@ -716,3 +716,39 @@ def test_evaluate_ticker_signal_and_held_and_watching():
                                   ticker="SPY", held=False, equity=25000.0)
     assert watch_eval.signal is None
     assert "chain_unavailable" in (watch_eval.reason or "")
+
+
+def test_watchlist_marks_only_deepest_signal_would_open(db_session):
+    """pick_would_open + ticker_eval_to_row mark exactly the row the live
+    scanner would open: the deepest-magnitude SIGNAL. Two names signal here
+    (NVDA deeper than AAPL) — only NVDA gets would_open=True."""
+    from backend.bots.scanner import (
+        evaluate_universe_watchlist, ticker_eval_to_row, pick_would_open,
+    )
+    from backend.bots.registry import get_bot
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    meta = get_bot("undertow")
+    cfg = dict(meta["defaults"])
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+    # NVDA dips to 140 (6.7% off the 150 ref-high), AAPL to 145 (3.3%) — both
+    # SIGNAL, NVDA deeper.
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
+                          "AAPL": _spread_chain("AAPL", 145.0)},
+        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+    )
+    evals = evaluate_universe_watchlist(engine=eng, bot="undertow", meta=meta,
+                                        cfg=cfg, now_ct=now, chain_provider=provider)
+    winner = pick_would_open(evals)
+    assert winner is not None and winner.ticker == "NVDA"
+
+    rows = [ticker_eval_to_row(e, would_open=(e is winner)) for e in evals]
+    by = {r["ticker"]: r for r in rows}
+    assert by["NVDA"]["status"] == "SIGNAL" and by["NVDA"]["would_open"] is True
+    assert by["AAPL"]["status"] == "SIGNAL" and by["AAPL"]["would_open"] is False
+    assert by["SPY"]["would_open"] is False
+    # exactly one would_open across the whole universe
+    assert sum(1 for r in rows if r["would_open"]) == 1
+    # default arg keeps would_open False
+    assert ticker_eval_to_row(winner)["would_open"] is False
