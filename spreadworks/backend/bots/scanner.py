@@ -292,6 +292,62 @@ def _evaluate_ticker(*, engine: Engine | None, bot: str, meta: dict, cfg: dict,
                       setup=setup, signal=signal, indicators=indicators)
 
 
+def evaluate_universe_watchlist(*, engine, bot: str, meta: dict, cfg: dict,
+                                now_ct: datetime, chain_provider: ChainProvider
+                                ) -> list[TickerEval]:
+    """READ-ONLY evaluation of every universe name. Never opens, never writes
+    scan_activity/equity. One TickerEval per name in meta['universe'] order."""
+    opens = list_open_positions(engine, bot)
+    held = {p["ticker"] for p in opens}
+    equity = account_equity(engine, bot)
+    return [
+        _evaluate_ticker(engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
+                         chain_provider=chain_provider, ticker=t, held=(t in held),
+                         equity=equity)
+        for t in meta["universe"]
+    ]
+
+
+def ticker_eval_to_row(e: TickerEval) -> dict[str, Any]:
+    """Serialize a TickerEval to a JSON-safe watchlist row. Candidate spread is
+    present ONLY when a signal is buildable (status SIGNAL)."""
+    status = "HELD" if e.held else ("SIGNAL" if e.signal is not None else "WATCHING")
+    ind = e.indicators or {}
+    row: dict[str, Any] = {
+        "ticker": e.ticker,
+        "status": status,
+        "held": e.held,
+        "spot": e.spot,
+        "expiration": e.chain_expiration,
+        "dip_pct": ind.get("dip_pct"),
+        "rip_pct": ind.get("rip_pct"),
+        "rsi": ind.get("rsi"),
+        "sma20": ind.get("sma"),
+        "reason": e.reason,
+        "candidate": None,
+    }
+    if e.signal is not None and e.setup is not None:
+        s = e.signal
+        legs = s.legs()
+        long_leg = next((l for l in legs if l["side"] == "long"), {})
+        short_leg = next((l for l in legs if l["side"] == "short"), {})
+        row["candidate"] = {
+            "kind": s.kind,
+            "direction": e.setup.direction,
+            "long_strike": long_leg.get("strike"),
+            "short_strike": short_leg.get("strike"),
+            "width": s.width,
+            "net": s.net,
+            "is_credit": s.is_credit,
+            "max_profit": s.max_profit,
+            "max_loss": s.max_loss,
+            "contracts": s.contracts,
+            "pt_target_pnl": s.pt_target_pnl,
+            "sl_target_pnl": s.sl_target_pnl,
+        }
+    return row
+
+
 def _evaluate_universe_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, opens: list[dict[str, Any]],

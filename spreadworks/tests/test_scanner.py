@@ -640,6 +640,52 @@ def test_delta_opens_call_credit_spread_on_rip(db_session):
     assert all(l["type"] == "call" for l in _j.loads(pos["legs"]))
 
 
+def test_evaluate_universe_watchlist_statuses(db_session):
+    from datetime import datetime
+    from backend.bots.scanner import (
+        evaluate_universe_watchlist, ticker_eval_to_row, _evaluate_ticker,
+    )
+    from backend.bots.registry import get_bot
+    from backend.bots.executor import open_position
+    from backend.bots.strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
+    eng = db_session.get_bind()
+    _enable_undertow(eng)
+    meta = get_bot("undertow")
+    cfg = dict(meta["defaults"])
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+
+    # Open a real AAPL position so AAPL shows HELD.
+    aapl_chain = _spread_chain("AAPL", 140.0)
+    aapl_sig = build_vertical_signal(
+        kind="bull_call_spread", chain=aapl_chain, config=cfg, equity=25000.0,
+        params={**DEFAULT_VERTICAL_PARAMS, **(meta.get("params") or {})},
+    )
+    assert aapl_sig is not None
+    open_position(eng, "undertow", "bull_call_spread", aapl_sig, now)
+
+    # NVDA has a buildable dip -> SIGNAL. Other universe names: no chain -> WATCHING.
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
+                          "AAPL": _spread_chain("AAPL", 140.0)},
+        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+    )
+    evals = evaluate_universe_watchlist(engine=eng, bot="undertow", meta=meta,
+                                        cfg=cfg, now_ct=now, chain_provider=provider)
+    rows = [ticker_eval_to_row(e) for e in evals]
+    by_ticker = {r["ticker"]: r for r in rows}
+
+    assert len(rows) == len(meta["universe"])
+    assert by_ticker["AAPL"]["status"] == "HELD"
+    assert by_ticker["NVDA"]["status"] == "SIGNAL"
+    assert by_ticker["NVDA"]["candidate"]["kind"] == "bull_call_spread"
+    assert by_ticker["NVDA"]["candidate"]["long_strike"] is not None
+    assert by_ticker["NVDA"]["candidate"]["short_strike"] is not None
+    assert by_ticker["NVDA"]["expiration"] == "2026-06-22"
+    assert by_ticker["SPY"]["status"] == "WATCHING"
+    assert by_ticker["SPY"]["candidate"] is None
+    assert "chain_unavailable" in (by_ticker["SPY"]["reason"] or "")
+
+
 def test_evaluate_ticker_signal_and_held_and_watching():
     from backend.bots.scanner import _evaluate_ticker
     from backend.bots.registry import get_bot
