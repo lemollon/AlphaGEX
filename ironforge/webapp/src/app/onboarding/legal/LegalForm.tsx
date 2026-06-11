@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
 
 /* ── Inline glyphs (custom SVG, no emojis/stock icons) ─────────────── */
@@ -10,15 +9,6 @@ function ShieldSmall() {
   return (
     <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
       <path d="M12 3l7 3v5c0 4.2-2.9 7.4-7 8.5-4.1-1.1-7-4.3-7-8.5V6l7-3z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function CheckCircle() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="mx-auto h-12 w-12" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" stroke="#EE5A24" strokeWidth="1.6" />
-      <path d="M8 12.5l2.5 2.5L16 9.5" stroke="#EE5A24" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -68,7 +58,6 @@ export default function LegalForm() {
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState(false)
 
   const allChecked = acks.riskDisclosure && acks.automatedExecution && acks.termsAccepted
 
@@ -93,29 +82,12 @@ export default function LegalForm() {
         setSubmitting(false)
         return
       }
-      setDone(true)
+      // Advance to the risk-assessment step (sub-project: risk assessment).
+      window.location.href = '/onboarding/risk'
     } catch {
       setError('Network error. Please try again.')
       setSubmitting(false)
     }
-  }
-
-  if (done) {
-    return (
-      <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-16">
-        <div className="mx-auto max-w-md rounded-2xl border border-white/10 bg-forge-card/90 p-8 text-center shadow-2xl">
-          <CheckCircle />
-          <h1 className="mt-4 text-xl font-bold text-white">Disclosures accepted</h1>
-          <p className="mt-2 text-sm leading-relaxed text-gray-400">
-            Thank you. Your acceptance has been recorded. The next steps — billing, brokerage connection,
-            and risk profile — are coming soon. We&apos;ll email you the moment they&apos;re ready.
-          </p>
-          <p className="mt-6 text-xs text-gray-500">
-            <Link href="/" className="font-semibold text-amber-500 hover:text-amber-400">Return home</Link>
-          </p>
-        </div>
-      </div>
-    )
   }
 
   return (

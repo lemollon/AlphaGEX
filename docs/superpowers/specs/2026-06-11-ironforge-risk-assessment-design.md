@@ -46,10 +46,12 @@ needed (it already matches the `/onboarding/*` rule). The legal step's success n
 **redirects to `/onboarding/risk`** instead of showing the terminal "coming soon" panel;
 that terminal panel moves to the risk step's post-submit success state.
 
-**Customer-auth coordination:** when the customer-auth plan is built, its
-`nextRouteForOnboarding` resolver must map `legal_accepted → /onboarding/risk` and
-`risk_assessed → /onboarding/complete`. That plan's resolver task is updated to include
-the risk case. (Tracked as a note in that plan.)
+**Customer-auth coordination (REQUIREMENT for that future build):** when the customer-auth
+sub-project is implemented, its `nextRouteForOnboarding` resolver MUST map
+`legal_accepted → /onboarding/risk` and `risk_assessed → /onboarding/complete` (not
+`legal_accepted → /onboarding/complete`). The customer-auth plan doc currently lives on a
+separate branch; this requirement is recorded here as the source of truth and must be
+folded into that resolver + its tests before customer-auth ships.
 
 ## The questionnaire
 
@@ -143,6 +145,8 @@ audit event (`{ score, tier, recommended_bot }`).
 **Modified**
 - `src/lib/customers-db.ts` — `risk_assessments` table + `users.risk_tier`/`recommended_bot`
 - `src/app/onboarding/legal/LegalForm.tsx` — on accept, redirect to `/onboarding/risk` (replaces terminal panel)
-- `src/components/Shell.tsx` — already full-bleed for `/onboarding/*` (no change needed; confirm)
-- `docs/superpowers/plans/2026-06-11-ironforge-customer-auth.md` — resolver note (legal_accepted → /onboarding/risk)
+- `src/components/Shell.tsx` — already full-bleed for `/onboarding/*` (no change needed; confirmed)
+
+Customer-auth resolver coordination is a documented REQUIREMENT (see above), not a file
+change in this sub-project — that plan lives on a separate branch.
 ```
