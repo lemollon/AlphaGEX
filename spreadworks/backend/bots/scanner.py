@@ -33,7 +33,7 @@ from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
 from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
 from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
-from .strategies.setups import detect_setup, DEFAULT_SETUP_PARAMS
+from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
 from . import ai_rationale
 
@@ -223,6 +223,71 @@ def _vertical_kind(mode: str, direction: str) -> str:
     return "bull_put_spread" if direction == "bullish" else "bear_call_spread"
 
 
+@dataclass
+class TickerEval:
+    """One universe name's evaluation. `signal is not None` means a spread is
+    currently buildable (would be opened if it's the deepest). Shared by the
+    live entry path and the read-only watchlist so they cannot drift."""
+    ticker: str
+    held: bool
+    spot: float | None = None
+    chain_expiration: str | None = None
+    setup: Any = None          # strategies.setups.Setup | None
+    signal: Any = None         # strategies.vertical_spread.VerticalSignal | None
+    indicators: dict | None = None
+    reason: str | None = None
+
+
+def _evaluate_ticker(*, engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
+                     chain_provider: ChainProvider, ticker: str, held: bool,
+                     equity: float) -> TickerEval:
+    """Evaluate ONE universe name. Held names short-circuit WITHOUT fetching
+    (preserving the live scanner's skip-held behavior and API cost). For
+    non-held names: earnings gate -> chain -> history -> detect_setup ->
+    build_vertical_signal, capturing the first rejection reason for display."""
+    if held:
+        return TickerEval(ticker=ticker, held=True, reason="held")
+
+    params = dict(meta.get("params") or {})
+    if _within_earnings_window(ticker, now_ct, int(params.get("earnings_exclude_days", 0) or 0)):
+        return TickerEval(ticker=ticker, held=False, reason=f"earnings_excluded: {ticker}")
+
+    chain = chain_provider.get_chain(ticker=ticker, dte=meta["front_dte"], today=now_ct.date())
+    if chain is None:
+        return TickerEval(ticker=ticker, held=False, reason=f"chain_unavailable: {ticker}")
+    spot = float(chain["spot"])
+    exp = chain.get("expiration")
+
+    lookback = max(int(params.get("sma_period", 20)), int(params.get("lookback_n", 5))) + 25
+    history = chain_provider.get_daily_history(ticker=ticker, days=lookback)
+    if not history:
+        return TickerEval(ticker=ticker, held=False, spot=spot, chain_expiration=exp,
+                          reason=f"history_unavailable: {ticker}")
+
+    merged = {**DEFAULT_SETUP_PARAMS, **params}
+    indicators = compute_indicators(spot=spot, history=history, today=now_ct.date(), params=merged)
+
+    sdiag: list[str] = []
+    setup = detect_setup(spot=spot, history=history, today=now_ct.date(),
+                         params=merged, diag=sdiag)
+    if setup is None:
+        return TickerEval(ticker=ticker, held=False, spot=spot, chain_expiration=exp,
+                          indicators=indicators,
+                          reason=sdiag[0] if sdiag else f"no_setup: {ticker}")
+
+    kind = _vertical_kind(meta.get("vertical_mode", "debit"), setup.direction)
+    vdiag: list[str] = []
+    signal = build_vertical_signal(kind=kind, chain=chain, config=cfg, equity=equity,
+                                   params={**DEFAULT_VERTICAL_PARAMS, **params}, diag=vdiag)
+    if signal is None:
+        return TickerEval(ticker=ticker, held=False, spot=spot, chain_expiration=exp,
+                          setup=setup, indicators=indicators,
+                          reason=vdiag[0] if vdiag else f"no_signal: {ticker}")
+
+    return TickerEval(ticker=ticker, held=False, spot=spot, chain_expiration=exp,
+                      setup=setup, signal=signal, indicators=indicators)
+
+
 def _evaluate_universe_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, opens: list[dict[str, Any]],
@@ -232,47 +297,22 @@ def _evaluate_universe_entry(
     credit bots build put-credit/call-credit spreads (resolved by vertical_mode
     + setup direction). Window / concurrent-cap gates ran in the caller."""
     held = {p["ticker"] for p in opens}
-    params = dict(meta.get("params") or {})
     equity = account_equity(engine, bot)
-    mode = meta.get("vertical_mode", "debit")
-    candidates: list[tuple[float, Any, Any]] = []
-    last_reason: str | None = None
-    for ticker in meta["universe"]:
-        if ticker in held:
-            continue
-        if _within_earnings_window(ticker, now_ct,
-                                   int(params.get("earnings_exclude_days", 0) or 0)):
-            last_reason = f"earnings_excluded: {ticker}"
-            continue
-        chain = chain_provider.get_chain(ticker=ticker, dte=meta["front_dte"], today=now_ct.date())
-        if chain is None:
-            last_reason = f"chain_unavailable: {ticker}"
-            continue
-        lookback = max(int(params.get("sma_period", 20)), int(params.get("lookback_n", 5))) + 25
-        history = chain_provider.get_daily_history(ticker=ticker, days=lookback)
-        if not history:
-            last_reason = f"history_unavailable: {ticker}"
-            continue
-        sdiag: list[str] = []
-        setup = detect_setup(spot=float(chain["spot"]), history=history, today=now_ct.date(),
-                             params={**DEFAULT_SETUP_PARAMS, **params}, diag=sdiag)
-        if setup is None:
-            last_reason = sdiag[0] if sdiag else f"no_setup: {ticker}"
-            continue
-        kind = _vertical_kind(mode, setup.direction)
-        vdiag: list[str] = []
-        signal = build_vertical_signal(kind=kind, chain=chain, config=cfg, equity=equity,
-                                       params={**DEFAULT_VERTICAL_PARAMS, **params}, diag=vdiag)
-        if signal is None:
-            last_reason = vdiag[0] if vdiag else f"no_signal: {ticker}"
-            continue
-        candidates.append((setup.magnitude_pct, signal, setup))
-
+    evals = [
+        _evaluate_ticker(engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
+                         chain_provider=chain_provider, ticker=t, held=(t in held),
+                         equity=equity)
+        for t in meta["universe"]
+    ]
+    candidates = [e for e in evals if e.signal is not None]
     if not candidates:
+        # surface the last non-held rejection reason, mirroring the old loop
+        last_reason = next((e.reason for e in reversed(evals) if e.reason and not e.held), None)
         return {"outcome": "NO_TRADE", "reason": last_reason or "no universe signal"}
 
-    candidates.sort(key=lambda c: c[0], reverse=True)  # deepest dip/rip wins
-    _mag, signal, setup = candidates[0]
+    candidates.sort(key=lambda e: e.setup.magnitude_pct, reverse=True)  # deepest dip/rip wins
+    best = candidates[0]
+    signal, setup = best.signal, best.setup
     rationale = ai_rationale.generate_entry_rationale(
         bot=bot,
         signal_context={

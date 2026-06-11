@@ -638,3 +638,39 @@ def test_delta_opens_call_credit_spread_on_rip(db_session):
     pos = list_open_positions(eng, "delta")[0]
     assert pos["strategy"] == "bear_call_spread"
     assert all(l["type"] == "call" for l in _j.loads(pos["legs"]))
+
+
+def test_evaluate_ticker_signal_and_held_and_watching():
+    from datetime import datetime
+    from backend.bots.scanner import _evaluate_ticker
+    from backend.bots.registry import get_bot
+    meta = get_bot("undertow")
+    cfg = dict(meta["defaults"])
+    now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
+
+    # SIGNAL: NVDA dips to 140 from a 150 ref-high, oversold, above SMA(~131).
+    provider = FakeChainProvider(
+        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
+        daily_history={"NVDA": _undertow_history()},
+    )
+    sig_eval = _evaluate_ticker(engine=None, bot="undertow", meta=meta, cfg=cfg,
+                                now_ct=now, chain_provider=provider,
+                                ticker="NVDA", held=False, equity=25000.0)
+    assert sig_eval.signal is not None
+    assert sig_eval.setup.direction == "bullish"
+    assert sig_eval.indicators is not None and sig_eval.indicators["dip_pct"] > 0
+
+    # HELD: short-circuits, no chain fetch, no signal.
+    held_eval = _evaluate_ticker(engine=None, bot="undertow", meta=meta, cfg=cfg,
+                                 now_ct=now, chain_provider=provider,
+                                 ticker="NVDA", held=True, equity=25000.0)
+    assert held_eval.held is True
+    assert held_eval.signal is None and held_eval.setup is None
+
+    # WATCHING: a name with no chain available -> reason, no signal.
+    empty = FakeChainProvider(chains_by_ticker={}, daily_history={})
+    watch_eval = _evaluate_ticker(engine=None, bot="undertow", meta=meta, cfg=cfg,
+                                  now_ct=now, chain_provider=empty,
+                                  ticker="SPY", held=False, equity=25000.0)
+    assert watch_eval.signal is None
+    assert "chain_unavailable" in (watch_eval.reason or "")
