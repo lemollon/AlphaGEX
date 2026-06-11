@@ -105,6 +105,18 @@ CREATE INDEX IF NOT EXISTS idx_risk_assessments_user ON risk_assessments(user_id
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS risk_tier TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS recommended_bot TEXT;
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  token_hash TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 `
 
 let _ensured: Promise<void> | null = null

@@ -3,6 +3,7 @@ import { getIronSession } from 'iron-session'
 import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/auth/session'
 import { decideAccess } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
+import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
 
 export async function middleware(req: NextRequest) {
   // Placeholder mode: while public access is on, the login wall is dormant and the
@@ -38,6 +39,15 @@ export async function middleware(req: NextRequest) {
     if (hasSession || hasServiceToken) return res
     const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)
     if (claims) return res
+    // A logged-in customer can resume onboarding via their own session cookie.
+    let hasCustomerSession = false
+    try {
+      const cs = await getIronSession<CustomerSessionData>(req, res, customerSessionOptions)
+      hasCustomerSession = Boolean(cs.customerId)
+    } catch {
+      hasCustomerSession = false
+    }
+    if (hasCustomerSession) return res
     if (isApi) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const url = req.nextUrl.clone()
     url.pathname = '/login'
@@ -50,8 +60,9 @@ export async function middleware(req: NextRequest) {
   if (decision === 'unauthorized') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
+  // Operator wall → operator login (customers use /login).
   const url = req.nextUrl.clone()
-  url.pathname = '/login'
+  url.pathname = '/ops/login'
   url.searchParams.set('next', pathname)
   return NextResponse.redirect(url)
 }
