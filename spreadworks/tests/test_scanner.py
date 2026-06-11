@@ -641,10 +641,7 @@ def test_delta_opens_call_credit_spread_on_rip(db_session):
 
 
 def test_evaluate_universe_watchlist_statuses(db_session):
-    from datetime import datetime
-    from backend.bots.scanner import (
-        evaluate_universe_watchlist, ticker_eval_to_row, _evaluate_ticker,
-    )
+    from backend.bots.scanner import evaluate_universe_watchlist, ticker_eval_to_row
     from backend.bots.registry import get_bot
     from backend.bots.executor import open_position
     from backend.bots.strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS

@@ -292,9 +292,9 @@ def _evaluate_ticker(*, engine: Engine | None, bot: str, meta: dict, cfg: dict,
                       setup=setup, signal=signal, indicators=indicators)
 
 
-def evaluate_universe_watchlist(*, engine, bot: str, meta: dict, cfg: dict,
-                                now_ct: datetime, chain_provider: ChainProvider
-                                ) -> list[TickerEval]:
+def evaluate_universe_watchlist(*, engine: Engine | None, bot: str, meta: dict,
+                                cfg: dict, now_ct: datetime,
+                                chain_provider: ChainProvider) -> list[TickerEval]:
     """READ-ONLY evaluation of every universe name. Never opens, never writes
     scan_activity/equity. One TickerEval per name in meta['universe'] order."""
     opens = list_open_positions(engine, bot)
