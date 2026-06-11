@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_evt_token_hash ON email_verification_tokens(token_hash);
+
+CREATE TABLE IF NOT EXISTS attio_sync_queue (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  attio_record_id TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  synced_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_attio_queue_pending ON attio_sync_queue(status, attempts);
 `
 
 let _ensured: Promise<void> | null = null
