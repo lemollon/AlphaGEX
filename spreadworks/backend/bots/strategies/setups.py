@@ -91,6 +91,8 @@ def compute_indicators(*, spot: float, history: list[dict[str, Any]], today: dat
     rsi_period = int(params["rsi_period"])
     need = max(n, sma_period, rsi_period + 1)
     bars = closed_bars(history, today)
+    # None = not enough closed bars or missing spot — the caller treats both
+    # as "no data to display" (detect_setup diagnoses them separately).
     if len(bars) < need or spot <= 0:
         return None
     highs = [float(b["high"]) for b in bars]
