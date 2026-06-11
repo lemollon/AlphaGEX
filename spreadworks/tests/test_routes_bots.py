@@ -298,3 +298,80 @@ def test_reset_wipes_data_and_restores_starting_capital(client):
     # Trade history and equity curve are empty after the wipe.
     assert client.get("/api/spreadworks/bots/river/trades").json()["trades"] == []
     assert client.get("/api/spreadworks/bots/river/equity-curve").json()["curve"] == []
+
+
+# ---------------------------------------------------------------------------
+# Watchlist endpoint tests
+# ---------------------------------------------------------------------------
+
+class _WatchlistFakeProvider:
+    """Minimal ChainProvider for the watchlist endpoint test."""
+    def __init__(self, chains, history):
+        self._chains = chains
+        self._history = history
+    def get_chain(self, *, ticker, dte, today):
+        return self._chains.get(ticker)
+    def get_leg_mids(self, *, ticker, legs):
+        return [leg["entry_price"] for leg in legs]
+    def get_daily_history(self, *, ticker, days):
+        return list(self._history.get(ticker, []))
+
+
+def _wl_chain(ticker, spot):
+    # Synthetic option chain priced so a name at this spot yields a buildable
+    # bull-call debit spread (mids well above min_option_price, tight b/a).
+    # Names with no chain entry resolve to None -> WATCHING.
+    opts = []
+    for s in range(100, 201, 5):
+        call_mid = max(0.30, (spot - s) * 0.4 + 6.0)
+        put_mid = max(0.30, (s - spot) * 0.4 + 6.0)
+        opts.append({"strike": s, "type": "call", "bid": round(call_mid - 0.05, 2), "ask": round(call_mid + 0.05, 2)})
+        opts.append({"strike": s, "type": "put", "bid": round(put_mid - 0.05, 2), "ask": round(put_mid + 0.05, 2)})
+    return {"spot": spot, "expiration": "2026-06-22", "ticker": ticker, "options": opts}
+
+
+def _wl_history():
+    from datetime import date, timedelta
+    bars = []
+    base = date(2026, 4, 1)
+    for i in range(36):
+        p = 101 + i
+        bars.append({"date": (base + timedelta(days=i)).isoformat(),
+                     "open": p, "high": p, "low": p, "close": p})
+    bars += [
+        {"date": (base + timedelta(days=36)).isoformat(), "open": 144, "high": 150, "low": 143, "close": 145},
+        {"date": (base + timedelta(days=37)).isoformat(), "open": 145, "high": 146, "low": 142, "close": 143},
+        {"date": (base + timedelta(days=38)).isoformat(), "open": 143, "high": 143, "low": 140, "close": 141},
+        {"date": (base + timedelta(days=39)).isoformat(), "open": 141, "high": 141, "low": 139, "close": 140},
+    ]
+    return bars
+
+
+def test_watchlist_returns_rows_for_universe_bot(client, monkeypatch):
+    from backend.bots import routes_helpers
+    provider = _WatchlistFakeProvider(
+        chains={"NVDA": _wl_chain("NVDA", 140.0)},
+        history={"NVDA": _wl_history()},
+    )
+    monkeypatch.setattr(routes_helpers, "build_live_chain_provider", lambda: provider)
+    r = client.get("/api/spreadworks/bots/undertow/watchlist")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["bot"] == "undertow"
+    assert d["mode"] == "debit"
+    assert isinstance(d["universe"], list) and "NVDA" in d["universe"]
+    assert len(d["rows"]) == len(d["universe"])
+    by_ticker = {row["ticker"]: row for row in d["rows"]}
+    assert by_ticker["NVDA"]["status"] == "SIGNAL"
+    assert by_ticker["NVDA"]["candidate"]["kind"] == "bull_call_spread"
+    assert by_ticker["SPY"]["status"] == "WATCHING"
+
+
+def test_watchlist_400_for_non_universe_bot(client):
+    r = client.get("/api/spreadworks/bots/flow/watchlist")
+    assert r.status_code == 400
+
+
+def test_watchlist_404_for_unknown_bot(client):
+    r = client.get("/api/spreadworks/bots/notabot/watchlist")
+    assert r.status_code == 404

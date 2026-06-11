@@ -1,7 +1,7 @@
 """Shared dip/rip setup detection tests."""
 from __future__ import annotations
 from datetime import date, timedelta
-from backend.bots.strategies.setups import detect_setup, DEFAULT_SETUP_PARAMS
+from backend.bots.strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 
 
 def _hist(closes_highs_lows):
@@ -55,3 +55,36 @@ def test_no_setup_when_shallow():
     s = detect_setup(spot=147.0, history=_dip_history(), today=date(2026, 6, 10),
                      params=_p(), diag=diag)
     assert s is None and "no_setup" in diag[0]
+
+
+def test_compute_indicators_returns_dip_rip_rsi_sma():
+    # 36 flat-rising days then a spike-high and 3 down days (same shape the
+    # scanner tests use): ref_high=150, spot below it -> positive dip_pct.
+    bars = []
+    base = date(2026, 4, 1)
+    for i in range(36):
+        p = 101 + i
+        bars.append({"date": (base + timedelta(days=i)).isoformat(),
+                     "open": p, "high": p, "low": p, "close": p})
+    bars += [
+        {"date": (base + timedelta(days=36)).isoformat(), "open": 144, "high": 150, "low": 143, "close": 145},
+        {"date": (base + timedelta(days=37)).isoformat(), "open": 145, "high": 146, "low": 142, "close": 143},
+        {"date": (base + timedelta(days=38)).isoformat(), "open": 143, "high": 143, "low": 140, "close": 141},
+        {"date": (base + timedelta(days=39)).isoformat(), "open": 141, "high": 141, "low": 139, "close": 140},
+    ]
+    ind = compute_indicators(spot=140.0, history=bars,
+                             today=date(2026, 6, 10),
+                             params=DEFAULT_SETUP_PARAMS)
+    assert ind is not None
+    assert ind["ref_high"] == 150.0
+    assert round(ind["dip_pct"], 4) == round((150.0 - 140.0) / 150.0, 4)
+    # rip_pct = (spot - ref_low)/ref_low, clamped to >= 0. Derive from the
+    # returned ref_low (the min low of the last 5 bars) rather than hardcoding.
+    assert round(ind["rip_pct"], 4) == round((140.0 - ind["ref_low"]) / ind["ref_low"], 4)
+    assert ind["rsi"] is not None
+    assert ind["sma"] is not None
+
+
+def test_compute_indicators_insufficient_history_returns_none():
+    assert compute_indicators(spot=100.0, history=[], today=date(2026, 6, 10),
+                              params=DEFAULT_SETUP_PARAMS) is None
