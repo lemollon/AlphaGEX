@@ -3,6 +3,7 @@ import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute, customerTransaction } from '@/lib/customers-db'
+import { syncBrokerageConnectionToAttio } from '@/lib/attio'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -18,6 +19,11 @@ interface UserRow {
   id: string
   snaptrade_user_id: string | null
   snaptrade_user_secret: string | null
+  email: string
+  first_name: string
+  last_name: string
+  phone: string
+  state: string | null
 }
 
 export async function GET(req: NextRequest) {
@@ -32,7 +38,9 @@ export async function GET(req: NextRequest) {
 
   try {
     const rows = await customerQuery<UserRow>(
-      `SELECT id, snaptrade_user_id, snaptrade_user_secret FROM users WHERE id = $1 LIMIT 1`,
+      `SELECT id, snaptrade_user_id, snaptrade_user_secret,
+              email, first_name, last_name, phone, state
+         FROM users WHERE id = $1 LIMIT 1`,
       [uid],
     )
     const user = rows[0]
@@ -78,6 +86,40 @@ export async function GET(req: NextRequest) {
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECTED', $2)`,
       [user.id, JSON.stringify({ accounts: accounts.length })],
     ).catch(() => {})
+
+    // Mirror the brokerage-connection milestone into Attio CRM (best-effort; never blocks
+    // the redirect). Awaited like the signup sync so it runs before the handler returns.
+    try {
+      const first = accounts[0]
+      const attioRes = await syncBrokerageConnectionToAttio(
+        {
+          firstName: user.first_name,
+          lastName: user.last_name,
+          email: user.email,
+          phone: user.phone,
+          state: user.state || undefined,
+        },
+        {
+          brokerage: first?.institution_name,
+          accountName: first?.name ?? first?.institution_name,
+          accountCount: accounts.length,
+          connectedAt: new Date().toISOString(),
+        },
+      )
+      if (attioRes.synced) {
+        await customerExecute(
+          `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'ATTIO_BROKERAGE_SYNCED', $2)`,
+          [user.id, JSON.stringify({ record_id: attioRes.recordId ?? null })],
+        ).catch(() => {})
+      } else if (!attioRes.skipped) {
+        await customerExecute(
+          `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'ATTIO_BROKERAGE_SYNC_FAILED', $2)`,
+          [user.id, JSON.stringify({ error: (attioRes.error ?? '').slice(0, 200) })],
+        ).catch(() => {})
+      }
+    } catch (e) {
+      console.error('[brokerage/callback] attio sync threw:', e)
+    }
 
     return NextResponse.redirect(complete)
   } catch (e) {
