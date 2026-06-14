@@ -4,6 +4,7 @@ import { hasValidServiceToken } from '@/lib/auth/session'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
 import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
+import { sendTradeApprovalEmail } from '@/lib/email'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -113,7 +114,22 @@ export async function POST(req: NextRequest) {
       ],
     )
 
-    // TODO(notify): email/push the customer that a trade is awaiting approval (fast-follow).
+    // Notify the customer that a trade awaits approval (best-effort; never blocks the response).
+    customerQuery<{ email: string; first_name: string }>(
+      `SELECT email, first_name FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    )
+      .then(([u]) => {
+        if (!u?.email) return
+        return sendTradeApprovalEmail({
+          to: u.email,
+          firstName: u.first_name,
+          summary: `${action} ${units} ${symbol} (${orderType})`,
+          approveUrl: `${req.nextUrl.origin}/account/trades`,
+        })
+      })
+      .catch((e) => console.error('[trades:create] notify failed:', e))
+
     await customerQuery(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'TRADE_APPROVAL_CREATED', $2)`,
       [userId, JSON.stringify({ approvalId: inserted[0].id, symbol, action, units, bot })],

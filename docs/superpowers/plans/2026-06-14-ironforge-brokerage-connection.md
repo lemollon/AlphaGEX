@@ -69,8 +69,9 @@ The compliance-critical surface. Order placement lives in exactly ONE route, gat
 
 - [x] **`POST /api/brokerage/trades`** (internal, **service-token** guarded via `hasValidServiceToken`) —
       resolves ticker → universal symbol (`symbolSearchUserAccount`), runs `getOrderImpact` for the
-      preview + `tradeId`, inserts a `pending` row with a 5-min TTL, audits `TRADE_APPROVAL_CREATED`.
-      (Customer notify = TODO fast-follow.) The seam the scanner / AlphaGEX calls.
+      preview + `tradeId`, inserts a `pending` row with a 5-min TTL, audits `TRADE_APPROVAL_CREATED`,
+      and **notifies the customer by email** (`sendTradeApprovalEmail`, best-effort). The seam the
+      scanner / AlphaGEX calls.
 - [x] **`GET /api/brokerage/trades`** — customer-session list of recent approvals.
 - [x] **`POST /api/brokerage/trades/[id]/approve`** — ownership-checked; `decideApproval()` gate;
       on `'place'` → `placeOrder({ tradeId })` → `placed`(+order id)/`failed`(+error); `'expired'`/`'invalid'`
@@ -96,6 +97,16 @@ The compliance-critical surface. Order placement lives in exactly ONE route, gat
       hit **Confirm**. No charges until production access is explicitly enabled. Do NOT submit until the
       §2 compliance gate is cleared (SnapTrade trade-enabled review needs a working app to inspect + the
       per-trade-approval flow live; securities-counsel sign-off).
+
+## Notifications ✅ DONE (2026-06-14)
+- [x] `sendTradeApprovalEmail` (Resend, mirrors verification/reset emails) + wired into the create
+      route (best-effort, non-blocking). Unit-tested (`trade-approval-email.test.ts`, 3 tests).
+
+## Local end-to-end test
+- See **`2026-06-14-ironforge-brokerage-local-e2e-runbook.md`** — full connect → approve → place
+  loop against SnapTrade sandbox. Requires a throwaway Postgres + a PAPER broker (e.g. Alpaca Paper)
+  in the portal. Not runnable from CI (needs human-in-portal + a reachable DB); `placeOrder` is the
+  one path verified only by this runbook.
 
 ## Out of scope (fast-follow)
 Live bot-signal → approval fan-out wiring; hands-off auto-trading (RIA); billing step; multi-account UX;
