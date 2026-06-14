@@ -23,6 +23,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     pathname === '/ops/login' ||
     pathname === '/forgot-password' ||
     pathname === '/reset-password' ||
+    pathname === '/account/trades' ||
     pathname.startsWith('/onboarding')
 
   return (

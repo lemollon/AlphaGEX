@@ -62,17 +62,26 @@ configured in the SnapTrade dashboard.
 **Free-tier limits (sufficient for all of Phase 2/3 dev):** up to 5 connected users (sandbox), testing only.
 **Webhook already configured** in SnapTrade: `https://ironforge.trade/api/brokerage/webhook`.
 
-## Phase 3 — Per-trade approval flow (the compliance-critical surface)
+## Phase 3 — Per-trade approval flow ✅ DONE (built + verified 2026-06-14)
 
-- [ ] **`POST /api/brokerage/trades`** (internal, service-token guarded) — create a pending
-      `trade_approvals` row from a bot signal: `getOrderImpact` → store preview + `snaptrade_trade_id`,
-      set `expires_at`, notify customer. The seam the scanner / AlphaGEX calls.
-- [ ] **`GET /api/brokerage/trades`** — customer's pending + recent approvals.
-- [ ] **`POST /api/brokerage/trades/[id]/approve`** — gate with `decideApproval()`; on `'place'` call
-      `placeOrder({ tradeId })` → `placed`/`failed`; on `'expired'` mark expired + refuse. Audit.
-- [ ] **`POST /api/brokerage/trades/[id]/decline`** — mark `declined`.
-- [ ] **Approvals UI** — `/account/trades` (or dashboard panel): preview (symbol/action/units/est. fees)
-      + Approve / Decline. Every real order passes through an explicit human Approve here.
+The compliance-critical surface. Order placement lives in exactly ONE route, gated by
+`decideApproval()`; nothing places without an explicit, unexpired customer approval.
+
+- [x] **`POST /api/brokerage/trades`** (internal, **service-token** guarded via `hasValidServiceToken`) —
+      resolves ticker → universal symbol (`symbolSearchUserAccount`), runs `getOrderImpact` for the
+      preview + `tradeId`, inserts a `pending` row with a 5-min TTL, audits `TRADE_APPROVAL_CREATED`.
+      (Customer notify = TODO fast-follow.) The seam the scanner / AlphaGEX calls.
+- [x] **`GET /api/brokerage/trades`** — customer-session list of recent approvals.
+- [x] **`POST /api/brokerage/trades/[id]/approve`** — ownership-checked; `decideApproval()` gate;
+      on `'place'` → `placeOrder({ tradeId })` → `placed`(+order id)/`failed`(+error); `'expired'`/`'invalid'`
+      refuse. Audits `TRADE_PLACED`.
+- [x] **`POST /api/brokerage/trades/[id]/decline`** — marks `declined` (idempotent). Audits `TRADE_DECLINED`.
+- [x] **Approvals UI** — `/account/trades` + client: lists pending approvals with Approve/Decline;
+      middleware-open page, data API self-guards the customer session (renders sign-in prompt if 401).
+- [x] Helper `src/lib/brokerage/snaptrade-user.ts` (load + decrypt creds); access.ts now prefix-allows
+      `/api/brokerage/*` (self-guarded) + the `/account/trades` page; Shell standalone for it.
+- [x] **Verified:** `npx next build` green (all 3 trade routes + page in the table); 16/16 unit tests pass.
+      Runtime (place order) needs a sandbox-connected account → exercise during the live smoke test.
 
 ## Phase 4 — Operator + go-live (gated by §2 compliance gate)
 
