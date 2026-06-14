@@ -1,12 +1,14 @@
-import type { SessionOptions, IronSession } from 'iron-session'
-import { getIronSession } from 'iron-session'
-import { cookies } from 'next/headers'
+import type { SessionOptions } from 'iron-session'
 
 /**
  * Customer session — DISTINCT from the operator session (src/lib/auth/session.ts).
  * The operator gate reads only `ironforge_session`; the customer gate reads only
  * `ironforge_customer`. They are never cross-honored, so a customer session can
  * never satisfy operator gating. (Sub-project: customer auth, Approach A.)
+ *
+ * Edge-safe by design: this module is imported by middleware, so it must NOT pull
+ * in `next/headers` (server-only). The Node-runtime accessor `getCustomerSession()`
+ * lives in `customer-session-server.ts`. Mirrors the operator `session.ts` split.
  */
 export interface CustomerSessionData {
   customerId?: string // users.id (uuid) in the ironforge-customers DB
@@ -27,9 +29,4 @@ export const customerSessionOptions: SessionOptions = {
     maxAge: 60 * 60 * 24 * 30, // 30 days
     path: '/',
   },
-}
-
-/** Route-handler / server-component accessor (Node runtime only). */
-export async function getCustomerSession(): Promise<IronSession<CustomerSessionData>> {
-  return getIronSession<CustomerSessionData>(cookies(), customerSessionOptions)
 }

@@ -3,7 +3,7 @@ import { verifyPassword } from '@/lib/auth/password'
 import { normalizeEmail } from '@/lib/signup-validation'
 import { classifyLoginAttempt, TIMING_DUMMY_HASH } from '@/lib/auth/customer-auth'
 import { nextRouteForOnboarding } from '@/lib/auth/onboarding-route'
-import { getCustomerSession } from '@/lib/auth/customer-session'
+import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 
 export const runtime = 'nodejs'

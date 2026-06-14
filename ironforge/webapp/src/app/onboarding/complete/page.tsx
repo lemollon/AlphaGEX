@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
-import { getCustomerSession } from '@/lib/auth/customer-session'
+import { getCustomerSession } from '@/lib/auth/customer-session-server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

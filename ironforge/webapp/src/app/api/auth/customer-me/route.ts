@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getCustomerSession } from '@/lib/auth/customer-session'
+import { getCustomerSession } from '@/lib/auth/customer-session-server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
