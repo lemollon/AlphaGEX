@@ -18,6 +18,11 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
+  // Brokerage: webhook is server-to-server (secret-verified); accounts/connection
+  // self-enforce the customer session in-route (middleware only knows the operator session).
+  '/api/brokerage/webhook',
+  '/api/brokerage/accounts',
+  '/api/brokerage/connection',
 ])
 
 export function isPublicPath(pathname: string): boolean {
