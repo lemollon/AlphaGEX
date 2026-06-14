@@ -4,6 +4,8 @@ import { hasValidServiceToken } from '@/lib/auth/session'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
 import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
+import { isTradierOAuthConfigured, previewOrder as tradierPreviewOrder } from '@/lib/tradier-oauth'
+import { decryptSecret } from '@/lib/crypto/secret-box'
 import { sendTradeApprovalEmail } from '@/lib/email'
 
 export const runtime = 'nodejs'
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest) {
   if (!hasValidServiceToken(req.headers.get('x-ironforge-service'))) {
     return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
   }
-  if (!isSnapTradeConfigured() || !isCustomersDbConfigured()) {
+  if (!isCustomersDbConfigured()) {
     return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 })
   }
 
@@ -68,49 +70,79 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const creds = await loadSnapTradeCreds(userId)
-    if (!creds) return NextResponse.json({ ok: false, error: 'Customer has no connected brokerage.' }, { status: 409 })
+    // Which provider backs this customer's account? Determines how we preview + later place.
+    const connRows = await customerQuery<{ provider: string }>(
+      `SELECT provider FROM brokerage_connections
+        WHERE user_id = $1 AND account_id = $2 AND status = 'active' LIMIT 1`,
+      [userId, accountId],
+    )
+    const provider = connRows[0]?.provider
+    if (!provider) {
+      return NextResponse.json({ ok: false, error: 'Customer has no active connection for this account.' }, { status: 409 })
+    }
 
-    const snaptrade = getSnapTrade()
+    let snaptradeTradeId: string | null = null
+    let previewJson: unknown = null
 
-    // Resolve ticker → universal symbol for this account.
-    const search = await snaptrade.referenceData.symbolSearchUserAccount({
-      userId: creds.snaptradeUserId,
-      userSecret: creds.userSecret,
-      accountId,
-      substring: symbol,
-    })
-    const matches = Array.isArray(search.data) ? search.data : []
-    const sym = matches.find((s) => s.symbol === symbol || s.raw_symbol === symbol) ?? matches[0]
-    if (!sym) return NextResponse.json({ ok: false, error: `Symbol ${symbol} not tradable on this account.` }, { status: 422 })
-
-    // Preview (fees/impact) + a validated tradeId we can later place.
-    const impact = await snaptrade.trading.getOrderImpact({
-      userId: creds.snaptradeUserId,
-      userSecret: creds.userSecret,
-      account_id: accountId,
-      action,
-      universal_symbol_id: sym.id,
-      order_type: orderType,
-      time_in_force: timeInForce,
-      units,
-    })
-    const tradeId = impact.data.trade?.id
-    if (!tradeId) return NextResponse.json({ ok: false, error: 'Could not price this order.' }, { status: 502 })
+    if (provider === 'snaptrade') {
+      if (!isSnapTradeConfigured()) return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 })
+      const creds = await loadSnapTradeCreds(userId)
+      if (!creds) return NextResponse.json({ ok: false, error: 'Customer has no connected brokerage.' }, { status: 409 })
+      const snaptrade = getSnapTrade()
+      const search = await snaptrade.referenceData.symbolSearchUserAccount({
+        userId: creds.snaptradeUserId,
+        userSecret: creds.userSecret,
+        accountId,
+        substring: symbol,
+      })
+      const matches = Array.isArray(search.data) ? search.data : []
+      const sym = matches.find((s) => s.symbol === symbol || s.raw_symbol === symbol) ?? matches[0]
+      if (!sym) return NextResponse.json({ ok: false, error: `Symbol ${symbol} not tradable on this account.` }, { status: 422 })
+      const impact = await snaptrade.trading.getOrderImpact({
+        userId: creds.snaptradeUserId,
+        userSecret: creds.userSecret,
+        account_id: accountId,
+        action,
+        universal_symbol_id: sym.id,
+        order_type: orderType,
+        time_in_force: timeInForce,
+        units,
+      })
+      snaptradeTradeId = impact.data.trade?.id ?? null
+      if (!snaptradeTradeId) return NextResponse.json({ ok: false, error: 'Could not price this order.' }, { status: 502 })
+      previewJson = {
+        impacts: impact.data.trade_impacts ?? null,
+        remainingBalance: impact.data.combined_remaining_balance ?? null,
+      }
+    } else if (provider === 'tradier') {
+      if (!isTradierOAuthConfigured()) return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 })
+      const trows = await customerQuery<{ tradier_access_token: string | null }>(
+        `SELECT tradier_access_token FROM users WHERE id = $1 LIMIT 1`,
+        [userId],
+      )
+      const enc = trows[0]?.tradier_access_token
+      if (!enc) return NextResponse.json({ ok: false, error: 'Customer has no connected brokerage.' }, { status: 409 })
+      previewJson = await tradierPreviewOrder(decryptSecret(enc), accountId, {
+        symbol,
+        side: action === 'SELL' ? 'sell' : 'buy',
+        quantity: units,
+        type: orderType.toLowerCase() === 'limit' ? 'limit' : 'market',
+        duration: 'day',
+      })
+    } else {
+      return NextResponse.json({ ok: false, error: 'Unsupported brokerage provider.' }, { status: 409 })
+    }
 
     const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS).toISOString()
     const inserted = await customerQuery<{ id: string }>(
       `INSERT INTO trade_approvals
-         (user_id, account_id, bot, symbol, action, units, order_type, preview, snaptrade_trade_id, status, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',$10)
+         (user_id, account_id, provider, bot, symbol, action, units, order_type, preview, snaptrade_trade_id, status, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11)
        RETURNING id`,
       [
-        userId, accountId, bot, symbol, action, units, orderType,
-        JSON.stringify({
-          impacts: impact.data.trade_impacts ?? null,
-          remainingBalance: impact.data.combined_remaining_balance ?? null,
-        }),
-        tradeId, expiresAt,
+        userId, accountId, provider, bot, symbol, action, units, orderType,
+        JSON.stringify(previewJson),
+        snaptradeTradeId, expiresAt,
       ],
     )
 

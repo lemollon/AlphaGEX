@@ -8,20 +8,21 @@ export default function BrokerageConnectClient() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function connect() {
+  // Both providers return { redirectURI } and we hand off to the broker's hosted flow.
+  // SnapTrade covers Tastytrade/Webull/E*Trade/etc.; Tradier has its own OAuth.
+  async function start(path: string) {
     if (busy) return
     setBusy(true)
     setError(null)
     try {
-      const res = await fetch('/api/onboarding/brokerage/connect', { method: 'POST' })
+      const res = await fetch(path, { method: 'POST' })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.redirectURI) {
-        // Hand off to SnapTrade's hosted Connection Portal (broker login / 2FA / OTP live there).
         window.location.href = data.redirectURI
         return
       }
       if (res.status === 503) {
-        setError('Brokerage connection isn’t available right now. You can skip and connect later.')
+        setError('That connection isn’t available right now. You can try the other option or skip.')
       } else {
         setError(data.error || 'Could not start the connection. Please try again.')
       }
@@ -43,11 +44,18 @@ export default function BrokerageConnectClient() {
         <p className="rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</p>
       )}
       <button
-        onClick={connect}
+        onClick={() => start('/api/onboarding/brokerage/connect')}
         disabled={busy}
         className="flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        {busy ? 'Starting…' : 'Connect your brokerage'}
+        {busy ? 'Starting…' : 'Connect a brokerage (Tastytrade, Webull, E*Trade…)'}
+      </button>
+      <button
+        onClick={() => start('/api/onboarding/brokerage/tradier/connect')}
+        disabled={busy}
+        className="flex w-full items-center justify-center rounded-md border border-amber-600/60 px-4 py-3 text-sm font-semibold text-amber-400 transition hover:bg-amber-600/10 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? 'Starting…' : 'Connect Tradier'}
       </button>
       <button
         onClick={skip}

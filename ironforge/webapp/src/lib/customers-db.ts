@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS trade_approvals (
   decided_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_trade_approvals_user_status ON trade_approvals(user_id, status);
+
+-- Multi-provider brokerage support: SnapTrade (default) or direct Tradier OAuth.
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'snaptrade';
+ALTER TABLE trade_approvals       ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'snaptrade';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_access_token TEXT;       -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_refresh_token TEXT;      -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_token_expires_at TIMESTAMPTZ;
 `
 
 let _ensured: Promise<void> | null = null
