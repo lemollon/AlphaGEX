@@ -1713,24 +1713,26 @@ class TradingVolatilityAPI:
                 if 'error' not in strikes_resp:
                     strikes_data = strikes_resp.get('data', strikes_resp)
                     points = strikes_data.get('points', []) or []
-                    max_call_gex = 0.0
-                    max_put_gex = 0.0
+                    walls_input = []
                     for p in points:
                         if not isinstance(p, dict):
                             continue
                         s = float(p.get('strike', 0) or 0)
                         c_raw = float(p.get('call', 0) or 0)
                         pu_raw = float(p.get('put', 0) or 0)
-                        c = abs(c_raw)
-                        pu = abs(pu_raw)
                         total_call_gex += c_raw
                         total_put_gex += pu_raw
-                        if c > max_call_gex:
-                            max_call_gex = c
-                            call_wall = s
-                        if pu > max_put_gex:
-                            max_put_gex = pu
-                            put_wall = s
+                        walls_input.append({
+                            'strike': s,
+                            'call_gamma': c_raw,
+                            'put_gamma': pu_raw,
+                        })
+                    # Spot-side-constrained walls (call >= spot, put <= spot,
+                    # guaranteed distinct) via the shared helper — same logic as
+                    # the Tradier paths so all sources agree on wall semantics.
+                    if walls_input and spot_price > 0:
+                        from data.gex_calculator import compute_walls
+                        call_wall, put_wall = compute_walls(walls_input, spot_price)
                     if call_wall and put_wall:
                         print(f"✅ {symbol} walls (v2): Call ${call_wall:.2f}, Put ${put_wall:.2f}")
             except Exception as wall_err:
@@ -1953,18 +1955,18 @@ class TradingVolatilityAPI:
                 strikes_data_filtered = strikes_data
                 min_strike, max_strike = 0, 0
 
-            # Recompute walls within filtered range
-            max_call_filt = 0.0
-            max_put_filt = 0.0
-            call_wall_filt = call_wall_all
-            put_wall_filt = put_wall_all
-            for s in strikes_data_filtered:
-                if s['call_gamma'] > max_call_filt:
-                    max_call_filt = s['call_gamma']
-                    call_wall_filt = s['strike']
-                if s['put_gamma'] > max_put_filt:
-                    max_put_filt = s['put_gamma']
-                    put_wall_filt = s['strike']
+            # Recompute walls within filtered range via the shared,
+            # spot-side-constrained helper (call >= spot, put <= spot,
+            # guaranteed distinct). On empty/sparse filtered data fall back to
+            # the unconstrained full-range walls rather than collapsing to spot.
+            from data.gex_calculator import compute_walls
+            if strikes_data_filtered and spot_price > 0:
+                call_wall_filt, put_wall_filt = compute_walls(strikes_data_filtered, spot_price)
+            elif strikes_data and spot_price > 0:
+                call_wall_filt, put_wall_filt = compute_walls(strikes_data, spot_price)
+            else:
+                call_wall_filt = call_wall_all
+                put_wall_filt = put_wall_all
 
             # Flip point: prefer v2 totals.gex_flip_price; otherwise compute zero-crossing.
             flip_point = flip_from_totals

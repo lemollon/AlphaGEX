@@ -35,6 +35,110 @@ DEFAULT_IV_FOR_FILTERING = 0.20
 
 
 # =============================================================================
+# SHARED WALL COMPUTATION
+# =============================================================================
+
+def compute_walls(
+    strikes_with_gamma: List[Dict],
+    spot: float
+) -> Tuple[float, float]:
+    """
+    Compute call_wall and put_wall with a spot-side constraint.
+
+    This is the single shared implementation used by every GEX path so that
+    walls are computed identically regardless of data source. It mirrors the
+    constrained logic in calculate_gex_from_chain (call wall at/above spot,
+    put wall at/below spot) and GUARANTEES call_wall != put_wall so the API
+    never returns a zero-width band.
+
+    Logic:
+      - call_wall = strike with max call-gamma AMONG strikes >= spot.
+        Fallback (no call gamma at/above spot, or no strikes at/above spot):
+        the nearest strike strictly above spot.
+      - put_wall  = strike with max put-gamma  AMONG strikes <= spot.
+        Fallback (no put gamma at/below spot, or no strikes at/below spot):
+        the nearest strike strictly below spot.
+      - Collision guard: if call_wall == put_wall (e.g. sparse/single-strike
+        data), nudge each to the next available strike on its correct side.
+        If no other strike exists, synthesize a one-cent offset so the band
+        is never zero-width.
+
+    Args:
+        strikes_with_gamma: list of dicts with 'strike', 'call_gamma',
+            'put_gamma' (gammas are treated by magnitude — sign-agnostic).
+        spot: current spot price.
+
+    Returns:
+        (call_wall, put_wall)
+    """
+    # Normalize and sort the strike universe.
+    points = []
+    for s in strikes_with_gamma or []:
+        try:
+            strike = float(s.get('strike', 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if strike <= 0:
+            continue
+        call_g = abs(float(s.get('call_gamma', 0) or 0))
+        put_g = abs(float(s.get('put_gamma', 0) or 0))
+        points.append((strike, call_g, put_g))
+
+    if not points:
+        return spot, spot
+
+    points.sort(key=lambda p: p[0])
+    all_strikes = [p[0] for p in points]
+
+    # ----- Call wall: argmax(call_gamma) over strikes >= spot -----
+    call_wall = None
+    max_call_g = -1.0
+    for strike, call_g, _ in points:
+        if strike >= spot and call_g > max_call_g:
+            max_call_g = call_g
+            call_wall = strike
+    if call_wall is None or max_call_g <= 0:
+        # Fallback: nearest strike strictly above spot (else overall argmax call).
+        above = [s for s in all_strikes if s > spot]
+        if above:
+            call_wall = min(above)
+        else:
+            call_wall = max(points, key=lambda p: p[1])[0]
+
+    # ----- Put wall: argmax(put_gamma) over strikes <= spot -----
+    put_wall = None
+    max_put_g = -1.0
+    for strike, _, put_g in points:
+        if strike <= spot and put_g > max_put_g:
+            max_put_g = put_g
+            put_wall = strike
+    if put_wall is None or max_put_g <= 0:
+        # Fallback: nearest strike strictly below spot (else overall argmax put).
+        below = [s for s in all_strikes if s < spot]
+        if below:
+            put_wall = max(below)
+        else:
+            put_wall = max(points, key=lambda p: p[2])[0]
+
+    # ----- Collision guard: never return call_wall == put_wall -----
+    if call_wall == put_wall:
+        # Try to push call_wall to the next strike strictly above; failing that
+        # push put_wall to the next strike strictly below. As a last resort
+        # (single-strike chain) synthesize a one-cent band around the strike.
+        above = [s for s in all_strikes if s > call_wall]
+        below = [s for s in all_strikes if s < put_wall]
+        if above:
+            call_wall = min(above)
+        elif below:
+            put_wall = max(below)
+        else:
+            call_wall = call_wall + 0.01
+            put_wall = put_wall - 0.01
+
+    return call_wall, put_wall
+
+
+# =============================================================================
 # OPTIONS DATA VALIDATION
 # =============================================================================
 
@@ -174,25 +278,17 @@ def filter_strikes_to_7day_range(
         if min_strike <= s.get('strike', 0) <= max_strike
     ]
 
-    # Recalculate call_wall and put_wall from filtered strikes
-    # Call wall = strike with highest call gamma
-    # Put wall = strike with highest put gamma (absolute value)
-    call_wall = spot_price  # Default fallback
-    put_wall = spot_price   # Default fallback
-    max_call_gamma = 0
-    max_put_gamma = 0
-
-    for strike_data in filtered_array:
-        call_g = abs(strike_data.get('call_gamma', 0))
-        put_g = abs(strike_data.get('put_gamma', 0))
-
-        if call_g > max_call_gamma:
-            max_call_gamma = call_g
-            call_wall = strike_data['strike']
-
-        if put_g > max_put_gamma:
-            max_put_gamma = put_g
-            put_wall = strike_data['strike']
+    # Recalculate call_wall and put_wall from filtered strikes using the shared,
+    # spot-side-constrained helper (call wall >= spot, put wall <= spot, and
+    # guaranteed call_wall != put_wall). On empty/sparse filtered data, fall
+    # back to the UNCONSTRAINED walls (computed over the full gamma_array)
+    # rather than collapsing both to spot_price.
+    if filtered_array:
+        call_wall, put_wall = compute_walls(filtered_array, spot_price)
+    elif gamma_array:
+        call_wall, put_wall = compute_walls(gamma_array, spot_price)
+    else:
+        call_wall = put_wall = spot_price
 
     logger.debug(f"Strike filtering: {len(gamma_array)} -> {len(filtered_array)} "
                  f"(range: ${min_strike:.2f} to ${max_strike:.2f})")
@@ -252,16 +348,18 @@ def calculate_gex_from_chain(
             timestamp=datetime.now(CENTRAL_TZ)
         )
 
+    # Scale normalization: the raw per-strike dollar-gamma sum
+    # (gamma * OI * 100 * spot^2) is on the PER-$1-move scale (~1e11 for an
+    # index). The canonical scale used everywhere downstream is the
+    # PER-1%-MOVE notional (~1e9, matching TradingVolatility's
+    # gamma_notional_per_1pct_move_usd). Convert at this source boundary by
+    # multiplying by 0.01 (1% of spot move) so every consumer sees one scale.
+    PER_1PCT = 0.01
+
     # Group by strike
     strikes_gex = {}
     total_call_gex = 0
     total_put_gex = 0
-
-    # For wall calculation - track max gamma ABOVE and BELOW spot
-    max_call_gex_above_spot = 0  # Call wall should be at/above spot (resistance)
-    max_put_gex_below_spot = 0   # Put wall should be at/below spot (support)
-    call_wall_strike = spot_price
-    put_wall_strike = spot_price
 
     # For max pain calculation
     call_oi_by_strike = {}
@@ -276,9 +374,9 @@ def calculate_gex_from_chain(
         if strike <= 0 or gamma <= 0 or open_interest <= 0:
             continue
 
-        # GEX = gamma * OI * 100 * spot^2
+        # GEX = gamma * OI * 100 * spot^2, converted to per-1%-move notional.
         # Note: gamma from APIs is usually per-share, so multiply by 100 for per-contract
-        gex_value = gamma * open_interest * contract_multiplier * (spot_price ** 2)
+        gex_value = gamma * open_interest * contract_multiplier * (spot_price ** 2) * PER_1PCT
 
         if strike not in strikes_gex:
             strikes_gex[strike] = {'call_gex': 0, 'put_gex': 0, 'net_gex': 0}
@@ -289,21 +387,11 @@ def calculate_gex_from_chain(
             total_call_gex += gex_value
             call_oi_by_strike[strike] = call_oi_by_strike.get(strike, 0) + open_interest
 
-            # Call Wall = max call gamma AT or ABOVE spot price (resistance level)
-            if strike >= spot_price and gex_value > max_call_gex_above_spot:
-                max_call_gex_above_spot = gex_value
-                call_wall_strike = strike
-
         elif option_type == 'put':
             # Short puts = Short gamma for MM when hedging (negative GEX)
             strikes_gex[strike]['put_gex'] -= gex_value  # Negative for puts
             total_put_gex += gex_value  # Store absolute value
             put_oi_by_strike[strike] = put_oi_by_strike.get(strike, 0) + open_interest
-
-            # Put Wall = max put gamma AT or BELOW spot price (support level)
-            if strike <= spot_price and gex_value > max_put_gex_below_spot:
-                max_put_gex_below_spot = gex_value
-                put_wall_strike = strike
 
     # Calculate net GEX per strike and find flip point
     for strike in strikes_gex:
@@ -315,8 +403,22 @@ def calculate_gex_from_chain(
     # Calculate max pain
     max_pain = calculate_max_pain(call_oi_by_strike, put_oi_by_strike, spot_price)
 
-    # Net GEX is call GEX minus absolute put GEX
-    net_gex = total_call_gex - total_put_gex
+    # Net GEX is the SIGNED PER-STRIKE sum, NOT (total_call - total_put) of two
+    # huge near-equal totals. The difference-of-totals form sign-flips minute to
+    # minute; summing the per-strike signed net (call_gex - |put_gex|) is stable.
+    net_gex = sum(s['net_gex'] for s in strikes_gex.values())
+
+    # Walls via the shared, spot-side-constrained helper (call wall >= spot,
+    # put wall <= spot, guaranteed distinct). Build the gamma view it expects.
+    walls_input = [
+        {
+            'strike': strike,
+            'call_gamma': strikes_gex[strike]['call_gex'],
+            'put_gamma': strikes_gex[strike]['put_gex'],
+        }
+        for strike in strikes_gex
+    ]
+    call_wall_strike, put_wall_strike = compute_walls(walls_input, spot_price)
 
     # Prepare strikes data for detailed view
     strikes_data = []
