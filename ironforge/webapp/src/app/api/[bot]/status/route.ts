@@ -292,6 +292,31 @@ export async function GET(
         tradierBalanceFetchError = err instanceof Error ? err.message : String(err)
         console.warn(`[status] ${bot}: production balance fetch failed (${tradierBalanceFetchError}) — falling back to paper_account`)
       }
+
+      // Pause-independent balance DISPLAY. getProductionAccountsForBot() returns []
+      // when production trading is PAUSED (or its allow-list/creds don't resolve),
+      // which left the override empty and fell all the way back to the stale DB
+      // ledger — showing a wrong (even negative) balance while the real broker
+      // account was fine. The broker balance is already fetched in sandboxBalances
+      // (not pause-gated), so use it for display. Pausing must stop TRADING, not
+      // blank the balance. Only kicks in when the primary override didn't succeed.
+      if (accountSource !== 'tradier') {
+        const prodBals = sandboxBalances.filter(
+          (s) => s.account_type === 'production' && s.total_equity != null,
+        )
+        if (prodBals.length > 0) {
+          const eq = prodBals.reduce((a, s) => a + num(s.total_equity), 0)
+          const bp = prodBals.reduce((a, s) => a + num(s.option_buying_power), 0)
+          balance = Math.round(eq * 100) / 100
+          buyingPower = Math.round(bp * 100) / 100
+          liveCollateral = Math.round(Math.max(0, eq - bp) * 100) / 100
+          tradierOpenPlOverride = Math.round(prodBals.reduce((a, s) => a + num(s.unrealized_pnl), 0) * 100) / 100
+          // Back-compute starting_capital so balance = starting_capital + realizedPnl.
+          startingCapital = Math.round((balance - realizedPnl) * 100) / 100
+          accountSource = 'tradier'
+          tradierBalanceFetchError = null
+        }
+      }
     }
 
     // FLAME sandbox mirror: balance/BP/P&L come from the Tradier User sandbox
