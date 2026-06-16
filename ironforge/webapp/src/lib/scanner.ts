@@ -65,8 +65,8 @@ import {
   type SandboxCloseInfo,
   type IcMtmResult,
 } from './tradier'
-import { diffVolAlerts, isAlertingKey } from './volAlerts'
-import { ensureVolAlertsTable } from './volAlerts.server'
+import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, type SignalStreak } from './volAlerts'
+import { ensureVolAlertsTable, upsertRegimeDaily } from './volAlerts.server'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
@@ -5532,6 +5532,9 @@ const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
 let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
 let _attioRetryRunning = false
 let _volAlertsRunning = false
+// Per-signal active/inactive streaks for alert debounce (in-memory; resets on
+// restart, which at worst costs one debounce window). Kills the 5-min flap.
+let _volSignalStreaks: Record<string, SignalStreak> = {}
 
 const ALPHAGEX_API_BASE = (
   process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com'
@@ -5583,13 +5586,26 @@ async function checkVolAlerts(): Promise<void> {
     )
     const openKeys = openRows.map((r) => r.signal_key)
 
-    const { toOpen, toResolve } = diffVolAlerts(activeKeys, openKeys)
+    // Debounce: require sustained active/inactive before open/resolve so a single
+    // 5-min blip can no longer flap an alert open-then-resolved.
+    _volSignalStreaks = stepStreaks(_volSignalStreaks, activeKeys, ALERTING_SIGNAL_KEYS)
+    const { toOpen, toResolve } = debouncedTransitions(_volSignalStreaks, openKeys)
 
     const headline: string | null = report?.action?.headline ?? null
     const message: string | null = report?.action?.plain ?? report?.summary ?? null
     const regimeLabel: string | null = report?.regime_label ?? null
     const vix: number | null = report?.inputs?.vix ?? null
     const vvix: number | null = report?.inputs?.vvix ?? null
+    const vix3m: number | null = report?.inputs?.vix3m ?? null
+
+    // Persist today's latched regime read + daily hedge decision (sticky) for the
+    // stable per-day read and the backtest record. Best-effort — never blocks alerts.
+    try {
+      const snap = { regimeLabel, activeSignals: activeKeys, vix, vix3m, vvix }
+      await upsertRegimeDaily(snap, hedgeFlagged(snap))
+    } catch (e) {
+      console.warn(`[scanner] regime_daily upsert failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
 
     for (const key of toOpen) {
       const direction: string | null = signals[key]?.direction ?? null
