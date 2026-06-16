@@ -160,6 +160,54 @@ interface CalibrationResponse {
   parameters: Record<string, CalibrationParam>
 }
 
+interface WeeklyEntryBucket {
+  attempts: number
+  filled: number
+  blocked: number
+}
+
+interface WeeklyExitTriggerBucket {
+  count: number
+  total_pnl: number
+  wins: number
+  losses: number
+  avg_pnl: number
+}
+
+interface WeeklySummary {
+  window_days: number
+  window_start_utc: string
+  window_end_utc: string
+  entries: {
+    attempts: number
+    filled: number
+    blocked: number
+    fill_rate: number | null
+    by_instance: Record<string, WeeklyEntryBucket>
+  }
+  exits: {
+    closed: number
+    total_pnl: number
+    avg_pnl_per_trade: number
+    win_rate: number | null
+    wins: number
+    losses: number
+    by_trigger: Record<string, WeeklyExitTriggerBucket>
+  }
+  gate_failures: {
+    total: number
+    top_blocker: string | null
+    by_gate: Record<string, number>
+    by_instance_x_gate: Record<string, Record<string, number>>
+    sample_reasons: Record<string, string>
+  }
+  open_positions: {
+    total: number
+    platform_cap: number
+    by_instance: Record<string, number>
+  }
+}
+
 // ============================================================================
 // FORMATTERS
 // ============================================================================
@@ -202,6 +250,7 @@ export default function GoliathContent() {
   const [gates, setGates] = useState<GateFailure[]>([])
   const [kills, setKills] = useState<KillState | null>(null)
   const [calibration, setCalibration] = useState<CalibrationResponse | null>(null)
+  const [weekly, setWeekly] = useState<WeeklySummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -213,7 +262,7 @@ export default function GoliathContent() {
 
     const [
       pStatus, pos, eq, iEq, perfData, auditData,
-      gatesData, killData, calibData,
+      gatesData, killData, calibData, weeklyData,
     ] = await Promise.all([
       fetchApi<PlatformStatus>('/api/goliath/status'),
       fetchApi<{ positions: Position[] }>('/api/goliath/positions'),
@@ -224,6 +273,7 @@ export default function GoliathContent() {
       fetchApi<{ failures: GateFailure[] }>('/api/goliath/gate-failures?limit=50'),
       fetchApi<KillState>('/api/goliath/kill-state'),
       fetchApi<CalibrationResponse>('/api/goliath/calibration'),
+      fetchApi<WeeklySummary>('/api/goliath/weekly-summary?days=7'),
     ])
 
     if (pStatus) setPlatform(pStatus)
@@ -235,6 +285,7 @@ export default function GoliathContent() {
     if (gatesData) setGates(gatesData.failures)
     if (killData) setKills(killData)
     if (calibData) setCalibration(calibData)
+    if (weeklyData) setWeekly(weeklyData)
     setLoading(false)
     setRefreshing(false)
   }, [selectedInstance])
@@ -424,6 +475,7 @@ export default function GoliathContent() {
             scope={selectedInstance}
             platform={platform}
             perf={perf}
+            weekly={weekly}
           />
         )}
         {tab === 'positions' && <PositionsTab positions={positions} scope={selectedInstance} />}
@@ -441,13 +493,14 @@ export default function GoliathContent() {
 // ============================================================================
 
 function OverviewTab({
-  equity, intraday, scope, platform, perf,
+  equity, intraday, scope, platform, perf, weekly,
 }: {
   equity: EquityPoint[]
   intraday: EquityPoint[]
   scope: string
   platform: PlatformStatus | null
   perf: PerformanceResponse | null
+  weekly: WeeklySummary | null
 }) {
   const platformPerf = perf?.platform
   const totalOpen = platform?.instances.reduce((s, i) => s + i.open_position_count, 0) ?? 0
@@ -484,6 +537,8 @@ function OverviewTab({
           icon={Zap}
         />
       </div>
+
+      <WeeklySummaryPanel weekly={weekly} />
 
       {/* Intraday equity */}
       <Panel title={`Intraday Equity — ${scope}`} icon={Clock}>
@@ -966,6 +1021,181 @@ function ConfigTab({
     </div>
   )
 }
+
+// ============================================================================
+// WEEKLY CALIBRATION SUMMARY
+// ============================================================================
+
+function WeeklySummaryPanel({ weekly }: { weekly: WeeklySummary | null }) {
+  if (!weekly) {
+    return (
+      <Panel title="Weekly Calibration Summary (7d)" icon={BarChart3}>
+        <EmptyHint text="Loading weekly summary…" />
+      </Panel>
+    )
+  }
+
+  const { entries, exits, gate_failures, open_positions } = weekly
+  const sortedGates = Object.entries(gate_failures.by_gate)
+    .sort((a, b) => b[1] - a[1])
+  const sortedTriggers = Object.entries(exits.by_trigger)
+    .sort((a, b) => b[1].count - a[1].count)
+  const instanceNames = Object.keys(entries.by_instance).sort()
+
+  const pnlColor =
+    exits.total_pnl > 0 ? 'text-green-400'
+      : exits.total_pnl < 0 ? 'text-red-400'
+        : 'text-gray-400'
+
+  return (
+    <Panel title={`Weekly Calibration Summary (${weekly.window_days}d)`} icon={BarChart3}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="bg-gray-950/50 border border-gray-800 rounded p-3">
+          <div className="text-xs text-gray-500">Entry attempts</div>
+          <div className="text-xl font-mono">{entries.attempts}</div>
+          <div className="text-xs text-gray-500 mt-1">
+            {entries.filled} filled · {entries.blocked} blocked
+            {entries.fill_rate != null && (
+              <> · {fmtPct(entries.fill_rate, 0)} fill</>
+            )}
+          </div>
+        </div>
+        <div className="bg-gray-950/50 border border-gray-800 rounded p-3">
+          <div className="text-xs text-gray-500">Closed trades</div>
+          <div className="text-xl font-mono">{exits.closed}</div>
+          <div className={`text-xs mt-1 font-mono ${pnlColor}`}>
+            {fmtUSD(exits.total_pnl, 2)} total
+            {exits.win_rate != null && (
+              <span className="text-gray-500"> · {fmtPct(exits.win_rate, 0)} WR</span>
+            )}
+          </div>
+        </div>
+        <div className="bg-gray-950/50 border border-gray-800 rounded p-3">
+          <div className="text-xs text-gray-500">Gate failures</div>
+          <div className="text-xl font-mono">{gate_failures.total}</div>
+          <div className="text-xs text-gray-500 mt-1">
+            Top blocker:{' '}
+            <span className="text-red-300 font-mono">
+              {gate_failures.top_blocker ?? '—'}
+            </span>
+          </div>
+        </div>
+        <div className="bg-gray-950/50 border border-gray-800 rounded p-3">
+          <div className="text-xs text-gray-500">Open positions</div>
+          <div className="text-xl font-mono">
+            {open_positions.total}<span className="text-gray-600 text-sm">/{open_positions.platform_cap}</span>
+          </div>
+          <div className="text-xs text-gray-500 mt-1">
+            Platform cap pressure
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Per-instance entry attempts */}
+        <div>
+          <div className="text-xs font-semibold text-gray-400 mb-2">
+            Entries by instance
+          </div>
+          <table className="w-full text-xs">
+            <thead className="text-gray-500 border-b border-gray-800">
+              <tr>
+                <th className="text-left py-1">Instance</th>
+                <th className="text-right py-1">Att</th>
+                <th className="text-right py-1">Fill</th>
+                <th className="text-right py-1">Blk</th>
+              </tr>
+            </thead>
+            <tbody>
+              {instanceNames.map((name) => {
+                const b = entries.by_instance[name]
+                return (
+                  <tr key={name} className="border-b border-gray-800/40">
+                    <td className="py-1 font-mono text-gray-300">{name.replace('GOLIATH-', '')}</td>
+                    <td className="py-1 text-right font-mono">{b.attempts}</td>
+                    <td className="py-1 text-right font-mono text-green-400">{b.filled}</td>
+                    <td className="py-1 text-right font-mono text-gray-500">{b.blocked}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Gate failure histogram */}
+        <div>
+          <div className="text-xs font-semibold text-gray-400 mb-2">
+            Gate failure histogram
+          </div>
+          {sortedGates.length === 0 ? (
+            <EmptyHint text="No gate failures in window." />
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="text-gray-500 border-b border-gray-800">
+                <tr>
+                  <th className="text-left py-1">Gate</th>
+                  <th className="text-right py-1">Count</th>
+                  <th className="text-left py-1 pl-3">Sample reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedGates.map(([gate, count]) => (
+                  <tr key={gate} className="border-b border-gray-800/40">
+                    <td className="py-1 font-mono text-red-300">{gate}</td>
+                    <td className="py-1 text-right font-mono">{count}</td>
+                    <td className="py-1 pl-3 text-gray-500 max-w-[18rem] truncate">
+                      {gate_failures.sample_reasons[gate] ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Exits by trigger */}
+        <div>
+          <div className="text-xs font-semibold text-gray-400 mb-2">
+            Exits by trigger
+          </div>
+          {sortedTriggers.length === 0 ? (
+            <EmptyHint text="No exits in window." />
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="text-gray-500 border-b border-gray-800">
+                <tr>
+                  <th className="text-left py-1">Trigger</th>
+                  <th className="text-right py-1">Count</th>
+                  <th className="text-right py-1">Total P&L</th>
+                  <th className="text-right py-1">Avg</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedTriggers.map(([trig, b]) => {
+                  const c = b.total_pnl > 0 ? 'text-green-400'
+                    : b.total_pnl < 0 ? 'text-red-400' : 'text-gray-400'
+                  return (
+                    <tr key={trig} className="border-b border-gray-800/40">
+                      <td className="py-1 font-mono text-purple-300">{trig}</td>
+                      <td className="py-1 text-right font-mono">{b.count}</td>
+                      <td className={`py-1 text-right font-mono ${c}`}>
+                        {fmtUSD(b.total_pnl, 2)}
+                      </td>
+                      <td className={`py-1 text-right font-mono ${c}`}>
+                        {fmtUSD(b.avg_pnl, 2)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 
 // ============================================================================
 // SHARED PRESENTATIONAL COMPONENTS
