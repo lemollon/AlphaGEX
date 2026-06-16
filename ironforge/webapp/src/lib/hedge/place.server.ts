@@ -17,13 +17,12 @@
  */
 import { dbQuery, dbExecute, botTable } from '@/lib/db'
 import {
-  getQuote, getOptionQuote, buildOccSymbol,
+  getQuote, getOptionQuote, buildOccSymbol, getTradierBalanceDetail,
   getHedgeAccount, resolveHedgeExpiration, placeHedgePutSpread, isConfigured,
 } from '@/lib/tradier'
-import { buildHedgePlan } from '@/lib/hedge/advisor'
+import { buildHedgePlan, computeHedgeCap } from '@/lib/hedge/advisor'
 
 const DEFAULT_TAIL = Number(process.env.HEDGE_DEFAULT_TAIL) || 1200
-const DEFAULT_CAP = Number(process.env.HEDGE_MAX_DEBIT) || 800
 const round2 = (x: number) => Math.round(x * 100) / 100
 
 export type HedgeExecStatus = 'pending' | 'placed' | 'declined' | 'skipped' | 'failed'
@@ -144,21 +143,45 @@ async function prepareHedge(): Promise<{ ok: true; prepared: PreparedHedge } | {
     await record('failed', { expiration, long_occ: occLong, short_occ: occShort, error: `invalid legs (mid debit ${midDebit})` })
     return { ok: false, result: { status: 'failed', reason: 'invalid hedge legs' } }
   }
-  if (totalDebit > DEFAULT_CAP) {
-    await record('skipped', { expiration, long_occ: occLong, short_occ: occShort, contracts: plan.contracts, est_total_debit: totalDebit,
-      reason: `debit $${totalDebit} exceeds cap $${DEFAULT_CAP}` })
-    return { ok: false, result: { status: 'skipped', reason: `debit $${totalDebit} > cap $${DEFAULT_CAP}` } }
-  }
 
   const acct = await getHedgeAccount()
   if (!acct) return { ok: false, result: { status: 'failed', reason: 'no production account resolved' } }
+
+  // RELATIVE cap. Soft = min(50% of tail, 12% of account equity, optional $ override) —
+  // scales with risk so it never blocks a legitimately-sized hedge. Hard ceiling = the tail.
+  let accountEquity: number | null = null
+  try {
+    const bal = await getTradierBalanceDetail(acct.apiKey, acct.accountId, acct.baseUrl)
+    accountEquity = bal?.total_equity ?? null
+  } catch { /* equity is optional for the cap */ }
+  const { softCap, hardCeiling } = computeHedgeCap({
+    tail,
+    accountEquity,
+    tailPct: Number(process.env.HEDGE_CAP_TAIL_PCT) || undefined,
+    acctPct: Number(process.env.HEDGE_CAP_ACCT_PCT) || undefined,
+    absoluteSoftCap: Number(process.env.HEDGE_MAX_DEBIT) || undefined,
+  })
+
+  // HARD ceiling = circuit breaker: a hedge costing more than the tail it protects is
+  // pathological / bad pricing → skip.
+  if (totalDebit > hardCeiling) {
+    await record('skipped', { expiration, long_occ: occLong, short_occ: occShort, contracts: plan.contracts, est_total_debit: totalDebit,
+      reason: `debit $${totalDebit} > hard ceiling $${hardCeiling} (more than the tail — bad pricing)` })
+    return { ok: false, result: { status: 'skipped', reason: `debit $${totalDebit} exceeds the tail it protects — skipped` } }
+  }
+
+  // Over the SOFT cap → still PROPOSE (never silently skip an expensive hedge on a high-vol
+  // day — that's exactly when it's needed). Flag it so the operator decides at the button.
+  const expensive = totalDebit > softCap
+  const reasonText = reasons.join('; ') +
+    (expensive ? ` — ⚠ expensive: $${totalDebit} (${Math.round((totalDebit / tail) * 100)}% of tail; soft cap $${softCap})` : '')
 
   const limitDebit = round2(midDebit + 0.05)
   const legs = { occLong, occShort, contracts: plan.contracts, limitDebit }
   const base = {
     long_occ: occLong, short_occ: occShort, expiration, contracts: plan.contracts,
     limit_debit: limitDebit, est_total_debit: totalDebit, est_max_payoff: plan.est_max_payoff,
-    account_name: acct.name, reason: reasons.join('; '),
+    account_name: acct.name, reason: reasonText,
   }
 
   const preview = await placeHedgePutSpread(acct, legs, { preview: true })

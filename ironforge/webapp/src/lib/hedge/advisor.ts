@@ -111,6 +111,45 @@ export function buildHedgePlan(input: HedgeInputs): HedgePlan {
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  Relative hedge cap (pure, unit-tested)                              */
+/* ------------------------------------------------------------------ */
+
+export interface HedgeCapInputs {
+  /** Aggregate dollar tail being hedged. */
+  tail: number
+  /** Broker account equity (for the % -of-account ceiling). Optional. */
+  accountEquity?: number | null
+  /** Soft cap as a fraction of the tail (default 0.50 — don't pay >half the tail). */
+  tailPct?: number
+  /** Soft cap as a fraction of account equity/day (default 0.12). */
+  acctPct?: number
+  /** Optional absolute $ soft-cap tightener (e.g. HEDGE_MAX_DEBIT). Lowers the soft cap only. */
+  absoluteSoftCap?: number
+}
+export interface HedgeCap {
+  /** Above this = "expensive" (warn, but STILL propose — never silently skip). */
+  softCap: number
+  /** Above this = circuit breaker (skip): a hedge costing more than the tail it
+   *  protects is pathological / bad pricing. */
+  hardCeiling: number
+}
+
+/**
+ * Relative hedge cap. The SOFT cap (min of % -of-tail, % -of-account, optional $ override)
+ * scales with the risk so it never blocks a legitimately-sized hedge — over it, the hedge is
+ * flagged expensive but still proposed for the operator to approve. The HARD ceiling (the tail
+ * itself) is the real circuit breaker: never pay more than you're protecting. Pure + total.
+ */
+export function computeHedgeCap(i: HedgeCapInputs): HedgeCap {
+  const tailPct = i.tailPct && i.tailPct > 0 ? i.tailPct : 0.5
+  const acctPct = i.acctPct && i.acctPct > 0 ? i.acctPct : 0.12
+  let soft = i.tail * tailPct
+  if (i.accountEquity != null && i.accountEquity > 0) soft = Math.min(soft, i.accountEquity * acctPct)
+  if (i.absoluteSoftCap != null && i.absoluteSoftCap > 0) soft = Math.min(soft, i.absoluteSoftCap)
+  return { softCap: Math.round(soft), hardCeiling: Math.round(i.tail) }
+}
+
 /** One-line human summary, e.g. "BUY 1× SPY 35D 731/719 put spread — ~$396, covers ~$1,200". */
 export function hedgePlanText(p: HedgePlan): string {
   if (!p.hedge) return p.reason
