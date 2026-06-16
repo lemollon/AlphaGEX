@@ -67,7 +67,7 @@ import {
 } from './tradier'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily } from './volAlerts.server'
-import { placeHedgeForToday } from './hedge/place.server'
+import { runHedgeProposal } from './hedge/place.server'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
@@ -5608,17 +5608,17 @@ async function checkVolAlerts(): Promise<void> {
       console.warn(`[scanner] regime_daily upsert failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
     }
 
-    // Phase 3: auto-place the regime hedge once/day when ARMED. Default OFF; only
-    // fires when HEDGE_AUTO_PLACE=true. Self-guarded (idempotent, debit-capped,
-    // preview-first, flagged-only). Fully isolated from the trade loop. Never throws.
+    // Phase 3: on a flagged + armed day, PROPOSE the real-money hedge (status='pending').
+    // The operator confirms via the dashboard button before any order is placed — the
+    // real-money SPARK hedge is never auto-fired. Self-guarded; trade-loop-isolated.
     if (process.env.HEDGE_AUTO_PLACE === 'true') {
       try {
-        const r = await placeHedgeForToday({})
-        if (r.status === 'placed' || r.status === 'failed') {
+        const r = await runHedgeProposal()
+        if (r.status === 'pending' || r.status === 'failed') {
           console.log(`[scanner] hedge ${r.status}: ${r.reason}`)
         }
       } catch (e) {
-        console.warn(`[scanner] hedge place failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+        console.warn(`[scanner] hedge proposal failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
       }
     }
 

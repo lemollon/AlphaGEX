@@ -1,15 +1,18 @@
 /**
- * Regime hedge — real-money placement orchestration (Phase 3). Server-only.
+ * Regime hedge — placement orchestration (Phase 3). Server-only.
  *
- * SAFETY (all enforced here):
- *  - ARM FLAG: `HEDGE_AUTO_PLACE === 'true'` required to place a real order. Unset
- *    or anything else → preview-only, NEVER places.
+ * REAL-MONEY (SPARK production) hedge is APPROVAL-GATED: on a flagged day the scanner
+ * only PROPOSES a hedge (status='pending') — a human must confirm via the button
+ * (confirmHedgeForToday) before any order is placed. Non-production accounts auto-place
+ * (none wired today; forward-looking).
+ *
+ * SAFETY (all enforced):
+ *  - APPROVAL: real-money placement only via explicit confirm (button / authorized POST).
+ *  - ARM FLAG: `HEDGE_AUTO_PLACE === 'true'` required even to PROPOSE. Unset → nothing.
  *  - DEBIT CAP: `HEDGE_MAX_DEBIT` (default $800) — refuse if the spread costs more.
- *  - PREVIEW-FIRST: always Tradier-preview + sanity-check the legs before placing.
- *  - IDEMPOTENT: at most one PLACED hedge per CT day (hedge_orders PK + status guard).
- *  - FLAGGED-ONLY: only on a regime_daily hedge_flagged day.
- *  - DRY-RUN: opts.dryRun (or `HEDGE_DRY_RUN==='true'`) → preview + record, no place.
- *
+ *  - PREVIEW-FIRST: always Tradier-preview + sanity-check legs before risking money.
+ *  - IDEMPOTENT: one PLACED hedge per CT day; 'declined' is terminal for the day too.
+ *  - FLAGGED-ONLY: only when regime_daily.hedge_flagged.
  * Every outcome is recorded in hedge_orders for audit + display.
  */
 import { dbQuery, dbExecute, botTable } from '@/lib/db'
@@ -23,7 +26,7 @@ const DEFAULT_TAIL = Number(process.env.HEDGE_DEFAULT_TAIL) || 1200
 const DEFAULT_CAP = Number(process.env.HEDGE_MAX_DEBIT) || 800
 const round2 = (x: number) => Math.round(x * 100) / 100
 
-export type HedgeExecStatus = 'placed' | 'preview' | 'skipped' | 'failed'
+export type HedgeExecStatus = 'pending' | 'placed' | 'declined' | 'skipped' | 'failed'
 export interface HedgeExecResult {
   status: HedgeExecStatus
   reason: string
@@ -55,7 +58,7 @@ async function ensureHedgeOrdersTable(): Promise<void> {
   _hedgeTableEnsured = true
 }
 
-/** Upsert today's hedge_orders row — but never downgrade a 'placed' row. */
+/** Upsert today's hedge_orders row — never downgrade a terminal (placed/declined) row. */
 async function record(status: HedgeExecStatus, fields: Record<string, unknown>): Promise<void> {
   await dbExecute(
     `INSERT INTO hedge_orders
@@ -67,7 +70,7 @@ async function record(status: HedgeExecStatus, fields: Record<string, unknown>):
        status=$1, long_occ=$2, short_occ=$3, expiration=$4, contracts=$5,
        limit_debit=$6, est_total_debit=$7, est_max_payoff=$8, preview_cost=$9,
        tradier_order_id=$10, account_name=$11, reason=$12, error=$13, updated_at=NOW()
-     WHERE hedge_orders.status <> 'placed'`,
+     WHERE hedge_orders.status NOT IN ('placed','declined')`,
     [
       status,
       fields.long_occ ?? null, fields.short_occ ?? null, fields.expiration ?? null, fields.contracts ?? null,
@@ -77,7 +80,6 @@ async function record(status: HedgeExecStatus, fields: Record<string, unknown>):
   )
 }
 
-/** Today's hedge_orders row (status preview/placed/skipped/failed) for display, or null. */
 export async function getTodayHedgeOrder(): Promise<Record<string, unknown> | null> {
   await ensureHedgeOrdersTable()
   const rows = await dbQuery(
@@ -88,37 +90,31 @@ export async function getTodayHedgeOrder(): Promise<Record<string, unknown> | nu
   return rows[0] ?? null
 }
 
-/** Whether real placement is armed (HEDGE_AUTO_PLACE=true) and live (not dry-run). */
-export function hedgeArmState(): { armed: boolean; dryRun: boolean } {
-  return {
-    armed: process.env.HEDGE_AUTO_PLACE === 'true',
-    dryRun: process.env.HEDGE_DRY_RUN === 'true',
-  }
+export function hedgeArmState(): { armed: boolean } {
+  return { armed: process.env.HEDGE_AUTO_PLACE === 'true' }
 }
 
-/** Run the hedge flow for today. Idempotent, capped, preview-first, arm-gated. */
-export async function placeHedgeForToday(opts: { dryRun?: boolean } = {}): Promise<HedgeExecResult> {
-  if (!isConfigured()) return { status: 'skipped', reason: 'Tradier not configured' }
-  await ensureHedgeOrdersTable()
+interface PreparedHedge {
+  acct: { apiKey: string; baseUrl: string; accountId: string; name: string }
+  legs: { occLong: string; occShort: string; contracts: number; limitDebit: number }
+  base: Record<string, unknown>
+  previewCost: number | null
+}
 
-  // Idempotency — already placed today?
-  const placedRows = await dbQuery(
-    `SELECT 1 FROM hedge_orders WHERE ct_date=(NOW() AT TIME ZONE 'America/Chicago')::date AND status='placed' LIMIT 1`,
-  )
-  if (placedRows.length > 0) return { status: 'skipped', reason: 'already hedged today' }
-
-  // Flagged today?
+/**
+ * Shared pre-flight: flagged-check, tail/SPY/plan, resolve real strikes, cap-check,
+ * Tradier preview + leg sanity. Returns the prepared hedge or a terminal skip/fail.
+ * Does NOT place. Both propose and confirm call this so the confirmed order is priced
+ * fresh (market may have moved since the proposal).
+ */
+async function prepareHedge(): Promise<{ ok: true; prepared: PreparedHedge } | { ok: false; result: HedgeExecResult }> {
   const reg = await dbQuery<{ hedge_flagged: boolean; hedge_reasons: string[] | null }>(
     `SELECT hedge_flagged, hedge_reasons FROM regime_daily
       WHERE ct_date=(NOW() AT TIME ZONE 'America/Chicago')::date LIMIT 1`,
   )
-  if (!reg[0]?.hedge_flagged) {
-    await record('skipped', { reason: 'regime not flagged' })
-    return { status: 'skipped', reason: 'regime not flagged' }
-  }
+  if (!reg[0]?.hedge_flagged) return { ok: false, result: { status: 'skipped', reason: 'regime not flagged' } }
   const reasons = reg[0].hedge_reasons ?? []
 
-  // Tail (SPARK live IC max-loss, else default) + SPY + plan.
   const tailRows = await dbQuery<{ tail: number }>(
     `SELECT COALESCE(SUM(GREATEST(spread_width - total_credit, 0) * contracts * 100), 0) AS tail
        FROM ${botTable('spark', 'positions')}
@@ -128,39 +124,36 @@ export async function placeHedgeForToday(opts: { dryRun?: boolean } = {}): Promi
   const tail = openTail > 0 ? Math.round(openTail) : DEFAULT_TAIL
 
   const spyQ = await getQuote('SPY')
-  if (!spyQ?.last) return { status: 'skipped', reason: 'no SPY quote' }
+  if (!spyQ?.last) return { ok: false, result: { status: 'skipped', reason: 'no SPY quote' } }
   const plan = buildHedgePlan({ flagged: true, reasons, tail, spy: spyQ.last })
-  if (!plan.hedge) { await record('skipped', { reason: plan.reason }); return { status: 'skipped', reason: plan.reason } }
+  if (!plan.hedge) return { ok: false, result: { status: 'skipped', reason: plan.reason } }
 
-  // Resolve real expiration + quote the two put legs.
   const expiration = await resolveHedgeExpiration(plan.dte)
-  if (!expiration) return { status: 'failed', reason: 'no SPY expiration near target DTE' }
+  if (!expiration) return { ok: false, result: { status: 'failed', reason: 'no SPY expiration near target DTE' } }
   const occLong = buildOccSymbol('SPY', expiration, plan.long_strike, 'P')
   const occShort = buildOccSymbol('SPY', expiration, plan.short_strike, 'P')
   const [lq, sq] = await Promise.all([getOptionQuote(occLong), getOptionQuote(occShort)])
   if (!lq || !sq) {
     await record('failed', { expiration, long_occ: occLong, short_occ: occShort, error: 'legs not quotable (strike unavailable)' })
-    return { status: 'failed', reason: 'hedge strikes not quotable on chain' }
+    return { ok: false, result: { status: 'failed', reason: 'hedge strikes not quotable on chain' } }
   }
 
-  // Net debit per spread; sanity-check the structure before risking money.
   const midDebit = round2(lq.mid - sq.mid)
   const totalDebit = round2(midDebit * 100 * plan.contracts)
-  const cap = DEFAULT_CAP
   if (!(plan.long_strike > plan.short_strike) || midDebit <= 0) {
     await record('failed', { expiration, long_occ: occLong, short_occ: occShort, error: `invalid legs (mid debit ${midDebit})` })
-    return { status: 'failed', reason: 'invalid hedge legs' }
+    return { ok: false, result: { status: 'failed', reason: 'invalid hedge legs' } }
   }
-  if (totalDebit > cap) {
+  if (totalDebit > DEFAULT_CAP) {
     await record('skipped', { expiration, long_occ: occLong, short_occ: occShort, contracts: plan.contracts, est_total_debit: totalDebit,
-      reason: `debit $${totalDebit} exceeds cap $${cap}` })
-    return { status: 'skipped', reason: `debit $${totalDebit} > cap $${cap}` }
+      reason: `debit $${totalDebit} exceeds cap $${DEFAULT_CAP}` })
+    return { ok: false, result: { status: 'skipped', reason: `debit $${totalDebit} > cap $${DEFAULT_CAP}` } }
   }
 
   const acct = await getHedgeAccount()
-  if (!acct) return { status: 'failed', reason: 'no production account resolved' }
+  if (!acct) return { ok: false, result: { status: 'failed', reason: 'no production account resolved' } }
 
-  const limitDebit = round2(midDebit + 0.05) // small fill buffer; still cap-bounded
+  const limitDebit = round2(midDebit + 0.05)
   const legs = { occLong, occShort, contracts: plan.contracts, limitDebit }
   const base = {
     long_occ: occLong, short_occ: occShort, expiration, contracts: plan.contracts,
@@ -168,27 +161,55 @@ export async function placeHedgeForToday(opts: { dryRun?: boolean } = {}): Promi
     account_name: acct.name, reason: reasons.join('; '),
   }
 
-  // PREVIEW always (catches leg/structure errors before real money).
   const preview = await placeHedgePutSpread(acct, legs, { preview: true })
   if (!preview.ok) {
-    await record('failed', { ...base, preview_cost: preview.cost, error: preview.error })
-    return { status: 'failed', reason: `preview rejected: ${preview.error}` }
+    await record('failed', { ...base, error: preview.error })
+    return { ok: false, result: { status: 'failed', reason: `preview rejected: ${preview.error}` } }
   }
+  return { ok: true, prepared: { acct, legs, base, previewCost: preview.cost } }
+}
 
-  const armed = process.env.HEDGE_AUTO_PLACE === 'true'
-  const dryRun = opts.dryRun === true || process.env.HEDGE_DRY_RUN === 'true'
-  if (dryRun || !armed) {
-    const reason = !armed ? 'HEDGE_AUTO_PLACE not enabled — preview only' : 'dry-run — preview only'
-    await record('preview', { ...base, preview_cost: preview.cost, reason })
-    return { status: 'preview', reason, detail: { ...base, preview_cost: preview.cost } }
-  }
+/** Scanner path: on a flagged + armed day, PROPOSE the real-money hedge (status='pending').
+ *  Never places. The operator confirms via the button. Idempotent / terminal-safe. */
+export async function runHedgeProposal(): Promise<HedgeExecResult> {
+  if (!isConfigured()) return { status: 'skipped', reason: 'Tradier not configured' }
+  if (process.env.HEDGE_AUTO_PLACE !== 'true') return { status: 'skipped', reason: 'hedge system not enabled' }
+  await ensureHedgeOrdersTable()
 
-  // ARMED + not dry-run → place the real order.
+  const today = await getTodayHedgeOrder()
+  const st = today?.status as string | undefined
+  if (st === 'placed' || st === 'declined') return { status: st as HedgeExecStatus, reason: `already ${st} today` }
+
+  const prep = await prepareHedge()
+  if (!prep.ok) return prep.result
+  await record('pending', { ...prep.prepared.base, preview_cost: prep.prepared.previewCost,
+    reason: `${prep.prepared.base.reason} — awaiting confirmation` })
+  return { status: 'pending', reason: 'hedge proposed — awaiting confirmation', detail: { ...prep.prepared.base, preview_cost: prep.prepared.previewCost } }
+}
+
+/** Button path: place the real-money hedge after explicit human confirmation. */
+export async function confirmHedgeForToday(): Promise<HedgeExecResult> {
+  if (!isConfigured()) return { status: 'skipped', reason: 'Tradier not configured' }
+  await ensureHedgeOrdersTable()
+  const today = await getTodayHedgeOrder()
+  if (today?.status === 'placed') return { status: 'placed', reason: 'already hedged today' }
+
+  const prep = await prepareHedge() // re-price fresh before risking money
+  if (!prep.ok) return prep.result
+  const { acct, legs, base, previewCost } = prep.prepared
+
   const placed = await placeHedgePutSpread(acct, legs, { preview: false })
   if (!placed.ok) {
-    await record('failed', { ...base, preview_cost: preview.cost, error: placed.error })
+    await record('failed', { ...base, preview_cost: previewCost, error: placed.error })
     return { status: 'failed', reason: `place rejected: ${placed.error}` }
   }
-  await record('placed', { ...base, preview_cost: preview.cost, tradier_order_id: placed.orderId })
+  await record('placed', { ...base, preview_cost: previewCost, tradier_order_id: placed.orderId })
   return { status: 'placed', reason: 'hedge placed', detail: { ...base, order_id: placed.orderId } }
+}
+
+/** Button path: decline today's hedge (terminal — won't re-propose today). */
+export async function declineHedgeForToday(): Promise<HedgeExecResult> {
+  await ensureHedgeOrdersTable()
+  await record('declined', { reason: 'declined by operator' })
+  return { status: 'declined', reason: 'hedge declined' }
 }
