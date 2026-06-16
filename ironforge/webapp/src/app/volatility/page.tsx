@@ -18,6 +18,7 @@ import TriggerWatch from '@/components/vol/TriggerWatch'
 import EvidenceTable from '@/components/vol/EvidenceTable'
 import LiveTrackRecord from '@/components/vol/LiveTrackRecord'
 import AlertsFeed from '@/components/vol/AlertsFeed'
+import HedgeCard from '@/components/vol/HedgeCard'
 import GexSummaryBanner from '@/components/gex/GexSummaryBanner'
 
 const REFRESH = 60_000
@@ -91,6 +92,8 @@ export default function VolatilityPage() {
       </header>
 
       <div className="space-y-3">
+        <HedgeCard />
+
         <ActionCard action={report.action} recommendation={recommendation} />
 
         <AlertsFeed />
