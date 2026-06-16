@@ -16,7 +16,7 @@ const TONE_CLASS: Record<VolTone, string> = {
   warn: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
   bull: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
   bear: 'border-red-500/40 bg-red-500/10 text-red-300',
-  info: 'border-forge-border bg-forge-card/80 text-forge-muted',
+  info: 'border-sky-500/40 bg-sky-500/10 text-sky-200',
 }
 
 const TONE_LABEL: Record<VolTone, string> = {
