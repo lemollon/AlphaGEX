@@ -27,6 +27,9 @@ interface HedgePlanResp {
     tradier_order_id?: string | null
     preview_cost?: number | null
     error?: string | null
+    expensive?: boolean | null
+    est_total_debit?: number | null
+    soft_cap?: number | null
   } | null
 }
 
@@ -98,6 +101,14 @@ export default function HedgeCard() {
 
       <p className="mt-1 text-sm text-white">{data.summary}</p>
       <p className="mt-2 text-xs text-forge-muted">{p.reason}</p>
+
+      {exec?.expensive ? (
+        <p className="mt-2 rounded border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300">
+          ⚠ Expensive hedge — ${Number(exec.est_total_debit ?? 0).toFixed(0)} is{' '}
+          {data.inputs?.tail ? Math.round((Number(exec.est_total_debit ?? 0) / data.inputs.tail) * 100) : '?'}% of the tail
+          {exec.soft_cap != null ? ` (above the $${Number(exec.soft_cap).toFixed(0)} soft cap)` : ''}. Review before placing.
+        </p>
+      ) : null}
 
       <div className="mt-3 grid grid-cols-3 gap-2 text-center font-mono text-[11px]">
         <Stat label="Est. debit" v={`$${p.est_debit.toFixed(0)}`} />
