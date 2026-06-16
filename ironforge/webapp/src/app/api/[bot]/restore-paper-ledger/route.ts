@@ -47,9 +47,14 @@ async function gather(bot: string, dte: string) {
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot, 'positions')}
      WHERE dte_mode = '${escapeSql(archivedDte)}' AND ${PRODUCTION}`,
   )
-  const maxSandboxId = await dbQuery(
-    `SELECT MAX(id) AS max_id FROM ${botTable(bot, 'paper_account')}
-     WHERE dte_mode = '${escapeSql(dte)}' AND ${SANDBOX}`,
+  // Pick the REAL paper ledger to reactivate: the sandbox row with the most
+  // capital, not a fresh scanner-seeded default. (After the reset deactivated
+  // the active sandbox row, the scanner auto-inserted a $10k default row; that
+  // one must NOT win.) Tie-break by newest id.
+  const pick = await dbQuery(
+    `SELECT id FROM ${botTable(bot, 'paper_account')}
+     WHERE dte_mode = '${escapeSql(dte)}' AND ${SANDBOX}
+     ORDER BY current_balance DESC, id DESC LIMIT 1`,
   )
 
   return {
@@ -63,7 +68,7 @@ async function gather(bot: string, dte: string) {
       cumulative_pnl: num(r.cumulative_pnl),
       account_type: r.account_type ?? null,
     })),
-    row_to_reactivate: maxSandboxId[0]?.max_id != null ? int(maxSandboxId[0].max_id) : null,
+    row_to_reactivate: pick[0]?.id != null ? int(pick[0].id) : null,
     archived_sandbox_positions_to_restore: int(archivedSandbox[0]?.cnt),
     archived_production_positions_kept: int(archivedProduction[0]?.cnt),
   }
@@ -122,7 +127,27 @@ export async function POST(
 
   try {
     const before = await gather(bot, dte)
-    if (before.row_to_reactivate == null) {
+
+    // Optional explicit override: ?row_id=N must be one of the sandbox rows.
+    const rowIdParam = req.nextUrl.searchParams.get('row_id')
+    let targetRow: number | null = before.row_to_reactivate
+    if (rowIdParam != null) {
+      const requested = parseInt(rowIdParam, 10)
+      const valid = before.sandbox_paper_account_rows.some((r) => r.id === requested)
+      if (!Number.isFinite(requested) || !valid) {
+        return NextResponse.json(
+          {
+            error: `row_id=${rowIdParam} is not a sandbox paper_account row for this dte_mode. ` +
+              `Valid: ${before.sandbox_paper_account_rows.map((r) => r.id).join(', ')}`,
+            before,
+          },
+          { status: 400 },
+        )
+      }
+      targetRow = requested
+    }
+
+    if (targetRow == null) {
       return NextResponse.json(
         { error: 'No sandbox paper_account row found to reactivate — nothing to restore.', before },
         { status: 409 },
@@ -142,7 +167,7 @@ export async function POST(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET is_active = TRUE, updated_at = NOW()
        WHERE id = $1`,
-      [before.row_to_reactivate],
+      [targetRow],
     )
 
     // 2. Un-archive sandbox positions (ARCHIVED_<dte> -> <dte>). Production stays archived.
@@ -161,11 +186,11 @@ export async function POST(
         [
           'PAPER_RESTORE',
           `Restored SPARK paper (sandbox) ledger after the 2026-06-16 reset over-reach: ` +
-            `reactivated paper_account row id=${before.row_to_reactivate}, ` +
+            `reactivated paper_account row id=${targetRow}, ` +
             `un-archived ${restoredPositions} sandbox positions. Production ledger untouched.`,
           JSON.stringify({
             event: 'paper_restore',
-            reactivated_row: before.row_to_reactivate,
+            reactivated_row: targetRow,
             reactivated_count: reactivated,
             restored_sandbox_positions: restoredPositions,
             production_positions_left_archived: before.archived_production_positions_kept,
@@ -179,7 +204,7 @@ export async function POST(
     return NextResponse.json({
       bot,
       applied: true,
-      reactivated_paper_account_row: before.row_to_reactivate,
+      reactivated_paper_account_row: targetRow,
       restored_sandbox_positions: restoredPositions,
       production_positions_left_archived: before.archived_production_positions_kept,
       after,
