@@ -101,16 +101,28 @@ interface ResetPreview {
   }
 }
 
+// For the live production bot (SPARK) the paper (sandbox) and live (production)
+// ledgers coexist in the same tables under the same dte_mode, separated only by
+// account_type. A "reset" must touch ONLY the production ledger, or it clobbers
+// the paper ledger too. Paper-only bots have no production rows, so this is a
+// no-op for them.
+function acctScope(bot: string): string {
+  return bot === PRODUCTION_BOT
+    ? " AND COALESCE(account_type, 'sandbox') = 'production'"
+    : ''
+}
+
 async function gatherState(
   bot: string,
   dte: string,
   overrideCapital: number | null,
 ): Promise<ResetPreview> {
+  const scope = acctScope(bot)
   const acctRows = await dbQuery(
     `SELECT id, is_active, starting_capital, current_balance, cumulative_pnl,
             account_type, updated_at
      FROM ${botTable(bot, 'paper_account')}
-     WHERE dte_mode = '${escapeSql(dte)}'
+     WHERE dte_mode = '${escapeSql(dte)}'${scope}
      ORDER BY id`,
   )
 
@@ -120,7 +132,7 @@ async function gatherState(
        COUNT(*) FILTER (WHERE status IN ('closed', 'expired')) AS closed_count,
        COALESCE(SUM(realized_pnl) FILTER (WHERE status IN ('closed', 'expired')), 0) AS total_pnl
      FROM ${botTable(bot, 'positions')}
-     WHERE dte_mode = '${escapeSql(dte)}'`,
+     WHERE dte_mode = '${escapeSql(dte)}'${scope}`,
   )
 
   // Resolve the day-1 seed capital. For SPARK (the live production bot) this
@@ -354,12 +366,14 @@ export async function POST(
     }
 
     const archivedDte = `${ARCHIVED_SUFFIX}${dte}`
+    // Scope mutations to the production ledger for SPARK (no-op clause for paper bots).
+    const scope = acctScope(bot)
 
     // 1. Archive closed/expired positions (rename dte_mode so they stop being summed)
     const archivedClosed = await dbExecute(
       `UPDATE ${botTable(bot, 'positions')}
        SET dte_mode = $1, updated_at = NOW()
-       WHERE dte_mode = $2 AND status IN ('closed', 'expired')`,
+       WHERE dte_mode = $2 AND status IN ('closed', 'expired')${scope}`,
       [archivedDte, dte],
     )
 
@@ -372,15 +386,15 @@ export async function POST(
            close_reason = COALESCE(close_reason, 'paper_reset'),
            dte_mode = $1,
            updated_at = NOW()
-       WHERE dte_mode = $2 AND status = 'open'`,
+       WHERE dte_mode = $2 AND status = 'open'${scope}`,
       [archivedDte, dte],
     )
 
-    // 3. Deactivate all existing paper_account rows for this dte_mode
+    // 3. Deactivate existing paper_account rows for this dte_mode (production-scoped for SPARK)
     const deactivated = await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET is_active = FALSE, updated_at = NOW()
-       WHERE dte_mode = $1`,
+       WHERE dte_mode = $1${scope}`,
       [dte],
     )
 
