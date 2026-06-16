@@ -88,3 +88,49 @@ export async function openVertical(
     short_symbol: shortSym,
   }
 }
+
+/**
+ * Open the net-imbalance HEDGE: an OPPOSING 0DTE debit spread that profits on the
+ * move that hurts the heavy side. Width spans ~the 1σ move so it reaches near-max
+ * on an adverse day; contracts are sized so the hedge's MAX PAYOFF ≈ targetOffset
+ * (matching opposing max-gain to the heavy side's excess max-loss). Tagged
+ * 'imbalance_hedge' so computeImbalance ignores it. Closes via the normal
+ * PT/SL/14:45 exit path like any other position.
+ */
+export async function openImbalanceHedge(
+  args: { hedgeSide: 'call' | 'put'; targetOffset: number; spot: number; sigMove: number },
+  config: FlareConfig,
+): Promise<OpenResult | null> {
+  const expiration = todayTradingDay(new Date())
+  const optType: 'C' | 'P' = args.hedgeSide === 'call' ? 'C' : 'P'
+  const width = Math.max(2, Math.min(10, Math.round(args.sigMove))) // span ~the adverse move
+  const atm = Math.round(args.spot)
+  // call hedge: long ATM / short higher (bullish). put hedge: long ATM / short lower (bearish).
+  const longStrike = atm
+  const shortStrike = args.hedgeSide === 'call' ? atm + width : atm - width
+  const longSym = buildOccSymbol(config.ticker, expiration, longStrike, optType)
+  const shortSym = buildOccSymbol(config.ticker, expiration, shortStrike, optType)
+
+  const [longQ, shortQ] = await Promise.all([getOptionQuote(longSym), getOptionQuote(shortSym)])
+  if (!longQ || !shortQ) return null
+  const debit = longQ.ask - shortQ.bid
+  if (debit <= 0 || debit >= width) return null
+
+  const maxPayoffPerContract = (width - debit) * 100
+  const contracts = Math.max(1, Math.round(args.targetOffset / maxPayoffPerContract))
+
+  const position_id = await insertFlarePosition({
+    setup_type: 'imbalance_hedge',
+    direction: args.hedgeSide,
+    long_strike: longStrike,
+    short_strike: shortStrike,
+    long_symbol: longSym,
+    short_symbol: shortSym,
+    debit,
+    contracts,
+    expiration,
+    spot_at_entry: args.spot,
+  })
+  if (!position_id) return null
+  return { position_id, debit, contracts, long_symbol: longSym, short_symbol: shortSym }
+}

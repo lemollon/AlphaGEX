@@ -138,7 +138,7 @@ export async function getOpenFlarePositions(): Promise<OpenFlarePosition[]> {
 }
 
 export interface InsertPositionInput {
-  setup_type: SetupType
+  setup_type: SetupType | 'imbalance_hedge'
   direction: 'call' | 'put'
   long_strike: number
   short_strike: number
