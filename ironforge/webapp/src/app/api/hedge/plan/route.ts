@@ -3,6 +3,7 @@ import { dbQuery, botTable } from '@/lib/db'
 import { getRawQuotes, isConfigured } from '@/lib/tradier'
 import { ensureRegimeDailyTable } from '@/lib/volAlerts.server'
 import { buildHedgePlan, hedgePlanText } from '@/lib/hedge/advisor'
+import { getTodayHedgeOrder, hedgeArmState } from '@/lib/hedge/place.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -66,12 +67,15 @@ export async function GET(req: NextRequest) {
     }
 
     const plan = buildHedgePlan({ flagged, reasons, tail, spy, coverage })
+    const execution = await getTodayHedgeOrder().catch(() => null)
     return NextResponse.json({
       ok: true,
       as_of: new Date().toISOString(),
       flagged,
       summary: hedgePlanText(plan),
       plan,
+      execution,
+      arm: hedgeArmState(),
       inputs: {
         tail,
         tail_source: openTail > 0 ? 'open_positions' : 'default',
