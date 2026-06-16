@@ -22,6 +22,7 @@ import BuilderTab from './dashboard/builder/BuilderTab'
 import BlazeDirectionalChart from './BlazeDirectionalChart'
 import GexSummaryBanner from './gex/GexSummaryBanner'
 import VolRegimeBanner from './vol/VolRegimeBanner'
+import HedgeCard from './vol/HedgeCard'
 
 /* Error boundary to catch component crashes without breaking the whole page */
 class ComponentErrorBoundary extends React.Component<
@@ -348,6 +349,13 @@ export default function BotDashboard({
           changes): the active directional alert when present, else a neutral note. */}
       <ComponentErrorBoundary fallback="Vol banner error">
         <VolRegimeBanner bot={bot} />
+      </ComponentErrorBoundary>
+
+      {/* Regime-gated hedge overlay status — shown on every bot page so the hedge
+          stance (and HEDGING ON/OFF arm state) is visible portfolio-wide, not just
+          on /volatility. Renders nothing until the hedge plan feed is available. */}
+      <ComponentErrorBoundary fallback="Hedge card error">
+        <HedgeCard />
       </ComponentErrorBoundary>
 
       {/* Title + Paper/Live Toggle */}
