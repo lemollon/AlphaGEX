@@ -67,6 +67,7 @@ import {
 } from './tradier'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily } from './volAlerts.server'
+import { placeHedgeForToday } from './hedge/place.server'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
@@ -5605,6 +5606,20 @@ async function checkVolAlerts(): Promise<void> {
       await upsertRegimeDaily(snap, hedgeFlagged(snap))
     } catch (e) {
       console.warn(`[scanner] regime_daily upsert failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
+
+    // Phase 3: auto-place the regime hedge once/day when ARMED. Default OFF; only
+    // fires when HEDGE_AUTO_PLACE=true. Self-guarded (idempotent, debit-capped,
+    // preview-first, flagged-only). Fully isolated from the trade loop. Never throws.
+    if (process.env.HEDGE_AUTO_PLACE === 'true') {
+      try {
+        const r = await placeHedgeForToday({})
+        if (r.status === 'placed' || r.status === 'failed') {
+          console.log(`[scanner] hedge ${r.status}: ${r.reason}`)
+        }
+      } catch (e) {
+        console.warn(`[scanner] hedge place failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+      }
     }
 
     for (const key of toOpen) {
