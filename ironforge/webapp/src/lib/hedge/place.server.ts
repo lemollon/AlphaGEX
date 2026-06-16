@@ -77,6 +77,25 @@ async function record(status: HedgeExecStatus, fields: Record<string, unknown>):
   )
 }
 
+/** Today's hedge_orders row (status preview/placed/skipped/failed) for display, or null. */
+export async function getTodayHedgeOrder(): Promise<Record<string, unknown> | null> {
+  await ensureHedgeOrdersTable()
+  const rows = await dbQuery(
+    `SELECT status, long_occ, short_occ, expiration, contracts, limit_debit,
+            est_total_debit, est_max_payoff, preview_cost, tradier_order_id, reason, error, updated_at
+       FROM hedge_orders WHERE ct_date=(NOW() AT TIME ZONE 'America/Chicago')::date LIMIT 1`,
+  )
+  return rows[0] ?? null
+}
+
+/** Whether real placement is armed (HEDGE_AUTO_PLACE=true) and live (not dry-run). */
+export function hedgeArmState(): { armed: boolean; dryRun: boolean } {
+  return {
+    armed: process.env.HEDGE_AUTO_PLACE === 'true',
+    dryRun: process.env.HEDGE_DRY_RUN === 'true',
+  }
+}
+
 /** Run the hedge flow for today. Idempotent, capped, preview-first, arm-gated. */
 export async function placeHedgeForToday(opts: { dryRun?: boolean } = {}): Promise<HedgeExecResult> {
   if (!isConfigured()) return { status: 'skipped', reason: 'Tradier not configured' }
