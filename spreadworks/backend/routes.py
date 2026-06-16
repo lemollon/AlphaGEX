@@ -581,6 +581,11 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "flip_point": fp_obj.get("current") if isinstance(fp_obj, dict) else fp_obj,
                 "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
                 "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
+                # Per-strike gamma magnets + predicted pin — same fields the live
+                # SpreadWorks bots consume, so gex-suggest can center butterfly
+                # bodies on the gamma pin with identical logic.
+                "magnets": d.get("magnets") or [],
+                "pin_strike": d.get("likely_pin"),
                 "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
@@ -609,6 +614,8 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "flip_point": d.get("flip_point"),
                 "call_wall": d.get("call_wall"),
                 "put_wall": d.get("put_wall"),
+                "magnets": d.get("magnets") or [],
+                "pin_strike": d.get("likely_pin") or d.get("pin_strike"),
                 "gamma_regime": d.get("regime") or d.get("gamma_regime"),
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
@@ -876,12 +883,12 @@ def _variant_specs(strategy: str) -> list[dict]:
             {"name": "Aggressive",   "sd_offset": -0.30, "wing_delta": -1.0,
              "description": "Shorts closer to spot, tighter wings — higher credit, tighter R:R"},
         ]
-    # butterfly: center always at flip, vary wing width
+    # butterfly: body centered on the gamma pin (gamma_pin_center), vary wing width
     return [
         {"name": "Conservative", "sd_offset": 0.0, "wing_delta": 2.0,
          "description": "Wider wings — lower max profit, wider profit zone"},
         {"name": "Standard",     "sd_offset": 0.0, "wing_delta": 0.0,
-         "description": "Standard wings centered on flip"},
+         "description": "Standard wings centered on the gamma pin"},
         {"name": "Aggressive",   "sd_offset": 0.0, "wing_delta": -1.5,
          "description": "Tight wings — higher max profit at the peak, narrower zone"},
     ]
@@ -893,8 +900,14 @@ def _build_legs_for_variant(
     atm_straddle: float | None, regime: str | None,
     front_strikes_call: list[float], front_strikes_put: list[float],
     front_exp: str, back_exp: str, credit_exp: str,
+    body_center: float | None = None,
 ):
-    """Produce a strikes dict (snapped to the actual chain) for one variant."""
+    """Produce a strikes dict (snapped to the actual chain) for one variant.
+
+    `body_center` is the gamma pin the (iron) butterfly body is centered on —
+    the same `gamma_pin_center` level the live BREEZE bot uses, NOT the flip.
+    Defaults to spot when not supplied."""
+    fly_center = body_center if body_center is not None else spot
     sd_offset = spec["sd_offset"]
     wing_delta = spec["wing_delta"]
     base_wing = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
@@ -939,9 +952,10 @@ def _build_legs_for_variant(
             "front_expiration": front_exp, "back_expiration": back_exp,
         }
     if strategy == "iron_butterfly":
-        # Body at flip (current behavior); vary wing width.
-        body_call = snap_call(flip)
-        body_put = snap_put(flip)
+        # Body on the gamma pin (gamma_pin_center), NOT the flip — the butterfly
+        # peaks at the body, so it belongs where price is most likely to expire.
+        body_call = snap_call(fly_center)
+        body_put = snap_put(fly_center)
         long_put = snap_put(body_put - wing)
         long_call = snap_call(body_call + wing)
         # For IBF the body is a single strike — prefer call's snap (typically
@@ -952,8 +966,8 @@ def _build_legs_for_variant(
             "long_call_strike": long_call,
             "expiration": credit_exp,
         }
-    # butterfly
-    center_call = snap_call(flip)
+    # butterfly — center on the gamma pin (same rationale as iron_butterfly).
+    center_call = snap_call(fly_center)
     lower = snap_call(center_call - wing)
     upper = snap_call(center_call + wing)
     return {
@@ -1308,7 +1322,22 @@ async def gex_suggest(
     if atm_straddle is None:
         warnings.append("ATM straddle unavailable — wing sizing is using fixed dollars.")
 
-    # 6) Build 3 variants. Each fully snapped to actual chain strikes, with
+    # 6) Resolve the gamma pin for butterfly bodies — same gamma_pin_center the
+    #    live BREEZE bot uses (magnets bracket spot -> midpoint; else dominant
+    #    magnet; else likely_pin; else call/put-wall corridor; else spot). NOT
+    #    the flip point.
+    body_center = gamma_pin_center(
+        {
+            "magnets": gex.get("magnets") or [],
+            "pin_strike": gex.get("pin_strike"),
+            "call_wall": call_wall,
+            "put_wall": put_wall,
+        },
+        float(spot),
+    )
+    context["body_center"] = round(float(body_center), 2)
+
+    # 7) Build 3 variants. Each fully snapped to actual chain strikes, with
     #    preview metrics priced from real bid/ask mids.
     variants = []
     for spec in _variant_specs(strategy):
@@ -1319,6 +1348,7 @@ async def gex_suggest(
             front_strikes_call=front_call_strikes,
             front_strikes_put=front_put_strikes,
             front_exp=front_exp, back_exp=back_exp, credit_exp=credit_exp,
+            body_center=body_center,
         )
         preview = _estimate_preview(strategy, legs_dict, front_options, back_options, float(spot))
         variants.append({
@@ -1328,7 +1358,7 @@ async def gex_suggest(
             "preview": preview,
         })
 
-    # 7) Optional bot-aligned preview — "what would FLOW pick right now?"
+    # 8) Optional bot-aligned preview — "what would FLOW pick right now?"
     bot_preview = None
     if bot:
         try:
@@ -1345,7 +1375,7 @@ async def gex_suggest(
                            "rejection_reasons": [f"preview_error: {e}"],
                            "legs": None, "preview": None}
 
-    # 8) Standard variant duplicated at top-level for the Discord-bot reader
+    # 9) Standard variant duplicated at top-level for the Discord-bot reader
     #    (and any other legacy caller). Kept verbose to match the old shape.
     standard = next((v for v in variants if v["name"] == "Standard"), None) or (
         variants[0] if variants else {"legs": {}, "description": ""}
@@ -2181,7 +2211,7 @@ STRATEGY_LABELS = {
 # the P&L formula must negate it. Canonical set lives in bots.strategies so
 # the executor and routes can't drift apart; re-exported here for callers
 # (e.g. routes_bots) that import it from this module.
-from .bots.strategies import CREDIT_STRATEGIES  # noqa: E402
+from .bots.strategies import CREDIT_STRATEGIES, gamma_pin_center  # noqa: E402
 
 
 def _compute_unrealized_pnl(
