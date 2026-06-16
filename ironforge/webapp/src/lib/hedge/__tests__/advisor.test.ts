@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest'
-import { buildHedgePlan, hedgePlanText } from '@/lib/hedge/advisor'
+import { buildHedgePlan, hedgePlanText, computeHedgeCap } from '@/lib/hedge/advisor'
+
+describe('computeHedgeCap (relative cap)', () => {
+  it('soft cap = min(50% of tail, 12% of account); hard ceiling = the tail', () => {
+    const c = computeHedgeCap({ tail: 1200, accountEquity: 5145 })
+    // 50% of 1200 = 600; 12% of 5145 = 617 → soft = 600; hard = 1200
+    expect(c.softCap).toBe(600)
+    expect(c.hardCeiling).toBe(1200)
+  })
+
+  it('a small account tightens the soft cap via the %-of-account ceiling', () => {
+    const c = computeHedgeCap({ tail: 1200, accountEquity: 3000 }) // 12% = 360 < 600
+    expect(c.softCap).toBe(360)
+  })
+
+  it('an absolute $ override only lowers the soft cap', () => {
+    expect(computeHedgeCap({ tail: 1200, accountEquity: 5145, absoluteSoftCap: 500 }).softCap).toBe(500)
+    expect(computeHedgeCap({ tail: 1200, accountEquity: 5145, absoluteSoftCap: 5000 }).softCap).toBe(600)
+  })
+
+  it('hard ceiling is the tail regardless of percentages (never pay > what you protect)', () => {
+    expect(computeHedgeCap({ tail: 1200 }).hardCeiling).toBe(1200)
+  })
+})
 
 describe('buildHedgePlan', () => {
   it('returns no-hedge on a calm (unflagged) day', () => {
