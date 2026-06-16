@@ -51,9 +51,14 @@ async function ensureHedgeOrdersTable(): Promise<void> {
       account_name     TEXT,
       reason           TEXT,
       error            TEXT,
+      expensive        BOOLEAN,
+      soft_cap         REAL,
       updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  // Existing prod tables predate the relative-cap columns.
+  await dbExecute(`ALTER TABLE hedge_orders ADD COLUMN IF NOT EXISTS expensive BOOLEAN`)
+  await dbExecute(`ALTER TABLE hedge_orders ADD COLUMN IF NOT EXISTS soft_cap REAL`)
   _hedgeTableEnsured = true
 }
 
@@ -63,18 +68,19 @@ async function record(status: HedgeExecStatus, fields: Record<string, unknown>):
     `INSERT INTO hedge_orders
        (ct_date, status, long_occ, short_occ, expiration, contracts,
         limit_debit, est_total_debit, est_max_payoff, preview_cost,
-        tradier_order_id, account_name, reason, error, updated_at)
-     VALUES ((NOW() AT TIME ZONE 'America/Chicago')::date, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, NOW())
+        tradier_order_id, account_name, reason, error, expensive, soft_cap, updated_at)
+     VALUES ((NOW() AT TIME ZONE 'America/Chicago')::date, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, NOW())
      ON CONFLICT (ct_date) DO UPDATE SET
        status=$1, long_occ=$2, short_occ=$3, expiration=$4, contracts=$5,
        limit_debit=$6, est_total_debit=$7, est_max_payoff=$8, preview_cost=$9,
-       tradier_order_id=$10, account_name=$11, reason=$12, error=$13, updated_at=NOW()
+       tradier_order_id=$10, account_name=$11, reason=$12, error=$13, expensive=$14, soft_cap=$15, updated_at=NOW()
      WHERE hedge_orders.status NOT IN ('placed','declined')`,
     [
       status,
       fields.long_occ ?? null, fields.short_occ ?? null, fields.expiration ?? null, fields.contracts ?? null,
       fields.limit_debit ?? null, fields.est_total_debit ?? null, fields.est_max_payoff ?? null, fields.preview_cost ?? null,
       fields.tradier_order_id ?? null, fields.account_name ?? null, fields.reason ?? null, fields.error ?? null,
+      fields.expensive ?? null, fields.soft_cap ?? null,
     ],
   )
 }
@@ -83,7 +89,8 @@ export async function getTodayHedgeOrder(): Promise<Record<string, unknown> | nu
   await ensureHedgeOrdersTable()
   const rows = await dbQuery(
     `SELECT status, long_occ, short_occ, expiration, contracts, limit_debit,
-            est_total_debit, est_max_payoff, preview_cost, tradier_order_id, reason, error, updated_at
+            est_total_debit, est_max_payoff, preview_cost, tradier_order_id, reason, error,
+            expensive, soft_cap, updated_at
        FROM hedge_orders WHERE ct_date=(NOW() AT TIME ZONE 'America/Chicago')::date LIMIT 1`,
   )
   return rows[0] ?? null
@@ -181,7 +188,7 @@ async function prepareHedge(): Promise<{ ok: true; prepared: PreparedHedge } | {
   const base = {
     long_occ: occLong, short_occ: occShort, expiration, contracts: plan.contracts,
     limit_debit: limitDebit, est_total_debit: totalDebit, est_max_payoff: plan.est_max_payoff,
-    account_name: acct.name, reason: reasonText,
+    account_name: acct.name, reason: reasonText, expensive, soft_cap: softCap,
   }
 
   const preview = await placeHedgePutSpread(acct, legs, { preview: true })
