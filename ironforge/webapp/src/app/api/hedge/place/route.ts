@@ -1,24 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { hasValidServiceToken } from '@/lib/auth/session'
-import { placeHedgeForToday } from '@/lib/hedge/place.server'
+import { cookies } from 'next/headers'
+import { getIronSession } from 'iron-session'
+import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/auth/session'
+import { confirmHedgeForToday, declineHedgeForToday, runHedgeProposal } from '@/lib/hedge/place.server'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+/** Authorized = valid internal service token OR a logged-in operator (dashboard button). */
+async function authorized(req: NextRequest): Promise<boolean> {
+  if (hasValidServiceToken(req.headers.get('x-ironforge-service'))) return true
+  try {
+    const s = await getIronSession<SessionData>(cookies(), sessionOptions)
+    return Boolean(s.userId)
+  } catch {
+    return false
+  }
+}
+
 /**
- * Trigger today's hedge flow (Phase 3). Service-token gated (operator/internal only).
- * `?dryRun=true` → preview + record only, never places. A real order additionally
- * requires `HEDGE_AUTO_PLACE=true` in the environment (the master arm flag), so even
- * `dryRun=false` is a no-op placement until the operator explicitly arms it.
+ * Hedge actions (Phase 3). REAL-MONEY placement (`?action=confirm`) requires explicit
+ * authorization — this is the operator pressing the "Place hedge" button, never the
+ * scanner. `?action=decline` dismisses today's proposal. Default re-runs the proposal.
  */
 export async function POST(req: NextRequest) {
-  if (!hasValidServiceToken(req.headers.get('x-ironforge-service'))) {
+  if (!(await authorized(req))) {
     return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 })
   }
-  const dryRun = req.nextUrl.searchParams.get('dryRun') === 'true'
+  const action = req.nextUrl.searchParams.get('action')
   try {
-    const result = await placeHedgeForToday({ dryRun })
-    return NextResponse.json({ ok: true, dryRun, ...result })
+    const result =
+      action === 'confirm' ? await confirmHedgeForToday()
+      : action === 'decline' ? await declineHedgeForToday()
+      : await runHedgeProposal()
+    return NextResponse.json({ ok: true, action: action ?? 'propose', ...result })
   } catch (e) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 })
   }
