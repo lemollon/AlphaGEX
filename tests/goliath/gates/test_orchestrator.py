@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
+from trading.goliath.gates import orchestrator as _orchestrator  # noqa: E402
 from trading.goliath.gates.orchestrator import (  # noqa: E402
     EntryDecision,
     GateInputs,
@@ -99,7 +100,18 @@ def _good_inputs(**overrides) -> GateInputs:
     return GateInputs(**base)
 
 
-class HappyPath(unittest.TestCase):
+class _GateChainTestCase(unittest.TestCase):
+    """Base for tests that need the real gate chain (bypass disabled)."""
+
+    def setUp(self):
+        self._bypass_patcher = patch.object(_orchestrator, "BYPASS_ALL_GATES", False)
+        self._bypass_patcher.start()
+
+    def tearDown(self):
+        self._bypass_patcher.stop()
+
+
+class HappyPath(_GateChainTestCase):
     def test_all_gates_pass_returns_structure(self):
         decision = orchestrate_entry(_good_inputs())
         self.assertIsInstance(decision, EntryDecision)
@@ -111,7 +123,7 @@ class HappyPath(unittest.TestCase):
         self.assertIsNone(decision.first_failure)
 
 
-class FirstFailureStopsChain(unittest.TestCase):
+class FirstFailureStopsChain(_GateChainTestCase):
     def test_g05_insufficient_history_stops_chain(self):
         decision = orchestrate_entry(_good_inputs(iv_rank=None))
         self.assertEqual(decision.first_failure.gate, "G05")
@@ -133,7 +145,7 @@ class FirstFailureStopsChain(unittest.TestCase):
         self.assertEqual(len(passed), 8)
 
 
-class StructureUnavailable(unittest.TestCase):
+class StructureUnavailable(_GateChainTestCase):
     def test_none_structure_synthesizes_g06_fail(self):
         decision = orchestrate_entry(_good_inputs(attempted_structure=None))
         self.assertEqual(decision.first_failure.gate, "G06")
@@ -141,7 +153,7 @@ class StructureUnavailable(unittest.TestCase):
         self.assertFalse(decision.first_failure.context.get("structure_present"))
 
 
-class PersistenceIsBestEffort(unittest.TestCase):
+class PersistenceIsBestEffort(_GateChainTestCase):
     def test_persist_swallows_import_error(self):
         # Force the import inside _persist_failure to fail; orchestrator
         # must still return a clean EntryDecision.
@@ -149,6 +161,33 @@ class PersistenceIsBestEffort(unittest.TestCase):
             decision = orchestrate_entry(_good_inputs(iv_rank=None))
         self.assertIsNone(decision.structure)
         self.assertEqual(decision.first_failure.gate, "G05")
+
+
+class BypassAllGates(unittest.TestCase):
+    """Verifies orchestrate_entry short-circuits when BYPASS_ALL_GATES=True."""
+
+    def test_bypass_approves_structure_even_when_gates_would_fail(self):
+        # iv_rank=None would fail G05; open_position_count=3 would fail G10;
+        # both pass under bypass.
+        with patch.object(_orchestrator, "BYPASS_ALL_GATES", True):
+            decision = orchestrate_entry(
+                _good_inputs(iv_rank=None, open_position_count=3, underlying_net_gex=0.0)
+            )
+        self.assertIsNotNone(decision.structure)
+        self.assertTrue(decision.passed)
+        self.assertEqual(
+            [r.gate for r in decision.chain],
+            ["G02", "G03", "G04", "G05", "G06", "G07", "G08", "G09", "G10"],
+        )
+        for r in decision.chain:
+            self.assertTrue(r.passed)
+            self.assertTrue(r.context.get("bypassed"))
+
+    def test_bypass_still_blocks_when_no_structure_available(self):
+        with patch.object(_orchestrator, "BYPASS_ALL_GATES", True):
+            decision = orchestrate_entry(_good_inputs(attempted_structure=None))
+        self.assertIsNone(decision.structure)
+        self.assertEqual(decision.first_failure.gate, "G06")
 
 
 if __name__ == "__main__":
