@@ -12,14 +12,14 @@ export function renderBriefImage(brief: BriefRow): Response {
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 28, color: '#fbbf24', letterSpacing: 2 }}>
+          <div style={{ fontSize: 28, color: '#ff8a3d', letterSpacing: 2 }}>
             IRON · FORGE
           </div>
           <div style={{ fontSize: 22, color: '#9ca3af' }}>
             {String(brief.brief_date)} · {brief.bot.toUpperCase()}
           </div>
         </div>
-        <div style={{ fontSize: 22, color: '#fbbf24', fontStyle: 'italic', marginBottom: 18 }}>
+        <div style={{ fontSize: 22, color: '#ff8a3d', fontStyle: 'italic', marginBottom: 18 }}>
           {brief.bot_voice_signature || ''}
         </div>
         <div style={{ fontSize: 56, fontWeight: 700, lineHeight: 1.1, marginBottom: 28 }}>
@@ -27,7 +27,7 @@ export function renderBriefImage(brief: BriefRow): Response {
         </div>
         {brief.wisdom ? (
           <div style={{
-            fontSize: 30, fontStyle: 'italic', color: '#fbbf24', borderLeft: '4px solid #fbbf24',
+            fontSize: 30, fontStyle: 'italic', color: '#ff8a3d', borderLeft: '4px solid #ff8a3d',
             paddingLeft: 20, marginBottom: 28, lineHeight: 1.3,
           }}>
             "{brief.wisdom}"

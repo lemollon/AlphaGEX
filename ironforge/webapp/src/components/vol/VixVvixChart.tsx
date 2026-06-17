@@ -14,7 +14,7 @@ import { seriesForChart, type VolSeriesPoint } from '@/lib/volatility'
 const LABEL = 'text-[10px] text-forge-muted uppercase tracking-wider'
 
 const VIX_COLOR = '#3b82f6'
-const VVIX_COLOR = '#a78bfa'
+const VVIX_COLOR = '#06b6d4'
 
 function formatDate(d: string) {
   if (!d) return ''

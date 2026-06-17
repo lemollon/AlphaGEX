@@ -106,7 +106,7 @@ export default function CandleChart({
       const x = CHART_LEFT_MARGIN + i * candleSpacing - barWidth / 2
       const centerX = CHART_LEFT_MARGIN + i * candleSpacing
       const isUp = c.close >= c.open
-      const color = isUp ? '#26a69a' : '#ef5350'
+      const color = isUp ? '#34d399' : '#f87171'
       const bodyTop = pToY(Math.max(c.open, c.close))
       const bodyBottom = pToY(Math.min(c.open, c.close))
       const bodyHeight = Math.max(bodyBottom - bodyTop, 1)
@@ -114,7 +114,7 @@ export default function CandleChart({
       const wickBottom = pToY(c.low)
       const volH = ((c.volume || 0) / maxVol) * 40
       const volY = height - BOTTOM_PAD - volH
-      return { x, centerX, bodyTop, bodyHeight, wickTop, wickBottom, color, volH, volY, volColor: isUp ? '#26a69a44' : '#ef535044', time: c.time }
+      return { x, centerX, bodyTop, bodyHeight, wickTop, wickBottom, color, volH, volY, volColor: isUp ? '#34d39944' : '#f8717144', time: c.time }
     })
 
     const dateLabels: Array<{ x: number; label: string }> = []
@@ -229,7 +229,7 @@ export default function CandleChart({
     const longPrices = [strikes.longPutStrike, strikes.longCallStrike].filter((v): v is number => v != null && Number.isFinite(Number(v))).map(Number)
     const shortPrices = [strikes.shortPutStrike, strikes.shortCallStrike].filter((v): v is number => v != null && Number.isFinite(Number(v))).map(Number)
     longPrices.forEach((p) => {
-      if (p >= minPrice && p <= maxPrice) strikeLines.push({ y: pToY(p), color: '#22c55e', dash: '5,4', label: `$${p}` })
+      if (p >= minPrice && p <= maxPrice) strikeLines.push({ y: pToY(p), color: '#34d399', dash: '5,4', label: `$${p}` })
     })
     shortPrices.forEach((p) => {
       if (p >= minPrice && p <= maxPrice) strikeLines.push({ y: pToY(p), color: '#ef4444', dash: '5,4', label: `$${p}` })
@@ -341,8 +341,8 @@ export default function CandleChart({
         {/* Current price line + badge in protected right margin */}
         {lastCandleX != null && spotY != null && spotPrice != null && (
           <>
-            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#448aff" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
-            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#448aff" />
+            <line x1={lastCandleX} y1={TOP_PAD} x2={lastCandleX} y2={height - BOTTOM_PAD} stroke="#3b82f6" strokeWidth="1" strokeDasharray="3,3" opacity="0.6" />
+            <rect x={svgWidth - CHART_RIGHT_MARGIN + 8} y={spotY - 8} width={60} height={16} rx={3} fill="#3b82f6" />
             <text x={svgWidth - CHART_RIGHT_MARGIN + 38} y={spotY + 3} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="600" fontFamily="monospace">
               ${spotPrice.toFixed(2)}
             </text>

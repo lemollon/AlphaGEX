@@ -100,7 +100,7 @@ function SummaryPanel({ stats, label, isChosen, period }: SummaryPanelProps) {
       <div className="flex items-center gap-2 mb-3">
         {isChosen && (
           <svg width="13" height="13" viewBox="0 0 13 13" fill="none" className="shrink-0">
-            <polygon points="6.5,1 8.1,5.1 12.5,5.5 9.3,8.3 10.3,12.5 6.5,10.2 2.7,12.5 3.7,8.3 0.5,5.5 4.9,5.1" fill="#f59e0b" />
+            <polygon points="6.5,1 8.1,5.1 12.5,5.5 9.3,8.3 10.3,12.5 6.5,10.2 2.7,12.5 3.7,8.3 0.5,5.5 4.9,5.1" fill="#FF5500" />
           </svg>
         )}
         <span className={`text-sm font-semibold ${headerColor}`}>{label}</span>
@@ -180,8 +180,8 @@ function EmberEquityChart({ curve }: { curve: EquityCurvePoint[] }) {
 
   const last = curve[curve.length - 1]
   const isPositive = (last?.cum_pnl ?? 0) >= 0
-  const fillColor = isPositive ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)'
-  const lineColor = isPositive ? '#10b981' : '#ef4444'
+  const fillColor = isPositive ? 'rgba(52,211,153,0.12)' : 'rgba(239,68,68,0.12)'
+  const lineColor = isPositive ? '#34d399' : '#ef4444'
 
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -241,9 +241,9 @@ function EmberEquityChart({ curve }: { curve: EquityCurvePoint[] }) {
           <Area
             type="monotone"
             dataKey="oos_value"
-            stroke="#8b5cf6"
+            stroke="#06b6d4"
             strokeWidth={2.5}
-            fill="rgba(139,92,246,0.15)"
+            fill="rgba(6,182,212,0.15)"
             dot={false}
             isAnimationActive={false}
             connectNulls={false}
@@ -338,7 +338,7 @@ function EmberGrid({ grid }: { grid: PolicyResult[] }) {
                   <td className="p-2.5 font-mono text-xs">
                     {isBest && (
                       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="inline mr-1.5 mb-0.5">
-                        <polygon points="5,1 6.2,3.9 9.5,4.2 7.1,6.4 7.9,9.7 5,8 2.1,9.7 2.9,6.4 0.5,4.2 3.8,3.9" fill="#f59e0b" />
+                        <polygon points="5,1 6.2,3.9 9.5,4.2 7.1,6.4 7.9,9.7 5,8 2.1,9.7 2.9,6.4 0.5,4.2 3.8,3.9" fill="#FF5500" />
                       </svg>
                     )}
                     {isLive && (

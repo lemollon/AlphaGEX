@@ -121,7 +121,7 @@ export default function EmberBuildProgress({ status, onStop, onRetry, canceling 
         .ember-indeterminate-bar {
           animation: ember-indeterminate 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
           width: 40%;
-          background: linear-gradient(90deg, transparent, #f59e0b, #fbbf24, #f59e0b, transparent);
+          background: linear-gradient(90deg, transparent, #FF5500, #ff8a3d, #FF5500, transparent);
         }
         .ember-shimmer-overlay {
           animation: ember-shimmer 2s ease-in-out infinite;
@@ -221,7 +221,7 @@ export default function EmberBuildProgress({ status, onStop, onRetry, canceling 
                   className="h-full rounded-full transition-all duration-500 relative overflow-hidden"
                   style={{
                     width: `${progress}%`,
-                    background: 'linear-gradient(90deg, #d97706, #f59e0b, #fbbf24)',
+                    background: 'linear-gradient(90deg, #b83c12, #FF5500, #ff8a3d)',
                   }}
                 >
                   {/* Animated shimmer overlay — keeps bar looking alive */}

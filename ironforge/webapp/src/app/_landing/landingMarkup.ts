@@ -669,7 +669,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         </div>
         <div>
           <span class="label">EXPERIENCE LEVEL <em style="color:var(--ink-3);font-style:normal">// optional</em></span>
-          <select name="experience" style="width:100%;background:var(--bg);border:1px solid var(--line-2);color:var(--ink);padding:12px 14px;font-family:'IBM Plex Mono',monospace;font-size:14px;outline:none">
+          <select name="experience" style="width:100%;background:var(--bg);border:1px solid var(--line-2);color:var(--ink);padding:12px 14px;font-family:var(--font-sans);font-size:14px;outline:none">
             <option>Never traded options</option>
             <option>Dabbled a few times</option>
             <option>I trade actively</option>
@@ -682,7 +682,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         </label>
         <button class="submit" type="submit">
           <span>▸ GET MY INVITE</span>
-          <span style="font-family:'IBM Plex Sans';font-weight:300;font-size:18px;letter-spacing:0">→</span>
+          <span style="font-family:var(--font-sans);font-weight:300;font-size:18px;letter-spacing:0">→</span>
         </button>
         <div class="alt" id="waitlist-thanks" style="display:none">✓ You're on the list. We'll be in touch.</div>
         <div class="alt">No spam. One email when the bots go live.</div>
