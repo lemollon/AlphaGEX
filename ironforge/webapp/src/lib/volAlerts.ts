@@ -291,3 +291,90 @@ export function debouncedTransitions(
   }
   return { toOpen, toResolve }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Signal escalation ladder (pure, unit-tested) — NEVER drops a read  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Instantaneous escalation state of a directional signal on a single read.
+ *
+ *   idle      → not active and not near its trigger
+ *   watch     → not active but proximity ≥ WATCH_PROXIMITY (approaching)
+ *   tripped   → crossed its trigger this read but not yet debounce-CONFIRMED
+ *   confirmed → has a sustained, debounce-confirmed open alert (`vol_alerts`)
+ *
+ * The `vol_alerts` table holds only the CONFIRMED (actionable, debounced) layer.
+ * This ladder is the observation layer underneath it: a `tripped` read that never
+ * confirms still becomes a permanent event row, so a real market sign can never be
+ * silently dropped by the debounce. `resolved` is not a state — it's the EVENT of
+ * leaving `confirmed` (a confirmed→{idle,watch} transition).
+ */
+export type SignalState = 'idle' | 'watch' | 'tripped' | 'confirmed'
+
+/** Proximity (0..1, from the advisor) at/above which an inactive signal is WATCH. */
+export const WATCH_PROXIMITY = 0.9
+
+/**
+ * Classify one signal's instantaneous ladder state. `confirmed` wins (the open
+ * alert persists through the resolve-debounce window even when a single read goes
+ * inactive); else `tripped` when active; else `watch` near the trigger; else idle.
+ * Pure + total.
+ */
+export function classifySignalState(args: {
+  active: boolean
+  confirmed: boolean
+  proximity: number | null | undefined
+}): SignalState {
+  if (args.confirmed) return 'confirmed'
+  if (args.active) return 'tripped'
+  const p = typeof args.proximity === 'number' && Number.isFinite(args.proximity) ? args.proximity : 0
+  return p >= WATCH_PROXIMITY ? 'watch' : 'idle'
+}
+
+/** A single ladder state change for one signal (the unit the event log records). */
+export interface LadderTransition {
+  signalKey: string
+  direction: string | null
+  from: SignalState
+  to: SignalState
+}
+
+/** Notification verdict for a ladder transition. */
+export interface NotifyVerdict {
+  notify: boolean
+  priority: 'high' | 'info'
+  /** Short machine reason, e.g. 'confirmed' | 'early-warning' | 'resolved' | 'none'. */
+  reason: string
+}
+
+/**
+ * Escalation + asymmetry policy for a ladder transition (pure):
+ *   • →confirmed (any signal)                  → notify HIGH ('confirmed')
+ *   • →tripped for the bearish vol-expansion
+ *     signal (ts_flattening), if early-warning
+ *     is enabled                               → notify HIGH ('early-warning')
+ *   • confirmed→{idle,watch,tripped}           → no ping ('resolved'; UI only)
+ *   • everything else                          → no ping ('none')
+ *
+ * The ts_flattening asymmetry exists because vol-expansion is the ruin scenario for
+ * the short-premium books — we accept an extra heads-up on the dangerous signal
+ * before it fully confirms. Flap is tamed by a per-signal notify cooldown at the
+ * call site, not here. Pure + total.
+ */
+export function notifyDecision(
+  t: LadderTransition,
+  opts: { earlyWarnTsFlattening?: boolean } = {},
+): NotifyVerdict {
+  const earlyWarn = opts.earlyWarnTsFlattening !== false // default ON
+  if (t.to === 'confirmed') {
+    return { notify: true, priority: 'high', reason: 'confirmed' }
+  }
+  if (t.from === 'confirmed') {
+    return { notify: false, priority: 'info', reason: 'resolved' }
+  }
+  if (t.to === 'tripped' && t.signalKey === 'ts_flattening' && earlyWarn) {
+    return { notify: true, priority: 'high', reason: 'early-warning' }
+  }
+  return { notify: false, priority: 'info', reason: 'none' }
+}
