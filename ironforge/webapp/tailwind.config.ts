@@ -4,6 +4,11 @@ const config: Config = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
   theme: {
     extend: {
+      fontFamily: {
+        // --font-sans / --font-display are injected by next/font in app/layout.tsx
+        sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        display: ['var(--font-display)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
       colors: {
         // Brand re-hue: the accent rides on Tailwind's built-in `amber-*` classes
         // (414 usages), so overriding the `amber` scale re-skins the whole site to

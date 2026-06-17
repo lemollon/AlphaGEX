@@ -54,8 +54,8 @@ const botGlow: Record<string, string> = {
   FLAME: 'glow-flame',
   SPARK: 'glow-spark',
   INFERNO: 'glow-inferno',
-  BLAZE: 'glow-inferno',
-  FLARE: 'glow-inferno',
+  BLAZE: 'glow-blaze',
+  FLARE: 'glow-flare',
 }
 
 /** Bots with trading accounts get a green dot; paper-only get nothing.
@@ -70,8 +70,8 @@ const primaryLinks: NavLink[] = [
   { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
   { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
   { href: '/inferno', label: 'INFERNO', className: 'text-red-400 hover:text-red-300' },
-  { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
-  { href: '/flare', label: 'FLARE', className: 'text-fuchsia-400 hover:text-fuchsia-300' },
+  { href: '/blaze', label: 'BLAZE', className: 'text-cyan-400 hover:text-cyan-300' },
+  { href: '/flare', label: 'FLARE', className: 'text-yellow-400 hover:text-yellow-300' },
   { href: '/gex', label: 'GEX Profile', className: 'text-cyan-400 hover:text-cyan-300' },
   { href: '/volatility', label: 'Volatility', className: 'text-violet-400 hover:text-violet-300' },
   { href: '/compare', label: 'Compare' },
@@ -163,7 +163,7 @@ export default function Nav() {
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
-          <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
+          <Link href="/" className="text-xl font-bold font-display flex items-center gap-1.5">
             <img src="/ironforge-mark.png" alt="" className="h-7 w-auto inline-block" />
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>

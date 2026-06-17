@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { getCTNow, getCTMinutes } from '@/lib/pt-tiers'
+import { BOT_COLORS } from '@/lib/botColors'
 import StatusCard from './StatusCard'
 import EventBlackoutBanner from './EventBlackoutBanner'
 import PerformanceCard from './PerformanceCard'
@@ -339,8 +340,8 @@ export default function BotDashboard({
   const accentActive =
     accent === 'amber' ? 'border-amber-400 text-amber-400'
     : accent === 'red' ? 'border-red-400 text-red-400'
-    : accent === 'orange' ? 'border-orange-400 text-orange-400'
-    : accent === 'fuchsia' ? 'border-fuchsia-500 text-fuchsia-400'
+    : accent === 'orange' ? 'border-cyan-400 text-cyan-400'
+    : accent === 'fuchsia' ? 'border-yellow-400 text-yellow-400'
     : 'border-blue-400 text-blue-400'
 
   return (
@@ -362,7 +363,7 @@ export default function BotDashboard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <h1
-            className={`text-xl sm:text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'}`}
+            className={`text-xl sm:text-2xl font-bold font-display ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-cyan-400' : accent === 'fuchsia' ? 'text-yellow-400' : 'text-blue-400'}`}
           >
             {bot.toUpperCase()}
           </h1>
@@ -553,7 +554,7 @@ export default function BotDashboard({
                 data={equity?.curve || []}
                 intradayData={intraday?.snapshots}
                 startingCapital={equity?.starting_capital || status?.account?.starting_capital || 10000}
-                color={accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : accent === 'fuchsia' ? '#d946ef' : '#3b82f6'}
+                color={BOT_COLORS[accent === 'amber' ? 'flame' : accent === 'red' ? 'inferno' : accent === 'orange' ? 'blaze' : accent === 'fuchsia' ? 'flare' : 'spark']}
                 title={`${bot.toUpperCase()} Equity Curve`}
                 liveUnrealizedPnl={positionMonitor?.total_unrealized_pnl}
                 period={equityPeriod}
@@ -690,7 +691,7 @@ function BrokerEquityTab({
   accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 }) {
   const points = data?.mode === 'intraday' ? data?.snapshots : data?.curve
-  const accentColor = accent === 'amber' ? '#f59e0b' : accent === 'red' ? '#ef4444' : accent === 'orange' ? '#fb923c' : accent === 'fuchsia' ? '#d946ef' : '#3b82f6'
+  const accentColor = BOT_COLORS[accent === 'amber' ? 'flame' : accent === 'red' ? 'inferno' : accent === 'orange' ? 'blaze' : accent === 'fuchsia' ? 'flare' : 'spark']
 
   if (!data) return <TabLoading />
 

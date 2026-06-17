@@ -207,27 +207,27 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <span class="bh-meta">FIG. 01.2 · 5 UNITS · SPY 14DTE</span>
     </div>
     <div class="bench-grid">
-      <div class="bp" data-bot="spark" style="--c:#5b8fd9">
+      <div class="bp" data-bot="spark" style="--c:#3b82f6">
         <div class="bp-h"><span class="bp-glyph">◆</span><span class="bp-n">SPARK</span><span class="bp-dte">1D</span></div>
         <div class="bp-state" data-state></div>
         <div class="bp-foot">IC · 528/533 · NEUTRAL</div>
       </div>
-      <div class="bp" data-bot="flame" style="--c:#f5a623">
+      <div class="bp" data-bot="flame" style="--c:#FF5500">
         <div class="bp-h"><span class="bp-glyph">▲</span><span class="bp-n">FLAME</span><span class="bp-dte">2D</span></div>
         <div class="bp-state" data-state></div>
         <div class="bp-foot">BPS · 1σ ENTRIES</div>
       </div>
-      <div class="bp" data-bot="inferno" style="--c:#e74c3c">
+      <div class="bp" data-bot="inferno" style="--c:#ef4444">
         <div class="bp-h"><span class="bp-glyph">◊</span><span class="bp-n">INFERNO</span><span class="bp-dte">0D</span></div>
         <div class="bp-state" data-state></div>
         <div class="bp-foot">0DTE IC · INTRADAY</div>
       </div>
-      <div class="bp" data-bot="flare" style="--c:#d4a017">
+      <div class="bp" data-bot="flare" style="--c:#f5a623">
         <div class="bp-h"><span class="bp-glyph">◈</span><span class="bp-n">FLARE</span><span class="bp-dte">0D</span></div>
         <div class="bp-state" data-state></div>
         <div class="bp-foot">DEBIT · DIRECTIONAL</div>
       </div>
-      <div class="bp" data-bot="blaze" style="--c:#4a90e2">
+      <div class="bp" data-bot="blaze" style="--c:#06b6d4">
         <div class="bp-h"><span class="bp-glyph">➤</span><span class="bp-n">BLAZE</span><span class="bp-dte">1D</span></div>
         <div class="bp-state" data-state></div>
         <div class="bp-foot">DEBIT · NEXT-DAY</div>
@@ -276,8 +276,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
 </div>
 <section class="bots-sheet">
   <div class="bots-grid">
-    <a href="/spark" class="bot-art" style="--c:#5b8fd9">
-      <div class="b-meta"><span>FIG. 02-A · <em>SPARK</em></span><span>1 DTE · <b style="color:#5b8fd9">MODERATE</b></span></div>
+    <a href="/spark" class="bot-art" style="--c:#3b82f6">
+      <div class="b-meta"><span>FIG. 02-A · <em>SPARK</em></span><span>1 DTE · <b style="color:#3b82f6">MODERATE</b></span></div>
       <div class="b-name">Spark</div>
       <div class="b-tag">STRUCTURED INCOME · START HERE</div>
       <div class="b-recom">Short-duration iron condors. Daily premium collection, defined risk, lowest touch — the bot to learn the engine on.</div>
@@ -285,15 +285,15 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
-          <polyline points="20,140 80,140 110,70 170,70 200,140 260,140" fill="none" stroke="#5b8fd9" stroke-width="1.5"/>
-          <circle cx="110" cy="70" r="3" fill="#5b8fd9"/>
-          <circle cx="170" cy="70" r="3" fill="#5b8fd9"/>
+          <polyline points="20,140 80,140 110,70 170,70 200,140 260,140" fill="none" stroke="#3b82f6" stroke-width="1.5"/>
+          <circle cx="110" cy="70" r="3" fill="#3b82f6"/>
+          <circle cx="170" cy="70" r="3" fill="#3b82f6"/>
           <circle cx="80" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
           <circle cx="200" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
-          <line x1="80" y1="148" x2="110" y2="148" stroke="#5b8fd9" stroke-width="0.6"/>
-          <line x1="170" y1="148" x2="200" y2="148" stroke="#5b8fd9" stroke-width="0.6"/>
-          <text x="95" y="158" fill="#5b8fd9" font-size="7" text-anchor="middle">5w</text>
-          <text x="185" y="158" fill="#5b8fd9" font-size="7" text-anchor="middle">5w</text>
+          <line x1="80" y1="148" x2="110" y2="148" stroke="#3b82f6" stroke-width="0.6"/>
+          <line x1="170" y1="148" x2="200" y2="148" stroke="#3b82f6" stroke-width="0.6"/>
+          <text x="95" y="158" fill="#3b82f6" font-size="7" text-anchor="middle">5w</text>
+          <text x="185" y="158" fill="#3b82f6" font-size="7" text-anchor="middle">5w</text>
           <text x="140" y="60" fill="#a8a092" font-size="8" text-anchor="middle">PROFIT</text>
         </svg>
       </div>
@@ -306,8 +306,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>FREQ</span><b>DAILY</b></div>
       </div>
     </a>
-    <a href="/flame" class="bot-art" style="--c:#f5a623">
-      <div class="b-meta"><span>FIG. 02-B · <em>FLAME</em></span><span>2 DTE · <b style="color:#f5a623">MODERATE</b></span></div>
+    <a href="/flame" class="bot-art" style="--c:#FF5500">
+      <div class="b-meta"><span>FIG. 02-B · <em>FLAME</em></span><span>2 DTE · <b style="color:#FF5500">MODERATE</b></span></div>
       <div class="b-name">Flame</div>
       <div class="b-tag">PREMIUM SELLING · TACTICAL</div>
       <div class="b-recom">Bull put credit spreads with statistical edge. Captures premium when skew is favorable.</div>
@@ -315,11 +315,11 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
-          <polyline points="20,140 100,140 140,70 260,70" fill="none" stroke="#f5a623" stroke-width="1.5"/>
-          <circle cx="140" cy="70" r="3" fill="#f5a623"/>
+          <polyline points="20,140 100,140 140,70 260,70" fill="none" stroke="#FF5500" stroke-width="1.5"/>
+          <circle cx="140" cy="70" r="3" fill="#FF5500"/>
           <circle cx="100" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
-          <line x1="100" y1="148" x2="140" y2="148" stroke="#f5a623" stroke-width="0.6"/>
-          <text x="120" y="158" fill="#f5a623" font-size="7" text-anchor="middle">5w</text>
+          <line x1="100" y1="148" x2="140" y2="148" stroke="#FF5500" stroke-width="0.6"/>
+          <text x="120" y="158" fill="#FF5500" font-size="7" text-anchor="middle">5w</text>
           <text x="200" y="62" fill="#a8a092" font-size="8" text-anchor="middle">PROFIT (1-SIDED)</text>
         </svg>
       </div>
@@ -332,8 +332,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>FREQ</span><b>1–2/DAY</b></div>
       </div>
     </a>
-    <a href="/inferno" class="bot-art" style="--c:#e74c3c">
-      <div class="b-meta"><span>FIG. 02-C · <em>INFERNO</em></span><span>0 DTE · <b style="color:#e74c3c">HIGH</b></span></div>
+    <a href="/inferno" class="bot-art" style="--c:#ef4444">
+      <div class="b-meta"><span>FIG. 02-C · <em>INFERNO</em></span><span>0 DTE · <b style="color:#ef4444">HIGH</b></span></div>
       <div class="b-name">Inferno</div>
       <div class="b-tag">INTRADAY VOLATILITY · EXPERIENCED</div>
       <div class="b-recom">High-frequency 0DTE iron condors for intraday edges. Multiple positions, tight risk controls, fast exits.</div>
@@ -341,9 +341,9 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
-          <polyline points="20,140 100,140 122,80 158,80 180,140 260,140" fill="none" stroke="#e74c3c" stroke-width="1.5"/>
-          <circle cx="122" cy="80" r="3" fill="#e74c3c"/>
-          <circle cx="158" cy="80" r="3" fill="#e74c3c"/>
+          <polyline points="20,140 100,140 122,80 158,80 180,140 260,140" fill="none" stroke="#ef4444" stroke-width="1.5"/>
+          <circle cx="122" cy="80" r="3" fill="#ef4444"/>
+          <circle cx="158" cy="80" r="3" fill="#ef4444"/>
           <circle cx="100" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
           <circle cx="180" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
           <text x="140" y="70" fill="#a8a092" font-size="8" text-anchor="middle">TIGHT</text>
@@ -358,8 +358,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>FREQ</span><b>MULTI/DAY</b></div>
       </div>
     </a>
-    <a href="/flare" class="bot-art" style="--c:#d4a017">
-      <div class="b-meta"><span>FIG. 02-D · <em>FLARE</em></span><span>0 DTE · <b style="color:#d4a017">HIGH</b></span></div>
+    <a href="/flare" class="bot-art" style="--c:#f5a623">
+      <div class="b-meta"><span>FIG. 02-D · <em>FLARE</em></span><span>0 DTE · <b style="color:#f5a623">HIGH</b></span></div>
       <div class="b-name">Flare</div>
       <div class="b-tag">DIRECTIONAL · DEFINED-RISK DEBIT</div>
       <div class="b-recom">Same-day debit spreads. Pay-to-play directional bets with capped risk and asymmetric payoff on intraday momentum.</div>
@@ -367,9 +367,9 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
-          <polyline points="20,140 120,140 160,40 260,40" fill="none" stroke="#d4a017" stroke-width="1.5"/>
+          <polyline points="20,140 120,140 160,40 260,40" fill="none" stroke="#f5a623" stroke-width="1.5"/>
           <circle cx="120" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
-          <circle cx="160" cy="40" r="3" fill="#d4a017"/>
+          <circle cx="160" cy="40" r="3" fill="#f5a623"/>
           <text x="200" y="32" fill="#a8a092" font-size="8" text-anchor="middle">CAPPED MAX</text>
           <text x="60" y="112" fill="#a8a092" font-size="8" text-anchor="middle">CAPPED LOSS</text>
         </svg>
@@ -383,8 +383,8 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>FREQ</span><b>1–3/DAY</b></div>
       </div>
     </a>
-    <a href="/blaze" class="bot-art" style="--c:#4a90e2">
-      <div class="b-meta"><span>FIG. 02-E · <em>BLAZE</em></span><span>1 DTE · <b style="color:#4a90e2">MODERATE+</b></span></div>
+    <a href="/blaze" class="bot-art" style="--c:#06b6d4">
+      <div class="b-meta"><span>FIG. 02-E · <em>BLAZE</em></span><span>1 DTE · <b style="color:#06b6d4">MODERATE+</b></span></div>
       <div class="b-name">Blaze</div>
       <div class="b-tag">OVERNIGHT DIRECTIONAL · DEBIT</div>
       <div class="b-recom">Next-day debit spreads. Carries a directional thesis into the following session with defined risk and a longer runway than Flare.</div>
@@ -392,9 +392,9 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
-          <polyline points="20,140 110,140 150,40 260,40" fill="none" stroke="#4a90e2" stroke-width="1.5"/>
+          <polyline points="20,140 110,140 150,40 260,40" fill="none" stroke="#06b6d4" stroke-width="1.5"/>
           <circle cx="110" cy="140" r="2.5" fill="none" stroke="#7a7468"/>
-          <circle cx="150" cy="40" r="3" fill="#4a90e2"/>
+          <circle cx="150" cy="40" r="3" fill="#06b6d4"/>
           <text x="200" y="32" fill="#a8a092" font-size="8" text-anchor="middle">CAPPED MAX</text>
           <text x="60" y="112" fill="#a8a092" font-size="8" text-anchor="middle">CAPPED LOSS</text>
         </svg>
@@ -421,7 +421,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
   <div class="cmp-wrap">
     <table class="cmp">
       <thead>
-        <tr><th>Feature</th><th class="bot-h c-spk">SPARK</th><th class="bot-h c-flm">FLAME</th><th class="bot-h c-inf">INFERNO</th><th class="bot-h" style="color:#d4a017">FLARE</th><th class="bot-h c-blz">BLAZE</th></tr>
+        <tr><th>Feature</th><th class="bot-h c-spk">SPARK</th><th class="bot-h c-flm">FLAME</th><th class="bot-h c-inf">INFERNO</th><th class="bot-h c-flr">FLARE</th><th class="bot-h c-blz">BLAZE</th></tr>
       </thead>
       <tbody>
         <tr><td>Strategy Type</td><td>Iron Condor</td><td>Bull Put Spread</td><td>Iron Condor</td><td>Debit Spread</td><td>Debit Spread</td></tr>
@@ -430,7 +430,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <tr><td>Market Conditions</td><td>Normal IV / Range</td><td>Elevated IV / Pullback</td><td>High IV / Volatile</td><td>Intraday Momentum</td><td>Overnight Setup</td></tr>
         <tr><td>Trade Frequency</td><td>Daily</td><td>1–2 / Day</td><td>Multi / Day</td><td>1–3 / Day</td><td>1–2 / Day</td></tr>
         <tr><td>Hold Time</td><td>Intraday</td><td>Hours – 2 Days</td><td>Minutes – Hours</td><td>Intraday</td><td>Overnight – 1 Day</td></tr>
-        <tr><td>Risk Profile</td><td class="c-spk">Moderate</td><td class="c-flm">Moderate+</td><td class="c-inf">High</td><td style="color:#d4a017">High</td><td class="c-blz">Moderate+</td></tr>
+        <tr><td>Risk Profile</td><td class="c-spk">Moderate</td><td class="c-flm">Moderate+</td><td class="c-inf">High</td><td class="c-flr">High</td><td class="c-blz">Moderate+</td></tr>
         <tr><td>Automation</td><td>High</td><td>High</td><td>High</td><td>High</td><td>High</td></tr>
       </tbody>
     </table>
