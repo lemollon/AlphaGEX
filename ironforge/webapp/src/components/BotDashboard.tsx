@@ -21,6 +21,7 @@ import SignalsTable from './SignalsTable'
 import ProductionTab from './dashboard/ProductionTab'
 import BuilderTab from './dashboard/builder/BuilderTab'
 import BlazeDirectionalChart from './BlazeDirectionalChart'
+import DirectionBalanceCard from './DirectionBalanceCard'
 import GexSummaryBanner from './gex/GexSummaryBanner'
 import VolRegimeBanner from './vol/VolRegimeBanner'
 import HedgeCard from './vol/HedgeCard'
@@ -499,6 +500,21 @@ export default function BotDashboard({
             quoteAgeSeconds={positionMonitor?.quote_age_seconds}
             todaysClosedTrades={positionMonitor?.todays_closed_trades}
             viewMode={viewMode}
+          />
+        </ComponentErrorBoundary>
+      )}
+
+      {/* Call/Put balance — directional bots only (FLARE/BLAZE). Surfaces the
+          live call vs put split so a one-sided pile-up is visible; FLARE also
+          shows each side's distance to the per-direction force-close stop
+          (−10% of balance, DEFAULT_FLARE_CONFIG.perdir_force_close_pct). */}
+      {(bot === 'flare' || bot === 'blaze') && (
+        <ComponentErrorBoundary fallback="Call/Put balance card error">
+          <DirectionBalanceCard
+            positions={positionMonitor?.positions}
+            balance={status?.account?.balance}
+            bot={bot}
+            forceClosePct={bot === 'flare' ? 0.10 : undefined}
           />
         </ComponentErrorBoundary>
       )}
