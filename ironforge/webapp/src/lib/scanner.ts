@@ -65,8 +65,9 @@ import {
   type SandboxCloseInfo,
   type IcMtmResult,
 } from './tradier'
-import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, type SignalStreak } from './volAlerts'
-import { ensureVolAlertsTable, upsertRegimeDaily } from './volAlerts.server'
+import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
+import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, type SignalRead } from './volAlerts.server'
+import { sendVolAlertEmail } from './email'
 import { runHedgeProposal } from './hedge/place.server'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
@@ -5525,6 +5526,9 @@ function safeInfernoFastMonitor(): void {
 // trading loop. Worst case on any failure: no new alert rows this tick.
 
 const VOL_ALERTS_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+// Per-signal/-state cooldown for ladder notifications — suppresses re-sending the
+// same escalation state within this window so a near-threshold flap can't spam.
+const VOL_NOTIFY_COOLDOWN_MIN = 60
 let _volAlertsIntervalId: ReturnType<typeof setInterval> | null = null
 
 // Attio CRM retry drain — re-attempts signups that failed to sync to Attio
@@ -5641,6 +5645,66 @@ async function checkVolAlerts(): Promise<void> {
         [toResolve],
       )
       console.log(`[scanner] vol-alert RESOLVE: ${toResolve.join(', ')}`)
+    }
+
+    // Escalation ladder — the NEVER-DROP observation layer underneath the
+    // confirmed `vol_alerts` rows above. Records every signal's instantaneous
+    // state (idle/watch/tripped/confirmed) so a real market sign can't be lost to
+    // the debounce, and notifies on escalation per policy. Fully isolated in its
+    // own try/catch so a ladder/email failure can't disturb the confirmed layer
+    // that already committed, nor the trade loop.
+    try {
+      // Confirmed set AFTER this cycle's open/resolve commits.
+      const confirmedSet = new Set(openKeys)
+      for (const k of toOpen) confirmedSet.add(k)
+      for (const k of toResolve) confirmedSet.delete(k)
+
+      const activeSet = new Set(activeKeys)
+      const reads: SignalRead[] = ALERTING_SIGNAL_KEYS.map((key) => {
+        const sig = signals[key] || {}
+        const proximity = typeof sig.proximity === 'number' ? sig.proximity : null
+        return {
+          signalKey: key,
+          direction: sig.direction ?? null,
+          state: classifySignalState({
+            active: activeSet.has(key),
+            confirmed: confirmedSet.has(key),
+            proximity,
+          }),
+          value: typeof sig.value === 'number' ? sig.value : null,
+          proximity,
+          vix,
+          vvix,
+          vix3m,
+          regimeLabel,
+        }
+      })
+
+      const transitions = await recordLadderTransitions(reads)
+      const earlyWarn = process.env.VOL_EARLY_WARN !== 'false' // default ON
+      for (const t of transitions) {
+        const verdict = notifyDecision(t, { earlyWarnTsFlattening: earlyWarn })
+        console.log(`[scanner] vol-ladder ${t.signalKey} ${t.from}->${t.to}${verdict.notify ? ` (notify:${verdict.reason})` : ''}`)
+        if (!verdict.notify) continue
+        // Cooldown so a tripped↔watch flap can't re-send the same state inside 60m.
+        if (!(await markNotifiedIfDue(t.signalKey, t.to, VOL_NOTIFY_COOLDOWN_MIN))) continue
+        const sig = signals[t.signalKey] || {}
+        const res = await sendVolAlertEmail({
+          signalKey: t.signalKey,
+          direction: t.direction,
+          reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
+          headline,
+          message,
+          regimeLabel,
+          vix,
+          vix3m,
+          vvix,
+          proximity: typeof sig.proximity === 'number' ? sig.proximity : null,
+        })
+        console.log(`[scanner] vol-alert EMAIL ${t.signalKey} ${t.to}: ${res.sent ? 'sent' : res.skipped ? 'skipped (email unconfigured)' : 'error: ' + res.error}`)
+      }
+    } catch (e) {
+      console.warn(`[scanner] vol-ladder/notify failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
     }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
