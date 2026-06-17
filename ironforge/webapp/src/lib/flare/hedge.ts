@@ -56,6 +56,9 @@ export function computeImbalance(positions: HedgePosition[]): Imbalance {
 /** Calibrated from FLARE's tape: floor ≈ 2× a good day's net; cover the excess aggressively. */
 export const HEDGE_FLOOR = Number(process.env.FLARE_HEDGE_FLOOR) || 2000
 export const HEDGE_COVERAGE = Number(process.env.FLARE_HEDGE_COVERAGE) || 0.75
+/** Minimum capital-at-risk shortfall ($) before topping up the hedge — avoids
+ *  churning a 1-contract order every tick once the book is roughly balanced. */
+export const HEDGE_MIN_TOPUP = Number(process.env.FLARE_HEDGE_MIN_TOPUP) || 500
 
 export interface HedgeDecision {
   hedge: boolean
@@ -70,6 +73,15 @@ export interface HedgeDecision {
   targetOffset: number
   /** Opposing-spread contracts to buy, sized so its 1σ-adverse gain ≈ targetOffset. */
   contracts: number
+  /**
+   * RISK-balance target: total capital-at-risk (debit × 100 × contracts) the
+   * protective side should carry to close the directional gap to within the
+   * tolerance floor (= netImbalance − floor). The scanner subtracts existing
+   * hedge risk and tops up only the shortfall each tick, so the hedge scales
+   * with the heavy side instead of firing once. Bounded by netImbalance, so it
+   * can never over-hedge past the exposure it offsets.
+   */
+  targetHedgeRisk: number
 }
 
 /**
@@ -90,7 +102,7 @@ export function decideHedge(p: {
   const { netImbalance, heavyDir } = p.imbalance
 
   const none = (reason: string): HedgeDecision => ({
-    hedge: false, reason, heavyDir, hedgeSide: null, netImbalance, excess: 0, targetOffset: 0, contracts: 0,
+    hedge: false, reason, heavyDir, hedgeSide: null, netImbalance, excess: 0, targetOffset: 0, contracts: 0, targetHedgeRisk: 0,
   })
 
   if (heavyDir === 'none' || netImbalance <= floor) {
@@ -106,10 +118,15 @@ export function decideHedge(p: {
   const perSpreadGain = p.perSpreadDeltaPayoff ?? Math.max(1, 0.15 * p.sigMove * 100)
   const contracts = Math.max(1, Math.round(targetOffset / perSpreadGain))
 
+  // Risk-balance target: bring the protective side's capital-at-risk up to close
+  // the gap to within the floor. Bounded by netImbalance (floor > 0), so total
+  // hedge risk can never exceed the heavy side it offsets.
+  const targetHedgeRisk = Math.max(0, netImbalance - floor)
+
   return {
     hedge: true,
     reason: `${heavyDir}-heavy by $${netImbalance} (>${floor}); hedge ${hedgeSide} to recover ~$${targetOffset} on a 1σ move`,
-    heavyDir, hedgeSide, netImbalance, excess, targetOffset, contracts,
+    heavyDir, hedgeSide, netImbalance, excess, targetOffset, contracts, targetHedgeRisk,
   }
 }
 
