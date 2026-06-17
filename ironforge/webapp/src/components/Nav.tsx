@@ -181,7 +181,7 @@ export default function Nav() {
           <span
             className="hidden xl:block"
             style={{
-              color: '#7A756C',
+              color: '#C7C1B6',
               fontSize: '0.75rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
               fontStyle: 'italic',
@@ -196,7 +196,8 @@ export default function Nav() {
               whiteSpace: 'nowrap',
             }}
           >
-            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
+            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash;{' '}
+            <span style={{ color: '#FF5500', fontStyle: 'normal', fontWeight: 600 }}>Proverbs 27:17</span>
           </span>
         </div>
 

@@ -28,7 +28,7 @@
   body{
     background-image:
       radial-gradient(ellipse 1200px 600px at 50% -200px, rgba(255,85,0,.10), transparent 70%),
-      radial-gradient(ellipse at 80% 80%, rgba(217,119,6,.03) 0%, transparent 40%),
+      radial-gradient(ellipse at 80% 80%, rgba(184,60,18,.03) 0%, transparent 40%),
       radial-gradient(circle at 1px 1px, var(--grid) 1px, transparent 1px);
     background-size:auto, auto, 18px 18px;
     background-position:0 0, 0 0, 0 0;
@@ -102,7 +102,7 @@
     font-size:11px;letter-spacing:.14em;color:var(--ink-2);background:rgba(14,12,10,.6);
   }
   .sheet-rule .sh{color:var(--accent)}
-  .sheet-rule .ln{height:1px;background:linear-gradient(90deg, transparent, rgba(255,85,0,0.4), rgba(217,119,6,0.6), rgba(255,85,0,0.4), transparent)}
+  .sheet-rule .ln{height:1px;background:linear-gradient(90deg, transparent, rgba(255,85,0,0.4), rgba(184,60,18,0.6), rgba(255,85,0,0.4), transparent)}
   .sheet-rule .stamp{
     border:1px solid var(--accent);color:var(--accent);padding:3px 8px;
     font-size:10px;letter-spacing:.18em;display:inline-flex;align-items:center;gap:6px;
@@ -132,7 +132,7 @@
   }
   .hero h1 em{
     font-style:italic;font-weight:500;
-    background-image:linear-gradient(90deg, #FF5500 0%, #ff8a3d 25%, #fff2c0 50%, #ff8a3d 75%, #FF5500 100%);
+    background-image:linear-gradient(90deg, #FF5500 0%, #ff8a3d 25%, #ffe8d6 50%, #ff8a3d 75%, #FF5500 100%);
     background-size:200% 100%;
     -webkit-background-clip:text;background-clip:text;color:transparent;
     animation:molten 6s linear infinite;
@@ -767,20 +767,24 @@
   }
   .anvil-overlay h2 em{
     font-style:italic;font-weight:500;
-    background-image:linear-gradient(90deg, #FF5500 0%, #ff8a3d 25%, #fff2c0 50%, #ff8a3d 75%, #FF5500 100%);
+    background-image:linear-gradient(90deg, #FF5500 0%, #ff8a3d 25%, #ffe8d6 50%, #ff8a3d 75%, #FF5500 100%);
     background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
     text-shadow:0 0 60px rgba(255,85,0,.4);
     animation:molten 8s linear infinite;
   }
   .anvil-overlay .quote{
     font-family:Georgia,'Times New Roman',serif;font-style:italic;font-weight:500;
-    font-size:clamp(20px, 1.8vw, 26px);color:var(--ink-2);line-height:1.4;
-    max-width:42ch;margin:0 auto 12px;
+    font-size:clamp(24px, 2.4vw, 34px);color:var(--bone);line-height:1.4;
+    max-width:46ch;margin:0 auto 14px;
     text-shadow:0 2px 24px rgba(0,0,0,.8);
   }
+  .anvil-overlay .quote::before{
+    content:"";display:block;width:48px;height:2px;margin:0 auto 22px;
+    background:var(--accent);box-shadow:0 0 12px var(--accent);
+  }
   .anvil-overlay .quote-attr{
-    font-family:var(--font-sans);font-size:10px;letter-spacing:.22em;
-    color:var(--ink-3);text-transform:uppercase;
+    font-family:var(--font-sans);font-size:11.5px;letter-spacing:.24em;
+    color:var(--accent);text-transform:uppercase;font-weight:600;
   }
   .anvil-overlay .quote-attr em{color:var(--accent);font-style:normal}
   /* Forge edge under the anvil (heat line + cinders) */
@@ -872,8 +876,8 @@
   .found-head .kicker{font-family:var(--font-sans);font-size:10px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase;margin-bottom:12px}
   .found-head h3{font-family:var(--font-sans);font-weight:300;font-size:36px;letter-spacing:-.02em;line-height:1.05}
   .found-head h3 em{font-style:italic;font-weight:500;color:var(--accent)}
-  .found-head .verse{font-family:Georgia,'Times New Roman',serif;font-style:italic;color:var(--ink-2);font-size:17px;margin-top:14px;line-height:1.4}
-  .found-head .verse-attr{font-family:var(--font-sans);font-size:9.5px;letter-spacing:.22em;color:var(--accent);text-transform:uppercase;margin-top:6px;display:block}
+  .found-head .verse{font-family:Georgia,'Times New Roman',serif;font-style:italic;color:var(--bone);font-size:clamp(20px,2vw,26px);margin-top:16px;line-height:1.45;max-width:48ch;margin-left:auto;margin-right:auto}
+  .found-head .verse-attr{font-family:var(--font-sans);font-size:11px;letter-spacing:.24em;color:var(--accent);text-transform:uppercase;margin-top:8px;display:block;font-weight:600}
   .values-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:1px solid var(--line);max-width:1280px;margin:0 auto;background:var(--paper)}
   .val-cell{padding:24px 18px;border-right:1px solid var(--line);text-align:center}
   .val-cell:last-child{border-right:0}
