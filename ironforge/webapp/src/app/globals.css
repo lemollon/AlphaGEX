@@ -9,6 +9,10 @@
   --bot-inferno: #ef4444;
   --bot-blaze: #06b6d4;
   --bot-flare: #f5a623;
+  /* Semantic colors (mirror Tailwind emerald/red/amber unification) */
+  --pos: #34d399;
+  --neg: #f87171;
+  --warn: #e0b23f;
 }
 
 body {

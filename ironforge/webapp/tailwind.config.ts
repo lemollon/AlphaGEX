@@ -1,4 +1,21 @@
 import type { Config } from 'tailwindcss'
+import colors from 'tailwindcss/colors'
+
+// ── Design-system palette (single source of truth) ──────────────────────────
+// The whole app rides Tailwind color utilities, so unifying the scales here
+// re-skins every inner page into the system in ONE place — the same technique
+// already used to re-hue `amber` to the brand orange.
+//   • green / emerald  → POSITIVE (profit, up, healthy)
+//   • red / rose       → NEGATIVE (loss, down, danger)
+//   • yellow           → CAUTION  (warnings only)
+//   • every decorative hue (blue, cyan, violet, purple, fuchsia, pink, indigo,
+//     teal, lime, sky, orange) → NEUTRAL, so color stays deliberate.
+// Per-bot identity is NOT a Tailwind hue — it comes from lib/botColors.ts /
+// globals.css --bot-* and is applied only as a thin accent (dot + card top-rule).
+const POSITIVE = colors.emerald
+const NEGATIVE = colors.red
+const CAUTION = colors.amber
+const NEUTRAL = colors.stone
 
 const config: Config = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
@@ -10,9 +27,7 @@ const config: Config = {
         display: ['var(--font-display)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       colors: {
-        // Brand re-hue: the accent rides on Tailwind's built-in `amber-*` classes
-        // (414 usages), so overriding the `amber` scale re-skins the whole site to
-        // the orange-red brand in one place. Anchored on the mockup CTA (#E8531F).
+        // Brand accent rides amber-* (existing re-hue, anchored on the #FF5500 family)
         amber: {
           50: '#FFF3ED',
           100: '#FFE3D3',
@@ -25,6 +40,25 @@ const config: Config = {
           800: '#92300E',
           900: '#5C1E08',
         },
+        // Semantic unification — one green, one red, one caution everywhere
+        green: POSITIVE,
+        emerald: POSITIVE,
+        red: NEGATIVE,
+        rose: NEGATIVE,
+        yellow: CAUTION,
+        // Collapse decorative "skittles" to a single neutral. Bot identity is
+        // reintroduced deliberately via lib/botColors (dots + card top-rules).
+        blue: NEUTRAL,
+        sky: NEUTRAL,
+        cyan: NEUTRAL,
+        indigo: NEUTRAL,
+        violet: NEUTRAL,
+        purple: NEUTRAL,
+        fuchsia: NEUTRAL,
+        pink: NEUTRAL,
+        teal: NEUTRAL,
+        lime: NEUTRAL,
+        orange: NEUTRAL,
         flame: {
           DEFAULT: '#E8531F',
           dark: '#C2410C',

@@ -363,7 +363,7 @@ export default function BotDashboard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <h1
-            className={`text-xl sm:text-2xl font-bold font-display ${accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-cyan-400' : accent === 'fuchsia' ? 'text-yellow-400' : 'text-blue-400'}`}
+            className="text-xl sm:text-2xl font-bold font-display text-white"
           >
             {bot.toUpperCase()}
           </h1>
