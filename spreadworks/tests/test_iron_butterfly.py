@@ -56,6 +56,28 @@ def test_pins_between_two_large_magnets(fake_chain_0dte):
     assert sig.long_call_strike == 502
 
 
+def test_pins_between_magnets_with_net_gamma_key(fake_chain_0dte):
+    # Regression: the live WATCHTOWER engine emits magnets keyed by `net_gamma`
+    # (core/watchtower_engine.identify_magnets), NOT `gamma`. The builder must
+    # read that key, otherwise every magnet reads as 0 gamma, gets dropped, and
+    # the body silently falls back to spot/pin instead of the magnet midpoint.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 502.0,
+            "magnets": [
+                {"strike": 497.0, "net_gamma": -1.0e9, "probability": 40},
+                {"strike": 501.0, "net_gamma": 1.0e9, "probability": 42},
+            ],
+        },
+    }
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.body_strike == 499  # midpoint of 497/501 — magnets honored
+
+
 def test_single_dominant_magnet_centers_on_top_magnet(fake_chain_0dte):
     # One magnet far larger than the rest -> NOT a between-magnets case, so the
     # body centers on the dominant magnet (503), winning over pin_strike (500).

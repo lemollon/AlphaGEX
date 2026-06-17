@@ -109,6 +109,20 @@ def _nearest(strikes: list[int], target: float) -> int | None:
     return min(strikes, key=lambda s: abs(s - target))
 
 
+def _magnet_gamma(m: dict[str, Any]) -> float:
+    """A magnet's gamma magnitude, tolerant of the upstream key name.
+
+    The WATCHTOWER gamma engine emits each magnet as
+    `{"strike", "net_gamma", "probability"}` (see
+    `core/watchtower_engine.identify_magnets`), while older callers/tests use
+    a plain `"gamma"` key. Read whichever is present — otherwise every magnet
+    silently reads as 0 gamma, gets dropped, and the body falls back to spot."""
+    g = m.get("gamma")
+    if g is None:
+        g = m.get("net_gamma", 0)
+    return abs(float(g or 0))
+
+
 def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
     """[(strike, |gamma|)] for magnets within MAGNET_PARITY of the top one."""
     raw = gex.get("magnets") or []
@@ -116,7 +130,7 @@ def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
     for m in raw:
         try:
             strike = float(m["strike"])
-            gamma = abs(float(m.get("gamma", 0)))
+            gamma = _magnet_gamma(m)
         except (KeyError, TypeError, ValueError):
             continue
         if gamma > 0:

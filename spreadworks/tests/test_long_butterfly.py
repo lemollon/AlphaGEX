@@ -60,6 +60,25 @@ def test_pins_between_two_large_magnets(fake_chain_0dte):
     assert sig.body_strike == 499  # gamma-weighted midpoint of 497 and 501
 
 
+def test_pins_between_magnets_with_net_gamma_key(fake_chain_0dte):
+    # Regression: the live WATCHTOWER engine emits magnets keyed by `net_gamma`
+    # (core/watchtower_engine.identify_magnets), NOT `gamma`. The builder must
+    # honor that key so the body centers on the magnet midpoint, not spot/pin.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 502.0,
+            "magnets": [
+                {"strike": 497.0, "net_gamma": -1.0e9, "probability": 40},
+                {"strike": 501.0, "net_gamma": 1.0e9, "probability": 42},
+            ],
+        },
+    }
+    sig = build_long_butterfly_signal(chain=chain, config=_config(), equity=10000.0)
+    assert sig is not None
+    assert sig.body_strike == 499  # gamma-weighted midpoint of 497 and 501
+
+
 def test_falls_back_to_spot_when_no_pin(fake_chain_0dte):
     chain = {**fake_chain_0dte, "gex": {"flip_point": 502.0}}
     sig = build_long_butterfly_signal(chain=chain, config=_config(), equity=10000.0)
