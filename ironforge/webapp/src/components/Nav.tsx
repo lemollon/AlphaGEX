@@ -81,13 +81,13 @@ const primaryLinks: NavLink[] = [
   { href: '/inferno', label: 'INFERNO', className: 'text-gray-300 hover:text-white' },
   { href: '/blaze', label: 'BLAZE', className: 'text-gray-300 hover:text-white' },
   { href: '/flare', label: 'FLARE', className: 'text-gray-300 hover:text-white' },
-  { href: '/gex', label: 'GEX Profile', className: 'text-gray-300 hover:text-white' },
-  { href: '/volatility', label: 'Volatility', className: 'text-gray-300 hover:text-white' },
   { href: '/compare', label: 'Compare' },
 ]
 
 // Secondary — folded into a "More ▾" dropdown to declutter the row.
 const moreLinks: NavLink[] = [
+  { href: '/gex', label: 'GEX Profile', className: 'text-gray-300 hover:text-gray-100' },
+  { href: '/volatility', label: 'Volatility', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/calendar', label: 'Calendar', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
@@ -169,7 +169,7 @@ export default function Nav() {
 
   return (
     <nav className="relative z-[60] border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
+      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-4">
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
           <Link href="/" className="text-xl font-bold font-display flex items-center gap-1.5">
@@ -179,7 +179,7 @@ export default function Nav() {
           </Link>
           {/* Proverbs verse — hidden on small screens to keep the bar compact */}
           <span
-            className="hidden lg:block"
+            className="hidden xl:block"
             style={{
               color: '#7A756C',
               fontSize: '0.75rem',
@@ -190,6 +190,10 @@ export default function Nav() {
               marginTop: '-1px',
               paddingLeft: '1.15rem',
               textShadow: 'none',
+              maxWidth: '24rem',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
             &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
@@ -197,8 +201,8 @@ export default function Nav() {
         </div>
 
         {/* Desktop links + auth — hidden below md, where the hamburger takes over */}
-        <div className="hidden md:flex flex-1 items-center gap-8">
-          <div className="flex gap-6 items-center">
+        <div className="hidden lg:flex flex-1 items-center gap-4">
+          <div className="flex gap-4 items-center">
             {primaryLinks.map((link) => (
               <NavLinkItem key={link.href} link={link} pathname={pathname} />
             ))}
@@ -253,7 +257,7 @@ export default function Nav() {
           aria-label="Toggle navigation menu"
           aria-expanded={mobileOpen}
           aria-controls="mobile-nav"
-          className="md:hidden ml-auto inline-flex items-center justify-center w-10 h-10 rounded-md text-gray-300 hover:text-white hover:bg-amber-900/20 transition-colors"
+          className="lg:hidden ml-auto inline-flex items-center justify-center w-10 h-10 rounded-md text-gray-300 hover:text-white hover:bg-amber-900/20 transition-colors"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             {mobileOpen ? (
@@ -269,7 +273,7 @@ export default function Nav() {
       {mobileOpen && (
         <div
           id="mobile-nav"
-          className="md:hidden border-t border-amber-900/30 bg-forge-bg/98 backdrop-blur-sm px-2 py-2"
+          className="lg:hidden border-t border-amber-900/30 bg-forge-bg/98 backdrop-blur-sm px-2 py-2"
         >
           <div className="flex flex-col">
             {[...primaryLinks, ...moreLinks].map((link) => (
