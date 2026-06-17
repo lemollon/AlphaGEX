@@ -89,16 +89,22 @@ export async function openVertical(
   }
 }
 
+/** Max contracts a single hedge top-up order may place — bounds blast radius
+ *  while the per-tick shortfall logic converges the protective side to target. */
+export const HEDGE_MAX_CONTRACTS_PER_ORDER =
+  Number(process.env.FLARE_HEDGE_MAX_CONTRACTS) || 50
+
 /**
- * Open the net-imbalance HEDGE: an OPPOSING 0DTE debit spread that profits on the
- * move that hurts the heavy side. Width spans ~the 1σ move so it reaches near-max
- * on an adverse day; contracts are sized so the hedge's MAX PAYOFF ≈ targetOffset
- * (matching opposing max-gain to the heavy side's excess max-loss). Tagged
- * 'imbalance_hedge' so computeImbalance ignores it. Closes via the normal
- * PT/SL/14:45 exit path like any other position.
+ * Open (or top up) the net-imbalance HEDGE: an OPPOSING 0DTE debit spread that
+ * profits on the move that hurts the heavy side. Width spans ~the 1σ move so it
+ * reaches near-max on an adverse day. Contracts are sized by CAPITAL-AT-RISK so
+ * the hedge's max loss (debit × 100 × contracts) ≈ targetRisk — this RISK-balances
+ * the protective side against the heavy side (so the call/put-balance card moves
+ * toward even), rather than only matching max-payoff. Tagged 'imbalance_hedge' so
+ * computeImbalance ignores it. Closes via the normal PT/SL/14:45 exit path.
  */
 export async function openImbalanceHedge(
-  args: { hedgeSide: 'call' | 'put'; targetOffset: number; spot: number; sigMove: number },
+  args: { hedgeSide: 'call' | 'put'; targetRisk: number; spot: number; sigMove: number },
   config: FlareConfig,
 ): Promise<OpenResult | null> {
   const expiration = todayTradingDay(new Date())
@@ -116,8 +122,13 @@ export async function openImbalanceHedge(
   const debit = longQ.ask - shortQ.bid
   if (debit <= 0 || debit >= width) return null
 
-  const maxPayoffPerContract = (width - debit) * 100
-  const contracts = Math.max(1, Math.round(args.targetOffset / maxPayoffPerContract))
+  // Size by capital-at-risk: each contract risks debit × 100. Clamp to a per-order
+  // ceiling so one tick can't place a pathological order if targetRisk is large.
+  const riskPerContract = debit * 100
+  const contracts = Math.min(
+    HEDGE_MAX_CONTRACTS_PER_ORDER,
+    Math.max(1, Math.round(args.targetRisk / riskPerContract)),
+  )
 
   const position_id = await insertFlarePosition({
     setup_type: 'imbalance_hedge',

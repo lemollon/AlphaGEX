@@ -10,7 +10,7 @@
  */
 import { query } from '../db'
 import { getOptionQuote, getQuote } from '../tradier'
-import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR } from './hedge'
+import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR, HEDGE_MIN_TOPUP } from './hedge'
 import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
 import { openVertical, openImbalanceHedge } from './executor'
@@ -175,18 +175,28 @@ export async function runMonitorCycle(): Promise<void> {
       const spot = spyQ?.last ?? 0
       const sig = sigMove(spot, vixQ?.last ?? 0)
       const d = decideHedge({ imbalance: im, sigMove: sig })
-      const alreadyHedged = positions.some((p) => p.setup_type === 'imbalance_hedge' && p.direction === d.hedgeSide)
-      if (d.hedge && d.hedgeSide && spot > 0 && sig > 0 && !alreadyHedged) {
-        const res = await openImbalanceHedge(
-          { hedgeSide: d.hedgeSide, targetOffset: d.targetOffset, spot, sigMove: sig },
-          DEFAULT_FLARE_CONFIG,
-        )
-        await insertSignalActivity({
-          outcome: 'TRADE',
-          detail: res
-            ? `HEDGE ${d.hedgeSide} x${res.contracts} debit=${res.debit.toFixed(2)} (${im.heavyDir}-heavy $${im.netImbalance}, target $${d.targetOffset}, σ=$${sig})`
-            : `HEDGE_SKIP ${d.hedgeSide} (target $${d.targetOffset}) — no chain quote`,
-        })
+      if (d.hedge && d.hedgeSide && spot > 0 && sig > 0) {
+        // RISK-balance + scale: bring the protective side's capital-at-risk up to
+        // targetHedgeRisk, topping up only the SHORTFALL over any hedge already on
+        // that side. Re-evaluated every tick, so the hedge grows as the heavy side
+        // grows (fixes the old one-and-done guard that froze the hedge at one
+        // spread). Bounded by netImbalance, so it can't over-hedge.
+        const existingHedgeRisk = positions
+          .filter((p) => p.setup_type === 'imbalance_hedge' && p.direction === d.hedgeSide)
+          .reduce((s, p) => s + Math.max(0, p.debit) * 100 * (p.contracts || 0), 0)
+        const shortfallRisk = Math.round(d.targetHedgeRisk - existingHedgeRisk)
+        if (shortfallRisk >= HEDGE_MIN_TOPUP) {
+          const res = await openImbalanceHedge(
+            { hedgeSide: d.hedgeSide, targetRisk: shortfallRisk, spot, sigMove: sig },
+            DEFAULT_FLARE_CONFIG,
+          )
+          await insertSignalActivity({
+            outcome: 'TRADE',
+            detail: res
+              ? `HEDGE ${d.hedgeSide} x${res.contracts} debit=${res.debit.toFixed(2)} risk+$${(res.debit * 100 * res.contracts).toFixed(0)} (${im.heavyDir}-heavy net $${im.netImbalance}, target risk $${d.targetHedgeRisk}, had $${existingHedgeRisk.toFixed(0)})`
+              : `HEDGE_SKIP ${d.hedgeSide} (shortfall $${shortfallRisk}) — no chain quote`,
+          })
+        }
       }
     }
   } catch (e) {
