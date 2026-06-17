@@ -90,10 +90,25 @@ class LiveTradierChainProvider:
             fp = ms.get("flip_point")
             flip = fp.get("current") if isinstance(fp, dict) else fp
             gw = ms.get("gamma_walls", {}) or {}
+            magnets = d.get("magnets") or []
+            pin = d.get("likely_pin")
+            # Diagnostic: butterfly bodies center on these magnets/pin. If both
+            # are missing the body silently falls back to spot — log it so a
+            # bot "opening at spot" is traceable to absent GEX vs. a code bug.
+            if not magnets and pin is None:
+                logger.warning(
+                    f"gex has no magnets and no pin for {ticker} {expiration} "
+                    f"-> butterfly body will fall back to SPOT"
+                )
+            else:
+                logger.info(
+                    f"gex for {ticker} {expiration}: magnets={len(magnets)} "
+                    f"pin={pin} flip={flip}"
+                )
             return {
-                "pin_strike": d.get("likely_pin"),
+                "pin_strike": pin,
                 "pin_probability": d.get("pin_probability"),
-                "magnets": d.get("magnets") or [],
+                "magnets": magnets,
                 "flip_point": flip,
                 "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
                 "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
