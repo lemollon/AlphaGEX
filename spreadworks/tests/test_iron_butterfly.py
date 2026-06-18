@@ -165,6 +165,45 @@ def test_gex_walls_clip_wings(fake_chain_0dte):
     assert sig.long_call_strike == 503
 
 
+def test_sl_is_pct_of_max_loss_not_max_profit(fake_chain_0dte):
+    # The iron fly's stop must be a fraction of MAX LOSS (defined risk). Basing
+    # it on max_profit (the rich ATM credit) made it unreachable. max_loss and
+    # max_profit differ here, so this distinguishes the two bases.
+    sig = build_iron_butterfly_signal(
+        chain=fake_chain_0dte, config=_config(sl_pct=1.0), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.max_loss != pytest.approx(sig.max_profit)
+    assert sig.sl_target_pnl == pytest.approx(1.0 * sig.max_loss * sig.contracts)
+
+
+def test_asymmetric_walls_keep_wings_symmetric(fake_chain_0dte):
+    # A near call_wall (502) and a far put_wall (497) must NOT produce a
+    # broken-wing fly. Both wings pull in to the nearer wall distance (1) so the
+    # fly stays symmetric and the defined-risk math (max_loss = wing - credit)
+    # holds. Base wings would be 498/504; the close call wall caps both to ±1.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {"pin_strike": 501.0, "call_wall": 502.0, "put_wall": 497.0},
+    }
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(use_gex_walls=True), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.long_call_strike - sig.body_strike == sig.body_strike - sig.long_put_strike
+    assert sig.long_call_strike == 502 and sig.long_put_strike == 500
+
+
+def test_rejects_missing_atm_straddle(fake_chain_0dte):
+    chain = {**fake_chain_0dte, "atm_straddle_mid": 0}
+    diag = []
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0, diag=diag
+    )
+    assert sig is None
+    assert diag and "missing_atm_straddle" in diag[0]
+
+
 def test_max_contracts_zero_means_uncapped(fake_chain_0dte):
     # Regression: max_contracts=0 must mean "no ceiling, size by BP alone",
     # NOT "clamp to zero". The old min(max_contracts, raw) rejected every

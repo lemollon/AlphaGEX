@@ -23,7 +23,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.30,
-            "sl_pct": 2.0,
+            # SL = fraction of MAX LOSS (defined risk), matching RIVER. Was 2.0
+            # of MAX PROFIT, which for an iron fly's rich ATM credit was an
+            # unreachable stop (max loss never reaches 2x credit).
+            "sl_pct": 0.50,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
             "eod_close_ct": "14:45",

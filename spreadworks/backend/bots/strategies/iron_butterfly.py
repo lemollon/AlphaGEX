@@ -54,7 +54,7 @@ class IronButterflySignal:
     contracts: int
     max_profit: float        # per contract, $
     max_loss: float          # per contract, $
-    wing_width: int          # min(call_wing, put_wing) for collateral math; use long_*_strike for actual shape
+    wing_width: int          # symmetric wing distance (body to either long strike)
     pt_target_pnl: float     # $ total
     sl_target_pnl: float     # $ total
 
@@ -190,19 +190,29 @@ def build_iron_butterfly_signal(
         return _reject(f"no_body_strike: center={center:.2f}")
 
     atm_straddle = float(chain.get("atm_straddle_mid", 0))
+    if atm_straddle <= 0:
+        # No ATM straddle => can't size the wings; mirrors the iron condor's
+        # guard. Without this the wings collapse to the $1 floor on missing data.
+        return _reject("missing_atm_straddle")
     sd_mult = float(config.get("sd_mult", 1.0))
     wing_distance = max(1, round(sd_mult * atm_straddle * 0.85))
 
-    long_call_strike = body + wing_distance
-    long_put_strike = body - wing_distance
-
     if config.get("use_gex_walls"):
+        # Walls cap how far the protective wings sit, but the fly must stay a
+        # SYMMETRIC tent or the defined-risk math below (max_loss = wing -
+        # credit) breaks: clipping only one side makes a broken-wing fly whose
+        # true max loss is the WIDER wing minus credit, which would silently
+        # under-size risk. So pull BOTH wings in to the nearer wall distance.
         cw = gex.get("call_wall")
         pw = gex.get("put_wall")
-        if cw is not None and body < cw < long_call_strike:
-            long_call_strike = int(round(cw))
-        if pw is not None and long_put_strike < pw < body:
-            long_put_strike = int(round(pw))
+        if cw is not None and cw > body:
+            wing_distance = min(wing_distance, int(round(cw)) - body)
+        if pw is not None and pw < body:
+            wing_distance = min(wing_distance, body - int(round(pw)))
+        wing_distance = max(1, wing_distance)
+
+    long_call_strike = body + wing_distance
+    long_put_strike = body - wing_distance
 
     short_call = _find_option(chain, body, "call")
     short_put = _find_option(chain, body, "put")
@@ -216,9 +226,9 @@ def build_iron_butterfly_signal(
     # No minimum-credit floor — a thin credit is acceptable for this strategy.
     credit = round(sc_mid + sp_mid - lc_mid - lp_mid, 4)
 
-    wing_width_call = long_call_strike - body
-    wing_width_put = body - long_put_strike
-    wing_width = min(wing_width_call, wing_width_put)
+    # Wings are symmetric by construction (wall clipping above pulls BOTH in
+    # equally), so a single wing width drives the defined-risk math.
+    wing_width = long_call_strike - body
     max_profit_per = credit * 100.0
     max_loss_per = (wing_width - credit) * 100.0
     if max_loss_per <= 0:
@@ -237,9 +247,13 @@ def build_iron_butterfly_signal(
         return _reject(f"sizing_below_one: equity={equity:.0f} bp_pct={bp_pct} max_loss_per={max_loss_per:.0f}")
 
     pt_pct = float(config.get("pt_pct", 0.30))
-    sl_pct = float(config.get("sl_pct", 2.0))
+    sl_pct = float(config.get("sl_pct", 0.50))
     pt_target = pt_pct * max_profit_per * contracts
-    sl_target = sl_pct * max_profit_per * contracts
+    # SL is a fraction of MAX LOSS (defined risk), mirroring RIVER. Basing it on
+    # max_profit (the credit) made the stop unreachable for an iron fly: the
+    # rich ATM credit is a large fraction of the wing, so the max loss
+    # (wing - credit) can never reach 2x the credit and the stop never fired.
+    sl_target = sl_pct * max_loss_per * contracts
 
     return IronButterflySignal(
         ticker=chain.get("ticker", "SPY"),
