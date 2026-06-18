@@ -167,7 +167,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "starting_capital": 25000.0,
             "enabled": False,
             "max_contracts": 10,
-            "bp_pct": 0.02,
+            "bp_pct": 0.05,
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 0.50,
@@ -205,7 +205,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
-            "bp_pct": 0.02, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
+            "bp_pct": 0.05, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
             "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
             "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
             "max_concurrent_positions": 5,
