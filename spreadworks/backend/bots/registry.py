@@ -153,8 +153,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "front_dte": 10,
         "back_dte": None,
         "params": {
-            "lookback_n": 5, "dip_threshold": 0.03,
-            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            # Loosened 2026-06-18: RSI(2) < 10 + 3% dip almost never aligned
+            # (real 4-6% dips like AMD/META sat at RSI 11-17). Eased to
+            # rsi_oversold 30 / rsi_overbought 70 / dip 2% so genuine
+            # pullbacks-in-uptrend actually fire. Trend gate kept.
+            "lookback_n": 5, "dip_threshold": 0.02,
+            "rsi_period": 2, "rsi_oversold": 30, "rsi_overbought": 70,
             "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
             "spread_pct": 0.04, "max_spread_pct": 0.15, "min_option_price": 0.20,
             "earnings_exclude_days": 3, "hold_days": 2,
@@ -189,8 +193,11 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "front_dte": 10,
         "back_dte": None,
         "params": {
-            "lookback_n": 5, "dip_threshold": 0.03,
-            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            # Loosened 2026-06-18 in lockstep with UNDERTOW (shared universe /
+            # setup gates): rsi_oversold 30 / rsi_overbought 70 / dip 2% so the
+            # credit-spread setups actually trigger. Trend gate kept.
+            "lookback_n": 5, "dip_threshold": 0.02,
+            "rsi_period": 2, "rsi_oversold": 30, "rsi_overbought": 70,
             "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
             "short_otm_pct": 0.03, "spread_pct": 0.04, "max_spread_pct": 0.15,
             "min_option_price": 0.20, "min_credit": 0.20,
