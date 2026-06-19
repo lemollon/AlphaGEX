@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
@@ -138,13 +139,44 @@ function RouteBtn({ icon, label, to, end = false }) {
 // Each row is a react-router `<Link>` so navigation works even if the
 // onClick side-effects throw — clicking always changes the URL, period.
 // The onClick callback only persists localStorage + closes the menu.
-function BotMenu({ activeBotId, onSelect }) {
+function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
   const statusMap = useBotStatusMap();
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
-  return (
+
+  // Anchored to the chip but PORTALED to <body>. The header sets backdrop-filter,
+  // which creates a stacking context that traps this menu's z-index; the glass
+  // KPI cards below the header (.sw-glass — each its own stacking context, later
+  // in the DOM) then paint on top, so the menu vanished behind "Account Equity".
+  // Worst on mobile, where the header wraps and the menu opens right over them.
+  // position:fixed off the chip's rect sidesteps the trap entirely.
+  const [pos, setPos] = useState(() => {
+    const el = anchorRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) };
+  });
+  useEffect(() => {
+    function place() {
+      const el = anchorRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
+    }
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchorRef]);
+  if (!pos) return null;
+
+  return createPortal(
     <div
+      ref={panelRef}
       style={{
-        position: 'absolute', top: 'calc(100% + 8px)', right: 0,
+        position: 'fixed', top: pos.top, right: pos.right,
         width: 260, padding: 6, borderRadius: 12, zIndex: 9999,
         background: 'rgba(13,28,46,0.92)',
         backdropFilter: 'blur(16px) saturate(140%)',
@@ -227,7 +259,8 @@ function BotMenu({ activeBotId, onSelect }) {
           <Plus size={12} /> New bot
         </button>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -278,9 +311,14 @@ function NavBar() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
+  const menuPanelRef = useRef(null);
   useEffect(() => {
     function onDoc(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+      // The menu is portaled to <body>, so it lives outside menuRef (the chip).
+      // Treat a click as "outside" only when it misses BOTH the chip and panel.
+      const inChip = menuRef.current && menuRef.current.contains(e.target);
+      const inPanel = menuPanelRef.current && menuPanelRef.current.contains(e.target);
+      if (!inChip && !inPanel) setMenuOpen(false);
     }
     function onKey(e) { if (e.key === 'Escape') setMenuOpen(false); }
     document.addEventListener('mousedown', onDoc);
@@ -455,6 +493,8 @@ function NavBar() {
         {menuOpen && (
           <BotMenu
             activeBotId={activeBotId}
+            anchorRef={menuRef}
+            panelRef={menuPanelRef}
             onSelect={(id) => {
               // The <Link> in BotMenu is supposed to navigate, but Tide/Drift/
               // Flow have been silently failing for the user in spite of the
