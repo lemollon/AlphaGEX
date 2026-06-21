@@ -2000,6 +2000,55 @@ export async function getBatchOptionQuotesWithGreeks(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Net GEX (gamma exposure) computed from the option chain            */
+/*  net_gex = Σ(call gamma*OI) − Σ(put gamma*OI) across near-term       */
+/*  expirations. Positive ⇒ dealers long gamma (price pins / mean-      */
+/*  reverts) — the regime that favors selling iron condors.            */
+/*  Matches the backtested definition (ironforge-data spy_gex_daily).  */
+/* ------------------------------------------------------------------ */
+export async function getNetGex(
+  symbol: string,
+  maxDte = 90,
+): Promise<number | null> {
+  await ensureQuoteApiKey()
+  if (!_tradierApiKey) return null
+  const expirations = await getOptionExpirations(symbol)
+  if (!expirations || expirations.length === 0) return null
+
+  const now = Date.now()
+  const within = expirations.filter((e) => {
+    const dte = (new Date(e + 'T00:00:00').getTime() - now) / 86_400_000
+    return dte >= 0 && dte <= maxDte
+  })
+  if (within.length === 0) return null
+
+  let net = 0
+  let sawData = false
+  for (const exp of within) {
+    const data = await tradierGet('/markets/options/chains', {
+      symbol,
+      expiration: exp,
+      greeks: 'true',
+    })
+    let opts = data?.options?.option
+    if (!opts) continue
+    if (!Array.isArray(opts)) opts = [opts]
+    for (const o of opts) {
+      const gRaw = o?.greeks?.gamma
+      const oiRaw = o?.open_interest
+      if (gRaw == null || oiRaw == null) continue
+      const gamma = typeof gRaw === 'number' ? gRaw : parseFloat(String(gRaw))
+      const oi = typeof oiRaw === 'number' ? oiRaw : parseFloat(String(oiRaw))
+      if (!Number.isFinite(gamma) || !Number.isFinite(oi)) continue
+      const isCall = String(o.option_type || '').toLowerCase() === 'call'
+      net += (isCall ? 1 : -1) * gamma * oi
+      sawData = true
+    }
+  }
+  return sawData ? net : null
+}
+
+/* ------------------------------------------------------------------ */
 /*  Sandbox account positions (for per-account P&L)                    */
 /* ------------------------------------------------------------------ */
 
