@@ -116,6 +116,75 @@ export async function syncContactToAttio(c: AttioContact): Promise<AttioSyncResu
   }
 }
 
+export interface BrokerageConnectionInfo {
+  brokerage?: string // institution name, e.g. "Tastytrade"
+  accountName?: string
+  accountCount?: number
+  connectedAt?: string // ISO timestamp
+}
+
+/** Free-text note recording that the prospect connected a brokerage (a key funnel milestone). */
+export function buildBrokerageNote(
+  recordId: string,
+  info: BrokerageConnectionInfo,
+): Record<string, unknown> {
+  const lines = [
+    'IronForge brokerage connected',
+    `Brokerage: ${info.brokerage || '—'}`,
+    info.accountName ? `Account: ${info.accountName}` : null,
+    info.accountCount != null ? `Accounts: ${info.accountCount}` : null,
+    `Connected at: ${info.connectedAt || '—'}`,
+  ].filter(Boolean) as string[]
+  return {
+    data: {
+      parent_object: 'people',
+      parent_record_id: recordId,
+      title: 'IronForge brokerage connected',
+      format: 'plaintext',
+      content: lines.join('\n'),
+    },
+  }
+}
+
+/**
+ * Push a brokerage-connection milestone to Attio: assert the Person by email (idempotent,
+ * keeps the contact fresh) and attach a "brokerage connected" Note. Best-effort; never throws.
+ * Returns {skipped:true} when ATTIO_API_KEY is unset. (sub-project: brokerage connection)
+ */
+export async function syncBrokerageConnectionToAttio(
+  c: AttioContact,
+  info: BrokerageConnectionInfo,
+): Promise<AttioSyncResult> {
+  if (!isAttioConfigured()) return { synced: false, skipped: true }
+  try {
+    const res = await fetch(ATTIO_PEOPLE_ASSERT_URL, {
+      method: 'PUT',
+      headers: authHeaders(),
+      body: JSON.stringify(buildPersonAssert(c)),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { synced: false, error: `Attio ${res.status}: ${detail.slice(0, 300)}` }
+    }
+    const json = (await res.json().catch(() => null)) as { data?: { id?: { record_id?: string } } } | null
+    const recordId = json?.data?.id?.record_id
+    if (recordId) {
+      try {
+        await fetch(ATTIO_NOTES_URL, {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify(buildBrokerageNote(recordId, info)),
+        })
+      } catch (e) {
+        console.error('[attio] brokerage note attach failed (non-fatal):', e)
+      }
+    }
+    return { synced: true, recordId }
+  } catch (e) {
+    return { synced: false, error: e instanceof Error ? e.message : 'attio brokerage sync failed' }
+  }
+}
+
 /** Queue a failed contact for later retry. Never throws (best-effort persistence). */
 export async function enqueueAttioSync(
   userId: string | null,

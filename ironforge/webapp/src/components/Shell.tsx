@@ -19,10 +19,14 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const isStandalone =
     pathname === '/signup' ||
     pathname === '/pricing' ||
+    pathname === '/contact' ||
+    pathname === '/privacy' ||
+    pathname === '/terms' ||
     pathname === '/login' ||
     pathname === '/ops/login' ||
     pathname === '/forgot-password' ||
     pathname === '/reset-password' ||
+    pathname === '/account/trades' ||
     pathname.startsWith('/onboarding')
 
   return (

@@ -3,6 +3,9 @@ const PUBLIC_EXACT = new Set<string>([
   '/login',
   '/signup',
   '/pricing',
+  '/contact',
+  '/privacy',
+  '/terms',
   '/ops/login',
   '/forgot-password',
   '/reset-password',
@@ -18,9 +21,17 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
+  // Customer trade-approval UI: page shell loads for anyone; the data API self-guards
+  // the customer session, so the page shows a sign-in prompt when unauthenticated.
+  '/account/trades',
 ])
 
 export function isPublicPath(pathname: string): boolean {
+  // All /api/brokerage/* routes are middleware-open and self-guarded in-route
+  // (webhook → shared secret, customer routes → customer session, internal → service
+  // token). Middleware only recognizes the OPERATOR session, so customer-facing
+  // brokerage APIs must bypass it here and enforce their own auth.
+  if (pathname.startsWith('/api/brokerage/')) return true
   return PUBLIC_EXACT.has(pathname)
 }
 

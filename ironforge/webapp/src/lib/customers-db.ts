@@ -117,6 +117,52 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+-- Brokerage connection (Model A: customers link their own brokerage via SnapTrade) --
+ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_id TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_secret TEXT;       -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS brokerage_connected BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS brokerage_connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  authorization_id TEXT,
+  brokerage_slug TEXT,
+  account_id TEXT,
+  account_name TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',   -- pending | active | disabled | removed
+  last_synced_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_brokerage_conn_user ON brokerage_connections(user_id);
+
+CREATE TABLE IF NOT EXISTS trade_approvals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  account_id TEXT NOT NULL,
+  bot TEXT,
+  symbol TEXT NOT NULL,
+  action TEXT NOT NULL,                      -- BUY | SELL
+  units NUMERIC,
+  order_type TEXT NOT NULL DEFAULT 'Market',
+  preview JSONB,
+  snaptrade_trade_id TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',    -- pending | approved | placed | failed | expired | declined
+  expires_at TIMESTAMPTZ NOT NULL,
+  placed_order_id TEXT,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_trade_approvals_user_status ON trade_approvals(user_id, status);
+
+-- Multi-provider brokerage support: SnapTrade (default) or direct Tradier OAuth.
+ALTER TABLE brokerage_connections ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'snaptrade';
+ALTER TABLE trade_approvals       ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'snaptrade';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_access_token TEXT;       -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_refresh_token TEXT;      -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_token_expires_at TIMESTAMPTZ;
 `
 
 let _ensured: Promise<void> | null = null

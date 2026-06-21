@@ -19,8 +19,8 @@ export default async function OnboardingCompletePage() {
         <h1 className="text-xl font-bold text-white">You&apos;re all set — for now</h1>
         <p className="mt-2 text-sm leading-relaxed text-gray-400">
           Your account is created, your disclosures are on file, and we&apos;ve matched you to a
-          recommended bot. The next steps — billing, brokerage connection, and deployment — are
-          coming soon. We&apos;ll email you the moment they&apos;re ready.
+          recommended bot. The next steps — billing and deployment — are coming soon. We&apos;ll
+          email you the moment they&apos;re ready.
         </p>
         <p className="mt-6 text-xs text-gray-500">
           <Link href="/" className="font-semibold text-amber-500 hover:text-amber-400">Return home</Link>
