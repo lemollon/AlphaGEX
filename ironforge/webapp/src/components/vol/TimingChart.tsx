@@ -58,12 +58,12 @@ export default function TimingChart({
           {hasTarget && (
             <ReferenceLine
               x={p75}
-              stroke="#f59e0b"
+              stroke="#FF5500"
               strokeDasharray="4 4"
               label={{
                 value: 'target',
                 position: 'top',
-                fill: '#f59e0b',
+                fill: '#FF5500',
                 fontSize: 11,
               }}
             />

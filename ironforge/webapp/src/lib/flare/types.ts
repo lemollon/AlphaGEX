@@ -101,15 +101,20 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   // on choppy-regime noise before positions could revert to PT (only 1 PT in 16).
   // The blow-up brake still fires at half the 6/04 damage; size-down + cap20 keep
   // the blast radius bounded. Revisit if a one-way trend day reappears.
-  perdir_force_close_pct: 0.10,
-  perdir_cooldown_minutes: 15,
-  perdir_size_mult_after_fc: 0.33,
-  max_concurrent_per_direction: 20,
-  // Wall-break gate (operator decision 2026-06-09, flare_gate_sim.py — see
-  // FlareConfig doc above). room>=1pt + don't-fade-into-a->=0.5pt/15min trend.
-  wall_fade_min_room: 1.0,
+  // 2026-06-16 (operator): REVERTED to the free-trading original. The per-direction
+  // guillotine (force-close / cooldown / size-down / concurrent cap) and the
+  // wall-break entry gate are NEUTRALIZED — FLARE trades freely again, and the
+  // NET-IMBALANCE HEDGE (lib/flare/hedge) replaces them as the risk mechanism:
+  // instead of CUTTING the stacked side (which created the -$1.5k 6/15 batch loss
+  // and tripped on chop), we HEDGE the unhedged directional exposure. To restore
+  // the old controls, set: FC 0.10 / cd 15 / size 0.33 / cap 20 / room 1.0 / adverse 0.5.
+  perdir_force_close_pct: 100.0,    // never fires (>10000% of balance)
+  perdir_cooldown_minutes: 0,       // no cooldown
+  perdir_size_mult_after_fc: 1.0,   // no size-down
+  max_concurrent_per_direction: 9999, // effectively unbounded
+  wall_fade_min_room: 0.0,          // room>=0 → entry gate always passes
   wall_fade_trend_lookback_minutes: 15,
-  wall_fade_max_adverse_trend: 0.5,
+  wall_fade_max_adverse_trend: 9999, // never blocks on trend
   // 0DTE timing override (vs BLAZE's 1DTE 15:55).
   //   - Entries cut off at 14:30 in scanner.ts:isMarketHours.
   //   - 14:45 TIME_STOP closes anything still open 15min before 15:00 settlement.

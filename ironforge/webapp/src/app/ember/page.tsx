@@ -302,7 +302,7 @@ export default function EmberPage() {
             xmlns="http://www.w3.org/2000/svg"
             className="shrink-0"
           >
-            <rect width="40" height="40" rx="8" fill="rgba(217,119,6,0.12)" />
+            <rect width="40" height="40" rx="8" fill="rgba(255,85,0,0.12)" />
             {/* Flame silhouette */}
             <path
               d="M20 6C20 6 14 12 14 19C14 22.3 15.5 24.8 18 26C17 24 17.5 22 19 21C19 23 20 25 20 25C20 25 21 23 21 21C22.5 22 23 24 22 26C24.5 24.8 26 22.3 26 19C26 12 20 6 20 6Z"
@@ -313,8 +313,8 @@ export default function EmberPage() {
             <rect x="20" y="17" width="2" height="7" rx="1" fill="rgba(0,0,0,0.4)" />
             <defs>
               <linearGradient id="ember-grad" x1="20" y1="6" x2="20" y2="26" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#fbbf24" />
-                <stop offset="100%" stopColor="#d97706" />
+                <stop offset="0%" stopColor="#ff8a3d" />
+                <stop offset="100%" stopColor="#FF5500" />
               </linearGradient>
             </defs>
           </svg>
@@ -363,8 +363,8 @@ export default function EmberPage() {
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-4 py-3 flex items-center gap-3">
           {/* Checkmark glyph */}
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" className="shrink-0">
-            <circle cx="9" cy="9" r="8" stroke="#f59e0b" strokeWidth="1.5" />
-            <path d="M5.5 9L7.5 11L12.5 7" stroke="#f59e0b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="9" cy="9" r="8" stroke="#FF5500" strokeWidth="1.5" />
+            <path d="M5.5 9L7.5 11L12.5 7" stroke="#FF5500" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           <span className="text-sm text-amber-300">
             Build ready &mdash; {buildStatus.n_days ?? '?'} trading days loaded.
@@ -406,7 +406,7 @@ export default function EmberPage() {
             {/* North arrow */}
             <path d="M8 5L9.2 9H6.8L8 5Z" fill="currentColor" />
             {/* South arrow */}
-            <path d="M8 11L6.8 7H9.2L8 11Z" fill="rgba(217,119,6,0.4)" />
+            <path d="M8 11L6.8 7H9.2L8 11Z" fill="rgba(255,85,0,0.4)" />
           </svg>
           <h2 className="text-sm font-semibold text-gray-300">New here? Load a sample setup</h2>
         </div>

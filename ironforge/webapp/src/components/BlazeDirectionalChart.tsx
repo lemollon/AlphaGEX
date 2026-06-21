@@ -289,21 +289,21 @@ export default function BlazeDirectionalChart() {
       // Raw (faint) — under the smoothed line
       {
         label: 'Call Wall (raw)',
-        color: '#22d3ee',
+        color: '#06b6d4',
         strokeWidth: 1,
         opacity: 0.25,
         points: mkPoints(callRaw),
       },
       {
         label: 'Put Wall (raw)',
-        color: '#c084fc',
+        color: '#3b82f6',
         strokeWidth: 1,
         opacity: 0.25,
         points: mkPoints(putRaw),
       },
       {
         label: 'Flip (raw)',
-        color: '#facc15',
+        color: '#e0b23f',
         strokeWidth: 1,
         dash: '2,2',
         opacity: 0.3,
@@ -312,21 +312,21 @@ export default function BlazeDirectionalChart() {
       // Smoothed (5-snapshot median) — the dominant visual
       {
         label: 'Call Wall',
-        color: '#22d3ee',
+        color: '#06b6d4',
         strokeWidth: 2,
         opacity: 0.95,
         points: mkPoints(callSmoothed),
       },
       {
         label: 'Put Wall',
-        color: '#c084fc',
+        color: '#3b82f6',
         strokeWidth: 2,
         opacity: 0.95,
         points: mkPoints(putSmoothed),
       },
       {
         label: 'Flip',
-        color: '#facc15',
+        color: '#e0b23f',
         strokeWidth: 2,
         dash: '4,3',
         opacity: 1,
@@ -343,9 +343,9 @@ export default function BlazeDirectionalChart() {
     // compete with the polyline overlay. Without history, draw them solid
     // (Phase 1 behavior).
     const hasH = hasHistory
-    if (gex.call_wall) lines.push({ price: gex.call_wall, color: '#22d3ee', label: `CALL WALL $${gex.call_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
-    if (gex.put_wall) lines.push({ price: gex.put_wall, color: '#c084fc', label: `PUT WALL $${gex.put_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
-    if (gex.flip_point) lines.push({ price: gex.flip_point, color: '#facc15', label: `FLIP $${gex.flip_point.toFixed(0)}`, dash: '8,3', opacity: hasH ? 0.25 : 0.9, side: hasH ? 'right' : 'left' })
+    if (gex.call_wall) lines.push({ price: gex.call_wall, color: '#06b6d4', label: `CALL WALL $${gex.call_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
+    if (gex.put_wall) lines.push({ price: gex.put_wall, color: '#3b82f6', label: `PUT WALL $${gex.put_wall.toFixed(0)}`, dash: '4,4', opacity: hasH ? 0.25 : 0.85, side: hasH ? 'right' : 'left' })
+    if (gex.flip_point) lines.push({ price: gex.flip_point, color: '#e0b23f', label: `FLIP $${gex.flip_point.toFixed(0)}`, dash: '8,3', opacity: hasH ? 0.25 : 0.9, side: hasH ? 'right' : 'left' })
     if (sigmaPlus) lines.push({ price: sigmaPlus, color: '#9ca3af', label: `+1σ`, dash: '1,3', opacity: 0.55, side: 'right' })
     if (sigmaMinus) lines.push({ price: sigmaMinus, color: '#9ca3af', label: `−1σ`, dash: '1,3', opacity: 0.55, side: 'right' })
     return lines

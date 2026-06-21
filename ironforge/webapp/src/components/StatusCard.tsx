@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { getCurrentPTTier, secondsUntilNextTier, isMarketOpen, getCTNow, formatCloseReason, eodCutoffMinutesCT } from '@/lib/pt-tiers'
+import { BOT_COLORS } from '@/lib/botColors'
 
 interface SandboxAccount {
   name: string
@@ -87,7 +88,6 @@ function scanAgeMinutes(lastScan: string | null): number | null {
 
 export default function StatusCard({
   data,
-  accent,
   config,
   bot,
   liveUnrealizedPnl,
@@ -169,8 +169,8 @@ export default function StatusCard({
   const todayTotalPositive = todayTotal >= 0
   const todayTotalPct = startingCapital > 0 ? (todayTotal / startingCapital) * 100 : null
 
-  const accentBorder = accent === 'amber' ? 'border-amber-500/30' : accent === 'red' ? 'border-red-500/30' : accent === 'orange' ? 'border-orange-500/30' : accent === 'fuchsia' ? 'border-fuchsia-500/30' : 'border-blue-500/30'
-  const accentText = accent === 'amber' ? 'text-amber-400' : accent === 'red' ? 'text-red-400' : accent === 'orange' ? 'text-orange-400' : accent === 'fuchsia' ? 'text-fuchsia-400' : 'text-blue-400'
+  // Bot identity = a thin top-rule in the bot's color (set inline below).
+  const botColor = BOT_COLORS[bot]
 
   /* ---- Toggle bot active state ---- */
   const [toggling, setToggling] = useState(false)
@@ -285,7 +285,7 @@ export default function StatusCard({
   }
 
   return (
-    <div className={`rounded-xl border ${accentBorder} bg-forge-card/80 p-4`}>
+    <div className="rounded-xl border border-forge-border border-t-2 bg-forge-card/80 p-4" style={{ borderTopColor: botColor }}>
       {/* Toggle confirmation dialog */}
       {confirmToggle && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -327,7 +327,7 @@ export default function StatusCard({
           className={`w-2 h-2 rounded-full shrink-0 ${healthDot}`}
           title={healthTooltip}
         />
-        <h2 className={`text-lg font-bold ${accentText}`}>{data.bot_name}</h2>
+        <h2 className="text-lg font-bold text-white">{data.bot_name}</h2>
         <span className="text-xs text-gray-400 bg-forge-border px-2 py-0.5 rounded">
           {data.strategy}
         </span>

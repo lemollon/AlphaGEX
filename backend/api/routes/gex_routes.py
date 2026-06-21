@@ -148,9 +148,13 @@ def get_gex_from_tradier_direct(symbol: str) -> Optional[Dict[str, Any]]:
         if not options_data:
             return None
 
+        # calculate_gex_from_chain returns net_gex on the canonical per-1%-move
+        # USD scale (raw per-$1 dollar-gamma * 0.01) as a SIGNED per-strike sum,
+        # so this dict is already on the same scale as TradingVolatility — no
+        # route-level rescaling needed downstream.
         gex_result = calculate_gex_from_chain(symbol, spot_price, options_data)
 
-        logger.info(f"✅ GEX calculated from Tradier for {symbol}: net_gex={gex_result.net_gex/1e9:.2f}B")
+        logger.info(f"✅ GEX calculated from Tradier for {symbol}: net_gex={gex_result.net_gex/1e9:.2f}B (per-1%-move)")
 
         return {
             'symbol': symbol,
@@ -365,16 +369,30 @@ async def get_gex_data(symbol: str):
 
         # Calculate regime
         net_gex = data.get('net_gex', 0) or 0
-        # Normalize net_gex to the canonical per-1%-move USD scale BEFORE classifying.
-        # TradingVolatility (live_api) and the gex_history DB already emit this scale
-        # (gamma_notional_per_1pct_move_usd, ~1e9 for major indices) — which the regime
-        # thresholds below are calibrated for. The Tradier chain calcs emit the RAW
-        # dollar-gamma sum (gamma*OI*100*spot^2): ~100x larger and per-$1-move, not
-        # per-1%-move. Without this divide, every Tradier-sourced response reads EXTREME
-        # and the regime flips with the data SOURCE, not the market. Sign is preserved,
-        # so mm_state (below) and downstream sign-based gates are unaffected.
-        if data.get('data_source') in ('tradier_live', 'tradier_calculated'):
-            net_gex = net_gex / 100.0
+        call_gex = data.get('call_gex', 0) or 0
+        put_gex = data.get('put_gex', 0) or 0
+        # net_gex is now on the canonical per-1%-move USD scale at the SOURCE
+        # boundary: TradingVolatility (live_api) and the gex_history DB emit
+        # gamma_notional_per_1pct_move_usd (~1e9 for major indices), and the
+        # Tradier chain calcs (calculate_gex_from_chain / get_gex_from_tradier_direct)
+        # now multiply the raw per-$1 dollar-gamma sum by 0.01 internally. The old
+        # route-level ÷100 special-case for tradier sources has been REMOVED — with
+        # sources normalized at the boundary it would double-divide. The regime
+        # thresholds below are calibrated for this per-1%-move scale.
+
+        # Scale-drift sanity guard: with sources normalized, the per-side gex
+        # (call_gex + put_gex, put already signed negative) should ≈ net_gex. A
+        # large gap signals a source still on the wrong scale.
+        try:
+            if net_gex and abs((call_gex + put_gex) - net_gex) > 0.25 * abs(net_gex):
+                logger.warning(
+                    f"GEX scale drift for {symbol} (source={data.get('data_source')}): "
+                    f"call_gex+put_gex={call_gex + put_gex:.3e} vs net_gex={net_gex:.3e} "
+                    f"(>25% tolerance) — possible scale mismatch at source boundary"
+                )
+        except Exception:
+            pass
+
         if net_gex <= -3e9:
             regime = 'EXTREME_NEGATIVE'
         elif net_gex <= -2e9:
@@ -444,8 +462,8 @@ async def get_gex_data(symbol: str):
             "data": {
                 "symbol": symbol,
                 "net_gex": safe_round(net_gex),
-                "call_gex": safe_round(data.get('call_gex', 0)),
-                "put_gex": safe_round(data.get('put_gex', 0)),
+                "call_gex": safe_round(call_gex),
+                "put_gex": safe_round(put_gex),
                 "flip_point": safe_round(flip_point),
                 "gamma_flip": safe_round(flip_point),  # Alias for backwards compat
                 "call_wall": safe_round(data.get('call_wall', 0)),

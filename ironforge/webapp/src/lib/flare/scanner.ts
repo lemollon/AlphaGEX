@@ -9,10 +9,11 @@
  *   - bot_name strings are 'FLARE'/'flare'
  */
 import { query } from '../db'
-import { getOptionQuote } from '../tradier'
+import { getOptionQuote, getQuote } from '../tradier'
+import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR, HEDGE_MIN_TOPUP } from './hedge'
 import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
-import { openVertical } from './executor'
+import { openVertical, openImbalanceHedge } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
 import { dispatch, evaluateFlipCross, evaluateWallBreak, evaluateWallFade, FlipBuffer } from './setups'
 import { DEFAULT_FLARE_CONFIG, Direction, GexSnapshot, SetupType } from './types'
@@ -158,6 +159,48 @@ export async function runMonitorCycle(): Promise<void> {
       outcome: 'TRADE',
       detail: `RISK_FORCE_CLOSE ${dir} x${side.length} pnl=${sideUnreal.toFixed(2)} cooldown_${DEFAULT_FLARE_CONFIG.perdir_cooldown_minutes}min [${reason}]`,
     })
+  }
+
+  // Net-imbalance hedge — the LIVE risk mechanism that replaces the (neutralized)
+  // force-close. When the directional book is over-exposed one way beyond the
+  // tolerance floor, BUY an opposing debit spread sized to recover the excess on
+  // an adverse move. One hedge per side at a time; it closes via the normal
+  // PT/SL/14:45 exit path. Best-effort — never blocks the monitor.
+  try {
+    const im = computeImbalance(
+      positions.map((p) => ({ direction: p.direction, debit: p.debit, contracts: p.contracts, setup_type: p.setup_type })),
+    )
+    if (im.heavyDir !== 'none' && im.netImbalance > HEDGE_FLOOR) {
+      const [spyQ, vixQ] = await Promise.all([getQuote('SPY'), getQuote('VIX')])
+      const spot = spyQ?.last ?? 0
+      const sig = sigMove(spot, vixQ?.last ?? 0)
+      const d = decideHedge({ imbalance: im, sigMove: sig })
+      if (d.hedge && d.hedgeSide && spot > 0 && sig > 0) {
+        // RISK-balance + scale: bring the protective side's capital-at-risk up to
+        // targetHedgeRisk, topping up only the SHORTFALL over any hedge already on
+        // that side. Re-evaluated every tick, so the hedge grows as the heavy side
+        // grows (fixes the old one-and-done guard that froze the hedge at one
+        // spread). Bounded by netImbalance, so it can't over-hedge.
+        const existingHedgeRisk = positions
+          .filter((p) => p.setup_type === 'imbalance_hedge' && p.direction === d.hedgeSide)
+          .reduce((s, p) => s + Math.max(0, p.debit) * 100 * (p.contracts || 0), 0)
+        const shortfallRisk = Math.round(d.targetHedgeRisk - existingHedgeRisk)
+        if (shortfallRisk >= HEDGE_MIN_TOPUP) {
+          const res = await openImbalanceHedge(
+            { hedgeSide: d.hedgeSide, targetRisk: shortfallRisk, spot, sigMove: sig },
+            DEFAULT_FLARE_CONFIG,
+          )
+          await insertSignalActivity({
+            outcome: 'TRADE',
+            detail: res
+              ? `HEDGE ${d.hedgeSide} x${res.contracts} debit=${res.debit.toFixed(2)} risk+$${(res.debit * 100 * res.contracts).toFixed(0)} (${im.heavyDir}-heavy net $${im.netImbalance}, target risk $${d.targetHedgeRisk}, had $${existingHedgeRisk.toFixed(0)})`
+              : `HEDGE_SKIP ${d.hedgeSide} (shortfall $${shortfallRisk}) — no chain quote`,
+          })
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`[flare] imbalance hedge failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
   }
 }
 

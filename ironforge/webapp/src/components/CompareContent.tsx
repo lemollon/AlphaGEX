@@ -5,14 +5,15 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { ComparisonChart, type Period, type CompareSeries, type CompareMode, type CurvePoint } from '@/components/EquityChart'
 import PerformanceCard from '@/components/PerformanceCard'
+import { BOT_COLORS } from '@/lib/botColors'
 
 const REFRESH = 60_000
 
 const BOTS = [
-  { key: 'flame', label: 'FLAME (2DTE)', short: 'FLAME', color: '#f59e0b', accent: 'text-amber-400' },
-  { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: '#3b82f6', accent: 'text-blue-400' },
-  { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: '#ef4444', accent: 'text-red-400' },
-  { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: '#fb923c', accent: 'text-orange-400' },
+  { key: 'flame', label: 'FLAME (2DTE)', short: 'FLAME', color: BOT_COLORS.flame, accent: 'text-amber-400' },
+  { key: 'spark', label: 'SPARK (1DTE)', short: 'SPARK', color: BOT_COLORS.spark, accent: 'text-blue-400' },
+  { key: 'inferno', label: 'INFERNO (0DTE)', short: 'INFERNO', color: BOT_COLORS.inferno, accent: 'text-red-400' },
+  { key: 'blaze', label: 'BLAZE (1DTE dir.)', short: 'BLAZE', color: BOT_COLORS.blaze, accent: 'text-cyan-400' },
   // FLARE intentionally omitted from the comparison — it will be surfaced
   // separately later. Its /flare dashboard and nav link remain unaffected.
 ] as const

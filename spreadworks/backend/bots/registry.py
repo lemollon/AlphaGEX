@@ -23,7 +23,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.30,
-            "sl_pct": 2.0,
+            # SL = fraction of MAX LOSS (defined risk), matching RIVER. Was 2.0
+            # of MAX PROFIT, which for an iron fly's rich ATM credit was an
+            # unreachable stop (max loss never reaches 2x credit).
+            "sl_pct": 0.50,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
             "eod_close_ct": "14:45",
@@ -150,8 +153,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "front_dte": 10,
         "back_dte": None,
         "params": {
-            "lookback_n": 5, "dip_threshold": 0.03,
-            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            # Loosened 2026-06-18: RSI(2) < 10 + 3% dip almost never aligned
+            # (real 4-6% dips like AMD/META sat at RSI 11-17). Eased to
+            # rsi_oversold 30 / rsi_overbought 70 / dip 2% so genuine
+            # pullbacks-in-uptrend actually fire. Trend gate kept.
+            "lookback_n": 5, "dip_threshold": 0.02,
+            "rsi_period": 2, "rsi_oversold": 30, "rsi_overbought": 70,
             "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
             "spread_pct": 0.04, "max_spread_pct": 0.15, "min_option_price": 0.20,
             "earnings_exclude_days": 3, "hold_days": 2,
@@ -160,7 +167,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "starting_capital": 25000.0,
             "enabled": False,
             "max_contracts": 10,
-            "bp_pct": 0.02,
+            "bp_pct": 0.05,
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 0.50,
@@ -186,8 +193,11 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "front_dte": 10,
         "back_dte": None,
         "params": {
-            "lookback_n": 5, "dip_threshold": 0.03,
-            "rsi_period": 2, "rsi_oversold": 10, "rsi_overbought": 90,
+            # Loosened 2026-06-18 in lockstep with UNDERTOW (shared universe /
+            # setup gates): rsi_oversold 30 / rsi_overbought 70 / dip 2% so the
+            # credit-spread setups actually trigger. Trend gate kept.
+            "lookback_n": 5, "dip_threshold": 0.02,
+            "rsi_period": 2, "rsi_oversold": 30, "rsi_overbought": 70,
             "use_rsi_confirm": True, "use_trend_gate": True, "sma_period": 20,
             "short_otm_pct": 0.03, "spread_pct": 0.04, "max_spread_pct": 0.15,
             "min_option_price": 0.20, "min_credit": 0.20,
@@ -195,7 +205,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
-            "bp_pct": 0.02, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
+            "bp_pct": 0.05, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
             "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
             "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
             "max_concurrent_positions": 5,

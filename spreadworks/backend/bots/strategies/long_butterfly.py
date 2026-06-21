@@ -109,6 +109,20 @@ def _nearest(strikes: list[int], target: float) -> int | None:
     return min(strikes, key=lambda s: abs(s - target))
 
 
+def _magnet_gamma(m: dict[str, Any]) -> float:
+    """A magnet's gamma magnitude, tolerant of the upstream key name.
+
+    The WATCHTOWER gamma engine emits each magnet as
+    `{"strike", "net_gamma", "probability"}` (see
+    `core/watchtower_engine.identify_magnets`), while older callers/tests use
+    a plain `"gamma"` key. Read whichever is present — otherwise every magnet
+    silently reads as 0 gamma, gets dropped, and the body falls back to spot."""
+    g = m.get("gamma")
+    if g is None:
+        g = m.get("net_gamma", 0)
+    return abs(float(g or 0))
+
+
 def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
     """[(strike, |gamma|)] for magnets within MAGNET_PARITY of the top one."""
     raw = gex.get("magnets") or []
@@ -116,7 +130,7 @@ def _large_magnets(gex: dict[str, Any]) -> list[tuple[float, float]]:
     for m in raw:
         try:
             strike = float(m["strike"])
-            gamma = abs(float(m.get("gamma", 0)))
+            gamma = _magnet_gamma(m)
         except (KeyError, TypeError, ValueError):
             continue
         if gamma > 0:
@@ -192,19 +206,28 @@ def build_long_butterfly_signal(
         return _reject(f"no_body_strike: center={center:.2f}")
 
     atm_straddle = float(chain.get("atm_straddle_mid", 0))
+    if atm_straddle <= 0:
+        # No ATM straddle => can't size the wings; mirrors the iron condor's
+        # guard. Without this the wings collapse to the $1 floor on missing data.
+        return _reject("missing_atm_straddle")
     sd_mult = float(config.get("sd_mult", 1.0))
     wing_distance = max(1, round(sd_mult * atm_straddle * 0.85))
 
-    upper_strike = body + wing_distance
-    lower_strike = body - wing_distance
-
     if config.get("use_gex_walls"):
+        # Keep the fly SYMMETRIC (see BREEZE): a one-sided wall clip makes a
+        # broken-wing 1-2-1 whose max loss can EXCEED the debit, which the
+        # sizing below (max_loss = debit) does not account for. Pull both wings
+        # in to the nearer wall distance instead.
         cw = gex.get("call_wall")
         pw = gex.get("put_wall")
-        if cw is not None and body < cw < upper_strike:
-            upper_strike = int(round(cw))
-        if pw is not None and lower_strike < pw < body:
-            lower_strike = int(round(pw))
+        if cw is not None and cw > body:
+            wing_distance = min(wing_distance, int(round(cw)) - body)
+        if pw is not None and pw < body:
+            wing_distance = min(wing_distance, body - int(round(pw)))
+        wing_distance = max(1, wing_distance)
+
+    upper_strike = body + wing_distance
+    lower_strike = body - wing_distance
 
     # Price both single-type flies on these strikes; keep the cheaper (OTM) side.
     call_priced = _price_side(chain, "call", body, lower_strike, upper_strike)
@@ -230,9 +253,9 @@ def build_long_butterfly_signal(
     if debit <= 0:
         return _reject(f"non_positive_debit: type={option_type} debit={debit:.2f}")
 
-    # Symmetric wings by construction; use the realized distances for safety
-    # (GEX-wall clipping can make them asymmetric).
-    wing_width = min(upper_strike - body, body - lower_strike)
+    # Symmetric wings by construction (wall clipping above pulls BOTH in
+    # equally), so a single wing width drives the defined-risk math.
+    wing_width = upper_strike - body
     if wing_width <= 0:
         return _reject(f"degenerate_wings: lower={lower_strike} body={body} upper={upper_strike}")
 

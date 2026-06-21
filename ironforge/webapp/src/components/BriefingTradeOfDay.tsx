@@ -308,7 +308,7 @@ export default function BriefingTradeOfDay({ trade, macro }: Props) {
           stroke="#6b7280" strokeWidth={1} />
 
         {/* Payoff curve */}
-        <path d={linePath} fill="none" stroke="#fbbf24" strokeWidth={2}
+        <path d={linePath} fill="none" stroke="#ff8a3d" strokeWidth={2}
           strokeLinejoin="round" strokeLinecap="round" />
 
         {/* Strike inflection points — small filled dots for a finished feel */}
@@ -326,7 +326,7 @@ export default function BriefingTradeOfDay({ trade, macro }: Props) {
           }
           return (
             <circle key={`skd${i}`} cx={cx} cy={cy} r={2.5}
-              fill="#fbbf24" stroke="#0b0b0d" strokeWidth={1} />
+              fill="#ff8a3d" stroke="#0b0b0d" strokeWidth={1} />
           )
         })}
 
@@ -336,11 +336,11 @@ export default function BriefingTradeOfDay({ trade, macro }: Props) {
           return (
             <g key={`be${i}`}>
               <circle cx={x} cy={zeroPx} r={3.5}
-                fill="#0b0b0d" stroke="#fbbf24" strokeWidth={1.5} />
+                fill="#0b0b0d" stroke="#ff8a3d" strokeWidth={1.5} />
               <line x1={x} y1={PAD_T + innerH} x2={x} y2={PAD_T + innerH + 5}
-                stroke="#fbbf24" strokeWidth={1} />
+                stroke="#ff8a3d" strokeWidth={1} />
               <text x={x} y={PAD_T + innerH + 16} textAnchor="middle"
-                fontSize={10} fontWeight={500} fill="#fbbf24">
+                fontSize={10} fontWeight={500} fill="#ff8a3d">
                 {fmtSpot(bx)}
               </text>
             </g>

@@ -122,7 +122,7 @@ export default function EquityChart({
     const unrealizedForBadge = liveUnrealizedPnl ?? latest.unrealized_pnl ?? 0
     const fillColor =
       latest.equity >= startingCapital
-        ? 'rgba(16, 185, 129, 0.15)'
+        ? 'rgba(52, 211, 153, 0.15)'
         : 'rgba(239, 68, 68, 0.15)'
 
     return (
@@ -228,12 +228,12 @@ export default function EquityChart({
   const lastPoint = data[data.length - 1]
   const lastEquity = lastPoint.equity
   const fillColor =
-    lastEquity >= startingCapital ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'
+    lastEquity >= startingCapital ? 'rgba(52, 211, 153, 0.15)' : 'rgba(239, 68, 68, 0.15)'
 
   // Hypo color: distinct from the actual equity line so the two are easy
   // to tell apart at a glance. Purple/violet works well against blue/red/amber.
-  const hypoColor = '#a78bfa'
-  const hypoFill = 'rgba(167, 139, 250, 0.10)'
+  const hypoColor = '#06b6d4'
+  const hypoFill = 'rgba(6, 182, 212, 0.10)'
   const lastHypoCum = lastPoint.cumulative_hypothetical_pnl ?? null
   const lastHypoEquity = lastPoint.hypothetical_equity ?? null
   const botLabel = (bot || 'this bot').toUpperCase()

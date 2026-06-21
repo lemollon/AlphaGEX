@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import type { VolAlert } from '@/lib/volAlerts'
+import { BOT_COLORS } from '@/lib/botColors'
 import AuthControls from './AuthControls'
 
 /**
@@ -42,21 +43,29 @@ function VolAlertBadge() {
   )
 }
 
-const botIcons: Record<string, React.ReactNode> = {
-  FLAME: <img src="/icon-flame.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  SPARK: <img src="/icon-spark.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  INFERNO: <img src="/icon-inferno.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  BLAZE: <img src="/icon-blaze.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
-  FLARE: <img src="/icon-flare.svg" alt="" className="h-4 w-4 inline-block mr-1.5 align-[-2px]" />,
+// Per-bot identity is shown as a single small colored dot (not mismatched icon
+// art) — the one place a bot's color appears in the nav. Color from the SoT.
+const BOT_DOT: Record<string, string> = {
+  FLAME: BOT_COLORS.flame,
+  SPARK: BOT_COLORS.spark,
+  INFERNO: BOT_COLORS.inferno,
+  BLAZE: BOT_COLORS.blaze,
+  FLARE: BOT_COLORS.flare,
 }
 
-const botGlow: Record<string, string> = {
-  FLAME: 'glow-flame',
-  SPARK: 'glow-spark',
-  INFERNO: 'glow-inferno',
-  BLAZE: 'glow-inferno',
-  FLARE: 'glow-inferno',
+function botDot(label: string): React.ReactNode {
+  const c = BOT_DOT[label]
+  if (!c) return null
+  return (
+    <span
+      className="inline-block w-1.5 h-1.5 rounded-full mr-2 align-[1px] shrink-0"
+      style={{ background: c, boxShadow: `0 0 6px ${c}` }}
+    />
+  )
 }
+
+// Nav links carry no colored text glow — the dot is the only identity cue.
+const botGlow: Record<string, string> = {}
 
 /** Bots with trading accounts get a green dot; paper-only get nothing.
  *  SPARK is the only bot wired to a real Tradier production account (Iron Viper). */
@@ -67,18 +76,18 @@ type NavLink = { href: string; label: string; className?: string; external?: boo
 // Primary row — always visible. Home, the five bots, GEX, Compare.
 const primaryLinks: NavLink[] = [
   { href: '/', label: 'Home' },
-  { href: '/spark', label: 'SPARK', className: 'text-blue-400 hover:text-blue-300' },
-  { href: '/flame', label: 'FLAME', className: 'text-amber-400 hover:text-amber-300' },
-  { href: '/inferno', label: 'INFERNO', className: 'text-red-400 hover:text-red-300' },
-  { href: '/blaze', label: 'BLAZE', className: 'text-orange-400 hover:text-orange-300' },
-  { href: '/flare', label: 'FLARE', className: 'text-fuchsia-400 hover:text-fuchsia-300' },
-  { href: '/gex', label: 'GEX Profile', className: 'text-cyan-400 hover:text-cyan-300' },
-  { href: '/volatility', label: 'Volatility', className: 'text-violet-400 hover:text-violet-300' },
+  { href: '/spark', label: 'SPARK', className: 'text-gray-300 hover:text-white' },
+  { href: '/flame', label: 'FLAME', className: 'text-gray-300 hover:text-white' },
+  { href: '/inferno', label: 'INFERNO', className: 'text-gray-300 hover:text-white' },
+  { href: '/blaze', label: 'BLAZE', className: 'text-gray-300 hover:text-white' },
+  { href: '/flare', label: 'FLARE', className: 'text-gray-300 hover:text-white' },
   { href: '/compare', label: 'Compare' },
 ]
 
 // Secondary — folded into a "More ▾" dropdown to declutter the row.
 const moreLinks: NavLink[] = [
+  { href: '/gex', label: 'GEX Profile', className: 'text-gray-300 hover:text-gray-100' },
+  { href: '/volatility', label: 'Volatility', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/calendar', label: 'Calendar', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
@@ -98,7 +107,7 @@ function NavLinkItem({
   block?: boolean
 }) {
   const isActive = pathname === link.href
-  const icon = botIcons[link.label]
+  const icon = botDot(link.label)
   const glow = botGlow[link.label] || ''
   const baseColor = link.className || 'text-gray-400 hover:text-gray-200'
   const activeColor = 'text-white underline underline-offset-4 decoration-amber-500'
@@ -160,19 +169,19 @@ export default function Nav() {
 
   return (
     <nav className="relative z-[60] border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
+      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-4">
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
-          <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
+          <Link href="/" className="text-xl font-bold font-display flex items-center gap-1.5">
             <img src="/ironforge-mark.png" alt="" className="h-7 w-auto inline-block" />
             <span className="text-white">Iron</span>
             <span className="text-amber-400">Forge</span>
           </Link>
           {/* Proverbs verse — hidden on small screens to keep the bar compact */}
           <span
-            className="hidden lg:block"
+            className="hidden xl:block"
             style={{
-              color: '#FCD34D',
+              color: '#C7C1B6',
               fontSize: '0.75rem',
               fontFamily: "Georgia, 'Times New Roman', serif",
               fontStyle: 'italic',
@@ -180,16 +189,21 @@ export default function Nav() {
               lineHeight: 1,
               marginTop: '-1px',
               paddingLeft: '1.15rem',
-              textShadow: '0 1px 3px rgba(0,0,0,0.8), 0 0 8px rgba(251,191,36,0.5)',
+              textShadow: 'none',
+              maxWidth: '24rem',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
             }}
           >
-            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash; Proverbs 27:17
+            &ldquo;As iron sharpens iron, so one person sharpens another.&rdquo; &mdash;{' '}
+            <span style={{ color: '#FF5500', fontStyle: 'normal', fontWeight: 600 }}>Proverbs 27:17</span>
           </span>
         </div>
 
         {/* Desktop links + auth — hidden below md, where the hamburger takes over */}
-        <div className="hidden md:flex flex-1 items-center gap-8">
-          <div className="flex gap-6 items-center">
+        <div className="hidden lg:flex flex-1 items-center gap-4">
+          <div className="flex gap-4 items-center">
             {primaryLinks.map((link) => (
               <NavLinkItem key={link.href} link={link} pathname={pathname} />
             ))}
@@ -244,7 +258,7 @@ export default function Nav() {
           aria-label="Toggle navigation menu"
           aria-expanded={mobileOpen}
           aria-controls="mobile-nav"
-          className="md:hidden ml-auto inline-flex items-center justify-center w-10 h-10 rounded-md text-gray-300 hover:text-white hover:bg-amber-900/20 transition-colors"
+          className="lg:hidden ml-auto inline-flex items-center justify-center w-10 h-10 rounded-md text-gray-300 hover:text-white hover:bg-amber-900/20 transition-colors"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             {mobileOpen ? (
@@ -260,7 +274,7 @@ export default function Nav() {
       {mobileOpen && (
         <div
           id="mobile-nav"
-          className="md:hidden border-t border-amber-900/30 bg-forge-bg/98 backdrop-blur-sm px-2 py-2"
+          className="lg:hidden border-t border-amber-900/30 bg-forge-bg/98 backdrop-blur-sm px-2 py-2"
         >
           <div className="flex flex-col">
             {[...primaryLinks, ...moreLinks].map((link) => (

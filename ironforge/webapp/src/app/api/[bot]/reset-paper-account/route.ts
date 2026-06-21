@@ -32,18 +32,33 @@
  * and uses N instead. Useful if Tradier is unreachable or you want a
  * specific value (e.g. after manually resetting Tradier sandbox to $100K).
  *
- * Scoped to FLAME only — SPARK and INFERNO are untouched.
+ * SPARK (the live production bot) is supported with extra safety:
+ *   - The day-1 seed comes from SPARK's REAL production balance
+ *     (total_cash → total_equity), NOT the sandbox User account.
+ *   - The reset REFUSES if SPARK holds any open live position at Tradier,
+ *     or any open row in the spark ledger. It never force-closes on the
+ *     production bot (that would orphan a real broker position). Run it
+ *     only on a flat, settled book — i.e. after the close, so the next
+ *     session opens clean as "day 1".
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
-import { getSandboxAccountBalances } from '@/lib/tradier'
+import {
+  getSandboxAccountBalances,
+  getProductionAccountsForBot,
+  getProductionPauseState,
+  getTradierBalanceDetail,
+  getSandboxAccountPositions,
+  PRODUCTION_BOT,
+} from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
 // FLAME: reconcile to Tradier sandbox equity. FLARE: hard reset to a fixed
 // paper base (pass ?starting_capital=10000) after the 2026-06-04 blow-up;
 // archives the old -$47k tape via dte_mode rename so the equity curve restarts.
-const SUPPORTED_BOTS = new Set(['flame', 'flare'])
+// SPARK: live production bot — seeds from real production cash, refuses on an open book.
+const SUPPORTED_BOTS = new Set(['flame', 'flare', 'spark'])
 const ARCHIVED_SUFFIX = 'ARCHIVED_'
 
 interface ResetPreview {
@@ -51,8 +66,17 @@ interface ResetPreview {
   dte_mode: string
   tradier: {
     user_total_equity: number | null
-    source: 'tradier' | 'override' | 'unavailable'
+    source: 'tradier' | 'production' | 'override' | 'unavailable'
     note?: string
+  }
+  // Present only for the live production bot (SPARK): the real broker book.
+  live?: {
+    paused: boolean
+    account_name: string | null
+    total_cash: number | null
+    total_equity: number | null
+    open_position_count: number
+    open_symbols: string[]
   }
   current: {
     paper_account_rows: Array<{
@@ -77,16 +101,28 @@ interface ResetPreview {
   }
 }
 
+// For the live production bot (SPARK) the paper (sandbox) and live (production)
+// ledgers coexist in the same tables under the same dte_mode, separated only by
+// account_type. A "reset" must touch ONLY the production ledger, or it clobbers
+// the paper ledger too. Paper-only bots have no production rows, so this is a
+// no-op for them.
+function acctScope(bot: string): string {
+  return bot === PRODUCTION_BOT
+    ? " AND COALESCE(account_type, 'sandbox') = 'production'"
+    : ''
+}
+
 async function gatherState(
   bot: string,
   dte: string,
   overrideCapital: number | null,
 ): Promise<ResetPreview> {
+  const scope = acctScope(bot)
   const acctRows = await dbQuery(
     `SELECT id, is_active, starting_capital, current_balance, cumulative_pnl,
             account_type, updated_at
      FROM ${botTable(bot, 'paper_account')}
-     WHERE dte_mode = '${escapeSql(dte)}'
+     WHERE dte_mode = '${escapeSql(dte)}'${scope}
      ORDER BY id`,
   )
 
@@ -96,15 +132,69 @@ async function gatherState(
        COUNT(*) FILTER (WHERE status IN ('closed', 'expired')) AS closed_count,
        COALESCE(SUM(realized_pnl) FILTER (WHERE status IN ('closed', 'expired')), 0) AS total_pnl
      FROM ${botTable(bot, 'positions')}
-     WHERE dte_mode = '${escapeSql(dte)}'`,
+     WHERE dte_mode = '${escapeSql(dte)}'${scope}`,
   )
 
-  // Tradier User sandbox balance
+  // Resolve the day-1 seed capital. For SPARK (the live production bot) this
+  // comes from the REAL production balance and we also read the live broker
+  // book so the reset can refuse on an open position. For paper bots it comes
+  // from the Tradier User sandbox account (legacy behavior).
   let tradierEquity: number | null = null
-  let source: 'tradier' | 'override' | 'unavailable' = 'unavailable'
+  let source: 'tradier' | 'production' | 'override' | 'unavailable' = 'unavailable'
   let note: string | undefined
+  let live: ResetPreview['live']
 
-  if (overrideCapital != null) {
+  if (bot === PRODUCTION_BOT) {
+    const pause = await getProductionPauseState(bot)
+    const accounts = await getProductionAccountsForBot(bot) // [] when paused
+    const acct = accounts[0]
+    if (acct?.accountId) {
+      try {
+        const bal = await getTradierBalanceDetail(acct.apiKey, acct.accountId, acct.baseUrl)
+        const cash = bal?.total_cash ?? bal?.total_equity ?? null
+        const positions = (
+          await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
+        ).filter((p) => p.quantity !== 0)
+        live = {
+          paused: pause.paused,
+          account_name: acct.name,
+          total_cash: bal?.total_cash ?? null,
+          total_equity: bal?.total_equity ?? null,
+          open_position_count: positions.length,
+          open_symbols: positions.map((p) => p.symbol),
+        }
+        if (overrideCapital != null) {
+          tradierEquity = overrideCapital
+          source = 'override'
+        } else if (cash != null) {
+          tradierEquity = cash
+          source = 'production'
+        } else {
+          note = 'Production balance returned no total_cash/total_equity — pass ?starting_capital=N to override'
+        }
+      } catch (err: unknown) {
+        note = `Production balance read failed: ${err instanceof Error ? err.message : String(err)}`
+      }
+    } else {
+      // No production account visible — either paused (accounts hidden) or unconfigured.
+      live = {
+        paused: pause.paused,
+        account_name: null,
+        total_cash: null,
+        total_equity: null,
+        open_position_count: 0,
+        open_symbols: [],
+      }
+      if (overrideCapital != null) {
+        tradierEquity = overrideCapital
+        source = 'override'
+      } else {
+        note = pause.paused
+          ? 'SPARK production is PAUSED, so the live account + book are hidden. Cannot verify a flat book or read real cash. Un-pause SPARK, or pass ?starting_capital=N only if you have independently confirmed the book is flat.'
+          : 'No SPARK production account configured — pass ?starting_capital=N to override.'
+      }
+    }
+  } else if (overrideCapital != null) {
     tradierEquity = overrideCapital
     source = 'override'
   } else {
@@ -130,6 +220,7 @@ async function gatherState(
     bot,
     dte_mode: dte,
     tradier: { user_total_equity: tradierEquity, source, note },
+    live,
     current: {
       paper_account_rows: acctRows.map((r) => ({
         id: int(r.id),
@@ -229,13 +320,60 @@ export async function POST(
       )
     }
 
+    // SPARK is the live real-money bot. Guard hard before mutating anything:
+    // never reset on an open book (would orphan a live broker position), and
+    // never fall through to the force-close step on the production bot.
+    if (bot === PRODUCTION_BOT) {
+      const liveUnverified =
+        !preview.live ||
+        (preview.live.account_name == null && preview.tradier.source !== 'override')
+      if (liveUnverified) {
+        return NextResponse.json(
+          {
+            error:
+              'Cannot verify SPARK live account state (paused or unconfigured). Refusing to reset. ' +
+              'Un-pause SPARK so the book can be checked, or pass ?starting_capital=N only after ' +
+              'independently confirming a flat book.',
+            preview,
+          },
+          { status: 503 },
+        )
+      }
+      if (preview.live && preview.live.open_position_count > 0) {
+        return NextResponse.json(
+          {
+            error:
+              `Refusing to reset: SPARK holds ${preview.live.open_position_count} open live position(s) ` +
+              `at Tradier (${preview.live.open_symbols.join(', ')}). Reset only on a flat book — ` +
+              `wait until after the close and settlement.`,
+            preview,
+          },
+          { status: 409 },
+        )
+      }
+      if (preview.current.open_positions > 0) {
+        return NextResponse.json(
+          {
+            error:
+              `Refusing to reset: ${preview.current.open_positions} open position(s) remain in the spark ` +
+              `ledger. Close/reconcile them first (force-close or fix-collateral); the live reset will ` +
+              `not force-close on the production bot.`,
+            preview,
+          },
+          { status: 409 },
+        )
+      }
+    }
+
     const archivedDte = `${ARCHIVED_SUFFIX}${dte}`
+    // Scope mutations to the production ledger for SPARK (no-op clause for paper bots).
+    const scope = acctScope(bot)
 
     // 1. Archive closed/expired positions (rename dte_mode so they stop being summed)
     const archivedClosed = await dbExecute(
       `UPDATE ${botTable(bot, 'positions')}
        SET dte_mode = $1, updated_at = NOW()
-       WHERE dte_mode = $2 AND status IN ('closed', 'expired')`,
+       WHERE dte_mode = $2 AND status IN ('closed', 'expired')${scope}`,
       [archivedDte, dte],
     )
 
@@ -248,15 +386,15 @@ export async function POST(
            close_reason = COALESCE(close_reason, 'paper_reset'),
            dte_mode = $1,
            updated_at = NOW()
-       WHERE dte_mode = $2 AND status = 'open'`,
+       WHERE dte_mode = $2 AND status = 'open'${scope}`,
       [archivedDte, dte],
     )
 
-    // 3. Deactivate all existing paper_account rows for this dte_mode
+    // 3. Deactivate existing paper_account rows for this dte_mode (production-scoped for SPARK)
     const deactivated = await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET is_active = FALSE, updated_at = NOW()
-       WHERE dte_mode = $1`,
+       WHERE dte_mode = $1${scope}`,
       [dte],
     )
 
@@ -268,8 +406,8 @@ export async function POST(
           high_water_mark, max_drawdown,
           is_active, dte_mode, account_type,
           created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
-      [newCapital, dte],
+       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, $3, NOW(), NOW())`,
+      [newCapital, dte, bot === PRODUCTION_BOT ? 'production' : 'sandbox'],
     )
 
     // Audit log

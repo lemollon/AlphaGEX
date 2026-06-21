@@ -2,6 +2,19 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Per-bot identity colors — single source of truth (mirror of src/lib/botColors.ts). */
+:root {
+  --bot-flame: #FF5500;
+  --bot-spark: #3b82f6;
+  --bot-inferno: #ef4444;
+  --bot-blaze: #06b6d4;
+  --bot-flare: #f5a623;
+  /* Semantic colors (mirror Tailwind emerald/red/amber unification) */
+  --pos: #34d399;
+  --neg: #f87171;
+  --warn: #e0b23f;
+}
+
 body {
   @apply bg-forge-bg text-gray-100;
   background-image:
@@ -52,10 +65,12 @@ body {
 .countdown-ember:nth-child(7n)   { --drift: -18px; }
 
 /* ── Heated-metal glow utilities ─────────────────────────────── */
-.glow-amber   { text-shadow: 0 0 8px #EE5A2466, 0 0 20px #EE5A2433; }
-.glow-flame   { text-shadow: 0 0 6px #EE5A2499, 0 0 16px #EE5A2444; }
-.glow-spark   { text-shadow: 0 0 6px #3B82F699, 0 0 16px #3B82F644; }
-.glow-inferno { text-shadow: 0 0 6px #EF444499, 0 0 16px #EF444444; }
+.glow-orange  { text-shadow: 0 0 8px #FF550066, 0 0 20px #FF550033; }
+.glow-flame   { text-shadow: 0 0 6px color-mix(in srgb, var(--bot-flame) 60%, transparent),   0 0 16px color-mix(in srgb, var(--bot-flame) 27%, transparent); }
+.glow-spark   { text-shadow: 0 0 6px color-mix(in srgb, var(--bot-spark) 60%, transparent),   0 0 16px color-mix(in srgb, var(--bot-spark) 27%, transparent); }
+.glow-inferno { text-shadow: 0 0 6px color-mix(in srgb, var(--bot-inferno) 60%, transparent), 0 0 16px color-mix(in srgb, var(--bot-inferno) 27%, transparent); }
+.glow-blaze   { text-shadow: 0 0 6px color-mix(in srgb, var(--bot-blaze) 60%, transparent),   0 0 16px color-mix(in srgb, var(--bot-blaze) 27%, transparent); }
+.glow-flare   { text-shadow: 0 0 6px color-mix(in srgb, var(--bot-flare) 60%, transparent),   0 0 16px color-mix(in srgb, var(--bot-flare) 27%, transparent); }
 
 /* ── Skeleton loading animation ──────────────────────────────── */
 .skeleton {

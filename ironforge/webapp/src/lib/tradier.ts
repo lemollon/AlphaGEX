@@ -597,6 +597,87 @@ export async function getOptionExpirations(
   return Array.isArray(dates) ? dates : [dates]
 }
 
+/* ------------------------------------------------------------------ */
+/*  Regime hedge — SPY put-debit-spread placement (Phase 3)            */
+/*  Reuses the live IC multileg path (sandboxPost). The CALLER owns    */
+/*  the flag/cap/idempotency gating; this just executes given legs.    */
+/* ------------------------------------------------------------------ */
+
+export interface HedgeLegPlan {
+  occLong: string
+  occShort: string
+  contracts: number
+  /** Net debit limit per spread, dollars (e.g. 4.05). */
+  limitDebit: number
+}
+export interface HedgePlaceResult {
+  ok: boolean
+  preview: boolean
+  orderId: string | null
+  cost: number | null
+  error: string | null
+}
+
+/** Resolve the SPY production (Iron Viper) account creds — NOT pause-gated (a hedge
+ *  protects existing risk even when new-IC trading is paused). */
+export async function getHedgeAccount(): Promise<{ apiKey: string; baseUrl: string; accountId: string; name: string } | null> {
+  const accts = await getLoadedSandboxAccountsAsync()
+  const prod = accts.find((a) => a.type === 'production')
+  if (!prod) return null
+  const accountId = await getAccountIdForKey(prod.apiKey, prod.baseUrl)
+  if (!accountId) return null
+  return { apiKey: prod.apiKey, baseUrl: prod.baseUrl, accountId, name: prod.name }
+}
+
+/** Pick the SPY expiration nearest targetDte within [minDte,maxDte]; null if none. */
+export async function resolveHedgeExpiration(targetDte: number, minDte = 25, maxDte = 50): Promise<string | null> {
+  const exps = await getOptionExpirations('SPY')
+  const now = Date.now()
+  const dated = exps
+    .map((d) => ({ d, dte: Math.round((Date.parse(`${d}T20:00:00Z`) - now) / 86_400_000) }))
+    .filter((x) => Number.isFinite(x.dte) && x.dte >= minDte && x.dte <= maxDte)
+  if (dated.length === 0) return null
+  dated.sort((a, b) => Math.abs(a.dte - targetDte) - Math.abs(b.dte - targetDte))
+  return dated[0].d
+}
+
+/**
+ * Place (or preview) a SPY PUT DEBIT SPREAD on the production account. `type:limit`
+ * at the given net debit (so a bad day can't fill at a runaway price). Mirrors the
+ * live IC multileg order. Never throws. preview:true → Tradier dry-run (returns cost,
+ * no order). The caller MUST have already checked the arm flag + cap + idempotency.
+ */
+export async function placeHedgePutSpread(
+  acct: { apiKey: string; baseUrl: string; accountId: string },
+  legs: HedgeLegPlan,
+  opts: { preview: boolean },
+): Promise<HedgePlaceResult> {
+  const body: Record<string, string> = {
+    class: 'multileg',
+    symbol: 'SPY',
+    type: 'limit',
+    duration: 'day',
+    price: legs.limitDebit.toFixed(2),
+    'option_symbol[0]': legs.occLong, 'side[0]': 'buy_to_open', 'quantity[0]': String(legs.contracts),
+    'option_symbol[1]': legs.occShort, 'side[1]': 'sell_to_open', 'quantity[1]': String(legs.contracts),
+    tag: 'ironforge-hedge',
+  }
+  if (opts.preview) body.preview = 'true'
+  const res = await sandboxPost(`/accounts/${acct.accountId}/orders`, body, acct.apiKey, acct.baseUrl)
+  if (!res) return { ok: false, preview: opts.preview, orderId: null, cost: null, error: 'order POST returned null' }
+  if (res.errors) return { ok: false, preview: opts.preview, orderId: null, cost: null, error: JSON.stringify(res.errors).slice(0, 300) }
+  const order = res.order ?? {}
+  const cost = order.cost != null ? Number(order.cost) : order.margin_change != null ? Number(order.margin_change) : null
+  if (opts.preview) return { ok: true, preview: true, orderId: null, cost, error: null }
+  return {
+    ok: order.id != null,
+    preview: false,
+    orderId: order.id != null ? String(order.id) : null,
+    cost,
+    error: order.id != null ? null : 'no order id returned',
+  }
+}
+
 /** Get the entry credit for an Iron Condor (sell at bid, buy at ask). */
 export async function getIcEntryCredit(
   ticker: string,

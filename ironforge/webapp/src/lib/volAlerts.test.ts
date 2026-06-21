@@ -3,8 +3,12 @@ import {
   diffVolAlerts,
   botVolMessage,
   isAlertingKey,
+  classifySignalState,
+  notifyDecision,
+  WATCH_PROXIMITY,
   type VolAlert,
   type VolBot,
+  type LadderTransition,
 } from './volAlerts'
 
 /** Minimal alert factory. */
@@ -35,6 +39,62 @@ describe('isAlertingKey', () => {
     expect(isAlertingKey('divergence')).toBe(false)
     expect(isAlertingKey('double_floor')).toBe(false)
     expect(isAlertingKey('nonsense')).toBe(false)
+  })
+})
+
+describe('classifySignalState', () => {
+  it('confirmed wins even if a single read goes inactive (resolve-debounce window)', () => {
+    expect(classifySignalState({ active: false, confirmed: true, proximity: 0.1 })).toBe('confirmed')
+    expect(classifySignalState({ active: true, confirmed: true, proximity: 1 })).toBe('confirmed')
+  })
+  it('tripped when active but not yet confirmed', () => {
+    expect(classifySignalState({ active: true, confirmed: false, proximity: 0.2 })).toBe('tripped')
+  })
+  it('watch when inactive but proximity at/above the watch threshold', () => {
+    expect(classifySignalState({ active: false, confirmed: false, proximity: WATCH_PROXIMITY })).toBe('watch')
+    expect(classifySignalState({ active: false, confirmed: false, proximity: 0.95 })).toBe('watch')
+  })
+  it('idle when inactive and below the watch threshold (incl. null proximity)', () => {
+    expect(classifySignalState({ active: false, confirmed: false, proximity: 0.5 })).toBe('idle')
+    expect(classifySignalState({ active: false, confirmed: false, proximity: null })).toBe('idle')
+    expect(classifySignalState({ active: false, confirmed: false, proximity: undefined })).toBe('idle')
+  })
+})
+
+describe('notifyDecision', () => {
+  const mk = (over: Partial<LadderTransition>): LadderTransition => ({
+    signalKey: 'backwardation',
+    direction: 'bullish',
+    from: 'idle',
+    to: 'idle',
+    ...over,
+  })
+
+  it('notifies HIGH on any →confirmed transition', () => {
+    const v = notifyDecision(mk({ from: 'tripped', to: 'confirmed' }))
+    expect(v).toMatchObject({ notify: true, priority: 'high', reason: 'confirmed' })
+  })
+  it('notifies HIGH on ts_flattening →tripped (asymmetric early warning, default on)', () => {
+    const v = notifyDecision(mk({ signalKey: 'ts_flattening', direction: 'bearish', from: 'watch', to: 'tripped' }))
+    expect(v).toMatchObject({ notify: true, priority: 'high', reason: 'early-warning' })
+  })
+  it('does NOT early-warn other signals on →tripped', () => {
+    expect(notifyDecision(mk({ signalKey: 'backwardation', to: 'tripped' })).notify).toBe(false)
+    expect(notifyDecision(mk({ signalKey: 'exhaustion', to: 'tripped' })).notify).toBe(false)
+  })
+  it('suppresses ts_flattening early warning when disabled', () => {
+    const v = notifyDecision(mk({ signalKey: 'ts_flattening', to: 'tripped' }), { earlyWarnTsFlattening: false })
+    expect(v.notify).toBe(false)
+  })
+  it('never pings on resolution (confirmed→watch/idle) — UI only', () => {
+    expect(notifyDecision(mk({ from: 'confirmed', to: 'watch' }))).toMatchObject({ notify: false, reason: 'resolved' })
+    expect(notifyDecision(mk({ from: 'confirmed', to: 'idle' })).notify).toBe(false)
+    // even ts_flattening leaving confirmed must not re-fire an early warning
+    expect(notifyDecision(mk({ signalKey: 'ts_flattening', from: 'confirmed', to: 'tripped' })).notify).toBe(false)
+  })
+  it('is silent on benign transitions (idle↔watch)', () => {
+    expect(notifyDecision(mk({ from: 'idle', to: 'watch' })).notify).toBe(false)
+    expect(notifyDecision(mk({ from: 'watch', to: 'idle' })).notify).toBe(false)
   })
 })
 

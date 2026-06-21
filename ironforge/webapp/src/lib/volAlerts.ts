@@ -187,3 +187,194 @@ export function botVolMessage(bot: VolBot, alerts: VolAlert[] | null | undefined
 
   return null
 }
+
+/* ------------------------------------------------------------------ */
+/*  Daily hedge trigger (pure, unit-tested) — the STABLE per-day read  */
+/* ------------------------------------------------------------------ */
+
+export interface RegimeSnapshot {
+  regimeLabel?: string | null
+  /** Alerting keys active this read (e.g. ['ts_flattening']). */
+  activeSignals: string[]
+  vix?: number | null
+  vix3m?: number | null
+  vvix?: number | null
+}
+
+export interface HedgeDecision {
+  flagged: boolean
+  reasons: string[]
+}
+
+/** Regimes that, on their own, warrant an IC hedge for the day. */
+const HEDGE_REGIMES: ReadonlySet<string> = new Set(['backwardation_stressed', 'contango_flattening'])
+/** VVIX (vol-of-vol) stress threshold. */
+export const VVIX_STRESS = 115
+
+/**
+ * The stable daily hedge trigger: flagged=true (with reasons) when the regime /
+ * term structure signals elevated short-premium tail risk — the days we want an
+ * IC hedge on. Pure + total. The scanner LATCHES this per CT day (sticky) so a
+ * transient intraday trip still marks the day "hedge", killing the flap problem.
+ * Calm contango with VIX<VIX3M and benign VVIX → not flagged (don't hedge).
+ */
+export function hedgeFlagged(s: RegimeSnapshot): HedgeDecision {
+  const reasons: string[] = []
+  if (s.regimeLabel && HEDGE_REGIMES.has(s.regimeLabel)) reasons.push(`regime ${s.regimeLabel}`)
+  if (s.activeSignals?.includes('ts_flattening')) reasons.push('ts_flattening')
+  if (s.activeSignals?.includes('backwardation')) reasons.push('backwardation')
+  if (typeof s.vix === 'number' && typeof s.vix3m === 'number' && s.vix > s.vix3m) {
+    reasons.push(`VIX ${s.vix.toFixed(1)} > VIX3M ${s.vix3m.toFixed(1)}`)
+  }
+  if (typeof s.vvix === 'number' && s.vvix >= VVIX_STRESS) {
+    reasons.push(`VVIX ${s.vvix.toFixed(0)} ≥ ${VVIX_STRESS}`)
+  }
+  return { flagged: reasons.length > 0, reasons }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Alert debounce / hysteresis (pure, unit-tested) — kills the flap   */
+/* ------------------------------------------------------------------ */
+
+export interface SignalStreak {
+  active: number
+  inactive: number
+}
+
+/** Consecutive active reads required before OPENING an alert (~10 min @ 5-min cadence). */
+export const DEBOUNCE_OPEN_AFTER = 2
+/** Consecutive inactive reads required before RESOLVING an open alert (~15 min). */
+export const DEBOUNCE_RESOLVE_AFTER = 3
+
+/**
+ * Advance per-signal active/inactive streaks by one cycle (pure → new map).
+ * `instActive` = keys active THIS read; `keys` = the universe to track.
+ */
+export function stepStreaks(
+  prev: Record<string, SignalStreak>,
+  instActive: string[],
+  keys: readonly string[],
+): Record<string, SignalStreak> {
+  const active = new Set(instActive)
+  const next: Record<string, SignalStreak> = {}
+  for (const k of keys) {
+    const p = prev[k] ?? { active: 0, inactive: 0 }
+    next[k] = active.has(k)
+      ? { active: p.active + 1, inactive: 0 }
+      : { active: 0, inactive: p.inactive + 1 }
+  }
+  return next
+}
+
+/**
+ * Debounced open/resolve decision from streaks + currently-open keys. Open once a
+ * key's active streak ≥ openAfter; resolve an open key once its inactive streak ≥
+ * resolveAfter. This replaces the per-cycle diff so a 5-min blip can't flap an alert.
+ */
+export function debouncedTransitions(
+  streaks: Record<string, SignalStreak>,
+  openKeys: string[],
+  opts: { openAfter: number; resolveAfter: number } = {
+    openAfter: DEBOUNCE_OPEN_AFTER,
+    resolveAfter: DEBOUNCE_RESOLVE_AFTER,
+  },
+): VolAlertDiff {
+  const open = new Set(openKeys)
+  const toOpen: string[] = []
+  for (const [k, s] of Object.entries(streaks)) {
+    if (!open.has(k) && s.active >= opts.openAfter) toOpen.push(k)
+  }
+  const toResolve: string[] = []
+  for (const k of openKeys) {
+    const s = streaks[k]
+    if (s && s.inactive >= opts.resolveAfter) toResolve.push(k)
+  }
+  return { toOpen, toResolve }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Signal escalation ladder (pure, unit-tested) — NEVER drops a read  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Instantaneous escalation state of a directional signal on a single read.
+ *
+ *   idle      → not active and not near its trigger
+ *   watch     → not active but proximity ≥ WATCH_PROXIMITY (approaching)
+ *   tripped   → crossed its trigger this read but not yet debounce-CONFIRMED
+ *   confirmed → has a sustained, debounce-confirmed open alert (`vol_alerts`)
+ *
+ * The `vol_alerts` table holds only the CONFIRMED (actionable, debounced) layer.
+ * This ladder is the observation layer underneath it: a `tripped` read that never
+ * confirms still becomes a permanent event row, so a real market sign can never be
+ * silently dropped by the debounce. `resolved` is not a state — it's the EVENT of
+ * leaving `confirmed` (a confirmed→{idle,watch} transition).
+ */
+export type SignalState = 'idle' | 'watch' | 'tripped' | 'confirmed'
+
+/** Proximity (0..1, from the advisor) at/above which an inactive signal is WATCH. */
+export const WATCH_PROXIMITY = 0.9
+
+/**
+ * Classify one signal's instantaneous ladder state. `confirmed` wins (the open
+ * alert persists through the resolve-debounce window even when a single read goes
+ * inactive); else `tripped` when active; else `watch` near the trigger; else idle.
+ * Pure + total.
+ */
+export function classifySignalState(args: {
+  active: boolean
+  confirmed: boolean
+  proximity: number | null | undefined
+}): SignalState {
+  if (args.confirmed) return 'confirmed'
+  if (args.active) return 'tripped'
+  const p = typeof args.proximity === 'number' && Number.isFinite(args.proximity) ? args.proximity : 0
+  return p >= WATCH_PROXIMITY ? 'watch' : 'idle'
+}
+
+/** A single ladder state change for one signal (the unit the event log records). */
+export interface LadderTransition {
+  signalKey: string
+  direction: string | null
+  from: SignalState
+  to: SignalState
+}
+
+/** Notification verdict for a ladder transition. */
+export interface NotifyVerdict {
+  notify: boolean
+  priority: 'high' | 'info'
+  /** Short machine reason, e.g. 'confirmed' | 'early-warning' | 'resolved' | 'none'. */
+  reason: string
+}
+
+/**
+ * Escalation + asymmetry policy for a ladder transition (pure):
+ *   • →confirmed (any signal)                  → notify HIGH ('confirmed')
+ *   • →tripped for the bearish vol-expansion
+ *     signal (ts_flattening), if early-warning
+ *     is enabled                               → notify HIGH ('early-warning')
+ *   • confirmed→{idle,watch,tripped}           → no ping ('resolved'; UI only)
+ *   • everything else                          → no ping ('none')
+ *
+ * The ts_flattening asymmetry exists because vol-expansion is the ruin scenario for
+ * the short-premium books — we accept an extra heads-up on the dangerous signal
+ * before it fully confirms. Flap is tamed by a per-signal notify cooldown at the
+ * call site, not here. Pure + total.
+ */
+export function notifyDecision(
+  t: LadderTransition,
+  opts: { earlyWarnTsFlattening?: boolean } = {},
+): NotifyVerdict {
+  const earlyWarn = opts.earlyWarnTsFlattening !== false // default ON
+  if (t.to === 'confirmed') {
+    return { notify: true, priority: 'high', reason: 'confirmed' }
+  }
+  if (t.from === 'confirmed') {
+    return { notify: false, priority: 'info', reason: 'resolved' }
+  }
+  if (t.to === 'tripped' && t.signalKey === 'ts_flattening' && earlyWarn) {
+    return { notify: true, priority: 'high', reason: 'early-warning' }
+  }
+  return { notify: false, priority: 'info', reason: 'none' }
+}

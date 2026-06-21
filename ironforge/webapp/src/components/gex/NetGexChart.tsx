@@ -90,20 +90,20 @@ export default function NetGexChart({
                   label={{ value: 'Price', fill: '#3b82f6', fontSize: 10, position: 'right' }} />
               )}
               {flip != null && (
-                <ReferenceLine y={flip} stroke="#eab308" strokeDasharray="4 3"
-                  label={{ value: 'Flip', fill: '#eab308', fontSize: 10, position: 'right' }} />
+                <ReferenceLine y={flip} stroke="#e0b23f" strokeDasharray="4 3"
+                  label={{ value: 'Flip', fill: '#e0b23f', fontSize: 10, position: 'right' }} />
               )}
               {upper1sd != null && (
-                <ReferenceLine y={upper1sd} stroke="#f59e0b" strokeDasharray="2 4"
-                  label={{ value: '+1σ', fill: '#f59e0b', fontSize: 10, position: 'right' }} />
+                <ReferenceLine y={upper1sd} stroke="#FF5500" strokeDasharray="2 4"
+                  label={{ value: '+1σ', fill: '#FF5500', fontSize: 10, position: 'right' }} />
               )}
               {lower1sd != null && (
-                <ReferenceLine y={lower1sd} stroke="#f59e0b" strokeDasharray="2 4"
-                  label={{ value: '−1σ', fill: '#f59e0b', fontSize: 10, position: 'right' }} />
+                <ReferenceLine y={lower1sd} stroke="#FF5500" strokeDasharray="2 4"
+                  label={{ value: '−1σ', fill: '#FF5500', fontSize: 10, position: 'right' }} />
               )}
               <Bar dataKey="net_gamma" barSize={6} isAnimationActive={false}>
                 {data.map((d, i) => (
-                  <Cell key={i} fill={d.net_gamma >= 0 ? '#22c55e' : '#ef4444'} />
+                  <Cell key={i} fill={d.net_gamma >= 0 ? '#34d399' : '#ef4444'} />
                 ))}
               </Bar>
             </BarChart>

@@ -60,6 +60,25 @@ def test_pins_between_two_large_magnets(fake_chain_0dte):
     assert sig.body_strike == 499  # gamma-weighted midpoint of 497 and 501
 
 
+def test_pins_between_magnets_with_net_gamma_key(fake_chain_0dte):
+    # Regression: the live WATCHTOWER engine emits magnets keyed by `net_gamma`
+    # (core/watchtower_engine.identify_magnets), NOT `gamma`. The builder must
+    # honor that key so the body centers on the magnet midpoint, not spot/pin.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 502.0,
+            "magnets": [
+                {"strike": 497.0, "net_gamma": -1.0e9, "probability": 40},
+                {"strike": 501.0, "net_gamma": 1.0e9, "probability": 42},
+            ],
+        },
+    }
+    sig = build_long_butterfly_signal(chain=chain, config=_config(), equity=10000.0)
+    assert sig is not None
+    assert sig.body_strike == 499  # gamma-weighted midpoint of 497 and 501
+
+
 def test_falls_back_to_spot_when_no_pin(fake_chain_0dte):
     chain = {**fake_chain_0dte, "gex": {"flip_point": 502.0}}
     sig = build_long_butterfly_signal(chain=chain, config=_config(), equity=10000.0)
@@ -149,6 +168,32 @@ def test_gex_walls_clip_wings(fake_chain_0dte):
     assert sig.lower_strike == 499
     assert sig.upper_strike == 503
     assert sig.wing_width == 2
+
+
+def test_asymmetric_walls_keep_wings_symmetric(fake_chain_0dte):
+    # A near call_wall (502) and a far put_wall (497) must NOT produce a
+    # broken-wing 1-2-1 (whose max loss can exceed the debit). Both wings pull
+    # in to the nearer wall distance (1) so the fly stays symmetric.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {"pin_strike": 501.0, "call_wall": 502.0, "put_wall": 497.0},
+    }
+    sig = build_long_butterfly_signal(
+        chain=chain, config=_config(use_gex_walls=True), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.upper_strike - sig.body_strike == sig.body_strike - sig.lower_strike
+    assert sig.upper_strike == 502 and sig.lower_strike == 500
+
+
+def test_rejects_missing_atm_straddle(fake_chain_0dte):
+    chain = {**fake_chain_0dte, "atm_straddle_mid": 0}
+    diag = []
+    sig = build_long_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0, diag=diag
+    )
+    assert sig is None
+    assert diag and "missing_atm_straddle" in diag[0]
 
 
 def test_returns_four_legs_single_type(fake_chain_0dte):

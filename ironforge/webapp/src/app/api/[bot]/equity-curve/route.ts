@@ -9,6 +9,8 @@ import {
   getTradierBalanceDetail,
   getVerticalMarkToMarket,
   calculateVerticalUnrealizedPnl,
+  getSandboxAccountBalances,
+  PRODUCTION_BOT,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -201,6 +203,36 @@ export async function GET(
               rebaseSource = 'tradier'
             }
           }
+        }
+      } catch { /* fall back to paper basis */ }
+    }
+
+    // SPARK production rebase: the top card shows the live Tradier (Iron Viper)
+    // balance, and it's pause-independent — so rebase the curve to end at that
+    // same broker equity (same P&L shape, broker basis on the Y-axis), keeping
+    // the chart consistent with the scorecard. Uses getSandboxAccountBalances
+    // (NOT pause-gated), so a paused bot still gets the right basis.
+    if (bot === PRODUCTION_BOT && accountTypeParam === 'production') {
+      try {
+        const prodBals = (await getSandboxAccountBalances()).filter(
+          (s) => s.account_type === 'production' && s.total_equity != null,
+        )
+        if (prodBals.length > 0) {
+          const eq = Math.round(prodBals.reduce((a, s) => a + (s.total_equity ?? 0), 0) * 100) / 100
+          const lastCumPnl = curve.length > 0 ? curve[curve.length - 1].cumulative_pnl : 0
+          const rebaseStart = Math.round((eq - lastCumPnl - liveUnrealizedPnl) * 100) / 100
+          const offset = rebaseStart - startingCapital
+          if (offset !== 0) {
+            curve = curve.map((pt) => ({
+              ...pt,
+              equity: Math.round((pt.equity + offset) * 100) / 100,
+              ...(pt.hypothetical_equity != null
+                ? { hypothetical_equity: Math.round((pt.hypothetical_equity + offset) * 100) / 100 }
+                : {}),
+            }))
+          }
+          startingCapital = rebaseStart
+          rebaseSource = 'tradier'
         }
       } catch { /* fall back to paper basis */ }
     }

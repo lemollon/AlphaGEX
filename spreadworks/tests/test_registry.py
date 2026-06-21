@@ -11,7 +11,9 @@ def test_breeze_defaults():
     assert b["front_dte"] == 0
     assert b["back_dte"] is None
     assert b["defaults"]["pt_pct"] == 0.30
-    assert b["defaults"]["sl_pct"] == 2.0
+    # SL = fraction of MAX LOSS (defined risk), mirroring RIVER. Was 2.0 of
+    # max profit, an unreachable stop for an iron fly's rich ATM credit.
+    assert b["defaults"]["sl_pct"] == 0.50
     assert b["defaults"]["sd_mult"] == 1.0
     assert b["defaults"]["eod_close_ct"] == "14:45"
     # All bots deploy 50% of the account, uncapped — matches FLOW.

@@ -55,7 +55,7 @@ function DigitCard({ value, label }: { value: number; label: string }) {
                 bg-gradient-to-b from-forge-card via-forge-card to-[#0f0d0c]
                 border border-amber-500/20
                 flex items-center justify-center
-                shadow-[0_0_15px_rgba(245,158,11,0.1),inset_0_1px_0_rgba(255,255,255,0.05)]
+                shadow-[0_0_15px_rgba(255,85,0,0.1),inset_0_1px_0_rgba(255,255,255,0.05)]
                 relative overflow-hidden
               "
             >
@@ -66,8 +66,8 @@ function DigitCard({ value, label }: { value: number; label: string }) {
                 className="
                   text-3xl md:text-4xl font-extrabold tabular-nums
                   text-transparent bg-clip-text
-                  bg-gradient-to-b from-amber-300 via-orange-400 to-red-500
-                  drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]
+                  bg-gradient-to-b from-amber-300 via-amber-400 to-red-500
+                  drop-shadow-[0_0_8px_rgba(255,85,0,0.6)]
                   relative z-10
                 "
               >
@@ -90,8 +90,8 @@ function DigitCard({ value, label }: { value: number; label: string }) {
 function Separator() {
   return (
     <div className="flex flex-col gap-2.5 pt-1 md:pt-2">
-      <div className="w-1.5 h-1.5 rounded-full bg-amber-500/60 shadow-[0_0_6px_rgba(245,158,11,0.5)] animate-pulse" />
-      <div className="w-1.5 h-1.5 rounded-full bg-amber-500/60 shadow-[0_0_6px_rgba(245,158,11,0.5)] animate-pulse" />
+      <div className="w-1.5 h-1.5 rounded-full bg-amber-500/60 shadow-[0_0_6px_rgba(255,85,0,0.5)] animate-pulse" />
+      <div className="w-1.5 h-1.5 rounded-full bg-amber-500/60 shadow-[0_0_6px_rgba(255,85,0,0.5)] animate-pulse" />
     </div>
   )
 }
@@ -143,10 +143,10 @@ export default function LaunchCountdown() {
             THE FORGE IS LIVE
           </p>
           <p className="text-sm text-amber-500/60 mt-1">Iron has been tempered. Trading has begun.</p>
-          <p className="text-sm font-medium text-amber-200/90 mt-4 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(251,191,36,0.3)' }}>
+          <p className="text-sm font-medium text-amber-200/90 mt-4 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(255,138,61,0.3)' }}>
             &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
           </p>
-          <p className="text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(245,158,11,0.25)' }}>
+          <p className="text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(255,85,0,0.25)' }}>
             John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
             On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, now alive.
           </p>
@@ -214,10 +214,10 @@ export default function LaunchCountdown() {
         </div>
 
         {/* Scripture */}
-        <p className="text-center text-sm font-medium text-amber-200/90 mt-6 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(251,191,36,0.3)' }}>
+        <p className="text-center text-sm font-medium text-amber-200/90 mt-6 italic max-w-lg mx-auto leading-relaxed" style={{ textShadow: '0 0 12px rgba(255,138,61,0.3)' }}>
           &ldquo;For God so loved the world that he gave his one and only Son, that whoever believes in him shall not perish but have eternal life.&rdquo;
         </p>
-        <p className="text-center text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(245,158,11,0.25)' }}>
+        <p className="text-center text-xs font-medium text-amber-400/80 mt-3 max-w-md mx-auto leading-relaxed" style={{ textShadow: '0 0 8px rgba(255,85,0,0.25)' }}>
           John 3:16 &middot; Iron is forged through fire, faith is refined through trials.
           On 3/16, the Forge is born again &mdash; tested by paper, tempered by patience, ready to live.
         </p>
