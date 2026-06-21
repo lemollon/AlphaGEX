@@ -32,6 +32,7 @@ import { forgeBriefingsTick } from './forgeBriefings/tick'
 import {
   getQuote,
   getOptionExpirations,
+  getNetGex,
   getIcEntryCredit,
   getPutSpreadEntryCredit,
   getPutSpreadMarkToMarket,
@@ -716,6 +717,25 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
     topFactors: factors,
     reasoning: `Advisor: ${advice} WP=${winProb.toFixed(2)} conf=${confidence.toFixed(2)}`,
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Net-GEX regime gate (flag-gated) — cached once per CT day          */
+/* ------------------------------------------------------------------ */
+// OI updates once daily, so a per-day cache is plenty and keeps the
+// extra Tradier chain calls to ~once/day (at the entry decision).
+let _netGexCache: { day: string; value: number | null } | null = null
+async function getNetGexCached(): Promise<number | null> {
+  const day = getCentralTime().toISOString().slice(0, 10)
+  if (_netGexCache && _netGexCache.day === day) return _netGexCache.value
+  let value: number | null = null
+  try {
+    value = await getNetGex('SPY', 90)
+  } catch {
+    value = null
+  }
+  _netGexCache = { day, value }
+  return value
 }
 
 /* ------------------------------------------------------------------ */
@@ -2754,11 +2774,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const adv = evaluateAdvisor(vix, spot, expectedMove, bot.dte)
   if (adv.advice === 'SKIP') return `skip:advisor(${adv.reasoning})`
 
-  // GEX data warning — log but don't block (GEX not yet integrated)
-  // When GEX is wired up, change this to a hard block
-  console.warn(
-    `[scanner] ${bot.name.toUpperCase()}: GEX_DATA_MISSING — all GEX fields zero, trading without gamma context`,
-  )
+  // GEX (gamma-regime) entry filter — FLAG-GATED, default OFF.
+  // When SPARK_GEX_FILTER=true, skip entries on negative net-gamma days
+  // (dealers short gamma ⇒ they amplify moves ⇒ unfavorable for selling
+  // iron condors). Backtest 2020-2026: GEX≥0 lifts win rate 89%→94%, turns
+  // 2022/2025 green. Fails OPEN: if GEX can't be computed, we do NOT block.
+  if (process.env.SPARK_GEX_FILTER === 'true' && bot.name === 'spark') {
+    const netGex = await getNetGexCached()
+    if (netGex !== null && netGex < 0) {
+      return `skip:negative_gamma(net_gex=${netGex.toFixed(0)})`
+    }
+  }
 
   // Expiration
   const targetExp = getTargetExpiration(bot.minDte)
@@ -2824,7 +2850,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     : botCfg.max_contracts > 0
       ? Math.min(botCfg.max_contracts, bpContracts)
       : bpContracts
-  const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
+  // Optional hard contract cap — FLAG-GATED, default OFF (SPARK_GEX_CAP=0).
+  // Caps the single-day tail on a compounding account (backtest: cap 10 turns
+  // the −$25k uncapped day into ≤−$4.9k AND improves total return).
+  const gexCap = parseInt(process.env.SPARK_GEX_CAP || '0', 10)
+  const capCeil = gexCap > 0 && bot.name === 'spark'
+    ? Math.min(gexCap, SCANNER_MAX_CONTRACTS)
+    : SCANNER_MAX_CONTRACTS
+  const maxContracts = Math.min(rawMax, capCeil)
 
   const totalCollateral = collateralPer * maxContracts
   const maxProfit = credits.totalCredit * 100 * maxContracts
