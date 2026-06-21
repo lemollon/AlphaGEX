@@ -1950,8 +1950,14 @@ async function monitorSinglePosition(
     return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
   }
 
-  // Stop loss uses BID/ASK (conservative) — better to exit early on losses
-  if (costToClose >= stopLossPrice) {
+  // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
+  // SWING flag (flag-gated, default OFF): when SPARK_SWING=true, SPARK skips the
+  // stop and rides the position to the profit target or EOD ("swing"). Backtest:
+  // ~82% of stopped trades recover by close; with small %-based sizing this lifts
+  // win rate to ~98% and slashes drawdown. With the stop off, position SIZE
+  // (bp_pct, set ~0.15) becomes the risk control — keep it small.
+  const swingOn = process.env.SPARK_SWING === 'true' && bot.name === 'spark'
+  if (costToClose >= stopLossPrice && !swingOn) {
     // Commit R1: DB-level trigger log.
     try {
       await dbExecute(
@@ -2774,16 +2780,21 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const adv = evaluateAdvisor(vix, spot, expectedMove, bot.dte)
   if (adv.advice === 'SKIP') return `skip:advisor(${adv.reasoning})`
 
-  // GEX (gamma-regime) entry filter — FLAG-GATED, default OFF.
-  // When SPARK_GEX_FILTER=true, skip entries on negative net-gamma days
-  // (dealers short gamma ⇒ they amplify moves ⇒ unfavorable for selling
-  // iron condors). Backtest 2020-2026: GEX≥0 lifts win rate 89%→94%, turns
-  // 2022/2025 green. Fails OPEN: if GEX can't be computed, we do NOT block.
-  if (process.env.SPARK_GEX_FILTER === 'true' && bot.name === 'spark') {
-    const netGex = await getNetGexCached()
-    if (netGex !== null && netGex < 0) {
-      return `skip:negative_gamma(net_gex=${netGex.toFixed(0)})`
-    }
+  // GEX (gamma-regime) — FLAG-GATED, default OFF. Net GEX is computed once (cached
+  // per day) if EITHER the filter or the widen flag is on, then reused by both.
+  let spkNetGex: number | null = null
+  if (bot.name === 'spark' &&
+      (process.env.SPARK_GEX_FILTER === 'true' || process.env.SPARK_GEX_WIDEN === 'true')) {
+    spkNetGex = await getNetGexCached()
+  }
+  // FILTER: skip negative-gamma days (dealers short gamma ⇒ amplify moves ⇒
+  // unfavorable for selling condors). Backtest: GEX≥0 lifts win 89%→94%, turns
+  // 2022/2025 green. Fails OPEN — if GEX can't be computed, we do NOT block.
+  // Use the FILTER to SKIP neg-gamma days, OR the WIDEN flag (below) to trade them
+  // wider instead — typically one or the other, not both.
+  if (process.env.SPARK_GEX_FILTER === 'true' && bot.name === 'spark'
+      && spkNetGex !== null && spkNetGex < 0) {
+    return `skip:negative_gamma(net_gex=${spkNetGex.toFixed(0)})`
   }
 
   // Expiration
@@ -2810,6 +2821,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const SD_STEP = 0.1
   const SD_FLOOR = 0.5
   let usedSd = botCfg.sd
+  // WIDEN (flag-gated, default OFF): on negative-gamma days, push the short strikes
+  // wider (default 2.0 SD) instead of skipping. Backtest: 2.0 SD on neg-gamma flips
+  // those days profitable at ~96% win. IMPORTANT: the wide condor's thin credit gets
+  // chopped by the 300% stop, so widening only works WITH the swing exit
+  // (SPARK_SWING=true) and small %-based sizing (bp_pct ~0.15).
+  if (process.env.SPARK_GEX_WIDEN === 'true' && bot.name === 'spark'
+      && spkNetGex !== null && spkNetGex < 0) {
+    usedSd = parseFloat(process.env.SPARK_WIDEN_SD || '2.0')
+  }
   let strikes = calculateStrikes(spot, expectedMove, usedSd)
   let credits = await getIcEntryCredit(
     'SPY', expiration,
