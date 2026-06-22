@@ -302,7 +302,7 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="row"><span>DTE</span><b>1 DAY</b></div>
         <div class="row"><span>BIAS</span><b>NEUTRAL</b></div>
         <div class="row"><span>TARGET</span><b>+50%</b></div>
-        <div class="row"><span>STOP</span><b>-200%</b></div>
+        <div class="row"><span>STOP</span><b>NONE · SWING</b></div>
         <div class="row"><span>FREQ</span><b>DAILY</b></div>
       </div>
     </a>
