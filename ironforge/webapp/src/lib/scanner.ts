@@ -2848,7 +2848,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const spreadWidth = strikes.putShort - strikes.putLong
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
-  const usableBP = buyingPower * botCfg.bp_pct
+  // SPARK risk cap: with the stop off (swing), position SIZE is the only risk
+  // control, so SPARK never deploys more than 15% of buying power per trade —
+  // enforced in code regardless of the config value (backtest: 30%+no-stop blows
+  // up; ~15% gives 98% win with a survivable drawdown). Other bots use bp_pct.
+  const effBpPct = bot.name === 'spark' ? Math.min(botCfg.bp_pct, 0.15) : botCfg.bp_pct
+  const usableBP = buyingPower * effBpPct
   const bpContracts = Math.floor(usableBP / collateralPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
   if (bpContracts < 1 && !sandboxAlreadyTraded) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
