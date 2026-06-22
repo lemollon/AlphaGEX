@@ -762,7 +762,7 @@ export default function StatusCard({
       {config && (
         <div className="flex flex-wrap items-center gap-3 mt-3 pt-3 border-t border-forge-border/50">
           <span className="text-[10px] text-forge-muted uppercase tracking-wider">Config</span>
-          <span className="text-xs font-mono text-gray-400">{config.sd_multiplier ?? 1.2}x SD</span>
+          <span className="text-xs font-mono text-gray-400">{bot === 'spark' ? '1.2–2.0 SD (GEX-auto)' : `${config.sd_multiplier ?? 1.2}x SD`}</span>
           <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
 
           {/* Editable BP% */}
@@ -795,13 +795,22 @@ export default function StatusCard({
             </span>
           ) : (
             <span className="inline-flex items-center gap-1">
-              <button
-                onClick={() => { setBpDraft(String(((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0))); setEditingBP(true) }}
-                className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
-                title="Click to edit buying power allocation %"
-              >
-                {((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP
-              </button>
+              {bot === 'spark' ? (
+                <span
+                  className="text-xs font-mono text-gray-400"
+                  title="SPARK is hard-capped at 15% of buying power in code (risk control for swing / no-stop). Config values above 15% are ignored."
+                >
+                  ≤15% BP (capped)
+                </span>
+              ) : (
+                <button
+                  onClick={() => { setBpDraft(String(((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0))); setEditingBP(true) }}
+                  className="text-xs font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2 decoration-dotted cursor-pointer"
+                  title="Click to edit buying power allocation %"
+                >
+                  {((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP
+                </button>
+              )}
               {savedField === 'buying_power_usage_pct' && (
                 <span className="text-emerald-400 text-[10px] font-medium animate-pulse">Saved</span>
               )}
@@ -875,7 +884,7 @@ export default function StatusCard({
               ? 'PT HOLD_TO_EOD'
               : `PT ${config.profit_target_pct ?? 30}%`}
           </span>
-          <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
+          <span className="text-xs font-mono text-gray-400" title={bot === 'spark' ? 'SPARK swings — no hard stop. Rides to profit target or EOD.' : undefined}>{bot === 'spark' ? 'Swing (no stop)' : `SL ${config.stop_loss_pct ?? 100}%`}</span>
           <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
           <span className="text-xs font-mono text-gray-400">max {config.max_contracts === 0 ? '∞' : (config.max_contracts ?? 10)}x</span>
         </div>

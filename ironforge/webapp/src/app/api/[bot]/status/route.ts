@@ -533,7 +533,9 @@ export async function GET(
       ? 'Put Credit Spread'
       : bot === 'blaze'
         ? 'Directional Spread'
-        : 'Iron Condor'
+        : bot === 'spark'
+          ? 'Iron Condor (GEX-adaptive · swing · 15% BP)'
+          : 'Iron Condor'
     const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
 
     return NextResponse.json({

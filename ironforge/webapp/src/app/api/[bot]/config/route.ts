@@ -16,7 +16,10 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
   spark: {
     sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.05,
     profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 32.0,
-    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
+    // SPARK runs the automatic GEX strategy (scanner.ts): strike width is GEX-
+    // adaptive (1.2 SD calm / 2.0 SD stormy), it SWINGS (no hard stop — stop_loss_pct
+    // is ignored), and sizing is hard-capped at 15% BP in code regardless of this value.
+    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.15,
     risk_per_trade_pct: 0.15, min_win_probability: 0.42,
     entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
     pdt_max_day_trades: 4, starting_capital: 10000.0,
