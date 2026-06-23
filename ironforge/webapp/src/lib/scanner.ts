@@ -69,7 +69,6 @@ import {
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
-import { runHedgeProposal } from './hedge/place.server'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
@@ -5653,20 +5652,6 @@ async function checkVolAlerts(): Promise<void> {
       await upsertRegimeDaily(snap, hedgeFlagged(snap))
     } catch (e) {
       console.warn(`[scanner] regime_daily upsert failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
-    }
-
-    // Phase 3: on a flagged + armed day, PROPOSE the real-money hedge (status='pending').
-    // The operator confirms via the dashboard button before any order is placed — the
-    // real-money SPARK hedge is never auto-fired. Self-guarded; trade-loop-isolated.
-    if (process.env.HEDGE_AUTO_PLACE === 'true') {
-      try {
-        const r = await runHedgeProposal()
-        if (r.status === 'pending' || r.status === 'failed') {
-          console.log(`[scanner] hedge ${r.status}: ${r.reason}`)
-        }
-      } catch (e) {
-        console.warn(`[scanner] hedge proposal failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
-      }
     }
 
     for (const key of toOpen) {
