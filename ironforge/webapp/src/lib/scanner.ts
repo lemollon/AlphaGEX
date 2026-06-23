@@ -141,13 +141,16 @@ interface BotConfig {
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
-  // SPARK 1DTE min_credit raised 0.05 → 0.25 on 2026-05-06: a $0.18 IC opened
-  // earlier that day (5-wide spread, 7 contracts) couldn't round-trip the
-  // combo bid/ask spread — 9 sequential PT limits failed and the kill switch
-  // closed it at break-even. With a $0.25 floor the bot tightens strikes
-  // (lower SD) to reach acceptable credit or skips the day entirely.
+  // FLAME min_credit 0.25 (2026-05-06): a $0.18 IC couldn't round-trip the combo
+  // bid/ask spread — 9 sequential PT limits failed, kill switch closed at break-even.
+  // SPARK min_credit LOWERED 0.25 → 0.05 on 2026-06-23: that PT-fill failure mode
+  // only bites a bot that scalps the close. SPARK SWINGS (rides to expiry, no stop),
+  // so it never needs the PT limit to fill — ~96% expire worthless. A $0.25 floor was
+  // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
+  // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
+  // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
 }
 
@@ -2813,11 +2816,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const SD_FLOOR = 0.5
   let usedSd = botCfg.sd
   // WIDEN — AUTOMATIC: on negative-gamma (stormy) days the bot pushes the short
-  // strikes wider (2.0 SD) by itself, giving the bigger move room. Backtest: 2.0 SD
-  // on neg-gamma flips those days profitable at ~96% win. Works because SPARK swings
-  // (no hard stop) and sizes small (bp_pct ~0.15). Calm days use the normal 1.2 SD.
+  // strikes wider by itself, giving the bigger move room. Calm days use the normal
+  // 1.2 SD. Widen distance set to 1.5 SD on 2026-06-23 (was 2.0): warehouse backtest
+  // (2020-26, swing, worst-case fills) showed neg-gamma 1.5 SD ≫ 1.8 ≫ 2.0
+  // (+$11.73 vs +$6.95 vs +$4.65/ct) — 2.0 was too far OTM to collect premium that
+  // clears even a low floor, so the bot rarely traded. 1.5 collects more from closer
+  // strikes; the extra breaches are recovered by the swing. Works because SPARK swings
+  // (no hard stop) and sizes small (bp_pct ~0.15).
   if (bot.name === 'spark' && spkNetGex !== null && spkNetGex < 0) {
-    usedSd = 2.0
+    usedSd = 1.5
   }
   let strikes = calculateStrikes(spot, expectedMove, usedSd)
   let credits = await getIcEntryCredit(
