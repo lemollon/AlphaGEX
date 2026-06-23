@@ -105,7 +105,7 @@ def test_undertow_registered():
     meta = get_bot("undertow")
     assert meta["display"] == "UNDERTOW"
     assert meta["strategy"] == "vertical_debit"
-    assert "SPY" in meta["universe"] and "NVDA" in meta["universe"]
+    assert "SPY" in meta["universe"] and "QQQ" in meta["universe"]
     assert meta["params"]["lookback_n"] == 5
     assert meta["defaults"]["enabled"] is False
     assert meta["defaults"]["max_concurrent_positions"] == 5
@@ -116,7 +116,7 @@ def test_undertow_is_vertical_debit():
     m = get_bot("undertow")
     assert m["vertical_mode"] == "debit"
     assert m["params"]["spread_pct"] == 0.04
-    assert m["defaults"]["pt_pct"] == 0.50 and m["defaults"]["sl_pct"] == 0.50
+    assert m["defaults"]["pt_pct"] == 0.60 and m["defaults"]["sl_pct"] == 0.40
 
 
 def test_undertow_tables_autocreate(db_session):
