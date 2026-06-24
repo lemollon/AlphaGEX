@@ -60,7 +60,15 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.50,
-            "sl_pct": 1.0,
+            # sl_pct 1.0 -> 3.0 = effectively NO stop (hold to front expiry). A
+            # backtest (examples/backtest_tide_stop.py) showed no stop level ever
+            # beats holding to expiry: a long calendar can't lose more than its
+            # debit, and the deepest EOD mark was only -0.72x debit, so the old
+            # 1.0 stop only ever fired INTRADAY on violent days — selling at a
+            # near-worthless mark that recovered by close (the live blowups).
+            # 3.0 is unreachable, so TIDE rides to expiry; risk stays capped at
+            # the debit. (2026-06-24)
+            "sl_pct": 3.0,
             # Strike placement = spot +/- strike_mult * front-straddle. Widened
             # 1.0->1.5 after the backtest: at 1.0 the strikes sat right where a
             # day's move lands, so >1-straddle moves blew through the short.
