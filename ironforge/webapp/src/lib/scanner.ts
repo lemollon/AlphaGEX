@@ -1258,11 +1258,17 @@ async function monitorSinglePosition(
           // stuck — reprice aggressively near the mid. We still respect the
           // current tier target as a minimum so we never fill below the
           // guaranteed return.
-          // Was 10 min — reduced to 3 min after 4/29/2026 incident where the
-          // chase loop never actually escalated (tier-advance reset the clock
-          // every 60s; even after that bug was fixed, 10 min is too long for
-          // 1DTE close decisions where the EOD cushion is finite).
-          const SLIPPAGE_GUARD_MIN_AGE_MS = 3 * 60 * 1000
+          // Was 10 min → 3 min (4/29/2026) → 60s (6/24/2026). The 3-min wait
+          // was the dominant cause of "PT fired but didn't take profit fast
+          // enough": when the initial limit rests at the tier floor below the
+          // executable combo ask (thin 1DTE chains), nothing fills until this
+          // guard escalates to cross the ask. With the 20s SPARK fast monitor,
+          // 3 min meant the position sat ~3 min after a missed touch before
+          // chasing. 60s still requires a demonstrated touch+retreat to fire
+          // (currentMin <= limit && mid > limit) and the reprice is STILL capped
+          // at the tier floor, so this only speeds the chase — it never fills
+          // below tier% profit (no risk control loosened).
+          const SLIPPAGE_GUARD_MIN_AGE_MS = 60 * 1000
           const ageMs = placedAtMs != null ? Date.now() - placedAtMs : 0
           // Slippage guard needs an MTM read. Fetch it once here — if it
           // fails we skip the guard and fall through to the normal re-poll.
