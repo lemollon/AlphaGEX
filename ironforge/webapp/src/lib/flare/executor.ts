@@ -193,10 +193,15 @@ export async function openQuickItmCall(
   const longQ = await getOptionQuote(longSym)
   if (!longQ || longQ.ask <= 0) return null
   const debit = longQ.ask                                     // pay the ask to buy the call
-  // Size by premium-fraction (the premium = max loss on a naked long). Floor at 1.
+  // Size by premium-fraction (the premium = max loss on a naked long), floored at 1
+  // and CAPPED at quick_itm_max_contracts so it never sizes to unfillable 0DTE size
+  // (the chronological backtest showed the uncapped rule compounds to 139+ lots).
   const balance = await getPaperBalance()
   const premiumPerContract = debit * 100
-  const contracts = Math.max(1, Math.floor((balance * config.quick_itm_risk_pct) / premiumPerContract))
+  const contracts = Math.min(
+    config.quick_itm_max_contracts,
+    Math.max(1, Math.floor((balance * config.quick_itm_risk_pct) / premiumPerContract)),
+  )
 
   const position_id = await insertFlarePosition({
     setup_type: 'gex_quick_itm',
