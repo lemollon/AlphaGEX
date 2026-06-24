@@ -81,6 +81,7 @@ from backend.api.routes import (
     bot_reports_routes,  # Bot Daily Reports - End-of-day analysis with Claude AI
     tastytrade_routes,  # Tastytrade API - VALOR futures bot integration
     valor_routes,  # VALOR - MES Futures Scalping Bot using GEX signals
+    zephyr_routes,  # ZEPHYR (ASAHEL) - Kalshi live-sports scalper
     agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
     agape_spot_routes,  # AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD trading
     agape_btc_routes,  # AGAPE-BTC - BTC Micro Futures (/MBT) bot using crypto microstructure signals
@@ -366,6 +367,7 @@ app.include_router(unified_metrics_routes.router)
 app.include_router(bot_reports_routes.router)
 app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
+app.include_router(zephyr_routes.router)
 app.include_router(agape_routes.router)
 app.include_router(agape_spot_routes.router)
 app.include_router(agape_btc_routes.router)
