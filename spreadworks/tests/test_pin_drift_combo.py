@@ -1,4 +1,4 @@
-"""Unit tests for CONFLUENCE — the pin+drift combo (long butterfly + two
+"""Unit tests for SURGE — the pin+drift combo (long butterfly + two
 0DTE/1DTE calendars). Front chain = the shared 0DTE fixture; back chain is
 derived from it (same strikes, every price bumped +$0.50 for time value) so the
 calendars find their strikes and carry a positive debit."""

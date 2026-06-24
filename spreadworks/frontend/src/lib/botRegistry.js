@@ -2,7 +2,7 @@
 // Keep these in sync when editing.
 
 export const BOT_REGISTRY = {
-  confluence: { display: 'CONFLUENCE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
+  surge: { display: 'SURGE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
@@ -29,8 +29,8 @@ export const STRATEGY_LABEL = {
 // (see design_handoff_bots/bots-data.jsx BOT_THEMES). The whole bot page
 // tints to these colors — nameplate, equity curve, active tab, nav pill.
 export const BOT_THEME = {
-  confluence: {
-    glyph:       'wave',                        // CONFLUENCE = where the pin + drift structures meet
+  surge: {
+    glyph:       'wave',                        // SURGE = where the pin + drift structures meet
     primary:     '#22d3ee',                    // cyan-400
     primarySoft: 'rgba(34,211,238,0.10)',
     primaryRing: 'rgba(34,211,238,0.30)',

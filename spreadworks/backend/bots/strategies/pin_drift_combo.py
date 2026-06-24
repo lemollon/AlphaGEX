@@ -1,4 +1,4 @@
-"""CONFLUENCE — Pin + Drift Combo 0DTE/1DTE entry signal builder.
+"""SURGE — Pin + Drift Combo 0DTE/1DTE entry signal builder.
 
 The combo that real-fill backtesting (2022-2025, ThetaData) showed is the best
 SPY 0DTE structure: a long butterfly that wins on a PIN, plus two cheap

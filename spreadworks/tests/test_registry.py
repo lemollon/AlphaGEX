@@ -2,13 +2,13 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"confluence", "tide", "drift", "flow", "meadow", "river", "undertow", "delta"}
+    assert set(BOT_REGISTRY.keys()) == {"surge", "tide", "drift", "flow", "meadow", "river", "undertow", "delta"}
 
 
-def test_confluence_defaults():
-    # CONFLUENCE — pin+drift combo (long butterfly + two 0DTE/1DTE calendars).
+def test_surge_defaults():
+    # SURGE — pin+drift combo (long butterfly + two 0DTE/1DTE calendars).
     # Replaced BREEZE (which was just RIVER's pin bet as a credit — redundant).
-    b = get_bot("confluence")
+    b = get_bot("surge")
     assert b["strategy"] == "pin_drift_combo"
     assert b["front_dte"] == 0
     assert b["back_dte"] == 1          # 1DTE back legs for the calendars
@@ -100,7 +100,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["confluence", "delta", "drift", "flow", "meadow", "river", "tide", "undertow"]
+    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "river", "surge", "tide", "undertow"]
 
 
 def test_undertow_registered():
