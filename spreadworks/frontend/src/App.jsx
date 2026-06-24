@@ -533,7 +533,13 @@ function BuilderPage() {
   const [viewMode, setViewMode] = useState('graph');
   const [tableViewMode, setTableViewMode] = useState('pnl_dollar');
   const [lastPayload, setLastPayload] = useState(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Default the strategy panel OPEN on desktop but COLLAPSED on phones, so a
+  // mobile user sees the chart + controls first instead of scrolling past the
+  // whole panel. The toggle button in the chart header opens it on demand.
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') return window.innerWidth >= 768;
+    return true;
+  });
   const [candleSpacing, setCandleSpacing] = useState(9);
 
   const zoomIn = () => setCandleSpacing((s) => Math.min(s + 3, 30));
@@ -678,7 +684,7 @@ function BuilderPage() {
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="flex flex-col h-screen w-full overflow-hidden">
+      <div className="flex flex-col h-dvh w-full overflow-hidden">
         <NavBar />
         <Suspense fallback={
           <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
