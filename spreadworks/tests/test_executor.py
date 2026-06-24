@@ -23,10 +23,10 @@ def test_open_and_list_position(db_session, fake_chain_0dte):
     )
     assert sig is not None
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    pid = open_position(engine, bot="river", strategy="iron_butterfly",
+    pid = open_position(engine, bot="surge", strategy="iron_butterfly",
                         signal=sig, now=now)
-    assert pid.startswith("river-2026-05-20-")
-    opens = list_open_positions(engine, "river")
+    assert pid.startswith("surge-2026-05-20-")
+    opens = list_open_positions(engine, "surge")
     assert len(opens) == 1
     assert opens[0]["position_id"] == pid
     legs = json.loads(opens[0]["legs"])
@@ -42,13 +42,13 @@ def test_close_writes_to_closed_trades(db_session, fake_chain_0dte):
         equity=10000.0,
     )
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    pid = open_position(engine, "river", "iron_butterfly", sig, now)
+    pid = open_position(engine, "surge", "iron_butterfly", sig, now)
     later = datetime(2026, 5, 20, 11, 0, tzinfo=CT)
-    close_position(engine, bot="river", position_id=pid,
+    close_position(engine, bot="surge", position_id=pid,
                    close_value=sig.credit * 0.7, close_reason="PT", now=later)
     with engine.begin() as conn:
         ct = conn.execute(text(
-            "SELECT * FROM river_closed_trades WHERE position_id=:p"
+            "SELECT * FROM surge_closed_trades WHERE position_id=:p"
         ), {"p": pid}).mappings().first()
     assert ct is not None
     assert ct["close_reason"] == "PT"
@@ -56,7 +56,7 @@ def test_close_writes_to_closed_trades(db_session, fake_chain_0dte):
     # original position now CLOSED
     with engine.begin() as conn:
         row = conn.execute(text(
-            "SELECT status FROM river_positions WHERE position_id=:p"
+            "SELECT status FROM surge_positions WHERE position_id=:p"
         ), {"p": pid}).mappings().first()
     assert row["status"] == "CLOSED"
 
@@ -85,5 +85,5 @@ def test_compute_mtm_credit_strategy(fake_chain_0dte):
 
 def test_account_equity_starts_at_config(db_session):
     engine = db_session.bind
-    eq = account_equity(engine, "river")
+    eq = account_equity(engine, "surge")
     assert eq == 10000.0

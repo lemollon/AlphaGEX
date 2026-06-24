@@ -7,7 +7,6 @@ export const BOT_REGISTRY = {
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
   meadow: { display: 'MEADOW', strategy: 'double_diagonal_credit', ticker: 'SPY', version: 'v1.0' },
-  river:  { display: 'RIVER',  strategy: 'long_butterfly',  ticker: 'SPY', version: 'v1.0' },
   undertow: { display: 'UNDERTOW', strategy: 'vertical_debit', ticker: 'multi', version: 'v1.0' },
   delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
 };
@@ -68,14 +67,6 @@ export const BOT_THEME = {
     primaryRing: 'rgba(52,211,153,0.30)',
     glow:        'rgba(52,211,153,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(52,211,153,0.22) 0%, rgba(52,211,153,0.03) 100%)',
-  },
-  river: {
-    glyph:       'stream',                      // RIVER = a meandering river — distinct from FLOW's 'river' current glyph
-    primary:     '#60a5fa',                    // blue-400
-    primarySoft: 'rgba(96,165,250,0.10)',
-    primaryRing: 'rgba(96,165,250,0.30)',
-    glow:        'rgba(96,165,250,0.18)',
-    accentBg:    'linear-gradient(135deg, rgba(96,165,250,0.22) 0%, rgba(96,165,250,0.03) 100%)',
   },
   undertow: {
     glyph:       'wave',                       // UNDERTOW = a pulling undercurrent

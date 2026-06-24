@@ -49,7 +49,7 @@ def client(monkeypatch):
 
 
 def test_status_returns_basic_fields(client):
-    # FLOW ships disabled (RIVER and SURGE are enabled by default).
+    # FLOW ships disabled (SURGE and SURGE are enabled by default).
     r = client.get("/api/spreadworks/bots/flow/status")
     assert r.status_code == 200
     d = r.json()
@@ -73,14 +73,14 @@ def test_toggle_flips_enabled(client):
 
 
 def test_config_get_and_post(client):
-    r = client.get("/api/spreadworks/bots/river/config")
+    r = client.get("/api/spreadworks/bots/surge/config")
     assert r.status_code == 200
     cfg = r.json()
     assert cfg["pt_pct"] == 0.30 or float(cfg["pt_pct"]) == 0.30
 
-    r2 = client.post("/api/spreadworks/bots/river/config", json={"pt_pct": 0.40})
+    r2 = client.post("/api/spreadworks/bots/surge/config", json={"pt_pct": 0.40})
     assert r2.status_code == 200
-    r3 = client.get("/api/spreadworks/bots/river/config")
+    r3 = client.get("/api/spreadworks/bots/surge/config")
     assert float(r3.json()["pt_pct"]) == 0.40
 
 
@@ -106,7 +106,7 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
 
 @pytest.mark.parametrize("bot,strategy,legs,entry", [
     (
-        "river", "iron_butterfly",
+        "surge", "iron_butterfly",
         [
             {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
             {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
@@ -146,9 +146,9 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
         1.6,  # credit
     ),
     (
-        # RIVER long butterfly: single-type 1-2-1 with the body sold twice.
+        # SURGE long butterfly: single-type 1-2-1 with the body sold twice.
         # The payoff branch must resolve lower/upper by strike ordering.
-        "river", "long_butterfly",
+        "surge", "long_butterfly",
         [
             {"side": "long",  "type": "call", "strike": 498, "expiration": "2099-01-15"},
             {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},
@@ -191,15 +191,15 @@ def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
 
 
 def test_position_payoff_404_on_unknown_position(client):
-    r = client.get("/api/spreadworks/bots/river/positions/does-not-exist/payoff")
+    r = client.get("/api/spreadworks/bots/surge/positions/does-not-exist/payoff")
     assert r.status_code == 404
 
 
 def test_adjust_updates_pt_and_flips_override(client):
     from backend import routes_bots
-    pid = "river-adj-001"
+    pid = "surge-adj-001"
     _seed_bot_position(
-        routes_bots.ENGINE, "river", pid, "iron_butterfly",
+        routes_bots.ENGINE, "surge", pid, "iron_butterfly",
         [
             {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
             {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
@@ -209,7 +209,7 @@ def test_adjust_updates_pt_and_flips_override(client):
         2.0,
     )
     r = client.post(
-        f"/api/spreadworks/bots/river/positions/{pid}/adjust",
+        f"/api/spreadworks/bots/surge/positions/{pid}/adjust",
         json={"pt_target_pnl": 75.0},
     )
     assert r.status_code == 200, r.text
@@ -243,7 +243,7 @@ def test_adjust_normalizes_sl_to_magnitude(client):
 
 def test_adjust_400_when_no_fields(client):
     r = client.post(
-        "/api/spreadworks/bots/river/positions/anything/adjust",
+        "/api/spreadworks/bots/surge/positions/anything/adjust",
         json={},
     )
     assert r.status_code == 400
@@ -251,7 +251,7 @@ def test_adjust_400_when_no_fields(client):
 
 def test_adjust_404_on_unknown_position(client):
     r = client.post(
-        "/api/spreadworks/bots/river/positions/does-not-exist/adjust",
+        "/api/spreadworks/bots/surge/positions/does-not-exist/adjust",
         json={"pt_target_pnl": 50.0},
     )
     assert r.status_code == 404
@@ -276,7 +276,7 @@ def _seed_closed_trade(engine, bot: str, position_id: str, realized_pnl: float):
 
 
 def test_reset_requires_confirm(client):
-    r = client.post("/api/spreadworks/bots/river/reset")
+    r = client.post("/api/spreadworks/bots/surge/reset")
     assert r.status_code == 400
     assert "confirm" in r.text.lower()
 
@@ -291,18 +291,18 @@ def test_reset_wipes_data_and_restores_starting_capital(client):
     eng = routes_bots.ENGINE
     # Seed an open position AND a couple of closed trades so equity is moved.
     _seed_bot_position(
-        eng, "river", "river-reset-open", "long_butterfly",
+        eng, "surge", "surge-reset-open", "long_butterfly",
         [{"side": "long", "type": "call", "strike": 498, "expiration": "2099-01-15"}],
         0.75,
     )
-    _seed_closed_trade(eng, "river", "river-reset-c1", 120.0)
-    _seed_closed_trade(eng, "river", "river-reset-c2", -45.0)
+    _seed_closed_trade(eng, "surge", "surge-reset-c1", 120.0)
+    _seed_closed_trade(eng, "surge", "surge-reset-c2", -45.0)
 
-    before = client.get("/api/spreadworks/bots/river/status").json()
+    before = client.get("/api/spreadworks/bots/surge/status").json()
     assert before["open_positions"] == 1
     assert before["equity"] != before["starting_capital"]
 
-    r = client.post("/api/spreadworks/bots/river/reset?confirm=true")
+    r = client.post("/api/spreadworks/bots/surge/reset?confirm=true")
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["reset"] is True
@@ -310,12 +310,12 @@ def test_reset_wipes_data_and_restores_starting_capital(client):
     assert d["deleted"]["closed_trades"] == 2
     assert d["equity"] == pytest.approx(d["starting_capital"])
 
-    after = client.get("/api/spreadworks/bots/river/status").json()
+    after = client.get("/api/spreadworks/bots/surge/status").json()
     assert after["open_positions"] == 0
     assert after["equity"] == pytest.approx(after["starting_capital"])
     # Trade history and equity curve are empty after the wipe.
-    assert client.get("/api/spreadworks/bots/river/trades").json()["trades"] == []
-    assert client.get("/api/spreadworks/bots/river/equity-curve").json()["curve"] == []
+    assert client.get("/api/spreadworks/bots/surge/trades").json()["trades"] == []
+    assert client.get("/api/spreadworks/bots/surge/equity-curve").json()["curve"] == []
 
 
 # ---------------------------------------------------------------------------

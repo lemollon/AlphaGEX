@@ -689,7 +689,7 @@ export default function App() {
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
-            <Route path="/bots" element={<Navigate to="/bots/river" replace />} />
+            <Route path="/bots" element={<Navigate to="/bots/surge" replace />} />
             <Route path="/bots/:bot" element={<BotDashboard />} />
           </Routes>
         </Suspense>
