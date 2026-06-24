@@ -1028,8 +1028,15 @@ async function ensureTables(): Promise<void> {
                                     min_win_probability, entry_start, entry_end, eod_cutoff_et,
                                     pdt_max_day_trades, starting_capital)
          VALUES ('1DTE', 'production', 1.2, 2.0, 0.05, 30.0, 100.0, 32.0, 1,
-                 1, 0.85, 0.15, 0.42, '08:30', '14:00', '14:45', 4, 500.0)
+                 1, 0.85, 0.15, 0.42, '08:30', '14:00', '14:45', 4, 490.0)
          ON CONFLICT (dte_mode, account_type) DO NOTHING`,
+      )
+      // Correct an already-seeded row to the live ~$490 (ON CONFLICT above won't
+      // update an existing row). Keeps the dashboard's configured capital aligned
+      // with the real account until the continuous broker-mirror lands.
+      await client.query(
+        `UPDATE kindle_config SET starting_capital = 490.0, updated_at = NOW()
+         WHERE dte_mode = '1DTE' AND account_type = 'production' AND starting_capital <> 490.0`,
       )
     } catch { /* table or constraint may not be ready yet */ }
 
