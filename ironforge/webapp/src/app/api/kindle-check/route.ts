@@ -1,28 +1,26 @@
 /**
- * GET /api/kindle-check
+ * GET /api/kindle-check  — KINDLE live-trading PREFLIGHT (read-only).
  *
- * Read-only diagnostic for KINDLE's live Tradier credentials. Reads
- * TRADIER_KINDLE_API_KEY + TRADIER_KINDLE_ACCOUNT_ID from the server env (never
- * the DB) and runs three probes to pinpoint any problem WITHOUT guessing:
- *   1. prod  /user/profile  → what accounts does this key actually own?
- *   2. prod  /accounts/{id}/balances → the funded balance (the goal).
- *   3. sbx   /user/profile  → is this key actually a SANDBOX key?
- *
- * Reports HTTP statuses + the (masked) accounts the key owns + a plain-English
- * diagnosis. Places NO orders, writes NO rows, leaks no secrets.
+ * Exercises the real production path end-to-end WITHOUT placing any order:
+ *   1. Tradier creds: TRADIER_KINDLE_* valid on production + account funded.
+ *   2. Pause state: the kill switch (expect paused=TRUE until deliberate go-live).
+ *   3. getProductionAccountsForBot('kindle'): the actual loader the scanner uses
+ *      (returns [] while paused — that's correct and safe).
+ *   4. Production sizing config availability (loadProductionConfigFor).
+ * Returns a plain-English readiness verdict. Places NO orders, writes NO rows,
+ * leaks no secrets (account id masked).
  */
 import { NextResponse } from 'next/server'
+import { getProductionPauseState, getProductionAccountsForBot } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
 const PROD = 'https://api.tradier.com/v1'
-const SBX = 'https://sandbox.tradier.com/v1'
 
 function mask(id?: string | null): string | null {
   if (!id) return null
   return id.length <= 4 ? '***' : `${id.slice(0, 3)}***${id.slice(-2)}`
 }
-
 async function call(base: string, path: string, key: string) {
   try {
     const r = await fetch(`${base}${path}`, {
@@ -37,62 +35,88 @@ async function call(base: string, path: string, key: string) {
   }
 }
 
-function ownedAccounts(profileBody: Record<string, unknown> | null): (string | null)[] {
-  const prof = (profileBody as { profile?: { account?: unknown } } | null)?.profile
-  const acct = prof?.account
-  if (!acct) return []
-  const arr = Array.isArray(acct) ? acct : [acct]
-  return arr.map((a) => mask((a as { account_number?: string })?.account_number))
-}
-
 export async function GET() {
   const key = process.env.TRADIER_KINDLE_API_KEY || ''
   const acct = process.env.TRADIER_KINDLE_ACCOUNT_ID || ''
+
+  const checks: Record<string, unknown> = { account_id_masked: mask(acct) }
+  const blockers: string[] = []
+
+  // 1. Creds + balance
+  let equity: number | null = null
+  let obp: number | null = null
   if (!key || !acct) {
-    return NextResponse.json({
-      ok: false,
-      diagnosis: 'TRADIER_KINDLE_API_KEY and/or TRADIER_KINDLE_ACCOUNT_ID not set on this service.',
-      env_api_key_set: !!key,
-      env_account_id_set: !!acct,
-    })
-  }
-
-  const prodProfile = await call(PROD, '/user/profile', key)
-  const prodBal = await call(PROD, `/accounts/${acct}/balances`, key)
-  const sbxProfile = await call(SBX, '/user/profile', key)
-
-  const owns = ownedAccounts(prodProfile.body)
-  const balances = (prodBal.body as { balances?: Record<string, unknown> } | null)?.balances
-  const equity = balances ? (balances.total_equity as number | undefined) ?? null : null
-  const margin = (balances?.margin as Record<string, unknown> | undefined) || {}
-  const cash = (balances?.cash as Record<string, unknown> | undefined) || {}
-  const obp = (margin.option_buying_power as number | undefined)
-    ?? (cash.cash_available as number | undefined) ?? null
-
-  let diagnosis: string
-  if (equity != null) {
-    diagnosis = `LIVE OK — key authorizes account ${mask(acct)} on production.`
-  } else if (prodProfile.status === 401 && sbxProfile.status === 200) {
-    diagnosis = 'This is a SANDBOX key (works on sandbox.tradier.com, rejected by production). You need a PRODUCTION access token from your live Tradier dashboard.'
-  } else if (prodProfile.status === 401) {
-    diagnosis = 'Key is INVALID/unauthorized on production (401). Re-copy the production access token (no extra spaces).'
-  } else if (prodProfile.ok && owns.length && !owns.includes(mask(acct))) {
-    diagnosis = `Key is a valid PRODUCTION key but does NOT own ${mask(acct)}. It owns: ${owns.join(', ')}. Set TRADIER_KINDLE_ACCOUNT_ID to one of those.`
-  } else if (prodBal.status === 401 || prodBal.status === 404) {
-    diagnosis = `Account ${mask(acct)} not accessible under this key (balances ${prodBal.status}). Confirm the account number matches the key.`
+    blockers.push('TRADIER_KINDLE_API_KEY / TRADIER_KINDLE_ACCOUNT_ID not set on this service')
+    checks.creds = 'MISSING'
   } else {
-    diagnosis = 'Unexpected — see raw statuses below.'
+    const bal = await call(PROD, `/accounts/${acct}/balances`, key)
+    const balances = (bal.body as { balances?: Record<string, unknown> } | null)?.balances
+    equity = balances ? ((balances.total_equity as number | undefined) ?? null) : null
+    const margin = (balances?.margin as Record<string, unknown> | undefined) || {}
+    const cash = (balances?.cash as Record<string, unknown> | undefined) || {}
+    obp = (margin.option_buying_power as number | undefined) ?? (cash.cash_available as number | undefined) ?? null
+    checks.prod_balances_status = bal.status
+    checks.total_equity = equity
+    checks.option_buying_power = obp
+    if (bal.status !== 200 || equity == null) {
+      blockers.push(`Tradier production rejected the credentials (status ${bal.status}) — invalid/sandbox key or wrong account`)
+      checks.creds = 'INVALID'
+    } else if ((obp ?? 0) < 200) {
+      blockers.push(`option_buying_power $${obp} < $200 (need ~$190 for one $2-wide IC)`)
+      checks.creds = 'OK_LOW_BP'
+    } else {
+      checks.creds = 'OK'
+    }
   }
 
-  return NextResponse.json({
-    ok: equity != null,
-    diagnosis,
-    account_id_masked: mask(acct),
-    key_owns_accounts: owns,
-    total_equity: equity,
-    option_buying_power: obp,
-    prod_profile_status: prodProfile.status,
-    prod_balances_status: prodBal.status,
-    sandbox_profile_status: sbxProfile.status,
-  })
+  // 2. Pause state (kill switch)
+  let paused = true
+  try {
+    const ps = await getProductionPauseState('kindle')
+    paused = ps.paused
+    checks.paused = ps.paused
+    checks.paused_reason = ps.paused_reason
+  } catch (e: unknown) {
+    checks.paused = 'unknown'
+    blockers.push(`pause-state read failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // 3. Real production-account loader (the path the scanner uses)
+  try {
+    const accts = await getProductionAccountsForBot('kindle')
+    checks.production_accounts_resolved = accts.length
+    checks.production_account_ids = accts.map(a => mask(a.accountId))
+  } catch (e: unknown) {
+    checks.production_accounts_resolved = 'error'
+    blockers.push(`getProductionAccountsForBot threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // 4. Production sizing config (loadProductionConfigFor — drives order size)
+  try {
+    const { loadProductionConfigFor } = await import('@/lib/scanner')
+    const cfg = await loadProductionConfigFor('kindle')
+    checks.production_config = cfg ? { bp_pct: cfg.bp_pct, max_contracts: cfg.max_contracts } : null
+    if (!cfg || !(cfg.bp_pct > 0 && cfg.bp_pct <= 1)) {
+      blockers.push('no valid KINDLE production config row — order placement would size-drop (need a kindle_config production row)')
+    }
+  } catch (e: unknown) {
+    checks.production_config = 'error'
+    blockers.push(`loadProductionConfigFor threw: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // Verdict. "Paused" is NOT a blocker — it's the intended pre-go-live state.
+  const credsOk = checks.creds === 'OK'
+  const ready = credsOk && blockers.length === 0
+  let verdict: string
+  if (!credsOk) {
+    verdict = 'NOT READY — credentials/balance problem (see blockers).'
+  } else if (blockers.length > 0) {
+    verdict = `NOT READY — creds OK ($${equity} equity) but ${blockers.length} blocker(s) remain before go-live.`
+  } else if (paused) {
+    verdict = `READY (PAUSED) — creds valid, account funded ($${equity}, OBP $${obp}), kill switch ON. Deliberate unpause is the last step.`
+  } else {
+    verdict = `LIVE-ARMED — creds valid, funded ($${equity}), and UNPAUSED. KINDLE will place real orders on the next signal.`
+  }
+
+  return NextResponse.json({ ready_modulo_pause: ready, verdict, blockers, ...checks })
 }
