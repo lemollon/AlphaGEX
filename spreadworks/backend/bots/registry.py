@@ -88,33 +88,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
-    # RIVER — SPY 0DTE Long (debit) Butterfly. The debit-paid sibling of
-    # BREEZE: same gamma-magnet body thesis, but built as a single-type 1-2-1
-    # long fly (auto-picks the cheaper OTM call vs put side) paid for with a
-    # net debit. Defined risk = the debit. PT = % of max profit, SL = % of the
-    # debit paid. Sized 50% BP uncapped like BREEZE/FLOW.
-    "river": {
-        "display": "RIVER",
-        "strategy": "long_butterfly",
-        "ticker": "SPY",
-        "front_dte": 0,
-        "back_dte": None,
-        "defaults": {
-            "starting_capital": 10000.0,
-            "enabled": True,
-            "max_contracts": 0,
-            "bp_pct": 0.50,
-            "sd_mult": 1.0,
-            "pt_pct": 0.30,
-            "sl_pct": 0.50,
-            "entry_start_ct": "08:35",
-            "entry_end_ct": "14:00",
-            "eod_close_ct": "14:45",
-            "discord_alerts": False,
-            "delta_skew": 0,
-            "use_gex_walls": False,
-        },
-    },
+    # RIVER (long butterfly) removed 2026-06-24 — superseded by SURGE, whose
+    # butterfly leg IS RIVER's; running both just doubled the pin exposure. The
+    # long_butterfly strategy + payoff model are retained (used by SURGE's body
+    # logic conceptually and still unit-tested) but no bot trades it standalone.
     # FLOW — SPY 1DTE Iron Condor. Ported from IronForge SPARK criteria:
     # SD=1.2, $5 wings, PT=30% of max profit, SL=50% of max profit, VIX<=32,
     # entry 08:30-14:00 CT, EOD close 14:45. max_contracts=0 means "size by

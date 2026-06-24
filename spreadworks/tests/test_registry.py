@@ -2,7 +2,7 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"surge", "tide", "drift", "flow", "meadow", "river", "undertow", "delta"}
+    assert set(BOT_REGISTRY.keys()) == {"surge", "tide", "drift", "flow", "meadow", "undertow", "delta"}
 
 
 def test_surge_defaults():
@@ -77,22 +77,6 @@ def test_meadow_defaults():
     assert b["defaults"]["entry_days"] == "mon,fri"
 
 
-def test_river_defaults():
-    """RIVER — long (debit) butterfly, the debit-side sibling of BREEZE."""
-    b = get_bot("river")
-    assert b["strategy"] == "long_butterfly"
-    assert b["ticker"] == "SPY"
-    assert b["front_dte"] == 0
-    assert b["back_dte"] is None
-    assert b["defaults"]["sd_mult"] == 1.0
-    assert b["defaults"]["pt_pct"] == 0.30
-    assert b["defaults"]["sl_pct"] == 0.50
-    assert b["defaults"]["bp_pct"] == 0.50
-    assert b["defaults"]["max_contracts"] == 0
-    assert b["defaults"]["enabled"] is True
-    assert b["defaults"]["eod_close_ct"] == "14:45"
-
-
 def test_get_bot_unknown_raises():
     import pytest
     with pytest.raises(KeyError):
@@ -100,7 +84,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "river", "surge", "tide", "undertow"]
+    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "surge", "tide", "undertow"]
 
 
 def test_undertow_registered():

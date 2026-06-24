@@ -96,26 +96,26 @@ FRIDAY = datetime(2026, 5, 22, 9, 0, tzinfo=CT)
 MONDAY2 = datetime(2026, 5, 25, 9, 0, tzinfo=CT)  # next Mon, still < exp 2026-05-27
 
 
-def test_river_opens_position_in_entry_window(db_session, fake_chain_0dte):
+def test_surge_opens_position_in_entry_window(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] in ("TRADE", "NO_TRADE")  # not blocked
     # If TRADE, position should exist
     if res["outcome"] == "TRADE":
         with engine.begin() as conn:
             n = conn.execute(text(
-                "SELECT COUNT(*) c FROM river_positions WHERE status='OPEN'"
+                "SELECT COUNT(*) c FROM surge_positions WHERE status='OPEN'"
             )).mappings().first()["c"]
         assert n == 1
 
 
 def test_disabled_blocks_trading(db_session, fake_chain_0dte):
     # FLOW ships disabled by default, so it exercises the disabled-gate path
-    # (RIVER and SURGE are enabled). Disabled check precedes any chain fetch.
+    # (SURGE and SURGE are enabled). Disabled check precedes any chain fetch.
     engine = db_session.bind  # NOT enabling
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
@@ -126,21 +126,21 @@ def test_disabled_blocks_trading(db_session, fake_chain_0dte):
 
 def test_outside_entry_window_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     # Before 08:35
     now = datetime(2026, 5, 20, 8, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "BLOCKED_OUTSIDE_WINDOW"
 
 
 def test_event_blackout_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                         chain_provider=provider, event_blackout=True)
     assert res["outcome"] == "BLOCKED_EVENT"
 
@@ -150,24 +150,24 @@ def test_existing_open_position_monitors_instead_of_opens(db_session, fake_chain
     from backend.bots.strategies.iron_butterfly import build_iron_butterfly_signal
     from backend.bots.executor import open_position
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte,
         config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
                 "pt_pct": 0.30, "sl_pct": 2.0, "use_gex_walls": False},
         equity=10000.0,
     )
-    open_position(engine, "river", "iron_butterfly", sig,
+    open_position(engine, "surge", "iron_butterfly", sig,
                   datetime(2026, 5, 20, 9, 0, tzinfo=CT))
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "MONITOR"
 
 
-def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
-    """RIVER (long_butterfly) must re-derive PT from the DECREASING time-of-day
+def test_surge_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
+    """SURGE (long_butterfly) must re-derive PT from the DECREASING time-of-day
     ladder, not sit at the static 30%-of-max-profit target it was opened with.
 
     A gain of +$100 = 22.2% of the $450 max profit is below the 30% morning bar
@@ -177,7 +177,7 @@ def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
     from backend.bots.strategies.long_butterfly import build_long_butterfly_signal
     from backend.bots.executor import open_position
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     sig = build_long_butterfly_signal(
         chain=fake_chain_0dte,
         config={"max_contracts": 2, "bp_pct": 0.10, "sd_mult": 1.0,
@@ -187,7 +187,7 @@ def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
     )
     assert sig is not None
     # debit 0.75, 2 contracts, max_profit total = 225 * 2 = 450, stored PT = 135.
-    open_position(engine, "river", "long_butterfly", sig,
+    open_position(engine, "surge", "long_butterfly", sig,
                   datetime(2026, 5, 20, 9, 0, tzinfo=CT))
 
     # Drive the fly's current value to 1.25 -> pnl = (1.25 - 0.75) * 2 * 100 = +$100.
@@ -195,34 +195,34 @@ def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
     provider.leg_mid_overrides = [1.25, 0.0, 0.0, 0.0]
 
     # MORNING: 30% tier ($135) not met -> still just monitoring.
-    res_am = run_scan_cycle(engine=engine, bot="river",
+    res_am = run_scan_cycle(engine=engine, bot="surge",
                             now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
                             chain_provider=provider, event_blackout=False)
     assert res_am["outcome"] == "MONITOR"
 
     # AFTERNOON: 20% tier ($90) met -> take profit.
-    res_pm = run_scan_cycle(engine=engine, bot="river",
+    res_pm = run_scan_cycle(engine=engine, bot="surge",
                             now_ct=datetime(2026, 5, 20, 13, 30, tzinfo=CT),
                             chain_provider=provider, event_blackout=False)
     assert res_pm["outcome"] == "TRADE"
     assert res_pm["reason"] == "CLOSE_PT"
     with engine.begin() as conn:
         n = conn.execute(text(
-            "SELECT COUNT(*) c FROM river_positions WHERE status='OPEN'"
+            "SELECT COUNT(*) c FROM surge_positions WHERE status='OPEN'"
         )).mappings().first()["c"]
     assert n == 0
 
 
 def test_scan_activity_row_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT outcome FROM river_scan_activity"
+            "SELECT outcome FROM surge_scan_activity"
         )).mappings().all()
     assert len(rows) >= 1
 
@@ -338,51 +338,64 @@ def test_meadow_without_stacking_stays_one_at_a_time(
     assert n == 1
 
 
-def test_river_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte):
-    """End-to-end RIVER (long debit butterfly): the scanner opens a position,
-    and once the fly gains value the debit-aware MTM yields a positive P&L that
-    trips the profit target — exercising the 4-leg (body sold twice) path."""
-    engine = db_session.bind
-    _enable_bot(engine, "river")  # enabled by default, but be explicit
-    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+def _bumped_back(front, bump=0.50):
+    """A 1DTE back chain: same strikes as `front`, prices +bump (time value)."""
+    return {
+        **front, "expiration": "2026-05-21",
+        "options": [{**o, "bid": o["bid"] + bump, "ask": o["ask"] + bump}
+                    for o in front["options"]],
+    }
 
-    # 1) Open in the entry window (fixture expiration 2026-05-20 == scan day).
-    opened = run_scan_cycle(engine=engine, bot="river",
+
+def test_surge_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte):
+    """End-to-end SURGE (pin+drift combo): the scanner opens the 8-leg position
+    (butterfly + two 0DTE/1DTE calendars) and, once the legs gain value, the
+    debit-aware MTM yields a positive P&L that trips the profit target."""
+    engine = db_session.bind
+    _enable_bot(engine, "surge")  # enabled by default, but be explicit
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte,
+                                 chain_1dte=_bumped_back(fake_chain_0dte))
+
+    # 1) Open in the entry window (front expiration 2026-05-20 == scan day).
+    opened = run_scan_cycle(engine=engine, bot="surge",
                             now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
                             chain_provider=provider, event_blackout=False)
     assert opened["outcome"] == "TRADE" and opened["reason"] == "OPENED"
     with engine.begin() as conn:
         row = conn.execute(text(
-            "SELECT entry_price, contracts FROM river_positions WHERE status='OPEN'"
+            "SELECT entry_price, contracts FROM surge_positions WHERE status='OPEN'"
         )).mappings().first()
-    assert float(row["entry_price"]) == pytest.approx(0.75)  # the net debit
+    # total debit = fly 0.75 + call cal 0.50 + put cal 0.50 = 1.75
+    assert float(row["entry_price"]) == pytest.approx(1.75)
 
-    # 2) Drive the legs so the fly is worth ~3.0 (price pinned at the body):
-    #    legs order = [long lower, short body, short body, long upper];
-    #    mtm_value = lower - 2*body + upper = 3.0 - 0 + 0 = 3.0 >> 0.75 debit.
-    provider.leg_mid_overrides = [3.0, 0.0, 0.0, 0.0]
-    closed = run_scan_cycle(engine=engine, bot="river",
+    # 2) Drive every long leg rich and every short leg to ~0 so the combo's
+    #    debit-aware MTM is strongly positive and trips the profit target.
+    #    legs order: [fly_lower(L), fly_body(S), fly_body(S), fly_upper(L),
+    #                 cal_call_front(S), cal_call_back(L), cal_put_front(S),
+    #                 cal_put_back(L)]
+    provider.leg_mid_overrides = [10.0, 0.0, 0.0, 10.0, 0.0, 10.0, 0.0, 10.0]
+    closed = run_scan_cycle(engine=engine, bot="surge",
                             now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
                             chain_provider=provider, event_blackout=False)
     assert closed["outcome"] == "TRADE"
     assert closed["reason"] == "CLOSE_PT"
     with engine.begin() as conn:
         r = conn.execute(text(
-            "SELECT realized_pnl FROM river_closed_trades"
+            "SELECT realized_pnl FROM surge_closed_trades"
         )).mappings().first()
-    assert float(r["realized_pnl"]) > 0  # debit trade gains as fly value rises
+    assert float(r["realized_pnl"]) > 0
 
 
 def test_equity_snapshot_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "river")
+    _enable_bot(engine, "surge")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="river", now_ct=now,
+    run_scan_cycle(engine=engine, bot="surge", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT equity FROM river_equity_snapshots"
+            "SELECT equity FROM surge_equity_snapshots"
         )).mappings().all()
     assert len(rows) == 1
     assert float(rows[0]["equity"]) >= 9000  # near starting capital
