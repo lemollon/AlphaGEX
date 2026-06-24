@@ -11,7 +11,7 @@
 import { query } from '../db'
 import { getOptionQuote, getQuote, getDailyHistory } from '../tradier'
 import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR, HEDGE_MIN_TOPUP } from './hedge'
-import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
+import { closeFlarePosition, countTodaySetups, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
 import { openVertical, openPutCredit, openQuickItmCall, openImbalanceHedge } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
@@ -289,7 +289,10 @@ async function runEntryCycle(): Promise<void> {
     _lastQuickItmDate !== ctDate &&
     snap.net_gex >= 0 &&
     hhmm >= cfg.quick_itm_entry_start &&
-    hhmm <= cfg.quick_itm_entry_end
+    hhmm <= cfg.quick_itm_entry_end &&
+    // DB-backed idempotency: if a quick-ITM was already opened today (possibly by
+    // another instance / pre-restart), don't open a second. Sync the in-process guard.
+    (await countTodaySetups(['gex_quick_itm'])) === 0
   ) {
     try {
       const res = await openQuickItmCall(snap, cfg)
@@ -312,6 +315,15 @@ async function runEntryCycle(): Promise<void> {
   }
   // Enter near the close (14:45-14:55), matching the backtests' EOD entry.
   if (hhmm < 1445) return
+
+  // DB-backed idempotency for the once/day afternoon entry: survives restarts and
+  // Render zero-downtime deploy-overlap (two instances each with a fresh in-process
+  // _lastTradeDate). If a put-credit OR conviction was already opened today, stop.
+  if ((await countTodaySetups(['gex_putcredit', 'gex_momentum'])) > 0) {
+    _lastTradeDate = ctDate
+    await insertSignalActivity({ outcome: 'NO_TRADE', detail: 'already_traded_today_db' })
+    return
+  }
 
   // ===== GEX REGIME SWITCH =====
   // Positive-GEX (pin/grind) day -> BULLISH PUT CREDIT leg (held to expiry).

@@ -37,6 +37,29 @@ const BLANK_STATE = (trade_date: string): DailyState => ({
 })
 
 /**
+ * Count flare_positions OPENED TODAY (CT) for the given setup_types. The once/day
+ * entry guards are otherwise in-process module state (_lastTradeDate /
+ * _lastQuickItmDate), which is fresh on every instance — so a process restart or a
+ * Render zero-downtime deploy (two instances briefly) can let the SAME daily entry
+ * fire twice. This DB check makes the guard idempotent across instances/restarts:
+ * if a position of that setup already exists for today, don't open another.
+ */
+export async function countTodaySetups(setups: SetupType[]): Promise<number> {
+  if (!setups.length) return 0
+  try {
+    const res = await query<{ n: number | string }>(
+      `SELECT COUNT(*)::int AS n FROM flare_positions
+       WHERE open_date = (NOW() AT TIME ZONE 'America/Chicago')::date
+         AND setup_type = ANY($1)`,
+      [setups],
+    )
+    return Number(res[0]?.n || 0)
+  } catch {
+    return 0   // fail-open (don't block trading on a transient read error)
+  }
+}
+
+/**
  * SPY spot price ~`minutes` ago, read from flare_gex_history (the scanner writes
  * a snapshot every cycle). Returns the newest snapshot that is AT LEAST `minutes`
  * old but no more than `minutes + 6` old, so it can't silently reach back to a
