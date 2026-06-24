@@ -193,7 +193,10 @@ export async function openQuickItmCall(
   const longQ = await getOptionQuote(longSym)
   if (!longQ || longQ.ask <= 0) return null
   const debit = longQ.ask                                     // pay the ask to buy the call
-  const contracts = Math.max(1, Math.floor(config.quick_itm_contracts))
+  // Size by premium-fraction (the premium = max loss on a naked long). Floor at 1.
+  const balance = await getPaperBalance()
+  const premiumPerContract = debit * 100
+  const contracts = Math.max(1, Math.floor((balance * config.quick_itm_risk_pct) / premiumPerContract))
 
   const position_id = await insertFlarePosition({
     setup_type: 'gex_quick_itm',
