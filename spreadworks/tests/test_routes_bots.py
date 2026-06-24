@@ -49,7 +49,7 @@ def client(monkeypatch):
 
 
 def test_status_returns_basic_fields(client):
-    # FLOW ships disabled (RIVER and CONFLUENCE are enabled by default).
+    # FLOW ships disabled (RIVER and SURGE are enabled by default).
     r = client.get("/api/spreadworks/bots/flow/status")
     assert r.status_code == 200
     d = r.json()
@@ -158,9 +158,9 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
         0.75,  # debit
     ),
     (
-        # CONFLUENCE pin+drift combo: 8 legs in build order (fly 1-2-1, then
+        # SURGE pin+drift combo: 8 legs in build order (fly 1-2-1, then
         # call calendar @503, then put calendar @499) across two expirations.
-        "confluence", "pin_drift_combo",
+        "surge", "pin_drift_combo",
         [
             {"side": "long",  "type": "call", "strike": 498, "expiration": "2099-01-15"},
             {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},

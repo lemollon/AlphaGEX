@@ -8,15 +8,15 @@ from __future__ import annotations
 from typing import Any
 
 BOT_REGISTRY: dict[str, dict[str, Any]] = {
-    # CONFLUENCE — SPY 0DTE/1DTE Pin+Drift Combo. The best structure from real-
+    # SURGE — SPY 0DTE/1DTE Pin+Drift Combo. The best structure from real-
     # fill (ThetaData 2022-25) backtesting: RIVER's long butterfly (wins on a
     # pin) PLUS two cheap 0DTE/1DTE calendars `drift_offset` either side of the
     # body (win when price drifts there). ~+$24/day/lot at realistic fills, ~52%
     # win, green every year. Replaces BREEZE (which was just RIVER's pin bet in a
     # credit costume — economically redundant). front=0DTE fly+near calendars,
     # back=1DTE calendar far legs. Shipped LIVE (paper, like RIVER) 2026-06-24.
-    "confluence": {
-        "display": "CONFLUENCE",
+    "surge": {
+        "display": "SURGE",
         "strategy": "pin_drift_combo",
         "ticker": "SPY",
         "front_dte": 0,

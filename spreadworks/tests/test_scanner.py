@@ -115,7 +115,7 @@ def test_river_opens_position_in_entry_window(db_session, fake_chain_0dte):
 
 def test_disabled_blocks_trading(db_session, fake_chain_0dte):
     # FLOW ships disabled by default, so it exercises the disabled-gate path
-    # (RIVER and CONFLUENCE are enabled). Disabled check precedes any chain fetch.
+    # (RIVER and SURGE are enabled). Disabled check precedes any chain fetch.
     engine = db_session.bind  # NOT enabling
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
