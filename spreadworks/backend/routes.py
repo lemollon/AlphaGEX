@@ -1471,6 +1471,17 @@ def _scan_pnl_profile(
         T_exp = _tte(expirations["exp"])
         scan_lo = lp - 20
         scan_hi = lc + 20
+    elif strategy == "pin_drift_combo":
+        # Butterfly (front-expiry intrinsic) + two 0DTE/1DTE calendars (short
+        # front intrinsic + long back BS residual) evaluated at the front expiry.
+        lower, middle, upper = strikes["lower"], strikes["middle"], strikes["upper"]
+        is_call = strikes.get("is_call", True)
+        call_cal, put_cal = strikes["call_cal"], strikes["put_cal"]
+        T_front = _tte(expirations["front"])
+        T_back = _tte(expirations["back"])
+        T_remaining = max(T_back - T_front, 1 / 365.0)
+        scan_lo = min(lower, put_cal) - 20
+        scan_hi = max(upper, call_cal) + 20
     else:
         ps, cs = strikes["ps"], strikes["cs"]
         T_front = _tte(expirations["front"])
@@ -1533,6 +1544,17 @@ def _scan_pnl_profile(
                 + max(0, px - lc)     # long call payoff
                 - entry_cost
             ) * 100 * n
+        elif strategy == "pin_drift_combo":
+            # Long butterfly (single type, front expiry intrinsic)
+            if is_call:
+                fly = (max(0, px - lower) - 2 * max(0, px - middle) + max(0, px - upper))
+            else:
+                fly = (max(0, lower - px) - 2 * max(0, middle - px) + max(0, upper - px))
+            # Call calendar: short front call (intrinsic) + long back call (residual BS)
+            cc = -max(0, px - call_cal) + _bs_price(px, call_cal, T_remaining, r, sigma, True)
+            # Put calendar: short front put (intrinsic) + long back put (residual BS)
+            pc = -max(0, put_cal - px) + _bs_price(px, put_cal, T_remaining, r, sigma, False)
+            pnl = (fly + cc + pc - entry_cost) * 100 * n
         else:
             pnl = (
                 -max(0, ps - px)

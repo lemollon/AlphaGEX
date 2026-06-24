@@ -2,7 +2,7 @@
 // Keep these in sync when editing.
 
 export const BOT_REGISTRY = {
-  breeze: { display: 'BREEZE', strategy: 'iron_butterfly',  ticker: 'SPY', version: 'v1.4' },
+  confluence: { display: 'CONFLUENCE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
@@ -14,6 +14,7 @@ export const BOT_REGISTRY = {
 
 export const STRATEGY_LABEL = {
   iron_butterfly:        'Iron Butterfly',
+  pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
   double_diagonal:       'Double Diagonal',
   iron_condor:           'Iron Condor',
@@ -28,8 +29,8 @@ export const STRATEGY_LABEL = {
 // (see design_handoff_bots/bots-data.jsx BOT_THEMES). The whole bot page
 // tints to these colors — nameplate, equity curve, active tab, nav pill.
 export const BOT_THEME = {
-  breeze: {
-    glyph:       'snowflake',
+  confluence: {
+    glyph:       'wave',                        // CONFLUENCE = where the pin + drift structures meet
     primary:     '#22d3ee',                    // cyan-400
     primarySoft: 'rgba(34,211,238,0.10)',
     primaryRing: 'rgba(34,211,238,0.30)',
