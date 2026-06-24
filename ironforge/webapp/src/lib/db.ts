@@ -28,6 +28,7 @@ const DB_PREFIX: Record<string, string> = {
   inferno: 'inferno',
   blaze: 'blaze',
   flare: 'flare',
+  kindle: 'kindle',
 }
 
 /** Map display names to heartbeat bot_name values in bot_heartbeats table. */
@@ -37,6 +38,7 @@ const HEARTBEAT_MAP: Record<string, string> = {
   inferno: 'INFERNO',
   blaze: 'BLAZE',
   flare: 'FLARE',
+  kindle: 'KINDLE',
 }
 
 /**
@@ -68,6 +70,7 @@ export function dteMode(bot: string): string | null {
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
+  if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (SPARK strategy, $500 live acct)
   return null
 }
 
@@ -209,7 +212,7 @@ CREATE TABLE IF NOT EXISTS forge_briefings_meta (
   retry_count         INT DEFAULT 0,
   PRIMARY KEY (bot, brief_type)
 );
-` + ['flame', 'spark', 'inferno', 'blaze', 'flare'].map(bot => `
+` + ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle'].map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   starting_capital NUMERIC(12,2) NOT NULL,
@@ -489,7 +492,7 @@ async function ensureTables(): Promise<void> {
     await client.query(INIT_DDL)
 
     // Add missing columns to existing positions tables (safe to run repeatedly)
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
                           'kelly_raw NUMERIC(8,4)', 'kelly_half NUMERIC(8,4)', 'kelly_size_pct NUMERIC(6,4)']) {
         try {
@@ -571,7 +574,7 @@ async function ensureTables(): Promise<void> {
     // deployed backend, so the migration must also run here. Without these
     // columns the scanner throws `column "trailing_min_cost" does not exist`
     // every cycle and the equity snapshot writer never runs.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
       for (const col of ['trailing_min_cost NUMERIC(8, 4)', 'trailing_pt_fired_at_ms BIGINT']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
@@ -624,7 +627,7 @@ async function ensureTables(): Promise<void> {
     // ~40-day option timesales window. Originally SPARK-only; extended to
     // FLAME and INFERNO so the same Hypo column / dual equity line ships
     // for all three bots.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
       for (const col of [
         'hypothetical_eod_pnl NUMERIC(12,2)',
         'hypothetical_eod_spot NUMERIC(10,4)',
@@ -652,7 +655,7 @@ async function ensureTables(): Promise<void> {
     // FLAME, INFERNO and the directional bots BLAZE/FLARE get their own tables
     // so each bot's Market-Risk Brief card has somewhere to land. Schema
     // mirrors spark_market_briefs (incl. the GEX profile columns).
-    for (const bot of ['flame', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['flame', 'inferno', 'blaze', 'flare', 'kindle']) {
       try {
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${bot}_market_briefs (
@@ -687,7 +690,7 @@ async function ensureTables(): Promise<void> {
     // Migrate the GEX profile columns onto any pre-existing market_briefs
     // tables (spark/flame/inferno were created before these columns). Additive
     // ALTERs — safe to run every boot.
-    for (const bot of ['spark', 'flame', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['spark', 'flame', 'inferno', 'blaze', 'flare', 'kindle']) {
       for (const col of [
         'gex_regime TEXT',
         'gex_flip NUMERIC(10,4)',
@@ -725,7 +728,7 @@ async function ensureTables(): Promise<void> {
     // Old rows were backfilled with account_type='sandbox' DEFAULT (see the
     // ALTER ADD COLUMN above) so v2's (trade_date, person) uniqueness implies
     // v3's uniqueness — the swap is safe on already-populated tables.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare']) {
+    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
       try {
         // Drop the original v1 constraint if it lingers from a very old
         // deployment.
@@ -760,7 +763,7 @@ async function ensureTables(): Promise<void> {
     // SPARK production/Logan on 2026-04-20. Deactivate everything except the
     // highest-id row per (bot, dte_mode, account_type, person) tuple, then
     // enforce a partial unique index so the race can't happen again.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
       try {
         await client.query(
           `UPDATE ${bot}_paper_account SET is_active = FALSE
@@ -790,7 +793,7 @@ async function ensureTables(): Promise<void> {
     // race window; the partial unique index above is the actual guarantee.
     // A concurrent INSERT that loses the race trips the index and is swallowed
     // here so ensureTables() doesn't abort the whole transaction.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
       try {
         await client.query(
           `INSERT INTO ${bot}_paper_account
@@ -1128,10 +1131,10 @@ export function escapeSql(val: string): string {
   return val.replace(/'/g, "''")
 }
 
-/** Validate bot name parameter — flame, spark, inferno, blaze, or flare allowed. */
+/** Validate bot name parameter — flame, spark, inferno, blaze, flare, or kindle allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle') return null
   return b
 }
 
