@@ -11,6 +11,7 @@ export const BOT_COLORS = {
   inferno: '#ef4444', // 0DTE — red
   blaze: '#06b6d4', // 1DTE directional — cyan
   flare: '#f5a623', // 0DTE directional — amber
+  kindle: '#fbbf24', // 1DTE IC, $500 live (SPARK strategy) — gold/amber
 } as const
 
 export type BotKey = keyof typeof BOT_COLORS

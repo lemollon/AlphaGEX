@@ -114,7 +114,7 @@ export default function BotDashboard({
   bot,
   accent,
 }: {
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
   accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
 }) {
   const hasAccounts = ACCOUNT_BOTS.has(bot)

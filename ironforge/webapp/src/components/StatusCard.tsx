@@ -101,7 +101,7 @@ export default function StatusCard({
   data: StatusData
   accent: 'amber' | 'blue' | 'red' | 'orange' | 'fuchsia'
   config?: ConfigData | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
   liveUnrealizedPnl?: number | null
   liveUnrealizedPct?: number | null
   pendingOrderCount?: number
