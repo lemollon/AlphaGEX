@@ -68,8 +68,9 @@ function TabLoading() {
 const ALL_TABS = ['Equity Curve', 'IC Chart', 'Production', 'Broker Equity', 'Performance', 'Positions', 'Trade History', 'Signals', 'Logs', 'PDT', 'Reconcile', 'Market Pulse'] as const
 type Tab = (typeof ALL_TABS)[number]
 
-/** Only SPARK has sandbox/production accounts. FLAME, INFERNO, BLAZE are paper-only. */
-const ACCOUNT_BOTS = new Set(['spark'])
+/** Bots with real broker accounts. SPARK (live + sandbox) and KINDLE
+ *  (production-only, $500 account 6YB70795). FLAME/INFERNO/BLAZE are paper. */
+const ACCOUNT_BOTS = new Set(['spark', 'kindle'])
 
 /** Tabs that only make sense for bots with broker accounts */
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
