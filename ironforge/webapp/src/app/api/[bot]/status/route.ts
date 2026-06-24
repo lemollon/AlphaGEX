@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -207,7 +207,7 @@ export async function GET(
     let accountSource: 'tradier' | 'paper_account' = 'paper_account'
     let tradierBalanceFetchError: string | null = null
     let tradierOpenPlOverride: number | null = null
-    if (accountTypeParam === 'production' && bot === PRODUCTION_BOT) {
+    if (accountTypeParam === 'production' && isProductionBot(bot)) {
       try {
         const prodAccts = await getProductionAccountsForBot(bot)
         let tradierEquity = 0
