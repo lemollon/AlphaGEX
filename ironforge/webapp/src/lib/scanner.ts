@@ -191,7 +191,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
   // matches SPARK. The 15%-BP cap is SPARK-only; KINDLE's 1-contract ceiling is the
   // risk control instead.
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 500, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2 },
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2 },
 }
 
 /** DB column → config key mapping (with optional transform) */
