@@ -17,7 +17,7 @@ function GreekCell({ label, symbol, value, color, tooltip }) {
   const [hovered, setHovered] = useState(false);
   return (
     <div
-      className={`flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 relative cursor-default bg-bg-card ${
+      className={`flex-1 min-w-[140px] flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 relative cursor-default bg-bg-card ${
         hovered ? 'border-border-default' : 'border-white/5'
       }`}
       onMouseEnter={() => setHovered(true)}
@@ -101,7 +101,7 @@ export default function MetricsBar({ calcResult }) {
   const beUpper = r.upper_breakeven != null ? r.upper_breakeven.toFixed(2) : '--';
   const iv = r.implied_vol != null ? formatPct(r.implied_vol) : '--';
 
-  const cellCls = (idx) => `flex-1 flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 bg-bg-card ${
+  const cellCls = (idx) => `flex-1 min-w-[140px] flex flex-col gap-1 px-3.5 py-2.5 rounded-md border transition-colors duration-150 bg-bg-card ${
     hoveredIdx === idx ? 'border-border-default' : 'border-white/5'
   }`;
 
@@ -148,7 +148,7 @@ export default function MetricsBar({ calcResult }) {
         <GreekCell label="Gamma" symbol={'\u0393'} value={formatGreek(g.gamma, 5)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.gamma} />
         <GreekCell label="Theta" symbol={'\u0398'} value={g.theta != null ? `${formatGreekDollar(g.theta)}/day` : '--'} color={thetaColor(g.theta)} tooltip={GREEK_TOOLTIPS.theta} />
         <GreekCell label="Vega" symbol={'\u03BD'} value={formatGreekDollar(g.vega)} color="var(--color-text-secondary)" tooltip={GREEK_TOOLTIPS.vega} />
-        <div className="flex-[2] opacity-0" />
+        <div className="hidden md:block flex-[2] opacity-0" />
       </div>
     </div>
   );
