@@ -1290,7 +1290,26 @@ async function monitorSinglePosition(
             currentMin = currentMin == null ? newCost : Math.min(currentMin, newCost)
           }
 
-          const slippageGuardFired = (
+          // "Take it while it's at/above target" (6/24/2026): if the EXECUTABLE
+          // combo ask is at/below the tier floor right now, crossing it still
+          // locks in ≥ the tier's promised profit. Grab it IMMEDIATELY — no age
+          // wait — whenever the resting limit has drifted below the (still
+          // ≥-target) ask and stopped being marketable. This is the "PT fired at
+          // 30%, profit overshot to 35%, but the stale 30% limit didn't fill"
+          // case: previously the order sat until the 60s slippage timer or rode
+          // to EOD. The reprice below is still capped at currentTierTarget (the
+          // floor), so this can NEVER fill below target% — it only stops us
+          // missing a fill that already clears the target.
+          const comboAskNow = mtmForGuard?.cost_to_close
+          const crossHonorsTarget = (
+            existingLimitPrice != null &&
+            comboAskNow != null &&
+            Number.isFinite(comboAskNow) &&
+            comboAskNow <= currentTierTarget &&     // executable at ≥ target right now
+            comboAskNow > existingLimitPrice        // ...but the resting limit is stuck below the ask
+          )
+
+          const slippageGuardFired = crossHonorsTarget || (
             existingLimitPrice != null &&
             currentMin != null &&
             ageMs >= SLIPPAGE_GUARD_MIN_AGE_MS &&
