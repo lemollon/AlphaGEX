@@ -368,8 +368,8 @@ def _wl_history():
 def test_watchlist_returns_rows_for_universe_bot(client, monkeypatch):
     from backend.bots import routes_helpers
     provider = _WatchlistFakeProvider(
-        chains={"NVDA": _wl_chain("NVDA", 140.0)},
-        history={"NVDA": _wl_history()},
+        chains={"QQQ": _wl_chain("QQQ", 140.0)},
+        history={"QQQ": _wl_history()},
     )
     monkeypatch.setattr(routes_helpers, "build_live_chain_provider", lambda: provider)
     r = client.get("/api/spreadworks/bots/undertow/watchlist")
@@ -377,14 +377,14 @@ def test_watchlist_returns_rows_for_universe_bot(client, monkeypatch):
     d = r.json()
     assert d["bot"] == "undertow"
     assert d["mode"] == "debit"
-    assert isinstance(d["universe"], list) and "NVDA" in d["universe"]
+    assert isinstance(d["universe"], list) and "QQQ" in d["universe"]
     assert len(d["rows"]) == len(d["universe"])
     by_ticker = {row["ticker"]: row for row in d["rows"]}
-    assert by_ticker["NVDA"]["status"] == "SIGNAL"
-    assert by_ticker["NVDA"]["candidate"]["kind"] == "bull_call_spread"
+    assert by_ticker["QQQ"]["status"] == "SIGNAL"
+    assert by_ticker["QQQ"]["candidate"]["kind"] == "bull_call_spread"
     assert by_ticker["SPY"]["status"] == "WATCHING"
-    # NVDA is the only SIGNAL -> it is the one the live scanner would open.
-    assert by_ticker["NVDA"]["would_open"] is True
+    # QQQ is the only SIGNAL -> it is the one the live scanner would open.
+    assert by_ticker["QQQ"]["would_open"] is True
     assert by_ticker["SPY"]["would_open"] is False
     assert sum(1 for row in d["rows"] if row["would_open"]) == 1
 

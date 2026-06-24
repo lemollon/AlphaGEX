@@ -56,9 +56,9 @@ class FakeChainProvider(ChainProvider):
 
 
 def test_fake_provider_returns_daily_history():
-    p = FakeChainProvider(daily_history={"NVDA": [{"date": "2026-06-09",
+    p = FakeChainProvider(daily_history={"QQQ": [{"date": "2026-06-09",
         "open": 1, "high": 2, "low": 1, "close": 2}]})
-    bars = p.get_daily_history(ticker="NVDA", days=40)
+    bars = p.get_daily_history(ticker="QQQ", days=40)
     assert len(bars) == 1 and bars[0]["date"] == "2026-06-09"
     assert p.get_daily_history(ticker="MSFT", days=40) == []
 
@@ -451,11 +451,11 @@ def test_undertow_opens_deepest_dip(db_session):
     from backend.bots.scanner import run_scan_cycle
     eng = db_session.get_bind()
     _enable_undertow(eng)
-    # NVDA dips to 140 (6.7%), AAPL to 145 (3.3%) — NVDA is deeper.
+    # QQQ dips to 140 (6.7%), IWM to 145 (3.3%) — QQQ is deeper.
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
-                          "AAPL": _spread_chain("AAPL", 145.0)},
-        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0),
+                          "IWM": _spread_chain("IWM", 145.0)},
+        daily_history={"QQQ": _undertow_history(), "IWM": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
     res = run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
@@ -464,7 +464,7 @@ def test_undertow_opens_deepest_dip(db_session):
     from backend.bots.executor import list_open_positions
     opens = list_open_positions(eng, "undertow")
     assert len(opens) == 1
-    assert opens[0]["ticker"] == "NVDA"
+    assert opens[0]["ticker"] == "QQQ"
 
 
 def test_undertow_skips_held_ticker_and_respects_concurrent_cap(db_session):
@@ -475,8 +475,8 @@ def test_undertow_skips_held_ticker_and_respects_concurrent_cap(db_session):
     with eng.begin() as conn:
         conn.execute(text("UPDATE undertow_config SET max_concurrent_positions=1"))
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
     run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
@@ -497,8 +497,8 @@ def test_undertow_time_stop_closes_position_end_to_end(db_session):
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()},
     )
     # Open on day 0
     open_now = datetime(2026, 6, 8, 9, 0, tzinfo=CT)
@@ -524,8 +524,8 @@ def test_undertow_journals_dip_context(db_session):
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()},
     )
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
     run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
@@ -533,7 +533,7 @@ def test_undertow_journals_dip_context(db_session):
     from backend.bots.executor import list_open_positions
     pos = list_open_positions(eng, "undertow")[0]
     notes = _json.loads(pos["notes"])
-    assert notes["ticker"] == "NVDA"
+    assert notes["ticker"] == "QQQ"
     assert notes["kind"] == "bull_call_spread"
     assert notes["magnitude_pct"] > 0.03
     assert notes["reference_level"] == 150.0
@@ -542,24 +542,24 @@ def test_undertow_journals_dip_context(db_session):
 def test_undertow_earnings_window_excludes_ticker(db_session, monkeypatch):
     """A universe ticker inside its earnings window is skipped (no open),
     even though it has a qualifying dip. Companion to test_undertow_opens_deepest_dip
-    which proves NVDA DOES open when not in an earnings window."""
+    which proves QQQ DOES open when not in an earnings window."""
     from backend.bots.scanner import run_scan_cycle
     from backend.bots.executor import list_open_positions
     import backend.earnings_calendar as ec
     eng = db_session.get_bind()
     _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()},
     )
-    # Stub the calendar so NVDA is reported as having upcoming earnings.
+    # Stub the calendar so QQQ is reported as having upcoming earnings.
     monkeypatch.setattr(ec, "get_upcoming_earnings",
                         lambda from_date=None, days=30: [
-                            {"name": "📊 NVDA Earnings (Q1)", "datetime": None}])
+                            {"name": "📊 QQQ Earnings (Q1)", "datetime": None}])
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
     run_scan_cycle(engine=eng, bot="undertow", now_ct=now,
                    chain_provider=provider, event_blackout=False)
-    # NVDA was the only ticker with a chain, and it's earnings-excluded -> nothing opened.
+    # QQQ was the only ticker with a chain, and it's earnings-excluded -> nothing opened.
     assert len(list_open_positions(eng, "undertow")) == 0
 
 
@@ -569,8 +569,8 @@ def test_undertow_opens_bull_call_spread_on_dip(db_session):
     import json as _j
     eng = db_session.get_bind(); _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()})
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()})
     res = run_scan_cycle(engine=eng, bot="undertow",
                          now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
                          chain_provider=provider, event_blackout=False)
@@ -590,8 +590,8 @@ def test_undertow_writes_ai_rationale(db_session, monkeypatch):
     import json as _j
     eng = db_session.get_bind(); _enable_undertow(eng)
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()})
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()})
     run_scan_cycle(engine=eng, bot="undertow",
                    now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
                    chain_provider=provider, event_blackout=False)
@@ -627,8 +627,8 @@ def test_delta_opens_put_credit_spread_on_dip(db_session):
     import json as _j
     eng = db_session.get_bind(); _enable_bot(eng, "delta")
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()})  # dip -> bullish -> put credit
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()})  # dip -> bullish -> put credit
     res = run_scan_cycle(engine=eng, bot="delta",
                          now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
                          chain_provider=provider, event_blackout=False)
@@ -644,8 +644,8 @@ def test_delta_opens_call_credit_spread_on_rip(db_session):
     import json as _j
     eng = db_session.get_bind(); _enable_bot(eng, "delta")
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 110.0)},
-        daily_history={"NVDA": _rip_history_scanner()})  # rip -> bearish -> call credit
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 110.0)},
+        daily_history={"QQQ": _rip_history_scanner()})  # rip -> bearish -> call credit
     res = run_scan_cycle(engine=eng, bot="delta",
                          now_ct=datetime(2026, 6, 10, 9, 0, tzinfo=CT),
                          chain_provider=provider, event_blackout=False)
@@ -666,8 +666,8 @@ def test_evaluate_universe_watchlist_statuses(db_session):
     cfg = dict(meta["defaults"])
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
 
-    # Open a real AAPL position so AAPL shows HELD.
-    aapl_chain = _spread_chain("AAPL", 140.0)
+    # Open a real IWM position so IWM shows HELD.
+    aapl_chain = _spread_chain("IWM", 140.0)
     aapl_sig = build_vertical_signal(
         kind="bull_call_spread", chain=aapl_chain, config=cfg, equity=25000.0,
         params={**DEFAULT_VERTICAL_PARAMS, **(meta.get("params") or {})},
@@ -675,11 +675,11 @@ def test_evaluate_universe_watchlist_statuses(db_session):
     assert aapl_sig is not None
     open_position(eng, "undertow", "bull_call_spread", aapl_sig, now)
 
-    # NVDA has a buildable dip -> SIGNAL. Other universe names: no chain -> WATCHING.
+    # QQQ has a buildable dip -> SIGNAL. Other universe names: no chain -> WATCHING.
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
-                          "AAPL": _spread_chain("AAPL", 140.0)},
-        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0),
+                          "IWM": _spread_chain("IWM", 140.0)},
+        daily_history={"QQQ": _undertow_history(), "IWM": _undertow_history()},
     )
     evals = evaluate_universe_watchlist(engine=eng, bot="undertow", meta=meta,
                                         cfg=cfg, now_ct=now, chain_provider=provider)
@@ -687,12 +687,12 @@ def test_evaluate_universe_watchlist_statuses(db_session):
     by_ticker = {r["ticker"]: r for r in rows}
 
     assert len(rows) == len(meta["universe"])
-    assert by_ticker["AAPL"]["status"] == "HELD"
-    assert by_ticker["NVDA"]["status"] == "SIGNAL"
-    assert by_ticker["NVDA"]["candidate"]["kind"] == "bull_call_spread"
-    assert by_ticker["NVDA"]["candidate"]["long_strike"] is not None
-    assert by_ticker["NVDA"]["candidate"]["short_strike"] is not None
-    assert by_ticker["NVDA"]["expiration"] == "2026-06-22"
+    assert by_ticker["IWM"]["status"] == "HELD"
+    assert by_ticker["QQQ"]["status"] == "SIGNAL"
+    assert by_ticker["QQQ"]["candidate"]["kind"] == "bull_call_spread"
+    assert by_ticker["QQQ"]["candidate"]["long_strike"] is not None
+    assert by_ticker["QQQ"]["candidate"]["short_strike"] is not None
+    assert by_ticker["QQQ"]["expiration"] == "2026-06-22"
     assert by_ticker["SPY"]["status"] == "WATCHING"
     assert by_ticker["SPY"]["candidate"] is None
     assert "chain_unavailable" in (by_ticker["SPY"]["reason"] or "")
@@ -705,14 +705,14 @@ def test_evaluate_ticker_signal_and_held_and_watching():
     cfg = dict(meta["defaults"])
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
 
-    # SIGNAL: NVDA dips to 140 from a 150 ref-high, oversold, above SMA(~131).
+    # SIGNAL: QQQ dips to 140 from a 150 ref-high, oversold, above SMA(~131).
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0)},
-        daily_history={"NVDA": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0)},
+        daily_history={"QQQ": _undertow_history()},
     )
     sig_eval = _evaluate_ticker(engine=None, bot="undertow", meta=meta, cfg=cfg,
                                 now_ct=now, chain_provider=provider,
-                                ticker="NVDA", held=False, equity=25000.0)
+                                ticker="QQQ", held=False, equity=25000.0)
     assert sig_eval.signal is not None
     assert sig_eval.setup.direction == "bullish"
     assert sig_eval.indicators is not None and sig_eval.indicators["dip_pct"] > 0
@@ -720,7 +720,7 @@ def test_evaluate_ticker_signal_and_held_and_watching():
     # HELD: short-circuits, no chain fetch, no signal.
     held_eval = _evaluate_ticker(engine=None, bot="undertow", meta=meta, cfg=cfg,
                                  now_ct=now, chain_provider=provider,
-                                 ticker="NVDA", held=True, equity=25000.0)
+                                 ticker="QQQ", held=True, equity=25000.0)
     assert held_eval.held is True
     assert held_eval.signal is None and held_eval.setup is None
 
@@ -736,7 +736,7 @@ def test_evaluate_ticker_signal_and_held_and_watching():
 def test_watchlist_marks_only_deepest_signal_would_open(db_session):
     """pick_would_open + ticker_eval_to_row mark exactly the row the live
     scanner would open: the deepest-magnitude SIGNAL. Two names signal here
-    (NVDA deeper than AAPL) — only NVDA gets would_open=True."""
+    (QQQ deeper than IWM) — only QQQ gets would_open=True."""
     from backend.bots.scanner import (
         evaluate_universe_watchlist, ticker_eval_to_row, pick_would_open,
     )
@@ -746,22 +746,22 @@ def test_watchlist_marks_only_deepest_signal_would_open(db_session):
     meta = get_bot("undertow")
     cfg = dict(meta["defaults"])
     now = datetime(2026, 6, 10, 9, 0, tzinfo=CT)
-    # NVDA dips to 140 (6.7% off the 150 ref-high), AAPL to 145 (3.3%) — both
-    # SIGNAL, NVDA deeper.
+    # QQQ dips to 140 (6.7% off the 150 ref-high), IWM to 145 (3.3%) — both
+    # SIGNAL, QQQ deeper.
     provider = FakeChainProvider(
-        chains_by_ticker={"NVDA": _spread_chain("NVDA", 140.0),
-                          "AAPL": _spread_chain("AAPL", 145.0)},
-        daily_history={"NVDA": _undertow_history(), "AAPL": _undertow_history()},
+        chains_by_ticker={"QQQ": _spread_chain("QQQ", 140.0),
+                          "IWM": _spread_chain("IWM", 145.0)},
+        daily_history={"QQQ": _undertow_history(), "IWM": _undertow_history()},
     )
     evals = evaluate_universe_watchlist(engine=eng, bot="undertow", meta=meta,
                                         cfg=cfg, now_ct=now, chain_provider=provider)
     winner = pick_would_open(evals)
-    assert winner is not None and winner.ticker == "NVDA"
+    assert winner is not None and winner.ticker == "QQQ"
 
     rows = [ticker_eval_to_row(e, would_open=(e is winner)) for e in evals]
     by = {r["ticker"]: r for r in rows}
-    assert by["NVDA"]["status"] == "SIGNAL" and by["NVDA"]["would_open"] is True
-    assert by["AAPL"]["status"] == "SIGNAL" and by["AAPL"]["would_open"] is False
+    assert by["QQQ"]["status"] == "SIGNAL" and by["QQQ"]["would_open"] is True
+    assert by["IWM"]["status"] == "SIGNAL" and by["IWM"]["would_open"] is False
     assert by["SPY"]["would_open"] is False
     # exactly one would_open across the whole universe
     assert sum(1 for r in rows if r["would_open"]) == 1
