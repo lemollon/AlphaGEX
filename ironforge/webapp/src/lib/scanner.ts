@@ -3050,7 +3050,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Production-only mode: sandbox already traded, just need production ──
-    if (sandboxAlreadyTraded) {
+    // KINDLE is PRODUCTION-ONLY: it always takes this branch (never the
+    // sandbox-fill + paper-insert path below), so it places ONLY on its real
+    // account 6YB70795 (productionOnly:true) and records ONLY real positions
+    // into kindle_positions (account_type='production'). This makes the /kindle
+    // dashboard a true mirror of the live account and stops the paper-mirror
+    // from consuming the daily trade limit. (SPARK keeps the sandbox-mirror.)
+    if (sandboxAlreadyTraded || bot.name === 'kindle') {
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'
       }
