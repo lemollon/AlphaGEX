@@ -75,7 +75,16 @@ export interface FlareConfig extends BlazeConfig {
   // of the put-credit leg — on a pos-GEX day FLARE does BOTH (morning call + 2:45
   // put-credit).
   quick_itm_enabled: boolean
-  quick_itm_contracts: number   // fixed lot count (naked long call; unvalidated -> start at 1)
+  // Fraction of the account deployed as CALL PREMIUM per quick-ITM trade (the
+  // premium IS the max loss on a naked long). 0.20 = "aggressive responsibly" from
+  // the 2026-06-24 Kelly study on R=net_pnl/premium (mean +6.9%/trade, 323 trades):
+  // full-sample Kelly was 52% but inflated by the hot 2025-26 regime; the robust
+  // anchor is the WEAK-years (2020-24) Kelly of 31%, and ~2/3 of that = 20%. At 20%
+  // the unlucky 1-in-20 bootstrap path is still +4.58x (median 38x) but max DD ~70%.
+  // Not pushed to the 31% peak: it's a NAKED bullish call that LOST in 2020 and the
+  // sample under-weights bad regimes, so real downside > bootstrap. contracts =
+  // max(1, floor(balance * this / premium_per_contract)).
+  quick_itm_risk_pct: number
   quick_itm_strike_itm: number  // dollars in-the-money for the long call strike (round(spot) - this)
   quick_itm_entry_start: number // CT hhmm entry window open  (e.g. 900)
   quick_itm_entry_end: number   // CT hhmm entry window close (e.g. 930)
@@ -129,7 +138,7 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   // Quick-ITM morning sleeve (additive; see FlareConfig doc). Ships small + on its
   // own flag because it's a 54-day single-regime sample and a naked long call.
   quick_itm_enabled: true,
-  quick_itm_contracts: 1,
+  quick_itm_risk_pct: 0.20,   // aggressive-responsibly (~2/3 of weak-years Kelly); see field doc
   quick_itm_strike_itm: 5,
   quick_itm_entry_start: 900,
   quick_itm_entry_end: 930,
