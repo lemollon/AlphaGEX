@@ -83,8 +83,15 @@ export interface FlareConfig extends BlazeConfig {
   // the unlucky 1-in-20 bootstrap path is still +4.58x (median 38x) but max DD ~70%.
   // Not pushed to the 31% peak: it's a NAKED bullish call that LOST in 2020 and the
   // sample under-weights bad regimes, so real downside > bootstrap. contracts =
-  // max(1, floor(balance * this / premium_per_contract)).
+  // clamp(floor(balance * this / premium_per_contract), 1, quick_itm_max_contracts).
   quick_itm_risk_pct: number
+  // Hard ceiling on quick-ITM contracts per trade. The chronological sizing backtest
+  // (2026-06-24) showed the uncapped 20% rule compounds to 139+ lots of a single 0DTE
+  // ITM strike — unfillable; at that size you'd move the market and kill the measured
+  // edge. Cap at a size that stays liquid for 0DTE SPY so neither live nor backtest
+  // assumes untradeable size. (At the current ~$8.8k paper balance the risk-% gives
+  // ~2 lots, far below this — the cap only binds after large compounding.)
+  quick_itm_max_contracts: number
   quick_itm_strike_itm: number  // dollars in-the-money for the long call strike (round(spot) - this)
   quick_itm_entry_start: number // CT hhmm entry window open  (e.g. 900)
   quick_itm_entry_end: number   // CT hhmm entry window close (e.g. 930)
@@ -139,6 +146,7 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   // own flag because it's a 54-day single-regime sample and a naked long call.
   quick_itm_enabled: true,
   quick_itm_risk_pct: 0.20,   // aggressive-responsibly (~2/3 of weak-years Kelly); see field doc
+  quick_itm_max_contracts: 20, // liquidity cap for 0DTE SPY (keeps the measured edge fillable)
   quick_itm_strike_itm: 5,
   quick_itm_entry_start: 900,
   quick_itm_entry_end: 930,
