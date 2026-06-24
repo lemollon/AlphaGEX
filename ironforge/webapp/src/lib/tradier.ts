@@ -1437,6 +1437,23 @@ export async function placeIcOrderAllAccounts(
       eligibleAccounts = _sandboxAccounts.filter((a) => allowedPersons.includes(a.name))
     }
   }
+  // KINDLE's production account lives in TRADIER_KINDLE_* env vars, NOT the
+  // ironforge_accounts DB — so the DB-based bot filter above can't include it
+  // and production orders never reach 6YB70795 (root cause of the 2026-06-24
+  // "0 production entries" miss). Inject it here. Skipped for sandboxOnly calls;
+  // still subject to the pause check + isProductionBot gate downstream, so a
+  // PAUSED KINDLE still places nothing.
+  if (botName?.toLowerCase() === 'kindle' && !opts?.sandboxOnly) {
+    const kKey = process.env.TRADIER_KINDLE_API_KEY
+    const kAcct = process.env.TRADIER_KINDLE_ACCOUNT_ID
+    if (kKey && kAcct && !eligibleAccounts.some((a) => a.type === 'production' && a.name === 'Kindle')) {
+      eligibleAccounts = [
+        ...eligibleAccounts,
+        { name: 'Kindle', apiKey: kKey, baseUrl: PRODUCTION_URL, type: 'production' },
+      ]
+    }
+  }
+
   console.log(
     `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
     `eligible=[${eligibleAccounts.map(a => `${a.name}:${a.type}`).join(', ')}]`,
