@@ -38,7 +38,7 @@ export interface VolAlert {
 }
 
 /** The bot kinds that render a tailored volatility banner. */
-export type VolBot = 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare'
+export type VolBot = 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
 
 /** Tone → color mapping handled by the banner component. */
 export type VolTone = 'warn' | 'bull' | 'bear' | 'info'
@@ -116,7 +116,7 @@ export function diffVolAlerts(activeKeys: string[], openKeys: string[]): VolAler
 /* ------------------------------------------------------------------ */
 
 /** Iron-condor / short-premium sellers. */
-const SELLER_BOTS: ReadonlySet<VolBot> = new Set<VolBot>(['spark', 'flame', 'inferno'])
+const SELLER_BOTS: ReadonlySet<VolBot> = new Set<VolBot>(['spark', 'flame', 'inferno', 'kindle'])
 /** Debit-spread / 0DTE directional bots. */
 const DIRECTIONAL_BOTS: ReadonlySet<VolBot> = new Set<VolBot>(['blaze', 'flare'])
 

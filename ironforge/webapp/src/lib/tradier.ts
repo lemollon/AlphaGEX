@@ -795,6 +795,18 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
  */
 export const PRODUCTION_BOT = 'spark'
 
+/**
+ * Bots allowed to place real-money production orders. SPARK trades the existing
+ * live account (from ironforge_accounts); KINDLE trades a separate $500 account
+ * whose creds come from TRADIER_KINDLE_* env (see getProductionAccountsForBot).
+ * For 'spark' this returns true exactly where the old `=== PRODUCTION_BOT` did,
+ * so SPARK's routing is unchanged. KINDLE is additionally gated by a paused
+ * kill-switch row (born paused) — being in this allowlist does NOT mean it trades.
+ */
+export function isProductionBot(name: string): boolean {
+  return name === 'spark' || name === 'kindle'
+}
+
 /** Get sandbox accounts that a specific bot trades on. */
 export function getAccountsForBot(botName: string): string[] {
   return BOT_ACCOUNTS[botName]?.accounts ?? ['User']

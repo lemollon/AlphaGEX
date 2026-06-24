@@ -51,6 +51,7 @@ const BOT_DOT: Record<string, string> = {
   INFERNO: BOT_COLORS.inferno,
   BLAZE: BOT_COLORS.blaze,
   FLARE: BOT_COLORS.flare,
+  KINDLE: '#fbbf24', // amber — KINDLE (1DTE IC, $500 live, SPARK strategy)
 }
 
 function botDot(label: string): React.ReactNode {
@@ -77,6 +78,7 @@ type NavLink = { href: string; label: string; className?: string; external?: boo
 const primaryLinks: NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-gray-300 hover:text-white' },
+  { href: '/kindle', label: 'KINDLE', className: 'text-gray-300 hover:text-white' },
   { href: '/flame', label: 'FLAME', className: 'text-gray-300 hover:text-white' },
   { href: '/inferno', label: 'INFERNO', className: 'text-gray-300 hover:text-white' },
   { href: '/blaze', label: 'BLAZE', className: 'text-gray-300 hover:text-white' },
