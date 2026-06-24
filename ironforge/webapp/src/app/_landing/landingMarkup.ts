@@ -223,9 +223,9 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
         <div class="bp-foot">0DTE IC · INTRADAY</div>
       </div>
       <div class="bp" data-bot="flare" style="--c:#f5a623">
-        <div class="bp-h"><span class="bp-glyph">◈</span><span class="bp-n">FLARE</span><span class="bp-dte">0D</span></div>
+        <div class="bp-h"><span class="bp-glyph">◈</span><span class="bp-n">FLARE</span><span class="bp-dte">GEX</span></div>
         <div class="bp-state" data-state></div>
-        <div class="bp-foot">DEBIT · DIRECTIONAL</div>
+        <div class="bp-foot">GEX REGIME SWITCH</div>
       </div>
       <div class="bp" data-bot="blaze" style="--c:#06b6d4">
         <div class="bp-h"><span class="bp-glyph">➤</span><span class="bp-n">BLAZE</span><span class="bp-dte">1D</span></div>
@@ -359,11 +359,11 @@ export const LANDING_MARKUP = `<div class="topbar" id="topbar" style="display:no
       </div>
     </a>
     <a href="/flare" class="bot-art" style="--c:#f5a623">
-      <div class="b-meta"><span>FIG. 02-D · <em>FLARE</em></span><span>0 DTE · <b style="color:#f5a623">HIGH</b></span></div>
+      <div class="b-meta"><span>FIG. 02-D · <em>FLARE</em></span><span>GEX-ADAPTIVE · <b style="color:#f5a623">HIGH</b></span></div>
       <div class="b-name">Flare</div>
-      <div class="b-tag">DIRECTIONAL · DEFINED-RISK DEBIT</div>
-      <div class="b-recom">Same-day debit spreads. Pay-to-play directional bets with capped risk and asymmetric payoff on intraday momentum.</div>
-      <div class="b-pulse"><span class="dot"></span>STATE · <span class="state">SCANNING SETUPS</span> <span style="color:var(--ink);margin-left:auto">1–3 / DAY</span></div>
+      <div class="b-tag">GEX REGIME SWITCH · DEFINED-RISK</div>
+      <div class="b-recom">Reads net gamma each day. Negative-GEX (trend) days: a 1DTE directional debit spread following the trend, taken only when the 20- and 50-day moving averages agree. Positive-GEX (pin/grind) days: a bullish put-credit spread that profits if SPY rises or holds. One trade a day, held to expiry, matched to the regime.</div>
+      <div class="b-pulse"><span class="dot"></span>STATE · <span class="state">SCANNING REGIME</span> <span style="color:var(--ink);margin-left:auto">1 / DAY</span></div>
       <div class="b-diag">
         <svg viewBox="0 0 280 160" width="100%" height="100%">
           <line x1="20" y1="120" x2="260" y2="120" stroke="#3a342b"/>
