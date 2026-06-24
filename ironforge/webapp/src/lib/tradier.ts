@@ -1480,14 +1480,15 @@ export async function placeIcOrderAllAccounts(
     } catch { /* pre-migration deploy — fall through to the primary gate below */ }
   }
 
-  // SAFETY: Only SPARK is allowed to place production orders.
-  // FLAME and INFERNO are paper-only bots — they must NEVER place real money orders.
-  const productionBotUc = PRODUCTION_BOT.toUpperCase()
+  // SAFETY: Only production-allowlisted bots (SPARK, KINDLE) may place real-money
+  // orders. FLAME and INFERNO are paper-only — they must NEVER place real orders.
+  // (KINDLE is additionally gated by its paused kill-switch above, which zeroes
+  // productionAccts when paused — so this gate widening cannot make it trade.)
   const botUc = (botName || '').toUpperCase()
-  if (productionAccts.length > 0 && botUc !== productionBotUc) {
+  if (productionAccts.length > 0 && !isProductionBot((botName || '').toLowerCase())) {
     console.warn(
       `[tradier] BLOCKED: ${botUc} attempted production orders on ${productionAccts.length} account(s). ` +
-      `Only ${productionBotUc} can trade production. Removing production accounts from this order.`,
+      `Only production-allowlisted bots can trade production. Removing production accounts from this order.`,
     )
     productionAccts = []
   }
@@ -2883,7 +2884,7 @@ export async function getProductionPauseState(botName: string): Promise<Producti
  * pause flag on the trade side.
  */
 export async function getProductionAccountsForBot(botName: string): Promise<ProductionAccount[]> {
-  if (botName !== PRODUCTION_BOT) return []
+  if (!isProductionBot(botName)) return []
   const pauseState = await getProductionPauseState(botName)
   if (pauseState.paused) {
     console.warn(
@@ -2892,6 +2893,19 @@ export async function getProductionAccountsForBot(botName: string): Promise<Prod
       `returning zero production accounts. Scanner will skip production orders; sandbox/paper unaffected.`,
     )
     return []
+  }
+  // KINDLE: its single live account comes from TRADIER_KINDLE_* env vars, NOT the
+  // ironforge_accounts DB — so it is physically isolated from SPARK's accounts and
+  // can never resolve SPARK's (Logan) production row. Fail CLOSED: if either env var
+  // is missing, return zero accounts (no order can be placed).
+  if (botName.toLowerCase() === 'kindle') {
+    const apiKey = process.env.TRADIER_KINDLE_API_KEY
+    const accountId = process.env.TRADIER_KINDLE_ACCOUNT_ID
+    if (!apiKey || !accountId) {
+      console.warn('[tradier] KINDLE production creds (TRADIER_KINDLE_API_KEY/ACCOUNT_ID) not set — zero production accounts.')
+      return []
+    }
+    return [{ name: 'Kindle', apiKey, baseUrl: PRODUCTION_URL, accountId }]
   }
   const allowedNames = new Set(await getAccountsForBotAsync(botName))
   const loaded = await getLoadedSandboxAccountsAsync()

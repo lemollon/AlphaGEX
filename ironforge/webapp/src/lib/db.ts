@@ -491,6 +491,21 @@ async function ensureTables(): Promise<void> {
   try {
     await client.query(INIT_DDL)
 
+    // KINDLE kill switch: born PAUSED. ON CONFLICT DO NOTHING so a later manual
+    // unpause (operator flips paused=false to go live) is never overwritten on
+    // reboot. This is load-bearing: getProductionPauseState defaults to
+    // paused=false on a MISSING row, so without this seed KINDLE would be
+    // treated as unpaused the moment its production path is wired. Seeding
+    // paused=true guarantees KINDLE cannot place a real order until an explicit,
+    // deliberate unpause.
+    try {
+      await client.query(
+        `INSERT INTO ironforge_production_pause (bot_name, paused, paused_by, paused_reason)
+         VALUES ('KINDLE', TRUE, 'system', 'stage-2 born paused — awaiting preflight + supervised first trade')
+         ON CONFLICT (bot_name) DO NOTHING`,
+      )
+    } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
+
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
