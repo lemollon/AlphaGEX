@@ -86,6 +86,19 @@ const MAX_CONSECUTIVE_MTM_FAILURES = 10
 const PRODUCTION_BOT = 'spark'
 const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 
+/**
+ * Bots that run SPARK's *strategy* (1DTE IC, swing/no-stop, neg-gamma 1.5-SD
+ * widen). This is SEPARATE from PRODUCTION_BOT (which controls real-money order
+ * routing). KINDLE shares SPARK's strategy but has its own config/account/sizing
+ * and its own production identity. For input 'spark' this returns true exactly
+ * where the old literal `bot.name === 'spark'` did, so SPARK behavior is unchanged.
+ * NOTE: the 15%-BP cap is intentionally NOT gated on this — it stays SPARK-only;
+ * KINDLE's max_contracts:1 is its risk control.
+ */
+function isSparkStrategy(name: string): boolean {
+  return name === 'spark' || name === 'kindle'
+}
+
 // Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
 // with 1500+ rejected orders per day. After N consecutive rejections,
 // back off exponentially (skip cycles) before retrying.
@@ -117,6 +130,12 @@ const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
+  // KINDLE: a SECOND 1DTE Iron Condor that runs SPARK's exact validated strategy
+  // (swing/no-stop, neg-gamma 1.5-SD widen) but on its OWN tables/config/account,
+  // sized for a tiny ($500) real-money account: $2 wings, max 1 contract. Isolated
+  // from SPARK — see isSparkStrategy() (shares strategy) vs PRODUCTION_BOT (separate
+  // production identity, wired in stage 2).
+  { name: 'kindle', dte: '1DTE', minDte: 1 },
 ] as const
 
 type BotDef = (typeof BOTS)[number]
@@ -137,6 +156,7 @@ interface BotConfig {
   min_credit: number // minimum credit per contract to open a trade
   eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from the `eod_cutoff_et` config column, which is now interpreted as CENTRAL time (the legacy `_et` suffix is a misnomer — all IronForge times are CT). Default 1445 = 2:45 PM CT.
   trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
+  wing_width: number  // IC spread width in $ (long strike = short ± wing_width). Default 5; KINDLE uses 2 to fit a tiny account. Used by calculateStrikes for the IC path.
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
@@ -149,9 +169,15 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
   // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
   // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
+  // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
+  // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
+  // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
+  // matches SPARK. The 15%-BP cap is SPARK-only; KINDLE's 1-contract ceiling is the
+  // risk control instead.
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 500, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -744,8 +770,8 @@ async function getNetGexCached(): Promise<number | null> {
 /*  Strike calculation — now takes sdMult from config (Fix 1)          */
 /* ------------------------------------------------------------------ */
 
-function calculateStrikes(spot: number, expectedMove: number, sdMult: number) {
-  const WIDTH = 5
+function calculateStrikes(spot: number, expectedMove: number, sdMult: number, wingWidth = 5) {
+  const WIDTH = wingWidth
 
   const minEM = spot * 0.005
   const em = Math.max(expectedMove, minEM)
@@ -1958,7 +1984,7 @@ async function monitorSinglePosition(
   // small %-based sizing (bp_pct ~0.15) this lifts win rate to ~98% and slashes
   // drawdown. Position SIZE is the risk control with the stop off. Other bots keep
   // their stop. (Disable SPARK itself to halt — that is the kill switch.)
-  const swingOn = bot.name === 'spark'
+  const swingOn = isSparkStrategy(bot.name)
   if (costToClose >= stopLossPrice && !swingOn) {
     // Commit R1: DB-level trigger log.
     try {
@@ -2787,7 +2813,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // bot uses it below to decide strike width by itself: positive gamma (calm) →
   // normal strikes; negative gamma (stormy) → wider strikes.
   let spkNetGex: number | null = null
-  if (bot.name === 'spark') {
+  if (isSparkStrategy(bot.name)) {
     spkNetGex = await getNetGexCached()
   }
 
@@ -2823,19 +2849,22 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // clears even a low floor, so the bot rarely traded. 1.5 collects more from closer
   // strikes; the extra breaches are recovered by the swing. Works because SPARK swings
   // (no hard stop) and sizes small (bp_pct ~0.15).
-  if (bot.name === 'spark' && spkNetGex !== null && spkNetGex < 0) {
+  if (isSparkStrategy(bot.name) && spkNetGex !== null && spkNetGex < 0) {
     usedSd = 1.5
   }
-  let strikes = calculateStrikes(spot, expectedMove, usedSd)
+  let strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
   let credits = await getIcEntryCredit(
     'SPY', expiration,
     strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
   )
 
-  if (bot.name !== PRODUCTION_BOT) {
+  // Swing-strategy bots (SPARK, KINDLE) do NOT walk the SD in to chase credit —
+  // their edge is the fixed 1.2/1.5-SD strikes held to settlement. Only the
+  // non-swing IC bots (e.g. INFERNO) widen-in to meet min_credit.
+  if (!isSparkStrategy(bot.name)) {
     while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
       usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
-      strikes = calculateStrikes(spot, expectedMove, usedSd)
+      strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
       credits = await getIcEntryCredit(
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
