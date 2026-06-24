@@ -8,25 +8,30 @@ from __future__ import annotations
 from typing import Any
 
 BOT_REGISTRY: dict[str, dict[str, Any]] = {
-    "breeze": {
-        "display": "BREEZE",
-        "strategy": "iron_butterfly",
+    # CONFLUENCE — SPY 0DTE/1DTE Pin+Drift Combo. The best structure from real-
+    # fill (ThetaData 2022-25) backtesting: RIVER's long butterfly (wins on a
+    # pin) PLUS two cheap 0DTE/1DTE calendars `drift_offset` either side of the
+    # body (win when price drifts there). ~+$24/day/lot at realistic fills, ~52%
+    # win, green every year. Replaces BREEZE (which was just RIVER's pin bet in a
+    # credit costume — economically redundant). front=0DTE fly+near calendars,
+    # back=1DTE calendar far legs. Shipped LIVE (paper, like RIVER) 2026-06-24.
+    "confluence": {
+        "display": "CONFLUENCE",
+        "strategy": "pin_drift_combo",
         "ticker": "SPY",
         "front_dte": 0,
-        "back_dte": None,
+        "back_dte": 1,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,
-            # Deploy 50% of the account, uncapped (max_contracts=0), matching
-            # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
+            "enabled": True,
             "max_contracts": 0,
             "bp_pct": 0.50,
             "sd_mult": 1.0,
             "pt_pct": 0.30,
-            # SL = fraction of MAX LOSS (defined risk), matching RIVER. Was 2.0
-            # of MAX PROFIT, which for an iron fly's rich ATM credit was an
-            # unreachable stop (max loss never reaches 2x credit).
             "sl_pct": 0.50,
+            # Calendars sit this many dollars either side of the body (validated
+            # sweet spot from the real-fill sweep was +/- $3).
+            "drift_offset": 3,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
             "eod_close_ct": "14:45",

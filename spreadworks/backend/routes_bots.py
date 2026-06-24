@@ -502,6 +502,26 @@ def get_position_payoff(bot: str, position_id: str):
             {"exp": short_call["expiration"]},
             r, sigma, entry_cost, n,
         )
+    elif strategy == "pin_drift_combo":
+        # Legs are stored in build order (see PinDriftComboSignal.legs()):
+        #   0 fly lower, 1-2 fly body (x2), 3 fly upper,
+        #   4 call-cal front short, 5 call-cal back long,
+        #   6 put-cal front short, 7 put-cal back long.
+        fly_type = legs[0].get("type", "call")
+        lower = float(legs[0]["strike"])
+        middle = float(legs[1]["strike"])
+        upper = float(legs[3]["strike"])
+        call_cal = float(legs[4]["strike"])
+        put_cal = float(legs[6]["strike"])
+        front_exp = legs[0]["expiration"]
+        back_exp = legs[5]["expiration"]
+        profile = _scan_pnl_profile(
+            "pin_drift_combo", middle,
+            {"lower": lower, "middle": middle, "upper": upper,
+             "is_call": fly_type == "call", "call_cal": call_cal, "put_cal": put_cal},
+            {"front": front_exp, "back": back_exp},
+            r, sigma, entry_cost, n,
+        )
     else:
         raise HTTPException(400, f"Unsupported strategy for payoff: {strategy}")
 

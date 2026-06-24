@@ -96,49 +96,51 @@ FRIDAY = datetime(2026, 5, 22, 9, 0, tzinfo=CT)
 MONDAY2 = datetime(2026, 5, 25, 9, 0, tzinfo=CT)  # next Mon, still < exp 2026-05-27
 
 
-def test_breeze_opens_position_in_entry_window(db_session, fake_chain_0dte):
+def test_river_opens_position_in_entry_window(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] in ("TRADE", "NO_TRADE")  # not blocked
     # If TRADE, position should exist
     if res["outcome"] == "TRADE":
         with engine.begin() as conn:
             n = conn.execute(text(
-                "SELECT COUNT(*) c FROM breeze_positions WHERE status='OPEN'"
+                "SELECT COUNT(*) c FROM river_positions WHERE status='OPEN'"
             )).mappings().first()["c"]
         assert n == 1
 
 
-def test_breeze_disabled_blocks_trading(db_session, fake_chain_0dte):
+def test_disabled_blocks_trading(db_session, fake_chain_0dte):
+    # FLOW ships disabled by default, so it exercises the disabled-gate path
+    # (RIVER and CONFLUENCE are enabled). Disabled check precedes any chain fetch.
     engine = db_session.bind  # NOT enabling
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="flow", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "BLOCKED_DISABLED"
 
 
 def test_outside_entry_window_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     # Before 08:35
     now = datetime(2026, 5, 20, 8, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "BLOCKED_OUTSIDE_WINDOW"
 
 
 def test_event_blackout_blocks_open(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
                         chain_provider=provider, event_blackout=True)
     assert res["outcome"] == "BLOCKED_EVENT"
 
@@ -148,18 +150,18 @@ def test_existing_open_position_monitors_instead_of_opens(db_session, fake_chain
     from backend.bots.strategies.iron_butterfly import build_iron_butterfly_signal
     from backend.bots.executor import open_position
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     sig = build_iron_butterfly_signal(
         chain=fake_chain_0dte,
         config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
                 "pt_pct": 0.30, "sl_pct": 2.0, "use_gex_walls": False},
         equity=10000.0,
     )
-    open_position(engine, "breeze", "iron_butterfly", sig,
+    open_position(engine, "river", "iron_butterfly", sig,
                   datetime(2026, 5, 20, 9, 0, tzinfo=CT))
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 30, tzinfo=CT)
-    res = run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    res = run_scan_cycle(engine=engine, bot="river", now_ct=now,
                         chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "MONITOR"
 
@@ -213,14 +215,14 @@ def test_river_pt_rederived_on_decreasing_ladder(db_session, fake_chain_0dte):
 
 def test_scan_activity_row_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    run_scan_cycle(engine=engine, bot="river", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT outcome FROM breeze_scan_activity"
+            "SELECT outcome FROM river_scan_activity"
         )).mappings().all()
     assert len(rows) >= 1
 
@@ -373,14 +375,14 @@ def test_river_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte
 
 def test_equity_snapshot_written(db_session, fake_chain_0dte):
     engine = db_session.bind
-    _enable_bot(engine, "breeze")
+    _enable_bot(engine, "river")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
-    run_scan_cycle(engine=engine, bot="breeze", now_ct=now,
+    run_scan_cycle(engine=engine, bot="river", now_ct=now,
                    chain_provider=provider, event_blackout=False)
     with engine.begin() as conn:
         rows = conn.execute(text(
-            "SELECT equity FROM breeze_equity_snapshots"
+            "SELECT equity FROM river_equity_snapshots"
         )).mappings().all()
     assert len(rows) == 1
     assert float(rows[0]["equity"]) >= 9000  # near starting capital

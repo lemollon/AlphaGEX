@@ -32,6 +32,7 @@ from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
 from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
+from .strategies.pin_drift_combo import build_pin_drift_combo_signal
 from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
 from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
@@ -191,6 +192,11 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         return sig, front
     if strategy == "double_diagonal_credit":
         sig = build_double_diagonal_credit_signal(
+            front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
+        )
+        return sig, front
+    if strategy == "pin_drift_combo":
+        sig = build_pin_drift_combo_signal(
             front_chain=front, back_chain=back, config=config, equity=equity, diag=diag
         )
         return sig, front

@@ -49,10 +49,11 @@ def client(monkeypatch):
 
 
 def test_status_returns_basic_fields(client):
-    r = client.get("/api/spreadworks/bots/breeze/status")
+    # FLOW ships disabled (RIVER and CONFLUENCE are enabled by default).
+    r = client.get("/api/spreadworks/bots/flow/status")
     assert r.status_code == 200
     d = r.json()
-    assert d["bot"] == "breeze"
+    assert d["bot"] == "flow"
     assert d["enabled"] is False
     assert d["open_positions"] == 0
 
@@ -63,22 +64,23 @@ def test_unknown_bot_returns_404(client):
 
 
 def test_toggle_flips_enabled(client):
-    r = client.post("/api/spreadworks/bots/breeze/toggle")
+    # Start from FLOW (disabled by default) so the first toggle -> True.
+    r = client.post("/api/spreadworks/bots/flow/toggle")
     assert r.status_code == 200
     assert r.json()["enabled"] is True
-    r2 = client.post("/api/spreadworks/bots/breeze/toggle")
+    r2 = client.post("/api/spreadworks/bots/flow/toggle")
     assert r2.json()["enabled"] is False
 
 
 def test_config_get_and_post(client):
-    r = client.get("/api/spreadworks/bots/breeze/config")
+    r = client.get("/api/spreadworks/bots/river/config")
     assert r.status_code == 200
     cfg = r.json()
     assert cfg["pt_pct"] == 0.30 or float(cfg["pt_pct"]) == 0.30
 
-    r2 = client.post("/api/spreadworks/bots/breeze/config", json={"pt_pct": 0.40})
+    r2 = client.post("/api/spreadworks/bots/river/config", json={"pt_pct": 0.40})
     assert r2.status_code == 200
-    r3 = client.get("/api/spreadworks/bots/breeze/config")
+    r3 = client.get("/api/spreadworks/bots/river/config")
     assert float(r3.json()["pt_pct"]) == 0.40
 
 
@@ -104,7 +106,7 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
 
 @pytest.mark.parametrize("bot,strategy,legs,entry", [
     (
-        "breeze", "iron_butterfly",
+        "river", "iron_butterfly",
         [
             {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
             {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
@@ -155,6 +157,22 @@ def _seed_bot_position(engine, bot: str, position_id: str, strategy: str, legs: 
         ],
         0.75,  # debit
     ),
+    (
+        # CONFLUENCE pin+drift combo: 8 legs in build order (fly 1-2-1, then
+        # call calendar @503, then put calendar @499) across two expirations.
+        "confluence", "pin_drift_combo",
+        [
+            {"side": "long",  "type": "call", "strike": 498, "expiration": "2099-01-15"},
+            {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},
+            {"side": "short", "type": "call", "strike": 501, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "call", "strike": 504, "expiration": "2099-01-15"},
+            {"side": "short", "type": "call", "strike": 503, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "call", "strike": 503, "expiration": "2099-01-16"},
+            {"side": "short", "type": "put",  "strike": 499, "expiration": "2099-01-15"},
+            {"side": "long",  "type": "put",  "strike": 499, "expiration": "2099-01-16"},
+        ],
+        1.75,  # debit
+    ),
 ])
 def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
     from backend import routes_bots
@@ -173,15 +191,15 @@ def test_position_payoff_returns_curve(client, bot, strategy, legs, entry):
 
 
 def test_position_payoff_404_on_unknown_position(client):
-    r = client.get("/api/spreadworks/bots/breeze/positions/does-not-exist/payoff")
+    r = client.get("/api/spreadworks/bots/river/positions/does-not-exist/payoff")
     assert r.status_code == 404
 
 
 def test_adjust_updates_pt_and_flips_override(client):
     from backend import routes_bots
-    pid = "breeze-adj-001"
+    pid = "river-adj-001"
     _seed_bot_position(
-        routes_bots.ENGINE, "breeze", pid, "iron_butterfly",
+        routes_bots.ENGINE, "river", pid, "iron_butterfly",
         [
             {"side": "short", "type": "call", "strike": 500, "expiration": "2099-01-15"},
             {"side": "short", "type": "put",  "strike": 500, "expiration": "2099-01-15"},
@@ -191,7 +209,7 @@ def test_adjust_updates_pt_and_flips_override(client):
         2.0,
     )
     r = client.post(
-        f"/api/spreadworks/bots/breeze/positions/{pid}/adjust",
+        f"/api/spreadworks/bots/river/positions/{pid}/adjust",
         json={"pt_target_pnl": 75.0},
     )
     assert r.status_code == 200, r.text
@@ -225,7 +243,7 @@ def test_adjust_normalizes_sl_to_magnitude(client):
 
 def test_adjust_400_when_no_fields(client):
     r = client.post(
-        "/api/spreadworks/bots/breeze/positions/anything/adjust",
+        "/api/spreadworks/bots/river/positions/anything/adjust",
         json={},
     )
     assert r.status_code == 400
@@ -233,7 +251,7 @@ def test_adjust_400_when_no_fields(client):
 
 def test_adjust_404_on_unknown_position(client):
     r = client.post(
-        "/api/spreadworks/bots/breeze/positions/does-not-exist/adjust",
+        "/api/spreadworks/bots/river/positions/does-not-exist/adjust",
         json={"pt_target_pnl": 50.0},
     )
     assert r.status_code == 404
