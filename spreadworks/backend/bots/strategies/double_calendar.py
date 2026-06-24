@@ -22,14 +22,17 @@ MAX_VIX = 30.0
 #
 # Historical levels:
 #   1.0 — original strict gate (rejected ~every flat-IV day on SPY).
-#   0.3 — production gate (CURRENT): requires positive contango (back IV > front
-#         IV) so TIDE only opens when the calendar actually has a vega edge. A
-#         calendar is a vol-term-structure trade — buying the back richer than
-#         the front is edge-NEGATIVE, so the old "always trade" -10 default
-#         knowingly took losing trades in backwardation. Restored to 0.3 on
-#         2026-06-24 ("fix TIDE"); pending a real-fill backtest to refine.
-#  -10  — demo / paper-only "always trade" mode (edge-negative in backwardation).
-MIN_VEGA_EDGE = 0.3
+#   0.0 — CURRENT (set 2026-06-24 after the TIDE warehouse backtest). The
+#         "contango = edge" thesis is NOT supported: an EOD backtest of 817 days
+#         showed the 0.3 gate HALVES the trade count and does NOT improve avg
+#         P&L; SPY 1DTE/14DTE is normally backwardated (median -1.6vp) and the
+#         BACKWARDATION days were the best performers (the structure's P&L comes
+#         from the front leg decaying to intrinsic, not the IV spread). So we
+#         drop the contango requirement to a mild "back not cheaper than front"
+#         floor (0.0). NOTE: the EOD data actually favored trading every day;
+#         0.0 is the conservative choice pending a real-fill morning-entry test.
+#   0.3 — the (refuted) contango gate. -10 — demo "always trade".
+MIN_VEGA_EDGE = 0.0
 
 
 @dataclass

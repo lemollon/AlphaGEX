@@ -56,10 +56,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 1.0,
-            # Require positive contango (back IV > front IV by >=0.3 vol pts)
-            # so TIDE only opens when the calendar has a real vega edge. A
-            # calendar bought in backwardation is edge-negative. (fix 2026-06-24)
-            "min_vega_edge": 0.3,
+            # Vega-edge gate. Set 0.0 (mild "back not cheaper than front") after
+            # the 2026-06-24 warehouse backtest REFUTED the contango thesis: the
+            # 0.3 gate halved trades without improving P&L, and backwardation
+            # days performed best. EOD data even favored no gate; 0.0 is the
+            # conservative pick pending a real-fill morning-entry backtest.
+            "min_vega_edge": 0.0,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
             "eod_close_ct": "14:45",
