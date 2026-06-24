@@ -64,6 +64,18 @@ export interface FlareConfig extends BlazeConfig {
   wall_fade_min_room: number
   wall_fade_trend_lookback_minutes: number
   wall_fade_max_adverse_trend: number
+  // ---- per-leg sizing ----
+  // The two FLARE legs have very different risk profiles: the bullish put-credit
+  // (pos-GEX) wins ~88% and is DURABLE; the conviction directional debit (neg-GEX)
+  // wins ~41% and is FRAGILE (losses cluster). Bootstrap sizing shows that when
+  // both legs share one risk fraction, the fragile leg CAPS how big the whole book
+  // can size — so put-credit is left under-sized. Solution: size each leg
+  // separately. Put-credit uses the full risk_per_trade_pct; the conviction leg
+  // (setup_type 'gex_momentum') uses risk_per_trade_pct * conviction_size_mult, so
+  // it contributes less capital-at-risk and can't drag the book's ruin. This per-leg
+  // policy was the most profitable of {equal, per-leg, put-credit-only} at every
+  // account >= $5k while KEEPING the directional leg (2026-06-24 sizing study).
+  conviction_size_mult: number
 }
 
 // FLARE = 0DTE, validated config: PT 20% / SL 100% of debit (vs BLAZE's SL 30%).
@@ -80,7 +92,30 @@ export interface FlareConfig extends BlazeConfig {
 export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   ...DEFAULT_BLAZE_CONFIG,
   stop_loss_pct: 100.0,
-  risk_per_trade_pct: 0.05,
+  // $5-wide (BLAZE default is $1). CRITICAL: both validated FLARE legs — the
+  // conviction directional debit (neg-GEX) and the bullish put credit (pos-GEX) —
+  // were validated $5-wide. At $1-wide the bid/ask eats the entire edge
+  // (+$0.4/trade ≈ zero); the $5 width is what clears the spread cost. Do not
+  // narrow without re-validating on real bid/ask.
+  spread_width: 5,
+  // PUT-CREDIT (pos-GEX) leg risk fraction = the BASE size. 20% = AGGRESSIVE, set
+  // to the SLIPPAGE-ADJUSTED full-Kelly PEAK (operator chose aggressive 2026-06-24).
+  // Kelly study: raw in-sample full-Kelly base was ~31%, but after a realistic
+  // fill/slippage haircut the growth-maximizing fraction drops to ~20% — and going
+  // ABOVE 20% takes more risk for LESS expected growth (25% = the <5%-ruin ceiling
+  // for pure variance; 31% raw is strictly worse on every axis once fills count).
+  // So 20% is the most aggressive level that still maximizes growth (in-sample CAGR
+  // ~69%, but worst-case drawdowns ~85-90% — this is the aggressive end). At $8,790
+  // paper that's ~3 put-credit contracts (~16% of acct) on a premium day. The
+  // conviction leg sizes DOWN from this via conviction_size_mult (-> ~6.6%).
+  // To dial back to the robust/moderate setting use 0.10; to the ruin ceiling 0.25.
+  risk_per_trade_pct: 0.20,
+  // Conviction (gex_momentum) leg sizes at risk_per_trade_pct * this (=> ~3.3%).
+  // The directional leg is fragile (41% win, losses cluster); per-leg sizing keeps
+  // it small so it can't cap the durable put-credit leg's size (2026-06-24 study:
+  // per-leg was the most profitable policy at every account >= $5k while keeping
+  // FLARE directional). Applied in executor.openVertical.
+  conviction_size_mult: 0.33,
   max_trades_per_setup_per_day: 999,
   // Per-direction risk controls (see FlareConfig doc above). The "trade all day
   // AND manage risk" equilibrium (operator decision 2026-06-08): 5% per-side

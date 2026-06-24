@@ -90,6 +90,8 @@ const SETUP_COLUMN: Record<SetupType, string> = {
   wall_fade: 'wall_fade_count',
   wall_break: 'wall_break_count',
   flip_cross: 'flip_cross_count',
+  gex_momentum: 'wall_fade_count', // FLARE conviction directional doesn't use daily-state; maps to an existing col to satisfy the type
+  gex_putcredit: 'wall_fade_count',
 }
 
 export async function bumpDailyState(

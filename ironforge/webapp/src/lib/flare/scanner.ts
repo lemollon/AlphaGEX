@@ -9,11 +9,11 @@
  *   - bot_name strings are 'FLARE'/'flare'
  */
 import { query } from '../db'
-import { getOptionQuote, getQuote } from '../tradier'
+import { getOptionQuote, getQuote, getDailyHistory } from '../tradier'
 import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR, HEDGE_MIN_TOPUP } from './hedge'
 import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
-import { openVertical, openImbalanceHedge } from './executor'
+import { openVertical, openPutCredit, openImbalanceHedge } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
 import { dispatch, evaluateFlipCross, evaluateWallBreak, evaluateWallFade, FlipBuffer } from './setups'
 import { DEFAULT_FLARE_CONFIG, Direction, GexSnapshot, SetupType } from './types'
@@ -31,6 +31,44 @@ const RE_ENTRY_MIN_COOLDOWN_MS = 15 * 60_000
 const _closedAtByKey: Map<string, number> = new Map()
 const _triggerOffSeenByKey: Map<string, boolean> = new Map()
 
+// FLARE 1DTE two-regime state (in-process; resets on restart — worst case a
+// mid-day restart could allow a second same-day entry, acceptable on paper).
+let _lastTradeDate: string | null = null
+
+// Per-day cache of SPY daily closes (for the conviction SMA20/SMA50 signal), so
+// the entry tick window (14:45-14:55) doesn't re-hit Tradier history every tick.
+let _dailyClosesCache: { date: string; closes: number[] } = { date: '', closes: [] }
+
+/**
+ * Conviction trend signal for the negative-GEX leg (THE durable directional
+ * FLARE, /tmp/conviction.py). Compares today's spot to SMA20 & SMA50 of the
+ * prior daily closes. Returns a tradeable direction ONLY when the two SMAs AGREE
+ * (aligned = clean trend, not whipsaw); direction follows SMA50. `null` => no
+ * conviction (skip). Validated $5-wide 1DTE held-to-expiry on neg-GEX days:
+ * +$19.9/trade, 6/6 yrs green, two-sided (long & short both win), passes
+ * concentration. The neg-GEX gate is applied by the caller.
+ */
+async function convictionSignal(
+  spot: number,
+  ctDate: string,
+): Promise<{ dir: 'call' | 'put'; sma20: number; sma50: number } | null> {
+  if (_dailyClosesCache.date !== ctDate) {
+    const hist = await getDailyHistory('SPY', 100)
+    // Drop today's in-progress bar so the SMA window is the PRIOR closes (matches
+    // the backtest's sma(d,n) = mean of the n closes strictly before day d).
+    const closes = hist.filter((h) => h.date < ctDate).map((h) => h.close)
+    _dailyClosesCache = { date: ctDate, closes }
+  }
+  const closes = _dailyClosesCache.closes
+  if (closes.length < 50) return null
+  const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length
+  const sma20 = mean(closes.slice(-20))
+  const sma50 = mean(closes.slice(-50))
+  const aligned = (spot > sma20) === (spot > sma50)
+  if (!aligned) return null
+  return { dir: spot > sma50 ? 'call' : 'put', sma20, sma50 }
+}
+
 function ctNow(): Date {
   const s = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })
   return new Date(s)
@@ -38,13 +76,14 @@ function ctNow(): Date {
 
 function isMarketHours(ct: Date): boolean {
   // Entry window only — monitor runs unconditionally before this gate.
-  // Hard cutoff at 14:00 CT (operator rule): never open a 0DTE inside the last
-  // hour, when liquidity collapses and Tradier stops quoting expiring contracts
-  // cleanly. Any leftover position gets TIME_STOP'd at eod_time_ct=14:45.
+  // FLARE is now 1DTE neg-GEX momentum: it enters NEAR THE CLOSE (the actual
+  // entry happens >=14:45 in runEntryCycle) and the contracts expire the NEXT
+  // day, so the old "never open a 0DTE in the last hour" cutoff doesn't apply —
+  // 1DTE options are liquid near today's close. Allow the window up to 14:55.
   const dow = ct.getDay()
   if (dow === 0 || dow === 6) return false
   const hhmm = ct.getHours() * 100 + ct.getMinutes()
-  return hhmm >= 830 && hhmm <= 1400
+  return hhmm >= 830 && hhmm <= 1455
 }
 
 function minutesSinceOpen(ct: Date): number {
@@ -104,30 +143,28 @@ export async function runMonitorCycle(): Promise<void> {
     _streakByPos[pos.id] = 0
 
     const markToClose = longMid - shortMid
-    const decision = decideExit({
-      debit: pos.debit,
-      mark_to_close: markToClose,
-      now_ct: ct,
-      quotes_unavail_streak: _streakByPos[pos.id] || 0,
-      config: DEFAULT_FLARE_CONFIG,
-    })
-    if (decision.should_exit && decision.reason) {
-      const realized_pnl = (markToClose - pos.debit) * 100 * pos.contracts
-      await closeFlarePosition(pos.id, {
-        mark_to_close: markToClose,
-        exit_reason: decision.reason,
-        realized_pnl,
-      })
+    const ctDate = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
+    const hhmm = ct.getHours() * 100 + ct.getMinutes()
+    const pnl = (markToClose - pos.debit) * 100 * pos.contracts
+
+    // Both FLARE legs are 1DTE HELD TO EXPIRY — no intraday PT/SL. The conviction
+    // directional debit (gex_momentum) and the bullish put credit (gex_putcredit)
+    // each pay/collect their spread once at entry and settle at intrinsic. Close
+    // only on/after the expiration date near the close (>=14:45 CT). The
+    // (mark - debit) P&L works for both debit (debit>0) and credit (debit<0)
+    // spreads because markToClose = longMid - shortMid is signed consistently.
+    const atExpiry = ctDate >= pos.expiration && hhmm >= 1445
+    if (atExpiry) {
+      await closeFlarePosition(pos.id, { mark_to_close: markToClose, exit_reason: 'EXPIRY', realized_pnl: pnl })
       delete _streakByPos[pos.id]
-      armResetGate(pos.setup_type, pos.direction)
       await insertSignalActivity({
         outcome: 'TRADE',
-        detail: `close ${pos.setup_type} ${pos.direction} ${decision.reason} pnl=${realized_pnl.toFixed(2)}`,
+        detail: `close ${pos.setup_type} ${pos.direction} EXPIRY pnl=${pnl.toFixed(2)}`,
       })
       continue
     }
 
-    survivors.push({ pos, markToClose, unrealized: (markToClose - pos.debit) * 100 * pos.contracts })
+    survivors.push({ pos, markToClose, unrealized: pnl })
   }
 
   // Per-direction force-close stop. If one side's aggregate UNREALIZED P&L is
@@ -161,47 +198,10 @@ export async function runMonitorCycle(): Promise<void> {
     })
   }
 
-  // Net-imbalance hedge — the LIVE risk mechanism that replaces the (neutralized)
-  // force-close. When the directional book is over-exposed one way beyond the
-  // tolerance floor, BUY an opposing debit spread sized to recover the excess on
-  // an adverse move. One hedge per side at a time; it closes via the normal
-  // PT/SL/14:45 exit path. Best-effort — never blocks the monitor.
-  try {
-    const im = computeImbalance(
-      positions.map((p) => ({ direction: p.direction, debit: p.debit, contracts: p.contracts, setup_type: p.setup_type })),
-    )
-    if (im.heavyDir !== 'none' && im.netImbalance > HEDGE_FLOOR) {
-      const [spyQ, vixQ] = await Promise.all([getQuote('SPY'), getQuote('VIX')])
-      const spot = spyQ?.last ?? 0
-      const sig = sigMove(spot, vixQ?.last ?? 0)
-      const d = decideHedge({ imbalance: im, sigMove: sig })
-      if (d.hedge && d.hedgeSide && spot > 0 && sig > 0) {
-        // RISK-balance + scale: bring the protective side's capital-at-risk up to
-        // targetHedgeRisk, topping up only the SHORTFALL over any hedge already on
-        // that side. Re-evaluated every tick, so the hedge grows as the heavy side
-        // grows (fixes the old one-and-done guard that froze the hedge at one
-        // spread). Bounded by netImbalance, so it can't over-hedge.
-        const existingHedgeRisk = positions
-          .filter((p) => p.setup_type === 'imbalance_hedge' && p.direction === d.hedgeSide)
-          .reduce((s, p) => s + Math.max(0, p.debit) * 100 * (p.contracts || 0), 0)
-        const shortfallRisk = Math.round(d.targetHedgeRisk - existingHedgeRisk)
-        if (shortfallRisk >= HEDGE_MIN_TOPUP) {
-          const res = await openImbalanceHedge(
-            { hedgeSide: d.hedgeSide, targetRisk: shortfallRisk, spot, sigMove: sig },
-            DEFAULT_FLARE_CONFIG,
-          )
-          await insertSignalActivity({
-            outcome: 'TRADE',
-            detail: res
-              ? `HEDGE ${d.hedgeSide} x${res.contracts} debit=${res.debit.toFixed(2)} risk+$${(res.debit * 100 * res.contracts).toFixed(0)} (${im.heavyDir}-heavy net $${im.netImbalance}, target risk $${d.targetHedgeRisk}, had $${existingHedgeRisk.toFixed(0)})`
-              : `HEDGE_SKIP ${d.hedgeSide} (shortfall $${shortfallRisk}) — no chain quote`,
-          })
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`[flare] imbalance hedge failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
-  }
+  // Net-imbalance hedge DISABLED for the 1DTE neg-GEX momentum strategy. It was
+  // the old 0DTE bot's risk mechanism (it opens 0DTE opposing spreads); the new
+  // strategy holds ONE defined-risk 1DTE directional spread to expiry, so a hedge
+  // is both unnecessary (max loss = the debit) and wrong-dated. Left here, inert.
 }
 
 /**
@@ -244,59 +244,68 @@ async function runEntryCycle(): Promise<void> {
     return
   }
 
-  FLIP_BUFFER.add(snap)
-  refreshTriggerOffSeen(snap, DEFAULT_FLARE_CONFIG)
-  const state = await loadDailyState()
-  const action = dispatch(snap, state, FLIP_BUFFER, DEFAULT_FLARE_CONFIG)
-  if (!action) {
-    await insertSignalActivity({
-      outcome: 'NO_TRADE',
-      detail: `regime=${snap.regime} spot=${snap.spot.toFixed(2)} cw=${snap.call_wall} pw=${snap.put_wall}`,
-    })
+  // FLARE = 1DTE TWO-REGIME, validated $5-wide / held-to-expiry. Once a day near
+  // the close, read net GEX and pick the regime's leg:
+  //   • net GEX < 0  (trend / dealers short gamma) -> CONVICTION DIRECTIONAL DEBIT:
+  //       trade the trend direction (spot vs SMA50) only when SMA20 & SMA50 AGREE.
+  //   • net GEX >= 0 (pin / dealers long gamma)    -> BULLISH PUT CREDIT spread:
+  //       the grind-up thesis; profits if SPY rises or holds.
+  // Both enter near the close and are held to next-day expiry (pay the spread once).
+  const ct = ctNow()
+  const ctDate = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+
+  if (_lastTradeDate === ctDate) {
+    await insertSignalActivity({ outcome: 'NO_TRADE', detail: 'already_traded_today' })
+    return
+  }
+  // Enter near the close (14:45-14:55), matching the backtests' EOD entry.
+  if (hhmm < 1445) return
+
+  // ===== GEX REGIME SWITCH =====
+  // Positive-GEX (pin/grind) day -> BULLISH PUT CREDIT leg (held to expiry).
+  if (snap.net_gex >= 0) {
+    try {
+      const res = await openPutCredit(snap, DEFAULT_FLARE_CONFIG)
+      if (res) {
+        _lastTradeDate = ctDate
+        await insertSignalActivity({
+          outcome: 'TRADE',
+          detail: `open gex_putcredit ${res.contracts}x@$${res.debit.toFixed(2)} exp1DTE net_gex=${snap.net_gex.toExponential(2)}`,
+        })
+      } else {
+        await insertSignalActivity({ outcome: 'SKIP', detail: 'putcredit:no_credit_or_quote' })
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await insertSignalActivity({ outcome: 'ERROR', detail: `putcredit:${msg.substring(0, 160)}` })
+    }
     return
   }
 
-  // ---- wall-break entry gate (wall_fade only) ----
-  // Refuse to FADE a wall that price is sitting at / breaking through. The
-  // wall_fade trigger fires whenever price is NEAR the faded wall, and "near"
-  // includes "already at/through it" — the exact 6/04 trap (142 put fades as SPY
-  // ground up through the call wall, -$40.6k). Two filters (flare_gate_sim.py):
-  //   (a) require >= wall_fade_min_room points of ROOM to the faded wall, and
-  //   (b) refuse if price is TRENDING INTO that wall over the lookback window.
-  // Applied to wall_fade ONLY — wall_break intentionally trades the break, so the
-  // same geometry would be backwards for it.
-  if (action.setup === 'wall_fade') {
-    const cfg = DEFAULT_FLARE_CONFIG
-    // Faded wall: a put fade fades the CALL wall (overhead); a call fade fades the
-    // PUT wall (below). evaluateWallFade guarantees the relevant wall is > 0 and
-    // on the correct side, so room is well-defined and positive when it fires.
-    const room = action.direction === 'put'
-      ? snap.call_wall - snap.spot
-      : snap.spot - snap.put_wall
-    if (!(room >= cfg.wall_fade_min_room)) {
-      await insertSignalActivity({
-        outcome: 'SKIP',
-        detail: `wall_break_gate ${action.direction} room=${room.toFixed(2)}<${cfg.wall_fade_min_room} (price at/through faded wall)`,
-      })
-      return
-    }
-    // Trend INTO the faded wall over the lookback: a put fade fails on an up-move,
-    // a call fade on a down-move. Fail-open (allow) when history is too thin to
-    // measure (e.g. the first ~15 min of a session) — the room floor still applies.
-    const pastSpot = await getSpotMinutesAgo(cfg.wall_fade_trend_lookback_minutes)
-    if (pastSpot != null) {
-      const adverse = action.direction === 'put'
-        ? snap.spot - pastSpot      // rising pushes up through the call wall
-        : pastSpot - snap.spot      // falling pushes down through the put wall
-      if (adverse >= cfg.wall_fade_max_adverse_trend) {
-        await insertSignalActivity({
-          outcome: 'SKIP',
-          detail: `wall_break_gate ${action.direction} adverse=${adverse.toFixed(2)}>=${cfg.wall_fade_max_adverse_trend} /${cfg.wall_fade_trend_lookback_minutes}min (trending into faded wall)`,
-        })
-        return
-      }
-    }
+  // Negative-GEX (trend) day -> CONVICTION DIRECTIONAL DEBIT leg. Require SMA20 &
+  // SMA50 agreement; trade the trend direction, $5-wide, hold to expiry.
+  const conv = await convictionSignal(snap.spot, ctDate)
+  if (!conv) {
+    await insertSignalActivity({
+      outcome: 'NO_TRADE',
+      detail: `neg_gex ${snap.net_gex.toExponential(2)} no_conviction (SMA20/50 not aligned or insufficient history)`,
+    })
+    return
   }
+  const dir = conv.dir
+  const L = Math.round(snap.spot)
+  const w = DEFAULT_FLARE_CONFIG.spread_width
+  const action = {
+    setup: 'gex_momentum' as const,
+    direction: dir,
+    long_strike: L,
+    short_strike: dir === 'call' ? L + w : L - w,
+    reason: `neg_gex ${snap.net_gex.toExponential(2)} trend ${dir} sma20=${conv.sma20.toFixed(2)} sma50=${conv.sma50.toFixed(2)}`,
+  }
+
+  // (Re-entry gate below is inert for gex_momentum: the monitor no longer arms
+  // _closedAtByKey for it, so it always passes. Kept for the legacy wall setups.)
 
   // Per-direction cooldown: if this side was force-closed within the last
   // perdir_cooldown_minutes (aggregate unrealized breached the force-close
@@ -346,10 +355,10 @@ async function runEntryCycle(): Promise<void> {
       await insertSignalActivity({ outcome: 'SKIP', detail: `open_paper:invalid_${action.setup}` })
       return
     }
-    await bumpDailyState(action.setup, minutesSinceOpen(ctNow()))
+    _lastTradeDate = ctDate   // one trade per day
     await insertSignalActivity({
       outcome: 'TRADE',
-      detail: `open ${action.setup} ${action.direction} ${result.contracts}x@$${result.debit.toFixed(2)}`,
+      detail: `open ${action.setup} ${action.direction} ${result.contracts}x@$${result.debit.toFixed(2)} exp1DTE`,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -445,7 +454,10 @@ async function writeEquitySnapshot(): Promise<void> {
         ])
         if (!longQ || !shortQ) continue
         const spreadWidth = Math.abs(pos.short_strike - pos.long_strike)
-        const closeValue = Math.min(Math.max(0, longQ.bid - shortQ.ask), spreadWidth)
+        // Value to close = longBid - shortAsk, signed: a debit spread closes in
+        // [0, width]; a CREDIT spread (put-credit leg) closes in [-width, 0].
+        // Clamp to [-width, width] so both legs mark correctly.
+        const closeValue = Math.min(Math.max(longQ.bid - shortQ.ask, -spreadWidth), spreadWidth)
         unrealizedPnl += (closeValue - pos.debit) * 100 * pos.contracts
       } catch { /* skip leg on quote failure */ }
     }
