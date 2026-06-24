@@ -139,8 +139,12 @@ export async function bumpDailyState(
 export async function getOpenFlarePositions(): Promise<OpenFlarePosition[]> {
   try {
     const res = await query(
+      // expiration::text -> 'YYYY-MM-DD' string. CRITICAL: without the cast, pg
+      // returns the DATE as a Date at UTC midnight; formatting it in CT rolls it
+      // back a day (06-25 -> 06-24), making every 1DTE position read as expiring
+      // TODAY and the monitor force-close it same-day instead of holding to expiry.
       `SELECT id, setup_type, direction, long_strike, short_strike,
-              long_symbol, short_symbol, debit, contracts, expiration, open_time
+              long_symbol, short_symbol, debit, contracts, expiration::text AS expiration, open_time
        FROM flare_positions
        WHERE status = 'open' AND COALESCE(account_type, 'sandbox') = 'sandbox'
        ORDER BY open_time ASC`,
