@@ -13,7 +13,7 @@ import { getOptionQuote, getQuote, getDailyHistory } from '../tradier'
 import { computeImbalance, decideHedge, sigMove, HEDGE_FLOOR, HEDGE_MIN_TOPUP } from './hedge'
 import { closeFlarePosition, getOpenFlarePositions, getPaperBalance, getSpotMinutesAgo, insertSignalActivity, isDirectionInCooldown, setDirectionHalted, loadDailyState, bumpDailyState } from './db'
 import { decideExit } from './exit'
-import { openVertical, openPutCredit, openImbalanceHedge } from './executor'
+import { openVertical, openPutCredit, openQuickItmCall, openImbalanceHedge } from './executor'
 import { fetchGexSnapshot, GexStaleError } from './gex-client'
 import { dispatch, evaluateFlipCross, evaluateWallBreak, evaluateWallFade, FlipBuffer } from './setups'
 import { DEFAULT_FLARE_CONFIG, Direction, GexSnapshot, SetupType } from './types'
@@ -34,6 +34,9 @@ const _triggerOffSeenByKey: Map<string, boolean> = new Map()
 // FLARE 1DTE two-regime state (in-process; resets on restart — worst case a
 // mid-day restart could allow a second same-day entry, acceptable on paper).
 let _lastTradeDate: string | null = null
+// Separate once/day guard for the additive quick-ITM morning sleeve (independent
+// of _lastTradeDate so it does NOT block — or get blocked by — the 2:45 two-regime entry).
+let _lastQuickItmDate: string | null = null
 
 // Per-day cache of SPY daily closes (for the conviction SMA20/SMA50 signal), so
 // the entry tick window (14:45-14:55) doesn't re-hit Tradier history every tick.
@@ -122,6 +125,27 @@ export async function runMonitorCycle(): Promise<void> {
   const survivors: { pos: (typeof positions)[number]; markToClose: number; unrealized: number }[] = []
 
   for (const pos of positions) {
+    // QUICK-ITM sleeve (single 0DTE long call, setup_type 'gex_quick_itm'): no short
+    // leg. Sell SAME-DAY at the configured exit time (default 1:00 PM CT); EOD 14:45
+    // is a hard fallback so it never rides to settlement. Handled before the generic
+    // 2-leg path so the empty short_symbol is never quoted.
+    if (pos.setup_type === 'gex_quick_itm') {
+      let callQ
+      try { callQ = await getOptionQuote(pos.long_symbol) } catch { callQ = null }
+      if (!callQ) { _streakByPos[pos.id] = (_streakByPos[pos.id] || 0) + 1; continue }
+      _streakByPos[pos.id] = 0
+      const hhmm = ct.getHours() * 100 + ct.getMinutes()
+      const sellBid = callQ.bid                                   // sell at bid (worst-case)
+      const pnl = (sellBid - pos.debit) * 100 * pos.contracts
+      if (hhmm >= DEFAULT_FLARE_CONFIG.quick_itm_exit_hhmm || hhmm >= 1445) {
+        const reason = hhmm >= 1445 && hhmm < DEFAULT_FLARE_CONFIG.quick_itm_exit_hhmm ? 'TIME_STOP' : 'QUICK_EXIT'
+        await closeFlarePosition(pos.id, { mark_to_close: sellBid, exit_reason: reason, realized_pnl: pnl })
+        delete _streakByPos[pos.id]
+        await insertSignalActivity({ outcome: 'TRADE', detail: `close gex_quick_itm call ${reason} pnl=${pnl.toFixed(2)}` })
+      }
+      continue   // never enters the 2-leg path or the force-close pool
+    }
+
     let longMid: number | null = null
     let shortMid: number | null = null
     try {
@@ -254,6 +278,33 @@ async function runEntryCycle(): Promise<void> {
   const ct = ctNow()
   const ctDate = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
   const hhmm = ct.getHours() * 100 + ct.getMinutes()
+
+  // ===== ADDITIVE QUICK-ITM MORNING SLEEVE =====
+  // Independent of the two-regime entry below. On a positive-GEX day, in the morning
+  // window, buy a 0DTE ITM call (monitor sells it same-day ~1 PM CT). Runs ALONGSIDE
+  // the 2:45 put-credit — on a pos-GEX day FLARE does both. Its own once/day guard.
+  const cfg = DEFAULT_FLARE_CONFIG
+  if (
+    cfg.quick_itm_enabled &&
+    _lastQuickItmDate !== ctDate &&
+    snap.net_gex >= 0 &&
+    hhmm >= cfg.quick_itm_entry_start &&
+    hhmm <= cfg.quick_itm_entry_end
+  ) {
+    try {
+      const res = await openQuickItmCall(snap, cfg)
+      if (res) {
+        _lastQuickItmDate = ctDate
+        await insertSignalActivity({ outcome: 'TRADE', detail: `open gex_quick_itm call x${res.contracts}@$${res.debit.toFixed(2)} net_gex=${snap.net_gex.toExponential(2)}` })
+      } else {
+        await insertSignalActivity({ outcome: 'SKIP', detail: 'quick_itm:no_quote' })
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await insertSignalActivity({ outcome: 'ERROR', detail: `quick_itm:${msg.substring(0, 160)}` })
+    }
+    // fall through: the two-regime entry below is gated to >=14:45, so it no-ops now.
+  }
 
   if (_lastTradeDate === ctDate) {
     await insertSignalActivity({ outcome: 'NO_TRADE', detail: 'already_traded_today' })
@@ -448,6 +499,13 @@ async function writeEquitySnapshot(): Promise<void> {
     let unrealizedPnl = 0
     for (const pos of open) {
       try {
+        // Quick-ITM sleeve is a single long call (no short leg): mark at its bid.
+        if (pos.setup_type === 'gex_quick_itm') {
+          const cq = await getOptionQuote(pos.long_symbol)
+          if (!cq) continue
+          unrealizedPnl += (cq.bid - pos.debit) * 100 * pos.contracts
+          continue
+        }
         const [longQ, shortQ] = await Promise.all([
           getOptionQuote(pos.long_symbol),
           getOptionQuote(pos.short_symbol),

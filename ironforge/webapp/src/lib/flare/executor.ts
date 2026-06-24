@@ -173,6 +173,50 @@ export async function openPutCredit(
   return { position_id, debit, contracts, long_symbol: longSym, short_symbol: shortSym }
 }
 
+/**
+ * QUICK-ITM morning sleeve (ADDITIVE — runs alongside the two-regime legs, replaces
+ * nothing). A single 0DTE ITM long CALL bought in the morning on positive-GEX days
+ * to capture the intraday grind-up; the monitor sells it SAME-DAY at the configured
+ * exit time (no overnight). Modeled as a single-leg position: short_symbol is empty
+ * and short_strike == long_strike (spread_width 0) so the monitor knows it's a lone
+ * call. `debit` = the call ask (premium paid = max loss). Sized at a fixed small
+ * quick_itm_contracts (naked long, 54-day sample -> not risk-%-scaled). Tagged
+ * setup_type 'gex_quick_itm'. Caller gates on net_gex>=0 + the morning entry window.
+ */
+export async function openQuickItmCall(
+  snap: GexSnapshot,
+  config: FlareConfig,
+): Promise<OpenResult | null> {
+  const expiration = todayTradingDay(snap.snapshot_at)        // 0DTE same-day
+  const K = Math.round(snap.spot) - config.quick_itm_strike_itm
+  const longSym = buildOccSymbol(config.ticker, expiration, K, 'C')
+  const longQ = await getOptionQuote(longSym)
+  if (!longQ || longQ.ask <= 0) return null
+  const debit = longQ.ask                                     // pay the ask to buy the call
+  const contracts = Math.max(1, Math.floor(config.quick_itm_contracts))
+
+  const position_id = await insertFlarePosition({
+    setup_type: 'gex_quick_itm',
+    direction: 'call',
+    long_strike: K,
+    short_strike: K,            // single leg -> spread_width 0
+    long_symbol: longSym,
+    short_symbol: '',           // no short leg; monitor treats '' as single-leg
+    debit,
+    contracts,
+    expiration,
+    spot_at_entry: snap.spot,
+    gex_regime: snap.regime,
+    net_gex: snap.net_gex,
+    call_wall: snap.call_wall,
+    put_wall: snap.put_wall,
+    flip_point: snap.flip_point,
+    vix: snap.vix,
+  })
+  if (!position_id) return null
+  return { position_id, debit, contracts, long_symbol: longSym, short_symbol: '' }
+}
+
 /** Max contracts a single hedge top-up order may place — bounds blast radius
  *  while the per-tick shortfall logic converges the protective side to target. */
 export const HEDGE_MAX_CONTRACTS_PER_ORDER =
