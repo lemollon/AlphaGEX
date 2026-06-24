@@ -44,8 +44,13 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "display": "TIDE",
         "strategy": "double_calendar",
         "ticker": "SPY",
-        "front_dte": 1,
-        "back_dte": 14,
+        # Front 1->7 / back 14->30 (was 1/14). The 1DTE front was a gamma bomb:
+        # its loss on a move accelerated far faster than the 14DTE back's vega
+        # could compensate. A 7/30 calendar is far steadier and ~2x the EV in
+        # the warehouse backtest (2026-06-24); move-day blowups traced to the
+        # ultra-short front + too-close strikes (see strike_mult).
+        "front_dte": 7,
+        "back_dte": 30,
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": False,
@@ -56,6 +61,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "sd_mult": 1.0,
             "pt_pct": 0.50,
             "sl_pct": 1.0,
+            # Strike placement = spot +/- strike_mult * front-straddle. Widened
+            # 1.0->1.5 after the backtest: at 1.0 the strikes sat right where a
+            # day's move lands, so >1-straddle moves blew through the short.
+            # 1.5 flips move days from -$45/trade to +$103/trade and halves the
+            # catastrophic tail (worst -$447 vs -$610), held to expiry.
+            "strike_mult": 1.5,
             # Vega-edge gate. Set 0.0 (mild "back not cheaper than front") after
             # the 2026-06-24 warehouse backtest REFUTED the contango thesis: the
             # 0.3 gate halved trades without improving P&L, and backwardation
