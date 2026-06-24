@@ -64,6 +64,22 @@ export interface FlareConfig extends BlazeConfig {
   wall_fade_min_room: number
   wall_fade_trend_lookback_minutes: number
   wall_fade_max_adverse_trend: number
+  // ---- quick-ITM morning sleeve (ADDITIVE experimental leg) ----
+  // A SEPARATE intraday play that runs ALONGSIDE the two-regime legs (does not
+  // replace them): on positive-GEX days, buy a 0DTE ITM call in the morning and
+  // sell it SAME-DAY in the early afternoon — capturing the pos-GEX grind-up
+  // (validated 71% up morning->afternoon; helios 54-day round-trip-bid/ask test:
+  // $5-ITM call buy 9:00 CT / sell 1:00 PM CT = +$135/ct, 79% win on 24 days).
+  // SMALL/UNVALIDATED: only a 54-day single-regime sample and a NAKED long call,
+  // so it ships at quick_itm_contracts=1 behind its own enable flag. Independent
+  // of the put-credit leg — on a pos-GEX day FLARE does BOTH (morning call + 2:45
+  // put-credit).
+  quick_itm_enabled: boolean
+  quick_itm_contracts: number   // fixed lot count (naked long call; unvalidated -> start at 1)
+  quick_itm_strike_itm: number  // dollars in-the-money for the long call strike (round(spot) - this)
+  quick_itm_entry_start: number // CT hhmm entry window open  (e.g. 900)
+  quick_itm_entry_end: number   // CT hhmm entry window close (e.g. 930)
+  quick_itm_exit_hhmm: number   // CT hhmm to sell same-day  (e.g. 1300 = 1:00 PM CT)
   // ---- per-leg sizing ----
   // The two FLARE legs have very different risk profiles: the bullish put-credit
   // (pos-GEX) wins ~88% and is DURABLE; the conviction directional debit (neg-GEX)
@@ -110,6 +126,14 @@ export const DEFAULT_FLARE_CONFIG: FlareConfig = {
   // conviction leg sizes DOWN from this via conviction_size_mult (-> ~6.6%).
   // To dial back to the robust/moderate setting use 0.10; to the ruin ceiling 0.25.
   risk_per_trade_pct: 0.20,
+  // Quick-ITM morning sleeve (additive; see FlareConfig doc). Ships small + on its
+  // own flag because it's a 54-day single-regime sample and a naked long call.
+  quick_itm_enabled: true,
+  quick_itm_contracts: 1,
+  quick_itm_strike_itm: 5,
+  quick_itm_entry_start: 900,
+  quick_itm_entry_end: 930,
+  quick_itm_exit_hhmm: 1300,
   // Conviction (gex_momentum) leg sizes at risk_per_trade_pct * this (=> ~3.3%).
   // The directional leg is fragile (41% win, losses cluster); per-leg sizing keeps
   // it small so it can't cap the durable put-credit leg's size (2026-06-24 study:

@@ -3,7 +3,7 @@
  * Port of trading/helios/models.py + gex_client.GexSnapshot to TypeScript.
  */
 
-export type SetupType = 'wall_fade' | 'wall_break' | 'flip_cross' | 'gex_momentum' | 'gex_putcredit'
+export type SetupType = 'wall_fade' | 'wall_break' | 'flip_cross' | 'gex_momentum' | 'gex_putcredit' | 'gex_quick_itm'
 export type Direction = 'call' | 'put'
 export type ExitReason = 'PT' | 'SL' | 'TIME_STOP' | 'DATA_FAILURE'
 
@@ -82,6 +82,7 @@ export function countForSetup(state: DailyState, setup: SetupType): number {
     case 'flip_cross': return state.flip_cross_count
     case 'gex_momentum': return state.wall_fade_count // FLARE conviction directional (neg-GEX); no per-setup daily counts
     case 'gex_putcredit': return state.wall_fade_count // FLARE bullish put credit (pos-GEX); no per-setup daily counts
+    case 'gex_quick_itm': return state.wall_fade_count // FLARE quick ITM call (pos-GEX morning sleeve); no per-setup daily counts
   }
 }
 
