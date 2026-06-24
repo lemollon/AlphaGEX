@@ -27,8 +27,10 @@ def test_surge_defaults():
 def test_tide_defaults():
     b = get_bot("tide")
     assert b["strategy"] == "double_calendar"
-    assert b["front_dte"] == 1
-    assert b["back_dte"] == 14
+    # Restructured 2026-06-24 (backtest): 7/30 DTE + strikes at 1.5x straddle.
+    assert b["front_dte"] == 7
+    assert b["back_dte"] == 30
+    assert b["defaults"]["strike_mult"] == 1.5
     assert b["defaults"]["pt_pct"] == 0.50
     assert b["defaults"]["sl_pct"] == 1.0
     assert b["defaults"]["bp_pct"] == 0.50

@@ -133,8 +133,15 @@ def build_double_calendar_signal(
     if implied_move <= 0:
         return _reject(f"implied_move_zero: atm_straddle_mid={implied_move}")
 
-    target_call = call_strike_override if call_strike_override is not None else round(spot + implied_move)
-    target_put = put_strike_override if put_strike_override is not None else round(spot - implied_move)
+    # Strike placement = spot +/- strike_mult * implied_move. A warehouse
+    # backtest (2026-06-24) showed the default k=1.0 places the strikes too
+    # close: every >1-straddle move blows through the short before the back
+    # leg's vega compensates, so ALL the loss came from move days. Widening to
+    # ~1.5 flips move days from the loss engine into a profit contributor and
+    # cuts the catastrophic tail 2-3x (see TIDE registry strike_mult).
+    strike_mult = float(config.get("strike_mult", 1.0))
+    target_call = call_strike_override if call_strike_override is not None else round(spot + strike_mult * implied_move)
+    target_put = put_strike_override if put_strike_override is not None else round(spot - strike_mult * implied_move)
 
     # Snap to the nearest strike that exists in BOTH the front and back
     # chain — DC requires the same strike on both legs, and back-month
