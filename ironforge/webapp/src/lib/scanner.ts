@@ -99,17 +99,31 @@ function isSparkStrategy(name: string): boolean {
   return name === 'spark' || name === 'kindle'
 }
 
+/**
+ * Bots that route through the real-money PRODUCTION order path (open, fill-check,
+ * reconcile, EOD). Allowlist: SPARK (existing live account) + KINDLE ($500 account
+ * via TRADIER_KINDLE_* env). For 'spark' this returns true exactly where the old
+ * `isProductionBot(bot.name)` literal did, so SPARK's routing is byte-identical.
+ * KINDLE is independently gated by its paused kill-switch row (born paused), so
+ * being on this allowlist does NOT mean it trades until a deliberate unpause.
+ * NOTE: the SANDBOX-CLEANUP machinery still uses the single `PRODUCTION_BOT`
+ * constant as a VALUE (spark_* tables) — those are intentionally NOT changed.
+ */
+function isProductionBot(name: string): boolean {
+  return name === 'spark' || name === 'kindle'
+}
+
 // Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
 // with 1500+ rejected orders per day. After N consecutive rejections,
 // back off exponentially (skip cycles) before retrying.
-const _consecutiveRejects: Record<string, number> = { flame: 0, spark: 0, inferno: 0 }
+const _consecutiveRejects: Record<string, number> = { flame: 0, spark: 0, inferno: 0, kindle: 0 }
 const MAX_REJECTS_BEFORE_BACKOFF = 5  // After 5 rejections, start backing off
 const BACKOFF_CYCLES = 10             // Skip 10 cycles (~10 min) between retries
 
 // Per-bot sandbox cleanup verification gates.
 // Each bot tracks its own cleanup state so one bot's failure doesn't block others.
-const _sandboxCleanupVerified: Record<string, boolean> = { flame: false, spark: false, inferno: false }
-const _sandboxCleanupVerifiedDate: Record<string, string> = { flame: '', spark: '', inferno: '' }
+const _sandboxCleanupVerified: Record<string, boolean> = { flame: false, spark: false, inferno: false, kindle: false }
+const _sandboxCleanupVerifiedDate: Record<string, string> = { flame: '', spark: '', inferno: '', kindle: '' }
 
 // Production placement race guard (added 2026-05-19 after the 5/18 double-fill).
 // The safeRunAllScans watchdog at MAX_SCAN_DURATION_MS clears _running but does
@@ -1016,7 +1030,7 @@ async function monitorSinglePosition(
           // close and let the next cycle's pending-close re-poll capture
           // the fill normally.
           let cancelOk = true
-          if (bot.name === PRODUCTION_BOT && pos.sandbox_close_order_id) {
+          if (isProductionBot(bot.name) && pos.sandbox_close_order_id) {
             try {
               const pi = JSON.parse(pos.sandbox_close_order_id)
               const accountType2 = pos.account_type || 'sandbox'
@@ -1100,7 +1114,7 @@ async function monitorSinglePosition(
   // If sandbox_close_order_id is set but status is still 'open', a previous close
   // fired on Tradier but the fill price wasn't available. Re-poll for the fill
   // and complete the paper close once we have it.
-  if (bot.name === PRODUCTION_BOT && pos.sandbox_close_order_id) {
+  if (isProductionBot(bot.name) && pos.sandbox_close_order_id) {
     let pendingInfo: Record<string, any> = {}
     try { pendingInfo = JSON.parse(pos.sandbox_close_order_id) } catch { /* ignore */ }
 
@@ -2075,7 +2089,7 @@ async function closePosition(
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
   // SPARK + INFERNO: paper-only, no Tradier positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  const isProductionBotClose = bot.name === PRODUCTION_BOT
+  const isProductionBotClose = isProductionBot(bot.name)
 
   // Only FLAME has real Tradier positions (sandbox OR production). SPARK/INFERNO are paper-only.
   const shouldCloseSandbox = isProductionBotClose
@@ -2752,7 +2766,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
       // FLAME: check if production still needs to trade before returning
-      if (bot.name === PRODUCTION_BOT) {
+      if (isProductionBot(bot.name)) {
         let prodNeedsToTrade = false
         try {
           const prodDayCheck = await query(
@@ -2924,7 +2938,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // Production gating (PDT) is handled INSIDE this block — never blocks sandbox.
   // SPARK/INFERNO are paper-only (no sandbox orders, use estimated credit).
   const PRODUCTION_PRIMARY_ACCOUNT = 'User' // Primary fill account for FLAME
-  const isProductionFillOnly = bot.name === PRODUCTION_BOT
+  const isProductionFillOnly = isProductionBot(bot.name)
 
   let sandboxOrderIds: Record<string, SandboxOrderInfo> = {}
   let effectiveCredit = credits.totalCredit
@@ -2956,7 +2970,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       const pdtCfg = pdtConfigRows[0]
       // PDT is structurally disabled for the production bot regardless of the
       // DB row: this entire block only executes inside the `isProductionFillOnly`
-      // (bot.name === PRODUCTION_BOT) guard above, and SPARK's production
+      // (isProductionBot(bot.name)) guard above, and SPARK's production
       // account is over $25K and therefore exempt from FINRA Rule 4210. We
       // still read pdtCfg above so pdt_log writes downstream continue to work
       // for audit purposes, but the gate is a no-op.
@@ -5054,7 +5068,7 @@ async function scanBot(bot: BotDef): Promise<void> {
 
     // Production broker reconciliation — detect when production Tradier positions
     // are closed at the broker but DB still shows them as open (FLAME only)
-    if (bot.name === PRODUCTION_BOT) {
+    if (isProductionBot(bot.name)) {
       await reconcileProductionBrokerPositions(bot)
     }
 
@@ -5152,7 +5166,7 @@ async function scanBot(bot: BotDef): Promise<void> {
     // after EOD cutoff, not just when a position was just closed.
     // This catches stranded Tradier positions when the sandbox close fails
     // during the EOD close (e.g., orders rejected near market close).
-    if (bot.name === PRODUCTION_BOT && isAfterEodCutoff(ct, bot)) {
+    if (isProductionBot(bot.name) && isAfterEodCutoff(ct, bot)) {
       try {
         await postEodSandboxVerify(ct)
       } catch (err: unknown) {
@@ -5178,7 +5192,7 @@ async function scanBot(bot: BotDef): Promise<void> {
       // FLAME is excluded: its production-only mode (inside tryOpenTrade) handles
       // the case where sandbox traded but production hasn't.
       let tradedTodayCount = 0
-      if (maxTrades > 0 && bot.name !== PRODUCTION_BOT) {
+      if (maxTrades > 0 && !isProductionBot(bot.name)) {
         try {
           const todayPosRows = await query(
             `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
@@ -5190,7 +5204,7 @@ async function scanBot(bot: BotDef): Promise<void> {
         } catch { /* non-fatal — tryOpenTrade has its own guard */ }
       }
       const canOpenMore = (maxTrades === 0) ||
-        (bot.name === PRODUCTION_BOT && maxTrades === 1 && !hasOpenPosition) ||
+        (isProductionBot(bot.name) && maxTrades === 1 && !hasOpenPosition) ||
         (maxTrades > 0 && tradedTodayCount < maxTrades && !hasOpenPosition)
 
       if (canOpenMore) {
