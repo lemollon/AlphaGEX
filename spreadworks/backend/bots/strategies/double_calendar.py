@@ -22,13 +22,14 @@ MAX_VIX = 30.0
 #
 # Historical levels:
 #   1.0 — original strict gate (rejected ~every flat-IV day on SPY).
-#   0.3 — relaxed gate (still requires positive contango).
-#  -10  — demo / paper-only: lets the bots trade in any realistic regime
-#         including current backwardation. Trades will be edge-negative
-#         when the front month is richer than the back; that's the cost
-#         of "always trade" mode. Raise back to 0.3 (or higher) for
-#         production-style regime gating.
-MIN_VEGA_EDGE = -10.0
+#   0.3 — production gate (CURRENT): requires positive contango (back IV > front
+#         IV) so TIDE only opens when the calendar actually has a vega edge. A
+#         calendar is a vol-term-structure trade — buying the back richer than
+#         the front is edge-NEGATIVE, so the old "always trade" -10 default
+#         knowingly took losing trades in backwardation. Restored to 0.3 on
+#         2026-06-24 ("fix TIDE"); pending a real-fill backtest to refine.
+#  -10  — demo / paper-only "always trade" mode (edge-negative in backwardation).
+MIN_VEGA_EDGE = 0.3
 
 
 @dataclass
