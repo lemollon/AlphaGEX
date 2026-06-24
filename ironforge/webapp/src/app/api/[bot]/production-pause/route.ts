@@ -18,7 +18,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { dbExecute, validateBot } from '@/lib/db'
-import { PRODUCTION_BOT, getProductionPauseState } from '@/lib/tradier'
+import { PRODUCTION_BOT, isProductionBot, getProductionPauseState } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,7 +29,7 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  if (bot !== PRODUCTION_BOT) {
+  if (!isProductionBot(bot)) {
     return NextResponse.json({
       bot_name: bot.toUpperCase(),
       paused: false,
@@ -37,7 +37,7 @@ export async function GET(
       paused_by: null,
       paused_reason: null,
       updated_at: null,
-      note: `Production pause only applies to ${PRODUCTION_BOT.toUpperCase()} (the live-trading bot).`,
+      note: `Production pause only applies to live-trading bots (${PRODUCTION_BOT.toUpperCase()}, KINDLE).`,
     })
   }
 
@@ -57,9 +57,9 @@ export async function POST(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  if (bot !== PRODUCTION_BOT) {
+  if (!isProductionBot(bot)) {
     return NextResponse.json(
-      { error: `Production pause is only configurable for ${PRODUCTION_BOT.toUpperCase()}.` },
+      { error: `Production pause is only configurable for live-trading bots (${PRODUCTION_BOT.toUpperCase()}, KINDLE).` },
       { status: 400 },
     )
   }

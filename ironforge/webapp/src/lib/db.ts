@@ -1013,6 +1013,26 @@ async function ensureTables(): Promise<void> {
       )
     } catch { /* table or column may not be ready yet */ }
 
+    // KINDLE production config: KINDLE has no sandbox config row to copy from
+    // (sandbox uses DEFAULT_CONFIG.kindle), so seed an explicit production row.
+    // KEY: max_contracts=1 (the $500-account risk control — NOT the column default
+    // of 0/unlimited) and spread_width=2 ($2 wings). buying_power_usage_pct=0.85;
+    // with the max_contracts=1 cap this yields exactly ONE $2-wide IC per trade
+    // on the ~$490 account. Without this row loadProductionConfigFor returns null
+    // and every production order size-drops. Idempotent via ON CONFLICT.
+    try {
+      await client.query(
+        `INSERT INTO kindle_config (dte_mode, account_type, sd_multiplier, spread_width, min_credit,
+                                    profit_target_pct, stop_loss_pct, vix_skip, max_contracts,
+                                    max_trades_per_day, buying_power_usage_pct, risk_per_trade_pct,
+                                    min_win_probability, entry_start, entry_end, eod_cutoff_et,
+                                    pdt_max_day_trades, starting_capital)
+         VALUES ('1DTE', 'production', 1.2, 2.0, 0.05, 30.0, 100.0, 32.0, 1,
+                 1, 0.85, 0.15, 0.42, '08:30', '14:00', '14:45', 4, 500.0)
+         ON CONFLICT (dte_mode, account_type) DO NOTHING`,
+      )
+    } catch { /* table or constraint may not be ready yet */ }
+
     // INFERNO: ensure PDT is disabled (0DTE bot, no PDT enforcement)
     try {
       await client.query(
