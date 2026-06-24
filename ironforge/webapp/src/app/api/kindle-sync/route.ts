@@ -66,6 +66,9 @@ export async function POST() {
     `DELETE FROM ${botTable('kindle', 'positions')}
      WHERE COALESCE(account_type,'sandbox') <> 'production'`,
   )
+  // Clear stale equity snapshots (old $10,000-base rows) so the intraday equity
+  // curve rebuilds from the correct ~$490 baseline on the next scan cycle.
+  await dbExecute(`DELETE FROM ${botTable('kindle', 'equity_snapshots')}`)
   // Reset the paper ledger to mirror the live account.
   await dbExecute(
     `UPDATE ${botTable('kindle', 'paper_account')}
