@@ -32,7 +32,9 @@ def test_tide_defaults():
     assert b["back_dte"] == 30
     assert b["defaults"]["strike_mult"] == 1.5
     assert b["defaults"]["pt_pct"] == 0.50
-    assert b["defaults"]["sl_pct"] == 1.0
+    # sl_pct 3.0 = effectively no stop (hold to expiry); backtest showed the
+    # stop only ever loses money (fires intraday, sells recoverable dips).
+    assert b["defaults"]["sl_pct"] == 3.0
     assert b["defaults"]["bp_pct"] == 0.50
     assert b["defaults"]["max_contracts"] == 0
 

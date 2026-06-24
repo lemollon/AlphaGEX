@@ -139,7 +139,10 @@ def build_double_calendar_signal(
     # leg's vega compensates, so ALL the loss came from move days. Widening to
     # ~1.5 flips move days from the loss engine into a profit contributor and
     # cuts the catastrophic tail 2-3x (see TIDE registry strike_mult).
-    strike_mult = float(config.get("strike_mult", 1.0))
+    # Default 1.5 (not 1.0): the config table has no strike_mult column, so the
+    # builder falls back to THIS value in prod — it must carry the backtest-best
+    # placement or the fix wouldn't take effect (DB has no override to apply).
+    strike_mult = float(config.get("strike_mult", 1.5))
     target_call = call_strike_override if call_strike_override is not None else round(spot + strike_mult * implied_move)
     target_put = put_strike_override if put_strike_override is not None else round(spot - strike_mult * implied_move)
 
