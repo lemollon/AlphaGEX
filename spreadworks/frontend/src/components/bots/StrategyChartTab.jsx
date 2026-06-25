@@ -621,22 +621,23 @@ function ChartCard({ d, theme, botId }) {
     }
 
     // ─── "Now" marker ───────────────────────────────────────────────
-    // The dot sits on the spot horizontal line; the label is offset upward
-    // by one label-height so it never lands on top of the cyan spot-price
-    // chip that lives at the same Y.
+    // The dot stays on the curve (spot horizontal line × current-P&L x), but
+    // the label is parked in the empty strip just LEFT of the payoff band near
+    // the top of the chart, with a thin leader line down to the dot. Floating
+    // it next to the dot at spot height (the old behavior) dropped the box
+    // squarely on top of the payoff curve's profit pocket AND the cyan spot
+    // chip — hiding exactly what the chart exists to show.
     let nowMarker = null;
     if (d.spot != null && d.unrealized != null) {
       const cx = xPnl(d.unrealized);
       const cy = yPx(d.spot);
       const labelW = 158;
-      const placeLeft = cx > overlayRight - labelW - 18;
-      const labelX = placeLeft ? cx - labelW - 12 : cx + 12;
-      // Keep the label inside the chart area even when spot pins near the top.
-      const labelCenterY = Math.max(padT + 16, cy - 22);
+      const labelX = Math.max(padL + 4, overlayLeft - labelW - 14);
+      const labelY = padT + 14;
       nowMarker = {
         cx, cy,
         labelX,
-        labelY: labelCenterY,
+        labelY,
         labelW,
         labelText: `Now: ${money(d.unrealized, { signed: true })} (${pctText(d.unrealizedPct, 1)})`,
       };
