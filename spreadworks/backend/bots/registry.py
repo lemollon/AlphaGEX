@@ -211,8 +211,16 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "earnings_exclude_days": 3, "hold_days": 2,
         },
         "defaults": {
+            # bp_pct 0.10 (not 0.05 like UNDERTOW): DELTA is a CREDIT spread, so
+            # max_loss_per = (width - credit) * 100 ~= $2000/contract on a ~4%-
+            # wide SPY spread. At bp_pct 0.05 the budget (0.05*25k=$1250) couldn't
+            # afford even one contract -> floor(1250/2000)=0 -> sizing_below_one,
+            # which silently blocked nearly all DELTA entries (2 trades/14d vs
+            # UNDERTOW's 20; UNDERTOW is a debit spread w/ far smaller max loss).
+            # 0.10 -> $2500 budget clears one contract. Pure execution fix; no
+            # setup/EV gate touched. Mirrored into the live DB config 2026-06-25.
             "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
-            "bp_pct": 0.05, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
+            "bp_pct": 0.10, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
             "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
             "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
             "max_concurrent_positions": 5,
