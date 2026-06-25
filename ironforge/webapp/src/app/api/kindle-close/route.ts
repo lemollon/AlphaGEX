@@ -75,9 +75,25 @@ async function readOpenLegs(key: string, acct: string): Promise<Leg[]> {
   return out
 }
 
-export async function GET(): Promise<Response> {
+export async function GET(req: Request): Promise<Response> {
   const c = creds()
   if (!c) return NextResponse.json({ ok: false, error: 'TRADIER_KINDLE_API_KEY / TRADIER_KINDLE_ACCOUNT_ID not set' }, { status: 400 })
+
+  // ?show=orders -> recent order statuses (diagnose stuck/pending/rejected closes).
+  if (new URL(req.url).searchParams.get('show') === 'orders') {
+    const res = await tradier(`/accounts/${c.acct}/orders`, c.key)
+    let arr = (res.body?.orders as { order?: unknown })?.order
+    if (!arr) arr = []
+    if (!Array.isArray(arr)) arr = [arr]
+    return NextResponse.json({
+      ok: true, account: mask(c.acct), orders: (arr as Array<Record<string, unknown>>).map((o) => ({
+        id: o.id, symbol: o.option_symbol || o.symbol, side: o.side, qty: o.quantity,
+        type: o.type, status: o.status, reason: o.reason_description ?? null,
+        last_fill_price: o.last_fill_price ?? null, create_date: o.create_date,
+      })),
+    })
+  }
+
   const legs = await readOpenLegs(c.key, c.acct)
   return NextResponse.json({
     ok: true,
