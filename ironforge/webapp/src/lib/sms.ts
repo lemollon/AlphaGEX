@@ -29,7 +29,7 @@ export interface VolAlertSmsParams {
   signalKey: string
   direction?: string | null
   reason: 'early-warning' | 'confirmed'
-  headline?: string
+  headline?: string | null
   vix?: number | null
   vix3m?: number | null
 }
