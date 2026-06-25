@@ -114,6 +114,42 @@ function armResetGate(setup: string, direction: string): void {
   _triggerOffSeenByKey.set(gateKey, false)
 }
 
+// Hard EOD settlement cutoff (CT hhmm). If the normal quote-based close can't run
+// because option quotes are unavailable, FORCE-settle the position at intrinsic from
+// the SPY spot once we're past this time on the expiry day — so nothing EVER rides
+// into expiration (auto-exercise/assignment + the ~$10 broker fee + pin risk). The
+// normal close starts at 14:45; this safety net fires from 14:50, leaving 10 min
+// before the 15:00 settlement.
+const EOD_SETTLE_HHMM = 1450
+
+/** SPY spot via the underlying quote — far more reliable than per-option quotes when
+ *  the option feed is stale. Used only by the EOD settlement fallback. */
+async function flareSpot(): Promise<number | null> {
+  try {
+    const q = await getQuote('SPY')
+    if (!q) return null
+    const last = (q as { last?: number }).last
+    if (typeof last === 'number' && last > 0) return last
+    if (q.bid > 0 && q.ask > 0) return (q.bid + q.ask) / 2
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** Intrinsic value (points, long − short) of an open FLARE position at settlement
+ *  spot — what a held-to-expiry spread is actually worth. Single-leg quick-ITM call
+ *  is just max(0, spot − strike). */
+function intrinsicMark(
+  pos: { setup_type: string; direction: 'call' | 'put'; long_strike: number; short_strike: number },
+  spot: number,
+): number {
+  if (pos.setup_type === 'gex_quick_itm') return Math.max(0, spot - pos.long_strike)
+  const li = pos.direction === 'call' ? Math.max(0, spot - pos.long_strike) : Math.max(0, pos.long_strike - spot)
+  const si = pos.direction === 'call' ? Math.max(0, spot - pos.short_strike) : Math.max(0, pos.short_strike - spot)
+  return li - si
+}
+
 export async function runMonitorCycle(): Promise<void> {
   const positions = await getOpenFlarePositions()
   if (!positions.length) return
@@ -124,6 +160,9 @@ export async function runMonitorCycle(): Promise<void> {
   // their live MTM — fed into the per-direction force-close stop below.
   const survivors: { pos: (typeof positions)[number]; markToClose: number; unrealized: number }[] = []
 
+  const ctDate = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
+  const hhmm = ct.getHours() * 100 + ct.getMinutes()
+
   for (const pos of positions) {
     // QUICK-ITM sleeve (single 0DTE long call, setup_type 'gex_quick_itm'): no short
     // leg. Sell SAME-DAY at the configured exit time (default 1:00 PM CT); EOD 14:45
@@ -132,9 +171,24 @@ export async function runMonitorCycle(): Promise<void> {
     if (pos.setup_type === 'gex_quick_itm') {
       let callQ
       try { callQ = await getOptionQuote(pos.long_symbol) } catch { callQ = null }
-      if (!callQ) { _streakByPos[pos.id] = (_streakByPos[pos.id] || 0) + 1; continue }
+      if (!callQ) {
+        _streakByPos[pos.id] = (_streakByPos[pos.id] || 0) + 1
+        // EOD SAFETY: a 0DTE long call must NEVER be left to expire (auto-exercise +
+        // assignment fee/risk). If option quotes are down past the cutoff, settle at
+        // intrinsic from the SPY spot (reliable even when the option feed is stale).
+        if (hhmm >= EOD_SETTLE_HHMM) {
+          const spot = await flareSpot()
+          if (spot != null) {
+            const mark = intrinsicMark(pos, spot)
+            const pnl = (mark - pos.debit) * 100 * pos.contracts
+            await closeFlarePosition(pos.id, { mark_to_close: mark, exit_reason: 'EOD_SETTLE', realized_pnl: pnl })
+            delete _streakByPos[pos.id]
+            await insertSignalActivity({ outcome: 'TRADE', detail: `close gex_quick_itm call EOD_SETTLE (quotes down, intrinsic@${spot.toFixed(2)}) pnl=${pnl.toFixed(2)}` })
+          }
+        }
+        continue
+      }
       _streakByPos[pos.id] = 0
-      const hhmm = ct.getHours() * 100 + ct.getMinutes()
       const sellBid = callQ.bid                                   // sell at bid (worst-case)
       const pnl = (sellBid - pos.debit) * 100 * pos.contracts
       if (hhmm >= DEFAULT_FLARE_CONFIG.quick_itm_exit_hhmm || hhmm >= 1445) {
@@ -162,13 +216,24 @@ export async function runMonitorCycle(): Promise<void> {
     }
     if (longMid == null || shortMid == null) {
       _streakByPos[pos.id] = (_streakByPos[pos.id] || 0) + 1
+      // EOD SAFETY: never let a 1DTE spread expire (assignment + pin risk + the ~$10
+      // broker fee). On/after the expiry day, if quotes are down past the cutoff,
+      // settle at intrinsic from the SPY spot so it always closes before settlement.
+      if (ctDate >= pos.expiration && hhmm >= EOD_SETTLE_HHMM) {
+        const spot = await flareSpot()
+        if (spot != null) {
+          const mark = intrinsicMark(pos, spot)
+          const pnl = (mark - pos.debit) * 100 * pos.contracts
+          await closeFlarePosition(pos.id, { mark_to_close: mark, exit_reason: 'EOD_SETTLE', realized_pnl: pnl })
+          delete _streakByPos[pos.id]
+          await insertSignalActivity({ outcome: 'TRADE', detail: `close ${pos.setup_type} ${pos.direction} EOD_SETTLE (quotes down, intrinsic@${spot.toFixed(2)}) pnl=${pnl.toFixed(2)}` })
+        }
+      }
       continue
     }
     _streakByPos[pos.id] = 0
 
     const markToClose = longMid - shortMid
-    const ctDate = `${ct.getFullYear()}-${String(ct.getMonth() + 1).padStart(2, '0')}-${String(ct.getDate()).padStart(2, '0')}`
-    const hhmm = ct.getHours() * 100 + ct.getMinutes()
     const pnl = (markToClose - pos.debit) * 100 * pos.contracts
 
     // Both FLARE legs are 1DTE HELD TO EXPIRY — no intraday PT/SL. The conviction
