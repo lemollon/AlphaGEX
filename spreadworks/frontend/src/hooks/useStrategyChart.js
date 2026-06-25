@@ -43,26 +43,24 @@ export function useStrategyChart(bot, intervalMs = 15000) {
 
     async function tick() {
       try {
-        // Always fetch positions + candles in parallel.
-        const [posResp, candlesResp] = await Promise.all([
-          botApi.positions(bot),
-          botApi.candles(ticker),
-        ]);
-
+        // Fetch positions first — multi-ticker bots (UNDERTOW / DELTA) carry the
+        // real underlying on the position itself, so the registry ticker may be
+        // the placeholder 'multi'. Resolve the effective ticker before pulling
+        // candles, otherwise we'd request candles for a symbol that has none.
+        const posResp = await botApi.positions(bot);
         const open = (posResp.positions || []).find(p => p.status === 'OPEN')
           ?? (posResp.positions || [])[0]
           ?? null;
+        const effectiveTicker = open?.ticker || ticker;
 
-        // If we have a position, fetch its payoff. Otherwise no curve.
-        let payoff = null;
-        if (open) {
-          try {
-            payoff = await botApi.positionPayoff(bot, open.position_id);
-          } catch (e) {
-            // Payoff failure shouldn't blank the entire tab — keep candles.
-            payoff = null;
-          }
-        }
+        // Candles for the effective ticker + payoff (if a position is on) run
+        // in parallel.
+        const [candlesResp, payoff] = await Promise.all([
+          botApi.candles(effectiveTicker),
+          open
+            ? botApi.positionPayoff(bot, open.position_id).catch(() => null)
+            : Promise.resolve(null),
+        ]);
 
         if (cancelled) return;
         const next = {
@@ -72,7 +70,7 @@ export function useStrategyChart(bot, intervalMs = 15000) {
           payoff,
           candles: candlesResp.candles || [],
           spot: candlesResp.last_price ?? null,
-          ticker,
+          ticker: effectiveTicker,
         };
         stratChartCache.set(bot, next);
         setState(next);

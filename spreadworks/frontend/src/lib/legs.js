@@ -28,6 +28,7 @@ export function parseLegs(legs) {
   // and the body as a single short strike (dedup collapses the doubled body).
   const types = new Set(legs.map(l => l.type));
   if (types.size === 1) {
+    const optType = legs[0].type;
     const longs = legs
       .filter(l => l.side === 'long')
       .map(l => Number(l.strike))
@@ -41,6 +42,22 @@ export function parseLegs(legs) {
         shortCall: body,                   // body (short)
         longCall: longs[longs.length - 1], // upper wing (long)
       };
+    }
+    // Two-leg vertical spread (UNDERTOW debit / DELTA credit): one long + one
+    // short of a single option type. Map each leg to its natural call/put slot
+    // so the chart colors the long strike green and the short strike red; the
+    // opposite-type slots stay null and the Y-axis derives its range from the
+    // defined strikes only.
+    if (longs.length === 1 && shorts.length === 1) {
+      const out = { longPut: null, shortPut: null, shortCall: null, longCall: null };
+      if (optType === 'call') {
+        out.longCall = longs[0];
+        out.shortCall = shorts[0];
+      } else {
+        out.longPut = longs[0];
+        out.shortPut = shorts[0];
+      }
+      return out;
     }
     return null;
   }
