@@ -1471,6 +1471,17 @@ def _scan_pnl_profile(
         T_exp = _tte(expirations["exp"])
         scan_lo = lp - 20
         scan_hi = lc + 20
+    elif strategy == "vertical":
+        # Two-leg vertical spread, single option type. One long strike, one
+        # short strike — direction (bull/bear) and credit/debit are fully
+        # determined by which strike is long vs short plus the entry_cost sign,
+        # so a single intrinsic formula covers all four variants.
+        long_k = strikes["long"]
+        short_k = strikes["short"]
+        is_call = strikes.get("is_call", True)
+        T_exp = _tte(expirations["exp"])
+        scan_lo = min(long_k, short_k) - 20
+        scan_hi = max(long_k, short_k) + 20
     elif strategy == "pin_drift_combo":
         # Butterfly (front-expiry intrinsic) + two 0DTE/1DTE calendars (short
         # front intrinsic + long back BS residual) evaluated at the front expiry.
@@ -1544,6 +1555,22 @@ def _scan_pnl_profile(
                 + max(0, px - lc)     # long call payoff
                 - entry_cost
             ) * 100 * n
+        elif strategy == "vertical":
+            # Vertical spread at expiration: long leg intrinsic minus short leg
+            # intrinsic, less the net entry cost (debit positive / credit
+            # negative, set by the caller via CREDIT_STRATEGIES).
+            if is_call:
+                pnl = (
+                    max(0, px - long_k)    # long call payoff
+                    - max(0, px - short_k)  # short call payoff
+                    - entry_cost
+                ) * 100 * n
+            else:
+                pnl = (
+                    max(0, long_k - px)    # long put payoff
+                    - max(0, short_k - px)  # short put payoff
+                    - entry_cost
+                ) * 100 * n
         elif strategy == "pin_drift_combo":
             # Long butterfly (single type, front expiry intrinsic)
             if is_call:

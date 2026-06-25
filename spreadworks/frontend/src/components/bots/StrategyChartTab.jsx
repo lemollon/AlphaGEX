@@ -12,9 +12,19 @@ const STRATEGY_CODE = {
   iron_condor: 'IC',
   double_diagonal_credit: 'CDD',
   long_butterfly: 'LB',
+  bull_call_spread: 'BCS',
+  bear_call_spread: 'BrCS',
+  bull_put_spread: 'BPS',
+  bear_put_spread: 'BrPS',
 };
 
-const CREDIT_STRATEGIES = new Set(['iron_butterfly', 'iron_condor']);
+// Mirror of backend bots.strategies.CREDIT_STRATEGIES — strategies that collect
+// a net credit at entry (entry_price = credit received). Drives the credit vs
+// debit label/sign in the summary strip + economics row.
+const CREDIT_STRATEGIES = new Set([
+  'iron_butterfly', 'iron_condor', 'double_diagonal_credit',
+  'bull_put_spread', 'bear_call_spread',
+]);
 
 /* ─── Formatting helpers ─────────────────────────────────────────── */
 
@@ -436,11 +446,17 @@ function ChartCard({ d, theme, botId }) {
     const candleAreaW = candleEndX - padL;
 
     // ─── Y axis (price) — covers strikes + candle hi/lo ─────────────
-    const strikes = [d.legs.longPut, d.legs.shortPut, d.legs.shortCall, d.legs.longCall];
+    // Verticals only populate two of the four geometry slots, so derive the
+    // range from whichever strikes are defined rather than assuming longPut /
+    // longCall (the IC/IB outer wings) are always present.
+    const definedStrikes = [d.legs.longPut, d.legs.shortPut, d.legs.shortCall, d.legs.longCall]
+      .filter(v => v != null);
     const candleLows = candles.map(c => Number(c.low ?? c.l ?? 0)).filter(v => v > 0);
     const candleHighs = candles.map(c => Number(c.high ?? c.h ?? 0)).filter(v => v > 0);
-    const lo = Math.min(d.legs.longPut - 6, ...candleLows);
-    const hi = Math.max(d.legs.longCall + 6, ...candleHighs);
+    const minStrike = Math.min(...definedStrikes);
+    const maxStrike = Math.max(...definedStrikes);
+    const lo = Math.min(minStrike - 6, ...candleLows);
+    const hi = Math.max(maxStrike + 6, ...candleHighs);
     const yMin = Math.floor(lo / 5) * 5;
     const yMax = Math.ceil(hi / 5) * 5;
     const yPx = price => padT + (1 - (price - yMin) / (yMax - yMin)) * chartH;

@@ -30,6 +30,39 @@ assert.deepEqual(parseLegs(breezeIB),
   { longPut: 495, shortPut: 500, shortCall: 500, longCall: 505 },
   'IB geometry unchanged');
 
+// UNDERTOW bull call spread (debit): long lower call + short upper call.
+const undertowBCS = [
+  { side: 'long',  type: 'call', strike: 550 },
+  { side: 'short', type: 'call', strike: 570 },
+];
+assert.deepEqual(parseLegs(undertowBCS),
+  { longPut: null, shortPut: null, shortCall: 570, longCall: 550 },
+  'bull call spread maps onto call slots');
+
+// DELTA bull put spread (credit): short upper put + long lower put.
+const deltaBPS = [
+  { side: 'long',  type: 'put', strike: 485 },
+  { side: 'short', type: 'put', strike: 505 },
+];
+assert.deepEqual(parseLegs(deltaBPS),
+  { longPut: 485, shortPut: 505, shortCall: null, longCall: null },
+  'bull put spread maps onto put slots');
+
+// Bear call spread (credit): short lower call + long upper call.
+const bearCall = [
+  { side: 'short', type: 'call', strike: 550 },
+  { side: 'long',  type: 'call', strike: 570 },
+];
+assert.deepEqual(parseLegs(bearCall),
+  { longPut: null, shortPut: null, shortCall: 550, longCall: 570 },
+  'bear call spread maps onto call slots');
+
+// Verticals normalize to their two true legs.
+assert.deepEqual(normalizeLegs(undertowBCS), [
+  { side: 'long',  type: 'call', strike: 550, qty: 1 },
+  { side: 'short', type: 'call', strike: 570, qty: 1 },
+], 'bull call spread normalized');
+
 // Degenerate input returns null.
 assert.equal(parseLegs([]), null);
 assert.equal(parseLegs(null), null);

@@ -502,6 +502,24 @@ def get_position_payoff(bot: str, position_id: str):
             {"exp": short_call["expiration"]},
             r, sigma, entry_cost, n,
         )
+    elif strategy in ("bull_call_spread", "bear_call_spread",
+                      "bull_put_spread", "bear_put_spread"):
+        # Two-leg vertical spread (UNDERTOW debit / DELTA credit). Single option
+        # type, one long + one short strike — resolve long/short by side rather
+        # than by strike so all four directional variants route through the same
+        # intrinsic model.
+        long_leg = next(lg for lg in legs if lg.get("side") == "long")
+        short_leg = next(lg for lg in legs if lg.get("side") == "short")
+        is_call = legs[0].get("type") == "call"
+        long_k = float(long_leg["strike"])
+        short_k = float(short_leg["strike"])
+        S = (long_k + short_k) / 2
+        profile = _scan_pnl_profile(
+            "vertical", S,
+            {"long": long_k, "short": short_k, "is_call": is_call},
+            {"exp": long_leg["expiration"]},
+            r, sigma, entry_cost, n,
+        )
     elif strategy == "pin_drift_combo":
         # Legs are stored in build order (see PinDriftComboSignal.legs()):
         #   0 fly lower, 1-2 fly body (x2), 3 fly upper,
