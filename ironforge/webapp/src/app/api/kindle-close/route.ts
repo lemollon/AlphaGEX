@@ -48,6 +48,17 @@ interface Leg {
   quantity: number               // signed: + long, − short
   cost_basis: number
   side: 'buy_to_close' | 'sell_to_close'
+  exp: string                    // YYYY-MM-DD
+  cp: 'C' | 'P'
+}
+
+/** Parse an OCC symbol's trailing YYMMDD+C/P+strike(8). underlying = the rest. */
+function parseOcc(sym: string): { underlying: string; exp: string; cp: 'C' | 'P' } {
+  const opt = sym.slice(-15)
+  const underlying = sym.slice(0, sym.length - 15) || 'SPY'
+  const exp = `20${opt.slice(0, 2)}-${opt.slice(2, 4)}-${opt.slice(4, 6)}`
+  const cp = (opt[6] === 'P' ? 'P' : 'C') as 'C' | 'P'
+  return { underlying, exp, cp }
 }
 
 /** Read the live OPTION legs (qty ≠ 0) on the KINDLE account. Equities skipped. */
@@ -64,15 +75,31 @@ async function readOpenLegs(key: string, acct: string): Promise<Leg[]> {
     const qty = Number(p.quantity) || 0
     if (qty === 0) continue
     if (sym.length < 15) continue          // OCC option symbols are ≥15 chars; skip equities
+    const { underlying, exp, cp } = parseOcc(sym)
     out.push({
       option_symbol: sym,
-      underlying: sym.replace(/\d.*$/, '') || 'SPY',
+      underlying,
       quantity: qty,
       cost_basis: Number(p.cost_basis) || 0,
       side: qty > 0 ? 'sell_to_close' : 'buy_to_close',
+      exp,
+      cp,
     })
   }
   return out
+}
+
+/** Group legs into spreads by (expiration, call/put) — each pair is a vertical that
+ *  must be closed as ONE multileg order so the margin nets (avoids the BP wall on a
+ *  tight account: leg-by-leg buy_to_close needs cash the spread collateral is holding). */
+function groupSpreads(legs: Leg[]): { key: string; legs: Leg[] }[] {
+  const m = new Map<string, Leg[]>()
+  for (const l of legs) {
+    const k = `${l.exp}_${l.cp}`
+    if (!m.has(k)) m.set(k, [])
+    m.get(k)!.push(l)
+  }
+  return Array.from(m.entries()).map(([key, ls]) => ({ key, legs: ls }))
 }
 
 export async function GET(req: Request): Promise<Response> {
@@ -95,19 +122,19 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const legs = await readOpenLegs(c.key, c.acct)
+  const spreads = groupSpreads(legs)
   return NextResponse.json({
     ok: true,
     preview: true,
     account: mask(c.acct),
     open_legs: legs.length,
-    legs: legs.map((l) => ({
-      option_symbol: l.option_symbol,
-      quantity: l.quantity,
-      cost_basis: l.cost_basis,
-      close_order: `${l.side} ${Math.abs(l.quantity)} @ market`,
+    close_orders: spreads.map((s) => ({
+      spread: s.key,
+      type: s.legs.length === 2 ? 'multileg (2-leg vertical)' : `single x${s.legs.length}`,
+      legs: s.legs.map((l) => `${l.side} ${Math.abs(l.quantity)} ${l.option_symbol}`),
     })),
     note: legs.length
-      ? 'POST /api/kindle-close?confirm=YES to place these market close orders (market hours only).'
+      ? 'POST /api/kindle-close?confirm=YES — closes each vertical as ONE multileg market order (margin nets; no BP wall). Market hours only.'
       : 'No open option legs on the KINDLE account.',
   })
 }
@@ -122,25 +149,33 @@ export async function POST(req: Request): Promise<Response> {
   if (!legs.length) return NextResponse.json({ ok: true, executed: true, orders_placed: 0, note: 'No open option legs to close.' })
 
   const results: Array<Record<string, unknown>> = []
-  for (const l of legs) {
-    const params = new URLSearchParams({
-      class: 'option',
-      symbol: l.underlying,
-      option_symbol: l.option_symbol,
-      side: l.side,
-      quantity: String(Math.abs(l.quantity)),
-      type: 'market',
-      duration: 'day',
-    })
+  for (const sp of groupSpreads(legs)) {
+    const params = new URLSearchParams({ symbol: sp.legs[0].underlying, type: 'market', duration: 'day' })
+    if (sp.legs.length === 2) {
+      // Vertical: ONE multileg order — Tradier nets the margin so a tight account can close it.
+      params.set('class', 'multileg')
+      sp.legs.forEach((l, i) => {
+        params.append(`option_symbol[${i}]`, l.option_symbol)
+        params.append(`side[${i}]`, l.side)
+        params.append(`quantity[${i}]`, String(Math.abs(l.quantity)))
+      })
+    } else {
+      // Unexpected (unpaired) — fall back to a single-leg order for the first leg.
+      const l = sp.legs[0]
+      params.set('class', 'option')
+      params.set('option_symbol', l.option_symbol)
+      params.set('side', l.side)
+      params.set('quantity', String(Math.abs(l.quantity)))
+    }
     const r = await tradier(`/accounts/${c.acct}/orders`, c.key, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: params.toString(),
     })
     results.push({
-      option_symbol: l.option_symbol,
-      side: l.side,
-      quantity: Math.abs(l.quantity),
+      spread: sp.key,
+      class: sp.legs.length === 2 ? 'multileg' : 'option',
+      legs: sp.legs.map((l) => `${l.side} ${Math.abs(l.quantity)} ${l.option_symbol}`),
       order_id: r.body?.order?.id ?? null,
       order_status: r.body?.order?.status ?? null,
       error: r.body?.errors?.error ?? (r.ok ? null : `HTTP ${r.status}`),
@@ -150,7 +185,7 @@ export async function POST(req: Request): Promise<Response> {
     ok: true,
     executed: true,
     account: mask(c.acct),
-    legs: legs.length,
+    spreads: results.length,
     orders_placed: results.filter((r) => r.order_id).length,
     results,
   })
