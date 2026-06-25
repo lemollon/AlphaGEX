@@ -2360,9 +2360,22 @@ export async function closeIcOrderAllAccounts(
 
   // Filter accounts by type: sandbox closes only go to sandbox, production only to production.
   // Without this filter, closing a sandbox position cascades to production (and vice versa).
-  const accounts = accountType
+  let accounts = accountType
     ? _sandboxAccounts.filter(a => (a.type ?? 'sandbox') === accountType)
     : _sandboxAccounts
+
+  // KINDLE's production account lives in TRADIER_KINDLE_* env (NOT ironforge_accounts),
+  // so the DB-loaded list above can't include it — production CLOSES would fail and
+  // leave orphans at 6YB70795 that expire → Tradier assignment fees. Inject it for
+  // production closes (detected via the KINDLE position-id tag). Mirrors the inject
+  // in placeIcOrderAllAccounts so OPEN and CLOSE both reach the live account.
+  if (accountType === 'production' && (tag ?? '').toUpperCase().includes('KINDLE')) {
+    const kKey = process.env.TRADIER_KINDLE_API_KEY
+    const kAcct = process.env.TRADIER_KINDLE_ACCOUNT_ID
+    if (kKey && kAcct && !accounts.some(a => a.type === 'production' && a.name === 'Kindle')) {
+      accounts = [...accounts, { name: 'Kindle', apiKey: kKey, baseUrl: PRODUCTION_URL, type: 'production' }]
+    }
+  }
 
   await Promise.all(
     accounts.map(async (acct) => {
