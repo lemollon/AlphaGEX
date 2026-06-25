@@ -69,6 +69,7 @@ import {
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
+import { sendVolAlertSms } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
 
 /* ------------------------------------------------------------------ */
@@ -5811,6 +5812,16 @@ async function checkVolAlerts(): Promise<void> {
           proximity: typeof sig.proximity === 'number' ? sig.proximity : null,
         })
         console.log(`[scanner] vol-alert EMAIL ${t.signalKey} ${t.to}: ${res.sent ? 'sent' : res.skipped ? 'skipped (email unconfigured)' : 'error: ' + res.error}`)
+        // Also push to the operator's phone via SMS (Twilio). No-op if unconfigured.
+        const smsRes = await sendVolAlertSms({
+          signalKey: t.signalKey,
+          direction: t.direction,
+          reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
+          headline,
+          vix,
+          vix3m,
+        })
+        console.log(`[scanner] vol-alert SMS ${t.signalKey} ${t.to}: ${smsRes.sent ? 'sent' : smsRes.skipped ? 'skipped (sms unconfigured)' : 'error: ' + smsRes.error}`)
       }
     } catch (e) {
       console.warn(`[scanner] vol-ladder/notify failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
