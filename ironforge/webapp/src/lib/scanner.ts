@@ -172,6 +172,7 @@ interface BotConfig {
   eod_cutoff_hhmm_ct: number  // EOD force-close cutoff in CT HHMM. Loaded from the `eod_cutoff_et` config column, which is now interpreted as CENTRAL time (the legacy `_et` suffix is a misnomer — all IronForge times are CT). Default 1445 = 2:45 PM CT.
   trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
   wing_width: number  // IC spread width in $ (long strike = short ± wing_width). Default 5; KINDLE uses 2 to fit a tiny account. Used by calculateStrikes for the IC path.
+  min_credit_pct_width: number  // Min entry credit as a FRACTION of wing width (0 = OFF). A small account's absolute min_credit floor ($0.05) lets through thin-credit days whose risk/reward (10-19:1) is structurally -EV; this gate skips them. KINDLE uses 0.09. Code-controlled (no DB override), like the min_credit floor.
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
@@ -184,15 +185,23 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
   // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
   // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
   // matches SPARK. The 15%-BP cap is SPARK-only; KINDLE's 1-contract ceiling is the
   // risk control instead.
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2 },
+  // min_credit_pct_width 0.09 (2026-06-26): the $0.05 absolute floor let KINDLE
+  // trade thin-credit days (its first 3 real trades were 5%/8%/8.5% of width,
+  // ~11-19:1 risk/reward → structurally -EV). Warehouse backtest (2020-26, $490,
+  // 1 contract, settle-at-expiry, worst-case fills): a 9%-of-width gate lifts EV
+  // from +$2.16 → +$10.38/ct, turns every negative year (2023,2024) positive, and
+  // never ruins the $490 account at any commission. The gate — not the wing width
+  // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
+  // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09 },
 }
 
 /** DB column → config key mapping (with optional transform) */
@@ -2924,6 +2933,17 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   if (!credits || credits.totalCredit < botCfg.min_credit) {
     return `skip:credit_too_low($${credits?.totalCredit?.toFixed(4) ?? '0'} at sd=${usedSd.toFixed(1)})`
+  }
+
+  // Credit-as-%-of-width gate (KINDLE). The absolute min_credit floor doesn't
+  // account for wing width, so on a narrow-wing tiny account it lets through
+  // thin-credit days whose risk/reward is structurally -EV. Skip when the credit
+  // is below min_credit_pct_width × wing. Default 0 = OFF (SPARK/FLAME/INFERNO
+  // unchanged). See DEFAULT_CONFIG.kindle for the backtest justification.
+  const gateWidth = cfg(bot).wing_width
+  if (botCfg.min_credit_pct_width > 0 && gateWidth > 0 &&
+      credits.totalCredit < botCfg.min_credit_pct_width * gateWidth) {
+    return `skip:credit_pct_too_low($${credits.totalCredit.toFixed(4)} < ${(botCfg.min_credit_pct_width * 100).toFixed(0)}% of $${gateWidth} width)`
   }
 
   // Sizing — BP% for all bots. Trade quality filtered by min_credit in config.
