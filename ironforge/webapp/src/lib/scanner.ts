@@ -2256,23 +2256,30 @@ async function closePosition(
     )
     return // Exit without closing paper — next cycle will re-poll
   } else if (isProductionBotClose) {
-    // Sandbox close failed entirely (no order_id). Log critical error.
-    // Still close paper to prevent stranded positions, but mark the reason.
+    // Broker close failed ENTIRELY (no order_id). PREVIOUSLY this fell through and
+    // booked the paper close at an estimated price — but the REAL Tradier IC stayed
+    // OPEN, creating an ORPHAN with a wrong P&L (KINDLE 2026-06-25: "paper closed but
+    // Tradier may be open" → assignment-fee/pin risk → auto-pause). FIX: do NOT book
+    // the paper close. Leave the position OPEN and DEFER — the next monitor cycle
+    // re-fires the close (still past the EOD cutoff), so a transient broker failure
+    // self-heals; a persistent one keeps the paper/broker CONSISTENT (both open) and
+    // trips the existing orphan/pause path instead of silently orphaning. Mirrors the
+    // order-placed-but-no-fill defer above.
     console.error(
-      `[scanner] *** ${bot.name.toUpperCase()} CLOSE: NO SANDBOX ORDER *** Position ${positionId} — ` +
-      `Tradier close failed. Closing paper with estimated $${estimatedPrice.toFixed(4)}. ` +
-      `Check sandbox for orphaned positions.`,
+      `[scanner] *** ${bot.name.toUpperCase()} CLOSE: NO BROKER ORDER *** Position ${positionId} — ` +
+      `Tradier close failed. NOT booking the paper close; will retry next cycle.`,
     )
     await query(
       `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
       [
         'CRITICAL',
-        `SANDBOX CLOSE FAILED: ${positionId} — paper closed at estimated price, Tradier may have orphans`,
+        `BROKER CLOSE FAILED: ${positionId} — paper NOT closed (kept open, retrying next cycle to avoid orphan)`,
         JSON.stringify({ position_id: positionId, reason, sandbox_close_info: sandboxCloseInfo }),
         bot.dte,
       ],
     )
+    return // do NOT book the paper close — keep position open, retry broker close next cycle
   }
 
   const pnlPerContract = (entryCredit - effectivePrice) * 100
