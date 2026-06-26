@@ -18,9 +18,27 @@
  * Map a position's legs onto the chart geometry slots.
  * Returns { longPut, shortPut, shortCall, longCall } (numbers) or null when the
  * legs can't be interpreted.
+ *
+ * `strategy` is optional — only SURGE (pin_drift_combo) needs it, because its
+ * 8-leg combo can't be inferred from leg shape alone (the calendar legs collide
+ * with the butterfly in the 4-slot put/call topology below).
  */
-export function parseLegs(legs) {
+export function parseLegs(legs, strategy) {
   if (!Array.isArray(legs) || legs.length === 0) return null;
+
+  // SURGE / pin_drift_combo: butterfly (front) + a call calendar + a put
+  // calendar. The calendars share strikes/types with the butterfly side, so
+  // the generic topology below clobbers slots and draws nonsense. Map only the
+  // butterfly CORE — long wings + short body — onto the geometry. The calendar
+  // strikes are surfaced separately (see legGroups / extraStrikes) and by the
+  // payoff curve, so the chart stays readable. Legs are in build order (see
+  // PinDriftComboSignal.legs()): 0 lower wing, 1-2 body (x2), 3 upper wing.
+  if (strategy === 'pin_drift_combo' && legs.length >= 4) {
+    const lower = Number(legs[0].strike);
+    const body = Number(legs[1].strike);
+    const upper = Number(legs[3].strike);
+    return { longPut: lower, shortPut: body, shortCall: body, longCall: upper };
+  }
 
   // Single-type butterfly (RIVER): every leg shares one option type, with
   // long wings + a short body (sold twice). Map wings -> long slots and the
@@ -90,4 +108,44 @@ export function normalizeLegs(legs) {
     else map.set(key, { side: lg.side, type: lg.type, strike, qty: 1 });
   }
   return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
+}
+
+/** Keep a single raw leg's display fields (incl. expiration, which
+ *  normalizeLegs drops — calendars need it to distinguish front vs back). */
+function rawLeg(lg) {
+  return {
+    side: lg.side,
+    type: lg.type,
+    strike: Number(lg.strike),
+    qty: 1,
+    expiration: lg.expiration ?? null,
+  };
+}
+
+/**
+ * Split a position's legs into labeled sub-structures for display.
+ *
+ * Most strategies are a single structure, so this returns one unlabeled group.
+ * SURGE (pin_drift_combo) is a butterfly PLUS two calendars — without grouping
+ * you can't tell which strike belongs to which leg-set. Legs are in build order
+ * (PinDriftComboSignal.legs()):
+ *   0 fly lower, 1-2 fly body (x2), 3 fly upper,
+ *   4 call-cal front short, 5 call-cal back long,
+ *   6 put-cal  front short, 7 put-cal  back long.
+ *
+ * Returns [{ label, note, legs: [{ side, type, strike, qty, expiration }] }].
+ */
+export function legGroups(legs, strategy) {
+  if (!Array.isArray(legs) || legs.length === 0) return [];
+
+  if (strategy === 'pin_drift_combo' && legs.length >= 8) {
+    return [
+      { label: 'Butterfly', note: 'pin', legs: normalizeLegs(legs.slice(0, 4)) },
+      { label: 'Call calendar', note: 'drift up', legs: legs.slice(4, 6).map(rawLeg) },
+      { label: 'Put calendar', note: 'drift down', legs: legs.slice(6, 8).map(rawLeg) },
+    ];
+  }
+
+  // Single-structure strategies: one group of the true distinct legs.
+  return [{ label: null, note: null, legs: normalizeLegs(legs) }];
 }

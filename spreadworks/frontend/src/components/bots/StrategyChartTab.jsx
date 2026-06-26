@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useStrategyChart } from '../../hooks/useStrategyChart';
 import { BOT_THEME, BOT_REGISTRY, STRATEGY_LABEL } from '../../lib/botRegistry';
-import { parseLegs, normalizeLegs } from '../../lib/legs';
+import { parseLegs, normalizeLegs, legGroups } from '../../lib/legs';
 
 /* ─── Strategy code mapping (matches the spec) ──────────────────── */
 
@@ -11,6 +11,7 @@ const STRATEGY_CODE = {
   double_diagonal: 'DD',
   iron_condor: 'IC',
   double_diagonal_credit: 'CDD',
+  pin_drift_combo: 'PDC',
   long_butterfly: 'LB',
   bull_call_spread: 'BCS',
   bear_call_spread: 'BrCS',
@@ -61,14 +62,25 @@ function strikeColor(side) {
 function deriveDisplay({ position, payoff, spot, candles, ticker }) {
   if (!position) return null;
 
-  const legsMap = parseLegs(position.legs);
-  if (!legsMap) return null;
-  // True distinct legs (correct option type + quantity) for the leg chips —
-  // the geometry slot map above can't represent a single-type butterfly's
-  // doubled body, so chips read from this instead.
-  const legsList = normalizeLegs(position.legs);
-
   const strategy = position.strategy;
+  const legsMap = parseLegs(position.legs, strategy);
+  if (!legsMap) return null;
+  // True distinct legs (correct option type + quantity) for the leg chips,
+  // split into labeled sub-structures. For SURGE that's butterfly + two
+  // calendars so you can tell which strike belongs to which; everything else
+  // is a single unlabeled group.
+  const groups = legGroups(position.legs, strategy);
+
+  // SURGE's drift calendars sit at body±drift, inside the butterfly wings. The
+  // 4-slot geometry only carries the fly core, so surface the calendar strikes
+  // separately for the chart to draw + label.
+  const rawLegs = Array.isArray(position.legs) ? position.legs : [];
+  const extraStrikes = strategy === 'pin_drift_combo' && rawLegs.length >= 8
+    ? [
+        { strike: Number(rawLegs[4].strike), label: 'call cal' },
+        { strike: Number(rawLegs[6].strike), label: 'put cal' },
+      ]
+    : [];
   const strategyCode = STRATEGY_CODE[strategy] || strategy.toUpperCase();
   const strategyLabel = STRATEGY_LABEL[strategy] || strategy;
   const isCredit = CREDIT_STRATEGIES.has(strategy);
@@ -117,7 +129,8 @@ function deriveDisplay({ position, payoff, spot, candles, ticker }) {
     exp,
     status: position.status || 'OPEN',
     legs: legsMap,
-    legsList,
+    groups,
+    extraStrikes,
     contracts,
     creditPerContract: isCredit ? entryPerShare : -entryPerShare,
     netCredit,
@@ -207,33 +220,70 @@ function OpenPill() {
   );
 }
 
-function SummaryLegChips({ legsList }) {
-  const items = Array.isArray(legsList) ? legsList : [];
+function LegChip({ l }) {
+  if (l.strike == null) return null;
+  const isLong = l.side === 'long';
+  const color = isLong ? '#34d399' : '#fb7185';
+  const bg    = isLong ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)';
+  const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
+  const qty   = l.qty > 1 ? `${l.qty}×` : '';
+  const letter = l.type === 'call' ? 'C' : 'P';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-      {items.map((l, i) => {
-        if (l.strike == null) return null;
-        const isLong = l.side === 'long';
-        const color = isLong ? '#34d399' : '#fb7185';
-        const bg    = isLong ? 'rgba(52,211,153,0.10)' : 'rgba(251,113,133,0.10)';
-        const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
-        const qty   = l.qty > 1 ? `${l.qty}×` : '';
-        const letter = l.type === 'call' ? 'C' : 'P';
-        return (
-          <span
-            key={i}
-            style={{
-              fontFamily: 'JetBrains Mono',
-              fontSize: 11.5, fontWeight: 600,
-              padding: '4px 10px', borderRadius: 6,
-              background: bg, color,
-              boxShadow: `inset 0 0 0 1px ${ring}`,
-            }}
-          >
-            {qty}{isLong ? '+' : '−'}${l.strike}{letter}
+    <span
+      style={{
+        fontFamily: 'JetBrains Mono',
+        fontSize: 11.5, fontWeight: 600,
+        padding: '4px 10px', borderRadius: 6,
+        background: bg, color,
+        boxShadow: `inset 0 0 0 1px ${ring}`,
+      }}
+    >
+      {qty}{isLong ? '+' : '−'}${l.strike}{letter}
+    </span>
+  );
+}
+
+// Sub-structure label shown above a group of leg chips (SURGE only — single-
+// structure strategies render one unlabeled group, so the tag is suppressed).
+function GroupTag({ label, note }) {
+  if (!label) return null;
+  return (
+    <span
+      style={{
+        fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+        letterSpacing: '0.10em', color: '#7dd3fc',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+      {note && <span style={{ color: '#475569', marginLeft: 4 }}>· {note}</span>}
+    </span>
+  );
+}
+
+function SummaryLegChips({ groups }) {
+  const list = Array.isArray(groups) ? groups : [];
+  // A single, unlabeled group is the common case — render the chips inline,
+  // identical to the old flat layout.
+  if (list.length === 1 && !list[0].label) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        {list[0].legs.map((l, i) => <LegChip key={i} l={l} />)}
+      </div>
+    );
+  }
+  // Combined structures (SURGE): stack labeled rows so each strike is tied to
+  // its sub-strategy.
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {list.map((g, gi) => (
+        <div key={gi} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ display: 'inline-flex', width: 92, flexShrink: 0 }}>
+            <GroupTag label={g.label} note={g.note} />
           </span>
-        );
-      })}
+          {g.legs.map((l, i) => <LegChip key={i} l={l} />)}
+        </div>
+      ))}
     </div>
   );
 }
@@ -289,7 +339,7 @@ function StrategySummaryStrip({ d }) {
       >
         <ZoneLabel>Position</ZoneLabel>
         <div style={{ marginTop: 6 }}>
-          <SummaryLegChips legsList={d.legsList} />
+          <SummaryLegChips groups={d.groups} />
         </div>
         <div
           style={{
@@ -449,7 +499,9 @@ function ChartCard({ d, theme, botId }) {
     // Verticals only populate two of the four geometry slots, so derive the
     // range from whichever strikes are defined rather than assuming longPut /
     // longCall (the IC/IB outer wings) are always present.
-    const definedStrikes = [d.legs.longPut, d.legs.shortPut, d.legs.shortCall, d.legs.longCall]
+    const extraStrikes = (d.extraStrikes || []).filter(e => e.strike != null);
+    const definedStrikes = [d.legs.longPut, d.legs.shortPut, d.legs.shortCall, d.legs.longCall,
+      ...extraStrikes.map(e => e.strike)]
       .filter(v => v != null);
     const candleLows = candles.map(c => Number(c.low ?? c.l ?? 0)).filter(v => v > 0);
     const candleHighs = candles.map(c => Number(c.high ?? c.h ?? 0)).filter(v => v > 0);
@@ -585,6 +637,13 @@ function ChartCard({ d, theme, botId }) {
       .filter(s => s.strike >= yMin && s.strike <= yMax)
       .map(s => ({ ...s, y: yPx(s.strike), color: strikeColor(s.side) }));
 
+    // Extra (calendar) strikes — SURGE's drift legs. Drawn amber + labeled so
+    // they're distinct from the green/red butterfly wings & body.
+    const CAL_COLOR = '#fbbf24';
+    const extraLines = extraStrikes
+      .filter(e => e.strike >= yMin && e.strike <= yMax)
+      .map(e => ({ strike: e.strike, label: e.label, y: yPx(e.strike), color: CAL_COLOR }));
+
     // ─── X-axis time labels (5 evenly spaced across candle area) ────
     const xAxisLabels = [];
     if (candles.length > 0) {
@@ -659,7 +718,7 @@ function ChartCard({ d, theme, botId }) {
       chartH, volTop, volH, xAxisH,
       yPx, xPnl, yMin, yMax,
       candleRects, volBars,
-      strikeLines, yTicks, xAxisLabels,
+      strikeLines, extraLines, yTicks, xAxisLabels,
       fillPaths, linePath,
       nowMarker, spotInfo, beDots,
       maxProfit, maxLoss: maxLossAbs,
@@ -722,6 +781,7 @@ function ChartCard({ d, theme, botId }) {
         <div className="flex items-center gap-3 text-[10px]" style={{ color: '#94a3b8' }}>
           <Legend dot="#34d399" label="Long strike" />
           <Legend dot="#fb7185" label="Short strike" />
+          {L.extraLines.length > 0 && <Legend dot="#fbbf24" label="Drift calendar" />}
           <Legend dot="#fcd34d" label="Breakeven · Now" />
           <Legend dot={t.primary} label="Spot" dashed />
         </div>
@@ -808,6 +868,30 @@ function ChartCard({ d, theme, botId }) {
             >
               ${s.strike}
             </text>
+          </g>
+        ))}
+
+        {/* Calendar (drift) strike lines — amber, labeled, dotted to read as
+            "interior" markers vs the dashed butterfly wings/body. */}
+        {L.extraLines.map((s, i) => (
+          <g key={`x${i}`}>
+            <line
+              x1={L.padL} y1={s.y} x2={L.overlayRight} y2={s.y}
+              stroke={s.color} strokeWidth="1" strokeDasharray="2 4" opacity="0.45"
+            />
+            <g transform={`translate(${L.padL + 4}, ${s.y - 9})`}>
+              <rect
+                width="72" height="18" rx="3"
+                fill="rgba(6,18,31,0.92)" stroke={s.color} strokeWidth="0.8"
+              />
+              <text
+                x="36" y="12.5" textAnchor="middle"
+                fill={s.color} fontSize="9" fontWeight="700"
+                fontFamily="'JetBrains Mono', monospace"
+              >
+                {s.label} ${s.strike}
+              </text>
+            </g>
           </g>
         ))}
 
