@@ -99,15 +99,17 @@ assert.deepEqual(parseLegs(surge, 'pin_drift_combo'),
 const groups = legGroups(surge, 'pin_drift_combo');
 assert.equal(groups.length, 3, 'SURGE has 3 sub-structures');
 assert.deepEqual(groups[0].legs, [
-  { side: 'long',  type: 'call', strike: 500, qty: 1 },
-  { side: 'short', type: 'call', strike: 505, qty: 2 },
-  { side: 'long',  type: 'call', strike: 510, qty: 1 },
-], 'butterfly group = wings + doubled body');
+  { side: 'long',  type: 'call', strike: 500, qty: 1, expiration: '2026-06-26' },
+  { side: 'short', type: 'call', strike: 505, qty: 2, expiration: '2026-06-26' },
+  { side: 'long',  type: 'call', strike: 510, qty: 1, expiration: '2026-06-26' },
+], 'butterfly group = wings + doubled body, all front expiry');
 assert.equal(groups[1].label, 'Call calendar');
-assert.equal(groups[1].legs.length, 2, 'call calendar = front + back');
+assert.equal(groups[1].legs.length, 2, 'call calendar = front + back (not collapsed)');
 assert.equal(groups[1].legs[0].strike, 508);
+assert.equal(groups[1].legs[0].expiration, '2026-06-26', 'call cal front = 0DTE');
+assert.equal(groups[1].legs[1].expiration, '2026-06-29', 'call cal back = 1DTE');
 assert.equal(groups[2].label, 'Put calendar');
-assert.equal(groups[2].legs[1].expiration, '2026-06-29', 'calendar keeps back expiration');
+assert.equal(groups[2].legs[1].expiration, '2026-06-29', 'put cal keeps back expiration');
 
 // Non-combo strategies fall back to a single unlabeled group.
 const single = legGroups(breezeIB, 'iron_butterfly');

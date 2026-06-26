@@ -220,6 +220,13 @@ function OpenPill() {
   );
 }
 
+// "2026-06-26" -> "6/26". String-split (no Date) to avoid TZ drift.
+function fmtExp(exp) {
+  if (!exp) return null;
+  const p = String(exp).split('-');
+  return p.length === 3 ? `${Number(p[1])}/${Number(p[2])}` : String(exp);
+}
+
 function LegChip({ l }) {
   if (l.strike == null) return null;
   const isLong = l.side === 'long';
@@ -228,17 +235,25 @@ function LegChip({ l }) {
   const ring  = isLong ? 'rgba(52,211,153,0.25)' : 'rgba(251,113,133,0.25)';
   const qty   = l.qty > 1 ? `${l.qty}×` : '';
   const letter = l.type === 'call' ? 'C' : 'P';
+  const exp = fmtExp(l.expiration);
   return (
-    <span
-      style={{
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11.5, fontWeight: 600,
-        padding: '4px 10px', borderRadius: 6,
-        background: bg, color,
-        boxShadow: `inset 0 0 0 1px ${ring}`,
-      }}
-    >
-      {qty}{isLong ? '+' : '−'}${l.strike}{letter}
+    <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+      <span
+        style={{
+          fontFamily: 'JetBrains Mono',
+          fontSize: 11.5, fontWeight: 600,
+          padding: '4px 10px', borderRadius: 6,
+          background: bg, color,
+          boxShadow: `inset 0 0 0 1px ${ring}`,
+        }}
+      >
+        {qty}{isLong ? '+' : '−'}${l.strike}{letter}
+      </span>
+      {exp && (
+        <span style={{ fontFamily: 'JetBrains Mono', fontSize: 9, color: '#64748b' }}>
+          {exp}
+        </span>
+      )}
     </span>
   );
 }

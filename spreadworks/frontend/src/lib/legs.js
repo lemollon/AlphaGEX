@@ -110,16 +110,23 @@ export function normalizeLegs(legs) {
   return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
 }
 
-/** Keep a single raw leg's display fields (incl. expiration, which
- *  normalizeLegs drops — calendars need it to distinguish front vs back). */
-function rawLeg(lg) {
-  return {
-    side: lg.side,
-    type: lg.type,
-    strike: Number(lg.strike),
-    qty: 1,
-    expiration: lg.expiration ?? null,
-  };
+/**
+ * Like normalizeLegs, but keyed on expiration too so calendar/diagonal legs
+ * (same side+type+strike, different expiration) stay distinct and each chip can
+ * show its own expiry. The butterfly body (same strike AND expiration, sold
+ * twice) still collapses to qty 2.
+ */
+function collapseLegs(legs) {
+  const map = new Map();
+  for (const lg of legs) {
+    const strike = Number(lg.strike);
+    const exp = lg.expiration ?? null;
+    const key = `${lg.side}-${lg.type}-${strike}-${exp}`;
+    const existing = map.get(key);
+    if (existing) existing.qty += 1;
+    else map.set(key, { side: lg.side, type: lg.type, strike, qty: 1, expiration: exp });
+  }
+  return Array.from(map.values()).sort((a, b) => a.strike - b.strike);
 }
 
 /**
@@ -140,12 +147,13 @@ export function legGroups(legs, strategy) {
 
   if (strategy === 'pin_drift_combo' && legs.length >= 8) {
     return [
-      { label: 'Butterfly', note: 'pin', legs: normalizeLegs(legs.slice(0, 4)) },
-      { label: 'Call calendar', note: 'drift up', legs: legs.slice(4, 6).map(rawLeg) },
-      { label: 'Put calendar', note: 'drift down', legs: legs.slice(6, 8).map(rawLeg) },
+      { label: 'Butterfly', note: 'pin', legs: collapseLegs(legs.slice(0, 4)) },
+      { label: 'Call calendar', note: 'drift up', legs: collapseLegs(legs.slice(4, 6)) },
+      { label: 'Put calendar', note: 'drift down', legs: collapseLegs(legs.slice(6, 8)) },
     ];
   }
 
-  // Single-structure strategies: one group of the true distinct legs.
-  return [{ label: null, note: null, legs: normalizeLegs(legs) }];
+  // Single-structure strategies: one group of the true distinct legs (with
+  // expirations — calendars/diagonals span two expiries).
+  return [{ label: null, note: null, legs: collapseLegs(legs) }];
 }
