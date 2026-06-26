@@ -287,16 +287,16 @@ function SummaryLegChips({ groups }) {
       </div>
     );
   }
-  // Combined structures (SURGE): stack labeled rows so each strike is tied to
-  // its sub-strategy.
+  // Combined structures (SURGE): each sub-strategy gets its label on its own
+  // line ABOVE its chips, so the label/note can't collide with the strikes.
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {list.map((g, gi) => (
-        <div key={gi} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ display: 'inline-flex', width: 92, flexShrink: 0 }}>
-            <GroupTag label={g.label} note={g.note} />
-          </span>
-          {g.legs.map((l, i) => <LegChip key={i} l={l} />)}
+        <div key={gi} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <GroupTag label={g.label} note={g.note} />
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
+            {g.legs.map((l, i) => <LegChip key={i} l={l} />)}
+          </div>
         </div>
       ))}
     </div>
