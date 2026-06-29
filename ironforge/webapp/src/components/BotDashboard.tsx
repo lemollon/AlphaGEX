@@ -306,6 +306,12 @@ export default function BotDashboard({
   useEffect(() => {
     // Only trigger once per page load, and only when we have position data
     if (eodCloseTriggered.current) return
+    // FLARE is a 1DTE hold-to-next-day-expiry bot and manages its own exits
+    // (EXPIRY / EOD_SETTLE / quick-ITM QUICK_EXIT) in scanner.ts. The generic
+    // same-day EOD close (built for the 0DTE Iron Condor bots) would strangle
+    // FLARE's positions the same afternoon they open and book a phantom $0 P&L
+    // (its single-leg verticals have NULL IC strike columns). Never fire it here.
+    if (bot === 'flare') return
     const positions = positionMonitor?.positions
     if (!positions || positions.length === 0) return
 

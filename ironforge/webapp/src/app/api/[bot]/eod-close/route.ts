@@ -23,6 +23,16 @@ export async function POST(
   const dte = dteMode(bot)
   if (!dte) return NextResponse.json({ error: 'Invalid dte' }, { status: 400 })
 
+  // FLARE is a 1DTE two-regime bot that HOLDS to next-day expiry and manages its
+  // own exits (EXPIRY / EOD_SETTLE / quick-ITM QUICK_EXIT) in scanner.ts. This
+  // generic same-day EOD close was built for the 0DTE Iron Condor bots; running
+  // it against FLARE force-closes positions the same afternoon they open and books
+  // a phantom $0 P&L (its single-leg verticals have NULL IC strike columns, so
+  // getIcMarkToMarket returns nothing). Never let it touch FLARE.
+  if (bot === 'flare') {
+    return NextResponse.json({ closed: 0, results: [], message: 'FLARE manages its own EOD/expiry exits' })
+  }
+
   // Optional person filter — if provided, only close positions belonging to this person
   const personParam = req.nextUrl.searchParams.get('person')
   const personFilter = personParam && personParam !== 'all' ? `AND person = $2` : ''
