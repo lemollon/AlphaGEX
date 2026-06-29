@@ -173,6 +173,7 @@ interface BotConfig {
   trailing_retrace_dollars: number  // Trailing-lockin retracement threshold in dollars. Once PT has fired for a position, if cost-to-close climbs this many ¢ above the lowest seen, fire a marketable close. 0 disables the rule.
   wing_width: number  // IC spread width in $ (long strike = short ± wing_width). Default 5; KINDLE uses 2 to fit a tiny account. Used by calculateStrikes for the IC path.
   min_credit_pct_width: number  // Min entry credit as a FRACTION of wing width (0 = OFF). A small account's absolute min_credit floor ($0.05) lets through thin-credit days whose risk/reward (10-19:1) is structurally -EV; this gate skips them. KINDLE uses 0.09. Code-controlled (no DB override), like the min_credit floor.
+  skip_neg_gamma: boolean  // When true, DO NOT trade on confirmed negative-gamma days (net GEX < 0) — skip instead of widening the SD. KINDLE uses true: on a tiny survival-focused account, negative-gamma (trending) days are where ICs breach a wing, and the warehouse backtest ($349.86, $2w/9% gate, 1 contract) showed skipping them beats the widen on every survival axis (WR 90% vs 86%, EV +$10.55 vs +$4.49/ct, maxDD 33% vs 45%). Other bots keep the widen behavior. Code-controlled (no DB override).
 }
 
 /** Hardcoded defaults matching Python BOT_CONFIG */
@@ -185,9 +186,9 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
   // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
   // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0 },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
@@ -201,11 +202,16 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // never ruins the $490 account at any commission. The gate — not the wing width
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09 },
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
 }
 
+/** Numeric-valued config keys only — the DB override path writes numbers, so it
+ *  must never target a non-numeric field (e.g. the boolean skip_neg_gamma, which
+ *  is code-controlled). */
+type NumericConfigKey = { [K in keyof BotConfig]: BotConfig[K] extends number ? K : never }[keyof BotConfig]
+
 /** DB column → config key mapping (with optional transform) */
-const DB_TO_CFG: Record<string, { key: keyof BotConfig; transform?: (v: number) => number }> = {
+const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number) => number }> = {
   sd_multiplier:        { key: 'sd' },
   profit_target_pct:    { key: 'pt_pct', transform: (v) => v / 100 },    // DB stores 30.0 → 0.30
   stop_loss_pct:        { key: 'sl_mult', transform: (v) => v / 100 },   // DB stores 200.0 → 2.0
@@ -2905,6 +2911,16 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // clears even a low floor, so the bot rarely traded. 1.5 collects more from closer
   // strikes; the extra breaches are recovered by the swing. Works because SPARK swings
   // (no hard stop) and sizes small (bp_pct ~0.15).
+  // NEGATIVE-GAMMA POLICY. On confirmed negative-gamma days (net GEX < 0) the tape
+  // trends and an IC is far likelier to breach a wing. KINDLE (skip_neg_gamma) SKIPS
+  // these days entirely — on a tiny survival-focused account the backtest showed
+  // skipping beats widening on every axis (WR 90% vs 86%, EV +$10.55 vs +$4.49/ct,
+  // maxDD 33% vs 45%). Only skip when GEX is CONFIRMED negative; a null (feed down)
+  // is not treated as negative, so a flaky feed doesn't suppress all trading.
+  if (cfg(bot).skip_neg_gamma && spkNetGex !== null && spkNetGex < 0) {
+    return `skip:neg_gamma_env(net_gex=${spkNetGex.toExponential(2)})`
+  }
+  // Other swing bots (SPARK) WIDEN to 1.5 SD on negative-gamma instead of skipping.
   if (isSparkStrategy(bot.name) && spkNetGex !== null && spkNetGex < 0) {
     usedSd = 1.5
   }
