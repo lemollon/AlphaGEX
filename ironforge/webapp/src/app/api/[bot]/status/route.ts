@@ -207,6 +207,11 @@ export async function GET(
     let accountSource: 'tradier' | 'paper_account' = 'paper_account'
     let tradierBalanceFetchError: string | null = null
     let tradierOpenPlOverride: number | null = null
+    // "LIVE ACCOUNT" display cards built from THIS bot's own resolved production
+    // account(s). KINDLE's live account (6YB70795) comes from TRADIER_KINDLE_* env,
+    // NOT the shared ironforge_accounts list — so the generic sandbox_accounts list
+    // would surface SPARK's Iron Viper on the KINDLE page. Populated below.
+    let prodAccountCards: Array<Record<string, unknown>> | null = null
     if (accountTypeParam === 'production' && isProductionBot(bot)) {
       try {
         const prodAccts = await getProductionAccountsForBot(bot)
@@ -215,6 +220,7 @@ export async function GET(
         let tradierOpenPl = 0
         let tradierClosePl = 0
         let haveTradierData = false
+        const cards: Array<Record<string, unknown>> = []
         for (const pa of prodAccts) {
           if (!pa.accountId) continue
           const bal = await getTradierBalanceDetail(pa.apiKey, pa.accountId, pa.baseUrl)
@@ -224,7 +230,19 @@ export async function GET(
           tradierBp += bal.option_buying_power
           tradierOpenPl += bal.open_pl ?? 0
           tradierClosePl += bal.close_pl ?? 0
+          cards.push({
+            name: pa.name,
+            account_id: bal.account_id,
+            total_equity: bal.total_equity,
+            option_buying_power: bal.option_buying_power,
+            day_pnl: bal.close_pl,
+            unrealized_pnl: bal.open_pl,
+            unrealized_pnl_pct: null,
+            open_positions: 0,
+            account_type: 'production',
+          })
         }
+        if (cards.length > 0) prodAccountCards = cards
         if (haveTradierData) {
           balance = Math.round(tradierEquity * 100) / 100
           buyingPower = Math.round(tradierBp * 100) / 100
@@ -277,7 +295,10 @@ export async function GET(
               // Positions — count non-zero legs
               try {
                 const positions = await getSandboxAccountPositions(pa.apiKey, undefined, pa.baseUrl)
-                nonZeroPositions += positions.filter(p => p.quantity !== 0).length
+                const legs = positions.filter(p => p.quantity !== 0).length
+                nonZeroPositions += legs
+                const card = prodAccountCards?.find(c => c.account_id === pa.accountId)
+                if (card) card.open_positions = Math.ceil(legs / 4)
               } catch { /* positions fetch failed — leave at 0 */ }
             }
             totalTrades = filledTotal
@@ -602,7 +623,13 @@ export async function GET(
           ic_return_pct: icReturnPct,
         }
       }),
-      sandbox_accounts: sandboxBalances
+      // KINDLE is production-only and its live account (6YB70795) is NOT in the
+      // shared ironforge_accounts list — so it must NEVER render the generic
+      // sandbox_accounts (which would show SPARK's Iron Viper). Show ONLY its own
+      // resolved production account card (empty in paper view / when paused).
+      sandbox_accounts: bot === 'kindle'
+        ? (prodAccountCards ?? [])
+        : sandboxBalances
         .filter((s) => {
           // Paper-only bots never show broker accounts (SPARK, INFERNO have no Tradier orders)
           if (getAccountsForBot(bot).length === 0) return false

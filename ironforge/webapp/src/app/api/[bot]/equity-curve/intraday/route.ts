@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getLoadedSandboxAccountsAsync, getAccountIdForKey, getTradierBalanceDetail, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getLoadedSandboxAccountsAsync, getAccountIdForKey, getTradierBalanceDetail, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl, getProductionAccountsForBot } from '@/lib/tradier'
 import { isMarketOpen } from '@/lib/pt-tiers'
 
 export const dynamic = 'force-dynamic'
@@ -111,6 +111,34 @@ export async function GET(
               rebaseSource = 'tradier'
             }
           }
+        }
+      } catch { /* fall back to paper basis */ }
+    }
+
+    // KINDLE production rebase: same idea as FLAME, but against KINDLE's OWN live
+    // Tradier account (6YB70795 via TRADIER_KINDLE_* env). The scanner writes
+    // snapshots on the paper basis (~$10K), but the Live view's top card shows the
+    // real broker balance (~$350) — so without this the equity chart's Y-axis says
+    // "$10,000" while the Balance card says "$354". Rebase to the broker's
+    // start-of-day basis so the curve matches the account it's supposedly mirroring.
+    if (bot === 'kindle' && accountTypeParam === 'production') {
+      try {
+        const prodAccts = await getProductionAccountsForBot('kindle')
+        let eq = 0, closePl = 0, openPl = 0, have = false
+        for (const pa of prodAccts) {
+          if (!pa.accountId) continue
+          const bal = await getTradierBalanceDetail(pa.apiKey, pa.accountId, pa.baseUrl)
+          if (!bal || bal.total_equity == null) continue
+          have = true
+          eq += bal.total_equity
+          closePl += bal.close_pl ?? 0
+          openPl += bal.open_pl ?? 0
+        }
+        if (have) {
+          const todayStartingBasis = Math.round((eq - closePl - openPl) * 100) / 100
+          rebaseOffset = Math.round((todayStartingBasis - startingCapital) * 100) / 100
+          startingCapital = todayStartingBasis
+          rebaseSource = 'tradier'
         }
       } catch { /* fall back to paper basis */ }
     }
