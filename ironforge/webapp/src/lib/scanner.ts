@@ -1175,6 +1175,33 @@ async function monitorSinglePosition(
         )
         // Fall through — do NOT return; the EOD/stale close logic below will handle it
       } else {
+        // GUARD (2026-06-29): before any reprice/tier-advance, confirm the broker
+        // still HOLDS this position. If the deferred close order already filled (or
+        // a prior cycle's did), the broker is FLAT — repricing then re-fires a fresh
+        // limit against a closed position, which Tradier rejects every cycle ("more
+        // shares than your current short position") while the DB row stays 'open',
+        // showing phantom unrealized P&L and blocking new trades (KINDLE 2026-06-29).
+        // When flat, force tierAdvance=false AND disarm the slippage guard so control
+        // reaches the re-poll + broker-flat recovery below, which books the real fill
+        // instead of spamming rejected orders.
+        let brokerStillHolds = true
+        try {
+          const holdAccts = await getLoadedSandboxAccountsAsync()
+          const holdAcct = posAccountType === 'production'
+            ? holdAccts.find(a => a.name === posPerson && a.type === 'production')
+            : holdAccts.find(a => a.name === 'User' && a.type === 'sandbox') ?? holdAccts.find(a => a.name === 'User')
+          if (holdAcct) {
+            const hTicker = pos.ticker || 'SPY'
+            const hExp = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
+            const hOccShortPut = buildOccSymbol(hTicker, hExp, num(pos.put_short_strike), 'P')
+            const hBrokerPos = await getSandboxAccountPositions(holdAcct.apiKey, undefined, holdAcct.baseUrl)
+            brokerStillHolds = hBrokerPos.some((p: any) => p.symbol === hOccShortPut && p.quantity !== 0)
+            if (!brokerStillHolds) {
+              console.warn(`[scanner] ${bot.name.toUpperCase()} ${pid}: broker is FLAT with a pending close — skipping reprice; routing to re-poll/recovery to book the close.`)
+            }
+          }
+        } catch { /* assume holds on API error — never strand the position on a transient failure */ }
+
         // ── Commit B: Sliding-PT tier-advance + slippage guard ─────────────
         // Before waiting on the existing limit, check whether the sliding PT
         // has moved on to a more lenient tier since this limit was placed
@@ -1219,6 +1246,10 @@ async function monitorSinglePosition(
             tierAdvance = true
           }
         } catch { /* helper failed — leave tierAdvance=false, fall through to re-poll */ }
+
+        // Broker already flat: never tier-advance (cancel + re-fire would just spam a
+        // rejected order). Force the re-poll + broker-flat recovery path below.
+        if (!brokerStillHolds) tierAdvance = false
 
         if (tierAdvance) {
           const cancelAccts = await getLoadedSandboxAccountsAsync()
@@ -1319,7 +1350,10 @@ async function monitorSinglePosition(
             comboAskNow > existingLimitPrice        // ...but the resting limit is stuck below the ask
           )
 
-          const slippageGuardFired = crossHonorsTarget || (
+          // brokerStillHolds gate: if the broker is already flat, NEVER reprice —
+          // the limit isn't "resting unfilled," the whole position is gone. Fall
+          // through to the re-poll/recovery that books the close.
+          const slippageGuardFired = brokerStillHolds && (crossHonorsTarget || (
             existingLimitPrice != null &&
             currentMin != null &&
             ageMs >= SLIPPAGE_GUARD_MIN_AGE_MS &&
@@ -1327,7 +1361,7 @@ async function monitorSinglePosition(
             mtmForGuard != null &&
             Number.isFinite(mtmForGuard.cost_to_close_mid) &&
             mtmForGuard.cost_to_close_mid > existingLimitPrice
-          )
+          ))
 
           if (slippageGuardFired) {
             // Aggressive-fill ladder (added 2026-05-06 after Logan/production
