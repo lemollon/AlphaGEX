@@ -60,6 +60,7 @@ import {
   getAccountsForBot,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
+  getFullEquityForAccount,
   getPdtEnabledForAccount,
   getSandboxAccountBalances,
   type SandboxOrderInfo,
@@ -249,12 +250,27 @@ async function getStartingCapitalForBot(botName: string): Promise<number> {
       return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
     }
     const primaryPerson = primaryAccounts[0]
-    const allocated = await getAllocatedCapitalForAccount(primaryPerson, 'sandbox')
-    if (allocated > 0) {
-      console.log(
-        `[scanner] ${botName.toUpperCase()} capital from sandbox account (${primaryPerson}): $${allocated.toLocaleString()}`,
-      )
-      return allocated
+    // SPARK (the production bot) paper sizing FOLLOWS the current account
+    // balance: 100% of live sandbox equity, no manual capital_pct scaling.
+    // Its paper BP should mirror what the real account can actually do, not a
+    // hand-set allocation. Other bots keep the capital_pct-scaled allocation.
+    if (botName === PRODUCTION_BOT) {
+      const fullEquity = await getFullEquityForAccount(primaryPerson, 'sandbox')
+      if (fullEquity != null && fullEquity > 0) {
+        console.log(
+          `[scanner] ${botName.toUpperCase()} capital = 100% of live sandbox equity (${primaryPerson}): $${fullEquity.toLocaleString()}`,
+        )
+        return fullEquity
+      }
+      // Tradier unreachable — fall through to configured default below.
+    } else {
+      const allocated = await getAllocatedCapitalForAccount(primaryPerson, 'sandbox')
+      if (allocated > 0) {
+        console.log(
+          `[scanner] ${botName.toUpperCase()} capital from sandbox account (${primaryPerson}): $${allocated.toLocaleString()}`,
+        )
+        return allocated
+      }
     }
   } catch { /* fallback */ }
   return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
