@@ -325,10 +325,17 @@ async function loadConfigOverrides(): Promise<void> {
       }
 
       // Override starting_capital from ironforge_accounts (capital_pct × real balance)
-      // Only for bots with Tradier accounts (FLAME). Paper-only bots (SPARK, INFERNO)
-      // use the starting_capital from their DB config table — not Tradier.
+      // for bots with Tradier accounts.
+      //
+      // SPARK (the production bot) is EXCLUDED: its paper account is a SEPARATE,
+      // self-contained ledger (paper and sandbox are distinct). Its
+      // starting_capital is seeded once from the live balance via
+      // /api/spark/reseed-paper and then evolves ONLY by paper P&L. Continuously
+      // re-syncing it to live Tradier equity here double-counts against the
+      // sandbox account and conflates the two books — the exact confusion this
+      // decoupling fixes. See syncPaperAccountCapital() for the matching guard.
       const botAccounts = getAccountsForBot(bot.name)
-      if (botAccounts.length > 0) {
+      if (botAccounts.length > 0 && bot.name !== PRODUCTION_BOT) {
         try {
           const allocatedCap = await getStartingCapitalForBot(bot.name)
           if (allocatedCap > 0) {
@@ -420,7 +427,16 @@ async function syncPaperAccountCapital(): Promise<void> {
   for (const bot of BOTS) {
     const botCfg = cfg(bot)
     try {
-      // Sync SANDBOX paper_account
+      // Sync SANDBOX paper_account.
+      //
+      // SPARK (production bot) is EXCLUDED: its sandbox paper account is a
+      // SEPARATE, self-contained ledger seeded once from the live balance
+      // (/api/spark/reseed-paper) and evolving only by paper P&L. Re-seeding its
+      // starting_capital from live Tradier equity every cycle double-counts
+      // against the sandbox account and clobbers the paper ledger. FLAME/INFERNO
+      // keep syncing (their target is the static config default, so it's a
+      // no-op in practice). Matching guard: loadConfigOverrides().
+      if (bot.name !== PRODUCTION_BOT) {
       const rows = await query(
         `SELECT id, starting_capital, cumulative_pnl, collateral_in_use
          FROM ${botTable(bot.name, 'paper_account')}
@@ -456,6 +472,7 @@ async function syncPaperAccountCapital(): Promise<void> {
           )
         }
       }
+      } // end SPARK-excluded sandbox sync
 
       // Sync PRODUCTION paper_accounts (each person independently)
       const prodRows = await query(

@@ -2224,6 +2224,40 @@ export async function getAllocatedCapitalForAccount(person: string, accountType:
 }
 
 /**
+ * Get an account's FULL live equity — real Tradier total_equity with NO
+ * capital_pct scaling. This is the "follow the current account balance"
+ * variant of getAllocatedCapitalForAccount, used by SPARK paper sizing so its
+ * paper BP tracks 100% of the live account balance instead of a manual
+ * allocation knob. Returns null if the account/Tradier is unreachable so the
+ * caller can fall back to its configured default.
+ */
+export async function getFullEquityForAccount(person: string, accountType: 'sandbox' | 'production' = 'sandbox'): Promise<number | null> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT api_key, type FROM ironforge_accounts
+       WHERE person = '${person.replace(/'/g, "''")}' AND type = '${accountType}' AND is_active = TRUE
+       LIMIT 1`,
+    )
+    if (rows.length > 0 && rows[0].api_key) {
+      const apiKey = rows[0].api_key.trim()
+      const acctType = rows[0].type || 'sandbox'
+      const baseUrl = acctType === 'production' ? PRODUCTION_URL : SANDBOX_URL
+      const accountId = await getAccountIdForKey(apiKey, baseUrl)
+      if (accountId) {
+        const equity = await getSandboxTotalEquity(apiKey, accountId, baseUrl)
+        if (equity != null) {
+          const rounded = Math.round(equity * 100) / 100
+          console.log(`[tradier] getFullEquity: ${person}[${accountType}] → equity=$${rounded.toLocaleString()} (100%, no capital_pct)`)
+          return rounded
+        }
+      }
+    }
+  } catch { /* fall through to null */ }
+  return null
+}
+
+/**
  * Fetch total equity for a sandbox account (consistent with frontend display).
  * Uses total_equity, NOT option_buying_power.
  */
