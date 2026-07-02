@@ -14,6 +14,24 @@
 import { query } from '../db'
 import { findCurrentBlackout } from './repo'
 
+/**
+ * Master switch for the macro-event blackout halt.
+ *
+ * DISABLED 2026-07-02 (per operator). Rationale: the validated SPARK backtest
+ * (2020–2026) already traded through every FOMC / CPI / NFP in-sample and stayed
+ * +EV and survivable — event days are already priced into the edge. SPARK's real
+ * risk control is the code-enforced 15% BP size cap with the stop-off swing
+ * (scanner.ts), not a calendar halt. The blackout was a redundant post-hoc overlay
+ * that only cost trades the strategy would otherwise take (and idled the bots for
+ * paying customers on the busiest macro days). Disabling it for all three bots
+ * (FLAME / SPARK / INFERNO) realigns live behavior with the backtest.
+ *
+ * Everything below (per-bot `event_blackout_enabled` toggle, calendar, halt-window
+ * math, dashboard banner) is left fully intact — flip this back to `true` to
+ * re-arm the halt with no other change.
+ */
+const BLACKOUT_HALT_ENABLED: boolean = false
+
 export interface BlackoutResult {
   blocked: boolean
   reason?: string
@@ -32,6 +50,11 @@ function formatCT(d: Date): string {
 }
 
 export async function isEventBlackoutActive(bot: string, now: Date): Promise<BlackoutResult> {
+  // Master kill: event-blackout halt globally disabled (see BLACKOUT_HALT_ENABLED).
+  // Single chokepoint for both the scanner halt and the dashboard banner, so this
+  // clears the halt everywhere (including any currently-active window) for all bots.
+  if (!BLACKOUT_HALT_ENABLED) return { blocked: false }
+
   const botKey = bot.toLowerCase()
   if (botKey !== 'flame' && botKey !== 'spark' && botKey !== 'inferno') {
     return { blocked: false }
