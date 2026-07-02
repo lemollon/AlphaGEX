@@ -333,9 +333,11 @@ function NavBar() {
     <header
       className="relative flex items-center justify-between flex-wrap gap-y-2"
       style={{
-        paddingLeft: 28,
-        paddingRight: 28,
-        paddingTop: 12,
+        // Respect the top safe-area (notch / status bar) so the brand + nav
+        // clear it under viewport-fit=cover; falls back to 12px off-device.
+        paddingLeft: 'calc(28px + env(safe-area-inset-left, 0px))',
+        paddingRight: 'calc(28px + env(safe-area-inset-right, 0px))',
+        paddingTop: 'calc(12px + env(safe-area-inset-top, 0px))',
         paddingBottom: 12,
         backdropFilter: 'blur(20px) saturate(140%)',
         WebkitBackdropFilter: 'blur(20px) saturate(140%)',
