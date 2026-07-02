@@ -305,7 +305,7 @@ export default function GexProfilePage() {
 
   if (loading && !data) {
     return (
-      <div className="min-h-screen bg-bg-base px-4 md:px-6 py-5 font-[var(--font-ui)]">
+      <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-4 md:px-6 py-5 font-[var(--font-ui)]">
         <div className="flex items-center justify-center h-[60vh] text-text-muted gap-2.5 text-sm">
           <span className="inline-block animate-[sw-spin_1s_linear_infinite]">&#8635;</span>
           Loading GEX data...
@@ -315,7 +315,7 @@ export default function GexProfilePage() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-base px-4 md:px-6 py-5 font-[var(--font-ui)]">
+    <div className="flex-1 min-h-0 overflow-y-auto bg-bg-base px-4 md:px-6 py-5 pb-24 font-[var(--font-ui)]">
       {/* Title */}
       <div className="flex items-center gap-2.5 text-[22px] font-extrabold text-white tracking-tight mb-1">
         <Activity size={28} className="text-accent" />

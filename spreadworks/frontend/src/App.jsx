@@ -149,19 +149,26 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
   // in the DOM) then paint on top, so the menu vanished behind "Account Equity".
   // Worst on mobile, where the header wraps and the menu opens right over them.
   // position:fixed off the chip's rect sidesteps the trap entirely.
-  const [pos, setPos] = useState(() => {
+  // Position with explicit left/width clamped to the viewport. Right-align the
+  // panel to the chip, then clamp both edges + width so a narrow phone can't
+  // push the 260px panel off the left edge (it used to get clipped there).
+  // Also cap the height to what's left below the chip and scroll internally.
+  const computePos = () => {
     const el = anchorRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) };
-  });
+    const m = 8;
+    const width = Math.min(260, window.innerWidth - m * 2);
+    let left = r.right - width;                                  // right-align to chip
+    left = Math.min(left, window.innerWidth - width - m);        // keep off right edge
+    left = Math.max(m, left);                                    // keep off left edge
+    const top = r.bottom + 8;
+    const maxHeight = Math.max(160, window.innerHeight - top - m);
+    return { top, left, width, maxHeight };
+  };
+  const [pos, setPos] = useState(computePos);
   useEffect(() => {
-    function place() {
-      const el = anchorRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setPos({ top: r.bottom + 8, right: Math.max(8, window.innerWidth - r.right) });
-    }
+    function place() { setPos(computePos()); }
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
@@ -176,8 +183,9 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
     <div
       ref={panelRef}
       style={{
-        position: 'fixed', top: pos.top, right: pos.right,
-        width: 260, padding: 6, borderRadius: 12, zIndex: 9999,
+        position: 'fixed', top: pos.top, left: pos.left,
+        width: pos.width, maxHeight: pos.maxHeight, overflowY: 'auto',
+        padding: 6, borderRadius: 12, zIndex: 9999,
         background: 'rgba(13,28,46,0.92)',
         backdropFilter: 'blur(16px) saturate(140%)',
         WebkitBackdropFilter: 'blur(16px) saturate(140%)',
@@ -361,24 +369,27 @@ function NavBar() {
             'inset 0 0 0 1px rgba(125,211,252,0.10), inset 0 1px 0 rgba(255,255,255,0.04)',
         }}
       >
-        {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12, paddingRight: 12 }}>
-          <div
-            style={{
-              width: 36, height: 36, borderRadius: 12,
-              display: 'grid', placeItems: 'center',
-              fontWeight: 900, color: '#fff', fontSize: 16,
-              background: 'linear-gradient(135deg, rgba(125,211,252,0.4), rgba(45,212,191,0.2))',
-              boxShadow:
-                'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 0 0 1px rgba(255,255,255,0.10)',
-            }}
-          >
-            S
-          </div>
+        {/* Brand — clicking the logo/wordmark returns to the Builder (home). */}
+        <button
+          onClick={() => navigate('/')}
+          aria-label="SpreadWorks home"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            paddingLeft: 12, paddingRight: 12,
+            background: 'transparent', border: 'none', cursor: 'pointer',
+          }}
+        >
+          <img
+            src="/logo.png"
+            alt="SpreadWorks"
+            width={36}
+            height={36}
+            style={{ width: 36, height: 36, borderRadius: 12, display: 'block', flexShrink: 0 }}
+          />
           <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em', color: '#fff' }}>
             Spread<span style={{ color: '#22d3ee' }}>Works</span>
           </span>
-        </div>
+        </button>
 
         {/* Divider between brand and nav */}
         <span
