@@ -17,6 +17,14 @@ export default function CalendarPage() {
     fetcher,
     { refreshInterval: 5 * 60 * 1000 },
   )
+  // Whether the macro-event halt is armed. When disabled the bots trade through
+  // every event, so the year grid should NOT shade any day red.
+  const { data: blackoutStatus } = useSWR<{ halt_enabled?: boolean }>(
+    '/api/calendar/blackout-status?bot=flame',
+    fetcher,
+    { refreshInterval: 5 * 60 * 1000 },
+  )
+  const haltsEnabled = blackoutStatus?.halt_enabled !== false
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
@@ -30,7 +38,14 @@ export default function CalendarPage() {
       <CalendarStatusBanner />
 
       <section className="rounded-lg border border-amber-800/40 bg-amber-950/20 p-4 text-sm">
-        <div className="text-amber-300 font-medium mb-1">Day-of-news halt policy</div>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-amber-300 font-medium">Day-of-news halt policy</span>
+          {!haltsEnabled && (
+            <span className="rounded bg-gray-700/60 px-2 py-0.5 text-xs text-gray-300">
+              Currently disabled — bots trade through all events
+            </span>
+          )}
+        </div>
         <div className="text-amber-200/80 leading-snug">
           IronForge IC bots (FLAME · SPARK · INFERNO) only stand aside on the
           actual release day — not the days before.
@@ -79,8 +94,9 @@ export default function CalendarPage() {
           year={year}
           // Only halt-triggering events get the red blackout shading on
           // the year grid. Informational Tier-2/3 events still appear in
-          // the Upcoming panel above with full context.
-          events={(data?.events || []).filter((e: any) => e.halts_bots !== false)}
+          // the Upcoming panel above with full context. When the halt is
+          // globally disabled, nothing is shaded — the bots trade every day.
+          events={haltsEnabled ? (data?.events || []).filter((e: any) => e.halts_bots !== false) : []}
         />
       )}
 
