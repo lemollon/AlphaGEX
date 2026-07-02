@@ -9,13 +9,13 @@
  * Plus: price-to-wall gauge, flow diagnostics, skew measures, market interpretation.
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import Plotly from 'plotly.js-dist-min';
 import createPlotlyComponent from 'react-plotly.js/factory';
-import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send } from 'lucide-react';
+import { Activity, Search, RefreshCw, ArrowUpRight, AlertTriangle, Info, Anchor, BarChart3, TrendingUp, Send, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 
 const Plot = createPlotlyComponent(Plotly);
 
@@ -90,6 +90,35 @@ export default function GexProfilePage() {
   const [hoveredStrike, setHoveredStrike] = useState(null);
   const [discordMsg, setDiscordMsg] = useState('');
   const [discordPushing, setDiscordPushing] = useState(false);
+
+  // ── Intraday chart zoom ───────────────────────────────────
+  // react-plotly hands us the graph div; we drive zoom with Plotly.relayout
+  // so the header +/− buttons work without letting touch-drag hijack page
+  // scroll (dragmode is disabled in the chart layout below).
+  const intradayGdRef = useRef(null);
+  const zoomIntraday = useCallback((factor) => {
+    const gd = intradayGdRef.current;
+    if (!gd || !gd.layout) return;
+    const parse = (v) => (typeof v === 'string' ? new Date(v).getTime() : v);
+    const scale = (rng) => {
+      if (!rng) return null;
+      const a = parse(rng[0]), b = parse(rng[1]);
+      if (!isFinite(a) || !isFinite(b)) return null;
+      const c = (a + b) / 2, half = ((b - a) / 2) * factor;
+      return [c - half, c + half];
+    };
+    const update = {};
+    const nx = scale(gd.layout.xaxis && gd.layout.xaxis.range);
+    const ny = scale(gd.layout.yaxis && gd.layout.yaxis.range);
+    if (nx) update['xaxis.range'] = nx;
+    if (ny) update['yaxis.range'] = ny;
+    if (Object.keys(update).length) Plotly.relayout(gd, update);
+  }, []);
+  const resetIntradayZoom = useCallback(() => {
+    const gd = intradayGdRef.current;
+    if (!gd) return;
+    Plotly.relayout(gd, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+  }, []);
 
   const pushToDiscord = useCallback(async (view) => {
     const endpointMap = {
@@ -463,6 +492,19 @@ export default function GexProfilePage() {
                 )}
               </div>
               <div className="flex items-center gap-2.5">
+                {chartView === 'intraday' && (
+                  <div className="sw-toggle-group" title="Zoom the intraday chart">
+                    <button className="sw-toggle-btn" onClick={() => zoomIntraday(0.6)} title="Zoom in" aria-label="Zoom in">
+                      <ZoomIn size={13} />
+                    </button>
+                    <button className="sw-toggle-btn" onClick={() => zoomIntraday(1.6)} title="Zoom out" aria-label="Zoom out">
+                      <ZoomOut size={13} />
+                    </button>
+                    <button className="sw-toggle-btn" onClick={resetIntradayZoom} title="Reset zoom" aria-label="Reset zoom">
+                      <RotateCcw size={13} />
+                    </button>
+                  </div>
+                )}
                 <div className="sw-toggle-group">
                   {['net', 'split', 'intraday'].map(view => (
                     <button
@@ -507,6 +549,7 @@ export default function GexProfilePage() {
                   data={data}
                   isLive={isLive}
                   sessionDate={sessionDate}
+                  gdRef={intradayGdRef}
                 />
               )
             )}
@@ -690,7 +733,7 @@ function PriceGauge({ price, flipPoint, callWall, putWall }) {
   );
 }
 
-function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, isLive, sessionDate }) {
+function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, isLive, sessionDate, gdRef }) {
   const plotData = useMemo(() => {
     const candleTimes = intradayBars.map(b => toCentralPlotly(b.time));
     const hasCandleData = intradayBars.length > 0;
@@ -806,6 +849,10 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
             paper_bgcolor: '#0a0a14',
             plot_bgcolor: '#0f0f1e',
             font: { color: '#9ca3af', family: 'Inter, Arial, sans-serif', size: 11 },
+            // dragmode:false — one-finger touch scrolls the page instead of
+            // being hijacked into a chart zoom/pan. Zoom is driven by the
+            // header +/− buttons (Plotly.relayout) and desktop double-click.
+            dragmode: false,
             xaxis: {
               type: 'date', gridcolor: '#1a1a2e', showgrid: true,
               rangeslider: { visible: false },
@@ -823,7 +870,9 @@ function IntradayChart({ intradayBars, intradayChartData, sortedStrikes, data, i
             showlegend: false,
             transition: { duration: 300, easing: 'cubic-in-out' },
           }}
-          config={{ displayModeBar: false, responsive: true }}
+          onInitialized={(fig, graphDiv) => { if (gdRef) gdRef.current = graphDiv; }}
+          onUpdate={(fig, graphDiv) => { if (gdRef) gdRef.current = graphDiv; }}
+          config={{ displayModeBar: false, responsive: true, doubleClick: 'reset', scrollZoom: false }}
           style={{ width: '100%', height: '100%' }}
         />
       </div>
