@@ -384,7 +384,12 @@ function NavBar() {
             alt="SpreadWorks"
             width={36}
             height={36}
-            style={{ width: 36, height: 36, borderRadius: 12, display: 'block', flexShrink: 0 }}
+            style={{
+              width: 36, height: 36, borderRadius: 12, display: 'block', flexShrink: 0,
+              // Glowing cyan ring — box-shadow (not border) so the 36px box
+              // doesn't shift. Gentle pulse via the sw-logo-glow keyframe.
+              animation: 'sw-logo-glow 2.4s ease-in-out infinite',
+            }}
           />
           <span style={{ fontWeight: 800, fontSize: 19, letterSpacing: '-0.02em', color: '#fff' }}>
             Spread<span style={{ color: '#22d3ee' }}>Works</span>
