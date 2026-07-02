@@ -88,21 +88,50 @@ def get_position_monitor(bot: str):
     return get_positions(bot)
 
 
+# Non-intraday equity-curve windows, in days. Anything not listed here ("all")
+# returns the full series with no lower bound.
+_EQUITY_WINDOW_DAYS = {"1d": 1, "1w": 7, "1m": 30, "3m": 90}
+
+
+def _downsample_rows(rows: list, cap: int = 600) -> list:
+    """Evenly thin a long series to <=cap points for the chart, always keeping the
+    last (most recent) point so the tip of the curve is accurate."""
+    n = len(rows)
+    if n <= cap:
+        return rows
+    stride = n / cap
+    out = [rows[int(i * stride)] for i in range(cap)]
+    if out[-1] is not rows[-1]:
+        out.append(rows[-1])
+    return out
+
+
 @router.get("/{bot}/equity-curve")
-def get_equity_curve(bot: str):
+def get_equity_curve(bot: str, window: str = "all"):
+    """Equity curve over the selected `window` (1d/1w/1m/3m, or "all").
+
+    Sourced from the dense per-scan `equity_snapshots` series — NOT the sparse
+    `closed_trades` ledger, which stays empty until a bot closes >=2 trades and so
+    left every non-intraday window blank. Cutoff is computed in Python (CT-naive) to
+    keep the SQL dialect-portable, matching get_status. `pnl` is mark-to-market total
+    (equity - starting_capital), consistent with the intraday card."""
     _validate(bot)
-    t = bot_table(bot, "closed_trades")
     cfg = load_config(ENGINE, bot)
     sc = float(cfg["starting_capital"])
+    st = bot_table(bot, "equity_snapshots")
+    w = (window or "all").lower()
+    where = ""
+    params: dict[str, Any] = {}
+    if w in _EQUITY_WINDOW_DAYS:
+        cutoff = (datetime.now(CT) - timedelta(days=_EQUITY_WINDOW_DAYS[w])).replace(tzinfo=None)
+        where = "WHERE snapshot_time >= :cutoff "
+        params["cutoff"] = cutoff
     with ENGINE.begin() as conn:
         rows = conn.execute(text(
-            f"SELECT close_time, realized_pnl FROM {t} ORDER BY close_time"
-        )).mappings().all()
-    curve = []
-    cum = 0.0
-    for r in rows:
-        cum += float(r["realized_pnl"])
-        curve.append({"time": str(r["close_time"]), "equity": sc + cum, "pnl": cum})
+            f"SELECT snapshot_time, equity FROM {st} {where}ORDER BY snapshot_time"
+        ), params).mappings().all()
+    curve = [{"time": str(r["snapshot_time"]), "equity": float(r["equity"]),
+              "pnl": float(r["equity"]) - sc} for r in _downsample_rows(rows)]
     return {"curve": curve, "starting_capital": sc}
 
 

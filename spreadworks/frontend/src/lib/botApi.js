@@ -23,7 +23,7 @@ export const botApi = {
   status:         (b)        => _get(`/api/spreadworks/bots/${b}/status`),
   positions:      (b)        => _get(`/api/spreadworks/bots/${b}/positions`),
   positionMonitor:(b)        => _get(`/api/spreadworks/bots/${b}/position-monitor`),
-  equityCurve:    (b)        => _get(`/api/spreadworks/bots/${b}/equity-curve`),
+  equityCurve:    (b, window='all') => _get(`/api/spreadworks/bots/${b}/equity-curve?window=${window}`),
   equityIntraday: (b)        => _get(`/api/spreadworks/bots/${b}/equity-curve/intraday`),
   trades:         (b, limit=100) => _get(`/api/spreadworks/bots/${b}/trades?limit=${limit}`),
   performance:    (b)        => _get(`/api/spreadworks/bots/${b}/performance`),

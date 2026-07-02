@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react';
 import { botApi } from '../lib/botApi';
 
-export function useBotEquity(bot, mode = 'intraday', intervalMs = 30000) {
+// `period` is the selected timeframe: 'intraday' reads the today-only snapshot feed;
+// any other value ('1d'|'1w'|'1m'|'3m'|'all') is passed through as the equity-curve
+// window so the backend filters the dense snapshot series to that range.
+export function useBotEquity(bot, period = 'intraday', intervalMs = 30000) {
   const [curve, setCurve] = useState([]);
   const [error, setError] = useState(null);
   useEffect(() => {
     let cancelled = false;
     async function tick() {
       try {
-        const d = mode === 'intraday'
+        const d = period === 'intraday'
           ? await botApi.equityIntraday(bot)
-          : await botApi.equityCurve(bot);
-        const points = mode === 'intraday'
+          : await botApi.equityCurve(bot, period);
+        const points = period === 'intraday'
           ? (d.snapshots || []).map(s => ({ time: s.snapshot_time, equity: Number(s.equity) }))
           : (d.curve   || []).map(s => ({ time: s.time, equity: Number(s.equity) }));
         if (!cancelled) setCurve(points);
@@ -22,6 +25,6 @@ export function useBotEquity(bot, mode = 'intraday', intervalMs = 30000) {
     tick();
     const h = setInterval(tick, intervalMs);
     return () => { cancelled = true; clearInterval(h); };
-  }, [bot, mode, intervalMs]);
+  }, [bot, period, intervalMs]);
   return { curve, error };
 }

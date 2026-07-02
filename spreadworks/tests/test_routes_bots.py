@@ -275,6 +275,47 @@ def _seed_closed_trade(engine, bot: str, position_id: str, realized_pnl: float):
         })
 
 
+def _seed_snapshot(engine, bot: str, age_days: float, equity: float):
+    """Insert one equity snapshot `age_days` before now into {bot}_equity_snapshots."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import text
+    ts = datetime.now() - timedelta(days=age_days)
+    with engine.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {bot}_equity_snapshots ("
+            "snapshot_time, equity, unrealized_pnl, realized_pnl_today, "
+            "cumulative_pnl, open_positions"
+            ") VALUES (:t, :e, 0, 0, 0, 0)"
+        ), {"t": ts, "e": equity})
+
+
+def test_equity_curve_windows_from_snapshots_without_closed_trades(client):
+    """The non-intraday windows must populate from the dense equity_snapshots series
+    even when a bot has closed ZERO trades — this is the bug that left daily/weekly/
+    monthly blank for every bot (they used to read the empty closed_trades ledger)."""
+    from backend import routes_bots
+    eng = routes_bots.ENGINE
+    # Snapshots at 40d, 20d, 5d, and 12h old — NO closed trades seeded.
+    _seed_snapshot(eng, "surge", 40, 1000.0)
+    _seed_snapshot(eng, "surge", 20, 1100.0)
+    _seed_snapshot(eng, "surge", 5, 1200.0)
+    _seed_snapshot(eng, "surge", 0.5, 1250.0)
+
+    def resp(window):
+        return client.get(f"/api/spreadworks/bots/surge/equity-curve?window={window}").json()
+
+    # 1W keeps only the 5d + 12h points; 1M adds the 20d; ALL includes the 40d.
+    assert len(resp("1w")["curve"]) == 2
+    assert len(resp("1m")["curve"]) == 3
+    assert len(resp("all")["curve"]) == 4
+    # Populated despite zero closed trades, and pnl is mark-to-market (equity - start).
+    all_resp = resp("all")
+    sc = all_resp["starting_capital"]
+    latest = all_resp["curve"][-1]
+    assert latest["equity"] == pytest.approx(1250.0)
+    assert latest["pnl"] == pytest.approx(1250.0 - sc)
+
+
 def test_reset_requires_confirm(client):
     r = client.post("/api/spreadworks/bots/surge/reset")
     assert r.status_code == 400

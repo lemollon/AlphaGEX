@@ -696,9 +696,8 @@ export default function BotDashboard() {
 
   const { data: status, error: statusErr } = useBotStatus(bot, STATUS_REFRESH);
 
-  const equityMode     = equityPeriod === 'intraday' ? 'intraday' : 'historical';
   const equityInterval = equityPeriod === 'intraday' ? INTRADAY_REFRESH : TABLE_REFRESH;
-  const { curve: equityCurve } = useBotEquity(bot, equityMode, equityInterval);
+  const { curve: equityCurve } = useBotEquity(bot, equityPeriod, equityInterval);
 
   useEffect(() => {
     let cancelled = false;
