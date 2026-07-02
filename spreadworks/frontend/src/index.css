@@ -241,6 +241,19 @@ button:disabled { cursor: not-allowed; }
   from { opacity: 0; transform: translateX(-6px); }
   to   { opacity: 1; transform: translateX(0); }
 }
+/* Glowing cyan ring for the brand logo (App header <img>). */
+@keyframes sw-logo-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(34,211,238,0.55),
+                0 0 8px rgba(34,211,238,0.45),
+                0 0 16px rgba(34,211,238,0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(34,211,238,0.9),
+                0 0 14px rgba(34,211,238,0.7),
+                0 0 26px rgba(34,211,238,0.4);
+  }
+}
 
 /* ── Glass utility — translucent surface + backdrop blur ─────────── */
 .sw-glass {
