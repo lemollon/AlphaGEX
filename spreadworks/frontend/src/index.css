@@ -113,6 +113,13 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* Solid dark base behind everything — with viewport-fit=cover the webview
+   extends into the top status-bar / notch safe-area; without this the inset
+   would paint the default white and read as "whitespace" above the header. */
+html {
+  background: #0a1726;
+}
+
 body {
   font-family: var(--font-ui);
   color: var(--color-text-primary);
