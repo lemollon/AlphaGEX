@@ -21,8 +21,8 @@ export default function LegBreakdown({ calcResult }) {
         Legs ({legs.length} legs)
       </button>
       {open && (
-        <div className="px-3 pb-2.5 animate-fade-in">
-          <table className="w-full" style={{ borderCollapse: 'separate', borderSpacing: '0 2px' }}>
+        <div className="px-3 pb-2.5 animate-fade-in overflow-x-auto">
+          <table className="w-full min-w-[300px]" style={{ borderCollapse: 'separate', borderSpacing: '0 2px' }}>
             <thead>
               <tr>
                 {['Leg', 'Strike', 'Exp', 'Mid', 'IV', '\u0394', '\u0398'].map((h, i) => (

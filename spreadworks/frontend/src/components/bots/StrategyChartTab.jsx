@@ -435,7 +435,7 @@ function EconomicsRow({ d }) {
       : '—';
 
   return (
-    <div className="grid grid-cols-6 gap-2.5">
+    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
       <Cell
         label={d.isCredit ? 'Net Credit' : 'Net Debit'}
         value={money(Math.abs(d.netCredit))}
@@ -472,7 +472,7 @@ function GreeksRow() {
   // need a per-leg Tradier quote at chart-render time). Show placeholders so
   // the layout matches the spec and we can fill these in once the data flows.
   return (
-    <div className="grid grid-cols-4 gap-2.5">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
       <Cell label="Δ Delta" value="—" valueColor="#7dd3fc" />
       <Cell label="Γ Gamma" value="—" valueColor="#7dd3fc" />
       <Cell label="Θ Theta" value="—" valueColor="#34d399" />

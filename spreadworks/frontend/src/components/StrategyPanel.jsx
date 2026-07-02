@@ -225,7 +225,7 @@ function ContextStrip({ ctx }) {
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, minmax(0,1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(72px,1fr))',
         gap: 6,
         padding: '8px 10px',
         background: 'rgba(7,16,28,0.55)',
@@ -316,7 +316,7 @@ function VariantCard({ variant, onApply, isActive }) {
       </div>
       {hasMetrics ? (
         <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(4,minmax(0,1fr))', gap: 4,
+          display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(64px,1fr))', gap: 4,
           fontFamily: 'JetBrains Mono', fontSize: 10,
         }}>
           <Metric label={positiveCredit ? 'Credit' : 'Debit'} value={fmtUsd(Math.abs(p.credit_estimate))} color={positiveCredit ? '#34d399' : '#fcd34d'} />

@@ -126,7 +126,8 @@ export default function PositionCardHero({ position, onClose, onAdjust }) {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
+              // auto-fit reflows to 2-up on phones, 4-up on wider cards — no media query needed
+              gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
               gap: 16,
               paddingTop: 12,
               borderTop: '1px solid rgba(125,211,252,0.10)',

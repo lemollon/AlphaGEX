@@ -78,7 +78,7 @@ export default function PayoffPanel({
   }
 
   return (
-    <div className="w-[220px] min-w-[220px] bg-bg-base border-l border-border-subtle relative">
+    <div className="w-full sm:w-[220px] sm:min-w-[220px] bg-bg-base border-t sm:border-t-0 sm:border-l border-border-subtle relative">
       <svg
         width="100%"
         height={height}
