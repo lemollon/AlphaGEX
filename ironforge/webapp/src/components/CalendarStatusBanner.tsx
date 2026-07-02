@@ -6,6 +6,7 @@ import { fetcher } from '@/lib/fetcher'
 interface BlackoutStatus {
   bot: string
   now: string
+  halt_enabled?: boolean
   blackout: { blocked: boolean; eventTitle?: string; resumesAt?: string }
   next_blackout: {
     title: string
@@ -41,6 +42,18 @@ export default function CalendarStatusBanner() {
     { refreshInterval: 60_000 },
   )
   if (isLoading || !data) return <div className="h-16 bg-forge-card rounded animate-pulse" />
+
+  // Event halts globally disabled — bots trade through all macro events.
+  if (data.halt_enabled === false) {
+    return (
+      <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-4">
+        <div className="text-emerald-300 font-medium">✓ Trading normally</div>
+        <div className="text-sm text-emerald-200/80 mt-1">
+          Event halts are disabled — bots trade through all macro events (FOMC · CPI · NFP).
+        </div>
+      </div>
+    )
+  }
 
   const now = new Date(data.now).getTime()
   if (data.blackout.blocked && data.blackout.resumesAt) {

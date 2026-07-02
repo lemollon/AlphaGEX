@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { isEventBlackoutActive } from '@/lib/eventCalendar/gate'
+import { isEventBlackoutActive, BLACKOUT_HALT_ENABLED } from '@/lib/eventCalendar/gate'
 import { listUpcomingEvents } from '@/lib/eventCalendar/repo'
 
 export const dynamic = 'force-dynamic'
@@ -15,11 +15,14 @@ export async function GET(req: NextRequest) {
     const status = await isEventBlackoutActive(bot, now)
     // next_blackout = next halt-triggering event whose halt window hasn't started yet.
     // Informational Tier-2/3 events (PCE, GDP, ISM, JOLTs) are skipped.
-    const upcoming = await listUpcomingEvents()
+    // When the blackout halt is globally disabled there are no upcoming halts to
+    // advertise, so suppress next_blackout too — the UI should show nothing.
+    const upcoming = BLACKOUT_HALT_ENABLED ? await listUpcomingEvents() : []
     const next = upcoming.find(e => e.halts_bots && new Date(e.halt_start_ts as any) > now) ?? null
     return NextResponse.json({
       bot,
       now: now.toISOString(),
+      halt_enabled: BLACKOUT_HALT_ENABLED,
       blackout: status,
       next_blackout: next ? {
         event_id: next.event_id,

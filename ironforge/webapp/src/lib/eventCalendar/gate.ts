@@ -30,7 +30,7 @@ import { findCurrentBlackout } from './repo'
  * math, dashboard banner) is left fully intact — flip this back to `true` to
  * re-arm the halt with no other change.
  */
-const BLACKOUT_HALT_ENABLED: boolean = false
+export const BLACKOUT_HALT_ENABLED: boolean = false
 
 export interface BlackoutResult {
   blocked: boolean
