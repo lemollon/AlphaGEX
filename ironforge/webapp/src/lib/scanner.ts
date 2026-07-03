@@ -181,14 +181,16 @@ interface BotConfig {
 const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // FLAME min_credit 0.25 (2026-05-06): a $0.18 IC couldn't round-trip the combo
   // bid/ask spread — 9 sequential PT limits failed, kill switch closed at break-even.
-  // SPARK min_credit LOWERED 0.25 → 0.05 on 2026-06-23: that PT-fill failure mode
-  // only bites a bot that scalps the close. SPARK SWINGS (rides to expiry, no stop),
-  // so it never needs the PT limit to fill — ~96% expire worthless. A $0.25 floor was
-  // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
-  // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
-  // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
+  // SPARK min_credit history: 0.25 → 0.05 on 2026-06-23 (the $0.25 floor + 2.0-SD
+  // neg-gamma widen starved the bot to ~36 trades/6.5yr); 0.05 → 0.15 on 2026-07-03
+  // WITH the new SD walk-in (see tryOpenTrade). The old starvation can't recur:
+  // instead of skipping when credit < $0.15, SPARK now walks the strikes IN
+  // (0.1-SD steps, floor 0.7) until the credit clears — it trades MORE days than
+  // before (117% coverage) but never for pennies. Backtest: +$18,054/ct vs
+  // +$13,362 fixed-SD, every year green incl. 2024, lower maxDD. The sub-$0.15
+  // penny-credit trades were the 2024 bleed (-$1.55/ct avg on 547 trades).
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -2986,11 +2988,25 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
   )
 
-  // Swing-strategy bots (SPARK, KINDLE) do NOT walk the SD in to chase credit —
-  // their edge is the fixed 1.2/1.5-SD strikes held to settlement. Only the
-  // non-swing IC bots (e.g. INFERNO) widen-in to meet min_credit.
-  if (!isSparkStrategy(bot.name)) {
-    while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= SD_FLOOR) {
+  // SD WALK-IN policy (revised 2026-07-03):
+  //   SPARK  — WALKS IN on thin-credit days, floor 0.7 SD. Warehouse backtest
+  //            (2020-26, tier 40/35/30, swing, worst-case fills): "walk in until
+  //            credit >= $0.15" beats both fixed-SD ($13,362) and skip-thin-days
+  //            ($14,106) at +$18,054/ct with EVERY year green (2024 flips
+  //            -$664 -> +$554), 95.8% win, LOWER maxDD ($625 vs $1,060/ct) and
+  //            117% coverage (rescues days the old $0.05 floor skipped). The
+  //            walked cohort itself is +EV in 6 of 7 years. Mechanism: the old
+  //            failure was collecting pennies for real risk on low-vol days —
+  //            walking in until the credit is MEANINGFUL ($0.15) gets paid for
+  //            the risk, and the 40% tier banks the fatter credit. Walking to a
+  //            thin $0.08 target tested WORSE than baseline — the $0.15 floor is
+  //            the point. (Walked strikes land ~0.7-1.4 SD, median ~1.0.)
+  //   KINDLE — still NO walk-in (fixed 1.2 SD): untested on its $2-wing/$490
+  //            survival account; its gates are min_credit_pct_width + skip_neg_gamma.
+  //   INFERNO/paper bots — keep legacy walk-in to 0.5 SD.
+  const sdFloor = bot.name === 'spark' ? 0.7 : SD_FLOOR
+  if (bot.name !== 'kindle') {
+    while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= sdFloor) {
       usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
       strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
       credits = await getIcEntryCredit(
