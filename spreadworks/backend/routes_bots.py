@@ -225,6 +225,7 @@ class ConfigUpdate(BaseModel):
     allow_stacking: bool | None = None
     max_concurrent_positions: int | None = None
     min_credit: float | None = None
+    drift_offset: int | None = None
 
 
 @router.post("/{bot}/config")

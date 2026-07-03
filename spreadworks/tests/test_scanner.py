@@ -365,8 +365,11 @@ def test_surge_opens_and_pt_closes_with_positive_pnl(db_session, fake_chain_0dte
         row = conn.execute(text(
             "SELECT entry_price, contracts FROM surge_positions WHERE status='OPEN'"
         )).mappings().first()
-    # total debit = fly 0.75 + call cal 0.50 + put cal 0.50 = 1.75
-    assert float(row["entry_price"]) == pytest.approx(1.75)
+    # 2026-07-03 defaults: pin-center resolves body=501 on this fixture; wing
+    # = round(1.35 * 4.0 straddle * 0.85) = 5 -> call fly 496/501/506 =
+    # 4.70 + 0.45 - 2*1.60 = 1.95; calendars at +/-$2 (499P/503C) cost 0.50
+    # each (back chain = front + 0.50 time value). Debit = 2.95.
+    assert float(row["entry_price"]) == pytest.approx(2.95)
 
     # 2) Drive every long leg rich and every short leg to ~0 so the combo's
     #    debit-aware MTM is strongly positive and trips the profit target.
