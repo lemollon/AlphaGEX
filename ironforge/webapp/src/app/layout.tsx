@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   title: 'IronForge',
   description:
     'Autonomous, defined-risk options bots for SPY that run in your own Tradier account — every position has a capped max loss, sized and exited by rule. Join the IronForge early-access waitlist.',
-  icons: { icon: '/ironforge-mark.png' },
+  icons: { icon: '/ironforge-mark.png', apple: '/apple-touch-icon.png' },
 }
 
 export default function RootLayout({
