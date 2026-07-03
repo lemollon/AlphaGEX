@@ -1477,6 +1477,18 @@ def _start_scheduler(app: FastAPI):
         replace_existing=True,
     )
 
+    # ------------------------------------------------------------------
+    # TSUNAMI JOBS (entry Mon-Fri 10:30 CT + management every 15 min)
+    # ------------------------------------------------------------------
+    # Import-guarded: TSUNAMI failing to initialize must never block the
+    # Discord/scan jobs above.
+    try:
+        from .bots.tsunami.scheduler_hook import add_tsunami_jobs
+        if not add_tsunami_jobs(scheduler):
+            logger.error("[SpreadWorks] TSUNAMI jobs NOT registered (init failure)")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[SpreadWorks] TSUNAMI scheduler hook failed: %r", exc)
+
     scheduler.start()
     _active_scheduler = scheduler
     logger.info(
@@ -1615,6 +1627,17 @@ app.include_router(router)
 
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
+
+# TSUNAMI (LETF earnings-week bot, ported from AlphaGEX GOLIATH 2026-07-03)
+# has its own runner + tables and does not participate in the generic
+# BOT_REGISTRY scan loop; import-guarded so a broken port never takes down
+# the whole API.
+try:
+    from .routes_tsunami import router as tsunami_router
+    app.include_router(tsunami_router)
+except Exception as _tsunami_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] TSUNAMI routes failed to load: %r", _tsunami_exc)
 
 
 @app.get("/health")
