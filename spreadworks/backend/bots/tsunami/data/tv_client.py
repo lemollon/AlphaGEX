@@ -7,9 +7,13 @@ production-proven fallback path in AlphaGEX), so rather than port the full
 AlphaGEX TradingVolatilityAPI class this module implements just the one
 Bearer-authenticated GET.
 
-Requires ``TRADING_VOLATILITY_API_TOKEN`` in the environment (the v2
-Bearer token, sub_xxx style). Unset → returns None → G05 fails closed
-with INSUFFICIENT_HISTORY, exactly the spec's cold-start behavior.
+Auth: ``TRADING_VOLATILITY_API_TOKEN`` (the v2 Bearer token, sub_xxx
+style), falling back to ``TRADING_VOLATILITY_API_KEY`` — per Leron
+2026-07-03 that's the name the credential lives under in this
+environment. Caution: in AlphaGEX that name historically held the v1
+username; if the v2 endpoint rejects it, the 401 is logged and iv_rank
+returns None. Unset/invalid → None → G05 fails closed with
+INSUFFICIENT_HISTORY, exactly the spec's cold-start behavior.
 """
 from __future__ import annotations
 
@@ -33,9 +37,15 @@ def _base_url() -> str:
 
 def get_iv_rank(symbol: str) -> Optional[float]:
     """Latest IV rank for ``symbol`` from TV v2 series, or None on failure."""
-    token = os.environ.get("TRADING_VOLATILITY_API_TOKEN", "").strip()
+    token = (
+        os.environ.get("TRADING_VOLATILITY_API_TOKEN", "").strip()
+        or os.environ.get("TRADING_VOLATILITY_API_KEY", "").strip()
+    )
     if not token:
-        logger.info("[tv_client] TRADING_VOLATILITY_API_TOKEN not set — iv_rank unavailable")
+        logger.info(
+            "[tv_client] TRADING_VOLATILITY_API_TOKEN / TRADING_VOLATILITY_API_KEY "
+            "not set — iv_rank unavailable"
+        )
         return None
     try:
         resp = requests.get(
