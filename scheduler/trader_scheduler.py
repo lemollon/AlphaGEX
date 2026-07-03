@@ -7828,16 +7828,8 @@ class AutonomousTraderScheduler:
         except Exception as exc:
             logger.warning(f"AGAPE perp daily-briefs hook failed: {exc!r}")
 
-        # GOLIATH paper-trading jobs (Q4 2026-05-01: co-host on alphagex-trader).
-        # Two jobs: Monday 10:30 ET entry cycle + 15-min management cycle.
-        # All paper-only; no real Tradier execution. Wired with the
-        # Phase-α Tradier snapshot fetcher and paper broker executor.
-        try:
-            from scheduler.goliath_scheduler import add_goliath_jobs
-            if add_goliath_jobs(self.scheduler):
-                active_bots.append("GOLIATH")
-        except Exception as exc:
-            logger.warning(f"GOLIATH scheduler hook failed: {exc!r}")
+        # GOLIATH moved to SpreadWorks as TSUNAMI (2026-07-03); jobs now run
+        # on spreadworks-backend via backend.bots.tsunami.scheduler_hook.
 
         # Diagnostic: confirm all job registrations completed (before scheduler.start())
         try:
