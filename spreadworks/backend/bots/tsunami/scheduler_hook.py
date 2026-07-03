@@ -143,34 +143,41 @@ def add_tsunami_jobs(scheduler) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("[tsunami_scheduler] ensure_tables failed: %r", exc)
 
-    # Pre-warm Runner so init failures surface during scheduler startup.
-    if _get_runner() is None:
-        logger.error("[tsunami_scheduler] Runner init failed; jobs not registered")
+    # TSUNAMI-TREND (2026-07-03): the options engine is retired — backtests
+    # proved the 3-leg structure can never fill on these LETFs (zero-bid
+    # wall-mapped puts; tracking band narrower than the strike grid). The
+    # bot now runs the backtest-validated LETF trend engine: one daily
+    # rebalance near the close. Options Runner/gates/triggers stay importable
+    # for the audit trail and tests but get no jobs.
+    try:
+        from backend.bots.tsunami.trend_engine import ensure_trend_tables, run_rebalance
+        ensure_trend_tables()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[tsunami_scheduler] trend engine unavailable: %r", exc)
         return False
 
+    def tsunami_trend_job() -> None:
+        try:
+            s = run_rebalance()
+            logger.info("[tsunami_scheduler] trend rebalance: equity=%s fills=%s skipped=%s",
+                        s.get("equity"), s.get("fills"), s.get("skipped"))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[tsunami_scheduler] trend job failed: %r", exc)
+
     try:
-        # Entry: Mon-Fri 10:30 AM CT.
         scheduler.add_job(
-            tsunami_entry_job,
+            tsunami_trend_job,
             trigger=CronTrigger(
                 day_of_week="mon-fri",
-                hour=10,
-                minute=30,
+                hour=14,
+                minute=45,
                 timezone="America/Chicago",
             ),
-            id="tsunami_entry",
-            name="TSUNAMI - Mon-Fri 10:30 CT entry cycle",
+            id="tsunami_trend",
+            name="TSUNAMI-TREND - daily 14:45 CT LETF rebalance",
             replace_existing=True,
         )
-        # Management: every 15 min during market hours, Mon-Fri.
-        scheduler.add_job(
-            tsunami_management_job,
-            trigger=IntervalTrigger(minutes=15),
-            id="tsunami_management",
-            name="TSUNAMI - 15-min management cycle (market hours only)",
-            replace_existing=True,
-        )
-        logger.info("✅ TSUNAMI jobs scheduled (entry: Mon-Fri 10:30 CT, management: 15-min)")
+        logger.info("✅ TSUNAMI-TREND job scheduled (daily rebalance Mon-Fri 14:45 CT)")
         return True
     except Exception as exc:  # noqa: BLE001
         logger.exception("[tsunami_scheduler] add_job failed: %r", exc)

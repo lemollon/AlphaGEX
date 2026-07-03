@@ -777,3 +777,41 @@ def admin_run_management_cycle() -> dict[str, Any]:
         "triggers_fired": cycle.triggers_fired,
         "skips": cycle.skips,
     }
+
+
+# ---- TSUNAMI-TREND (LETF trend engine, 2026-07-03) -------------------------
+
+@router.get("/trend/status")
+def tsunami_trend_status() -> dict[str, Any]:
+    """Book, cash, and last trades for the LETF trend engine."""
+    book = _safe_query(
+        "SELECT letf, shares, avg_cost, updated_at FROM tsunami_trend_book ORDER BY letf")
+    cash = _safe_query("SELECT cash FROM tsunami_trend_cash WHERE id=1")
+    trades = _safe_query(
+        "SELECT ts, letf, side, shares, price, reason, realized_pnl"
+        " FROM tsunami_trend_trades ORDER BY ts DESC LIMIT 25")
+    eq = _safe_query(
+        "SELECT snapshot_at, equity FROM tsunami_equity_snapshots"
+        " WHERE scope='PLATFORM' ORDER BY snapshot_at DESC LIMIT 1")
+    return {
+        "engine": "TSUNAMI-TREND (LETF vol-managed MA50)",
+        "cash": float(cash[0][0]) if cash else None,
+        "equity": float(eq[0][1]) if eq else None,
+        "book": [{"letf": r[0], "shares": int(r[1]), "avg_cost": float(r[2]),
+                  "updated_at": str(r[3])} for r in book],
+        "recent_trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
+                           "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
+                           "realized_pnl": float(r[6]) if r[6] is not None else None}
+                          for r in trades],
+    }
+
+
+@router.post("/admin/trend-rebalance")
+def admin_trend_rebalance() -> dict[str, Any]:
+    """Manually trigger one TSUNAMI-TREND rebalance cycle (paper)."""
+    try:
+        from backend.bots.tsunami.trend_engine import ensure_trend_tables, run_rebalance
+        ensure_trend_tables()
+        return {"status": "ok", **{k: v for k, v in run_rebalance().items()}}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"trend rebalance failed: {exc!r}")

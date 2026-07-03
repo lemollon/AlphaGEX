@@ -61,6 +61,34 @@ def get_quote(symbol: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def get_daily_history(symbol: str, days: int = 130) -> list[dict[str, Any]]:
+    """Daily OHLC bars for the last ``days`` calendar days, ascending by date.
+    Empty list on failure (TSUNAMI-TREND treats that as no-signal)."""
+    from datetime import timedelta
+    end = date.today()
+    start = end - timedelta(days=int(days * 1.6) + 10)  # calendar slack for ~days bars
+    try:
+        resp = requests.get(
+            f"{TRADIER_BASE}/markets/history",
+            params={"symbol": symbol, "interval": "daily",
+                    "start": start.isoformat(), "end": end.isoformat()},
+            headers=_headers(),
+            timeout=_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            logger.warning("[tradier_client] history %s http %s", symbol, resp.status_code)
+            return []
+        rows = (resp.json().get("history") or {}).get("day") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        out = [r for r in rows if r.get("date") and r.get("close")]
+        out.sort(key=lambda r: str(r["date"]))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tradier_client] history %s failed: %r", symbol, exc)
+        return []
+
+
 def get_nearest_expiration(symbol: str, today: Optional[date] = None) -> Optional[str]:
     """Return the nearest option expiration date string (YYYY-MM-DD) on or
     after ``today``, or None on failure."""
