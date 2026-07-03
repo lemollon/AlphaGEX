@@ -163,6 +163,7 @@ interface BotConfig {
   sd: number
   pt_pct: number    // fraction, e.g. 0.30 = 30%
   sl_mult: number   // fraction, e.g. 2.0 = 200%
+  entry_start: number // HHMM earliest entry (CT). Default 830 (open). SPARK-strategy bots use 1300 (afternoon) — see below.
   entry_end: number // HHMM, e.g. 1400
   max_trades: number // 0 = unlimited
   max_contracts: number
@@ -186,9 +187,9 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // blocking trading on ~75% of days (incl. +EV high-vol neg-gamma ones). Warehouse
   // backtest (2020-26, swing, worst-case fills): $0.05 floor + neg-gamma 1.5 SD trades
   // ~every day at +$11/ct, 92.5% win. Size (15% BP cap) remains the risk control.
-  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
@@ -202,7 +203,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // never ruins the $490 account at any commission. The gate — not the wing width
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
-  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
+  kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
@@ -636,10 +637,17 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   if (dow === 0 || dow === 6) return false
   if (isMarketHoliday(ct)) return false // never open new positions on a closed market
   const hhmm = ctHHMM(ct)
+  // AFTERNOON ENTRY (2026-07-02): SPARK-strategy bots (SPARK, KINDLE) use entry_start=1300
+  // (1:00 PM CT) instead of the open. Full-history breach test (2020-25, 1,333 days): an IC
+  // placed at the OPEN breaches a short strike 18.0% / full-loss 2.40%; placed in the
+  // afternoon it's 9.3% / 1.05% — roughly HALVED, every year. Live SPARK was entering at
+  // the open (worst window) while every backtest entered EOD/afternoon, so this also aligns
+  // live with the validated backtest. Other bots keep entry_start=830 (open).
+  const entryStart = cfg(bot).entry_start ?? 830
   // Cap the entry window at the real session close so half-days don't queue
   // orders into a closed market (root cause of the 2026-05-25 phantom positions).
   const entryEnd = Math.min(cfg(bot).entry_end, marketCloseMinuteCT(ct))
-  return hhmm >= 830 && hhmm <= entryEnd
+  return hhmm >= entryStart && hhmm <= entryEnd
 }
 
 /**
@@ -711,12 +719,26 @@ function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [num
   if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
 
   const timeMinutes = ct.getHours() * 60 + ct.getMinutes()
-  const isSpark = botName === 'spark'
 
-  // SPARK: MORNING extends to 12:00 PM CT (720 min). All others use 10:30 AM CT (630 min).
-  const morningEnd = isSpark ? 720 : 630
+  // SPARK-strategy bots (SPARK, KINDLE) use a HIGHER-FLOOR sliding tier: 40/35/30
+  // (morning/midday/afternoon), replacing the old 30/20/15 on 2026-07-02.
+  // Warehouse backtest (2020-26, swing, worst-case fills, chain-computed GEX): the
+  // old 15% afternoon floor OVER-CLIPPED the swing's winners and booked sub-slippage
+  // "profits" as small losses; 40/35/30 lifts blended edge +$9.96 -> +$11.34/ct (+14%)
+  // AND raises win rate 89.0% -> 92.1% AND lowers the 2024 stress-year drawdown.
+  // Sweep of 10 schedules ranked 40/35/30 near the top with a gentle, robust slide
+  // (50/40/30 edged it but waits for 50% early = more fill-dependent). Code-controlled
+  // like the other SPARK-strategy floors — the DB profit_target_pct override does NOT
+  // apply to these bots (intentional; the tier shape is the validated strategy).
+  if (isSparkStrategy(botName)) {
+    if (timeMinutes < 720) return [0.40, 'MORNING']       // before 12:00 PM CT
+    if (timeMinutes < 780) return [0.35, 'MIDDAY']        // 12:00 - 1:00 PM CT
+    return [0.30, 'AFTERNOON']                             // 1:00 PM CT onward
+  }
 
-  if (timeMinutes < morningEnd) {
+  // FLAME (and any other non-INFERNO, non-SPARK-strategy bot): legacy 30/20/15 derived
+  // from basePt, MORNING until 10:30 AM CT (630 min).
+  if (timeMinutes < 630) {
     return [basePt, 'MORNING']
   } else if (timeMinutes < 780) { // before 1:00 PM CT
     return [Math.max(0.10, basePt - 0.10), 'MIDDAY']

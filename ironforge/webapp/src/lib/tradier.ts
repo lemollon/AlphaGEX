@@ -1527,7 +1527,15 @@ export async function placeIcOrderAllAccounts(
       const { loadProductionConfigFor } = await import('./scanner')
       const prodCfg = await loadProductionConfigFor(botName)
       if (prodCfg && prodCfg.bp_pct > 0 && prodCfg.bp_pct <= 1) {
-        prodBpPct = prodCfg.bp_pct
+        // SPARK real-money risk cap (2026-07-02): hard-clamp production sizing to
+        // <=15% of Option BP, matching the paper path's Math.min(bp_pct, 0.15).
+        // BUG FIXED HERE: this clamp previously existed ONLY on the paper/sandbox
+        // path (scanner.ts), so the live account silently sized off the raw DB
+        // bp_pct — a config row set to 0.30 made SPARK trade 30% BP / 3 contracts
+        // on a ~$5k account (the "30% blows up" loss zone we explicitly avoided).
+        // The DB can now only size the real account DOWN from 15%, never above it.
+        // SPARK-only, matching the paper cap; KINDLE's risk control is max_contracts:1.
+        prodBpPct = botName === 'spark' ? Math.min(prodCfg.bp_pct, 0.15) : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
         productionConfigOk = true
       } else {
