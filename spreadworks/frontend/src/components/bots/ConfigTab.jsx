@@ -37,6 +37,13 @@ function buildSections(bot, cfg) {
   if (!isIBF) {
     strategyRows.push({ label: 'Back DTE', value: cfg.back_dte != null ? String(cfg.back_dte) : '—' });
   }
+  if (meta.strategy === 'pin_drift_combo') {
+    // SURGE / SPLASH: dollars either side of the body where the calendars sit.
+    strategyRows.push({
+      label: 'Drift Offset',
+      value: cfg.drift_offset != null ? `±$${Number(cfg.drift_offset)}` : '—',
+    });
+  }
 
   return [
     { section: 'Strategy', rows: strategyRows },
@@ -86,7 +93,9 @@ function ReadOnlySection({ section }) {
   );
 }
 
-const EDIT_SECTIONS = [
+// Static sections shared by every bot; strategy-specific knobs are appended
+// per bot in editSections() below.
+const BASE_EDIT_SECTIONS = [
   { label: 'Sizing',  fields: [
     ['starting_capital', 'number', 'Starting Capital'],
     ['max_contracts',    'number', 'Max Contracts'],
@@ -112,10 +121,22 @@ const EDIT_SECTIONS = [
   ]},
 ];
 
-function EditableForm({ cfg, onChange, onCancel, onSave, saving }) {
+// Per-bot edit sections: pin_drift_combo (SURGE / SPLASH) also exposes the
+// calendar drift distance, mirroring the read-only Strategy card.
+function editSections(bot) {
+  const meta = BOT_REGISTRY[bot] || {};
+  if (meta.strategy !== 'pin_drift_combo') return BASE_EDIT_SECTIONS;
+  return BASE_EDIT_SECTIONS.map(section =>
+    section.label === 'Strategy'
+      ? { ...section, fields: [...section.fields, ['drift_offset', 'number', 'Drift Offset ($)']] }
+      : section
+  );
+}
+
+function EditableForm({ bot, cfg, onChange, onCancel, onSave, saving }) {
   return (
     <div className="px-5 py-5 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-7">
-      {EDIT_SECTIONS.map(section => (
+      {editSections(bot).map(section => (
         <div key={section.label} className="col-span-1">
           <div className="text-[10px] uppercase tracking-[0.16em] font-bold text-text-tertiary mb-3">
             {section.label}
@@ -208,7 +229,7 @@ export default function ConfigTab({ bot }) {
     setSaving(true);
     try {
       const body = {};
-      for (const section of EDIT_SECTIONS) {
+      for (const section of editSections(bot)) {
         for (const [k] of section.fields) body[k] = draft[k];
       }
       const updated = await botApi.saveConfig(bot, body);
@@ -227,6 +248,7 @@ export default function ConfigTab({ bot }) {
   if (editing && draft) {
     return (
       <EditableForm
+        bot={bot}
         cfg={draft}
         onChange={onChange}
         onCancel={cancelEdit}

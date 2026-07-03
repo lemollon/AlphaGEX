@@ -3,6 +3,7 @@
 
 export const BOT_REGISTRY = {
   surge: { display: 'SURGE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
+  splash: { display: 'SPLASH', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
@@ -35,6 +36,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(34,211,238,0.30)',
     glow:        'rgba(34,211,238,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(34,211,238,0.22) 0%, rgba(34,211,238,0.03) 100%)',
+  },
+  splash: {
+    glyph:       'droplet',                    // SPLASH = small-account pin+drift (narrow wing)
+    primary:     '#60a5fa',                    // blue-400
+    primarySoft: 'rgba(96,165,250,0.10)',
+    primaryRing: 'rgba(96,165,250,0.30)',
+    glow:        'rgba(96,165,250,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(96,165,250,0.22) 0%, rgba(96,165,250,0.03) 100%)',
   },
   tide: {
     glyph:       'wave',

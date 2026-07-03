@@ -43,6 +43,37 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
+    # SPLASH — SURGE's pin+drift combo tuned for SMALL accounts ($500 tier).
+    # Same 2026-07-03 sweep-validated exits (PT at 50% of max profit, NO stop,
+    # calendars +/- $2) but the NARROW wing (sd_mult 1.0 -> 0.85x straddle):
+    # ~$200-250 debit/lot vs ~$295 wide, +$46.7/day/lot at half-spread fills,
+    # 76.9% win, green every year 2022-2025. bp_pct 0.50 on $500 = 1 lot
+    # (~half-Kelly; full Kelly for this variant is bp ~1.1) and scales with
+    # equity as the account grows. Days when the combo prices over budget are
+    # skipped automatically — a built-in high-vol gate for tiny accounts.
+    "splash": {
+        "display": "SPLASH",
+        "strategy": "pin_drift_combo",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 1,
+        "defaults": {
+            "starting_capital": 500.0,
+            "enabled": True,
+            "max_contracts": 0,
+            "bp_pct": 0.50,
+            "sd_mult": 1.0,
+            "pt_pct": 0.50,
+            "sl_pct": 1.0,
+            "drift_offset": 2,
+            "entry_start_ct": "08:35",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
     "tide": {
         "display": "TIDE",
         "strategy": "double_calendar",
