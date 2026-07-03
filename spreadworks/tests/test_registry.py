@@ -2,7 +2,25 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"surge", "tide", "drift", "flow", "meadow", "undertow", "delta"}
+    assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "tide", "drift", "flow", "meadow", "undertow", "delta"}
+
+
+def test_splash_defaults():
+    # SPLASH — SURGE's pin+drift combo for the $500 small-account tier:
+    # narrow wing (sd_mult 1.0), same sweep-validated exits as SURGE
+    # (PT 50% of max profit, no stop, drift $2), half-Kelly sizing.
+    b = get_bot("splash")
+    assert b["strategy"] == "pin_drift_combo"
+    assert b["front_dte"] == 0
+    assert b["back_dte"] == 1
+    assert b["defaults"]["starting_capital"] == 500.0
+    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["defaults"]["sd_mult"] == 1.0
+    assert b["defaults"]["pt_pct"] == 0.50
+    assert b["defaults"]["sl_pct"] == 1.0
+    assert b["defaults"]["drift_offset"] == 2
+    assert b["defaults"]["max_contracts"] == 0
+    assert b["defaults"]["enabled"] is True
 
 
 def test_surge_defaults():
@@ -92,7 +110,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "surge", "tide", "undertow"]
+    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "splash", "surge", "tide", "undertow"]
 
 
 def test_undertow_registered():

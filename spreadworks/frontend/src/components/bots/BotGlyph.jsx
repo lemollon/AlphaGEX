@@ -32,6 +32,16 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'droplet') {
+    // SPLASH = a falling drop over its ripple — the small-account bot.
+    return (
+      <svg {...common}>
+        <path d="M12 3.5 C 9.5 7.5, 7.5 10, 7.5 12.5 a 4.5 4.5 0 0 0 9 0 C 16.5 10, 14.5 7.5, 12 3.5 Z" />
+        <path d="M4 20.5 q 2 -1.6 4 0 t 4 0 t 4 0 t 4 0" />
+      </svg>
+    );
+  }
+
   if (kind === 'wave') {
     return (
       <svg {...common}>
