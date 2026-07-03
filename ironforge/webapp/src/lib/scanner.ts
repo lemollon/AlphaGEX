@@ -183,14 +183,20 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // bid/ask spread — 9 sequential PT limits failed, kill switch closed at break-even.
   // SPARK min_credit history: 0.25 → 0.05 on 2026-06-23 (the $0.25 floor + 2.0-SD
   // neg-gamma widen starved the bot to ~36 trades/6.5yr); 0.05 → 0.15 on 2026-07-03
-  // WITH the new SD walk-in (see tryOpenTrade). The old starvation can't recur:
-  // instead of skipping when credit < $0.15, SPARK now walks the strikes IN
-  // (0.1-SD steps, floor 0.7) until the credit clears — it trades MORE days than
-  // before (117% coverage) but never for pennies. Backtest: +$18,054/ct vs
-  // +$13,362 fixed-SD, every year green incl. 2024, lower maxDD. The sub-$0.15
-  // penny-credit trades were the 2024 bleed (-$1.55/ct avg on 547 trades).
+  // WITH the new SD walk-in (see tryOpenTrade); 0.15 → 0.25 later on 2026-07-03
+  // after the floor sweep. The old starvation can't recur: instead of skipping when
+  // credit < floor, SPARK walks the strikes IN (0.1-SD steps, floor 0.7 SD) until
+  // the credit clears — still ~90% day coverage, never trades for pennies.
+  // Floor sweep (walk-in, tier 40/35/30, worst-case fills, 2020-26):
+  //   $0.15 +$18,054/ct | $0.25 +$23,993 | $0.30 +$25,731 | $0.50 +$31,928(OVERFIT)
+  // $0.25 chosen as the robust point: median walked strikes stay ~1.0-1.1 SD (a
+  // real OTM condor); deeper floors morph toward near-ATM and lean on this
+  // sample's quick-recovery regime. With VIX cap 40 (see tryOpenTrade):
+  // +$26,742/ct, every year green (2024 +$1,848), 95.7% win, maxDD $670/ct,
+  // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
+  // 2024 bleed.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -2840,8 +2846,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   const botCfg = cfg(bot)
 
-  // VIX filter
-  if (vix > 32) return `skip:vix_too_high(${vix.toFixed(1)})`
+  // VIX filter. SPARK's cap raised 32 -> 40 on 2026-07-03: the warehouse sweep
+  // showed the 32-40 VIX band was the BEST-paid cohort (fat credit at 1.2/1.5 SD,
+  // ~+$30-56/ct avg) and skipping it cost ~+$2.7k/ct over 2020-26. None of the
+  // added days appear in the worst-5 single-day losses — high-VIX credit cushions
+  // the moves. 40 kept (not removed entirely) as the catastrophic-vol circuit
+  // breaker; the "no cap" variant's extra gain was one regime (2020 COVID).
+  // Other bots (FLAME/INFERNO/KINDLE) keep the conservative 32.
+  const vixCap = bot.name === 'spark' ? 40 : 32
+  if (vix > vixCap) return `skip:vix_too_high(${vix.toFixed(1)}>cap${vixCap})`
 
   // Resolve the primary person for this bot (used for position attribution)
   let person = 'User'
