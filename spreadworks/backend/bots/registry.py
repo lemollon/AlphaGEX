@@ -25,13 +25,16 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "starting_capital": 10000.0,
             "enabled": True,
             "max_contracts": 0,
-            "bp_pct": 0.50,
-            "sd_mult": 1.0,
-            "pt_pct": 0.30,
-            "sl_pct": 0.50,
-            # Calendars sit this many dollars either side of the body (validated
-            # sweet spot from the real-fill sweep was +/- $3).
-            "drift_offset": 3,
+            # 2026-07-03 train(22-24)/holdout(25) sweep: quarter-Kelly sizing,
+            # PT at 50% of max profit with NO stop (the combo is defined-risk;
+            # a -50% stop on intraday marks was the live bleed), wing 1.15x
+            # straddle (sd_mult 1.35 x 0.85), calendars +/- $2. ~+$52-58/day/lot
+            # at half-spread fills, all years green incl 2023.
+            "bp_pct": 0.10,
+            "sd_mult": 1.35,
+            "pt_pct": 0.50,
+            "sl_pct": 1.0,
+            "drift_offset": 2,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
             "eod_close_ct": "14:45",

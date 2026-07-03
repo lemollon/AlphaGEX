@@ -76,7 +76,13 @@ def test_config_get_and_post(client):
     r = client.get("/api/spreadworks/bots/surge/config")
     assert r.status_code == 200
     cfg = r.json()
-    assert cfg["pt_pct"] == 0.30 or float(cfg["pt_pct"]) == 0.30
+    assert cfg["pt_pct"] == 0.50 or float(cfg["pt_pct"]) == 0.50
+    # drift_offset rides the same config row (added 2026-07-03 for SURGE)
+    assert int(cfg["drift_offset"]) == 2
+
+    r2 = client.post("/api/spreadworks/bots/surge/config", json={"pt_pct": 0.40, "drift_offset": 3})
+    assert r2.status_code == 200
+    assert int(client.get("/api/spreadworks/bots/surge/config").json()["drift_offset"]) == 3
 
     r2 = client.post("/api/spreadworks/bots/surge/config", json={"pt_pct": 0.40})
     assert r2.status_code == 200

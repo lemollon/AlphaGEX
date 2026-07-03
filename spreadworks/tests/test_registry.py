@@ -12,13 +12,17 @@ def test_surge_defaults():
     assert b["strategy"] == "pin_drift_combo"
     assert b["front_dte"] == 0
     assert b["back_dte"] == 1          # 1DTE back legs for the calendars
-    assert b["defaults"]["pt_pct"] == 0.30
-    assert b["defaults"]["sl_pct"] == 0.50
-    assert b["defaults"]["sd_mult"] == 1.0
-    assert b["defaults"]["drift_offset"] == 3
+    # 2026-07-03 sweep-validated shape: PT at 50% of max profit, NO stop
+    # (sl_pct 1.0 = the debit floor of a defined-risk combo), wing 1.15x
+    # straddle (sd_mult 1.35 x 0.85), calendars +/- $2.
+    assert b["defaults"]["pt_pct"] == 0.50
+    assert b["defaults"]["sl_pct"] == 1.0
+    assert b["defaults"]["sd_mult"] == 1.35
+    assert b["defaults"]["drift_offset"] == 2
     assert b["defaults"]["eod_close_ct"] == "14:45"
-    # All bots deploy 50% of the account, uncapped — matches FLOW.
-    assert b["defaults"]["bp_pct"] == 0.50
+    # Quarter-Kelly at half-spread fills (2026-07-03 study); the old 0.50 was
+    # ~1.3x FULL Kelly and drove the live paper drawdown.
+    assert b["defaults"]["bp_pct"] == 0.10
     assert b["defaults"]["max_contracts"] == 0
     # Shipped LIVE (paper) 2026-06-24 — enabled by default like RIVER.
     assert b["defaults"]["enabled"] is True
