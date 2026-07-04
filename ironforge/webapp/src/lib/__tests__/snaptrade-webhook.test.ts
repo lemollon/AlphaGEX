@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { snaptradeCanonicalJson, snaptradeSignatureValid } from '../snaptrade-webhook'
+import { snaptradeCanonicalJson, snaptradeCanonicalJsonSpaced, snaptradeSignatureValid } from '../snaptrade-webhook'
 
 // Reference values generated with Python:
 //   json.dumps(payload, separators=(",", ":"), sort_keys=True)
@@ -41,5 +41,19 @@ describe('snaptradeSignatureValid', () => {
   it('rejects when the consumer key is unset', () => {
     delete process.env.SNAPTRADE_CONSUMER_KEY
     expect(snaptradeSignatureValid(payload, PY_SIG)).toBe(false)
+  })
+})
+
+describe('snaptradeCanonicalJsonSpaced', () => {
+  it('matches Python json.dumps(sort_keys=True) with default separators', () => {
+    const PY_SPACED =
+      '{"details": {"accounts": [1, 2], "brokerage": "Alpaca", "note": "caf\\u00e9 \\u2713"}, "eventTimestamp": "2026-07-04T12:00:00Z", "eventType": "CONNECTION_ADDED", "flag": true, "nothing": null, "num": 12.5, "userId": "u-123", "webhookId": "wh_1"}'
+    expect(snaptradeCanonicalJsonSpaced(payload)).toBe(PY_SPACED)
+  })
+  it('spaced-form signature is accepted by snaptradeSignatureValid', () => {
+    const OLD = process.env.SNAPTRADE_CONSUMER_KEY
+    process.env.SNAPTRADE_CONSUMER_KEY = 'test-consumer-key'
+    expect(snaptradeSignatureValid(payload, 'durmSVGh4JAI5IJlc7dTx0XFYnpLhp1gla4RVocr5q0=')).toBe(true)
+    process.env.SNAPTRADE_CONSUMER_KEY = OLD
   })
 })

@@ -3,6 +3,7 @@ import { createHash, createHmac } from 'crypto'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
 import {
   snaptradeCanonicalJson,
+  snaptradeCanonicalJsonSpaced,
   snaptradeRawSignatureValid,
   snaptradeSignatureValid,
 } from '@/lib/snaptrade-webhook'
@@ -13,6 +14,12 @@ import {
  * an 8-char sha256 fingerprint of the consumer key, and 6-char prefixes of the received vs
  * computed signatures. Remove once the SnapTrade dashboard test passes.
  */
+function omit(obj: Record<string, unknown>, k: string): Record<string, unknown> {
+  const out = { ...obj }
+  delete out[k]
+  return out
+}
+
 function logWebhook401(body: Record<string, unknown>, sigHeader: string | null, raw: string) {
   try {
     const key = process.env.SNAPTRADE_CONSUMER_KEY ?? ''
@@ -29,15 +36,15 @@ function logWebhook401(body: Record<string, unknown>, sigHeader: string | null, 
       canonPrefix: h(snaptradeCanonicalJson(body)),
       rawPrefix: h(raw),
       canonNoSecretPrefix: h(snaptradeCanonicalJson(noSecret)),
-      // alternate-key candidates over the raw bytes: whitespace-trimmed env key, and the
-      // payload's own webhookSecret used as the HMAC key
-      trimmedKeyRawPrefix: key.trim() !== key
-        ? createHmac('sha256', key.trim()).update(raw).digest('base64').slice(0, 6)
-        : 'same',
+      // serialization-variant matrix: spaced = Python json.dumps default separators
+      spacedPrefix: h(snaptradeCanonicalJsonSpaced(body)),
+      spacedNoSecretPrefix: h(snaptradeCanonicalJsonSpaced(noSecret)),
+      canonNoTypoPrefix: h(snaptradeCanonicalJson(omit(body, 'webookId'))),
+      spacedNoTypoPrefix: h(snaptradeCanonicalJsonSpaced(omit(body, 'webookId'))),
+      canonNoIdPrefix: h(snaptradeCanonicalJson(omit(body, 'webhookId'))),
       wsKeyRawPrefix: typeof body.webhookSecret === 'string'
         ? createHmac('sha256', body.webhookSecret).update(raw).digest('base64').slice(0, 6)
         : 'n/a',
-      keyHasWs: key !== key.trim(),
       rawLen: raw.length,
       canonLen: snaptradeCanonicalJson(body).length,
       fieldTypes: Object.keys(body)
