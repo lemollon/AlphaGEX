@@ -269,12 +269,23 @@ export default function BotDashboard({
           : 'operator paused'
         body.reason = reason
       }
-      const res = await fetch(`/api/${bot}/production-pause`, {
+      let res = await fetch(`/api/${bot}/production-pause`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // No operator session (e.g. public mode) — the route accepts the shared
+      // pause password instead. Prompt once and retry.
+      if (res.status === 403 && typeof window !== 'undefined') {
+        const password = window.prompt('Trading password required to change pause state:')
+        if (!password) throw new Error('Password required')
+        res = await fetch(`/api/${bot}/production-pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, password }),
+        })
+      }
+      if (!res.ok) throw new Error(res.status === 403 ? 'Incorrect password' : `HTTP ${res.status}`)
       await mutatePause()
     } catch (e: unknown) {
       setPauseErr(e instanceof Error ? e.message : String(e))
