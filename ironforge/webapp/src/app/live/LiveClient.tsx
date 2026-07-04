@@ -60,7 +60,7 @@ export default function LiveClient() {
               </div>
               <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
                 <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} />
-                <NowTimelineCard state={summary?.state ?? null} />
+                <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} />
               </div>
               {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
               <div className="order-4 lg:order-3">

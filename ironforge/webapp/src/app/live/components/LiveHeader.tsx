@@ -21,15 +21,22 @@ export default function LiveHeader() {
     <div className="flex items-center justify-between">
       <h1 className="font-display text-2xl tracking-wide text-white">Live</h1>
       <div className="flex items-center gap-4">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-          strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
+        <div className="relative">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-spark" />
+        </div>
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-spark/20 text-xs font-semibold text-spark">
             {initials}
           </div>
           <span className="hidden text-sm text-gray-300 sm:block">{name}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-500">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
         </div>
       </div>
     </div>
