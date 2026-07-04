@@ -199,13 +199,24 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
       <Link
         to="/tsunami"
         style={{
-          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+          display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px',
+          marginBottom: 6, borderRadius: 8,
           textDecoration: 'none', borderBottom: '1px solid rgba(148,163,184,0.15)',
         }}
       >
-        <span style={{ fontSize: 16 }}>🌊</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>TSUNAMI</span>
-        <span style={{ fontSize: 10, color: '#94a3b8' }}>LETF trend · 12 instruments</span>
+        <div style={{
+          width: 28, height: 28, borderRadius: 6,
+          display: 'grid', placeItems: 'center',
+          background: 'rgba(125,211,252,0.12)', color: '#7dd3fc', flexShrink: 0,
+        }}>
+          <BotGlyph kind="wave" size={14} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>Tsunami</div>
+          <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
+            LETF Trend · 12 instruments
+          </div>
+        </div>
       </Link>
       {bots.map(b => {
         const t = BOT_THEME[b.id];
