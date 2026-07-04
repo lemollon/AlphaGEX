@@ -109,6 +109,7 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
           {mainItems.map(renderItem)}
           <div className="mx-4 my-3 border-t border-forge-border" />
           {secondaryItems.map(renderItem)}
+          <div className="mx-4 my-3 border-t border-forge-border" />
           <button onClick={handleLogout}
             className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
             <Icon d={ICONS.logout} />
@@ -120,7 +121,7 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
             <div className="font-display text-base text-amber-500">
               {membership?.plan ?? 'Forge Automate'}
             </div>
-            <div className="mt-2 inline-block rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs text-amber-400">
+            <div className="mt-2 inline-block rounded-full border border-spark/30 bg-spark/15 px-2.5 py-0.5 text-xs text-spark">
               {membership?.badge ?? 'Early Access'}
             </div>
           </div>

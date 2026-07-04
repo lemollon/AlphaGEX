@@ -1,6 +1,6 @@
 'use client'
 
-import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
+import { Area, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { CustomerState, LiveTrade } from '@/lib/live/types'
 import { formatDollarPnl } from '@/lib/format'
 
@@ -90,39 +90,56 @@ export default function LiveTradeCard({
 
           {(trade?.active || trade?.today_result) && (
             <div className="mt-4 rounded-lg border border-forge-border/70 bg-forge-bg/60 p-3">
-              <div className="text-xs text-gray-500">
-                {trade.active ? 'Unrealized P&L' : "Today's Result"}
-              </div>
-              <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
-                <div className={`font-mono text-3xl font-semibold ${pnl == null ? 'text-gray-400' : pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {formatDollarPnl(pnl)}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="shrink-0">
+                  <div className="text-xs text-gray-500">
+                    {trade.active ? 'Unrealized P&L' : "Today's Result"}
+                  </div>
+                  <div className={`mt-1 font-mono text-3xl font-semibold ${pnl == null ? 'text-gray-400' : pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatDollarPnl(pnl)}
+                  </div>
+                  {pct != null && (
+                    <div className={`mt-0.5 text-sm ${pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                    </div>
+                  )}
                 </div>
-                {pct != null && (
-                  <div className={`pb-1 text-sm ${pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                {showChart && (
+                  <div className="h-[100px] min-w-0 flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={series} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
+                        <XAxis dataKey="timestamp" hide />
+                        <YAxis
+                          orientation="right"
+                          domain={['auto', 'auto']}
+                          tickFormatter={(v: number) => (v > 0 ? `+$${Math.round(v)}` : v < 0 ? `-$${Math.abs(Math.round(v))}` : '$0')}
+                          stroke="transparent"
+                          tick={{ fill: '#78716c', fontSize: 10 }}
+                          width={48}
+                          tickCount={3}
+                        />
+                        <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
+                        <Area
+                          type="monotone"
+                          dataKey="pnl"
+                          stroke={chartColor}
+                          strokeWidth={2}
+                          fill={lastPnl >= 0 ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)'}
+                          isAnimationActive={false}
+                          dot={false}
+                        />
+                        <ReferenceDot
+                          x={series[series.length - 1].timestamp}
+                          y={lastPnl}
+                          r={4}
+                          fill={chartColor}
+                          stroke="none"
+                        />
+                      </ComposedChart>
+                    </ResponsiveContainer>
                   </div>
                 )}
               </div>
-              {showChart && (
-                <div className="mt-2 h-[90px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
-                      <XAxis dataKey="timestamp" hide />
-                      <YAxis hide domain={['auto', 'auto']} />
-                      <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
-                      <Area
-                        type="monotone"
-                        dataKey="pnl"
-                        stroke={chartColor}
-                        strokeWidth={2}
-                        fill={lastPnl >= 0 ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)'}
-                        isAnimationActive={false}
-                        dot={false}
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
               {trade.active && (
                 <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
                   <span className="h-1.5 w-1.5 rounded-full bg-spark" />

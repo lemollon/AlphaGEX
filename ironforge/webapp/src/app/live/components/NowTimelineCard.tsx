@@ -29,9 +29,23 @@ function explainer(state: CustomerState | null): string {
   }
 }
 
-export default function NowTimelineCard({ state }: { state: CustomerState | null }) {
+export default function NowTimelineCard({
+  state,
+  openedAt,
+}: {
+  state: CustomerState | null
+  openedAt: string | null
+}) {
   const step = state?.timeline_step ?? null
   const complete = state?.key === 'TRADE_COMPLETE'
+  const openedLabel = (() => {
+    if (!openedAt) return null
+    const d = new Date(openedAt)
+    if (isNaN(d.getTime())) return null
+    return d.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit',
+    })
+  })()
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -69,6 +83,9 @@ export default function NowTimelineCard({ state }: { state: CustomerState | null
                 {s.label}
               </div>
               {current && <div className="mt-1 text-xs font-medium text-spark">Live</div>}
+              {s.n === 1 && (done || current) && openedLabel && (
+                <div className="mt-1 text-xs text-gray-500">{openedLabel}</div>
+              )}
             </div>
           )
         })}
