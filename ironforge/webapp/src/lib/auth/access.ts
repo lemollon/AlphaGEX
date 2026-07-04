@@ -24,6 +24,11 @@ const PUBLIC_EXACT = new Set<string>([
   // Customer trade-approval UI: page shell loads for anyone; the data API self-guards
   // the customer session, so the page shows a sign-in prompt when unauthenticated.
   '/account/trades',
+  // Customer Live page (site not launched; ungated while dark).
+  '/live',
+  // TODO: gate behind customer session before launch — public pause control is
+  // acceptable only while the site is dark.
+  '/api/spark/production-pause',
 ])
 
 export function isPublicPath(pathname: string): boolean {
@@ -32,6 +37,8 @@ export function isPublicPath(pathname: string): boolean {
   // token). Middleware only recognizes the OPERATOR session, so customer-facing
   // brokerage APIs must bypass it here and enforce their own auth.
   if (pathname.startsWith('/api/brokerage/')) return true
+  // Customer-shaped Live page aggregation APIs; read-only, no operator internals.
+  if (pathname.startsWith('/api/live/')) return true
   return PUBLIC_EXACT.has(pathname)
 }
 
