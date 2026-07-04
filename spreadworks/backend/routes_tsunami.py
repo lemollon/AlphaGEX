@@ -815,3 +815,61 @@ def admin_trend_rebalance() -> dict[str, Any]:
         return {"status": "ok", **{k: v for k, v in run_rebalance().items()}}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"trend rebalance failed: {exc!r}")
+
+
+_cmp_cache: dict[str, Any] = {"ts": 0.0, "data": None}
+
+
+@router.get("/trend/comparison")
+def tsunami_trend_comparison(days: int = 180) -> dict[str, Any]:
+    """Time-series comparison: TSUNAMI equity vs each instrument, indexed to 100.
+
+    Feeds the dashboard's comparison chart (replaces the options-era
+    structures chart). Instrument closes come from Tradier daily history;
+    the TSUNAMI line from tsunami_equity_snapshots. 10-minute cache —
+    11 Tradier calls per refresh otherwise.
+    """
+    import time as _time
+    if _cmp_cache["data"] is not None and _time.time() - _cmp_cache["ts"] < 600:
+        return _cmp_cache["data"]
+
+    from backend.bots.tsunami.data import tradier_client
+    from backend.bots.tsunami.trend_engine import PAIRS, START_CASH
+
+    days = max(30, min(days, 400))
+    series: dict[str, dict[str, float]] = {}
+    for _, letf in PAIRS:
+        hist = tradier_client.get_daily_history(letf, days=days)
+        if not hist:
+            continue
+        base = float(hist[0]["close"])
+        if base <= 0:
+            continue
+        series[letf] = {str(h["date"]): round(100.0 * float(h["close"]) / base, 2)
+                        for h in hist if h.get("close")}
+
+    eq_rows = _safe_query(
+        "SELECT snapshot_at::date, MAX(equity) FROM tsunami_equity_snapshots"
+        " WHERE scope='PLATFORM' GROUP BY 1 ORDER BY 1")
+    tsunami = {str(r[0]): round(100.0 * float(r[1]) / START_CASH, 2) for r in eq_rows}
+
+    all_dates = sorted(set().union(tsunami.keys(), *[s.keys() for s in series.values()]))
+    points = []
+    for d in all_dates:
+        row: dict[str, Any] = {"date": d}
+        if d in tsunami:
+            row["TSUNAMI"] = tsunami[d]
+        for letf, s in series.items():
+            if d in s:
+                row[letf] = s[d]
+        points.append(row)
+
+    book = _safe_query("SELECT letf, shares FROM tsunami_trend_book WHERE shares > 0")
+    data = {
+        "tickers": [l for _, l in PAIRS],
+        "inverse": ["SBIT", "ETHD", "SMST"],
+        "held": [r[0] for r in book],
+        "points": points,
+    }
+    _cmp_cache.update(ts=_time.time(), data=data)
+    return data

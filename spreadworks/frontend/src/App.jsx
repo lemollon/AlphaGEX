@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus, Waves } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -15,6 +15,7 @@ import PositionsPage from './pages/PositionsPage';
 // Lazy-load heavy chart pages so Plotly + Recharts don't drag the main bundle.
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
+const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -410,6 +411,7 @@ function NavBar() {
           <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
           <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
           <RouteBtn to={`/bots/${activeBotId}`} icon={<Cpu size={14} />}  label="Bots" />
+          <RouteBtn to="/tsunami"         icon={<Waves size={14} />}     label="Tsunami" />
         </nav>
       </div>
 
@@ -715,6 +717,7 @@ export default function App() {
             <Route path="/gex-profile" element={<GexProfilePage />} />
             <Route path="/bots" element={<Navigate to="/bots/surge" replace />} />
             <Route path="/bots/:bot" element={<BotDashboard />} />
+            <Route path="/tsunami" element={<TsunamiPage />} />
           </Routes>
         </Suspense>
       </div>
