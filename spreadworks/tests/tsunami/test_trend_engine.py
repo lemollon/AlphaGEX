@@ -66,7 +66,7 @@ class Config(unittest.TestCase):
         self.assertEqual(trend_engine.START_CASH, 500.0)
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
-                          "BITX", "ETHU", "IONX",
+                          "BITX", "ETHU", "IONX", "UXRP",
                           "SBIT", "ETHD", "SMST"])
 
 
