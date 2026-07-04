@@ -194,30 +194,9 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
           'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
       }}
     >
-      {/* TSUNAMI — pinned row. Not a registry bot (own engine + page), but
-          users look for it here, so link it at the top of the menu. */}
-      <Link
-        to="/tsunami"
-        style={{
-          display: 'flex', alignItems: 'center', gap: 12, padding: '8px 10px',
-          marginBottom: 6, borderRadius: 8,
-          textDecoration: 'none', borderBottom: '1px solid rgba(148,163,184,0.15)',
-        }}
-      >
-        <div style={{
-          width: 28, height: 28, borderRadius: 6,
-          display: 'grid', placeItems: 'center',
-          background: 'rgba(125,211,252,0.12)', color: '#7dd3fc', flexShrink: 0,
-        }}>
-          <BotGlyph kind="wave" size={14} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>Tsunami</div>
-          <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
-            LETF Trend · 12 instruments
-          </div>
-        </div>
-      </Link>
+      {/* TSUNAMI deliberately NOT listed here (operator 2026-07-04): it isn't a registry bot —
+          it has its own engine, its own $500 sleeve, and its own top-nav tab. Keeping it out of
+          the BOT dropdown keeps this menu = "registry bots that share the options stack". */}
       {bots.map(b => {
         const t = BOT_THEME[b.id];
         const active = b.id === activeBotId;

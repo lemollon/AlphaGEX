@@ -193,23 +193,62 @@ function Card({ title, subtitle, children, headerRight }) {
   );
 }
 
+/* Timeframe windows for BOTH charts (days back from the newest point; ALL = everything). */
+const TIMEFRAMES = [
+  { id: '1W', days: 7 },
+  { id: '1M', days: 31 },
+  { id: '3M', days: 93 },
+  { id: 'ALL', days: 0 },
+];
+
+function windowPoints(points, days) {
+  if (!days || !points.length) return points;
+  const last = new Date(points[points.length - 1].date || points[points.length - 1].ts);
+  const cutoff = new Date(last.getTime() - days * 86400 * 1000);
+  return points.filter(p => new Date(p.date || p.ts) >= cutoff);
+}
+
+/* Pill-button group — chart view toggle + timeframe filter (same chrome as the chips). */
+function PillGroup({ options, value, onChange }) {
+  return (
+    <div className="inline-flex gap-1 p-0.5 rounded-full" style={{ background: 'rgba(148,163,184,0.08)' }}>
+      {options.map(o => (
+        <button
+          key={o}
+          onClick={() => onChange(o)}
+          className="px-2.5 py-1 rounded-full text-[11px] font-bold sw-mono cursor-pointer transition-all"
+          style={value === o
+            ? { color: '#0b1220', background: THEME.primary }
+            : { color: 'var(--color-text-tertiary)', background: 'transparent' }}
+        >
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function TsunamiPage() {
   const [status, setStatus] = useState(null);
   const [cmp, setCmp] = useState(null);
+  const [eq, setEq] = useState(null);
   const [err, setErr] = useState(null);
   const [on, setOn] = useState(DEFAULT_ON);
+  const [view, setView] = useState('EQUITY');    // EQUITY | COMPARE
+  const [tf, setTf] = useState('ALL');           // 1W | 1M | 3M | ALL
 
   useEffect(() => {
     let dead = false;
     (async () => {
       try {
-        const [s, c] = await Promise.all([
+        const [s, c, e] = await Promise.all([
           fetch(`${API_BASE}/api/tsunami/trend/status`).then(r => r.json()),
           fetch(`${API_BASE}/api/tsunami/trend/comparison`).then(r => r.json()),
+          fetch(`${API_BASE}/api/tsunami/trend/equity-curve`).then(r => r.json()).catch(() => null),
         ]);
-        if (!dead) { setStatus(s); setCmp(c); }
-      } catch (e) {
-        if (!dead) setErr(String(e));
+        if (!dead) { setStatus(s); setCmp(c); setEq(e); }
+      } catch (e2) {
+        if (!dead) setErr(String(e2));
       }
     })();
     return () => { dead = true; };
@@ -217,7 +256,12 @@ export default function TsunamiPage() {
 
   const held = useMemo(() => new Set(cmp?.held || []), [cmp]);
   const tickers = useMemo(() => ['TSUNAMI', ...(cmp?.tickers || [])], [cmp]);
-  const points = cmp?.points || [];
+  const tfDays = TIMEFRAMES.find(t => t.id === tf)?.days || 0;
+  const points = useMemo(
+    () => windowPoints(cmp?.points || [], tfDays), [cmp, tfDays]);
+  const eqPoints = useMemo(
+    () => windowPoints(eq?.points || [], tfDays), [eq, tfDays]);
+  const startCash = eq?.start_cash ?? 500;
 
   const toggle = (id) => setOn(prev => {
     const next = new Set(prev);
@@ -270,46 +314,87 @@ export default function TsunamiPage() {
           />
         </div>
 
-        {/* Comparison chart — TSUNAMI's centerpiece (stock bot: no payoff
-            diagram; the strategy IS relative performance vs its universe). */}
+        {/* Centerpiece — toggle between the EQUITY curve ($500 sleeve over time) and the
+            indexed COMPARISON vs its universe. Timeframe filter applies to both; instrument
+            chips filter the comparison view. */}
         <Card
-          title="TSUNAMI vs. its instruments"
-          subtitle="Indexed to 100 at the left edge · dashed = inverse (short-side) products"
+          title={view === 'EQUITY' ? 'TSUNAMI equity' : 'TSUNAMI vs. its instruments'}
+          subtitle={view === 'EQUITY'
+            ? `$${startCash.toFixed(0)} sleeve · one point per daily rebalance`
+            : 'Indexed to 100 at the left edge · dashed = inverse (short-side) products'}
+          headerRight={
+            <div className="flex flex-wrap items-center gap-2">
+              <PillGroup options={['EQUITY', 'COMPARE']} value={view} onChange={setView} />
+              <PillGroup options={TIMEFRAMES.map(t => t.id)} value={tf} onChange={setTf} />
+            </div>
+          }
         >
           <div className="px-5 pt-4 pb-5">
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {tickers.map(t => (
-                <Chip key={t} id={t} on={on.has(t)} held={held.has(t)} onClick={() => toggle(t)} />
-              ))}
-            </div>
+            {view === 'COMPARE' && (
+              <div className="flex flex-wrap gap-1.5 mb-4">
+                {tickers.map(t => (
+                  <Chip key={t} id={t} on={on.has(t)} held={held.has(t)} onClick={() => toggle(t)} />
+                ))}
+              </div>
+            )}
             {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
+            {view === 'EQUITY' && eqPoints.length === 0 && (
+              <div className="py-16 text-center text-[12.5px] text-text-tertiary">
+                No equity history yet — a point lands after each daily rebalance (14:45 CT).
+              </div>
+            )}
+            {(view === 'COMPARE' || eqPoints.length > 0) && (
             <div className="w-full h-[380px]">
               <ResponsiveContainer>
-                <LineChart data={points} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
-                  <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
-                         minTickGap={48} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
-                         tickLine={false} domain={['auto', 'auto']} width={44} />
-                  <Tooltip
-                    contentStyle={{
-                      background: 'rgba(13,28,46,0.95)',
-                      border: '1px solid rgba(125,211,252,0.25)',
-                      borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
-                    }}
-                    labelStyle={{ color: '#94a3b8' }}
-                    formatter={(v, name) => [Number(v).toFixed(1), name]}
-                  />
-                  <ReferenceLine y={100} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
-                  {tickers.filter(t => on.has(t)).map(t => (
-                    <Line key={t} type="monotone" dataKey={t} dot={false} connectNulls
-                          stroke={SERIES_COLOR[t] || '#94a3b8'}
-                          strokeWidth={t === 'TSUNAMI' ? 2.6 : 1.4}
-                          strokeDasharray={INVERSE.has(t) ? '5 4' : undefined} />
-                  ))}
-                </LineChart>
+                {view === 'EQUITY' ? (
+                  <LineChart data={eqPoints} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                    <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
+                           minTickGap={48} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
+                           tickLine={false} domain={['auto', 'auto']} width={54}
+                           tickFormatter={(v) => `$${Number(v).toFixed(0)}`} />
+                    <Tooltip
+                      contentStyle={{
+                        background: 'rgba(13,28,46,0.95)',
+                        border: '1px solid rgba(125,211,252,0.25)',
+                        borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
+                      }}
+                      labelStyle={{ color: '#94a3b8' }}
+                      formatter={(v) => [money(Number(v)), 'equity']}
+                    />
+                    <ReferenceLine y={startCash} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
+                    <Line type="monotone" dataKey="equity" dot={false} connectNulls
+                          stroke={THEME.primary} strokeWidth={2.4} />
+                  </LineChart>
+                ) : (
+                  <LineChart data={points} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                    <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
+                           minTickGap={48} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
+                           tickLine={false} domain={['auto', 'auto']} width={44} />
+                    <Tooltip
+                      contentStyle={{
+                        background: 'rgba(13,28,46,0.95)',
+                        border: '1px solid rgba(125,211,252,0.25)',
+                        borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
+                      }}
+                      labelStyle={{ color: '#94a3b8' }}
+                      formatter={(v, name) => [Number(v).toFixed(1), name]}
+                    />
+                    <ReferenceLine y={100} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
+                    {tickers.filter(t => on.has(t)).map(t => (
+                      <Line key={t} type="monotone" dataKey={t} dot={false} connectNulls
+                            stroke={SERIES_COLOR[t] || '#94a3b8'}
+                            strokeWidth={t === 'TSUNAMI' ? 2.6 : 1.4}
+                            strokeDasharray={INVERSE.has(t) ? '5 4' : undefined} />
+                    ))}
+                  </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
+            )}
           </div>
         </Card>
 

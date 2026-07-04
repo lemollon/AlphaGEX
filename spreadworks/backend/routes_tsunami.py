@@ -790,19 +790,38 @@ def tsunami_trend_status() -> dict[str, Any]:
     trades = _safe_query(
         "SELECT ts, letf, side, shares, price, reason, realized_pnl"
         " FROM tsunami_trend_trades ORDER BY ts DESC LIMIT 25")
-    eq = _safe_query(
-        "SELECT snapshot_at, equity FROM tsunami_equity_snapshots"
-        " WHERE scope='PLATFORM' ORDER BY snapshot_at DESC LIMIT 1")
+    # EQUITY = live cash + book at avg cost (marks refresh at each daily rebalance). Never read the
+    # latest PLATFORM snapshot here: that table still holds the OLD options-engine snapshots
+    # (starting_capital $5,000), which made the page show "$5,000 account equity" while the trend
+    # engine actually runs on $500 (START_CASH). Operator 2026-07-04: TSUNAMI uses $500, full stop.
+    _cash = float(cash[0][0]) if cash else None
+    _bookval = sum(float(r[1]) * float(r[2]) for r in book) if book else 0.0
     return {
         "engine": "TSUNAMI-TREND (LETF vol-managed MA50)",
-        "cash": float(cash[0][0]) if cash else None,
-        "equity": float(eq[0][1]) if eq else None,
+        "cash": _cash,
+        "equity": (round(_cash + _bookval, 2) if _cash is not None else None),
         "book": [{"letf": r[0], "shares": int(r[1]), "avg_cost": float(r[2]),
                   "updated_at": str(r[3])} for r in book],
         "recent_trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
                            "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
                            "realized_pnl": float(r[6]) if r[6] is not None else None}
                           for r in trades],
+    }
+
+
+@router.get("/trend/equity-curve")
+def tsunami_trend_equity_curve() -> dict[str, Any]:
+    """TREND-engine equity history for the page's equity chart. Filters to the trend engine's own
+    snapshots (starting_capital = $500) so the retired options-engine rows ($5,000 era, same
+    PLATFORM scope) can't pollute the curve. One point per snapshot, oldest first."""
+    rows = _safe_query(
+        "SELECT snapshot_at, equity FROM tsunami_equity_snapshots"
+        " WHERE scope='PLATFORM' AND starting_capital=500"
+        " ORDER BY snapshot_at ASC")
+    return {
+        "start_cash": 500.0,
+        "points": [{"date": str(r[0])[:10], "ts": str(r[0]), "equity": float(r[1])}
+                   for r in rows or []],
     }
 
 
