@@ -26,8 +26,8 @@ const PUBLIC_EXACT = new Set<string>([
   '/account/trades',
   // Customer Live page (site not launched; ungated while dark).
   '/live',
-  // TODO: gate behind customer session before launch — public pause control is
-  // acceptable only while the site is dark.
+  // Middleware-open so the Live page can reach it; POST self-guards in-route
+  // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
   '/api/spark/production-pause',
 ])
 
