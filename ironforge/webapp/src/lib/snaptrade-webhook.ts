@@ -28,10 +28,30 @@ function hmacB64Matches(content: string, header: string): boolean {
   return false
 }
 
+/**
+ * Canonical JSON but with Python's DEFAULT separators (", " / ": "), sorted keys — i.e.
+ * json.dumps(payload, sort_keys=True) with no separators override. Some SnapTrade senders
+ * appear to sign this form rather than the compact one their docs show.
+ */
+export function snaptradeCanonicalJsonSpaced(value: unknown): string {
+  const esc = (s: string) =>
+    s.replace(/[\u0080-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+  if (value === null || typeof value !== 'object') return esc(JSON.stringify(value))
+  if (Array.isArray(value)) return '[' + value.map(snaptradeCanonicalJsonSpaced).join(', ') + ']'
+  const obj = value as Record<string, unknown>
+  const keys = Object.keys(obj).sort()
+  return (
+    '{' + keys.map((k) => esc(JSON.stringify(k)) + ': ' + snaptradeCanonicalJsonSpaced(obj[k])).join(', ') + '}'
+  )
+}
+
 /** base64(HMAC-SHA256(canonical body, consumer key)) must equal the Signature header. */
 export function snaptradeSignatureValid(body: unknown, header: string | null): boolean {
   if (!header) return false
-  return hmacB64Matches(snaptradeCanonicalJson(body), header)
+  return (
+    hmacB64Matches(snaptradeCanonicalJson(body), header) ||
+    hmacB64Matches(snaptradeCanonicalJsonSpaced(body), header)
+  )
 }
 
 /** Same HMAC over the raw wire body — covers senders that sign the exact bytes they POST. */
