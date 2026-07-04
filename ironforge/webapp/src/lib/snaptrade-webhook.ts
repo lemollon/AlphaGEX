@@ -18,10 +18,14 @@ export function snaptradeCanonicalJson(value: unknown): string {
 function hmacB64Matches(content: string, header: string): boolean {
   const key = process.env.SNAPTRADE_CONSUMER_KEY
   if (!key) return false
-  const digest = createHmac('sha256', key).update(content).digest('base64')
-  const a = Buffer.from(digest)
-  const b = Buffer.from(header)
-  return a.length === b.length && timingSafeEqual(a, b)
+  // Tolerate stray whitespace picked up when the key was pasted into the env editor.
+  for (const k of key.trim() === key ? [key] : [key, key.trim()]) {
+    const digest = createHmac('sha256', k).update(content).digest('base64')
+    const a = Buffer.from(digest)
+    const b = Buffer.from(header)
+    if (a.length === b.length && timingSafeEqual(a, b)) return true
+  }
+  return false
 }
 
 /** base64(HMAC-SHA256(canonical body, consumer key)) must equal the Signature header. */

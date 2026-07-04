@@ -29,6 +29,15 @@ function logWebhook401(body: Record<string, unknown>, sigHeader: string | null, 
       canonPrefix: h(snaptradeCanonicalJson(body)),
       rawPrefix: h(raw),
       canonNoSecretPrefix: h(snaptradeCanonicalJson(noSecret)),
+      // alternate-key candidates over the raw bytes: whitespace-trimmed env key, and the
+      // payload's own webhookSecret used as the HMAC key
+      trimmedKeyRawPrefix: key.trim() !== key
+        ? createHmac('sha256', key.trim()).update(raw).digest('base64').slice(0, 6)
+        : 'same',
+      wsKeyRawPrefix: typeof body.webhookSecret === 'string'
+        ? createHmac('sha256', body.webhookSecret).update(raw).digest('base64').slice(0, 6)
+        : 'n/a',
+      keyHasWs: key !== key.trim(),
       rawLen: raw.length,
       canonLen: snaptradeCanonicalJson(body).length,
       fieldTypes: Object.keys(body)
