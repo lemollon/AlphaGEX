@@ -194,6 +194,19 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
           'inset 0 0 0 1px rgba(125,211,252,0.12), inset 0 1px 0 rgba(255,255,255,0.05), 0 12px 40px -8px rgba(0,0,0,0.4)',
       }}
     >
+      {/* TSUNAMI — pinned row. Not a registry bot (own engine + page), but
+          users look for it here, so link it at the top of the menu. */}
+      <Link
+        to="/tsunami"
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+          textDecoration: 'none', borderBottom: '1px solid rgba(148,163,184,0.15)',
+        }}
+      >
+        <span style={{ fontSize: 16 }}>🌊</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>TSUNAMI</span>
+        <span style={{ fontSize: 10, color: '#94a3b8' }}>LETF trend · 12 instruments</span>
+      </Link>
       {bots.map(b => {
         const t = BOT_THEME[b.id];
         const active = b.id === activeBotId;
