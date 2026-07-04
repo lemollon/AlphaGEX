@@ -20,6 +20,7 @@ const SERIES_COLOR = {
   BITX: '#fb7185',
   ETHU: '#38bdf8',
   IONX: '#c084fc',
+  UXRP: '#2dd4bf',
   SBIT: '#fb7185',  // inverses share their asset hue but render dashed
   ETHD: '#38bdf8',
   SMST: '#facc15',
