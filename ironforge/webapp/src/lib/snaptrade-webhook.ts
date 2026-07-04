@@ -15,12 +15,23 @@ export function snaptradeCanonicalJson(value: unknown): string {
   return '{' + keys.map((k) => esc(JSON.stringify(k)) + ':' + snaptradeCanonicalJson(obj[k])).join(',') + '}'
 }
 
-/** base64(HMAC-SHA256(canonical body, consumer key)) must equal the Signature header. */
-export function snaptradeSignatureValid(body: unknown, header: string | null): boolean {
+function hmacB64Matches(content: string, header: string): boolean {
   const key = process.env.SNAPTRADE_CONSUMER_KEY
-  if (!key || !header) return false
-  const digest = createHmac('sha256', key).update(snaptradeCanonicalJson(body)).digest('base64')
+  if (!key) return false
+  const digest = createHmac('sha256', key).update(content).digest('base64')
   const a = Buffer.from(digest)
   const b = Buffer.from(header)
   return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/** base64(HMAC-SHA256(canonical body, consumer key)) must equal the Signature header. */
+export function snaptradeSignatureValid(body: unknown, header: string | null): boolean {
+  if (!header) return false
+  return hmacB64Matches(snaptradeCanonicalJson(body), header)
+}
+
+/** Same HMAC over the raw wire body — covers senders that sign the exact bytes they POST. */
+export function snaptradeRawSignatureValid(raw: string, header: string | null): boolean {
+  if (!header || !raw) return false
+  return hmacB64Matches(raw, header)
 }

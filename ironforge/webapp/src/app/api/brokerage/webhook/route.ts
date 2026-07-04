@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHash, createHmac } from 'crypto'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
-import { snaptradeCanonicalJson, snaptradeSignatureValid } from '@/lib/snaptrade-webhook'
+import {
+  snaptradeCanonicalJson,
+  snaptradeRawSignatureValid,
+  snaptradeSignatureValid,
+} from '@/lib/snaptrade-webhook'
 
 /**
  * TEMPORARY diagnostics for webhook 401s — logs enough to distinguish "wrong consumer key in
@@ -9,22 +13,28 @@ import { snaptradeCanonicalJson, snaptradeSignatureValid } from '@/lib/snaptrade
  * an 8-char sha256 fingerprint of the consumer key, and 6-char prefixes of the received vs
  * computed signatures. Remove once the SnapTrade dashboard test passes.
  */
-function logWebhook401(body: Record<string, unknown>, sigHeader: string | null) {
+function logWebhook401(body: Record<string, unknown>, sigHeader: string | null, raw: string) {
   try {
     const key = process.env.SNAPTRADE_CONSUMER_KEY ?? ''
     const keyFp = key ? createHash('sha256').update(key).digest('hex').slice(0, 8) : 'UNSET'
-    const computed = key
-      ? createHmac('sha256', key).update(snaptradeCanonicalJson(body)).digest('base64')
-      : 'n/a'
+    const h = (content: string) =>
+      key ? createHmac('sha256', key).update(content).digest('base64').slice(0, 6) : 'n/a'
+    const noSecret = { ...body }
+    delete noSecret.webhookSecret
     console.error('[brokerage/webhook] 401 diag', {
       envClientId: process.env.SNAPTRADE_CLIENT_ID ?? 'UNSET',
       consumerKeyFp: keyFp,
       consumerKeyLen: key.length,
-      sigHeaderPresent: sigHeader != null,
-      sigHeaderLen: sigHeader?.length ?? 0,
-      sigHeaderPrefix: sigHeader?.slice(0, 6) ?? '',
-      computedPrefix: computed.slice(0, 6),
-      bodyKeys: Object.keys(body).sort().join(','),
+      sigHeaderPrefix: sigHeader?.slice(0, 6) ?? 'MISSING',
+      canonPrefix: h(snaptradeCanonicalJson(body)),
+      rawPrefix: h(raw),
+      canonNoSecretPrefix: h(snaptradeCanonicalJson(noSecret)),
+      rawLen: raw.length,
+      canonLen: snaptradeCanonicalJson(body).length,
+      fieldTypes: Object.keys(body)
+        .sort()
+        .map((k) => `${k}:${typeof body[k]}`)
+        .join(','),
     })
   } catch (e) {
     console.error('[brokerage/webhook] 401 diag failed', e)
@@ -44,12 +54,24 @@ export const dynamic = 'force-dynamic'
  * not retry-storm; 401 only when both checks fail. Public path (self-guarded).
  */
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+  const raw = await req.text().catch(() => '')
+  let body: Record<string, unknown> = {}
+  try {
+    body = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    /* leave {} */
+  }
 
   const legacySecret = process.env.SNAPTRADE_WEBHOOK_SECRET
   const legacyOk = Boolean(legacySecret) && body.webhookSecret === legacySecret
-  if (!legacyOk && !snaptradeSignatureValid(body, req.headers.get('signature'))) {
-    logWebhook401(body, req.headers.get('signature'))
+  const header = req.headers.get('signature')
+  // SnapTrade docs say the signature covers the canonical (sorted/compact) JSON, but accept the
+  // raw wire bytes too — equivalent when their sender serializes the same way, and robust when
+  // it doesn't (numbers/key order survive without re-serialization drift).
+  const sigOk =
+    snaptradeSignatureValid(body, header) || snaptradeRawSignatureValid(raw, header)
+  if (!legacyOk && !sigOk) {
+    logWebhook401(body, header, raw)
     return NextResponse.json({ ok: false }, { status: 401 })
   }
   if (!isCustomersDbConfigured()) return NextResponse.json({ ok: true })
