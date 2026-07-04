@@ -222,6 +222,38 @@ export async function getQuote(symbol: string): Promise<Quote | null> {
   }
 }
 
+export interface QuoteDetail {
+  last: number
+  change: number | null
+  change_percentage: number | null
+  prevclose: number | null
+  symbol: string
+}
+
+/**
+ * Like getQuote() but keeps the day-change fields Tradier already returns
+ * (change_percentage, prevclose). Additive — getQuote's shape is unchanged.
+ */
+export async function getQuoteDetail(symbol: string): Promise<QuoteDetail | null> {
+  const data = await tradierGet('/markets/quotes', { symbols: symbol })
+  if (!data) return null
+  let quote = data.quotes?.quote
+  if (Array.isArray(quote)) quote = quote[0]
+  if (!quote?.last) return null
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null) return null
+    const n = parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  return {
+    last: parseFloat(quote.last),
+    change: numOrNull(quote.change),
+    change_percentage: numOrNull(quote.change_percentage),
+    prevclose: numOrNull(quote.prevclose),
+    symbol: quote.symbol,
+  }
+}
+
 export async function getOptionQuote(
   occSymbol: string,
 ): Promise<OptionQuote | null> {
