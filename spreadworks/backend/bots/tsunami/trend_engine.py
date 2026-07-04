@@ -41,6 +41,10 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     ("BTC", "BITX"),
     ("ETH", "ETHU"),
     ("IONQ", "IONX"),
+    # UXRP added 2026-07-04 per Leron despite thin history (listed 2025-07,
+    # -$16 in its short walk-forward sample, no inverse exists). The MA50
+    # gate is the safety net: it can't be bought unless it's trending.
+    ("XRP", "UXRP"),
     # inverse crypto complex — the short side. An inverse ETF above its own
     # 50d MA IS the confirmed downtrend trade; its price already carries the
     # decay. Equity single-name inverses (TSLQ/NVD/CONI/AMDS) were backtested
