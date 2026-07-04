@@ -1,20 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { isCustomersDbConfigured, customerExecute } from '@/lib/customers-db'
+import { snaptradeSignatureValid } from '@/lib/snaptrade-webhook'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 /**
- * SnapTrade webhook listener (no session — verified by shared secret in the body). Keeps
- * brokerage_connections.status in sync as connections are added/broken/removed and touches
- * last_synced_at on holdings updates. Always 200s after a valid secret so SnapTrade does not
- * retry-storm; 401 only on a bad/missing secret. Public path (self-guarded by the secret).
+ * SnapTrade webhook listener (no session). Verified two ways, either passes:
+ *  - Signature header = HMAC-SHA256(canonical JSON body, consumer key), base64 — the current
+ *    SnapTrade mechanism ("webhook secrets are deprecated");
+ *  - legacy body.webhookSecret === SNAPTRADE_WEBHOOK_SECRET, kept for old listeners.
+ * Keeps brokerage_connections.status in sync as connections are added/broken/removed and touches
+ * last_synced_at on holdings updates. Always 200s after a valid signature/secret so SnapTrade does
+ * not retry-storm; 401 only when both checks fail. Public path (self-guarded).
  */
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
 
-  const expected = process.env.SNAPTRADE_WEBHOOK_SECRET
-  if (!expected || body.webhookSecret !== expected) {
+  const legacySecret = process.env.SNAPTRADE_WEBHOOK_SECRET
+  const legacyOk = Boolean(legacySecret) && body.webhookSecret === legacySecret
+  if (!legacyOk && !snaptradeSignatureValid(body, req.headers.get('signature'))) {
     return NextResponse.json({ ok: false }, { status: 401 })
   }
   if (!isCustomersDbConfigured()) return NextResponse.json({ ok: true })
