@@ -1,13 +1,28 @@
 // TSUNAMI — LETF trend bot page.
-// Replaces the options-era "structures" concept with what this bot actually
-// is: a comparison time series (TSUNAMI equity vs each instrument, indexed
-// to 100) with per-ticker filter chips, the live book, and recent fills.
+// Same data + behavior as before (status, comparison chart, book, fills);
+// the LOOK now matches the other bot dashboards: themed glyph nameplate,
+// sw-glass KPI tiles, branded card chrome. TSUNAMI is stock-only (buys and
+// sells shares), so instead of payoff/positions tabs it keeps its own
+// centerpiece: the indexed comparison chart plus the share book and fills.
 import { useEffect, useMemo, useState } from 'react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   ReferenceLine, CartesianGrid,
 } from 'recharts';
 import { API_URL as API_BASE } from '../lib/api';
+import BotGlyph from '../components/bots/BotGlyph';
+
+// Page theme — mirrors the BOT_THEME shape in lib/botRegistry.js. TSUNAMI
+// isn't a registry bot (own engine + routes) so its theme lives here.
+// sky-300 to match the nav menu's pinned TSUNAMI row.
+const THEME = {
+  glyph:       'wave',
+  primary:     '#7dd3fc',
+  primarySoft: 'rgba(125,211,252,0.10)',
+  primaryRing: 'rgba(125,211,252,0.30)',
+  glow:        'rgba(125,211,252,0.18)',
+  accentBg:    'linear-gradient(135deg, rgba(125,211,252,0.22) 0%, rgba(125,211,252,0.03) 100%)',
+};
 
 // Fixed categorical order — hue follows the ticker, never its rank.
 const SERIES_COLOR = {
@@ -29,23 +44,54 @@ const INVERSE = new Set(['SBIT', 'ETHD', 'SMST']);
 // Default view: system + the 5 core longs. Everything togglable.
 const DEFAULT_ON = new Set(['TSUNAMI', 'TSLL', 'AMDL', 'NVDL', 'CONL', 'MSTU']);
 
-const card = {
-  background: 'rgba(7,16,28,0.55)', border: '1px solid rgba(148,163,184,0.15)',
-  borderRadius: 16, padding: 16,
-};
+function money(v, { signed = false, decimals = 2 } = {}) {
+  if (v == null || Number.isNaN(v)) return '—';
+  const sign = v > 0 ? '+' : v < 0 ? '−' : '';
+  const abs = Math.abs(v);
+  const str = abs.toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+  if (signed) return `${sign}$${str}`;
+  return v < 0 ? `−$${str}` : `$${str}`;
+}
+
+/* ── KPI tile — same chrome as BotDashboard's KpiTile ───────────────── */
+
+function KpiTile({ label, value, sub, mono = true, accent }) {
+  return (
+    <div
+      className="px-5 py-4 rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
+      <div
+        className={`leading-none ${mono ? 'sw-mono' : ''}`}
+        style={{ fontSize: 28, fontWeight: 700, color: accent || 'var(--color-text-primary)' }}
+      >
+        {value}
+      </div>
+      <div className="text-[10.5px] uppercase tracking-[0.16em] font-semibold text-text-tertiary mt-3">
+        {label}
+      </div>
+      {sub && (
+        <div className="text-[11px] text-text-tertiary mt-1.5 sw-mono">{sub}</div>
+      )}
+    </div>
+  );
+}
+
+/* ── Series chip — brand pill, same interaction as before ───────────── */
 
 function Chip({ id, on, held, onClick }) {
   const c = SERIES_COLOR[id] || '#94a3b8';
   return (
     <button
       onClick={onClick}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full cursor-pointer text-[12px] font-semibold sw-mono transition-all"
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '4px 10px', borderRadius: 9999, cursor: 'pointer',
-        fontSize: 12, fontWeight: 600,
-        color: on ? '#e2e8f0' : '#64748b',
-        background: on ? 'rgba(148,163,184,0.12)' : 'transparent',
-        border: `1px solid ${on ? c : 'rgba(100,116,139,0.35)'}`,
+        color: on ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+        background: on ? 'rgba(148,163,184,0.10)' : 'transparent',
+        boxShadow: `inset 0 0 0 1px ${on ? c : 'rgba(100,116,139,0.35)'}`,
         opacity: on ? 1 : 0.7,
       }}
     >
@@ -53,9 +99,97 @@ function Chip({ id, on, held, onClick }) {
         width: 14, height: 0, borderTop: `2px ${INVERSE.has(id) ? 'dashed' : 'solid'} ${c}`,
       }} />
       {id}
-      {INVERSE.has(id) && <span style={{ fontSize: 9, color: '#94a3b8' }}>SHORT</span>}
-      {held && <span style={{ fontSize: 9, color: '#4ade80' }}>● HELD</span>}
+      {INVERSE.has(id) && (
+        <span className="text-[9px] font-bold tracking-wider text-text-secondary">SHORT</span>
+      )}
+      {held && (
+        <span className="text-[9px] font-bold tracking-wider text-sw-green">● HELD</span>
+      )}
     </button>
+  );
+}
+
+/* ── Nameplate header — mirrors BotHeader in BotDashboard ───────────── */
+
+function TsunamiHeader() {
+  return (
+    <div
+      className="px-4 md:px-8 pt-7 pb-6"
+      style={{ borderBottom: '1px solid rgba(125,211,252,0.18)' }}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="flex items-center gap-5 min-w-0">
+          {/* Glyph tile */}
+          <div
+            className="w-16 h-16 rounded-2xl grid place-items-center flex-shrink-0"
+            style={{
+              background: THEME.accentBg,
+              boxShadow: `inset 0 0 0 1px ${THEME.primaryRing}, 0 0 32px -8px ${THEME.glow}`,
+              color: THEME.primary,
+            }}
+          >
+            <BotGlyph kind={THEME.glyph} size={32} strokeWidth={1.6} />
+          </div>
+
+          {/* Nameplate */}
+          <div className="min-w-0">
+            <h1
+              className="font-black tracking-[0.04em] leading-none text-[28px] md:text-[44px]"
+              style={{ color: THEME.primary, textShadow: `0 0 24px ${THEME.glow}` }}
+            >
+              TSUNAMI
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 mt-2 text-[13.5px] text-text-secondary">
+              <span className="font-medium">LETF Trend Engine</span>
+              <span className="w-1 h-1 rounded-full bg-text-muted" />
+              <span className="sw-mono font-semibold text-white">12 instruments</span>
+              <span className="w-1 h-1 rounded-full bg-text-muted" />
+              <span className="sw-mono text-text-tertiary">
+                stocks only · daily rebalance 14:45 CT
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Status badges — no toggle/force-trade: TSUNAMI trades shares on a
+            fixed daily rebalance, not on-demand option structures. */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-[11.5px] font-bold tracking-wider uppercase text-sw-yellow bg-sw-yellow-dim ring-1 ring-sw-yellow/30">
+            Paper
+          </span>
+          <span className="inline-flex items-center gap-2 px-3 py-2 rounded-md text-[11.5px] font-bold tracking-wider uppercase text-sw-green bg-sw-green-dim ring-1 ring-sw-green/30">
+            <span className="relative inline-flex w-1.5 h-1.5">
+              <span className="absolute inset-0 rounded-full animate-ping opacity-60 bg-sw-green" />
+              <span className="relative inline-block w-1.5 h-1.5 rounded-full bg-sw-green" />
+            </span>
+            Enabled
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Card shell — matches the sw-glass card chrome on bot pages ─────── */
+
+function Card({ title, subtitle, children, headerRight }) {
+  return (
+    <div
+      className="rounded-lg sw-glass"
+      style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}
+    >
+      <div
+        className="px-5 py-4 flex flex-wrap items-center justify-between gap-2"
+        style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}
+      >
+        <div className="flex flex-wrap items-baseline gap-3">
+          <h3 className="text-[14px] font-semibold text-text-primary">{title}</h3>
+          {subtitle && <span className="text-[11.5px] text-text-tertiary">{subtitle}</span>}
+        </div>
+        {headerRight}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -95,94 +229,157 @@ export default function TsunamiPage() {
   const cash = status?.cash ?? null;
   const book = status?.book || [];
   const trades = status?.recent_trades || [];
+  const heldCount = book.filter(b => b.shares > 0).length;
+  const lastFill = trades.length ? String(trades[0].ts).slice(0, 10) : null;
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: 16, display: 'grid', gap: 16 }}>
-      {/* nameplate + stat strip */}
-      <div style={{ ...card, display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'baseline' }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: '#e2e8f0' }}>🌊 TSUNAMI</div>
-          <div style={{ fontSize: 12, color: '#94a3b8' }}>
-            LETF trend engine · long 2x + crypto inverse side · daily rebalance 14:45 CT · paper
-          </div>
-        </div>
-        {[['Equity', equity != null ? `$${equity.toFixed(2)}` : '—'],
-          ['Cash', cash != null ? `$${cash.toFixed(2)}` : '—'],
-          ['Positions', book.filter(b => b.shares > 0).length],
-        ].map(([k, v]) => (
-          <div key={k}>
-            <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>{k}</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: '#e2e8f0' }}>{v}</div>
-          </div>
-        ))}
-      </div>
+    <div className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
+      <TsunamiHeader />
 
-      {/* comparison chart + filters */}
-      <div style={card}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 4 }}>
-          TSUNAMI vs. its instruments — indexed to 100
+      <div className="px-4 md:px-8 py-6 space-y-5">
+        {/* KPI strip — stock-bot stats: equity / cash / held names / last fill */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <KpiTile
+            label="Account Equity"
+            value={equity != null ? money(equity) : '…'}
+            sub="Allocated · TSUNAMI"
+          />
+          <KpiTile
+            label="Cash"
+            value={cash != null ? money(cash) : '…'}
+            sub={
+              equity != null && cash != null && equity > 0
+                ? `${((cash / equity) * 100).toFixed(0)}% of equity uninvested`
+                : undefined
+            }
+          />
+          <KpiTile
+            label="Positions"
+            value={String(heldCount)}
+            accent={heldCount > 0 ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)'}
+            sub={heldCount > 0 ? 'Names held · shares' : 'All cash'}
+          />
+          <KpiTile
+            label="Last Fill"
+            value={
+              lastFill
+                ? <span className="text-sw-green text-[20px]">{lastFill}</span>
+                : <span className="text-text-muted">—</span>
+            }
+            sub={lastFill ? `${trades.length} recent fills` : 'Awaiting first rebalance'}
+          />
         </div>
-        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10 }}>
-          Every line starts at 100 at the left edge of the window. Dashed lines are the
-          inverse (short-side) products. Click a chip to show/hide a series.
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-          {tickers.map(t => (
-            <Chip key={t} id={t} on={on.has(t)} held={held.has(t)} onClick={() => toggle(t)} />
-          ))}
-        </div>
-        {err && <div style={{ color: '#fb7185', fontSize: 12 }}>{err}</div>}
-        <div style={{ width: '100%', height: 380 }}>
-          <ResponsiveContainer>
-            <LineChart data={points} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
-              <CartesianGrid stroke="rgba(148,163,184,0.10)" vertical={false} />
-              <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }}
-                     minTickGap={48} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false}
-                     tickLine={false} domain={['auto', 'auto']} width={44} />
-              <Tooltip
-                contentStyle={{ background: 'rgba(7,16,28,0.95)', border: '1px solid rgba(148,163,184,0.25)', borderRadius: 10, fontSize: 12 }}
-                labelStyle={{ color: '#94a3b8' }}
-                formatter={(v, name) => [Number(v).toFixed(1), name]}
-              />
-              <ReferenceLine y={100} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
-              {tickers.filter(t => on.has(t)).map(t => (
-                <Line key={t} type="monotone" dataKey={t} dot={false} connectNulls
-                      stroke={SERIES_COLOR[t] || '#94a3b8'}
-                      strokeWidth={t === 'TSUNAMI' ? 2.6 : 1.4}
-                      strokeDasharray={INVERSE.has(t) ? '5 4' : undefined} />
+
+        {/* Comparison chart — TSUNAMI's centerpiece (stock bot: no payoff
+            diagram; the strategy IS relative performance vs its universe). */}
+        <Card
+          title="TSUNAMI vs. its instruments"
+          subtitle="Indexed to 100 at the left edge · dashed = inverse (short-side) products"
+        >
+          <div className="px-5 pt-4 pb-5">
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {tickers.map(t => (
+                <Chip key={t} id={t} on={on.has(t)} held={held.has(t)} onClick={() => toggle(t)} />
               ))}
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
+            </div>
+            {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
+            <div className="w-full h-[380px]">
+              <ResponsiveContainer>
+                <LineChart data={points} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                  <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
+                         minTickGap={48} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
+                         tickLine={false} domain={['auto', 'auto']} width={44} />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'rgba(13,28,46,0.95)',
+                      border: '1px solid rgba(125,211,252,0.25)',
+                      borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
+                    }}
+                    labelStyle={{ color: '#94a3b8' }}
+                    formatter={(v, name) => [Number(v).toFixed(1), name]}
+                  />
+                  <ReferenceLine y={100} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
+                  {tickers.filter(t => on.has(t)).map(t => (
+                    <Line key={t} type="monotone" dataKey={t} dot={false} connectNulls
+                          stroke={SERIES_COLOR[t] || '#94a3b8'}
+                          strokeWidth={t === 'TSUNAMI' ? 2.6 : 1.4}
+                          strokeDasharray={INVERSE.has(t) ? '5 4' : undefined} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </Card>
 
-      {/* book + trades */}
-      <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-        <div style={card}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 10 }}>Book</div>
-          {book.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>All cash — no instrument above its 50-day MA (or first rebalance pending).</div>}
-          {book.map(b => (
-            <div key={b.letf} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.08)', fontSize: 13, color: '#cbd5e1' }}>
-              <span style={{ fontWeight: 700, color: SERIES_COLOR[b.letf] || '#e2e8f0' }}>{b.letf}</span>
-              <span>{b.shares} sh @ ${Number(b.avg_cost).toFixed(2)}</span>
+        {/* Book + fills — the stock-bot stand-ins for Positions / Trade History */}
+        <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+          <Card title="Book" subtitle="Shares held per instrument">
+            <div className="px-5 py-3">
+              {book.length === 0 && (
+                <div className="py-8 text-center text-[12.5px] text-text-tertiary">
+                  All cash — no instrument above its 50-day MA (or first rebalance pending).
+                </div>
+              )}
+              {book.map(b => (
+                <div
+                  key={b.letf}
+                  className="flex items-center justify-between py-2.5 text-[13px] text-text-body"
+                  style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
+                >
+                  <span className="inline-flex items-center gap-2 font-bold sw-mono"
+                        style={{ color: SERIES_COLOR[b.letf] || 'var(--color-text-primary)' }}>
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: SERIES_COLOR[b.letf] || '#94a3b8' }} />
+                    {b.letf}
+                  </span>
+                  <span className="sw-mono">
+                    {b.shares} sh <span className="text-text-tertiary">@</span> ${Number(b.avg_cost).toFixed(2)}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <div style={card}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 10 }}>Recent fills</div>
-          {trades.length === 0 && <div style={{ fontSize: 12, color: '#64748b' }}>No fills yet — first rebalance runs the next trading day at 14:45 CT.</div>}
-          {trades.slice(0, 12).map((t, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(148,163,184,0.08)', fontSize: 12, color: '#cbd5e1' }}>
-              <span style={{ color: t.side === 'BUY' ? '#4ade80' : '#fb7185', fontWeight: 700 }}>{t.side}</span>
-              <span style={{ fontWeight: 600 }}>{t.letf}</span>
-              <span>{t.shares} @ ${Number(t.price).toFixed(2)}</span>
-              <span style={{ color: '#64748b' }}>{String(t.ts).slice(0, 10)}</span>
-              <span style={{ color: t.realized_pnl > 0 ? '#4ade80' : t.realized_pnl < 0 ? '#fb7185' : '#64748b' }}>
-                {t.realized_pnl != null ? `$${Number(t.realized_pnl).toFixed(2)}` : ''}
-              </span>
+          </Card>
+
+          <Card title="Recent Fills" subtitle="Latest buys and sells">
+            <div className="px-5 py-3">
+              {trades.length === 0 && (
+                <div className="py-8 text-center text-[12.5px] text-text-tertiary">
+                  No fills yet — first rebalance runs the next trading day at 14:45 CT.
+                </div>
+              )}
+              {trades.slice(0, 12).map((t, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 justify-between py-2.5 text-[12.5px] text-text-body sw-mono"
+                  style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
+                >
+                  <span
+                    className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded"
+                    style={
+                      t.side === 'BUY'
+                        ? { color: 'var(--color-sw-green)', background: 'var(--color-sw-green-dim)', boxShadow: 'inset 0 0 0 1px rgba(52,211,153,0.30)' }
+                        : { color: 'var(--color-sw-red)', background: 'var(--color-sw-red-dim)', boxShadow: 'inset 0 0 0 1px rgba(251,113,133,0.30)' }
+                    }
+                  >
+                    {t.side}
+                  </span>
+                  <span className="font-semibold" style={{ color: SERIES_COLOR[t.letf] || 'var(--color-text-primary)' }}>
+                    {t.letf}
+                  </span>
+                  <span>{t.shares} @ ${Number(t.price).toFixed(2)}</span>
+                  <span className="text-text-tertiary">{String(t.ts).slice(0, 10)}</span>
+                  <span style={{
+                    color: t.realized_pnl > 0 ? 'var(--color-sw-green)'
+                         : t.realized_pnl < 0 ? 'var(--color-sw-red)'
+                         : 'var(--color-text-tertiary)',
+                  }}>
+                    {t.realized_pnl != null ? money(t.realized_pnl, { signed: true }) : ''}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
+          </Card>
         </div>
       </div>
     </div>
