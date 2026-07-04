@@ -30,12 +30,24 @@ from backend.bots.tsunami.monitoring import discord as tsunami_discord
 
 logger = logging.getLogger(__name__)
 
-PAIRS = [  # (underlying, letf) — signal and execution both on the LETF
+PAIRS = [  # (reference asset, instrument) — signal and execution on the instrument
+    # long 2x equity LETFs
     ("TSLA", "TSLL"),
     ("AMD", "AMDL"),
     ("NVDA", "NVDL"),
     ("COIN", "CONL"),
     ("MSTR", "MSTU"),
+    # long 2x crypto complex (universe expansion, backtested 2026-07-04)
+    ("BTC", "BITX"),
+    ("ETH", "ETHU"),
+    ("IONQ", "IONX"),
+    # inverse crypto complex — the short side. An inverse ETF above its own
+    # 50d MA IS the confirmed downtrend trade; its price already carries the
+    # decay. Equity single-name inverses (TSLQ/NVD/CONI/AMDS) were backtested
+    # and REJECTED: bear rallies chop them up (NVD alone -$227 on $500).
+    ("BTC-", "SBIT"),
+    ("ETH-", "ETHD"),
+    ("MSTR-", "SMST"),
 ]
 START_CASH = 500.0
 SLICE = 0.40
