@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from 'react'
 
-// Animated mascot: the gentle-flicker loop idles, and every minute one of the
+// Animated mascot: the gentle-flicker loop idles, and every 15s one of the
 // variant loops plays through a full pass before handing back to the idle.
-// All loops share the same base pose (frame 0 = the original still), so the
+// The idle is a forward-only loop with a crossfaded seam (no visible rewind);
+// variants are boomerangs so they end back on the shared base pose, and the
 // opacity crossfade between layers reads as one continuous animation.
-const IDLE_SRC = '/spark-anim/01-gentle-flicker.webp'
+const IDLE_SRC = '/spark-anim/01-gentle-flicker-v2.webp'
 const VARIANT_SRCS = [
   '/spark-anim/02-breathing-glow.webp',
   '/spark-anim/03-ember-rise.webp',
@@ -17,7 +18,7 @@ const VARIANT_SRCS = [
   '/spark-anim/09-heartbeat-flare.webp',
 ]
 const STATIC_SRC = '/spark-mascot.png'
-const ROTATE_EVERY_MS = 60_000
+const ROTATE_EVERY_MS = 15_000
 const VARIANT_PLAY_MS = 7_200 // one full loop pass (86 frames @ 12fps)
 
 export default function SparkMascot({ className }: { className: string }) {
