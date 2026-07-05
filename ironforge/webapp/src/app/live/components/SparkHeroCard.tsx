@@ -1,9 +1,9 @@
 'use client'
 
-import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import type { CustomerState, LiveSummary } from '@/lib/live/types'
 import { getCTMinutes } from '@/lib/pt-tiers'
+import SparkMascot from './SparkMascot'
 
 const DOT_CLASS: Record<CustomerState['dot'], string> = {
   green: 'bg-emerald-400',
@@ -40,14 +40,7 @@ export default function SparkHeroCard({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="flex flex-1 items-center gap-4">
           <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-forge-bg ring-1 ring-spark/25 sm:h-24 sm:w-24">
-            <Image
-              src="/spark-mascot.png"
-              alt="Spark"
-              width={96}
-              height={96}
-              className="h-full w-full rounded-2xl mix-blend-screen"
-              priority
-            />
+            <SparkMascot className="h-full w-full rounded-2xl mix-blend-screen" />
           </div>
           <div>
             {state ? (
