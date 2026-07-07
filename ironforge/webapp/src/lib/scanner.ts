@@ -163,7 +163,7 @@ interface BotConfig {
   sd: number
   pt_pct: number    // fraction, e.g. 0.30 = 30%
   sl_mult: number   // fraction, e.g. 2.0 = 200%
-  entry_start: number // HHMM earliest entry (CT). Default 830 (open). SPARK-strategy bots use 1300 (afternoon) — see below.
+  entry_start: number // HHMM earliest entry (CT). Default 830 (open).
   entry_end: number // HHMM, e.g. 1400
   max_trades: number // 0 = unlimited
   max_contracts: number
@@ -196,7 +196,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // worst day -$295. Penny-credit trades (sub-$0.15: 547 at -$1.55/ct) were the
   // 2024 bleed.
   flame:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
-  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  spark:   { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
@@ -645,12 +645,12 @@ function isInEntryWindow(ct: Date, bot: BotDef): boolean {
   if (dow === 0 || dow === 6) return false
   if (isMarketHoliday(ct)) return false // never open new positions on a closed market
   const hhmm = ctHHMM(ct)
-  // AFTERNOON ENTRY (2026-07-02): SPARK-strategy bots (SPARK, KINDLE) use entry_start=1300
-  // (1:00 PM CT) instead of the open. Full-history breach test (2020-25, 1,333 days): an IC
-  // placed at the OPEN breaches a short strike 18.0% / full-loss 2.40%; placed in the
-  // afternoon it's 9.3% / 1.05% — roughly HALVED, every year. Live SPARK was entering at
-  // the open (worst window) while every backtest entered EOD/afternoon, so this also aligns
-  // live with the validated backtest. Other bots keep entry_start=830 (open).
+  // MORNING ENTRY (2026-07-07, user override): SPARK reverted to entry_start=830 (market
+  // open) at the user's explicit request, after being moved to entry_start=1300 (afternoon)
+  // on 2026-07-02. NOTE: the afternoon-entry backtest (2020-25, 1,333 days) found morning-open
+  // entries breach a short strike ~18.0% / full-loss ~2.40% of the time vs ~9.3% / 1.05% in
+  // the afternoon — roughly HALF the risk. This change knowingly reverts that finding; SPARK's
+  // live loss rate is expected to track the higher morning-entry backtest numbers again.
   const entryStart = cfg(bot).entry_start ?? 830
   // Cap the entry window at the real session close so half-days don't queue
   // orders into a closed market (root cause of the 2026-05-25 phantom positions).
