@@ -92,7 +92,16 @@ VOL_TGT = 0.35
 W_CAP = 2.0
 MA_N = 50
 RV_N = 20
-REBAL_BAND = 0.25
+# 2026-07-07 "max responsible aggression" sweep (run_live17_fix_bt.py):
+# raising SLICE (0.40->1.20) or W_CAP (2.0->4.0) both made every metric
+# WORSE monotonically -- bigger positions amplify whipsaw and hit the cash
+# gate more often, they don't capture more edge. The one lever that WAS a
+# genuine improvement (better Sharpe/Calmar/MaxDD, not a risk-for-return
+# trade) was widening REBAL_BAND: swept 0.10-0.50, 0.35 was best-or-near-
+# best on both the walk-forward and recent windows (walk-forward Sharpe
+# 1.20->1.20/Calmar 1.61->1.64; recent Sharpe 1.13->1.30/Calmar 1.95->2.51)
+# by cutting whipsaw-driven rebalance churn, not by taking more risk.
+REBAL_BAND = 0.35
 SLIP = 0.0002  # paper-fill slippage per side
 
 _DDL = """
