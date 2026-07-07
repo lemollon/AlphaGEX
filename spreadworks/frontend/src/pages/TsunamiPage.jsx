@@ -37,14 +37,17 @@ const SERIES_COLOR = {
   IONX: '#c084fc',
   UXRP: '#2dd4bf',
   SPXL: '#60a5fa',
+  TQQQ: '#f472b6',
+  UVXY: '#eab308',
   SBIT: '#fb7185',  // inverses share their asset hue but render dashed
   ETHD: '#38bdf8',
   SMST: '#facc15',
   SPXS: '#60a5fa',
+  SQQQ: '#f472b6',
 };
-const INVERSE = new Set(['SBIT', 'ETHD', 'SMST', 'SPXS']);
-// Default view: system + the 6 core longs. Everything togglable.
-const DEFAULT_ON = new Set(['TSUNAMI', 'TSLL', 'AMDL', 'NVDL', 'CONL', 'MSTU', 'SPXL']);
+const INVERSE = new Set(['SBIT', 'ETHD', 'SMST', 'SPXS', 'SQQQ']);
+// Default view: system + the 7 core longs. Everything togglable.
+const DEFAULT_ON = new Set(['TSUNAMI', 'TSLL', 'AMDL', 'NVDL', 'CONL', 'MSTU', 'SPXL', 'TQQQ']);
 
 function money(v, { signed = false, decimals = 2 } = {}) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -144,7 +147,7 @@ function TsunamiHeader() {
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[13.5px] text-text-secondary">
               <span className="font-medium">LETF Trend Engine</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
-              <span className="sw-mono font-semibold text-white">14 instruments</span>
+              <span className="sw-mono font-semibold text-white">17 instruments</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
               <span className="sw-mono text-text-tertiary">
                 stocks only · daily rebalance 14:45 CT

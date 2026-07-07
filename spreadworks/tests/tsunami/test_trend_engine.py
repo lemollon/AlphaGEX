@@ -126,8 +126,8 @@ class Config(unittest.TestCase):
         self.assertEqual(trend_engine.START_CASH, 500.0)
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
-                          "BITX", "ETHU", "IONX", "UXRP", "SPXL",
-                          "SBIT", "ETHD", "SMST", "SPXS"])
+                          "BITX", "ETHU", "IONX", "UXRP", "SPXL", "TQQQ", "UVXY",
+                          "SBIT", "ETHD", "SMST", "SPXS", "SQQQ"])
 
 
 if __name__ == "__main__":

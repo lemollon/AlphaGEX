@@ -45,10 +45,14 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     # -$16 in its short walk-forward sample, no inverse exists). The MA50
     # gate is the safety net: it can't be bought unless it's trending.
     ("XRP", "UXRP"),
-    # SPX index 3x LETFs, added 2026-07-07 per Leron. Not backtested
-    # separately -- same MA50/vol-target signal as the rest of the
-    # universe, applied to the S&P 500 leg.
+    # SPX / Nasdaq-100 index 3x LETFs + VIX long-vol, added 2026-07-07 per
+    # Leron. Not backtested separately -- same MA50/vol-target signal as
+    # the rest of the universe. UVXY has no natural inverse pair (it's
+    # already the "short equities" trade during a spike), so it stands
+    # alone in the long group.
     ("SPX", "SPXL"),
+    ("NDX", "TQQQ"),
+    ("VIX", "UVXY"),
     # inverse crypto complex — the short side. An inverse ETF above its own
     # 50d MA IS the confirmed downtrend trade; its price already carries the
     # decay. Equity single-name inverses (TSLQ/NVD/CONI/AMDS) were backtested
@@ -57,6 +61,7 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     ("ETH-", "ETHD"),
     ("MSTR-", "SMST"),
     ("SPX-", "SPXS"),
+    ("NDX-", "SQQQ"),
 ]
 START_CASH = 500.0
 SLICE = 0.40

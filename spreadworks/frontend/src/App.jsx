@@ -214,7 +214,7 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>Tsunami</div>
           <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
-            LETF Trend · $500 sleeve · 14 instruments
+            LETF Trend · $500 sleeve · 17 instruments
           </div>
         </div>
       </Link>
