@@ -12,6 +12,24 @@ signal was beta (excess t=0.51). What survived train/holdout discipline:
 $500 start, slice 0.40: CAGR 29.4%, Sharpe 1.15, MaxDD -25.7%, every year
 positive (2022-08..2026-07, real LETF closes, decay priced in).
 
+2026-07-07 universe-expansion post-mortem (dev/ironforge-data/tools/
+tsunami_bt/run_live17_bt.py + run_live17_fix_bt.py): adding SPXL/SPXS/
+TQQQ/SQQQ/UVXY at full SLICE roughly DOUBLED MaxDD and collapsed Sharpe
+1.20->0.43 (walk-forward 2024-01..2026-07) despite TQQQ/SPXL each being
+individually profitable. Root cause: SPXL/TQQQ are index-level 3x LETFs
+highly correlated with the existing mega-cap-growth longs (TSLL/AMDL/
+NVDL/MSTU/CONL) -- sizing targets each name's OWN vol independently with
+no portfolio-level correlation awareness, so a market-wide trend stacks
+correlated beta with zero diversification credit. UVXY is a standalone
+loser in every window tested (contango-decay/mean-reversion product,
+wrong fit for a lagging trend-follow rule) -- dropped entirely. Fix:
+SLICE_OVERRIDE halves the index sleeve (SPXL/TQQQ/SPXS/SQQQ) to 0.15 --
+calibrated by sweep, restores Sharpe/Calmar to OLD12 parity in both the
+walk-forward and recent (2025-01..2026-07) windows. A portfolio-level
+realized-vol overlay was also tested and found NET NEGATIVE alone (too
+laggy -- dials down after the drawdown, then underweights the recovery);
+do not add one without re-testing on top of the calibrated slice.
+
 Paper-only. Daily rebalance near the close (scheduler: Mon-Fri 14:45 CT).
 Data: Tradier daily history + live quote. State: tsunami_trend_book /
 tsunami_trend_trades / tsunami_trend_cash; equity into
@@ -45,14 +63,12 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     # -$16 in its short walk-forward sample, no inverse exists). The MA50
     # gate is the safety net: it can't be bought unless it's trending.
     ("XRP", "UXRP"),
-    # SPX / Nasdaq-100 index 3x LETFs + VIX long-vol, added 2026-07-07 per
-    # Leron. Not backtested separately -- same MA50/vol-target signal as
-    # the rest of the universe. UVXY has no natural inverse pair (it's
-    # already the "short equities" trade during a spike), so it stands
-    # alone in the long group.
+    # SPX / Nasdaq-100 index 3x LETFs, added 2026-07-07. Correlated with
+    # the existing single-name longs -- see SLICE_OVERRIDE below. UVXY
+    # (VIX long-vol) was tested and dropped: standalone loser in every
+    # backtest window, wrong instrument for a trend-following rule.
     ("SPX", "SPXL"),
     ("NDX", "TQQQ"),
-    ("VIX", "UVXY"),
     # inverse crypto complex — the short side. An inverse ETF above its own
     # 50d MA IS the confirmed downtrend trade; its price already carries the
     # decay. Equity single-name inverses (TSLQ/NVD/CONI/AMDS) were backtested
@@ -65,6 +81,13 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
 ]
 START_CASH = 500.0
 SLICE = 0.40
+# Index-sleeve names are correlated substitutes for beta already held via
+# the single-name longs -- full SLICE double-counts that exposure with no
+# diversification credit (see 2026-07-07 post-mortem above). 0.15 was
+# picked by sweep over {0.10, 0.15, 0.20, 0.25, 0.30, 0.40} on the
+# walk-forward + recent windows; 0.15 matched or beat OLD12's Sharpe/
+# Calmar in both.
+SLICE_OVERRIDE = {"SPXL": 0.15, "TQQQ": 0.15, "SPXS": 0.15, "SQQQ": 0.15}
 VOL_TGT = 0.35
 W_CAP = 2.0
 MA_N = 50
@@ -142,7 +165,8 @@ def _signal_weight(letf: str) -> Optional[float]:
     rv = math.sqrt(sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)) * math.sqrt(252)
     if rv <= 0:
         return None
-    return SLICE * min(W_CAP, VOL_TGT / rv)
+    slice_ = SLICE_OVERRIDE.get(letf, SLICE)
+    return slice_ * min(W_CAP, VOL_TGT / rv)
 
 
 def run_rebalance(now: Optional[datetime] = None) -> dict:

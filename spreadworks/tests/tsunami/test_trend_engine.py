@@ -34,6 +34,19 @@ class SignalWeight(unittest.TestCase):
         # cap: never more than SLICE * W_CAP
         self.assertLessEqual(w, trend_engine.SLICE * trend_engine.W_CAP + 1e-9)
 
+    def test_index_sleeve_uses_override_slice_not_default(self):
+        # Same trend/vol inputs, different ticker -- TQQQ (overridden to
+        # 0.15) must come out to exactly 0.15/0.40 of TSLL's (default
+        # 0.40) weight, all else equal.
+        closes = [100.0 * (1.002 ** i) for i in range(80)]
+        with patch.object(trend_engine.tradier_client, "get_daily_history",
+                          return_value=_hist(closes)), \
+             patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": closes[-1] * 1.01}):
+            w_default = trend_engine._signal_weight("TSLL")
+            w_override = trend_engine._signal_weight("TQQQ")
+        self.assertAlmostEqual(w_override, w_default * (0.15 / 0.40))
+
     def test_high_vol_scales_down(self):
         # violent series -> RV >> target -> weight well under SLICE
         closes = [100.0 + (8.0 if i % 2 else -8.0) for i in range(80)]
@@ -126,8 +139,23 @@ class Config(unittest.TestCase):
         self.assertEqual(trend_engine.START_CASH, 500.0)
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
-                          "BITX", "ETHU", "IONX", "UXRP", "SPXL", "TQQQ", "UVXY",
+                          "BITX", "ETHU", "IONX", "UXRP", "SPXL", "TQQQ",
                           "SBIT", "ETHD", "SMST", "SPXS", "SQQQ"])
+
+    def test_index_sleeve_slice_override(self):
+        # Calibrated 2026-07-07 (dev/ironforge-data/tools/tsunami_bt/
+        # run_live17_fix_bt.py sweep): these four are correlated substitutes
+        # for beta already held via the single-name longs, so they run at
+        # a discounted slice instead of the full 0.40.
+        for t in ("SPXL", "TQQQ", "SPXS", "SQQQ"):
+            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.15)
+        # everything else still uses the global default (no entry here)
+        for t in ("TSLL", "AMDL", "NVDL", "CONL", "MSTU", "BITX", "ETHU",
+                  "IONX", "UXRP", "SBIT", "ETHD", "SMST"):
+            self.assertNotIn(t, trend_engine.SLICE_OVERRIDE)
+
+    def test_uvxy_dropped(self):
+        self.assertNotIn("UVXY", [l for _, l in trend_engine.PAIRS])
 
 
 if __name__ == "__main__":

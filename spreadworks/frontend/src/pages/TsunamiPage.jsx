@@ -38,7 +38,6 @@ const SERIES_COLOR = {
   UXRP: '#2dd4bf',
   SPXL: '#60a5fa',
   TQQQ: '#f472b6',
-  UVXY: '#eab308',
   SBIT: '#fb7185',  // inverses share their asset hue but render dashed
   ETHD: '#38bdf8',
   SMST: '#facc15',
@@ -147,7 +146,7 @@ function TsunamiHeader() {
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[13.5px] text-text-secondary">
               <span className="font-medium">LETF Trend Engine</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
-              <span className="sw-mono font-semibold text-white">17 instruments</span>
+              <span className="sw-mono font-semibold text-white">16 instruments</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
               <span className="sw-mono text-text-tertiary">
                 stocks only · daily rebalance 14:45 CT
