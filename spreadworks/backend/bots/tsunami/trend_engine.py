@@ -45,6 +45,10 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     # -$16 in its short walk-forward sample, no inverse exists). The MA50
     # gate is the safety net: it can't be bought unless it's trending.
     ("XRP", "UXRP"),
+    # SPX index 3x LETFs, added 2026-07-07 per Leron. Not backtested
+    # separately -- same MA50/vol-target signal as the rest of the
+    # universe, applied to the S&P 500 leg.
+    ("SPX", "SPXL"),
     # inverse crypto complex — the short side. An inverse ETF above its own
     # 50d MA IS the confirmed downtrend trade; its price already carries the
     # decay. Equity single-name inverses (TSLQ/NVD/CONI/AMDS) were backtested
@@ -52,6 +56,7 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     ("BTC-", "SBIT"),
     ("ETH-", "ETHD"),
     ("MSTR-", "SMST"),
+    ("SPX-", "SPXS"),
 ]
 START_CASH = 500.0
 SLICE = 0.40
@@ -243,5 +248,48 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
         logger.exception("[tsunami.trend] rebalance failed: %r", exc)
         conn.rollback()
         return summary
+    finally:
+        conn.close()
+
+
+def mark_intraday_equity() -> Optional[float]:
+    """Mark-to-market snapshot with NO trading -- feeds intraday chart
+    granularity between daily rebalances. run_rebalance() (14:45 CT) is
+    still the only path that buys/sells; this only reads the current book
+    and cash, re-prices held shares off live quotes, and writes one more
+    tsunami_equity_snapshots row. Returns the marked equity, or None if
+    the DB is unavailable or the mark failed."""
+    if not is_database_available():
+        return None
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT cash FROM tsunami_trend_cash WHERE id=1")
+            row = cur.fetchone()
+            cash = float(row[0]) if row else START_CASH
+            cur.execute("SELECT letf, shares FROM tsunami_trend_book WHERE shares > 0")
+            held = cur.fetchall()
+
+        equity = cash
+        for letf, shares in held:
+            q = tradier_client.get_quote(letf)
+            px = float((q or {}).get("last") or (q or {}).get("close") or 0)
+            if px > 0:
+                equity += int(shares) * px
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tsunami_equity_snapshots"
+                " (scope, instance_name, starting_capital, cumulative_realized_pnl,"
+                "  unrealized_pnl, open_position_count, equity)"
+                " VALUES ('PLATFORM', NULL, %s, %s, %s, %s, %s)",
+                (START_CASH, equity - START_CASH, 0, len(held), equity))
+        conn.commit()
+        return equity
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("[tsunami.trend] intraday mark failed: %r", exc)
+        conn.rollback()
+        return None
     finally:
         conn.close()

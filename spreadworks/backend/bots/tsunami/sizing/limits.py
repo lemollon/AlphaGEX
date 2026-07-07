@@ -18,12 +18,20 @@ from __future__ import annotations
 ACCOUNT_STARTING_CAPITAL = 5000.0
 PER_TRADE_RISK_PCT = 0.015  # 1.5%%
 
+# NOTE: kept in sync manually with configs/instances.py::TSUNAMI_INSTANCES
+# allocation_cap -- a duplicate on purpose (spec section 5 fixes these
+# dollar amounts independent of the instance registry), but any new
+# instance added to TSUNAMI_INSTANCES must also get an entry here or it
+# will gate-pass and then silently size to 0 contracts (instance_cap()
+# falls back to $0.0 for unknown tickers).
 INSTANCE_ALLOCATIONS: dict[str, float] = {
     "MSTU": 200.0,
     "TSLL": 200.0,
     "NVDL": 200.0,
     "CONL": 150.0,
     "AMDL": 150.0,
+    "SPXL": 200.0,
+    "SPXS": 200.0,
 }
 
 PLATFORM_TOTAL_CAP = 750.0

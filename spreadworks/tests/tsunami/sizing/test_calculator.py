@@ -135,6 +135,8 @@ class LimitsConstants(unittest.TestCase):
         self.assertEqual(instance_cap("NVDL"), 200.0)
         self.assertEqual(instance_cap("CONL"), 150.0)
         self.assertEqual(instance_cap("AMDL"), 150.0)
+        self.assertEqual(instance_cap("SPXL"), 200.0)
+        self.assertEqual(instance_cap("SPXS"), 200.0)
 
     def test_platform_cap_is_750(self):
         self.assertEqual(PLATFORM_TOTAL_CAP, 750.0)

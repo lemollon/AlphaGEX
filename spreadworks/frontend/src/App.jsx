@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus, Waves } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, ChevronDown, Plus } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import BotGlyph from './components/bots/BotGlyph';
 import { BOT_REGISTRY, BOT_THEME, STRATEGY_LABEL } from './lib/botRegistry';
@@ -214,7 +214,7 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: '#7dd3fc' }}>Tsunami</div>
           <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
-            LETF Trend · $500 sleeve · 12 instruments
+            LETF Trend · $500 sleeve · 14 instruments
           </div>
         </div>
       </Link>
@@ -435,7 +435,6 @@ function NavBar() {
           <RouteBtn to="/positions"       icon={<BarChart3 size={14} />} label="Positions" />
           <RouteBtn to="/gex-profile"     icon={<Activity size={14} />}  label="GEX Profile" />
           <RouteBtn to={`/bots/${activeBotId}`} icon={<Cpu size={14} />}  label="Bots" />
-          <RouteBtn to="/tsunami"         icon={<Waves size={14} />}     label="Tsunami" />
         </nav>
       </div>
 

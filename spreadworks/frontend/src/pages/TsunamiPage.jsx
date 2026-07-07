@@ -36,13 +36,15 @@ const SERIES_COLOR = {
   ETHU: '#38bdf8',
   IONX: '#c084fc',
   UXRP: '#2dd4bf',
+  SPXL: '#60a5fa',
   SBIT: '#fb7185',  // inverses share their asset hue but render dashed
   ETHD: '#38bdf8',
   SMST: '#facc15',
+  SPXS: '#60a5fa',
 };
-const INVERSE = new Set(['SBIT', 'ETHD', 'SMST']);
-// Default view: system + the 5 core longs. Everything togglable.
-const DEFAULT_ON = new Set(['TSUNAMI', 'TSLL', 'AMDL', 'NVDL', 'CONL', 'MSTU']);
+const INVERSE = new Set(['SBIT', 'ETHD', 'SMST', 'SPXS']);
+// Default view: system + the 6 core longs. Everything togglable.
+const DEFAULT_ON = new Set(['TSUNAMI', 'TSLL', 'AMDL', 'NVDL', 'CONL', 'MSTU', 'SPXL']);
 
 function money(v, { signed = false, decimals = 2 } = {}) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -142,7 +144,7 @@ function TsunamiHeader() {
             <div className="flex flex-wrap items-center gap-2 mt-2 text-[13.5px] text-text-secondary">
               <span className="font-medium">LETF Trend Engine</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
-              <span className="sw-mono font-semibold text-white">12 instruments</span>
+              <span className="sw-mono font-semibold text-white">14 instruments</span>
               <span className="w-1 h-1 rounded-full bg-text-muted" />
               <span className="sw-mono text-text-tertiary">
                 stocks only · daily rebalance 14:45 CT
@@ -193,16 +195,25 @@ function Card({ title, subtitle, children, headerRight }) {
   );
 }
 
-/* Timeframe windows for BOTH charts (days back from the newest point; ALL = everything). */
+/* Timeframe windows for BOTH charts (days back from the newest point; ALL = everything).
+   TODAY is a calendar-day filter (not a day-count) -- it's what shows the intraday marks
+   the equity chart now gets every 15 min, on top of the once-daily rebalance point. */
 const TIMEFRAMES = [
+  { id: 'TODAY' },
   { id: '1W', days: 7 },
   { id: '1M', days: 31 },
   { id: '3M', days: 93 },
   { id: 'ALL', days: 0 },
 ];
 
-function windowPoints(points, days) {
-  if (!days || !points.length) return points;
+function windowPoints(points, tf) {
+  if (!points.length) return points;
+  if (tf === 'TODAY') {
+    const lastDay = String(points[points.length - 1].date || points[points.length - 1].ts).slice(0, 10);
+    return points.filter(p => String(p.date || p.ts).slice(0, 10) === lastDay);
+  }
+  const days = TIMEFRAMES.find(t => t.id === tf)?.days || 0;
+  if (!days) return points;
   const last = new Date(points[points.length - 1].date || points[points.length - 1].ts);
   const cutoff = new Date(last.getTime() - days * 86400 * 1000);
   return points.filter(p => new Date(p.date || p.ts) >= cutoff);
@@ -235,7 +246,7 @@ export default function TsunamiPage() {
   const [err, setErr] = useState(null);
   const [on, setOn] = useState(DEFAULT_ON);
   const [view, setView] = useState('EQUITY');    // EQUITY | COMPARE
-  const [tf, setTf] = useState('ALL');           // 1W | 1M | 3M | ALL
+  const [tf, setTf] = useState('ALL');           // TODAY | 1W | 1M | 3M | ALL
 
   useEffect(() => {
     let dead = false;
@@ -256,11 +267,10 @@ export default function TsunamiPage() {
 
   const held = useMemo(() => new Set(cmp?.held || []), [cmp]);
   const tickers = useMemo(() => ['TSUNAMI', ...(cmp?.tickers || [])], [cmp]);
-  const tfDays = TIMEFRAMES.find(t => t.id === tf)?.days || 0;
   const points = useMemo(
-    () => windowPoints(cmp?.points || [], tfDays), [cmp, tfDays]);
+    () => windowPoints(cmp?.points || [], tf), [cmp, tf]);
   const eqPoints = useMemo(
-    () => windowPoints(eq?.points || [], tfDays), [eq, tfDays]);
+    () => windowPoints(eq?.points || [], tf), [eq, tf]);
   const startCash = eq?.start_cash ?? 500;
 
   const toggle = (id) => setOn(prev => {
@@ -320,7 +330,7 @@ export default function TsunamiPage() {
         <Card
           title={view === 'EQUITY' ? 'TSUNAMI equity' : 'TSUNAMI vs. its instruments'}
           subtitle={view === 'EQUITY'
-            ? `$${startCash.toFixed(0)} sleeve · one point per daily rebalance`
+            ? `$${startCash.toFixed(0)} sleeve · daily rebalance + 15-min intraday marks`
             : 'Indexed to 100 at the left edge · dashed = inverse (short-side) products'}
           headerRight={
             <div className="flex flex-wrap items-center gap-2">
@@ -340,7 +350,8 @@ export default function TsunamiPage() {
             {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
             {view === 'EQUITY' && eqPoints.length === 0 && (
               <div className="py-16 text-center text-[12.5px] text-text-tertiary">
-                No equity history yet — a point lands after each daily rebalance (14:45 CT).
+                No equity history yet — points land every 15 min during market hours,
+                plus the daily rebalance (14:45 CT).
               </div>
             )}
             {(view === 'COMPARE' || eqPoints.length > 0) && (
@@ -349,7 +360,9 @@ export default function TsunamiPage() {
                 {view === 'EQUITY' ? (
                   <LineChart data={eqPoints} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
                     <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
+                    <XAxis dataKey={tf === 'TODAY' ? 'ts' : 'date'}
+                           tickFormatter={tf === 'TODAY' ? (v) => String(v).slice(11, 16) : undefined}
+                           tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
                            minTickGap={48} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
                            tickLine={false} domain={['auto', 'auto']} width={54}
@@ -361,6 +374,7 @@ export default function TsunamiPage() {
                         borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
                       }}
                       labelStyle={{ color: '#94a3b8' }}
+                      labelFormatter={tf === 'TODAY' ? (v) => String(v).slice(0, 16).replace('T', ' ') : undefined}
                       formatter={(v) => [money(Number(v)), 'equity']}
                     />
                     <ReferenceLine y={startCash} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />

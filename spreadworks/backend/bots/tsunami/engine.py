@@ -122,6 +122,7 @@ class TsunamiEngine:
             config=config,
             attempted_structure=attempted,
             today=now.date() if now else None,
+            has_earnings=instance.config.has_earnings,
         )
         gate_decision: EntryDecision = orchestrate_entry(gate_inputs)
 

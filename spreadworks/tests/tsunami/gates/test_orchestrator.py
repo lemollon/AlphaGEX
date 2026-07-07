@@ -133,6 +133,20 @@ class FirstFailureStopsChain(unittest.TestCase):
         self.assertEqual(len(passed), 8)
 
 
+class EarningsGateSkip(unittest.TestCase):
+    def test_has_earnings_false_synthesizes_g04_pass(self):
+        decision = orchestrate_entry(_good_inputs(
+            underlying_ticker="SPY", next_earnings_date=None, has_earnings=False,
+        ))
+        g04 = next(r for r in decision.chain if r.gate == "G04")
+        self.assertTrue(g04.passed)
+        self.assertTrue(decision.passed)
+
+    def test_has_earnings_true_still_fails_closed_on_none(self):
+        decision = orchestrate_entry(_good_inputs(next_earnings_date=None))
+        self.assertEqual(decision.first_failure.gate, "G04")
+
+
 class StructureUnavailable(unittest.TestCase):
     def test_none_structure_synthesizes_g06_fail(self):
         decision = orchestrate_entry(_good_inputs(attempted_structure=None))

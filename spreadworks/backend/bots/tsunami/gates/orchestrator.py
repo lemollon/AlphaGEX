@@ -61,6 +61,9 @@ class GateInputs:
     config: TsunamiConfig
     attempted_structure: Optional[TradeStructure] = None
     today: Optional[date] = None
+    # False for index-tracking underlyings (e.g. SPY) with no earnings
+    # calendar -- G04 is synthesized as PASS instead of evaluated.
+    has_earnings: bool = True
 
 
 @dataclass
@@ -97,6 +100,19 @@ def _structure_unavailable(gate_id: str) -> GateResult:
     )
 
 
+def _earnings_gate_skipped(underlying_ticker: str) -> GateResult:
+    """Synthesize a PASS for G04 on index underlyings with no earnings calendar."""
+    return GateResult(
+        gate="G04",
+        outcome=GateOutcome.PASS,
+        reason=(
+            f"{underlying_ticker} has no earnings calendar (index-tracking "
+            "underlying); G04 skipped per instance config"
+        ),
+        context={"has_earnings": False},
+    )
+
+
 def _eval_chain(inputs: GateInputs) -> list[GateResult]:
     """Run gates G02-G10 in order, stopping at the first non-PASS."""
     chain: list[GateResult] = []
@@ -110,8 +126,11 @@ def _eval_chain(inputs: GateInputs) -> list[GateResult]:
         return chain
     if not _step(g03_wall_present.evaluate(inputs.underlying_strikes, inputs.underlying_spot, inputs.config)):
         return chain
-    if not _step(g04_earnings_window.evaluate(inputs.underlying_ticker, inputs.next_earnings_date, today=inputs.today)):
-        return chain
+    if inputs.has_earnings:
+        if not _step(g04_earnings_window.evaluate(inputs.underlying_ticker, inputs.next_earnings_date, today=inputs.today)):
+            return chain
+    else:
+        chain.append(_earnings_gate_skipped(inputs.underlying_ticker))
     if not _step(g05_iv_rank.evaluate(inputs.letf_ticker, inputs.iv_rank)):
         return chain
 

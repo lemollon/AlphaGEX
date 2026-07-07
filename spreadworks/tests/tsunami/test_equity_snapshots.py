@@ -42,7 +42,7 @@ class SafeFallbackWithoutDB(unittest.TestCase):
 
 
 class WritesPerInstanceAndPlatform(unittest.TestCase):
-    def test_writes_5_instances_plus_1_platform(self):
+    def test_writes_7_instances_plus_1_platform(self):
         # Track INSERT calls.
         inserts: list = []
 
@@ -68,16 +68,16 @@ class WritesPerInstanceAndPlatform(unittest.TestCase):
             instances = build_all_instances(all_instances())
             written = equity_snapshots.write_snapshots(instances)
 
-        # 5 instances + 1 platform = 6 INSERT calls (plus 5 SELECT calls
-        # for realized_pnl). Total execute calls = 11.
+        # 7 instances + 1 platform = 8 INSERT calls (plus 7 SELECT calls
+        # for realized_pnl). Total execute calls = 15.
         # Filter to INSERTs only.
         insert_calls = [c for c in inserts if "INSERT" in c[0]]
-        self.assertEqual(len(insert_calls), 6)
-        self.assertEqual(written, 6)
+        self.assertEqual(len(insert_calls), 8)
+        self.assertEqual(written, 8)
 
         # Verify scope distribution.
         scopes = [c[1][0] for c in insert_calls]
-        self.assertEqual(scopes.count("INSTANCE"), 5)
+        self.assertEqual(scopes.count("INSTANCE"), 7)
         self.assertEqual(scopes.count("PLATFORM"), 1)
 
 

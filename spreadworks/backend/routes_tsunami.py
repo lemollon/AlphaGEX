@@ -886,7 +886,7 @@ def tsunami_trend_comparison(days: int = 180) -> dict[str, Any]:
     book = _safe_query("SELECT letf, shares FROM tsunami_trend_book WHERE shares > 0")
     data = {
         "tickers": [l for _, l in PAIRS],
-        "inverse": ["SBIT", "ETHD", "SMST"],
+        "inverse": ["SBIT", "ETHD", "SMST", "SPXS"],
         "held": [r[0] for r in book],
         "points": points,
     }

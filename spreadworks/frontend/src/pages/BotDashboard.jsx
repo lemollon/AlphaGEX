@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Power, Zap, Play, Inbox, List, Terminal, Sliders, LineChart } from 'lucide-react';
 import { BOT_REGISTRY, STRATEGY_LABEL, BOT_THEME } from '../lib/botRegistry';
@@ -403,7 +403,29 @@ function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
 }
 
 function EquityChart({ bot, theme, data }) {
-  const W = 1200;
+  // Track the actual rendered width so the SVG viewBox always matches the
+  // card's real pixel width. A hardcoded viewBox (e.g. 1200) combined with
+  // SVG's default preserveAspectRatio="xMidYMid meet" only scales up to the
+  // SMALLER of width/height ratios -- on any screen wider than the
+  // hardcoded value, the chart got letterboxed (centered, empty margins on
+  // both sides) instead of filling the card. Measuring the container and
+  // using that as the viewBox width makes the coordinate space match the
+  // CSS box 1:1, so it always fills edge-to-edge with no distortion.
+  const containerRef = useRef(null);
+  const [measuredWidth, setMeasuredWidth] = useState(800);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect?.width;
+      if (w) setMeasuredWidth(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const W = measuredWidth;
   const H = 260;
   const padL = 64;
   const padR = 18;
@@ -412,7 +434,7 @@ function EquityChart({ bot, theme, data }) {
 
   if (!data || data.length < 2) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-2 h-[260px]">
+      <div ref={containerRef} className="flex flex-col items-center justify-center py-16 gap-2 h-[260px]">
         <span className="text-text-tertiary text-[13px]">
           No equity points yet. Bot will write one per scan cycle.
         </span>
@@ -477,6 +499,7 @@ function EquityChart({ bot, theme, data }) {
   const glowId = `eqglow-${bot}`;
 
   return (
+    <div ref={containerRef} className="w-full">
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-[260px]">
       <defs>
         <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
@@ -606,6 +629,7 @@ function EquityChart({ bot, theme, data }) {
         </text>
       </g>
     </svg>
+    </div>
   );
 }
 

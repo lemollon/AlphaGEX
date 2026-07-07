@@ -31,18 +31,19 @@ class GlobalConfig(unittest.TestCase):
 
 
 class InstanceRegistry(unittest.TestCase):
-    def test_five_instances(self):
-        self.assertEqual(len(TSUNAMI_INSTANCES), 5)
+    def test_seven_instances(self):
+        self.assertEqual(len(TSUNAMI_INSTANCES), 7)
 
     def test_universe_coverage(self):
         names = {cfg.letf_ticker for cfg in all_instances()}
-        self.assertEqual(names, {"MSTU", "TSLL", "NVDL", "CONL", "AMDL"})
+        self.assertEqual(names, {"MSTU", "TSLL", "NVDL", "CONL", "AMDL", "SPXL", "SPXS"})
 
     def test_underlying_pairs(self):
         pairs = {cfg.letf_ticker: cfg.underlying_ticker for cfg in all_instances()}
         self.assertEqual(pairs, {
             "MSTU": "MSTR", "TSLL": "TSLA", "NVDL": "NVDA",
             "CONL": "COIN", "AMDL": "AMD",
+            "SPXL": "SPY", "SPXS": "SPY",
         })
 
     def test_allocation_caps_per_spec(self):
@@ -52,6 +53,8 @@ class InstanceRegistry(unittest.TestCase):
         self.assertEqual(caps["NVDL"], 200.0)
         self.assertEqual(caps["CONL"], 150.0)
         self.assertEqual(caps["AMDL"], 150.0)
+        self.assertEqual(caps["SPXL"], 200.0)
+        self.assertEqual(caps["SPXS"], 200.0)
 
     def test_all_paper_only(self):
         for cfg in all_instances():
@@ -60,6 +63,17 @@ class InstanceRegistry(unittest.TestCase):
     def test_bot_guard_tags_namespaced(self):
         for cfg in all_instances():
             self.assertTrue(cfg.bot_guard_tag.startswith("TSUNAMI-"))
+
+    def test_has_earnings_default_true(self):
+        default_earnings_tickers = {"MSTU", "TSLL", "NVDL", "CONL", "AMDL"}
+        for cfg in all_instances():
+            if cfg.letf_ticker in default_earnings_tickers:
+                self.assertTrue(cfg.has_earnings, f"{cfg.bot_guard_tag} should default has_earnings=True")
+
+    def test_index_letfs_skip_earnings_gate(self):
+        for cfg in all_instances():
+            if cfg.letf_ticker in {"SPXL", "SPXS"}:
+                self.assertFalse(cfg.has_earnings, f"{cfg.bot_guard_tag} tracks SPY -- has_earnings must be False")
 
 
 class GetLookup(unittest.TestCase):

@@ -3,21 +3,24 @@
 TSUNAMI co-hosts on spreadworks-backend (moved from AlphaGEX's
 alphagex-trader on 2026-07-03). This module is the integration point --
 backend/__init__.py calls add_tsunami_jobs(scheduler) once during
-service startup, and these two jobs handle all TSUNAMI operation:
+service startup. Since 2026-07-03 the live strategy is TSUNAMI-TREND
+(trend_engine.py); the original 3-leg options engine (Runner/gates/
+triggers below) is retired but stays importable for tests + audit trail.
 
-  Entry cycle      Mon-Fri 10:30 AM CT (per 2026-05-07 schedule change;
-                   was Monday 10:30 ET per original spec section 1.7)
-  Management cycle Every 15 min during market hours, Mon-Fri
+TSUNAMI-TREND runs two jobs:
 
-Both jobs invoke the Phase 6 Runner with the Phase-α Tradier
-snapshot fetcher and paper broker executor wired in. Discord alerts
-fire from monitoring; equity snapshots and audit log persist
-automatically.
+  Daily rebalance   Mon-Fri 14:45 CT -- the only job that buys/sells.
+  Intraday mark     Every 15 min during market hours -- no trading, just
+                     re-prices the held book off live quotes and writes
+                     another tsunami_equity_snapshots row so the equity
+                     chart has intraday granularity between rebalances.
 
 Module-level state: keeps a single Runner instance across cycles so
 in-memory open_positions persist between management ticks (until the
 process restarts; v0.3 V03-RECOVER will reload from
-tsunami_paper_positions on startup).
+tsunami_paper_positions on startup). This only applies to the retired
+options Runner below -- TSUNAMI-TREND is stateless (reads/writes the DB
+directly each cycle).
 """
 from __future__ import annotations
 
@@ -150,7 +153,9 @@ def add_tsunami_jobs(scheduler) -> bool:
     # rebalance near the close. Options Runner/gates/triggers stay importable
     # for the audit trail and tests but get no jobs.
     try:
-        from backend.bots.tsunami.trend_engine import ensure_trend_tables, run_rebalance
+        from backend.bots.tsunami.trend_engine import (
+            ensure_trend_tables, mark_intraday_equity, run_rebalance,
+        )
         ensure_trend_tables()
     except Exception as exc:  # noqa: BLE001
         logger.exception("[tsunami_scheduler] trend engine unavailable: %r", exc)
@@ -163,6 +168,19 @@ def add_tsunami_jobs(scheduler) -> bool:
                         s.get("equity"), s.get("fills"), s.get("skipped"))
         except Exception as exc:  # noqa: BLE001
             logger.exception("[tsunami_scheduler] trend job failed: %r", exc)
+
+    def tsunami_trend_intraday_mark_job() -> None:
+        # No-trade mark, purely for intraday chart granularity between
+        # daily rebalances. Skip outside market hours -- quotes go stale
+        # and there's nothing new to show anyway.
+        if not _is_market_hours_et():
+            return
+        try:
+            equity = mark_intraday_equity()
+            if equity is not None:
+                logger.info("[tsunami_scheduler] intraday mark: equity=$%.2f", equity)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("[tsunami_scheduler] intraday mark job failed: %r", exc)
 
     try:
         scheduler.add_job(
@@ -177,7 +195,15 @@ def add_tsunami_jobs(scheduler) -> bool:
             name="TSUNAMI-TREND - daily 14:45 CT LETF rebalance",
             replace_existing=True,
         )
-        logger.info("✅ TSUNAMI-TREND job scheduled (daily rebalance Mon-Fri 14:45 CT)")
+        scheduler.add_job(
+            tsunami_trend_intraday_mark_job,
+            trigger=IntervalTrigger(minutes=15),
+            id="tsunami_trend_intraday_mark",
+            name="TSUNAMI-TREND - intraday mark (no trading), every 15 min during market hours",
+            replace_existing=True,
+        )
+        logger.info("✅ TSUNAMI-TREND jobs scheduled (daily rebalance Mon-Fri 14:45 CT "
+                    "+ intraday mark every 15 min)")
         return True
     except Exception as exc:  # noqa: BLE001
         logger.exception("[tsunami_scheduler] add_job failed: %r", exc)

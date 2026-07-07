@@ -6,8 +6,15 @@ Paper trading only; live unlock requires explicit sign-off.
 
 ## Universe
 
-MSTR, TSLA, NVDA, COIN, AMD (5 underlyings, each with a paired LETF).
-Instance names: `TSUNAMI-<LETF>`.
+MSTR, TSLA, NVDA, COIN, AMD (5 single-stock underlyings, each with a
+paired LETF), plus SPY paired with SPXL and SPXS (index-tracking 3x
+LETFs, added 2026-07-07). Instance names: `TSUNAMI-<LETF>`.
+
+SPXL/SPXS have `has_earnings=False` in `configs/instances.py` -- SPY has
+no earnings calendar, so G04 (earnings-window gate) is synthesized as a
+PASS for these two instances instead of evaluated (see
+`gates/orchestrator.py::_earnings_gate_skipped`). All other gates
+(G02, G03, G05-G10) still apply normally.
 
 ## Structure
 

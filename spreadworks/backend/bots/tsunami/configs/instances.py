@@ -1,4 +1,4 @@
-"""TSUNAMI per-instance configurations -- 5 LETFs.
+"""TSUNAMI per-instance configurations -- 7 LETFs.
 
 [TSUNAMI-DELTA] yellow: Python module instead of instances.yaml; see
 configs/global_config.py for rationale.
@@ -19,6 +19,10 @@ class InstanceConfig:
     allocation_cap: float
     paper_only: bool
     bot_guard_tag: str
+    # False for index-tracking LETFs (e.g. SPXL/SPXS on SPY) whose
+    # underlying has no earnings calendar -- G04 is skipped for these
+    # rather than fail-closed on a permanent None earnings date.
+    has_earnings: bool = True
 
     @property
     def instance_name(self) -> str:
@@ -52,6 +56,18 @@ TSUNAMI_INSTANCES: dict[str, InstanceConfig] = {
         letf_ticker="AMDL", underlying_ticker="AMD",
         allocation_cap=150.0, paper_only=True,
         bot_guard_tag="TSUNAMI-AMDL",
+    ),
+    "TSUNAMI-SPXL": InstanceConfig(
+        letf_ticker="SPXL", underlying_ticker="SPY",
+        allocation_cap=200.0, paper_only=True,
+        bot_guard_tag="TSUNAMI-SPXL",
+        has_earnings=False,
+    ),
+    "TSUNAMI-SPXS": InstanceConfig(
+        letf_ticker="SPXS", underlying_ticker="SPY",
+        allocation_cap=200.0, paper_only=True,
+        bot_guard_tag="TSUNAMI-SPXS",
+        has_earnings=False,
     ),
 }
 

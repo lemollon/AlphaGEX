@@ -55,6 +55,66 @@ class SignalWeight(unittest.TestCase):
             self.assertIsNone(trend_engine._signal_weight("TSLL"))
 
 
+class MarkIntradayEquity(unittest.TestCase):
+    """mark_intraday_equity() must re-price the held book and write a
+    snapshot WITHOUT touching cash/book/trades (no trading)."""
+
+    def _fake_conn(self, cash_row, book_rows):
+        fetch_queue = [cash_row, book_rows]
+        inserts = []
+
+        class _Cur:
+            def execute(self, sql, params=()):
+                if sql.strip().upper().startswith("INSERT"):
+                    inserts.append((sql, params))
+            def fetchone(self):
+                return fetch_queue.pop(0)
+            def fetchall(self):
+                return fetch_queue.pop(0)
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        class _Conn:
+            def cursor(self):
+                return _Cur()
+            def commit(self):
+                pass
+            def rollback(self):
+                pass
+            def close(self):
+                pass
+
+        return _Conn(), inserts
+
+    def test_marks_book_and_inserts_one_snapshot_no_trading(self):
+        conn, inserts = self._fake_conn(cash_row=(100.0,), book_rows=[("TSLL", 3)])
+        with patch.object(trend_engine, "is_database_available", return_value=True), \
+             patch.object(trend_engine, "get_connection", return_value=conn), \
+             patch.object(trend_engine.tradier_client, "get_quote", return_value={"last": 10.0}):
+            equity = trend_engine.mark_intraday_equity()
+
+        self.assertAlmostEqual(equity, 100.0 + 3 * 10.0)
+        self.assertEqual(len(inserts), 1)
+        self.assertIn("tsunami_equity_snapshots", inserts[0][0])
+        self.assertIn("PLATFORM", inserts[0][0])
+        self.assertEqual(inserts[0][1], (trend_engine.START_CASH, 100.0 + 3 * 10.0 - trend_engine.START_CASH, 0, 1, 100.0 + 3 * 10.0))
+
+    def test_returns_none_when_db_unavailable(self):
+        with patch.object(trend_engine, "is_database_available", return_value=False):
+            self.assertIsNone(trend_engine.mark_intraday_equity())
+
+    def test_zero_quote_excluded_from_equity(self):
+        conn, inserts = self._fake_conn(cash_row=(50.0,), book_rows=[("BITX", 2)])
+        with patch.object(trend_engine, "is_database_available", return_value=True), \
+             patch.object(trend_engine, "get_connection", return_value=conn), \
+             patch.object(trend_engine.tradier_client, "get_quote", return_value=None):
+            equity = trend_engine.mark_intraday_equity()
+
+        self.assertAlmostEqual(equity, 50.0)  # unpriceable holding contributes $0, not crash
+
+
 class Config(unittest.TestCase):
     def test_backtested_parameters(self):
         # These are the values the 2026-07-03 backtest validated. Changing
@@ -66,8 +126,8 @@ class Config(unittest.TestCase):
         self.assertEqual(trend_engine.START_CASH, 500.0)
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
-                          "BITX", "ETHU", "IONX", "UXRP",
-                          "SBIT", "ETHD", "SMST"])
+                          "BITX", "ETHU", "IONX", "UXRP", "SPXL",
+                          "SBIT", "ETHD", "SMST", "SPXS"])
 
 
 if __name__ == "__main__":

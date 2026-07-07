@@ -69,7 +69,7 @@ class EntryCycleHappyPath(unittest.TestCase):
     def tearDown(self):
         self._kill_patch.stop()
 
-    def test_entry_cycle_runs_all_5_instances(self):
+    def test_entry_cycle_runs_all_7_instances(self):
         broker = MagicMock(return_value="pos-123")
         runner = Runner(
             snapshot_fetcher=_good_snapshot,
@@ -78,11 +78,11 @@ class EntryCycleHappyPath(unittest.TestCase):
             dry_run=False,
         )
         result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.instances_evaluated, 5)
-        # All 5 instances should approve given the same good snapshot.
-        self.assertEqual(result.entries_approved, 5)
-        self.assertEqual(result.entries_filled, 5)
-        self.assertEqual(broker.call_count, 5)
+        self.assertEqual(result.instances_evaluated, 7)
+        # All 7 instances should approve given the same good snapshot.
+        self.assertEqual(result.entries_approved, 7)
+        self.assertEqual(result.entries_filled, 7)
+        self.assertEqual(broker.call_count, 7)
 
     def test_dry_run_does_not_call_broker(self):
         broker = MagicMock(return_value="pos-x")
@@ -93,7 +93,7 @@ class EntryCycleHappyPath(unittest.TestCase):
             dry_run=True,
         )
         result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.entries_approved, 5)
+        self.assertEqual(result.entries_approved, 7)
         self.assertEqual(result.entries_filled, 0)
         broker.assert_not_called()
 
@@ -118,9 +118,9 @@ class EntryCycleSkips(unittest.TestCase):
             dry_run=True,
         )
         result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.instances_evaluated, 5)
+        self.assertEqual(result.instances_evaluated, 7)
         self.assertEqual(result.entries_approved, 0)
-        self.assertEqual(len(result.skips), 5)
+        self.assertEqual(len(result.skips), 7)
 
     def test_kill_active_skips_instance(self):
         with patch("backend.bots.tsunami.instance.is_killed", return_value=True):
@@ -139,7 +139,7 @@ class EntryCycleSkips(unittest.TestCase):
         # is empty. Earlier the runner passed None straight into
         # engine.evaluate_entry, which crashed with AttributeError on the
         # first instance and aborted the entire cycle (only MSTU got a
-        # heartbeat in production, TSLL/NVDL/CONL/AMDL never ran).
+        # heartbeat in production, TSLL/NVDL/CONL/AMDL/SPXL/SPXS never ran).
         broker = MagicMock()
         runner = Runner(
             snapshot_fetcher=lambda _inst: None,
@@ -148,14 +148,14 @@ class EntryCycleSkips(unittest.TestCase):
             dry_run=True,
         )
         result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.instances_evaluated, 5)
+        self.assertEqual(result.instances_evaluated, 7)
         self.assertEqual(result.entries_approved, 0)
-        self.assertEqual(len(result.skips), 5)
+        self.assertEqual(len(result.skips), 7)
         self.assertTrue(all("snapshot_none" in s for s in result.skips))
 
     def test_unhandled_evaluate_entry_error_does_not_abort_cycle(self):
         # Regression: any per-instance failure in evaluate_entry must skip
-        # the instance, not abort the loop for the remaining 4.
+        # the instance, not abort the loop for the remaining 6.
         engine = MagicMock()
         engine.evaluate_entry.side_effect = RuntimeError("boom")
         runner = Runner(
@@ -166,9 +166,9 @@ class EntryCycleSkips(unittest.TestCase):
             dry_run=True,
         )
         result = runner.run_entry_cycle(now=_TODAY)
-        self.assertEqual(result.instances_evaluated, 5)
-        self.assertEqual(engine.evaluate_entry.call_count, 5)
-        self.assertEqual(len(result.skips), 5)
+        self.assertEqual(result.instances_evaluated, 7)
+        self.assertEqual(engine.evaluate_entry.call_count, 7)
+        self.assertEqual(len(result.skips), 7)
         self.assertTrue(all("cycle_error" in s for s in result.skips))
 
 
@@ -181,7 +181,7 @@ class ManagementCycle(unittest.TestCase):
             dry_run=True,
         )
         result = runner.run_management_cycle(now=_TODAY)
-        # No open positions across the 5 fresh instances.
+        # No open positions across the 7 fresh instances.
         self.assertEqual(result.instances_evaluated, 0)
         self.assertEqual(result.triggers_fired, 0)
 

@@ -104,11 +104,13 @@ class PositionLifecycle(unittest.TestCase):
 
 
 class BuildAllInstances(unittest.TestCase):
-    def test_returns_5_instances(self):
+    def test_returns_7_instances(self):
         from backend.bots.tsunami.configs import all_instances
         instances = build_all_instances(all_instances())
-        self.assertEqual(len(instances), 5)
+        self.assertEqual(len(instances), 7)
         self.assertIn("TSUNAMI-MSTU", instances)
+        self.assertIn("TSUNAMI-SPXL", instances)
+        self.assertIn("TSUNAMI-SPXS", instances)
         for inst in instances.values():
             self.assertEqual(inst.open_count, 0)
 
