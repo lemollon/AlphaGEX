@@ -66,6 +66,7 @@ import {
   type SandboxCloseInfo,
   type IcMtmResult,
 } from './tradier'
+import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
@@ -823,6 +824,26 @@ async function getNetGexCached(): Promise<number | null> {
     value = null
   }
   _netGexCache = { day, value }
+  return value
+}
+
+/* ------------------------------------------------------------------ */
+/*  Trading Volatility shadow cross-check — cached once per CT day     */
+/* ------------------------------------------------------------------ */
+// Independent vendor gamma-regime read, logged alongside the self-computed
+// net GEX for every bot. Visibility only — never affects strike width, skip,
+// or sizing. See getTvMarketStructureCached() call site below.
+let _tvGexCache: { day: string; value: TvMarketStructure | null } | null = null
+async function getTvMarketStructureCached(): Promise<TvMarketStructure | null> {
+  const day = getCentralTime().toISOString().slice(0, 10)
+  if (_tvGexCache && _tvGexCache.day === day) return _tvGexCache.value
+  let value: TvMarketStructure | null = null
+  try {
+    value = await getTvMarketStructure('SPY')
+  } catch {
+    value = null
+  }
+  _tvGexCache = { day, value }
   return value
 }
 
@@ -2948,6 +2969,21 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   let spkNetGex: number | null = null
   if (isSparkStrategy(bot.name)) {
     spkNetGex = await getNetGexCached()
+  }
+
+  // TRADING VOLATILITY SHADOW CROSS-CHECK (added 2026-07-07). Logs an
+  // independent vendor gamma-regime read next to the self-computed net GEX
+  // sign, for ALL bots (FLAME/INFERNO have no self-computed GEX today, so
+  // this is their only regime visibility). Does NOT affect strike width,
+  // skip, or sizing for any bot — promoting this to an actual gate is a
+  // separate decision once enough days of agreement/disagreement accumulate.
+  const tvGex = await getTvMarketStructureCached()
+  if (tvGex) {
+    const selfSign = spkNetGex === null ? 'n/a' : spkNetGex < 0 ? 'neg' : 'pos'
+    const tvSign = tvGex.gammaToneState.includes('negative') ? 'neg'
+      : tvGex.gammaToneState.includes('positive') ? 'pos' : 'n/a'
+    const agree = selfSign === 'n/a' || tvSign === 'n/a' ? 'n/a' : selfSign === tvSign ? 'yes' : 'no'
+    console.log(`[TV-GEX-SHADOW] bot=${bot.name} self_sign=${selfSign} tv_tone=${tvGex.gammaToneState} tv_regime=${tvGex.structureRegime} tv_flip=${tvGex.gammaFlipPrice} agree=${agree}`)
   }
 
   // Expiration
