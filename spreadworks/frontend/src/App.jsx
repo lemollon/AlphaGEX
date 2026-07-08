@@ -310,6 +310,18 @@ function capitalize(s) {
 // just the URL. URL still wins when the user is actually on /bots/<id>.
 const ACTIVE_BOT_KEY = 'spreadworks.activeBot';
 
+// TSUNAMI isn't in BOT_REGISTRY (own engine + page, not a registry bot), so
+// on /tsunami the chip's normal "last picked registry bot" fallback would
+// show a stale, unrelated bot name (e.g. "BOT Undertow" while viewing
+// Tsunami) instead of reflecting the page you're actually on. Mirrors
+// TsunamiPage.jsx's own THEME for visual consistency.
+const TSUNAMI_THEME = {
+  glyph: 'wave',
+  primary: '#7dd3fc',
+  primarySoft: 'rgba(125,211,252,0.10)',
+  primaryRing: 'rgba(125,211,252,0.30)',
+};
+
 function readStoredBot() {
   try {
     const v = localStorage.getItem(ACTIVE_BOT_KEY);
@@ -321,6 +333,7 @@ function readStoredBot() {
 function NavBar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const onTsunami = location.pathname === '/tsunami';
   const match = location.pathname.match(/^\/bots\/([^/]+)/);
   const urlBotId = match && BOT_REGISTRY[match[1]] ? match[1] : null;
   const firstBotId = Object.keys(BOT_REGISTRY)[0];
@@ -331,7 +344,8 @@ function NavBar() {
   const [storedBotId, setStoredBotId] = useState(() => readStoredBot());
   const activeBotId = urlBotId || storedBotId || firstBotId;
   const activeBot = BOT_REGISTRY[activeBotId];
-  const theme = BOT_THEME[activeBotId];
+  const theme = onTsunami ? TSUNAMI_THEME : BOT_THEME[activeBotId];
+  const chipLabel = onTsunami ? 'Tsunami' : capitalize(activeBot.display);
 
   // Keep storage in sync when URL drives the bot (e.g. user followed a
   // link straight to /bots/tide).
@@ -527,7 +541,7 @@ function NavBar() {
               Bot
             </span>
             <span style={{ fontSize: 13, fontWeight: 700, color: theme.primary }}>
-              {capitalize(activeBot.display)}
+              {chipLabel}
             </span>
             <ChevronDown size={12} style={{ color: theme.primary, opacity: 0.6 }} />
           </button>
