@@ -97,6 +97,34 @@ function useBotStatusMap() {
   return statusMap;
 }
 
+// ── useTsunamiStatus — mirrors useBotStatusMap's today-P&L polling, but for
+// TSUNAMI specifically. TSUNAMI isn't in BOT_REGISTRY (own engine, own
+// /api/tsunami/trend/status endpoint), so it never showed up in the bulk
+// /api/spreadworks/bots response the dropdown's other rows read from --
+// that's why its pinned row had no status dot/P&L while every other row
+// did. TSUNAMI has no enabled/disabled toggle (fixed daily rebalance), so
+// the dot is always "live" once a status response comes back.
+function useTsunamiStatus() {
+  const [todayPnl, setTodayPnl] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function poll() {
+      try {
+        const res = await fetch(`${API_URL}/api/tsunami/trend/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) {
+          setTodayPnl(typeof data?.today_pnl === 'number' ? data.today_pnl : null);
+        }
+      } catch { /* silent */ }
+    }
+    poll();
+    const iv = setInterval(poll, 15_000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+  return todayPnl;
+}
+
 // ── RouteBtn — inline-styled nav button per spec. Active state is derived
 // from the current URL via react-router so the URL stays source of truth.
 function RouteBtn({ icon, label, to, end = false }) {
@@ -142,6 +170,7 @@ function RouteBtn({ icon, label, to, end = false }) {
 // The onClick callback only persists localStorage + closes the menu.
 function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
   const statusMap = useBotStatusMap();
+  const tsunamiPnl = useTsunamiStatus();
   const bots = Object.entries(BOT_REGISTRY).map(([id, meta]) => ({ id, ...meta }));
 
   // Anchored to the chip but PORTALED to <body>. The header sets backdrop-filter,
@@ -216,6 +245,20 @@ function BotMenu({ activeBotId, onSelect, anchorRef, panelRef }) {
           <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: '#64748b', marginTop: 2 }}>
             LETF Trend · $500 sleeve · 16 instruments
           </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          <span style={{
+            width: 6, height: 6, borderRadius: 9999,
+            background: tsunamiPnl != null ? '#34d399' : '#475569',
+          }} />
+          <span style={{
+            fontFamily: 'JetBrains Mono', fontSize: 11, fontWeight: 600,
+            color: tsunamiPnl > 0 ? '#34d399' : tsunamiPnl < 0 ? '#fb7185' : '#64748b',
+          }}>
+            {tsunamiPnl == null || tsunamiPnl === 0
+              ? '—'
+              : (tsunamiPnl > 0 ? '+' : '−') + '$' + Math.abs(tsunamiPnl).toFixed(0)}
+          </span>
         </div>
       </Link>
       {bots.map(b => {
