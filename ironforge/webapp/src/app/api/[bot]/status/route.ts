@@ -555,7 +555,7 @@ export async function GET(
       : bot === 'blaze'
         ? 'Directional Spread'
         : bot === 'spark'
-          ? 'Iron Condor (GEX-adaptive · swing · 15% BP)'
+          ? 'Iron Condor (GEX-adaptive · swing · 30% BP)'
           : 'Iron Condor'
     const strategy = `${dteNum}DTE ${tradeMode} ${strategyName}`
 

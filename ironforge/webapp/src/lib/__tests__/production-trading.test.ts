@@ -360,13 +360,14 @@ describe('DB Schema Production Columns (Structural)', () => {
     expect(dbSource).toMatch(/filter\(\(b\) => b !== 'FLAME'\)/)
   })
 
-  it('seeds spark_config production row with bp_pct=0.15 and max_contracts=0', () => {
-    // Commit A: the production config row MUST override bp_pct to 0.15
-    // (operator's 15% rule) and max_contracts to 0 (unlimited; bp_pct is
-    // the cap). The clone-from-sandbox pattern would otherwise inherit
-    // bp_pct=0.85 — the exact double-dip bug Commit A fixes.
+  it('seeds spark_config production row with bp_pct=0.30 and max_contracts=0', () => {
+    // Commit A: the production config row MUST override bp_pct (operator's
+    // BP rule — 0.15 originally, raised to 0.30 on 2026-07-08) and
+    // max_contracts to 0 (unlimited; bp_pct is the cap). The
+    // clone-from-sandbox pattern would otherwise inherit bp_pct=0.85 — the
+    // exact double-dip bug Commit A fixes.
     expect(dbSource).toMatch(/0 AS max_contracts/)
-    expect(dbSource).toMatch(/0\.15 AS buying_power_usage_pct/)
+    expect(dbSource).toMatch(/0\.30 AS buying_power_usage_pct/)
   })
 
   it('defaults account_type to sandbox', () => {

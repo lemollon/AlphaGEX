@@ -94,7 +94,7 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
  * routing). KINDLE shares SPARK's strategy but has its own config/account/sizing
  * and its own production identity. For input 'spark' this returns true exactly
  * where the old literal `bot.name === 'spark'` did, so SPARK behavior is unchanged.
- * NOTE: the 15%-BP cap is intentionally NOT gated on this — it stays SPARK-only;
+ * NOTE: the 30%-BP cap is intentionally NOT gated on this — it stays SPARK-only;
  * KINDLE's max_contracts:1 is its risk control.
  */
 function isSparkStrategy(name: string): boolean {
@@ -202,7 +202,7 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // KINDLE: SPARK's 1DTE IC strategy (swing/no-stop, neg-gamma 1.5-SD widen via
   // isSparkStrategy) on a $500 real-money account. $2 wings + max_contracts: 1 =
   // exactly one IC per trade (the Kelly-justified size for $500). min_credit 0.05
-  // matches SPARK. The 15%-BP cap is SPARK-only; KINDLE's 1-contract ceiling is the
+  // matches SPARK. The 30%-BP cap is SPARK-only; KINDLE's 1-contract ceiling is the
   // risk control instead.
   // min_credit_pct_width 0.09 (2026-06-26): the $0.05 absolute floor let KINDLE
   // trade thin-credit days (its first 3 real trades were 5%/8%/8.5% of width,
@@ -2121,7 +2121,7 @@ async function monitorSinglePosition(
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
   // SPARK SWINGS: it never hard-stops — it rides the position to the profit target
   // or EOD. Backtest: ~82% of would-be-stopped trades recover by close; with the
-  // small %-based sizing (bp_pct ~0.15) this lifts win rate to ~98% and slashes
+  // small %-based sizing (bp_pct ≤ 0.30 cap) this lifts win rate to ~98% and slashes
   // drawdown. Position SIZE is the risk control with the stop off. Other bots keep
   // their stop. (Disable SPARK itself to halt — that is the kill switch.)
   const swingOn = isSparkStrategy(bot.name)
@@ -3017,7 +3017,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // (+$11.73 vs +$6.95 vs +$4.65/ct) — 2.0 was too far OTM to collect premium that
   // clears even a low floor, so the bot rarely traded. 1.5 collects more from closer
   // strikes; the extra breaches are recovered by the swing. Works because SPARK swings
-  // (no hard stop) and sizes small (bp_pct ~0.15).
+  // (no hard stop) and caps size (bp_pct ≤ 0.30).
   // NEGATIVE-GAMMA POLICY. On confirmed negative-gamma days (net GEX < 0) the tape
   // trends and an IC is far likelier to breach a wing. KINDLE (skip_neg_gamma) SKIPS
   // these days entirely — on a tiny survival-focused account the backtest showed
@@ -3088,10 +3088,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const collateralPer = Math.max(0, (spreadWidth - credits.totalCredit) * 100)
   if (collateralPer <= 0) return 'skip:bad_collateral'
   // SPARK risk cap: with the stop off (swing), position SIZE is the only risk
-  // control, so SPARK never deploys more than 15% of buying power per trade —
-  // enforced in code regardless of the config value (backtest: 30%+no-stop blows
-  // up; ~15% gives 98% win with a survivable drawdown). Other bots use bp_pct.
-  const effBpPct = bot.name === 'spark' ? Math.min(botCfg.bp_pct, 0.15) : botCfg.bp_pct
+  // control, so SPARK never deploys more than 30% of buying power per trade —
+  // enforced in code regardless of the config value. Raised 0.15 → 0.30 on
+  // 2026-07-08 per operator decision (informed): the 2026-07-07 compounding sim
+  // (spark_compounding_bp_sim_2026_07_07.py / Part-2 report) quantified 30%/3ct
+  // at +$80,228 (6.5yr, 3x return) with a 38.6% worst account slide — the
+  // report recommended 20%/2ct; operator explicitly chose the 30% row knowing
+  // the drawdown. Other bots use bp_pct.
+  const effBpPct = bot.name === 'spark' ? Math.min(botCfg.bp_pct, 0.30) : botCfg.bp_pct
   const usableBP = buyingPower * effBpPct
   const bpContracts = Math.floor(usableBP / collateralPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
@@ -3104,7 +3108,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     : botCfg.max_contracts > 0
       ? Math.min(botCfg.max_contracts, bpContracts)
       : bpContracts
-  // Position size is controlled by the % of buying power (bp_pct, set ~0.15 for
+  // Position size is controlled by the % of buying power (bp_pct, capped 0.30 for
   // SPARK) — that % IS the risk control with the stop off (no fixed cap needed).
   const maxContracts = Math.min(rawMax, SCANNER_MAX_CONTRACTS)
 
