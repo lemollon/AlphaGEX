@@ -60,6 +60,12 @@ function money(v, { signed = false, decimals = 2 } = {}) {
   return v < 0 ? `−$${str}` : `$${str}`;
 }
 
+function pct(v, decimals = 1) {
+  if (v == null || Number.isNaN(v)) return '—';
+  const sign = v >= 0 ? '+' : '−';
+  return `${sign}${Math.abs(v * 100).toFixed(decimals)}%`;
+}
+
 /* ── KPI tile — same chrome as BotDashboard's KpiTile ───────────────── */
 
 function KpiTile({ label, value, sub, mono = true, accent }) {
@@ -284,22 +290,46 @@ export default function TsunamiPage() {
 
   const equity = status?.equity ?? null;
   const cash = status?.cash ?? null;
+  const startingCapital = status?.starting_capital ?? null;
+  const todayPnl = status?.today_pnl ?? null;
+  const unrealizedPnl = status?.unrealized_pnl ?? null;
+  const realizedPnl = status?.realized_pnl ?? null;
   const book = status?.book || [];
   const trades = status?.recent_trades || [];
   const heldCount = book.filter(b => b.shares > 0).length;
   const lastFill = trades.length ? String(trades[0].ts).slice(0, 10) : null;
+  const returnPct = equity != null && startingCapital ? (equity - startingCapital) / startingCapital : null;
 
   return (
     <div className="flex-1 overflow-y-auto font-[var(--font-ui)] text-text-primary">
       <TsunamiHeader />
 
       <div className="px-4 md:px-8 py-6 space-y-5">
-        {/* KPI strip — stock-bot stats: equity / cash / held names / last fill */}
+        {/* KPI strip — stock-bot stats: equity / P&L (today, unrealized, realized) / positions */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <KpiTile
             label="Account Equity"
             value={equity != null ? money(equity) : '…'}
-            sub="Allocated · TSUNAMI"
+            accent={returnPct != null ? (returnPct >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)') : undefined}
+            sub={returnPct != null ? `${pct(returnPct, 1)} since deploy` : 'Allocated · TSUNAMI'}
+          />
+          <KpiTile
+            label="Today P&L"
+            value={todayPnl != null ? money(todayPnl, { signed: true }) : '…'}
+            accent={todayPnl != null ? (todayPnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)') : undefined}
+            sub="Realized · closed today"
+          />
+          <KpiTile
+            label="Unrealized P&L"
+            value={unrealizedPnl != null ? money(unrealizedPnl, { signed: true }) : '…'}
+            accent={unrealizedPnl != null ? (unrealizedPnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)') : undefined}
+            sub={heldCount > 0 ? `Mark-to-market · ${heldCount} held` : 'All cash'}
+          />
+          <KpiTile
+            label="Total Realized P&L"
+            value={realizedPnl != null ? money(realizedPnl, { signed: true }) : '…'}
+            accent={realizedPnl != null ? (realizedPnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)') : undefined}
+            sub="Since deploy · closed trades"
           />
           <KpiTile
             label="Cash"
@@ -435,8 +465,19 @@ export default function TsunamiPage() {
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: SERIES_COLOR[b.letf] || '#94a3b8' }} />
                     {b.letf}
                   </span>
-                  <span className="sw-mono">
-                    {b.shares} sh <span className="text-text-tertiary">@</span> ${Number(b.avg_cost).toFixed(2)}
+                  <span className="sw-mono text-right">
+                    <span className="block">
+                      {b.shares} sh <span className="text-text-tertiary">@</span> ${Number(b.avg_cost).toFixed(2)}
+                    </span>
+                    {b.unrealized_pnl != null && (
+                      <span
+                        className="block text-[11px]"
+                        style={{ color: b.unrealized_pnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)' }}
+                      >
+                        {money(b.unrealized_pnl, { signed: true })} unrealized
+                        {b.last != null && <span className="text-text-tertiary"> · last ${Number(b.last).toFixed(2)}</span>}
+                      </span>
+                    )}
                   </span>
                 </div>
               ))}

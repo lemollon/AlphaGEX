@@ -783,25 +783,67 @@ def admin_run_management_cycle() -> dict[str, Any]:
 
 @router.get("/trend/status")
 def tsunami_trend_status() -> dict[str, Any]:
-    """Book, cash, and last trades for the LETF trend engine."""
-    book = _safe_query(
-        "SELECT letf, shares, avg_cost, updated_at FROM tsunami_trend_book ORDER BY letf")
-    cash = _safe_query("SELECT cash FROM tsunami_trend_cash WHERE id=1")
+    """Book, cash, P&L, and last trades for the LETF trend engine.
+
+    2026-07-08: equity/book used to mark held shares at avg_cost (their
+    entry price), not the current quote -- so unrealized P&L on open
+    positions was invisible (always $0) and the page had no today/total
+    realized P&L fields at all, unlike every other bot's /status. Marks
+    now come from a live Tradier quote per held name (same source
+    trend_engine.run_rebalance/mark_intraday_equity use), matching the
+    other bots' "equity = cash + mark-to-market book" convention.
+    """
+    from backend.bots.tsunami.data import tradier_client
+
+    book_rows = _safe_query(
+        "SELECT letf, shares, avg_cost, updated_at FROM tsunami_trend_book"
+        " WHERE shares > 0 ORDER BY letf")
+    cash_rows = _safe_query("SELECT cash FROM tsunami_trend_cash WHERE id=1")
     trades = _safe_query(
         "SELECT ts, letf, side, shares, price, reason, realized_pnl"
         " FROM tsunami_trend_trades ORDER BY ts DESC LIMIT 25")
-    # EQUITY = live cash + book at avg cost (marks refresh at each daily rebalance). Never read the
-    # latest PLATFORM snapshot here: that table still holds the OLD options-engine snapshots
-    # (starting_capital $5,000), which made the page show "$5,000 account equity" while the trend
-    # engine actually runs on $500 (START_CASH). Operator 2026-07-04: TSUNAMI uses $500, full stop.
-    _cash = float(cash[0][0]) if cash else None
-    _bookval = sum(float(r[1]) * float(r[2]) for r in book) if book else 0.0
+    realized_total_rows = _safe_query(
+        "SELECT COALESCE(SUM(realized_pnl), 0) FROM tsunami_trend_trades"
+        " WHERE realized_pnl IS NOT NULL")
+    # "Today" in CT, matching the platform convention (routes_bots.py) --
+    # realized P&L from SELL fills that closed during today's CT session.
+    today_realized_rows = _safe_query(
+        "SELECT COALESCE(SUM(realized_pnl), 0) FROM tsunami_trend_trades"
+        " WHERE realized_pnl IS NOT NULL"
+        " AND (ts AT TIME ZONE 'America/Chicago')::date"
+        "     = (NOW() AT TIME ZONE 'America/Chicago')::date")
+
+    # Never read the latest PLATFORM snapshot for equity/cash: that table
+    # still holds the OLD options-engine snapshots (starting_capital
+    # $5,000), which made the page show "$5,000 account equity" while the
+    # trend engine actually runs on $500 (START_CASH). Operator 2026-07-04:
+    # TSUNAMI uses $500, full stop.
+    _cash = float(cash_rows[0][0]) if cash_rows else None
+
+    book_out, market_value, cost_basis = [], 0.0, 0.0
+    for letf, shares, avg_cost, updated_at in book_rows:
+        shares = int(shares)
+        avg_cost = float(avg_cost)
+        quote = tradier_client.get_quote(letf)
+        last = float((quote or {}).get("last") or (quote or {}).get("close") or 0) or avg_cost
+        market_value += shares * last
+        cost_basis += shares * avg_cost
+        book_out.append({
+            "letf": letf, "shares": shares, "avg_cost": avg_cost,
+            "last": round(last, 4), "unrealized_pnl": round(shares * (last - avg_cost), 2),
+            "updated_at": str(updated_at),
+        })
+
+    equity = round(_cash + market_value, 2) if _cash is not None else None
     return {
         "engine": "TSUNAMI-TREND (LETF vol-managed MA50)",
         "cash": _cash,
-        "equity": (round(_cash + _bookval, 2) if _cash is not None else None),
-        "book": [{"letf": r[0], "shares": int(r[1]), "avg_cost": float(r[2]),
-                  "updated_at": str(r[3])} for r in book],
+        "equity": equity,
+        "starting_capital": 500.0,
+        "unrealized_pnl": round(market_value - cost_basis, 2),
+        "today_pnl": float(today_realized_rows[0][0]) if today_realized_rows else 0.0,
+        "realized_pnl": float(realized_total_rows[0][0]) if realized_total_rows else 0.0,
+        "book": book_out,
         "recent_trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
                            "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
                            "realized_pnl": float(r[6]) if r[6] is not None else None}
