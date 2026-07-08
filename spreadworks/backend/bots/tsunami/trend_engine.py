@@ -127,6 +127,28 @@ CREATE TABLE IF NOT EXISTS tsunami_trend_cash (
 );
 INSERT INTO tsunami_trend_cash (id, cash)
     VALUES (1, %s) ON CONFLICT (id) DO NOTHING;
+-- One row per instrument per rebalance cycle -- the "why" behind every
+-- buy/sell/skip. Without this, only currently-held names + trade fills
+-- were ever visible; there was no way to see the other instruments in
+-- the universe or why they weren't bought (not trending, no data, etc).
+CREATE TABLE IF NOT EXISTS tsunami_trend_signals (
+    id            BIGSERIAL PRIMARY KEY,
+    ts            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    letf          VARCHAR(10) NOT NULL,
+    price         DECIMAL(12,4),
+    ma50          DECIMAL(12,4),
+    rv20          DECIMAL(8,4),
+    trending      BOOLEAN,
+    target_weight DECIMAL(8,4),
+    target_shares INTEGER,
+    held_shares   INTEGER,
+    action        VARCHAR(12) NOT NULL,
+    reason        TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_tsunami_trend_signals_letf_ts
+    ON tsunami_trend_signals (letf, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_tsunami_trend_signals_ts
+    ON tsunami_trend_signals (ts DESC);
 """
 
 
@@ -150,32 +172,68 @@ def ensure_trend_tables() -> bool:
             conn.close()
 
 
-def _signal_weight(letf: str) -> Optional[float]:
+def _diag(price=None, ma50=None, rv20=None, trending=None) -> dict:
+    return {"price": price, "ma50": ma50, "rv20": rv20, "trending": trending}
+
+
+def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     """Target weight for one LETF from its own daily closes + live quote.
 
-    None = data unavailable (leave the book untouched — fail safe)."""
+    Returns (weight, diag). weight=None means data unavailable (leave the
+    book untouched -- fail safe); weight=0.0 means trend is off (flat/
+    exit). diag carries whatever was computed before any early return --
+    price/ma50/rv20/trending -- so callers can log a "why" even on a skip,
+    not just on a fill. Any field diag doesn't reach yet is None."""
     hist = tradier_client.get_daily_history(letf, days=130)
     if len(hist) < MA_N + 1:
         logger.warning("[tsunami.trend] %s: only %d bars — no signal", letf, len(hist))
-        return None
+        return None, _diag()
     closes = [float(h["close"]) for h in hist if h.get("close")]
     quote = tradier_client.get_quote(letf)
     last = float((quote or {}).get("last") or (quote or {}).get("close") or 0)
     if last <= 0:
-        return None
+        return None, _diag()
     series = closes[-(MA_N + RV_N):] + [last]
     ma = sum(series[-MA_N:]) / MA_N
     if last <= ma:
-        return 0.0
+        return 0.0, _diag(price=last, ma50=ma, trending=False)
     rets = [math.log(series[i] / series[i - 1]) for i in range(1, len(series))][-RV_N:]
     if len(rets) < RV_N:
-        return None
+        return None, _diag(price=last, ma50=ma, trending=True)
     mean = sum(rets) / len(rets)
     rv = math.sqrt(sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)) * math.sqrt(252)
     if rv <= 0:
-        return None
+        return None, _diag(price=last, ma50=ma, trending=True)
     slice_ = SLICE_OVERRIDE.get(letf, SLICE)
-    return slice_ * min(W_CAP, VOL_TGT / rv)
+    weight = slice_ * min(W_CAP, VOL_TGT / rv)
+    return weight, _diag(price=last, ma50=ma, rv20=rv, trending=True)
+
+
+def _log_signal(letf, diag, target_weight, target_shares, held_shares, action, reason) -> None:
+    """Independent connection + transaction -- a signals-log write failure
+    must never abort or poison run_rebalance's trading transaction. Called
+    once per instrument per cycle regardless of outcome (fill/hold/skip)
+    so the full universe -- not just currently-held names -- has a record
+    of why each name was or wasn't traded."""
+    try:
+        conn = get_connection()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tsunami.trend] signal log connect failed for %s: %r", letf, exc)
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO tsunami_trend_signals"
+                " (letf, price, ma50, rv20, trending, target_weight, target_shares, held_shares, action, reason)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (letf, diag.get("price"), diag.get("ma50"), diag.get("rv20"), diag.get("trending"),
+                 target_weight, target_shares, held_shares, action, reason))
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tsunami.trend] signal log insert failed for %s: %r", letf, exc)
+        conn.rollback()
+    finally:
+        conn.close()
 
 
 def run_rebalance(now: Optional[datetime] = None) -> dict:
@@ -210,10 +268,19 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
             held = book.get(letf, {}).get("shares", 0)
             if px <= 0:
                 summary["skipped"].append(f"{letf}:no_quote")
+                _log_signal(letf, _diag(), None, 0, held,
+                            "NO_QUOTE", "no live quote from Tradier")
                 continue
-            w = _signal_weight(letf)
+            w, diag = _signal_weight(letf)
             if w is None:
                 summary["skipped"].append(f"{letf}:no_signal")
+                if diag["price"] is None:
+                    reason = "insufficient price history or no live quote"
+                elif diag["rv20"] is None:
+                    reason = "insufficient volatility history (recently listed)"
+                else:
+                    reason = "no signal"
+                _log_signal(letf, diag, None, 0, held, "NO_SIGNAL", reason)
                 continue
             target = int((w * equity) // px)
             fill = None
@@ -258,6 +325,7 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
                         " avg_cost=EXCLUDED.avg_cost, updated_at=NOW()",
                         (letf, book[letf]["shares"], book[letf]["avg_cost"]))
                 summary["fills"].append(f"{letf} {side} {n}@{fpx:.2f}")
+                _log_signal(letf, diag, w, target, held, side, reason)
                 try:
                     tsunami_discord.post_embed(
                         title=f"🌊 TSUNAMI-TREND paper {side}",
@@ -266,6 +334,18 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
                     )
                 except Exception:  # noqa: BLE001
                     pass
+            else:
+                if held == 0 and target == 0:
+                    action, reason = "FLAT", ("not trending" if w == 0.0 else "position size rounds to 0 shares")
+                elif held > 0 and target == held:
+                    action, reason = "HOLD", "at target size"
+                else:
+                    drift = abs(target - held) / held if held else 1.0
+                    if drift <= REBAL_BAND:
+                        action, reason = "HOLD", f"drift {drift:.0%} within {REBAL_BAND:.0%} band"
+                    else:
+                        action, reason = "HOLD", "rebalance triggered but insufficient cash"
+                _log_signal(letf, diag, w, target, held, action, reason)
 
         equity = cash + sum(b["shares"] * quotes.get(l, 0.0) for l, b in book.items())
         with conn.cursor() as cur:

@@ -851,6 +851,75 @@ def tsunami_trend_status() -> dict[str, Any]:
     }
 
 
+@router.get("/trend/universe")
+def tsunami_trend_universe() -> dict[str, Any]:
+    """All 16 instruments in the universe with the latest signal state --
+    not just currently-held names. Answers "why isn't X being bought":
+    trending Y/N, price vs its own 50d MA, target vs held shares, and the
+    reason text from the most recent rebalance cycle. Backed by
+    tsunami_trend_signals, written once per instrument per cycle
+    regardless of outcome (added 2026-07-08 -- before this there was no
+    persisted record of the universe beyond currently-held names)."""
+    from backend.bots.tsunami.trend_engine import PAIRS
+
+    rows = _safe_query(
+        "SELECT DISTINCT ON (letf) letf, ts, price, ma50, rv20, trending,"
+        " target_weight, target_shares, held_shares, action, reason"
+        " FROM tsunami_trend_signals ORDER BY letf, ts DESC")
+    by_letf = {r[0]: r for r in rows}
+    out = []
+    for _, letf in PAIRS:
+        r = by_letf.get(letf)
+        if r is None:
+            out.append({
+                "letf": letf, "ts": None, "price": None, "ma50": None, "rv20": None,
+                "trending": None, "target_weight": None, "target_shares": None,
+                "held_shares": None, "action": None, "reason": "no rebalance cycle yet",
+            })
+            continue
+        out.append({
+            "letf": r[0], "ts": str(r[1]),
+            "price": float(r[2]) if r[2] is not None else None,
+            "ma50": float(r[3]) if r[3] is not None else None,
+            "rv20": float(r[4]) if r[4] is not None else None,
+            "trending": r[5],
+            "target_weight": float(r[6]) if r[6] is not None else None,
+            "target_shares": r[7], "held_shares": r[8],
+            "action": r[9], "reason": r[10],
+        })
+    return {"instruments": out}
+
+
+@router.get("/trend/trades")
+def tsunami_trend_trades(limit: int = Query(200, ge=1, le=1000)) -> dict[str, Any]:
+    """Full trade history (the /trend/status embed is capped at 25 for the
+    KPI page; this is the dedicated Trade History tab's data source)."""
+    rows = _safe_query(
+        "SELECT ts, letf, side, shares, price, reason, realized_pnl"
+        " FROM tsunami_trend_trades ORDER BY ts DESC LIMIT %s", (limit,))
+    return {
+        "trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
+                    "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
+                    "realized_pnl": float(r[6]) if r[6] is not None else None}
+                   for r in rows],
+    }
+
+
+@router.get("/trend/logs")
+def tsunami_trend_logs(limit: int = Query(300, ge=1, le=2000)) -> dict[str, Any]:
+    """Chronological feed of every per-instrument decision each rebalance
+    cycle made (BUY/SELL/HOLD/FLAT/NO_SIGNAL/NO_QUOTE) -- the Logs tab."""
+    rows = _safe_query(
+        "SELECT ts, letf, action, reason, price, target_shares, held_shares"
+        " FROM tsunami_trend_signals ORDER BY ts DESC LIMIT %s", (limit,))
+    return {
+        "logs": [{"ts": str(r[0]), "letf": r[1], "action": r[2], "reason": r[3],
+                  "price": float(r[4]) if r[4] is not None else None,
+                  "target_shares": r[5], "held_shares": r[6]}
+                 for r in rows],
+    }
+
+
 @router.get("/trend/equity-curve")
 def tsunami_trend_equity_curve() -> dict[str, Any]:
     """TREND-engine equity history for the page's equity chart. Filters to the trend engine's own

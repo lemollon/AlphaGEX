@@ -9,6 +9,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   ReferenceLine, CartesianGrid,
 } from 'recharts';
+import { Inbox, LayoutGrid, List, Terminal } from 'lucide-react';
 import { API_URL as API_BASE } from '../lib/api';
 import BotGlyph from '../components/bots/BotGlyph';
 
@@ -248,6 +249,280 @@ function PillGroup({ options, value, onChange }) {
   );
 }
 
+/* ── Activity tabs — Positions / Universe / Trade History / Logs ─────
+   Mirrors BotDashboard's ActivityTabs pattern. TSUNAMI previously only
+   showed currently-HELD names (the Book card); there was no view of the
+   full 16-instrument universe, no reason why a name wasn't bought, no
+   full trade history (capped at 12 inline), and no logs at all. Backed
+   by tsunami_trend_signals (one row per instrument per rebalance cycle,
+   added 2026-07-08) via /trend/universe and /trend/logs, plus the
+   already-existing /trend/trades for full history. */
+
+function fmtCT(ts, opts = {}) {
+  if (!ts) return '—';
+  try {
+    return new Date(ts).toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit',
+      hour12: false, ...opts,
+    });
+  } catch {
+    return String(ts);
+  }
+}
+
+function actionBadgeStyle(action) {
+  if (action === 'BUY') {
+    return { color: 'var(--color-sw-green)', background: 'var(--color-sw-green-dim)', boxShadow: 'inset 0 0 0 1px rgba(52,211,153,0.30)' };
+  }
+  if (action === 'SELL') {
+    return { color: 'var(--color-sw-red)', background: 'var(--color-sw-red-dim)', boxShadow: 'inset 0 0 0 1px rgba(251,113,133,0.30)' };
+  }
+  if (action === 'NO_SIGNAL' || action === 'NO_QUOTE') {
+    return { color: 'var(--color-sw-yellow)', background: 'var(--color-sw-yellow-dim)' };
+  }
+  return { color: 'var(--color-text-tertiary)', background: 'rgba(148,163,184,0.10)' }; // HOLD / FLAT / null
+}
+
+function EmptyState({ children }) {
+  return <div className="py-8 text-center text-[12.5px] text-text-tertiary">{children}</div>;
+}
+
+function PositionsTabContent({ book }) {
+  return (
+    <div className="px-5 py-3">
+      {book.length === 0 && (
+        <EmptyState>All cash — no instrument above its 50-day MA (or first rebalance pending).</EmptyState>
+      )}
+      {book.map(b => (
+        <div
+          key={b.letf}
+          className="flex items-center justify-between py-2.5 text-[13px] text-text-body"
+          style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
+        >
+          <span className="inline-flex items-center gap-2 font-bold sw-mono"
+                style={{ color: SERIES_COLOR[b.letf] || 'var(--color-text-primary)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: SERIES_COLOR[b.letf] || '#94a3b8' }} />
+            {b.letf}
+          </span>
+          <span className="sw-mono text-right">
+            <span className="block">
+              {b.shares} sh <span className="text-text-tertiary">@</span> ${Number(b.avg_cost).toFixed(2)}
+            </span>
+            {b.unrealized_pnl != null && (
+              <span
+                className="block text-[11px]"
+                style={{ color: b.unrealized_pnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)' }}
+              >
+                {money(b.unrealized_pnl, { signed: true })} unrealized
+                {b.last != null && <span className="text-text-tertiary"> · last ${Number(b.last).toFixed(2)}</span>}
+              </span>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UniverseTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    fetch(`${API_BASE}/api/tsunami/trend/universe`).then(r => r.json())
+      .then(d => { if (!dead) setData(d); })
+      .catch(e => { if (!dead) setErr(String(e)); });
+    return () => { dead = true; };
+  }, []);
+  const instruments = data?.instruments || [];
+
+  return (
+    <div className="px-5 py-3">
+      {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
+      {!data && !err && <EmptyState>Loading universe…</EmptyState>}
+      {data && instruments.length === 0 && <EmptyState>No universe data yet.</EmptyState>}
+      {instruments.map(row => (
+        <div
+          key={row.letf}
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5 text-[12.5px] text-text-body sw-mono"
+          style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
+        >
+          <span className="inline-flex items-center gap-2 font-bold" style={{ minWidth: 68, color: SERIES_COLOR[row.letf] || 'var(--color-text-primary)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: SERIES_COLOR[row.letf] || '#94a3b8' }} />
+            {row.letf}
+          </span>
+          <span className="text-text-tertiary" style={{ minWidth: 130 }}>
+            {row.price != null ? `$${row.price.toFixed(2)}` : '—'}
+            {row.ma50 != null && <span className="text-[10.5px]"> · MA50 ${row.ma50.toFixed(2)}</span>}
+          </span>
+          <span
+            className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded"
+            style={
+              row.trending === true
+                ? { color: 'var(--color-sw-green)', background: 'var(--color-sw-green-dim)', boxShadow: 'inset 0 0 0 1px rgba(52,211,153,0.30)' }
+                : row.trending === false
+                ? { color: 'var(--color-text-tertiary)', background: 'rgba(148,163,184,0.10)' }
+                : { color: 'var(--color-sw-yellow)', background: 'var(--color-sw-yellow-dim)' }
+            }
+          >
+            {row.trending === true ? 'TRENDING' : row.trending === false ? 'FLAT' : 'NO DATA'}
+          </span>
+          <span className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded" style={actionBadgeStyle(row.action)}>
+            {row.action || '—'}
+          </span>
+          <span className="text-text-tertiary" style={{ minWidth: 90 }}>
+            {row.held_shares ?? 0} held
+            {row.target_shares != null && row.target_shares !== row.held_shares ? ` → ${row.target_shares} tgt` : ''}
+          </span>
+          <span className="flex-1 min-w-[160px] text-text-tertiary text-[11.5px]">{row.reason || '—'}</span>
+          <span className="text-text-tertiary text-[10.5px]">{row.ts ? fmtCT(row.ts) + ' CT' : ''}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TradeHistoryTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    fetch(`${API_BASE}/api/tsunami/trend/trades?limit=200`).then(r => r.json())
+      .then(d => { if (!dead) setData(d); })
+      .catch(e => { if (!dead) setErr(String(e)); });
+    return () => { dead = true; };
+  }, []);
+  const trades = data?.trades || [];
+
+  return (
+    <div className="px-5 py-3 max-h-[480px] overflow-y-auto">
+      {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
+      {!data && !err && <EmptyState>Loading trade history…</EmptyState>}
+      {data && trades.length === 0 && (
+        <EmptyState>No fills yet — first rebalance runs the next trading day at 14:45 CT.</EmptyState>
+      )}
+      {trades.map((t, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 justify-between py-2.5 text-[12.5px] text-text-body sw-mono"
+          style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
+        >
+          <span
+            className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded"
+            style={actionBadgeStyle(t.side)}
+          >
+            {t.side}
+          </span>
+          <span className="font-semibold" style={{ color: SERIES_COLOR[t.letf] || 'var(--color-text-primary)' }}>
+            {t.letf}
+          </span>
+          <span>{t.shares} @ ${Number(t.price).toFixed(2)}</span>
+          <span className="flex-1 min-w-[120px] text-text-tertiary text-[11.5px]">{t.reason}</span>
+          <span className="text-text-tertiary">{String(t.ts).slice(0, 10)}</span>
+          <span style={{
+            color: t.realized_pnl > 0 ? 'var(--color-sw-green)'
+                 : t.realized_pnl < 0 ? 'var(--color-sw-red)'
+                 : 'var(--color-text-tertiary)',
+          }}>
+            {t.realized_pnl != null ? money(t.realized_pnl, { signed: true }) : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TsunamiLogsTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    let dead = false;
+    fetch(`${API_BASE}/api/tsunami/trend/logs?limit=300`).then(r => r.json())
+      .then(d => { if (!dead) setData(d); })
+      .catch(e => { if (!dead) setErr(String(e)); });
+    return () => { dead = true; };
+  }, []);
+  const logs = data?.logs || [];
+
+  return (
+    <div className="px-5 py-3 max-h-[480px] overflow-y-auto">
+      {err && <div className="text-sw-red text-[12px] mb-2">{err}</div>}
+      {!data && !err && <EmptyState>Loading logs…</EmptyState>}
+      {data && logs.length === 0 && <EmptyState>No cycles logged yet.</EmptyState>}
+      {logs.map((l, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-3 py-2 text-[12px] sw-mono"
+          style={{ borderBottom: '1px solid rgba(125,211,252,0.05)' }}
+        >
+          <span className="text-text-tertiary" style={{ minWidth: 130 }}>
+            {String(l.ts).slice(0, 10)} {fmtCT(l.ts, { second: '2-digit' })}
+          </span>
+          <span className="font-bold" style={{ minWidth: 60, color: SERIES_COLOR[l.letf] || 'var(--color-text-primary)' }}>
+            {l.letf}
+          </span>
+          <span className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded" style={actionBadgeStyle(l.action)}>
+            {l.action}
+          </span>
+          <span className="flex-1 text-text-tertiary">{l.reason}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const TSUNAMI_TABS = [
+  { id: 'positions', label: 'Positions',     Icon: Inbox },
+  { id: 'universe',  label: 'Universe',      Icon: LayoutGrid },
+  { id: 'history',   label: 'Trade History', Icon: List },
+  { id: 'logs',      label: 'Logs',          Icon: Terminal },
+];
+
+function TsunamiTabs({ book, heldCount }) {
+  const [tab, setTab] = useState('positions');
+  return (
+    <div className="rounded-lg sw-glass" style={{ boxShadow: 'inset 0 0 0 1px rgba(125,211,252,0.08), inset 0 1px 0 rgba(255,255,255,0.04)' }}>
+      <div className="flex items-center gap-1 px-3 pt-3 overflow-x-auto whitespace-nowrap" style={{ borderBottom: '1px solid rgba(125,211,252,0.08)' }}>
+        {TSUNAMI_TABS.map(t => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className="relative shrink-0 inline-flex items-center gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold transition-colors cursor-pointer"
+              style={{ color: active ? THEME.primary : 'var(--color-text-secondary)' }}
+            >
+              <t.Icon size={13} />
+              {t.label}
+              {t.id === 'positions' && heldCount > 0 && (
+                <span
+                  className="sw-mono text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                  style={
+                    active
+                      ? { background: THEME.primarySoft, color: THEME.primary, boxShadow: `inset 0 0 0 1px ${THEME.primaryRing}` }
+                      : { background: 'rgba(255,255,255,0.05)', color: 'var(--color-text-secondary)' }
+                  }
+                >
+                  {heldCount}
+                </span>
+              )}
+              {active && (
+                <span className="absolute left-2.5 right-2.5 -bottom-px h-[2px]" style={{ background: THEME.primary }} />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="min-h-[240px]">
+        {tab === 'positions' && <PositionsTabContent book={book} />}
+        {tab === 'universe'  && <UniverseTab />}
+        {tab === 'history'   && <TradeHistoryTab />}
+        {tab === 'logs'      && <TsunamiLogsTab />}
+      </div>
+    </div>
+  );
+}
+
 export default function TsunamiPage() {
   const [status, setStatus] = useState(null);
   const [cmp, setCmp] = useState(null);
@@ -445,85 +720,8 @@ export default function TsunamiPage() {
           </div>
         </Card>
 
-        {/* Book + fills — the stock-bot stand-ins for Positions / Trade History */}
-        <div className="grid gap-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-          <Card title="Book" subtitle="Shares held per instrument">
-            <div className="px-5 py-3">
-              {book.length === 0 && (
-                <div className="py-8 text-center text-[12.5px] text-text-tertiary">
-                  All cash — no instrument above its 50-day MA (or first rebalance pending).
-                </div>
-              )}
-              {book.map(b => (
-                <div
-                  key={b.letf}
-                  className="flex items-center justify-between py-2.5 text-[13px] text-text-body"
-                  style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
-                >
-                  <span className="inline-flex items-center gap-2 font-bold sw-mono"
-                        style={{ color: SERIES_COLOR[b.letf] || 'var(--color-text-primary)' }}>
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: SERIES_COLOR[b.letf] || '#94a3b8' }} />
-                    {b.letf}
-                  </span>
-                  <span className="sw-mono text-right">
-                    <span className="block">
-                      {b.shares} sh <span className="text-text-tertiary">@</span> ${Number(b.avg_cost).toFixed(2)}
-                    </span>
-                    {b.unrealized_pnl != null && (
-                      <span
-                        className="block text-[11px]"
-                        style={{ color: b.unrealized_pnl >= 0 ? 'var(--color-sw-green)' : 'var(--color-sw-red)' }}
-                      >
-                        {money(b.unrealized_pnl, { signed: true })} unrealized
-                        {b.last != null && <span className="text-text-tertiary"> · last ${Number(b.last).toFixed(2)}</span>}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
-
-          <Card title="Recent Fills" subtitle="Latest buys and sells">
-            <div className="px-5 py-3">
-              {trades.length === 0 && (
-                <div className="py-8 text-center text-[12.5px] text-text-tertiary">
-                  No fills yet — first rebalance runs the next trading day at 14:45 CT.
-                </div>
-              )}
-              {trades.slice(0, 12).map((t, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 justify-between py-2.5 text-[12.5px] text-text-body sw-mono"
-                  style={{ borderBottom: '1px solid rgba(125,211,252,0.06)' }}
-                >
-                  <span
-                    className="text-[10.5px] font-bold tracking-wider px-1.5 py-0.5 rounded"
-                    style={
-                      t.side === 'BUY'
-                        ? { color: 'var(--color-sw-green)', background: 'var(--color-sw-green-dim)', boxShadow: 'inset 0 0 0 1px rgba(52,211,153,0.30)' }
-                        : { color: 'var(--color-sw-red)', background: 'var(--color-sw-red-dim)', boxShadow: 'inset 0 0 0 1px rgba(251,113,133,0.30)' }
-                    }
-                  >
-                    {t.side}
-                  </span>
-                  <span className="font-semibold" style={{ color: SERIES_COLOR[t.letf] || 'var(--color-text-primary)' }}>
-                    {t.letf}
-                  </span>
-                  <span>{t.shares} @ ${Number(t.price).toFixed(2)}</span>
-                  <span className="text-text-tertiary">{String(t.ts).slice(0, 10)}</span>
-                  <span style={{
-                    color: t.realized_pnl > 0 ? 'var(--color-sw-green)'
-                         : t.realized_pnl < 0 ? 'var(--color-sw-red)'
-                         : 'var(--color-text-tertiary)',
-                  }}>
-                    {t.realized_pnl != null ? money(t.realized_pnl, { signed: true }) : ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
+        {/* Positions / Universe (all 16, incl. why not bought) / Trade History / Logs */}
+        <TsunamiTabs book={book} heldCount={heldCount} />
       </div>
     </div>
   );

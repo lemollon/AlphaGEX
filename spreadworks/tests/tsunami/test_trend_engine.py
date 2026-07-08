@@ -19,7 +19,13 @@ class SignalWeight(unittest.TestCase):
                           return_value=_hist(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": 90.0}):  # below the 100 MA
-            self.assertEqual(trend_engine._signal_weight("TSLL"), 0.0)
+            w, diag = trend_engine._signal_weight("TSLL")
+        self.assertEqual(w, 0.0)
+        self.assertEqual(diag["trending"], False)
+        self.assertEqual(diag["price"], 90.0)
+        # ma50 includes the live quote as "today's close" in the MA window
+        # (49 historical 100.0 closes + the 90.0 live quote) / 50.
+        self.assertAlmostEqual(diag["ma50"], (49 * 100.0 + 90.0) / 50)
 
     def test_trend_on_returns_vol_scaled_weight(self):
         # gentle uptrend: last > MA, RV small but positive
@@ -28,11 +34,13 @@ class SignalWeight(unittest.TestCase):
                           return_value=_hist(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
-            w = trend_engine._signal_weight("TSLL")
+            w, diag = trend_engine._signal_weight("TSLL")
         self.assertIsNotNone(w)
         self.assertGreater(w, 0.0)
         # cap: never more than SLICE * W_CAP
         self.assertLessEqual(w, trend_engine.SLICE * trend_engine.W_CAP + 1e-9)
+        self.assertEqual(diag["trending"], True)
+        self.assertIsNotNone(diag["rv20"])
 
     def test_index_sleeve_uses_override_slice_not_default(self):
         # Same trend/vol inputs, different ticker -- TQQQ (overridden to
@@ -43,8 +51,8 @@ class SignalWeight(unittest.TestCase):
                           return_value=_hist(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
-            w_default = trend_engine._signal_weight("TSLL")
-            w_override = trend_engine._signal_weight("TQQQ")
+            w_default, _ = trend_engine._signal_weight("TSLL")
+            w_override, _ = trend_engine._signal_weight("TQQQ")
         self.assertAlmostEqual(w_override, w_default * (0.15 / 0.40))
 
     def test_high_vol_scales_down(self):
@@ -56,7 +64,7 @@ class SignalWeight(unittest.TestCase):
                           return_value=_hist(mixed)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": mixed[-1] + 10}):
-            w = trend_engine._signal_weight("TSLL")
+            w, diag = trend_engine._signal_weight("TSLL")
         self.assertIsNotNone(w)
         self.assertLess(w, trend_engine.SLICE)
 
@@ -65,7 +73,79 @@ class SignalWeight(unittest.TestCase):
                           return_value=[]), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value=None):
-            self.assertIsNone(trend_engine._signal_weight("TSLL"))
+            w, diag = trend_engine._signal_weight("TSLL")
+        self.assertIsNone(w)
+        self.assertIsNone(diag["price"])
+        self.assertIsNone(diag["trending"])
+
+
+class LogSignal(unittest.TestCase):
+    """_log_signal() writes on an INDEPENDENT connection from whatever
+    run_rebalance() is using -- a failure here must never abort or poison
+    the trading transaction (Postgres aborts the whole transaction on any
+    statement error until rollback, so sharing a connection would risk
+    silently losing real trades if this diagnostic-only insert broke)."""
+
+    def test_uses_independent_connection_not_the_caller_s(self):
+        inserts = []
+
+        class _Cur:
+            def execute(self, sql, params=()):
+                inserts.append((sql, params))
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        class _LogConn:
+            def cursor(self):
+                return _Cur()
+            def commit(self):
+                pass
+            def rollback(self):
+                pass
+            def close(self):
+                pass
+
+        log_conn = _LogConn()
+        with patch.object(trend_engine, "get_connection", return_value=log_conn) as mock_get:
+            trend_engine._log_signal(
+                "TSLL", trend_engine._diag(price=10.0, ma50=9.5, rv20=0.3, trending=True),
+                0.4, 5, 3, "BUY", "trend on, w=0.40")
+        mock_get.assert_called_once()  # opened its own connection
+        self.assertEqual(len(inserts), 1)
+        self.assertIn("tsunami_trend_signals", inserts[0][0])
+        self.assertEqual(inserts[0][1], ("TSLL", 10.0, 9.5, 0.3, True, 0.4, 5, 3, "BUY", "trend on, w=0.40"))
+
+    def test_connect_failure_is_swallowed_not_raised(self):
+        with patch.object(trend_engine, "get_connection", side_effect=RuntimeError("db down")):
+            trend_engine._log_signal("TSLL", trend_engine._diag(), None, 0, 0, "NO_QUOTE", "no quote")
+        # no exception propagated -- that's the whole point of this test
+
+    def test_insert_failure_rolls_back_and_does_not_raise(self):
+        class _BadCur:
+            def execute(self, sql, params=()):
+                raise RuntimeError("insert failed")
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        rollback_called = []
+
+        class _LogConn:
+            def cursor(self):
+                return _BadCur()
+            def commit(self):
+                raise AssertionError("commit should not be reached")
+            def rollback(self):
+                rollback_called.append(True)
+            def close(self):
+                pass
+
+        with patch.object(trend_engine, "get_connection", return_value=_LogConn()):
+            trend_engine._log_signal("TSLL", trend_engine._diag(), None, 0, 0, "NO_QUOTE", "no quote")
+        self.assertEqual(rollback_called, [True])
 
 
 class MarkIntradayEquity(unittest.TestCase):
