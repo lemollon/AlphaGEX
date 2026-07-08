@@ -198,10 +198,11 @@ function Card({ title, subtitle, children, headerRight }) {
 }
 
 /* Timeframe windows for BOTH charts (days back from the newest point; ALL = everything).
-   TODAY is a calendar-day filter (not a day-count) -- it's what shows the intraday marks
-   the equity chart now gets every 15 min, on top of the once-daily rebalance point. */
+   INTRADAY is a calendar-day filter (not a day-count) -- it's what shows the intraday marks
+   the equity chart now gets every 15 min, on top of the once-daily rebalance point. Matches
+   the "Intraday" view the other bot dashboards expose. */
 const TIMEFRAMES = [
-  { id: 'TODAY' },
+  { id: 'INTRADAY' },
   { id: '1W', days: 7 },
   { id: '1M', days: 31 },
   { id: '3M', days: 93 },
@@ -210,7 +211,7 @@ const TIMEFRAMES = [
 
 function windowPoints(points, tf) {
   if (!points.length) return points;
-  if (tf === 'TODAY') {
+  if (tf === 'INTRADAY') {
     const lastDay = String(points[points.length - 1].date || points[points.length - 1].ts).slice(0, 10);
     return points.filter(p => String(p.date || p.ts).slice(0, 10) === lastDay);
   }
@@ -248,7 +249,7 @@ export default function TsunamiPage() {
   const [err, setErr] = useState(null);
   const [on, setOn] = useState(DEFAULT_ON);
   const [view, setView] = useState('EQUITY');    // EQUITY | COMPARE
-  const [tf, setTf] = useState('ALL');           // TODAY | 1W | 1M | 3M | ALL
+  const [tf, setTf] = useState('ALL');           // INTRADAY | 1W | 1M | 3M | ALL
 
   useEffect(() => {
     let dead = false;
@@ -362,8 +363,8 @@ export default function TsunamiPage() {
                 {view === 'EQUITY' ? (
                   <LineChart data={eqPoints} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
                     <CartesianGrid stroke="rgba(125,211,252,0.06)" vertical={false} />
-                    <XAxis dataKey={tf === 'TODAY' ? 'ts' : 'date'}
-                           tickFormatter={tf === 'TODAY' ? (v) => String(v).slice(11, 16) : undefined}
+                    <XAxis dataKey={tf === 'INTRADAY' ? 'ts' : 'date'}
+                           tickFormatter={tf === 'INTRADAY' ? (v) => String(v).slice(11, 16) : undefined}
                            tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }}
                            minTickGap={48} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: '#475569', fontSize: 10.5, fontFamily: 'JetBrains Mono' }} axisLine={false}
@@ -376,7 +377,7 @@ export default function TsunamiPage() {
                         borderRadius: 10, fontSize: 12, fontFamily: 'JetBrains Mono',
                       }}
                       labelStyle={{ color: '#94a3b8' }}
-                      labelFormatter={tf === 'TODAY' ? (v) => String(v).slice(0, 16).replace('T', ' ') : undefined}
+                      labelFormatter={tf === 'INTRADAY' ? (v) => String(v).slice(0, 16).replace('T', ' ') : undefined}
                       formatter={(v) => [money(Number(v)), 'equity']}
                     />
                     <ReferenceLine y={startCash} stroke="rgba(148,163,184,0.35)" strokeDasharray="2 4" />
