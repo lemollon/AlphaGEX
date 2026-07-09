@@ -45,7 +45,10 @@ SCAN_TIMEOUT_SEC = 15
 
 class ChainProvider(Protocol):
     def get_chain(self, *, ticker: str, dte: int, today: date) -> dict | None: ...
-    def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float]: ...
+    # A leg mid is None when its quote was missing from the provider response
+    # (treating a missing quote as $0.00 marked debit combos negative and
+    # tripped phantom SLs, 2026-07-06..08).
+    def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]: ...
 
 
@@ -461,6 +464,14 @@ def _evaluate_entry(
     if allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
         return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
 
+    # one_entry_per_day (registry meta): after ANY entry today — open OR
+    # already closed — do not re-enter. The validated backtests are one
+    # morning entry/day; without this gate an early close (e.g. a phantom SL)
+    # had the scanner re-buying fresh debits all day (SPLASH opened 3x on
+    # 2026-07-08, the last at a junk $0.065 quote).
+    if bool(meta.get("one_entry_per_day")) and count_positions_opened_on(engine, bot, now_ct) > 0:
+        return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
+
     equity = account_equity(engine, bot)
     diag: list[str] = []
     signal, _chain = _build_signal(
@@ -514,13 +525,27 @@ def run_scan_cycle(
         for pos in opens:
             legs = json.loads(pos["legs"])
             mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
-            mtm_value, mtm_pnl = compute_mtm(
-                strategy=pos["strategy"], legs=legs,
-                entry_price=float(pos["entry_price"]),
-                contracts=int(pos["contracts"]),
-                leg_mids=mids,
-            )
-            update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
+            marks_stale = any(m is None for m in mids)
+            if marks_stale:
+                # One or more leg quotes missing — the fresh mark would be
+                # garbage (this is what booked negative combo closes and
+                # phantom SLs 2026-07-06..08). Keep the last stored mark and
+                # let ONLY time-based exits (EOD / EVENT_HALT / TIME_STOP)
+                # fire on it, never PT/SL.
+                mtm_value = float(pos["mtm_value"] or 0.0)
+                mtm_pnl = float(pos["mtm_pnl"] or 0.0)
+                logger.warning(
+                    f"[{bot}] {pos['position_id']}: leg quote(s) missing — "
+                    "skipping PT/SL this scan, holding last mark"
+                )
+            else:
+                mtm_value, mtm_pnl = compute_mtm(
+                    strategy=pos["strategy"], legs=legs,
+                    entry_price=float(pos["entry_price"]),
+                    contracts=int(pos["contracts"]),
+                    leg_mids=mids,
+                )
+                update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
 
             pt_target = float(pos["pt_target_pnl"])
             # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
@@ -533,7 +558,12 @@ def run_scan_cycle(
                 except (KeyError, IndexError):
                     pt_override = False
             if not pt_override:
-                if pos["strategy"] in ("iron_butterfly", "long_butterfly"):
+                # pt_ladder=False (registry meta) keeps the signal's static PT
+                # instead of the intraday 30/25/20 ladder. SPLASH's validated
+                # fly exit is hold-to-EOD; the ladder is unvalidated for it.
+                if not bool(meta.get("pt_ladder", True)):
+                    pass
+                elif pos["strategy"] in ("iron_butterfly", "long_butterfly"):
                     # Single-expiration butterflies (BREEZE iron fly, RIVER long
                     # fly) re-derive PT each scan from the DECREASING time-of-day
                     # ladder × max_profit. RIVER was previously NOT re-derived, so
@@ -561,9 +591,13 @@ def run_scan_cycle(
                 dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
                     else datetime.fromisoformat(str(pos["entry_time"]))
 
+            # On a stale mark, disarm PT/SL entirely (targets pushed to ±inf)
+            # so only the time-based exits can fire — the position is never
+            # stranded past EOD, but it also never closes on a phantom price.
             d = decide_exit(
                 strategy=pos["strategy"], mtm_pnl=mtm_pnl,
-                pt_target_pnl=pt_target, sl_target_pnl=float(pos["sl_target_pnl"]),
+                pt_target_pnl=float("inf") if marks_stale else pt_target,
+                sl_target_pnl=float("inf") if marks_stale else float(pos["sl_target_pnl"]),
                 now_ct=now_ct, front_expiration=front_exp,
                 eod_close_ct=_parse_time(cfg["eod_close_ct"]),
                 event_blackout=event_blackout,

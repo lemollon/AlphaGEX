@@ -359,11 +359,16 @@ def post_force_close(bot: str, position_id: str):
     provider = build_live_chain_provider()
     legs = json.loads(pos["legs"]) if isinstance(pos["legs"], str) else pos["legs"]
     mids = provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
-    mtm_value, _ = compute_mtm(
-        strategy=pos["strategy"], legs=legs,
-        entry_price=float(pos["entry_price"]),
-        contracts=int(pos["contracts"]), leg_mids=mids,
-    )
+    if any(m is None for m in mids):
+        # Missing leg quote — a fresh mark would be garbage. Force-close at
+        # the last stored mark instead of a phantom price.
+        mtm_value = float(pos["mtm_value"] or 0.0)
+    else:
+        mtm_value, _ = compute_mtm(
+            strategy=pos["strategy"], legs=legs,
+            entry_price=float(pos["entry_price"]),
+            contracts=int(pos["contracts"]), leg_mids=mids,
+        )
     realized = close_position(ENGINE, bot, position_id,
                               close_value=mtm_value, close_reason="FORCE",
                               now=datetime.now(CT))

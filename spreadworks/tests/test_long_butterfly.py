@@ -145,6 +145,37 @@ def test_rejects_non_positive_debit(fake_chain_0dte):
     assert diag and "non_positive_debit" in diag[0]
 
 
+def test_rejects_junk_cheap_debit(fake_chain_0dte):
+    # A debit far below the real-fill floor (~0.27x wing; gate at 0.10x) means
+    # broken/one-sided quotes, not a bargain — 2026-07-08 the live scanner
+    # bought a $0.065 combo on junk quotes. Cheapen the call fly to 0.25 on a
+    # $3 wing (frac 0.083 < 0.10) — it becomes the cheaper side and must be
+    # rejected, not traded.
+    chain = _override(fake_chain_0dte, 498, "call", 2.70, 2.80)  # lower mid 2.75
+    # call debit = 2.75 + 0.70 - 2*1.60 = 0.25 ; frac = 0.083
+    diag = []
+    sig = build_long_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0, diag=diag
+    )
+    assert sig is None
+    assert diag and "debit_too_cheap_junk_quotes" in diag[0]
+
+
+def test_rejects_debit_above_breakeven(fake_chain_0dte):
+    # Real-fill breakeven is ~0.38-0.45x wing. Paying MORE than 0.45x is a
+    # -EV entry even on real quotes. Collapse both body mids so each fly
+    # costs 1.45 on a $3 wing (frac 0.483) — must reject.
+    chain = _override(fake_chain_0dte, 501, "call", 1.20, 1.30)  # body mid 1.25
+    chain = _override(chain, 501, "put", 1.20, 1.30)
+    # debit = 3.25 + 0.70 - 2*1.25 = 1.45 ; frac = 0.483 > 0.45
+    diag = []
+    sig = build_long_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0, diag=diag
+    )
+    assert sig is None
+    assert diag and "debit_above_breakeven" in diag[0]
+
+
 def test_max_contracts_zero_means_uncapped(fake_chain_0dte):
     sig = build_long_butterfly_signal(
         chain=fake_chain_0dte, config=_config(max_contracts=0, bp_pct=0.50),
@@ -211,3 +242,56 @@ def test_returns_four_legs_single_type(fake_chain_0dte):
     assert len(longs) == 2 and len(shorts) == 2
     assert {l["strike"] for l in longs} == {sig.lower_strike, sig.upper_strike}
     assert all(l["strike"] == sig.body_strike for l in shorts)
+
+
+def _spx_chain():
+    """Synthetic SPX 0DTE chain: $5 strike grid, spot 5000, straddle 40.
+    Raw wing = round(1.0 * 40 * 0.85) = 34 -> must snap to 35 (the grid)."""
+    opts = []
+    for strike in range(4900, 5105, 5):
+        for t in ("call", "put"):
+            # Flat placeholder quotes; the three legs that matter are
+            # overridden below to give an in-band debit.
+            opts.append({"strike": strike, "type": t, "bid": 1.0, "ask": 1.2})
+    chain = {
+        "ticker": "SPX", "spot": 5000.0, "vix": 17.0,
+        "atm_straddle_mid": 40.0, "expiration": "2026-05-20",
+        "gex": {}, "options": opts,
+    }
+    # body 5000, wings 4965/5035: debit = 40.0 + 4.0 - 2*18.0 = 8.0
+    # -> frac 8/35 = 0.229, inside the 0.10-0.45 band.
+    for o in chain["options"]:
+        if o["type"] != "call":
+            continue
+        if o["strike"] == 4965:
+            o["bid"], o["ask"] = 39.9, 40.1
+        elif o["strike"] == 5000:
+            o["bid"], o["ask"] = 17.9, 18.1
+        elif o["strike"] == 5035:
+            o["bid"], o["ask"] = 3.9, 4.1
+    return chain
+
+
+def test_spx_wing_snaps_to_5_point_grid():
+    # Make the put fly expensive so the call side (with the crafted quotes)
+    # deterministically wins.
+    chain = _spx_chain()
+    sig = build_long_butterfly_signal(
+        chain=chain, config=_config(bp_pct=0.20, max_contracts=4),
+        equity=10000.0,
+    )
+    assert sig is not None
+    # Raw wing 34 doesn't exist on a $5 grid; snapped to 35.
+    assert sig.wing_width == 35
+    assert sig.lower_strike == 4965 and sig.upper_strike == 5035
+    assert sig.debit == pytest.approx(8.0)
+    # $10k * 0.20 = $2000 budget // $800 max loss = 2 lots.
+    assert sig.contracts == 2
+
+
+def test_spy_one_point_grid_snap_is_noop(fake_chain_0dte):
+    sig = build_long_butterfly_signal(
+        chain=fake_chain_0dte, config=_config(), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.wing_width == 3  # unchanged from round(1.0 * 4.0 * 0.85)

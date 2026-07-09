@@ -6,20 +6,25 @@ def test_bots_registered():
 
 
 def test_splash_defaults():
-    # SPLASH — SURGE's pin+drift combo for the $500 small-account tier:
-    # narrow wing (sd_mult 1.0), same sweep-validated exits as SURGE
-    # (PT 50% of max profit, no stop, drift $2), half-Kelly sizing.
+    # SPLASH v2 (2026-07-09) — SPX 0DTE long butterfly ONLY on the real-fill
+    # validated RIVER config: morning entry, hold to the 14:45 CT close,
+    # no PT ladder (pt 1.0 = unreachable), no SL (3.0 = unreachable),
+    # one entry per day, $10k paper account. SPX per operator decision
+    # (SPXW root, cash-settled, ~$1,000-1,200 debit/lot -> bp 0.20 = 1-2 lots).
     b = get_bot("splash")
-    assert b["strategy"] == "pin_drift_combo"
+    assert b["strategy"] == "long_butterfly"
+    assert b["ticker"] == "SPX"
     assert b["front_dte"] == 0
-    assert b["back_dte"] == 1
-    assert b["defaults"]["starting_capital"] == 500.0
-    assert b["defaults"]["bp_pct"] == 0.50
+    assert b["back_dte"] is None
+    assert b["one_entry_per_day"] is True
+    assert b["pt_ladder"] is False
+    assert b["defaults"]["starting_capital"] == 10000.0
+    assert b["defaults"]["bp_pct"] == 0.20
     assert b["defaults"]["sd_mult"] == 1.0
-    assert b["defaults"]["pt_pct"] == 0.50
-    assert b["defaults"]["sl_pct"] == 1.0
-    assert b["defaults"]["drift_offset"] == 2
-    assert b["defaults"]["max_contracts"] == 0
+    assert b["defaults"]["pt_pct"] == 1.0
+    assert b["defaults"]["sl_pct"] == 3.0
+    assert b["defaults"]["max_contracts"] == 4
+    assert b["defaults"]["entry_end_ct"] == "10:00"
     assert b["defaults"]["enabled"] is True
 
 
@@ -30,11 +35,13 @@ def test_surge_defaults():
     assert b["strategy"] == "pin_drift_combo"
     assert b["front_dte"] == 0
     assert b["back_dte"] == 1          # 1DTE back legs for the calendars
-    # 2026-07-03 sweep-validated shape: PT at 50% of max profit, NO stop
-    # (sl_pct 1.0 = the debit floor of a defined-risk combo), wing 1.15x
-    # straddle (sd_mult 1.35 x 0.85), calendars +/- $2.
+    # 2026-07-03 sweep-validated shape: PT at 50% of max profit, NO stop,
+    # wing 1.15x straddle (sd_mult 1.35 x 0.85), calendars +/- $2.
+    # sl_pct 3.0 (2026-07-09): 1.0 was meant as "no stop" but fired on
+    # phantom negative marks from missing leg quotes (-$888 on 7/7); 3.0 is
+    # genuinely unreachable for a defined-risk debit combo.
     assert b["defaults"]["pt_pct"] == 0.50
-    assert b["defaults"]["sl_pct"] == 1.0
+    assert b["defaults"]["sl_pct"] == 3.0
     assert b["defaults"]["sd_mult"] == 1.35
     assert b["defaults"]["drift_offset"] == 2
     assert b["defaults"]["eod_close_ct"] == "14:45"

@@ -49,6 +49,15 @@ class LiveTradierChainProvider:
             logger.warning(f"chain fetch failed {chain_resp.status_code}")
             return None
         data = chain_resp.json().get("options", {}).get("option", []) or []
+        if ticker == "SPX":
+            # SPX dailies trade under the SPXW root (PM-settled). On monthly
+            # 3rd Fridays Tradier returns BOTH roots for the expiration — the
+            # AM-settled SPX options stop trading at the open, so quoting or
+            # exiting against them intraday is wrong. Keep SPXW only whenever
+            # it's present; _occ() builds SPXW symbols to match.
+            spxw = [o for o in data if str(o.get("symbol", "")).startswith("SPXW")]
+            if spxw:
+                data = spxw
         spot = self._spot(ticker)
         if spot is None:
             return None
@@ -118,7 +127,7 @@ class LiveTradierChainProvider:
             logger.warning(f"gex fetch error for {ticker} {expiration}: {e}")
             return {}
 
-    def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float]:
+    def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]:
         # Build OCC symbols and batch-fetch quotes
         symbols = [self._occ(ticker, leg) for leg in legs]
         resp = self._client.get(
@@ -132,9 +141,17 @@ class LiveTradierChainProvider:
         if isinstance(quotes, dict):
             quotes = [quotes]
         by_sym = {q["symbol"]: q for q in quotes}
-        out = []
+        out: list[float | None] = []
         for sym in symbols:
-            q = by_sym.get(sym, {})
+            q = by_sym.get(sym)
+            if q is None:
+                # Symbol missing from the response entirely. Treating it as a
+                # $0.00 mid is what marked multi-leg debit combos NEGATIVE and
+                # tripped phantom SLs (2026-07-06..08 SPLASH/SURGE losses).
+                # Emit None; the scanner skips PT/SL on a stale mark.
+                logger.warning(f"leg quote missing for {sym} — mid unavailable")
+                out.append(None)
+                continue
             bid = float(q.get("bid") or 0); ask = float(q.get("ask") or 0)
             out.append((bid + ask) / 2.0)
         return out
@@ -253,11 +270,15 @@ class LiveTradierChainProvider:
     def _occ(self, ticker: str, leg: dict) -> str:
         # OCC format: ROOT + YYMMDD + C/P + Strike*1000 (8 digits)
         # Example: SPY260520C00500000 = SPY, 2026-05-20, Call, $500.00
+        # SPX dailies/weeklies trade under the SPXW root (PM-settled, the side
+        # we trade); building "SPX..." symbols would find no quote for them —
+        # which the scanner would then treat as a stale mark every scan.
+        root = "SPXW" if ticker == "SPX" else ticker
         d = date.fromisoformat(leg["expiration"])
         yymmdd = d.strftime("%y%m%d")
         cp = "C" if leg["type"] == "call" else "P"
         strike_milli = int(round(float(leg["strike"]) * 1000))
-        return f"{ticker}{yymmdd}{cp}{strike_milli:08d}"
+        return f"{root}{yymmdd}{cp}{strike_milli:08d}"
 
 
 def build_live_chain_provider() -> LiveTradierChainProvider:

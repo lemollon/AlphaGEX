@@ -49,6 +49,14 @@ MAX_VIX = 28.0
 # price gets caught between) when its |gamma| is at least this fraction of the
 # single largest magnet's |gamma|. Mirrors BREEZE.
 MAGNET_PARITY = 0.70
+# Debit sanity band, as a fraction of wing width. The real-fill backtest
+# (ThetaData 2022-25) put the true morning debit at ~0.27-0.29x wing with a
+# breakeven of ~0.38-0.45x. A debit below the floor means broken/one-sided
+# quotes (2026-07-08: a $0.065 combo entry on junk quotes); a debit above the
+# ceiling is paying more than the pin-rate breakeven — a -EV entry even if
+# the quotes are real. Both are rejected, not traded.
+MIN_DEBIT_FRAC = 0.10
+MAX_DEBIT_FRAC = 0.45
 
 
 @dataclass
@@ -107,6 +115,24 @@ def _nearest(strikes: list[int], target: float) -> int | None:
     if not strikes:
         return None
     return min(strikes, key=lambda s: abs(s - target))
+
+
+def _snap_wing_to_grid(strikes: list[int], body: int, wing: int) -> int:
+    """Snap `wing` to the chain's strike spacing around the body.
+
+    SPY lists $1 strikes so this is a no-op there, but SPX lists $5 strikes —
+    a raw wing like body±38 would land between strikes and every fly would be
+    rejected as strike_missing. Infer the local grid step from listed strikes
+    near the body and round the wing to the nearest positive multiple.
+    """
+    lo = body - 2 * wing
+    hi = body + 2 * wing
+    near = [s for s in strikes if lo <= s <= hi]
+    steps = [b - a for a, b in zip(near, near[1:]) if b - a > 0]
+    if not steps:
+        return wing
+    step = min(steps)
+    return max(step, int(round(wing / step)) * step)
 
 
 def _magnet_gamma(m: dict[str, Any]) -> float:
@@ -226,6 +252,12 @@ def build_long_butterfly_signal(
             wing_distance = min(wing_distance, body - int(round(pw)))
         wing_distance = max(1, wing_distance)
 
+    # Snap the wing to the chain's strike grid (no-op on SPY's $1 strikes;
+    # required on SPX's $5 strikes or the wings land between listings).
+    wing_distance = _snap_wing_to_grid(
+        _body_candidates(chain, "call"), body, wing_distance
+    )
+
     upper_strike = body + wing_distance
     lower_strike = body - wing_distance
 
@@ -243,21 +275,39 @@ def build_long_butterfly_signal(
             f"strike_missing: body={body} lower={lower_strike} upper={upper_strike}"
         )
 
-    # Cheaper debit wins; ties resolve to the call fly deterministically.
-    option_type, (debit, lower_mid, body_mid, upper_mid) = min(
-        candidates, key=lambda c: c[1][0]
-    )
+    # A long butterfly must be a net DEBIT. A non-positive debit means that
+    # side's quoted mids are inverted/degenerate (e.g. a credit fly) — drop
+    # it rather than let a $0.00 "cheaper side" shadow a valid fly.
+    priced = [c for c in candidates if c[1][0] > 0]
+    if not priced:
+        worst = min(candidates, key=lambda c: c[1][0])
+        return _reject(
+            f"non_positive_debit: type={worst[0]} debit={worst[1][0]:.2f}"
+        )
 
-    # A long butterfly must be a net DEBIT. A non-positive debit means the
-    # quoted mids are inverted/degenerate (e.g. a credit fly) — not our trade.
-    if debit <= 0:
-        return _reject(f"non_positive_debit: type={option_type} debit={debit:.2f}")
+    # Cheaper (positive) debit wins; ties resolve to the call fly.
+    option_type, (debit, lower_mid, body_mid, upper_mid) = min(
+        priced, key=lambda c: c[1][0]
+    )
 
     # Symmetric wings by construction (wall clipping above pulls BOTH in
     # equally), so a single wing width drives the defined-risk math.
     wing_width = upper_strike - body
     if wing_width <= 0:
         return _reject(f"degenerate_wings: lower={lower_strike} body={body} upper={upper_strike}")
+
+    # Debit sanity band vs wing width — see MIN/MAX_DEBIT_FRAC above.
+    debit_frac = debit / wing_width
+    if debit_frac < MIN_DEBIT_FRAC:
+        return _reject(
+            f"debit_too_cheap_junk_quotes: debit={debit:.2f} wing={wing_width} "
+            f"frac={debit_frac:.3f} min={MIN_DEBIT_FRAC}"
+        )
+    if debit_frac > MAX_DEBIT_FRAC:
+        return _reject(
+            f"debit_above_breakeven: debit={debit:.2f} wing={wing_width} "
+            f"frac={debit_frac:.3f} max={MAX_DEBIT_FRAC}"
+        )
 
     max_loss_per = debit * 100.0                       # most you can lose
     max_profit_per = (wing_width - debit) * 100.0      # price pins the body

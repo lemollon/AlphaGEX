@@ -33,7 +33,12 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "bp_pct": 0.10,
             "sd_mult": 1.35,
             "pt_pct": 0.50,
-            "sl_pct": 1.0,
+            # 1.0 was meant as "no stop" but decide_exit fires at -100% of
+            # debit, and a missing leg quote can mark the 8-leg combo below
+            # that (2026-07-07: closed at a NEGATIVE combo price for -$888).
+            # 3.0 is unreachable — the TIDE fix. Risk stays capped at the
+            # debit; the EOD close is the real exit.
+            "sl_pct": 3.0,
             "drift_offset": 2,
             "entry_start_ct": "08:35",
             "entry_end_ct": "14:00",
@@ -43,31 +48,57 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
-    # SPLASH — SURGE's pin+drift combo tuned for SMALL accounts ($500 tier).
-    # Same 2026-07-03 sweep-validated exits (PT at 50% of max profit, NO stop,
-    # calendars +/- $2) but the NARROW wing (sd_mult 1.0 -> 0.85x straddle):
-    # ~$200-250 debit/lot vs ~$295 wide, +$46.7/day/lot at half-spread fills,
-    # 76.9% win, green every year 2022-2025. bp_pct 0.50 on $500 = 1 lot
-    # (~half-Kelly; full Kelly for this variant is bp ~1.1) and scales with
-    # equity as the account grows. Days when the combo prices over budget are
-    # skipped automatically — a built-in high-vol gate for tiny accounts.
+    # SPLASH — SPY 0DTE long butterfly ONLY, rebuilt 2026-07-09 after the
+    # $500 pin+drift variant bricked in 3 days (-$462.50/6 trades). The live
+    # loss was NOT the pin edge: 4 of 6 closes were phantom SLs — missing leg
+    # quotes marked the 8-leg combo NEGATIVE (impossible for a net-long debit
+    # structure), tripping the "disabled" sl_pct=1.0 stop, then the scanner
+    # re-entered fresh debits same-day (3 entries on 7/8, one at a junk $0.065
+    # quote). Fix = fly-only (4 legs, one expiration -> clean marks) + the
+    # TIDE-style unreachable stop + one-entry-per-day + a min-debit gate.
+    # Config = the REAL-FILL validated RIVER setup (ThetaData 2022-25,
+    # examples/backtest_real_abc.py): enter morning, hold to the 14:45 CT
+    # close, no PT, no SL. +$8/day/lot net of commissions on SPY, ~44% win
+    # (low-win/positive-EV), green every year; real morning debit ~0.27x wing
+    # vs ~0.38-0.45 breakeven. The 30/25/20% PT ladder is UNVALIDATED for the
+    # fly, so pt_ladder=False and pt_pct=1.0 (only reachable pinned at expiry)
+    # -> effective exit is the EOD close, exactly like the backtest.
+    # Trades SPX (operator decision 2026-07-09): same underlying dynamics the
+    # backtest validated at 10x notional per lot — one SPX fly ~= 10 SPY flies
+    # (~$1,000-1,200 debit/lot), cash-settled PM (SPXW root), no assignment
+    # risk. NOTE the $-P&L per lot is 10x the SPY backtest figures.
     "splash": {
         "display": "SPLASH",
-        "strategy": "pin_drift_combo",
-        "ticker": "SPY",
+        "strategy": "long_butterfly",
+        "ticker": "SPX",
         "front_dte": 0,
-        "back_dte": 1,
+        "back_dte": None,
+        # Backtest = one morning entry/day; live churned 3 entries on 7/8.
+        "one_entry_per_day": True,
+        # Keep the signal's static PT (unreachable at 1.0) instead of the
+        # intraday 30/25/20 ladder — hold-to-EOD is the validated exit.
+        "pt_ladder": False,
         "defaults": {
-            "starting_capital": 500.0,
+            "starting_capital": 10000.0,
             "enabled": True,
-            "max_contracts": 0,
-            "bp_pct": 0.50,
+            # SPX fly debit ~$1,000-1,200/lot -> bp 0.20 on $10k = 1-2 lots;
+            # high-vol days (bigger straddle -> wider wing -> bigger debit)
+            # auto-skip on budget, a built-in vol gate. Cap keeps compounding
+            # inside where the fill model is credible.
+            "max_contracts": 4,
+            "bp_pct": 0.20,
             "sd_mult": 1.0,
-            "pt_pct": 0.50,
-            "sl_pct": 1.0,
-            "drift_offset": 2,
+            "pt_pct": 1.0,
+            # 3.0 = unreachable, the TIDE lesson: a long fly can't lose more
+            # than its debit, so a 1.0 "stop" only ever fires on garbage
+            # intraday marks (that's what killed the $500 SPLASH and SURGE's
+            # 7/7 -$888 trade).
+            "sl_pct": 3.0,
+            # Validated entry is the morning fill (9:35 ET). If no signal
+            # builds by 10:00 CT, skip the day rather than take an
+            # unvalidated afternoon entry.
             "entry_start_ct": "08:35",
-            "entry_end_ct": "14:00",
+            "entry_end_ct": "10:00",
             "eod_close_ct": "14:45",
             "discord_alerts": False,
             "delta_skew": 0,

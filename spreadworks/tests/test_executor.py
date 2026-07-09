@@ -87,3 +87,23 @@ def test_account_equity_starts_at_config(db_session):
     engine = db_session.bind
     eq = account_equity(engine, "surge")
     assert eq == 10000.0
+
+
+def test_compute_mtm_clamps_negative_long_fly_mark():
+    """A long fly can never be worth less than zero. When stale/one-sided leg
+    mids compute a negative unwind value, the mark must clamp to 0 so the loss
+    can never exceed the debit (2026-07-06..08: negative combo marks realized
+    -$175.50 on a $165 max-loss position and tripped phantom SLs)."""
+    legs = [
+        {"side": "long",  "type": "call", "strike": 498, "expiration": "2026-05-20", "entry_price": 3.25},
+        {"side": "short", "type": "call", "strike": 501, "expiration": "2026-05-20", "entry_price": 1.60},
+        {"side": "short", "type": "call", "strike": 501, "expiration": "2026-05-20", "entry_price": 1.60},
+        {"side": "long",  "type": "call", "strike": 504, "expiration": "2026-05-20", "entry_price": 0.70},
+    ]
+    # Shorts marked richer than longs -> raw unwind value would be -0.85.
+    mtm_value, mtm_pnl = compute_mtm(
+        strategy="long_butterfly", legs=legs, entry_price=0.75, contracts=1,
+        leg_mids=[0.10, 0.50, 0.50, 0.05],
+    )
+    assert mtm_value == 0.0
+    assert mtm_pnl == -75.0  # exactly -debit, never deeper
