@@ -2,14 +2,17 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 
 /**
  * Shared chrome for the customer Home + Community pages (per the approved
  * dashboard design): full-width top nav (logo, section links, bell, avatar)
- * plus a left rail (plan card, main nav, account nav). The /live page keeps
- * its own original shell — do not couple the two.
+ * plus a left rail (plan card, main nav, account nav). Below lg the rail is
+ * replaced by a hamburger-triggered slide-out drawer (MobileNavDrawer, also
+ * used by the /live page's mobile bar). The /live page keeps its own desktop
+ * shell — do not couple the two.
  */
 
 interface CustomerMe {
@@ -53,55 +56,6 @@ function LogoLockup() {
   )
 }
 
-function TopNav() {
-  const pathname = usePathname()
-  const { data } = useSWR<CustomerMe>('/api/auth/customer-me', fetcher, { shouldRetryOnError: false })
-  const email = data?.customer?.email ?? null
-  const name = email ? email.split('@')[0] : 'Trader'
-  const initials = name.slice(0, 2).toUpperCase()
-
-  return (
-    <header className="fixed inset-x-0 top-0 z-30 border-b border-forge-border bg-forge-bg">
-      <div className="flex h-14 items-center gap-8 px-4">
-        <LogoLockup />
-        <nav className="hidden h-full items-center gap-6 md:flex">
-          {NAV_MAIN.map((item) => {
-            const active = pathname === item.href
-            return (
-              <Link key={item.href} href={item.href}
-                className={`relative flex h-full items-center px-1 text-sm transition-colors ${
-                  active ? 'font-medium text-white' : 'text-gray-400 hover:text-white'
-                }`}>
-                {item.label}
-                {active && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-amber-500" />}
-              </Link>
-            )
-          })}
-        </nav>
-        <div className="ml-auto flex items-center gap-4">
-          <div className="relative">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500" />
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-xs font-semibold text-amber-500">
-              {initials}
-            </div>
-            <span className="hidden text-sm capitalize text-gray-300 sm:block">{name}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-500">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </div>
-        </div>
-      </div>
-    </header>
-  )
-}
-
 export interface PlanCardData {
   plan: string
   badge: string
@@ -142,7 +96,8 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
   )
 }
 
-function Sidebar({ membership, planVariant }: { membership: PlanCardData | null; planVariant: 'trial' | 'active' }) {
+/** Main + secondary nav items + logout, shared by the desktop rail and the mobile drawer. */
+function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
 
@@ -157,7 +112,7 @@ function Sidebar({ membership, planVariant }: { membership: PlanCardData | null;
   const renderItem = (item: { label: string; href: string; icon: string }) => {
     const active = pathname === item.href
     return (
-      <Link key={item.label} href={item.href}
+      <Link key={item.label} href={item.href} onClick={onNavigate}
         className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
           active
             ? 'border-l-2 border-amber-500 bg-amber-500/10 font-medium text-amber-500'
@@ -170,20 +125,116 @@ function Sidebar({ membership, planVariant }: { membership: PlanCardData | null;
   }
 
   return (
+    <>
+      {NAV_MAIN.map(renderItem)}
+      <div className="mx-4 my-3 border-t border-forge-border" />
+      {NAV_SECONDARY.map(renderItem)}
+      <div className="mx-4 my-3 border-t border-forge-border" />
+      <button onClick={handleLogout}
+        className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
+        <Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" />
+        <span>Log Out</span>
+      </button>
+    </>
+  )
+}
+
+/** Slide-out mobile navigation. Also used by the /live page's mobile top bar. */
+export function MobileNavDrawer({
+  open,
+  onClose,
+  membership,
+  planVariant = 'trial',
+}: {
+  open: boolean
+  onClose: () => void
+  membership: PlanCardData | null
+  planVariant?: 'trial' | 'active'
+}) {
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} aria-hidden />
+      <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-forge-border bg-forge-bg">
+        <div className="flex items-center justify-between px-4 py-4">
+          <LogoLockup />
+          <button onClick={onClose} className="p-1 text-gray-400 transition-colors hover:text-white" aria-label="Close menu">
+            <Icon className="h-5 w-5" d="M18 6 6 18M6 6l12 12" />
+          </button>
+        </div>
+        <div className="px-4 pb-4">
+          <PlanCard membership={membership} variant={planVariant} />
+        </div>
+        <nav className="flex-1 space-y-0.5 pb-6">
+          <NavItems onNavigate={onClose} />
+        </nav>
+      </div>
+    </div>
+  )
+}
+
+function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
+  const pathname = usePathname()
+  const { data } = useSWR<CustomerMe>('/api/auth/customer-me', fetcher, { shouldRetryOnError: false })
+  const email = data?.customer?.email ?? null
+  const name = email ? email.split('@')[0] : 'Trader'
+  const initials = name.slice(0, 2).toUpperCase()
+
+  return (
+    <header className="fixed inset-x-0 top-0 z-30 border-b border-forge-border bg-forge-bg">
+      <div className="flex h-14 items-center gap-4 px-4 md:gap-8">
+        <button onClick={onMenuClick}
+          className="-ml-1 p-1 text-gray-300 transition-colors hover:text-white lg:hidden"
+          aria-label="Open menu">
+          <Icon className="h-6 w-6" d="M4 6h16M4 12h16M4 18h16" />
+        </button>
+        <LogoLockup />
+        <nav className="hidden h-full items-center gap-6 md:flex">
+          {NAV_MAIN.map((item) => {
+            const active = pathname === item.href
+            return (
+              <Link key={item.href} href={item.href}
+                className={`relative flex h-full items-center px-1 text-sm transition-colors ${
+                  active ? 'font-medium text-white' : 'text-gray-400 hover:text-white'
+                }`}>
+                {item.label}
+                {active && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-amber-500" />}
+              </Link>
+            )
+          })}
+        </nav>
+        <div className="ml-auto flex items-center gap-4">
+          <div className="relative">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+            </svg>
+            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500" />
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-xs font-semibold text-amber-500">
+              {initials}
+            </div>
+            <span className="hidden text-sm capitalize text-gray-300 sm:block">{name}</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-500">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+          </div>
+        </div>
+      </div>
+    </header>
+  )
+}
+
+function Sidebar({ membership, planVariant }: { membership: PlanCardData | null; planVariant: 'trial' | 'active' }) {
+  return (
     <aside className="fixed bottom-0 left-0 top-14 z-20 hidden w-60 flex-col border-r border-forge-border bg-forge-bg lg:flex">
       <div className="p-4">
         <PlanCard membership={membership} variant={planVariant} />
       </div>
       <nav className="flex-1 space-y-0.5 overflow-y-auto pb-4">
-        {NAV_MAIN.map(renderItem)}
-        <div className="mx-4 my-3 border-t border-forge-border" />
-        {NAV_SECONDARY.map(renderItem)}
-        <div className="mx-4 my-3 border-t border-forge-border" />
-        <button onClick={handleLogout}
-          className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
-          <Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" />
-          <span>Log Out</span>
-        </button>
+        <NavItems />
       </nav>
     </aside>
   )
@@ -200,10 +251,13 @@ export default function CustomerShell({
   maxWidthClass?: string
   children: React.ReactNode
 }) {
+  const [menuOpen, setMenuOpen] = useState(false)
   return (
     <div className="min-h-screen bg-forge-bg">
-      <TopNav />
+      <TopNav onMenuClick={() => setMenuOpen(true)} />
       <Sidebar membership={membership} planVariant={planVariant} />
+      <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
+        membership={membership} planVariant={planVariant} />
       <div className="pt-14 lg:pl-60">
         <div className={`mx-auto ${maxWidthClass} px-4 py-5`}>{children}</div>
       </div>
