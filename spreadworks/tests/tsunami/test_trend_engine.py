@@ -8,15 +8,53 @@ from unittest.mock import patch
 from backend.bots.tsunami import trend_engine
 
 
-def _hist(closes: list[float]) -> list[dict]:
-    return [{"date": f"2026-01-{i+1:02d}", "close": c} for i, c in enumerate(closes)]
+def _closes(closes: list[float]) -> list[float]:
+    return list(closes)
+
+
+class AdjustedCloses(unittest.TestCase):
+    """Regression for the 2026-07 NVDL phantom signal: history must come
+    from a split-adjusted source, exclude today's partial bar (the live
+    quote is appended by the caller), and fail safe to [] on any error."""
+
+    def _fake_yf(self, index_dates, closes):
+        import sys
+        import types
+        import pandas as pd
+        hist = pd.DataFrame({"Close": closes}, index=pd.to_datetime(index_dates))
+        fake = types.ModuleType("yfinance")
+        fake.Ticker = lambda _t: types.SimpleNamespace(
+            history=lambda **_kw: hist)
+        return patch.dict(sys.modules, {"yfinance": fake})
+
+    def test_excludes_todays_partial_bar_and_bad_closes(self):
+        from datetime import date, timedelta
+        today = date.today()
+        dates = [today - timedelta(days=3), today - timedelta(days=2),
+                 today - timedelta(days=1), today]
+        with self._fake_yf(dates, [10.0, 0.0, 12.0, 99.0]):
+            out = trend_engine._adjusted_closes("NVDL")
+        # today's 99.0 partial bar dropped, zero close dropped
+        self.assertEqual(out, [10.0, 12.0])
+
+    def test_fetch_failure_returns_empty(self):
+        import sys
+        import types
+        fake = types.ModuleType("yfinance")
+
+        def _boom(_t):
+            raise RuntimeError("rate limited")
+        fake.Ticker = _boom
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            out = trend_engine._adjusted_closes("NVDL")
+        self.assertEqual(out, [])
 
 
 class SignalWeight(unittest.TestCase):
     def test_trend_off_below_ma_returns_zero(self):
         closes = [100.0] * 80  # flat history
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": 90.0}):  # below the 100 MA
             w, diag = trend_engine._signal_weight("TSLL")
@@ -30,8 +68,8 @@ class SignalWeight(unittest.TestCase):
     def test_trend_on_returns_vol_scaled_weight(self):
         # gentle uptrend: last > MA, RV small but positive
         closes = [100.0 * (1.002 ** i) for i in range(80)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
             w, diag = trend_engine._signal_weight("TSLL")
@@ -47,8 +85,8 @@ class SignalWeight(unittest.TestCase):
         # 0.15) must come out to exactly 0.15/0.40 of TSLL's (default
         # 0.40) weight, all else equal.
         closes = [100.0 * (1.002 ** i) for i in range(80)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
             w_default, _ = trend_engine._signal_weight("TSLL")
@@ -60,8 +98,8 @@ class SignalWeight(unittest.TestCase):
         closes = [100.0 + (8.0 if i % 2 else -8.0) for i in range(80)]
         base = [100.0 + i * 0.5 for i in range(80)]  # keep last above MA
         mixed = [b + (4.0 if i % 2 else -4.0) for i, b in enumerate(base)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(mixed)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(mixed)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": mixed[-1] + 10}):
             w, diag = trend_engine._signal_weight("TSLL")
@@ -69,7 +107,7 @@ class SignalWeight(unittest.TestCase):
         self.assertLess(w, trend_engine.SLICE)
 
     def test_no_data_returns_none(self):
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
+        with patch.object(trend_engine, "_adjusted_closes",
                           return_value=[]), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value=None):

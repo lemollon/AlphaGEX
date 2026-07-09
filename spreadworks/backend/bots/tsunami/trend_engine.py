@@ -31,7 +31,12 @@ laggy -- dials down after the drawdown, then underweights the recovery);
 do not add one without re-testing on top of the calibrated slice.
 
 Paper-only. Daily rebalance near the close (scheduler: Mon-Fri 14:45 CT).
-Data: Tradier daily history + live quote. State: tsunami_trend_book /
+Data: yfinance split-adjusted daily history + Tradier live quote (2026-07-09:
+Tradier's daily history is NOT split-adjusted -- NVDL's reverse split made
+the live price read 2x its "MA50" with 384% "vol", a phantom trending
+signal; only the whole-share rounding kept it from being bought. Crushed
+LETFs reverse-split routinely, so history MUST be adjusted). State:
+tsunami_trend_book /
 tsunami_trend_trades / tsunami_trend_cash; equity into
 tsunami_equity_snapshots (scope PLATFORM). Discord on every fill.
 """
@@ -176,6 +181,31 @@ def _diag(price=None, ma50=None, rv20=None, trending=None) -> dict:
     return {"price": price, "ma50": ma50, "rv20": rv20, "trending": trending}
 
 
+def _adjusted_closes(letf: str) -> list[float]:
+    """Split/dividend-adjusted daily closes from yfinance, oldest first,
+    excluding any partial bar for today (the caller appends the live
+    Tradier quote as today's price). Tradier's daily history is raw --
+    unadjusted for splits -- so an MA/vol computed across a reverse split
+    is garbage (NVDL 2026-07: price read 2x its "MA50" => phantom trend
+    signal). Returns [] on any failure; the caller fail-safes to
+    no-signal and leaves the book untouched."""
+    try:
+        import yfinance as yf  # type: ignore
+    except ImportError as exc:
+        logger.warning("[tsunami.trend] yfinance unavailable: %r", exc)
+        return []
+    try:
+        hist = yf.Ticker(letf).history(period="1y", auto_adjust=True, actions=False)
+        if hist is None or hist.empty:
+            return []
+        today = datetime.now(timezone.utc).date()
+        return [float(c) for d, c in zip(hist.index, hist["Close"])
+                if d.date() < today and c and c > 0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tsunami.trend] yfinance history %s failed: %r", letf, exc)
+        return []
+
+
 def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     """Target weight for one LETF from its own daily closes + live quote.
 
@@ -184,11 +214,10 @@ def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     exit). diag carries whatever was computed before any early return --
     price/ma50/rv20/trending -- so callers can log a "why" even on a skip,
     not just on a fill. Any field diag doesn't reach yet is None."""
-    hist = tradier_client.get_daily_history(letf, days=130)
-    if len(hist) < MA_N + 1:
-        logger.warning("[tsunami.trend] %s: only %d bars — no signal", letf, len(hist))
+    closes = _adjusted_closes(letf)
+    if len(closes) < MA_N + 1:
+        logger.warning("[tsunami.trend] %s: only %d bars — no signal", letf, len(closes))
         return None, _diag()
-    closes = [float(h["close"]) for h in hist if h.get("close")]
     quote = tradier_client.get_quote(letf)
     last = float((quote or {}).get("last") or (quote or {}).get("close") or 0)
     if last <= 0:
