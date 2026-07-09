@@ -121,6 +121,29 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
     return _parse_time(start) <= t < _parse_time(end)
 
 
+def _settlement_value(chain_provider: ChainProvider, ticker: str,
+                      legs: list[dict[str, Any]], exp: date) -> float | None:
+    """Cash-settlement value of an expired structure: signed intrinsic of each
+    leg against the official close of the expiry day. None until that close
+    appears in daily history (then the caller retries next scan). Mirrors
+    SPXW European cash settlement — including half-days, where the close is
+    simply the early official close."""
+    bars = chain_provider.get_daily_history(ticker=ticker, days=10)
+    close = None
+    for b in bars or []:
+        if str(b.get("date")) == exp.isoformat() and b.get("close"):
+            close = float(b["close"])
+    if not close:
+        return None
+    val = 0.0
+    for leg in legs:
+        k = float(leg["strike"])
+        intr = max(0.0, close - k) if leg["type"] == "call" else max(0.0, k - close)
+        val += intr if leg["side"] == "long" else -intr
+    # A net-long defined-risk structure settles >= 0 by construction.
+    return round(max(0.0, val), 4)
+
+
 def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   config: dict, equity: float, today: date,
                   ticker: str, front_dte: int, back_dte: int | None,
@@ -524,6 +547,29 @@ def run_scan_cycle(
         monitor_result: dict[str, Any] | None = None
         for pos in opens:
             legs = json.loads(pos["legs"])
+            # --- Cash settlement (settle_at_expiry bots, e.g. RIPPLE) ---
+            # European index flies are never bought back; the first scan AFTER
+            # expiry books intrinsic vs the official close. Runs before any
+            # quote fetch — the contracts no longer trade.
+            if bool(meta.get("settle_at_expiry")):
+                pos_exp = date.fromisoformat(legs[0]["expiration"])
+                if now_ct.date() > pos_exp:
+                    settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+                    if settle is None:
+                        logger.warning(
+                            f"[{bot}] {pos['position_id']}: no official close "
+                            f"for {pos_exp} yet — settlement retries next scan"
+                        )
+                        if monitor_result is None:
+                            monitor_result = {"outcome": "MONITOR",
+                                              "position_id": pos["position_id"]}
+                        continue
+                    close_position(engine, bot, pos["position_id"],
+                                   close_value=settle, close_reason="SETTLE",
+                                   now=now_ct)
+                    monitor_result = {"outcome": "TRADE", "reason": "CLOSE_SETTLE",
+                                      "position_id": pos["position_id"]}
+                    continue
             mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
             marks_stale = any(m is None for m in mids)
             if marks_stale:
@@ -602,6 +648,7 @@ def run_scan_cycle(
                 eod_close_ct=_parse_time(cfg["eod_close_ct"]),
                 event_blackout=event_blackout,
                 entry_time=dip_entry_time, hold_days=dip_hold_days,
+                settle_at_expiry=bool(meta.get("settle_at_expiry")),
             )
             if d.should_close:
                 close_position(engine, bot, pos["position_id"],

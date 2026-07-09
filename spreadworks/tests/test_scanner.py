@@ -892,3 +892,79 @@ def test_stale_leg_quotes_still_close_at_eod_on_last_mark(db_session, fake_chain
             "SELECT close_reason FROM splash_closed_trades"
         )).mappings().first()
     assert row["close_reason"] == "EOD"
+
+
+# ---------------------------------------------------------------------------
+# RIPPLE (settle_at_expiry, 2026-07-09) — SPLASH's A/B twin: wing 1.5, never
+# bought back, cash-settled at intrinsic vs the official close on the first
+# scan after expiry (SPXW European settlement).
+# ---------------------------------------------------------------------------
+
+def _open_ripple(engine, provider):
+    res = run_scan_cycle(engine=engine, bot="ripple",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    return res["position_id"]
+
+
+def test_ripple_never_eod_closes(db_session, fake_chain_0dte):
+    """At 14:50 CT — past the buyback time — a settle bot must still be open."""
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    _open_ripple(engine, provider)
+    res = run_scan_cycle(engine=engine, bot="ripple",
+                         now_ct=datetime(2026, 5, 20, 14, 50, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "MONITOR"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM ripple_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_ripple_settles_next_morning_at_intrinsic(db_session, fake_chain_0dte):
+    """First scan after expiry books intrinsic vs the official close.
+
+    Fixture fly: body 501, wing sd1.5 -> W = round(1.5*4.0*0.85) = 5, wings
+    496/506. Official close 503 -> payoff = 5 - |503-501| = 3.00."""
+    engine = db_session.bind
+    provider = FakeChainProvider(
+        chain_0dte=fake_chain_0dte,
+        daily_history={"SPY": [
+            {"date": "2026-05-20", "open": 500, "high": 504, "low": 499, "close": 503},
+        ]},
+    )
+    pid = _open_ripple(engine, provider)
+    res = run_scan_cycle(engine=engine, bot="ripple",
+                         now_ct=datetime(2026, 5, 21, 8, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    assert res["reason"] == "CLOSE_SETTLE"
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT close_reason, close_price, entry_price, contracts, realized_pnl "
+            "FROM ripple_closed_trades WHERE position_id=:p"
+        ), {"p": pid}).mappings().first()
+    assert row["close_reason"] == "SETTLE"
+    assert float(row["close_price"]) == 3.0
+    expected = (3.0 - float(row["entry_price"])) * int(row["contracts"]) * 100.0
+    assert abs(float(row["realized_pnl"]) - expected) < 0.01
+
+
+def test_ripple_settlement_retries_without_close(db_session, fake_chain_0dte):
+    """No official close in daily history yet -> position stays open, no
+    phantom close; the scan reports MONITOR and retries next cycle."""
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte, daily_history={})
+    _open_ripple(engine, provider)
+    res = run_scan_cycle(engine=engine, bot="ripple",
+                         now_ct=datetime(2026, 5, 21, 8, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "MONITOR"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM ripple_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1

@@ -4,6 +4,7 @@
 export const BOT_REGISTRY = {
   surge: { display: 'SURGE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
   splash: { display: 'SPLASH', strategy: 'long_butterfly', ticker: 'SPX', version: 'v2.0' },
+  ripple: { display: 'RIPPLE', strategy: 'long_butterfly', ticker: 'SPX', version: 'v1.0' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
   flow:   { display: 'FLOW',   strategy: 'iron_condor',     ticker: 'SPY', version: 'v1.0' },
@@ -25,6 +26,14 @@ export const STRATEGY_LABEL = {
   vertical_credit:       'Credit Vertical',
 };
 
+// Live A/B pairs: each bot's equity chart overlays its peer's curve so the
+// two configs (SPLASH wing 1.0 + 14:45 buyback vs RIPPLE wing 1.5 + cash
+// settlement) can be compared on the same axes.
+export const COMPARE_WITH = {
+  splash: 'ripple',
+  ripple: 'splash',
+};
+
 // Per-bot theme palette mirrored from the SpreadWorks Design System
 // (see design_handoff_bots/bots-data.jsx BOT_THEMES). The whole bot page
 // tints to these colors — nameplate, equity curve, active tab, nav pill.
@@ -44,6 +53,14 @@ export const BOT_THEME = {
     primaryRing: 'rgba(96,165,250,0.30)',
     glow:        'rgba(96,165,250,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(96,165,250,0.22) 0%, rgba(96,165,250,0.03) 100%)',
+  },
+  ripple: {
+    glyph:       'wave',                       // RIPPLE = rings spreading out — SPLASH's settle-at-expiry A/B twin
+    primary:     '#f0abfc',                    // fuchsia-300
+    primarySoft: 'rgba(240,171,252,0.10)',
+    primaryRing: 'rgba(240,171,252,0.30)',
+    glow:        'rgba(240,171,252,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(240,171,252,0.22) 0%, rgba(240,171,252,0.03) 100%)',
   },
   tide: {
     glyph:       'wave',

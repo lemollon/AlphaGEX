@@ -2,7 +2,27 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 
 def test_bots_registered():
-    assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "tide", "drift", "flow", "meadow", "undertow", "delta"}
+    assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow", "delta"}
+
+
+def test_ripple_defaults():
+    # RIPPLE — SPLASH's live A/B twin (2026-07-09): same SPX 0DTE fly and
+    # entry rules, but the fly_bt.py sweep winner: wing sd 1.5 and HOLD TO
+    # CASH SETTLEMENT (no 14:45 buyback — that exit forfeits the edge).
+    b = get_bot("ripple")
+    assert b["strategy"] == "long_butterfly"
+    assert b["ticker"] == "SPX"
+    assert b["one_entry_per_day"] is True
+    assert b["pt_ladder"] is False
+    assert b["settle_at_expiry"] is True
+    assert b["compare_with"] == "splash"
+    assert b["defaults"]["sd_mult"] == 1.5
+    assert b["defaults"]["max_contracts"] == 1
+    assert b["defaults"]["bp_pct"] == 0.25
+    assert b["defaults"]["pt_pct"] == 1.0
+    assert b["defaults"]["sl_pct"] == 3.0
+    assert b["defaults"]["starting_capital"] == 10000.0
+    assert b["defaults"]["enabled"] is True
 
 
 def test_splash_defaults():
@@ -117,7 +137,7 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "splash", "surge", "tide", "undertow"]
+    assert sorted(list_bots()) == ["delta", "drift", "flow", "meadow", "ripple", "splash", "surge", "tide", "undertow"]
 
 
 def test_undertow_registered():

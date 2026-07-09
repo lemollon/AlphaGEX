@@ -48,6 +48,49 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
+    # RIPPLE — SPLASH's A/B twin (added 2026-07-09): SAME SPX 0DTE long fly,
+    # same entry window and one-entry-per-day, but the fly_bt.py sweep winner
+    # config: WIDE wing (sd 1.5 -> ~1.275x straddle, debit ~0.395x wing,
+    # ~$2,000/lot) and HOLD TO CASH SETTLEMENT instead of the 14:45 CT
+    # buyback. The sweep (train 22-24 / holdout 24-25 / real-quote referee
+    # Mar-May 26) found the buyback exit forfeits the whole edge (-$4..-$9/day
+    # at real 2026 fills) while settle earns +$5..+$24/day/SPY-lot; wing 1.5
+    # beats 1.0 by +$6..+$18/day on identical days. RIPPLE vs SPLASH on the
+    # dashboard equity charts IS the live A/B of those two findings.
+    # settle_at_expiry: the scanner never EOD-closes; the first scan AFTER
+    # expiry settles at intrinsic vs the official close (SPXW is European
+    # cash-settled, so this mirrors reality exactly — incl. 1:15pm ET
+    # half-days, where a 14:45 CT buyback could never fill anyway).
+    "ripple": {
+        "display": "RIPPLE",
+        "strategy": "long_butterfly",
+        "ticker": "SPX",
+        "front_dte": 0,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "pt_ladder": False,
+        "settle_at_expiry": True,
+        "compare_with": "splash",
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": True,
+            # 1 lot at ~$2,000 debit on $10k — already ~1.5x Kelly; the cap
+            # keeps the A/B readable (same 1-lot-vs-1-lot daily bet).
+            "max_contracts": 1,
+            "bp_pct": 0.25,
+            "sd_mult": 1.5,
+            "pt_pct": 1.0,
+            "sl_pct": 3.0,
+            "entry_start_ct": "08:35",
+            "entry_end_ct": "10:00",
+            # eod_close_ct is unused for settle_at_expiry bots (kept for the
+            # config UI); the position rides to cash settlement.
+            "eod_close_ct": "14:45",
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
     # SPLASH — SPY 0DTE long butterfly ONLY, rebuilt 2026-07-09 after the
     # $500 pin+drift variant bricked in 3 days (-$462.50/6 trades). The live
     # loss was NOT the pin edge: 4 of 6 closes were phantom SLs — missing leg
@@ -78,6 +121,9 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         # Keep the signal's static PT (unreachable at 1.0) instead of the
         # intraday 30/25/20 ladder — hold-to-EOD is the validated exit.
         "pt_ladder": False,
+        # Live A/B vs RIPPLE (wing 1.5 + settle-at-expiry) — overlaid on the
+        # equity chart so the sweep's verdict is checked with real forward data.
+        "compare_with": "ripple",
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": True,
