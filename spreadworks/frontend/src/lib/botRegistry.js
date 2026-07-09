@@ -3,7 +3,7 @@
 
 export const BOT_REGISTRY = {
   surge: { display: 'SURGE', strategy: 'pin_drift_combo', ticker: 'SPY', version: 'v1.0' },
-  splash: { display: 'SPLASH', strategy: 'long_butterfly', ticker: 'SPX', version: 'v2.0' },
+  splash: { display: 'SPLASH', strategy: 'long_butterfly', ticker: 'XSP', version: 'v2.1' },
   ripple: { display: 'RIPPLE', strategy: 'long_butterfly', ticker: 'SPX', version: 'v1.0' },
   tide:   { display: 'TIDE',   strategy: 'double_calendar', ticker: 'SPY', version: 'v1.4' },
   drift:  { display: 'DRIFT',  strategy: 'double_diagonal', ticker: 'SPY', version: 'v1.4' },
@@ -26,9 +26,9 @@ export const STRATEGY_LABEL = {
   vertical_credit:       'Credit Vertical',
 };
 
-// Live A/B pairs: each bot's equity chart overlays its peer's curve so the
-// two configs (SPLASH wing 1.0 + 14:45 buyback vs RIPPLE wing 1.5 + cash
-// settlement) can be compared on the same axes.
+// Live A/B pairs: each bot's equity chart overlays its peer's curve. SPLASH
+// (XSP, ~$200/lot) and RIPPLE (SPX, ~$2,000/lot) run the IDENTICAL validated
+// fly strategy — the overlay compares vehicle + sizing on the same axes.
 export const COMPARE_WITH = {
   splash: 'ripple',
   ripple: 'splash',

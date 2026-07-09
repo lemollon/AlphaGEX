@@ -48,15 +48,14 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
-    # RIPPLE — SPLASH's A/B twin (added 2026-07-09): SAME SPX 0DTE long fly,
-    # same entry window and one-entry-per-day, but the fly_bt.py sweep winner
-    # config: WIDE wing (sd 1.5 -> ~1.275x straddle, debit ~0.395x wing,
-    # ~$2,000/lot) and HOLD TO CASH SETTLEMENT instead of the 14:45 CT
-    # buyback. The sweep (train 22-24 / holdout 24-25 / real-quote referee
-    # Mar-May 26) found the buyback exit forfeits the whole edge (-$4..-$9/day
-    # at real 2026 fills) while settle earns +$5..+$24/day/SPY-lot; wing 1.5
-    # beats 1.0 by +$6..+$18/day on identical days. RIPPLE vs SPLASH on the
-    # dashboard equity charts IS the live A/B of those two findings.
+    # RIPPLE — full-size SPX version of the validated 0DTE fly (2026-07-09).
+    # Strategy = the fly_bt.py sweep winner: wing sd 1.5 (~1.275x straddle,
+    # debit ~0.395x wing, ~$2,000/lot), one morning entry, HOLD TO CASH
+    # SETTLEMENT (the sweep found every early exit — 14:45 buyback, PT —
+    # forfeits the edge at real fills; settle earned +$5..+$24/day/SPY-lot,
+    # green 2022-25, holdout t=2.42). SPLASH runs the IDENTICAL strategy on
+    # XSP at 1/10 size — the vehicle/sizing A/B, overlaid on one equity
+    # chart (compare_with).
     # settle_at_expiry: the scanner never EOD-closes; the first scan AFTER
     # expiry settles at intrinsic vs the official close (SPXW is European
     # cash-settled, so this mirrors reality exactly — incl. 1:15pm ET
@@ -91,49 +90,45 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "use_gex_walls": False,
         },
     },
-    # SPLASH — SPY 0DTE long butterfly ONLY, rebuilt 2026-07-09 after the
-    # $500 pin+drift variant bricked in 3 days (-$462.50/6 trades). The live
-    # loss was NOT the pin edge: 4 of 6 closes were phantom SLs — missing leg
-    # quotes marked the 8-leg combo NEGATIVE (impossible for a net-long debit
-    # structure), tripping the "disabled" sl_pct=1.0 stop, then the scanner
-    # re-entered fresh debits same-day (3 entries on 7/8, one at a junk $0.065
-    # quote). Fix = fly-only (4 legs, one expiration -> clean marks) + the
-    # TIDE-style unreachable stop + one-entry-per-day + a min-debit gate.
-    # Config = the REAL-FILL validated RIVER setup (ThetaData 2022-25,
-    # examples/backtest_real_abc.py): enter morning, hold to the 14:45 CT
-    # close, no PT, no SL. +$8/day/lot net of commissions on SPY, ~44% win
-    # (low-win/positive-EV), green every year; real morning debit ~0.27x wing
-    # vs ~0.38-0.45 breakeven. The 30/25/20% PT ladder is UNVALIDATED for the
-    # fly, so pt_ladder=False and pt_pct=1.0 (only reachable pinned at expiry)
-    # -> effective exit is the EOD close, exactly like the backtest.
-    # Trades SPX (operator decision 2026-07-09): same underlying dynamics the
-    # backtest validated at 10x notional per lot — one SPX fly ~= 10 SPY flies
-    # (~$1,000-1,200 debit/lot), cash-settled PM (SPXW root), no assignment
-    # risk. NOTE the $-P&L per lot is 10x the SPY backtest figures.
+    # SPLASH — XSP (Mini-SPX) twin of RIPPLE (operator decision 2026-07-09):
+    # the SAME winning strategy — 0DTE long fly, wing sd 1.5, one morning
+    # entry, HOLD TO CASH SETTLEMENT — at 1/10 the contract size (~$200/lot
+    # vs ~$2,000). XSP is European PM cash-settled like SPX, single OCC root
+    # "XSP", $1 strikes. This is the "what a $10k account can actually
+    # afford" vehicle; RIPPLE is the commission-efficient full-size SPX
+    # version. The two overlay on one equity chart (compare_with) — same
+    # strategy, different vehicle + sizing.
+    # NOTE: paper fills at mids don't model XSP's wider real spreads or its
+    # 10x per-dollar commission drag — the live A/B compares sizing and
+    # tracking, not microstructure. (History: the v1 $500 pin+drift SPLASH
+    # bricked 7/6-7/8 via phantom-SL/mark bugs; v2 traded SPX for one day;
+    # autopsy + backtest in the vault/memory notes.)
     "splash": {
         "display": "SPLASH",
         "strategy": "long_butterfly",
-        "ticker": "SPX",
+        "ticker": "XSP",
         "front_dte": 0,
         "back_dte": None,
-        # Backtest = one morning entry/day; live churned 3 entries on 7/8.
+        # Backtest = one morning entry/day; the v1 bot churned 3 entries/day.
         "one_entry_per_day": True,
-        # Keep the signal's static PT (unreachable at 1.0) instead of the
-        # intraday 30/25/20 ladder — hold-to-EOD is the validated exit.
+        # Static PT (unreachable at 1.0) — no intraday ladder; the fly_bt
+        # sweep showed every early exit forfeits edge.
         "pt_ladder": False,
-        # Live A/B vs RIPPLE (wing 1.5 + settle-at-expiry) — overlaid on the
-        # equity chart so the sweep's verdict is checked with real forward data.
+        # Never bought back: settles at intrinsic vs the official close on
+        # the first scan after expiry (XSP European cash settlement; the
+        # settlement helper falls back to SPX close / 10 if Tradier serves
+        # no XSP daily history).
+        "settle_at_expiry": True,
         "compare_with": "ripple",
         "defaults": {
             "starting_capital": 10000.0,
             "enabled": True,
-            # SPX fly debit ~$1,000-1,200/lot -> bp 0.20 on $10k = 1-2 lots;
-            # high-vol days (bigger straddle -> wider wing -> bigger debit)
-            # auto-skip on budget, a built-in vol gate. Cap keeps compounding
-            # inside where the fill model is credible.
-            "max_contracts": 4,
-            "bp_pct": 0.20,
-            "sd_mult": 1.0,
+            # XSP fly debit ~$200/lot. bp 0.10 on $10k = ~$1,000/day budget
+            # -> up to 5 lots: the affordable-sizing tier (~10% of account
+            # at risk/day vs RIPPLE's 20% single SPX lot). Tune in Config.
+            "max_contracts": 5,
+            "bp_pct": 0.10,
+            "sd_mult": 1.5,
             "pt_pct": 1.0,
             # 3.0 = unreachable, the TIDE lesson: a long fly can't lose more
             # than its debit, so a 1.0 "stop" only ever fires on garbage
@@ -145,6 +140,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # unvalidated afternoon entry.
             "entry_start_ct": "08:35",
             "entry_end_ct": "10:00",
+            # Unused for settle_at_expiry bots (kept for the config UI).
             "eod_close_ct": "14:45",
             "discord_alerts": False,
             "delta_skew": 0,

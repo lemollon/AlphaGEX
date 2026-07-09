@@ -126,13 +126,22 @@ def _settlement_value(chain_provider: ChainProvider, ticker: str,
     """Cash-settlement value of an expired structure: signed intrinsic of each
     leg against the official close of the expiry day. None until that close
     appears in daily history (then the caller retries next scan). Mirrors
-    SPXW European cash settlement — including half-days, where the close is
-    simply the early official close."""
-    bars = chain_provider.get_daily_history(ticker=ticker, days=10)
-    close = None
-    for b in bars or []:
-        if str(b.get("date")) == exp.isoformat() and b.get("close"):
-            close = float(b["close"])
+    SPX/XSP European cash settlement — including half-days, where the close
+    is simply the early official close."""
+    def _close_for(sym: str) -> float | None:
+        bars = chain_provider.get_daily_history(ticker=sym, days=10)
+        for b in bars or []:
+            if str(b.get("date")) == exp.isoformat() and b.get("close"):
+                return float(b["close"])
+        return None
+
+    close = _close_for(ticker)
+    if close is None and ticker == "XSP":
+        # XSP settles at exactly SPX/10; fall back if Tradier serves no XSP
+        # daily history.
+        spx = _close_for("SPX")
+        if spx is not None:
+            close = spx / 10.0
     if not close:
         return None
     val = 0.0

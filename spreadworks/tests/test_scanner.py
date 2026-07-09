@@ -773,9 +773,9 @@ def test_watchlist_marks_only_deepest_signal_would_open(db_session):
 
 
 # ---------------------------------------------------------------------------
-# SPLASH v2 (0DTE long butterfly only, 2026-07-09) — the gates that fix the
-# 3-day live bleed: one entry/day, no PT ladder (hold-to-EOD), stale-mark
-# protection (missing leg quotes must never trip PT/SL or strand a position).
+# SPLASH v2.1 (XSP twin of RIPPLE, 2026-07-09) — identical validated strategy
+# (wing sd 1.5, one entry/day, static PT, cash settlement) at 1/10 size, plus
+# the stale-mark protection from the v1 autopsy.
 # ---------------------------------------------------------------------------
 
 def test_splash_opens_long_butterfly_with_unreachable_targets(db_session, fake_chain_0dte):
@@ -791,13 +791,19 @@ def test_splash_opens_long_butterfly_with_unreachable_targets(db_session, fake_c
             "SELECT * FROM splash_positions WHERE status='OPEN'"
         )).mappings().first()
     assert pos["strategy"] == "long_butterfly"
-    assert len(_j.loads(pos["legs"])) == 4
-    # $10k * bp 0.10 = $1000 budget // $75 debit = 13, capped at 4.
-    assert int(pos["contracts"]) == 4
-    # pt_pct 1.0 and sl_pct 3.0 -> both effectively unreachable intraday:
-    # PT = 100% of max profit (225*4=900), SL = 3x the debit (75*4*3=900).
-    assert float(pos["pt_target_pnl"]) == 900.0
-    assert float(pos["sl_target_pnl"]) == 900.0
+    legs = _j.loads(pos["legs"])
+    assert len(legs) == 4
+    # Wing sd 1.5 on the fixture straddle (4.0): W = round(1.5*4*0.85) = 5.
+    strikes = sorted({l["strike"] for l in legs})
+    W = strikes[-1] - strikes[1]
+    assert W == 5
+    entry = float(pos["entry_price"])
+    contracts = int(pos["contracts"])
+    # $10k * bp 0.10 = $1000 budget // debit, capped at 5 lots.
+    assert contracts == min(5, int(1000 // (entry * 100)))
+    # pt 1.0 = 100% of max profit; sl 3.0 = 3x debit — both unreachable.
+    assert float(pos["pt_target_pnl"]) == pytest.approx((W - entry) * 100 * contracts)
+    assert float(pos["sl_target_pnl"]) == pytest.approx(3.0 * entry * 100 * contracts)
 
 
 def test_splash_one_entry_per_day_blocks_reentry(db_session, fake_chain_0dte):
@@ -820,17 +826,21 @@ def test_splash_one_entry_per_day_blocks_reentry(db_session, fake_chain_0dte):
 
 def test_splash_pt_ladder_disabled_holds_through_morning_tier(db_session, fake_chain_0dte):
     """pt_ladder=False: a gain above the 30% morning-ladder tier but below the
-    static 100% PT must NOT close — SPLASH's validated exit is hold-to-EOD."""
+    static 100% PT must NOT close — the validated exit is cash settlement."""
     engine = db_session.bind
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     res = run_scan_cycle(engine=engine, bot="splash",
                          now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
                          chain_provider=provider, event_blackout=False)
     assert res["outcome"] == "TRADE"
-    # Fly value 1.65 -> pnl = (1.65 - 0.75) * 4 * 100 = +$360 = 40% of the
-    # $900 max profit. The ladder (30% tier = $270) would take profit here;
-    # the static PT ($900) must hold.
-    provider.leg_mid_overrides = [1.65, 0.0, 0.0, 0.0]
+    with engine.begin() as conn:
+        pos = conn.execute(text(
+            "SELECT entry_price FROM splash_positions WHERE status='OPEN'"
+        )).mappings().first()
+    entry = float(pos["entry_price"])
+    # Mark the fly at entry + 40% of max profit (W=5): above the 30% ladder
+    # tier, below the static 100% PT — must stay open.
+    provider.leg_mid_overrides = [entry + 0.4 * (5 - entry), 0.0, 0.0, 0.0]
     res2 = run_scan_cycle(engine=engine, bot="splash",
                           now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
                           chain_provider=provider, event_blackout=False)
@@ -873,23 +883,33 @@ def test_stale_leg_quotes_skip_pt_sl_and_keep_last_mark(db_session, fake_chain_0
 
 
 def test_stale_leg_quotes_still_close_at_eod_on_last_mark(db_session, fake_chain_0dte):
-    """Stale marks disarm PT/SL but NEVER the EOD close — a 0DTE position must
-    not be stranded past the close just because a quote went missing."""
+    """Stale marks disarm PT/SL but NEVER the EOD close for a NON-settle fly
+    bot — a 0DTE position must not be stranded past the close just because a
+    quote went missing. (Hosted under SURGE: SPLASH/RIPPLE are settle bots
+    now and never buy back; the engine path stays covered here.)"""
+    from backend.bots.strategies.long_butterfly import build_long_butterfly_signal
+    from backend.bots.executor import open_position
     engine = db_session.bind
+    _enable_bot(engine, "surge")
+    sig = build_long_butterfly_signal(
+        chain=fake_chain_0dte,
+        config={"max_contracts": 1, "bp_pct": 0.10, "sd_mult": 1.0,
+                "pt_pct": 1.0, "sl_pct": 3.0, "use_gex_walls": False},
+        equity=10000.0,
+    )
+    assert sig is not None
+    open_position(engine, "surge", "long_butterfly", sig,
+                  datetime(2026, 5, 20, 9, 0, tzinfo=CT))
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
-    res = run_scan_cycle(engine=engine, bot="splash",
-                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
-                         chain_provider=provider, event_blackout=False)
-    assert res["outcome"] == "TRADE"
     provider.leg_mid_overrides = [None, 1.60, 1.60, 0.70]
-    res2 = run_scan_cycle(engine=engine, bot="splash",
+    res2 = run_scan_cycle(engine=engine, bot="surge",
                           now_ct=datetime(2026, 5, 20, 14, 50, tzinfo=CT),
                           chain_provider=provider, event_blackout=False)
     assert res2["outcome"] == "TRADE"
     assert res2["reason"] == "CLOSE_EOD"
     with engine.begin() as conn:
         row = conn.execute(text(
-            "SELECT close_reason FROM splash_closed_trades"
+            "SELECT close_reason FROM surge_closed_trades"
         )).mappings().first()
     assert row["close_reason"] == "EOD"
 
@@ -968,3 +988,23 @@ def test_ripple_settlement_retries_without_close(db_session, fake_chain_0dte):
             "SELECT COUNT(*) c FROM ripple_positions WHERE status='OPEN'"
         )).mappings().first()["c"]
     assert n == 1
+
+
+def test_settlement_value_xsp_falls_back_to_spx_close_over_10():
+    """Tradier may serve no XSP daily history — settlement must fall back to
+    the SPX official close / 10 (XSP settles at exactly that by definition)."""
+    from backend.bots.scanner import _settlement_value
+    from datetime import date as _date
+    provider = FakeChainProvider(daily_history={
+        "SPX": [{"date": "2026-05-20", "open": 5000, "high": 5040,
+                 "low": 4990, "close": 5030.0}],
+    })
+    legs = [
+        {"side": "long",  "type": "call", "strike": 496, "expiration": "2026-05-20"},
+        {"side": "short", "type": "call", "strike": 501, "expiration": "2026-05-20"},
+        {"side": "short", "type": "call", "strike": 501, "expiration": "2026-05-20"},
+        {"side": "long",  "type": "call", "strike": 506, "expiration": "2026-05-20"},
+    ]
+    # SPX 5030 -> XSP settle 503 -> fly payoff = 5 - |503-501| = 3.00
+    val = _settlement_value(provider, "XSP", legs, _date(2026, 5, 20))
+    assert val == 3.0

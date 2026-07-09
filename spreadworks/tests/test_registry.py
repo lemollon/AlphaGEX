@@ -26,24 +26,25 @@ def test_ripple_defaults():
 
 
 def test_splash_defaults():
-    # SPLASH v2 (2026-07-09) — SPX 0DTE long butterfly ONLY on the real-fill
-    # validated RIVER config: morning entry, hold to the 14:45 CT close,
-    # no PT ladder (pt 1.0 = unreachable), no SL (3.0 = unreachable),
-    # one entry per day, $10k paper account. SPX per operator decision
-    # (SPXW root, cash-settled, ~$1,000-1,200 debit/lot -> bp 0.20 = 1-2 lots).
+    # SPLASH v2.1 (2026-07-09) — XSP (Mini-SPX) twin of RIPPLE: the IDENTICAL
+    # validated fly strategy (wing sd 1.5, one morning entry, hold to cash
+    # settlement) at 1/10 contract size (~$200/lot). bp 0.10 / max 5 lots =
+    # the affordable-sizing tier of the vehicle A/B.
     b = get_bot("splash")
     assert b["strategy"] == "long_butterfly"
-    assert b["ticker"] == "SPX"
+    assert b["ticker"] == "XSP"
     assert b["front_dte"] == 0
     assert b["back_dte"] is None
     assert b["one_entry_per_day"] is True
     assert b["pt_ladder"] is False
+    assert b["settle_at_expiry"] is True
+    assert b["compare_with"] == "ripple"
     assert b["defaults"]["starting_capital"] == 10000.0
-    assert b["defaults"]["bp_pct"] == 0.20
-    assert b["defaults"]["sd_mult"] == 1.0
+    assert b["defaults"]["bp_pct"] == 0.10
+    assert b["defaults"]["sd_mult"] == 1.5
     assert b["defaults"]["pt_pct"] == 1.0
     assert b["defaults"]["sl_pct"] == 3.0
-    assert b["defaults"]["max_contracts"] == 4
+    assert b["defaults"]["max_contracts"] == 5
     assert b["defaults"]["entry_end_ct"] == "10:00"
     assert b["defaults"]["enabled"] is True
 
