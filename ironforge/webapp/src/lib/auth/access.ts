@@ -26,6 +26,10 @@ const PUBLIC_EXACT = new Set<string>([
   '/account/trades',
   // Customer Live page (site not launched; ungated while dark).
   '/live',
+  // Customer Home dashboard + Forge Community pages (same ungated-while-dark
+  // treatment as /live; write APIs self-guard the customer session in-route).
+  '/home',
+  '/community',
   // Middleware-open so the Live page can reach it; POST self-guards in-route
   // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
   '/api/spark/production-pause',
@@ -39,6 +43,8 @@ export function isPublicPath(pathname: string): boolean {
   if (pathname.startsWith('/api/brokerage/')) return true
   // Customer-shaped Live page aggregation APIs; read-only, no operator internals.
   if (pathname.startsWith('/api/live/')) return true
+  // Forge Community APIs: GET is public-read; POSTs self-guard the customer session.
+  if (pathname.startsWith('/api/community/')) return true
   return PUBLIC_EXACT.has(pathname)
 }
 

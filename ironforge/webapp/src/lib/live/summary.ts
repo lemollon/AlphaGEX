@@ -232,7 +232,13 @@ export async function getLiveSummary(): Promise<LiveSummary> {
       source,
     },
     intraday,
-    membership: { plan: 'Forge Automate', badge: 'Early Access' },
+    membership: {
+      plan: 'Forge Automate',
+      badge: 'Early Access',
+      // Static placeholder matching the approved Home design — no billing/trial
+      // state exists in the DB yet (same precedent as plan/badge above).
+      trial: { label: '5 Day Free Trial', day: 2, total_days: 5, ends_label: 'Ends May 25, 2025' },
+    },
     as_of: new Date().toISOString(),
   }
 }
