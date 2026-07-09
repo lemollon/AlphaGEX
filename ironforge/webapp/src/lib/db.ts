@@ -967,7 +967,10 @@ async function ensureTables(): Promise<void> {
     // if no production row exists for 1DTE. Clones structural fields from the
     // sandbox row (strategy params, entry windows) so the schema is consistent,
     // but OVERRIDES the risk knobs for the live-money scope:
-    //   buying_power_usage_pct = 0.15   (per operator: 15% of live Tradier OBP)
+    //   buying_power_usage_pct = 0.30   (per operator: 30% of live Tradier OBP,
+    //                                    raised from 0.15 on 2026-07-08 — informed
+    //                                    choice off the 7/7 compounding sim: 3x
+    //                                    return, 38.6% worst slide)
     //   max_contracts         = 0      (unlimited — bp_pct is the real cap)
     try {
       await client.query(
@@ -978,7 +981,7 @@ async function ensureTables(): Promise<void> {
                                     pdt_max_day_trades, starting_capital)
          SELECT dte_mode, 'production', sd_multiplier, spread_width, min_credit,
                 profit_target_pct, stop_loss_pct, vix_skip, 0 AS max_contracts,
-                max_trades_per_day, 0.15 AS buying_power_usage_pct, risk_per_trade_pct,
+                max_trades_per_day, 0.30 AS buying_power_usage_pct, risk_per_trade_pct,
                 min_win_probability, entry_start, entry_end, eod_cutoff_et,
                 pdt_max_day_trades, starting_capital
          FROM spark_config
@@ -999,10 +1002,23 @@ async function ensureTables(): Promise<void> {
     try {
       await client.query(
         `UPDATE spark_config
-           SET buying_power_usage_pct = 0.15, updated_at = NOW()
+           SET buying_power_usage_pct = 0.30, updated_at = NOW()
          WHERE account_type = 'production'
            AND dte_mode = '1DTE'
            AND buying_power_usage_pct > 0.80`,
+      )
+      // 2026-07-08 one-time migration: raise SPARK sizing from the old 15% cap
+      // to the operator's new 30% target — BOTH scopes, so the paper mirror
+      // keeps sizing 1:1 with the live account. Matches EXACTLY 0.15 so it
+      // only converts the old cap value; any other deliberate operator setting
+      // (e.g. sizing down to 0.10, or a future 0.20) is preserved across
+      // restarts. NOTE: if the operator ever wants exactly 15% again, this
+      // UPDATE must be removed first or it will silently bump it back.
+      await client.query(
+        `UPDATE spark_config
+           SET buying_power_usage_pct = 0.30, updated_at = NOW()
+         WHERE dte_mode = '1DTE'
+           AND buying_power_usage_pct = 0.15`,
       )
       await client.query(
         `UPDATE spark_config

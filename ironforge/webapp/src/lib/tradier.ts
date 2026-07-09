@@ -1546,7 +1546,7 @@ export async function placeIcOrderAllAccounts(
   // account in this call sizes off the same knobs. We load it lazily (only
   // when production accounts are actually in scope) so sandbox-only paths
   // never touch the production config row.
-  //   bp_pct      → deployment fraction of Tradier OBP (default 0.15)
+  //   bp_pct      → deployment fraction of Tradier OBP (default 0.30)
   //   max_contracts → 0 = unlimited (bp_pct is the real cap)
   // If the production row is missing or malformed, we log + skip all
   // production accounts rather than falling back to paper values — matches
@@ -1559,15 +1559,15 @@ export async function placeIcOrderAllAccounts(
       const { loadProductionConfigFor } = await import('./scanner')
       const prodCfg = await loadProductionConfigFor(botName)
       if (prodCfg && prodCfg.bp_pct > 0 && prodCfg.bp_pct <= 1) {
-        // SPARK real-money risk cap (2026-07-02): hard-clamp production sizing to
-        // <=15% of Option BP, matching the paper path's Math.min(bp_pct, 0.15).
-        // BUG FIXED HERE: this clamp previously existed ONLY on the paper/sandbox
-        // path (scanner.ts), so the live account silently sized off the raw DB
-        // bp_pct — a config row set to 0.30 made SPARK trade 30% BP / 3 contracts
-        // on a ~$5k account (the "30% blows up" loss zone we explicitly avoided).
-        // The DB can now only size the real account DOWN from 15%, never above it.
+        // SPARK real-money risk cap (2026-07-02): hard-clamp production sizing,
+        // matching the paper path's Math.min(bp_pct, cap) so the DB can only size
+        // the real account DOWN from the cap, never above it. Cap raised
+        // 0.15 → 0.30 on 2026-07-08 per operator decision (informed): the
+        // 2026-07-07 compounding sim quantified 30%/3ct at 3x return with a
+        // 38.6% worst account slide (Part-2 report recommended 20%/2ct; operator
+        // explicitly chose 30% knowing the drawdown).
         // SPARK-only, matching the paper cap; KINDLE's risk control is max_contracts:1.
-        prodBpPct = botName === 'spark' ? Math.min(prodCfg.bp_pct, 0.15) : prodCfg.bp_pct
+        prodBpPct = botName === 'spark' ? Math.min(prodCfg.bp_pct, 0.30) : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
         productionConfigOk = true
       } else {
@@ -1622,7 +1622,7 @@ export async function placeIcOrderAllAccounts(
       //   Paper/Sandbox: usableBP = bp × botShare × 0.85           (85% hardcoded,
       //                                                             matches paper
       //                                                             ledger semantics)
-      //   Live/Production: usableBP = bp × botShare × prodBpPct    (0.15 from
+      //   Live/Production: usableBP = bp × botShare × prodBpPct    (0.30 from
       //                                                             spark_config's
       //                                                             production row)
       //
@@ -1630,7 +1630,7 @@ export async function placeIcOrderAllAccounts(
       // requires margin = spread_width * 100 per contract (NOT net collateral).
       //
       // Production is NOT capped by paperContracts — production is sized
-      // independently from the live Tradier account per operator's 15% rule.
+      // independently from the live Tradier account per operator's 30% rule.
       // The scanner's paper-sized paperContracts is only a cap for sandbox/paper
       // mirror orders (which must match paper contract count 1:1).
       const SANDBOX_MAX_CONTRACTS = 200
@@ -1643,7 +1643,7 @@ export async function placeIcOrderAllAccounts(
       // Per-scope bp_pct. Production reads from the siloed config row loaded
       // above; sandbox is hardcoded 0.85 (matches paper ledger).
       const bpPct = acct.type === 'production'
-        ? prodBpPct  // 0.15 default; refuses to size if productionConfigOk=false
+        ? prodBpPct  // 0.30 default; refuses to size if productionConfigOk=false
                      // (productionAccts was cleared above in that case, so we
                      // never reach here for prod without valid config)
         : 0.85
