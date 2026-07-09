@@ -2,7 +2,9 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
+import { MobileNavDrawer } from '@/components/customer/CustomerShell'
 
 /**
  * Left rail for the customer Live page — keeps the original IronForge
@@ -41,6 +43,7 @@ const ICONS = {
 
 export default function LiveSidebar({ membership }: { membership: { plan: string; badge: string } | null }) {
   const router = useRouter()
+  const [menuOpen, setMenuOpen] = useState(false)
 
   async function handleLogout() {
     try {
@@ -97,8 +100,15 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-forge-border bg-forge-bg px-4 py-3 lg:hidden">
         <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
-        <Link href="/spark" className="text-sm text-gray-400">Performance</Link>
+        <button onClick={() => setMenuOpen(true)} className="p-1 text-gray-300 transition-colors hover:text-white" aria-label="Open menu">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+            strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
       </div>
+      <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
+        membership={membership} planVariant="active" />
 
       {/* Desktop rail */}
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-forge-border bg-forge-bg lg:flex">
