@@ -28,6 +28,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     pathname === '/reset-password' ||
     pathname === '/account/trades' ||
     pathname === '/live' ||
+    pathname === '/home' ||
+    pathname === '/community' ||
     pathname.startsWith('/onboarding')
 
   return (

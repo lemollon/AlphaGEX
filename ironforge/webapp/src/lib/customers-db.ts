@@ -163,6 +163,66 @@ ALTER TABLE trade_approvals       ADD COLUMN IF NOT EXISTS provider TEXT NOT NUL
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_access_token TEXT;       -- AES-256-GCM ciphertext
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_refresh_token TEXT;      -- AES-256-GCM ciphertext
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_token_expires_at TIMESTAMPTZ;
+
+-- Forge Community (members-only chat; see IronForge_Forge_Community_V1 design doc) --
+CREATE TABLE IF NOT EXISTS community_channels (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO community_channels (slug, name, sort_order) VALUES
+  ('all-chat', 'All Chat', 0),
+  ('market-talk', 'Market Talk', 1),
+  ('trade-ideas', 'Trade Ideas', 2),
+  ('news-events', 'News & Events', 3),
+  ('general', 'General', 4)
+ON CONFLICT (slug) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS community_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id UUID NOT NULL REFERENCES community_channels(id),
+  user_id UUID REFERENCES users(id),
+  sender_name TEXT NOT NULL,
+  sender_type VARCHAR(25) NOT NULL DEFAULT 'USER',   -- USER | FORGE | SYSTEM
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_community_messages_channel_time
+  ON community_messages(channel_id, created_at);
+
+CREATE TABLE IF NOT EXISTS community_reactions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID NOT NULL REFERENCES community_messages(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id),
+  emoji TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (message_id, user_id, emoji)
+);
+
+CREATE TABLE IF NOT EXISTS community_presence (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  display_name TEXT NOT NULL,
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS community_moderation_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  message_excerpt TEXT,
+  category TEXT NOT NULL,
+  score NUMERIC,
+  action TEXT NOT NULL,                              -- REJECTED | WARNING
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Dedupe ledger for Forge's scheduled community posts (one row per slot).
+CREATE TABLE IF NOT EXISTS community_forge_posts (
+  slot_key TEXT PRIMARY KEY,                         -- e.g. 2026-07-09-premarket
+  message_id UUID REFERENCES community_messages(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 
 let _ensured: Promise<void> | null = null

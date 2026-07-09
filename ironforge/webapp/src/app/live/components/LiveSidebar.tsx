@@ -51,10 +51,10 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
   }
 
   const mainItems: NavItem[] = [
-    { label: 'Home', href: '/', icon: <Icon d={ICONS.home} /> },
+    { label: 'Home', href: '/home', icon: <Icon d={ICONS.home} /> },
     { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} />, active: true },
     { label: 'Performance', href: '/spark', icon: <Icon d={ICONS.performance} /> },
-    { label: 'Community', href: null, icon: <Icon d={ICONS.community} />, disabled: true },
+    { label: 'Community', href: '/community', icon: <Icon d={ICONS.community} /> },
   ]
   const secondaryItems: NavItem[] = [
     { label: 'My Membership', href: '/pricing', icon: <Icon d={ICONS.membership} /> },

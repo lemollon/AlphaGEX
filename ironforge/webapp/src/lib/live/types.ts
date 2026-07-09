@@ -62,7 +62,12 @@ export interface LiveSummary {
     source: 'tradier' | 'paper_account'
   }
   intraday: Array<{ timestamp: string; equity: number }>
-  membership: { plan: string; badge: string }
+  membership: {
+    plan: string
+    badge: string
+    /** Static placeholder until billing/trial state is modeled in the DB. */
+    trial?: { label: string; day: number; total_days: number; ends_label: string } | null
+  }
   as_of: string
 }
 
