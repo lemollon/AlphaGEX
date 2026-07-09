@@ -76,6 +76,7 @@ def decide_exit(
     event_blackout: bool,
     entry_time: datetime | None = None,
     hold_days: int | None = None,
+    settle_at_expiry: bool = False,
 ) -> ExitDecision:
     if event_blackout:
         return ExitDecision(True, "EVENT_HALT")
@@ -98,6 +99,12 @@ def decide_exit(
 
     eod = eod_close_time_for_strategy(strategy, eod_close_ct)
     if strategy in ("iron_butterfly", "long_butterfly"):
+        if settle_at_expiry:
+            # European cash-settled index flies (RIPPLE): never buy back —
+            # the scanner books intrinsic vs the official close on the first
+            # scan after expiry. The fly_bt sweep showed the buyback exit
+            # forfeits the edge (last-hour theta + exit spread).
+            return ExitDecision(False, None)
         # 0DTE single-expiration strategies: force-close at EOD every day.
         if now_ct.timetz().replace(tzinfo=None) >= eod:
             return ExitDecision(True, "EOD")

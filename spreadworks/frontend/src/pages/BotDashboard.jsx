@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Power, Zap, Play, Inbox, List, Terminal, Sliders, LineChart } from 'lucide-react';
-import { BOT_REGISTRY, STRATEGY_LABEL, BOT_THEME } from '../lib/botRegistry';
+import { BOT_REGISTRY, STRATEGY_LABEL, BOT_THEME, COMPARE_WITH } from '../lib/botRegistry';
 import { botApi } from '../lib/botApi';
 import { useBotStatus } from '../hooks/useBotStatus';
 import { useBotEquity } from '../hooks/useBotEquity';
@@ -361,7 +361,10 @@ function KpiGrid({ bot, status, perf, theme }) {
 
 /* ── Equity Curve (themed, hand-drawn SVG) ──────────────────────── */
 
-function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
+function EquityCurveCard({ bot, theme, period, onPeriodChange, curve, comparePeer, compareCurve }) {
+  const peerTheme = comparePeer ? BOT_THEME[comparePeer] : null;
+  const peerLabel = comparePeer ? (BOT_REGISTRY[comparePeer]?.display || comparePeer) : null;
+  const hasCompare = Boolean(peerTheme && compareCurve && compareCurve.length >= 2);
   return (
     <div
       className="rounded-lg sw-glass"
@@ -373,7 +376,24 @@ function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
       >
         <div className="flex items-center gap-3">
           <h3 className="text-[14px] font-semibold text-text-primary">Equity Curve</h3>
-          <span className="text-[11.5px] text-text-tertiary">Account equity over time</span>
+          {hasCompare ? (
+            <span className="flex items-center gap-3 text-[11.5px]">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-4 h-[3px] rounded" style={{ background: theme.primary }} />
+                <span className="text-text-secondary font-medium">{BOT_REGISTRY[bot]?.display || bot}</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span
+                  className="inline-block w-4 h-[3px] rounded"
+                  style={{ background: `repeating-linear-gradient(90deg, ${peerTheme.primary} 0 4px, transparent 4px 7px)` }}
+                />
+                <span className="text-text-secondary font-medium">{peerLabel}</span>
+              </span>
+              <span className="text-text-tertiary">live A/B</span>
+            </span>
+          ) : (
+            <span className="text-[11.5px] text-text-tertiary">Account equity over time</span>
+          )}
         </div>
         <div className="flex items-center gap-1 rounded-md p-0.5" style={{ background: 'rgba(7,16,28,0.4)' }}>
           {EQUITY_PERIODS.map(p => {
@@ -396,13 +416,19 @@ function EquityCurveCard({ bot, theme, period, onPeriodChange, curve }) {
         </div>
       </div>
       <div className="px-3 pt-3 pb-3">
-        <EquityChart bot={bot} theme={theme} data={curve} />
+        <EquityChart
+          bot={bot}
+          theme={theme}
+          data={curve}
+          compareData={hasCompare ? compareCurve : null}
+          compareTheme={hasCompare ? peerTheme : null}
+        />
       </div>
     </div>
   );
 }
 
-function EquityChart({ bot, theme, data }) {
+function EquityChart({ bot, theme, data, compareData, compareTheme }) {
   // Track the actual rendered width so the SVG viewBox always matches the
   // card's real pixel width. A hardcoded viewBox (e.g. 1200) combined with
   // SVG's default preserveAspectRatio="xMidYMid meet" only scales up to the
@@ -442,21 +468,45 @@ function EquityChart({ bot, theme, data }) {
     );
   }
 
+  // A/B overlay: scale y over BOTH series, and when a compare curve is
+  // present position BOTH lines by TIME (index spacing would misalign two
+  // feeds whose snapshots don't line up 1:1).
+  const cmp = (compareData || []).filter(d => Number.isFinite(d.equity) && d.time);
   const values = data.map(d => d.equity);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  const allValues = cmp.length ? values.concat(cmp.map(d => d.equity)) : values;
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
   const pad = (max - min) * 0.15 || 1;
   const yMin = min - pad;
   const yMax = max + pad;
   const range = yMax - yMin || 1;
   const stepX = (W - padL - padR) / (data.length - 1);
 
+  const t0 = new Date(data[0].time).getTime();
+  const t1 = new Date(data[data.length - 1].time).getTime();
+  const span = t1 - t0;
+  const useTimeAxis = cmp.length >= 2 && Number.isFinite(t0) && Number.isFinite(t1) && span > 0;
+  const xForTime = ts => {
+    const t = new Date(ts).getTime();
+    return padL + (W - padL - padR) * Math.min(1, Math.max(0, (t - t0) / span));
+  };
+  const yForVal = v => padT + (H - padT - padB) * (1 - (v - yMin) / range);
+
   const points = data.map((d, i) => {
-    const x = padL + i * stepX;
-    const y = padT + (H - padT - padB) * (1 - (d.equity - yMin) / range);
+    const x = useTimeAxis ? xForTime(d.time) : padL + i * stepX;
+    const y = yForVal(d.equity);
     return [x, y, d];
   });
   const linePts = points.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  const cmpPts = useTimeAxis
+    ? cmp
+        .filter(d => {
+          const t = new Date(d.time).getTime();
+          return t >= t0 && t <= t1;
+        })
+        .map(d => `${xForTime(d.time).toFixed(1)},${yForVal(d.equity).toFixed(1)}`)
+        .join(' ')
+    : '';
 
   const lastX = points[points.length - 1][0];
   const lastY = points[points.length - 1][1];
@@ -560,6 +610,20 @@ function EquityChart({ bot, theme, data }) {
         d={`M ${padL},${H - padB} L ${linePts.split(' ').join(' L ')} L ${W - padR},${H - padB} Z`}
         fill={`url(#${gradId})`}
       />
+
+      {/* A/B peer line (dashed, behind the bot's own line) */}
+      {cmpPts && compareTheme && (
+        <polyline
+          fill="none"
+          stroke={compareTheme.primary}
+          strokeWidth="1.75"
+          strokeDasharray="5 4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={cmpPts}
+          opacity="0.85"
+        />
+      )}
 
       {/* line */}
       <polyline
@@ -722,6 +786,10 @@ export default function BotDashboard() {
 
   const equityInterval = equityPeriod === 'intraday' ? INTRADAY_REFRESH : TABLE_REFRESH;
   const { curve: equityCurve } = useBotEquity(bot, equityPeriod, equityInterval);
+  // Live A/B overlay: SPLASH <-> RIPPLE share the equity chart so the two fly
+  // configs (wing/exit) are compared on the same axes with real forward data.
+  const comparePeer = COMPARE_WITH[bot] || null;
+  const { curve: compareCurve } = useBotEquity(comparePeer, equityPeriod, equityInterval);
 
   useEffect(() => {
     let cancelled = false;
@@ -792,6 +860,8 @@ export default function BotDashboard() {
           period={equityPeriod}
           onPeriodChange={setEquityPeriod}
           curve={equityCurve}
+          comparePeer={comparePeer}
+          compareCurve={compareCurve}
         />
 
         {meta.ticker === 'multi' && (
