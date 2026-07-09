@@ -770,3 +770,125 @@ def test_watchlist_marks_only_deepest_signal_would_open(db_session):
     assert sum(1 for r in rows if r["would_open"]) == 1
     # default arg keeps would_open False
     assert ticker_eval_to_row(winner)["would_open"] is False
+
+
+# ---------------------------------------------------------------------------
+# SPLASH v2 (0DTE long butterfly only, 2026-07-09) — the gates that fix the
+# 3-day live bleed: one entry/day, no PT ladder (hold-to-EOD), stale-mark
+# protection (missing leg quotes must never trip PT/SL or strand a position).
+# ---------------------------------------------------------------------------
+
+def test_splash_opens_long_butterfly_with_unreachable_targets(db_session, fake_chain_0dte):
+    import json as _j
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    res = run_scan_cycle(engine=engine, bot="splash",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    with engine.begin() as conn:
+        pos = conn.execute(text(
+            "SELECT * FROM splash_positions WHERE status='OPEN'"
+        )).mappings().first()
+    assert pos["strategy"] == "long_butterfly"
+    assert len(_j.loads(pos["legs"])) == 4
+    # $10k * bp 0.10 = $1000 budget // $75 debit = 13, capped at 4.
+    assert int(pos["contracts"]) == 4
+    # pt_pct 1.0 and sl_pct 3.0 -> both effectively unreachable intraday:
+    # PT = 100% of max profit (225*4=900), SL = 3x the debit (75*4*3=900).
+    assert float(pos["pt_target_pnl"]) == 900.0
+    assert float(pos["sl_target_pnl"]) == 900.0
+
+
+def test_splash_one_entry_per_day_blocks_reentry(db_session, fake_chain_0dte):
+    """After ANY entry today — even one already closed — SPLASH must not
+    re-enter (2026-07-08: three same-day entries churned fresh debits)."""
+    from backend.bots.executor import close_position
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    res = run_scan_cycle(engine=engine, bot="splash",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    close_position(engine, "splash", res["position_id"], close_value=0.50,
+                   close_reason="FORCE", now=datetime(2026, 5, 20, 9, 5, tzinfo=CT))
+    res2 = run_scan_cycle(engine=engine, bot="splash",
+                          now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
+                          chain_provider=provider, event_blackout=False)
+    assert res2["outcome"] == "BLOCKED_ALREADY_OPENED_TODAY"
+
+
+def test_splash_pt_ladder_disabled_holds_through_morning_tier(db_session, fake_chain_0dte):
+    """pt_ladder=False: a gain above the 30% morning-ladder tier but below the
+    static 100% PT must NOT close — SPLASH's validated exit is hold-to-EOD."""
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    res = run_scan_cycle(engine=engine, bot="splash",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    # Fly value 1.65 -> pnl = (1.65 - 0.75) * 4 * 100 = +$360 = 40% of the
+    # $900 max profit. The ladder (30% tier = $270) would take profit here;
+    # the static PT ($900) must hold.
+    provider.leg_mid_overrides = [1.65, 0.0, 0.0, 0.0]
+    res2 = run_scan_cycle(engine=engine, bot="splash",
+                          now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
+                          chain_provider=provider, event_blackout=False)
+    assert res2["outcome"] == "MONITOR"
+    with engine.begin() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) c FROM splash_positions WHERE status='OPEN'"
+        )).mappings().first()["c"]
+    assert n == 1
+
+
+def test_stale_leg_quotes_skip_pt_sl_and_keep_last_mark(db_session, fake_chain_0dte):
+    """A missing leg quote (None mid) must not produce a fresh mark — treating
+    it as $0.00 is what marked debit combos negative and tripped phantom SLs
+    (2026-07-06..08). The position stays open on its last stored mark."""
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    res = run_scan_cycle(engine=engine, bot="splash",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    with engine.begin() as conn:
+        before = conn.execute(text(
+            "SELECT mtm_value, mtm_pnl FROM splash_positions WHERE status='OPEN'"
+        )).mappings().first()
+    # Lower wing quote goes missing; naive math would mark the fly deeply
+    # negative (0 - 2*1.60 shorts dominate).
+    provider.leg_mid_overrides = [None, 1.60, 1.60, 0.70]
+    res2 = run_scan_cycle(engine=engine, bot="splash",
+                          now_ct=datetime(2026, 5, 20, 9, 30, tzinfo=CT),
+                          chain_provider=provider, event_blackout=False)
+    assert res2["outcome"] == "MONITOR"
+    with engine.begin() as conn:
+        after = conn.execute(text(
+            "SELECT mtm_value, mtm_pnl, status FROM splash_positions"
+        )).mappings().first()
+    assert after["status"] == "OPEN"
+    assert float(after["mtm_value"] or 0) == float(before["mtm_value"] or 0)
+    assert float(after["mtm_pnl"] or 0) == float(before["mtm_pnl"] or 0)
+
+
+def test_stale_leg_quotes_still_close_at_eod_on_last_mark(db_session, fake_chain_0dte):
+    """Stale marks disarm PT/SL but NEVER the EOD close — a 0DTE position must
+    not be stranded past the close just because a quote went missing."""
+    engine = db_session.bind
+    provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
+    res = run_scan_cycle(engine=engine, bot="splash",
+                         now_ct=datetime(2026, 5, 20, 9, 0, tzinfo=CT),
+                         chain_provider=provider, event_blackout=False)
+    assert res["outcome"] == "TRADE"
+    provider.leg_mid_overrides = [None, 1.60, 1.60, 0.70]
+    res2 = run_scan_cycle(engine=engine, bot="splash",
+                          now_ct=datetime(2026, 5, 20, 14, 50, tzinfo=CT),
+                          chain_provider=provider, event_blackout=False)
+    assert res2["outcome"] == "TRADE"
+    assert res2["reason"] == "CLOSE_EOD"
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            "SELECT close_reason FROM splash_closed_trades"
+        )).mappings().first()
+    assert row["close_reason"] == "EOD"

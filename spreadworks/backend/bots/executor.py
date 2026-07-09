@@ -17,6 +17,12 @@ from sqlalchemy.engine import Engine
 from .db import bot_table, load_config
 from .strategies import CREDIT_STRATEGIES
 
+# Debit structures whose liquidation value is bounded below by ZERO (a long
+# fly is worth 0..wing at any price; the pin+drift combo is the fly plus two
+# long calendars, each also >= 0). A computed negative unwind value for these
+# can only be quote noise — clamped in compute_mtm.
+NET_LONG_DEBIT_STRATEGIES = frozenset({"long_butterfly", "pin_drift_combo"})
+
 logger = logging.getLogger("spreadworks.bots.executor")
 
 
@@ -194,6 +200,13 @@ def compute_mtm(
         # For debit strats, mtm_value above is signed as "cost to buy in",
         # but for DC/DD we want "current credit to unwind" — flip sign:
         mtm_value = -mtm_value
+        if strategy in NET_LONG_DEBIT_STRATEGIES and mtm_value < 0.0:
+            # These structures can't be worth less than zero; a negative
+            # unwind value is stale/one-sided leg quotes. Floor at 0 so mark
+            # noise can never book a loss deeper than the debit (2026-07-06..08:
+            # negative combo marks closed SPLASH/SURGE trades at impossible
+            # prices, e.g. -$175.50 realized on a $165 max-loss position).
+            mtm_value = 0.0
         mtm_pnl = (mtm_value - entry_price) * contracts * 100.0
     return round(mtm_value, 4), round(mtm_pnl, 2)
 

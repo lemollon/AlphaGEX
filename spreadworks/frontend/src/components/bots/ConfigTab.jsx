@@ -38,7 +38,7 @@ function buildSections(bot, cfg) {
     strategyRows.push({ label: 'Back DTE', value: cfg.back_dte != null ? String(cfg.back_dte) : '—' });
   }
   if (meta.strategy === 'pin_drift_combo') {
-    // SURGE / SPLASH: dollars either side of the body where the calendars sit.
+    // SURGE: dollars either side of the body where the calendars sit.
     strategyRows.push({
       label: 'Drift Offset',
       value: cfg.drift_offset != null ? `±$${Number(cfg.drift_offset)}` : '—',
@@ -121,7 +121,7 @@ const BASE_EDIT_SECTIONS = [
   ]},
 ];
 
-// Per-bot edit sections: pin_drift_combo (SURGE / SPLASH) also exposes the
+// Per-bot edit sections: pin_drift_combo (SURGE) also exposes the
 // calendar drift distance, mirroring the read-only Strategy card.
 function editSections(bot) {
   const meta = BOT_REGISTRY[bot] || {};
