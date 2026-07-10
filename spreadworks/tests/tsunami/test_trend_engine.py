@@ -8,15 +8,53 @@ from unittest.mock import patch
 from backend.bots.tsunami import trend_engine
 
 
-def _hist(closes: list[float]) -> list[dict]:
-    return [{"date": f"2026-01-{i+1:02d}", "close": c} for i, c in enumerate(closes)]
+def _closes(closes: list[float]) -> list[float]:
+    return list(closes)
+
+
+class AdjustedCloses(unittest.TestCase):
+    """Regression for the 2026-07 NVDL phantom signal: history must come
+    from a split-adjusted source, exclude today's partial bar (the live
+    quote is appended by the caller), and fail safe to [] on any error."""
+
+    def _fake_yf(self, index_dates, closes):
+        import sys
+        import types
+        import pandas as pd
+        hist = pd.DataFrame({"Close": closes}, index=pd.to_datetime(index_dates))
+        fake = types.ModuleType("yfinance")
+        fake.Ticker = lambda _t: types.SimpleNamespace(
+            history=lambda **_kw: hist)
+        return patch.dict(sys.modules, {"yfinance": fake})
+
+    def test_excludes_todays_partial_bar_and_bad_closes(self):
+        from datetime import date, timedelta
+        today = date(2026, 7, 9)
+        dates = [today - timedelta(days=3), today - timedelta(days=2),
+                 today - timedelta(days=1), today]
+        with self._fake_yf(dates, [10.0, 0.0, 12.0, 99.0]),              patch.object(trend_engine, "_today_market_date", return_value=today):
+            out = trend_engine._adjusted_closes("NVDL")
+        # today's 99.0 partial bar dropped, zero close dropped
+        self.assertEqual(out, [10.0, 12.0])
+
+    def test_fetch_failure_returns_empty(self):
+        import sys
+        import types
+        fake = types.ModuleType("yfinance")
+
+        def _boom(_t):
+            raise RuntimeError("rate limited")
+        fake.Ticker = _boom
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            out = trend_engine._adjusted_closes("NVDL")
+        self.assertEqual(out, [])
 
 
 class SignalWeight(unittest.TestCase):
     def test_trend_off_below_ma_returns_zero(self):
         closes = [100.0] * 80  # flat history
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": 90.0}):  # below the 100 MA
             w, diag = trend_engine._signal_weight("TSLL")
@@ -30,8 +68,8 @@ class SignalWeight(unittest.TestCase):
     def test_trend_on_returns_vol_scaled_weight(self):
         # gentle uptrend: last > MA, RV small but positive
         closes = [100.0 * (1.002 ** i) for i in range(80)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
             w, diag = trend_engine._signal_weight("TSLL")
@@ -47,29 +85,51 @@ class SignalWeight(unittest.TestCase):
         # 0.15) must come out to exactly 0.15/0.40 of TSLL's (default
         # 0.40) weight, all else equal.
         closes = [100.0 * (1.002 ** i) for i in range(80)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(closes)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": closes[-1] * 1.01}):
             w_default, _ = trend_engine._signal_weight("TSLL")
             w_override, _ = trend_engine._signal_weight("TQQQ")
-        self.assertAlmostEqual(w_override, w_default * (0.15 / 0.40))
+        self.assertAlmostEqual(
+            w_override,
+            w_default * (trend_engine.SLICE_OVERRIDE["TQQQ"] / trend_engine.SLICE))
 
     def test_high_vol_scales_down(self):
         # violent series -> RV >> target -> weight well under SLICE
         closes = [100.0 + (8.0 if i % 2 else -8.0) for i in range(80)]
         base = [100.0 + i * 0.5 for i in range(80)]  # keep last above MA
         mixed = [b + (4.0 if i % 2 else -4.0) for i, b in enumerate(base)]
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
-                          return_value=_hist(mixed)), \
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(mixed)), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value={"last": mixed[-1] + 10}):
             w, diag = trend_engine._signal_weight("TSLL")
         self.assertIsNotNone(w)
         self.assertLess(w, trend_engine.SLICE)
 
+    def test_unadjusted_split_jump_returns_no_signal(self):
+        # SMST 2024-11 regression: a >100% bar-to-bar jump (unadjusted
+        # reverse split) must fail safe to no-signal, not a phantom trend.
+        closes = [40.0] * 60 + [160.0] * 20  # 4x jump mid-history
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)),              patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": 165.0}):
+            w, diag = trend_engine._signal_weight("SMST")
+        self.assertIsNone(w)
+        self.assertIsNone(diag["trending"])
+
+    def test_quote_vs_history_split_mismatch_returns_no_signal(self):
+        # Split effective today: history pre-split, live quote post-split.
+        closes = [10.0] * 80
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)),              patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": 40.0}):  # 4x reverse split
+            w, diag = trend_engine._signal_weight("NVDL")
+        self.assertIsNone(w)
+
     def test_no_data_returns_none(self):
-        with patch.object(trend_engine.tradier_client, "get_daily_history",
+        with patch.object(trend_engine, "_adjusted_closes",
                           return_value=[]), \
              patch.object(trend_engine.tradier_client, "get_quote",
                           return_value=None):
@@ -212,7 +272,10 @@ class Config(unittest.TestCase):
     def test_backtested_parameters(self):
         # These are the values the 2026-07-03 backtest validated. Changing
         # them invalidates the backtest — fail loudly.
-        self.assertEqual(trend_engine.SLICE, 0.40)
+        # SLICE recalibrated 0.40 -> 0.30 with the 2026-07-09 fractional-
+        # share switch (whole-share rounding was the implicit deployment
+        # governor; fractional at 0.40 over-deploys -- see engine comment).
+        self.assertEqual(trend_engine.SLICE, 0.30)
         self.assertEqual(trend_engine.VOL_TGT, 0.35)
         self.assertEqual(trend_engine.MA_N, 50)
         self.assertEqual(trend_engine.RV_N, 20)
@@ -225,10 +288,11 @@ class Config(unittest.TestCase):
     def test_index_sleeve_slice_override(self):
         # Calibrated 2026-07-07 (dev/ironforge-data/tools/tsunami_bt/
         # run_live17_fix_bt.py sweep): these four are correlated substitutes
-        # for beta already held via the single-name longs, so they run at
-        # a discounted slice instead of the full 0.40.
+        # for beta already held via the single-name longs, so they run at a
+        # discounted slice -- 0.375x the global default, rescaled with the
+        # 2026-07-09 fractional switch (0.30 * 0.375 = 0.1125).
         for t in ("SPXL", "TQQQ", "SPXS", "SQQQ"):
-            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.15)
+            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.1125)
         # everything else still uses the global default (no entry here)
         for t in ("TSLL", "AMDL", "NVDL", "CONL", "MSTU", "BITX", "ETHU",
                   "IONX", "UXRP", "SBIT", "ETHD", "SMST"):

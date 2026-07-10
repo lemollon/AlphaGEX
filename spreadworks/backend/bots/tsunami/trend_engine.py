@@ -6,8 +6,9 @@ tracking band narrower than the strike grid), and the gamma-wall stock
 signal was beta (excess t=0.51). What survived train/holdout discipline:
 
     Hold a 2x LETF while it closes above its own 50-day MA;
-    weight = SLICE * min(2, 0.35 / 20d realized vol); whole shares;
-    rebalance only when target drifts >25% from held; MA break -> cash.
+    weight = SLICE * min(2, 0.35 / 20d realized vol); fractional shares
+    since 2026-07-09 (see SLICE comment -- slice recalibrated 0.40->0.30);
+    rebalance only when target drifts >REBAL_BAND from held; MA break -> cash.
 
 $500 start, slice 0.40: CAGR 29.4%, Sharpe 1.15, MaxDD -25.7%, every year
 positive (2022-08..2026-07, real LETF closes, decay priced in).
@@ -31,7 +32,12 @@ laggy -- dials down after the drawdown, then underweights the recovery);
 do not add one without re-testing on top of the calibrated slice.
 
 Paper-only. Daily rebalance near the close (scheduler: Mon-Fri 14:45 CT).
-Data: Tradier daily history + live quote. State: tsunami_trend_book /
+Data: yfinance split-adjusted daily history + Tradier live quote (2026-07-09:
+Tradier's daily history is NOT split-adjusted -- NVDL's reverse split made
+the live price read 2x its "MA50" with 384% "vol", a phantom trending
+signal; only the whole-share rounding kept it from being bought. Crushed
+LETFs reverse-split routinely, so history MUST be adjusted). State:
+tsunami_trend_book /
 tsunami_trend_trades / tsunami_trend_cash; equity into
 tsunami_equity_snapshots (scope PLATFORM). Discord on every fill.
 """
@@ -80,14 +86,22 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     ("NDX-", "SQQQ"),
 ]
 START_CASH = 500.0
-SLICE = 0.40
+# 2026-07-09 fractional-share switch (Leron): whole shares on a $500 book
+# could not express 6 of 7 trending signals (SPXL $275/sh vs a ~$60 target
+# -- "position size rounds to 0 shares"). Fractional shares fix that, but
+# at the old SLICE=0.40 they over-deploy (~70% avg gross vs ~51%) and cost
+# ~0.4 Sharpe. Slice sweep {0.40,0.30,0.25,0.20,0.15} on walk-forward/
+# recent/full windows: 0.30 is the calibrated match (Sharpe 1.23/1.47/1.27
+# vs whole-share's 1.43/1.67/1.44, similar MaxDD) while expressing every
+# signal. Index sleeve keeps the same 0.375 ratio (0.30*0.375=0.1125).
+SLICE = 0.30
 # Index-sleeve names are correlated substitutes for beta already held via
 # the single-name longs -- full SLICE double-counts that exposure with no
 # diversification credit (see 2026-07-07 post-mortem above). 0.15 was
 # picked by sweep over {0.10, 0.15, 0.20, 0.25, 0.30, 0.40} on the
 # walk-forward + recent windows; 0.15 matched or beat OLD12's Sharpe/
 # Calmar in both.
-SLICE_OVERRIDE = {"SPXL": 0.15, "TQQQ": 0.15, "SPXS": 0.15, "SQQQ": 0.15}
+SLICE_OVERRIDE = {"SPXL": 0.1125, "TQQQ": 0.1125, "SPXS": 0.1125, "SQQQ": 0.1125}
 VOL_TGT = 0.35
 W_CAP = 2.0
 MA_N = 50
@@ -103,11 +117,12 @@ RV_N = 20
 # by cutting whipsaw-driven rebalance churn, not by taking more risk.
 REBAL_BAND = 0.35
 SLIP = 0.0002  # paper-fill slippage per side
+MIN_ORDER_NOTIONAL = 1.0  # skip dust orders below $1 (broker fractional minimum)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS tsunami_trend_book (
     letf        VARCHAR(10) PRIMARY KEY,
-    shares      INTEGER      NOT NULL DEFAULT 0,
+    shares      NUMERIC(16,6) NOT NULL DEFAULT 0,
     avg_cost    DECIMAL(12,4) NOT NULL DEFAULT 0,
     updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -116,7 +131,7 @@ CREATE TABLE IF NOT EXISTS tsunami_trend_trades (
     ts          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     letf        VARCHAR(10) NOT NULL,
     side        VARCHAR(4)  NOT NULL CHECK (side IN ('BUY','SELL')),
-    shares      INTEGER     NOT NULL,
+    shares      NUMERIC(16,6) NOT NULL,
     price       DECIMAL(12,4) NOT NULL,
     reason      TEXT        NOT NULL DEFAULT '',
     realized_pnl DECIMAL(12,4)
@@ -140,8 +155,8 @@ CREATE TABLE IF NOT EXISTS tsunami_trend_signals (
     rv20          DECIMAL(8,4),
     trending      BOOLEAN,
     target_weight DECIMAL(8,4),
-    target_shares INTEGER,
-    held_shares   INTEGER,
+    target_shares NUMERIC(16,6),
+    held_shares   NUMERIC(16,6),
     action        VARCHAR(12) NOT NULL,
     reason        TEXT NOT NULL DEFAULT ''
 );
@@ -149,6 +164,13 @@ CREATE INDEX IF NOT EXISTS idx_tsunami_trend_signals_letf_ts
     ON tsunami_trend_signals (letf, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_tsunami_trend_signals_ts
     ON tsunami_trend_signals (ts DESC);
+-- 2026-07-09 fractional-share migration: widen INTEGER share columns on
+-- pre-existing installs. int -> numeric is a safe widening cast; re-running
+-- is a no-op type-wise (PostgreSQL just rewrites the small paper tables).
+ALTER TABLE tsunami_trend_book    ALTER COLUMN shares        TYPE NUMERIC(16,6);
+ALTER TABLE tsunami_trend_trades  ALTER COLUMN shares        TYPE NUMERIC(16,6);
+ALTER TABLE tsunami_trend_signals ALTER COLUMN target_shares TYPE NUMERIC(16,6);
+ALTER TABLE tsunami_trend_signals ALTER COLUMN held_shares   TYPE NUMERIC(16,6);
 """
 
 
@@ -176,6 +198,39 @@ def _diag(price=None, ma50=None, rv20=None, trending=None) -> dict:
     return {"price": price, "ma50": ma50, "rv20": rv20, "trending": trending}
 
 
+def _today_market_date():
+    """Today's date on the exchange clock (America/New_York) — yfinance bar
+    timestamps are exchange-tz, so the partial-bar cutoff must use the same
+    calendar or evening runs (past midnight UTC) stop excluding today."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
+def _adjusted_closes(letf: str) -> list[float]:
+    """Split/dividend-adjusted daily closes from yfinance, oldest first,
+    excluding any partial bar for today (the caller appends the live
+    Tradier quote as today's price). Tradier's daily history is raw --
+    unadjusted for splits -- so an MA/vol computed across a reverse split
+    is garbage (NVDL 2026-07: price read 2x its "MA50" => phantom trend
+    signal). Returns [] on any failure; the caller fail-safes to
+    no-signal and leaves the book untouched."""
+    try:
+        import yfinance as yf  # type: ignore
+    except ImportError as exc:
+        logger.warning("[tsunami.trend] yfinance unavailable: %r", exc)
+        return []
+    try:
+        hist = yf.Ticker(letf).history(period="1y", auto_adjust=True, actions=False)
+        if hist is None or hist.empty:
+            return []
+        today = _today_market_date()
+        return [float(c) for d, c in zip(hist.index, hist["Close"])
+                if d.date() < today and c and c > 0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[tsunami.trend] yfinance history %s failed: %r", letf, exc)
+        return []
+
+
 def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     """Target weight for one LETF from its own daily closes + live quote.
 
@@ -184,16 +239,26 @@ def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     exit). diag carries whatever was computed before any early return --
     price/ma50/rv20/trending -- so callers can log a "why" even on a skip,
     not just on a fill. Any field diag doesn't reach yet is None."""
-    hist = tradier_client.get_daily_history(letf, days=130)
-    if len(hist) < MA_N + 1:
-        logger.warning("[tsunami.trend] %s: only %d bars — no signal", letf, len(hist))
+    closes = _adjusted_closes(letf)
+    if len(closes) < MA_N + 1:
+        logger.warning("[tsunami.trend] %s: only %d bars — no signal", letf, len(closes))
         return None, _diag()
-    closes = [float(h["close"]) for h in hist if h.get("close")]
     quote = tradier_client.get_quote(letf)
     last = float((quote or {}).get("last") or (quote or {}).get("close") or 0)
     if last <= 0:
         return None, _diag()
     series = closes[-(MA_N + RV_N):] + [last]
+    # Unadjusted-split tripwire: a 2x LETF cannot legitimately move >100%
+    # bar-to-bar (underlying would need a >50% day). SMST's 2024-11 reverse
+    # split is missing even from Yahoo's record (+272% phantom day), so no
+    # single data source is trusted blindly -- a jump this size means the
+    # history and/or quote straddle an unadjusted split. Fail safe.
+    for i in range(1, len(series)):
+        if series[i - 1] > 0 and abs(series[i] / series[i - 1] - 1) > 1.0:
+            logger.warning("[tsunami.trend] %s: >100%% bar-to-bar jump in signal "
+                           "window (%.2f -> %.2f) — suspected unadjusted split, no signal",
+                           letf, series[i - 1], series[i])
+            return None, _diag()
     ma = sum(series[-MA_N:]) / MA_N
     if last <= ma:
         return 0.0, _diag(price=last, ma50=ma, trending=False)
@@ -251,7 +316,7 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
             row = cur.fetchone()
             cash = float(row[0]) if row else START_CASH
             cur.execute("SELECT letf, shares, avg_cost FROM tsunami_trend_book")
-            book = {r[0]: {"shares": int(r[1]), "avg_cost": float(r[2])} for r in cur.fetchall()}
+            book = {r[0]: {"shares": float(r[1]), "avg_cost": float(r[2])} for r in cur.fetchall()}
 
         quotes: dict[str, float] = {}
         equity = cash
@@ -282,9 +347,11 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
                     reason = "no signal"
                 _log_signal(letf, diag, None, 0, held, "NO_SIGNAL", reason)
                 continue
-            target = int((w * equity) // px)
+            target = round((w * equity) / px, 4)
+            if target * px < MIN_ORDER_NOTIONAL:
+                target = 0.0
             fill = None
-            if held == 0 and target >= 1:
+            if held == 0 and target > 0:
                 cost = target * px * (1 + SLIP)
                 if cost <= cash:
                     cash -= cost
@@ -324,19 +391,19 @@ def run_rebalance(now: Optional[datetime] = None) -> dict:
                         " ON CONFLICT (letf) DO UPDATE SET shares=EXCLUDED.shares,"
                         " avg_cost=EXCLUDED.avg_cost, updated_at=NOW()",
                         (letf, book[letf]["shares"], book[letf]["avg_cost"]))
-                summary["fills"].append(f"{letf} {side} {n}@{fpx:.2f}")
+                summary["fills"].append(f"{letf} {side} {n:g}@{fpx:.2f}")
                 _log_signal(letf, diag, w, target, held, side, reason)
                 try:
                     tsunami_discord.post_embed(
                         title=f"🌊 TSUNAMI-TREND paper {side}",
-                        description=(f"{side} {n} {letf} @ ${fpx:.2f} — {reason}"
+                        description=(f"{side} {n:g} {letf} @ ${fpx:.2f} — {reason}"
                                      + (f" (realized ${pnl:+.2f})" if pnl is not None else "")),
                     )
                 except Exception:  # noqa: BLE001
                     pass
             else:
                 if held == 0 and target == 0:
-                    action, reason = "FLAT", ("not trending" if w == 0.0 else "position size rounds to 0 shares")
+                    action, reason = "FLAT", ("not trending" if w == 0.0 else "target below $1 minimum order")
                 elif held > 0 and target == held:
                     action, reason = "HOLD", "at target size"
                 else:
@@ -394,7 +461,7 @@ def mark_intraday_equity() -> Optional[float]:
             q = tradier_client.get_quote(letf)
             px = float((q or {}).get("last") or (q or {}).get("close") or 0)
             if px > 0:
-                equity += int(shares) * px
+                equity += float(shares) * px
 
         with conn.cursor() as cur:
             cur.execute(
