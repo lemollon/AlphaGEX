@@ -798,9 +798,9 @@ export default function StatusCard({
               {bot === 'spark' ? (
                 <span
                   className="text-xs font-mono text-gray-400"
-                  title="SPARK is hard-capped at 15% of buying power in code (risk control for swing / no-stop). Config values above 15% are ignored."
+                  title="SPARK is hard-capped at 30% of buying power in code (raised from 15% on 2026-07-08 per operator decision; risk control for swing / no-stop). Config values above 30% are ignored."
                 >
-                  ≤15% BP (capped)
+                  ≤30% BP (capped)
                 </span>
               ) : (
                 <button

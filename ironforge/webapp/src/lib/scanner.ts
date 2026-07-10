@@ -711,9 +711,10 @@ function hasWorkingEntryOrder(
  * fill ≤ that price (i.e., ≥ ptFraction profit) is accepted. The tier value is
  * the *guaranteed minimum* return, not an exact target — better fills are kept.
  *
- * SPARK   (1DTE, base=0.30): MORNING 30% (until 12:00 PM CT) → MIDDAY 20% → AFTERNOON 15%
- *   Extended MORNING window keeps the close limit aggressive (30% of credit)
- *   for longer to avoid stuck unfilled limits when the tier slides down.
+ * SPARK / KINDLE (SPARK-strategy): MORNING 40% (until 12:00 PM CT) → MIDDAY 35% → AFTERNOON 30%
+ *   (40/35/30 since 2026-07-02 — see the isSparkStrategy branch below.)
+ *   Extended MORNING window keeps the close limit aggressive for longer to
+ *   avoid stuck unfilled limits when the tier slides down.
  * FLAME   (base=0.30):       MORNING 30% (until 10:30 AM CT) → MIDDAY 20% → AFTERNOON 15%
  * INFERNO (0DTE):            HOLD_TO_EOD — no intraday PT.
  *   Tier function removed for INFERNO on 2026-05-12 (second iteration).

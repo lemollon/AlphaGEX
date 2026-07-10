@@ -272,3 +272,63 @@ describe('formatCloseReason', () => {
     expect(result.text).toBe('some custom reason')
   })
 })
+
+/* ================================================================== */
+/*  SPARK-strategy bots (SPARK/KINDLE) — 40/35/30 tier schedule        */
+/* ================================================================== */
+
+describe('SPARK-strategy tiers (spark/kindle)', () => {
+  it('returns MORNING 40% before 12:00 PM for spark', () => {
+    const d = new Date('2026-03-16T11:00:00')
+    const tier = getCurrentPTTier(d, 'spark')
+    expect(tier.pct).toBe(0.40)
+    expect(tier.label).toBe('Morning')
+  })
+
+  it('returns MIDDAY 35% between 12:00 and 1:00 PM for spark', () => {
+    const d = new Date('2026-03-16T12:30:00')
+    const tier = getCurrentPTTier(d, 'spark')
+    expect(tier.pct).toBe(0.35)
+    expect(tier.label).toBe('Midday')
+  })
+
+  it('returns AFTERNOON 30% at 1:00 PM for spark', () => {
+    const d = new Date('2026-03-16T13:00:00')
+    const tier = getCurrentPTTier(d, 'spark')
+    expect(tier.pct).toBe(0.30)
+    expect(tier.label).toBe('Afternoon')
+  })
+
+  it('kindle shares the spark schedule (morning ends 12:00 PM, 40/35/30)', () => {
+    expect(getCurrentPTTier(new Date('2026-03-16T11:00:00'), 'kindle').pct).toBe(0.40)
+    expect(getCurrentPTTier(new Date('2026-03-16T12:30:00'), 'kindle').pct).toBe(0.35)
+    expect(getCurrentPTTier(new Date('2026-03-16T13:30:00'), 'kindle').pct).toBe(0.30)
+  })
+
+  it('flame keeps the legacy 30/20/15 schedule', () => {
+    expect(getCurrentPTTier(new Date('2026-03-16T09:00:00'), 'flame').pct).toBe(0.30)
+    expect(getCurrentPTTier(new Date('2026-03-16T11:00:00'), 'flame').pct).toBe(0.20)
+    expect(getCurrentPTTier(new Date('2026-03-16T13:30:00'), 'flame').pct).toBe(0.15)
+  })
+
+  it('secondsUntilNextTier uses spark tier labels', () => {
+    const morning = secondsUntilNextTier(new Date('2026-03-16T11:00:00'), 'spark')
+    expect(morning!.nextLabel).toBe('35% Midday')
+    const midday = secondsUntilNextTier(new Date('2026-03-16T12:30:00'), 'spark')
+    expect(midday!.nextLabel).toBe('30% Afternoon')
+  })
+
+  it('formatCloseReason shows 40/35/30 for spark', () => {
+    expect(formatCloseReason('profit_target_morning', 'spark').text).toContain('40%')
+    expect(formatCloseReason('profit_target_midday', 'spark').text).toContain('35%')
+    expect(formatCloseReason('profit_target_afternoon', 'spark').text).toContain('30%')
+  })
+
+  it('formatCloseReason matches uppercase tier labels from the scanner', () => {
+    // scanner writes close_reason as profit_target_${tierLabel} with
+    // tierLabel uppercase, e.g. 'profit_target_MORNING'
+    const result = formatCloseReason('profit_target_MORNING', 'spark')
+    expect(result.text).toContain('Morning')
+    expect(result.text).toContain('40%')
+  })
+})
