@@ -15,11 +15,30 @@ class IsConfigured(unittest.TestCase):
     def test_unset_returns_false(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DISCORD_WEBHOOK_URL", None)
+            os.environ.pop("TSUNAMI_DISCORD_WEBHOOK_URL", None)
             self.assertFalse(discord.is_configured())
 
     def test_set_returns_true(self):
         with patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/x/y"}):
             self.assertTrue(discord.is_configured())
+
+    def test_dedicated_tsunami_webhook_wins_over_shared(self):
+        # 2026-07-10: TSUNAMI posts to its own channel when the dedicated
+        # env var is set; the shared platform webhook is only the fallback.
+        with patch.dict(os.environ, {
+            "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/shared/s",
+            "TSUNAMI_DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/tsunami/t",
+        }):
+            self.assertEqual(discord._webhook_from_env(),
+                             "https://discord.com/api/webhooks/tsunami/t")
+
+    def test_shared_webhook_is_fallback(self):
+        with patch.dict(os.environ, {
+            "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/shared/s",
+        }, clear=False):
+            os.environ.pop("TSUNAMI_DISCORD_WEBHOOK_URL", None)
+            self.assertEqual(discord._webhook_from_env(),
+                             "https://discord.com/api/webhooks/shared/s")
 
     def test_empty_string_returns_false(self):
         with patch.dict(os.environ, {"DISCORD_WEBHOOK_URL": "   "}):
@@ -30,6 +49,7 @@ class PostEmbedSafetyFallbacks(unittest.TestCase):
     def test_no_webhook_returns_false(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("DISCORD_WEBHOOK_URL", None)
+            os.environ.pop("TSUNAMI_DISCORD_WEBHOOK_URL", None)
             ok = discord.post_embed("title", "body")
         self.assertFalse(ok)
 
