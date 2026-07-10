@@ -69,6 +69,15 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     # -$16 in its short walk-forward sample, no inverse exists). The MA50
     # gate is the safety net: it can't be bought unless it's trending.
     ("XRP", "UXRP"),
+    # SpaceX 2x pair, added 2026-07-10 per Leron (long + inverse, same
+    # structure as BITX/SBIT). SPCX IPO'd 2026-06-12 -- both funds have
+    # ~18 bars at add time, so they sit NO_SIGNAL ("insufficient price
+    # history") until ~2026-08-26 when 51 bars exist, then the MA50 gate
+    # takes over (UXRP thin-history precedent). No backtest possible yet;
+    # full slice like the other single-name pairs -- the vol-target sizing
+    # (0.35/RV) self-limits weight on a name this volatile.
+    ("SPCX", "SPCF"),
+    ("SPCX-", "SSPC"),
     # 2x quantum LETFs, added 2026-07-10 per Leron thesis ("quantum stocks
     # are going to do well"). Backtest (run_quantum_add_bt.py): 0.82-0.95
     # pairwise correlation with each other and 0.76-0.91 with IONX -- five
