@@ -29,10 +29,10 @@ class AdjustedCloses(unittest.TestCase):
 
     def test_excludes_todays_partial_bar_and_bad_closes(self):
         from datetime import date, timedelta
-        today = date.today()
+        today = date(2026, 7, 9)
         dates = [today - timedelta(days=3), today - timedelta(days=2),
                  today - timedelta(days=1), today]
-        with self._fake_yf(dates, [10.0, 0.0, 12.0, 99.0]):
+        with self._fake_yf(dates, [10.0, 0.0, 12.0, 99.0]),              patch.object(trend_engine, "_today_market_date", return_value=today):
             out = trend_engine._adjusted_closes("NVDL")
         # today's 99.0 partial bar dropped, zero close dropped
         self.assertEqual(out, [10.0, 12.0])
@@ -105,6 +105,26 @@ class SignalWeight(unittest.TestCase):
             w, diag = trend_engine._signal_weight("TSLL")
         self.assertIsNotNone(w)
         self.assertLess(w, trend_engine.SLICE)
+
+    def test_unadjusted_split_jump_returns_no_signal(self):
+        # SMST 2024-11 regression: a >100% bar-to-bar jump (unadjusted
+        # reverse split) must fail safe to no-signal, not a phantom trend.
+        closes = [40.0] * 60 + [160.0] * 20  # 4x jump mid-history
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)),              patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": 165.0}):
+            w, diag = trend_engine._signal_weight("SMST")
+        self.assertIsNone(w)
+        self.assertIsNone(diag["trending"])
+
+    def test_quote_vs_history_split_mismatch_returns_no_signal(self):
+        # Split effective today: history pre-split, live quote post-split.
+        closes = [10.0] * 80
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)),              patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": 40.0}):  # 4x reverse split
+            w, diag = trend_engine._signal_weight("NVDL")
+        self.assertIsNone(w)
 
     def test_no_data_returns_none(self):
         with patch.object(trend_engine, "_adjusted_closes",

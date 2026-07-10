@@ -181,6 +181,14 @@ def _diag(price=None, ma50=None, rv20=None, trending=None) -> dict:
     return {"price": price, "ma50": ma50, "rv20": rv20, "trending": trending}
 
 
+def _today_market_date():
+    """Today's date on the exchange clock (America/New_York) — yfinance bar
+    timestamps are exchange-tz, so the partial-bar cutoff must use the same
+    calendar or evening runs (past midnight UTC) stop excluding today."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
 def _adjusted_closes(letf: str) -> list[float]:
     """Split/dividend-adjusted daily closes from yfinance, oldest first,
     excluding any partial bar for today (the caller appends the live
@@ -198,7 +206,7 @@ def _adjusted_closes(letf: str) -> list[float]:
         hist = yf.Ticker(letf).history(period="1y", auto_adjust=True, actions=False)
         if hist is None or hist.empty:
             return []
-        today = datetime.now(timezone.utc).date()
+        today = _today_market_date()
         return [float(c) for d, c in zip(hist.index, hist["Close"])
                 if d.date() < today and c and c > 0]
     except Exception as exc:  # noqa: BLE001
@@ -223,6 +231,17 @@ def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     if last <= 0:
         return None, _diag()
     series = closes[-(MA_N + RV_N):] + [last]
+    # Unadjusted-split tripwire: a 2x LETF cannot legitimately move >100%
+    # bar-to-bar (underlying would need a >50% day). SMST's 2024-11 reverse
+    # split is missing even from Yahoo's record (+272% phantom day), so no
+    # single data source is trusted blindly -- a jump this size means the
+    # history and/or quote straddle an unadjusted split. Fail safe.
+    for i in range(1, len(series)):
+        if series[i - 1] > 0 and abs(series[i] / series[i - 1] - 1) > 1.0:
+            logger.warning("[tsunami.trend] %s: >100%% bar-to-bar jump in signal "
+                           "window (%.2f -> %.2f) — suspected unadjusted split, no signal",
+                           letf, series[i - 1], series[i])
+            return None, _diag()
     ma = sum(series[-MA_N:]) / MA_N
     if last <= ma:
         return 0.0, _diag(price=last, ma50=ma, trending=False)
