@@ -293,6 +293,7 @@ class Config(unittest.TestCase):
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
                           "BITX", "ETHU", "IONX", "UXRP",
+                          "SPCF", "SSPC",
                           "QPUX", "RGTU", "QUBX", "QBTX",
                           "SPXL", "TQQQ",
                           "SBIT", "ETHD", "SMST", "SPXS", "SQQQ"])
@@ -311,7 +312,7 @@ class Config(unittest.TestCase):
             self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.15)
         # everything else still uses the global default (no entry here)
         for t in ("TSLL", "AMDL", "NVDL", "CONL", "MSTU", "BITX", "ETHU",
-                  "UXRP", "SBIT", "ETHD", "SMST"):
+                  "UXRP", "SBIT", "ETHD", "SMST", "SPCF", "SSPC"):
             self.assertNotIn(t, trend_engine.SLICE_OVERRIDE)
 
     def test_uvxy_dropped(self):
