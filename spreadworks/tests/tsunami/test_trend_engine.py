@@ -91,7 +91,9 @@ class SignalWeight(unittest.TestCase):
                           return_value={"last": closes[-1] * 1.01}):
             w_default, _ = trend_engine._signal_weight("TSLL")
             w_override, _ = trend_engine._signal_weight("TQQQ")
-        self.assertAlmostEqual(w_override, w_default * (0.15 / 0.40))
+        self.assertAlmostEqual(
+            w_override,
+            w_default * (trend_engine.SLICE_OVERRIDE["TQQQ"] / trend_engine.SLICE))
 
     def test_high_vol_scales_down(self):
         # violent series -> RV >> target -> weight well under SLICE
@@ -270,7 +272,10 @@ class Config(unittest.TestCase):
     def test_backtested_parameters(self):
         # These are the values the 2026-07-03 backtest validated. Changing
         # them invalidates the backtest — fail loudly.
-        self.assertEqual(trend_engine.SLICE, 0.40)
+        # SLICE recalibrated 0.40 -> 0.30 with the 2026-07-09 fractional-
+        # share switch (whole-share rounding was the implicit deployment
+        # governor; fractional at 0.40 over-deploys -- see engine comment).
+        self.assertEqual(trend_engine.SLICE, 0.30)
         self.assertEqual(trend_engine.VOL_TGT, 0.35)
         self.assertEqual(trend_engine.MA_N, 50)
         self.assertEqual(trend_engine.RV_N, 20)
@@ -283,10 +288,11 @@ class Config(unittest.TestCase):
     def test_index_sleeve_slice_override(self):
         # Calibrated 2026-07-07 (dev/ironforge-data/tools/tsunami_bt/
         # run_live17_fix_bt.py sweep): these four are correlated substitutes
-        # for beta already held via the single-name longs, so they run at
-        # a discounted slice instead of the full 0.40.
+        # for beta already held via the single-name longs, so they run at a
+        # discounted slice -- 0.375x the global default, rescaled with the
+        # 2026-07-09 fractional switch (0.30 * 0.375 = 0.1125).
         for t in ("SPXL", "TQQQ", "SPXS", "SQQQ"):
-            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.15)
+            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.1125)
         # everything else still uses the global default (no entry here)
         for t in ("TSLL", "AMDL", "NVDL", "CONL", "MSTU", "BITX", "ETHU",
                   "IONX", "UXRP", "SBIT", "ETHD", "SMST"):

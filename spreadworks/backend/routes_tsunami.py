@@ -822,7 +822,7 @@ def tsunami_trend_status() -> dict[str, Any]:
 
     book_out, market_value, cost_basis = [], 0.0, 0.0
     for letf, shares, avg_cost, updated_at in book_rows:
-        shares = int(shares)
+        shares = float(shares)
         avg_cost = float(avg_cost)
         quote = tradier_client.get_quote(letf)
         last = float((quote or {}).get("last") or (quote or {}).get("close") or 0) or avg_cost
@@ -845,7 +845,7 @@ def tsunami_trend_status() -> dict[str, Any]:
         "realized_pnl": float(realized_total_rows[0][0]) if realized_total_rows else 0.0,
         "book": book_out,
         "recent_trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
-                           "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
+                           "shares": float(r[3]), "price": float(r[4]), "reason": r[5],
                            "realized_pnl": float(r[6]) if r[6] is not None else None}
                           for r in trades],
     }
