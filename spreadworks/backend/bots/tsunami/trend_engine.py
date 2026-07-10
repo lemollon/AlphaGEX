@@ -69,6 +69,19 @@ PAIRS = [  # (reference asset, instrument) — signal and execution on the instr
     # -$16 in its short walk-forward sample, no inverse exists). The MA50
     # gate is the safety net: it can't be bought unless it's trending.
     ("XRP", "UXRP"),
+    # 2x quantum LETFs, added 2026-07-10 per Leron thesis ("quantum stocks
+    # are going to do well"). Backtest (run_quantum_add_bt.py): 0.82-0.95
+    # pairwise correlation with each other and 0.76-0.91 with IONX -- five
+    # tickers, ONE bet -- and every add-variant trailed the no-add baseline
+    # in the common window (quantum chop since late 2025). Added anyway as
+    # a THESIS position, UXRP-precedent: the MA50 gate keeps them in cash
+    # until the thesis actually shows up in price, and the quantum sleeve
+    # override (0.15, IONX folded in) caps the one-bet stacking. QPUX is a
+    # basket of the same underlyings (corr 0.91+ with each single name).
+    ("QUANTUM", "QPUX"),
+    ("RGTI", "RGTU"),
+    ("QUBT", "QUBX"),
+    ("QBTS", "QBTX"),
     # SPX / Nasdaq-100 index 3x LETFs, added 2026-07-07. Correlated with
     # the existing single-name longs -- see SLICE_OVERRIDE below. UVXY
     # (VIX long-vol) was tested and dropped: standalone loser in every
@@ -101,7 +114,15 @@ SLICE = 0.30
 # picked by sweep over {0.10, 0.15, 0.20, 0.25, 0.30, 0.40} on the
 # walk-forward + recent windows; 0.15 matched or beat OLD12's Sharpe/
 # Calmar in both.
-SLICE_OVERRIDE = {"SPXL": 0.1125, "TQQQ": 0.1125, "SPXS": 0.1125, "SQQQ": 0.1125}
+SLICE_OVERRIDE = {
+    "SPXL": 0.1125, "TQQQ": 0.1125, "SPXS": 0.1125, "SQQQ": 0.1125,
+    # quantum sleeve 2026-07-10: IONX/QPUX/RGTU/QUBX/QBTX are one highly
+    # correlated bet (see PAIRS comment); 0.15 was the best add-variant in
+    # the since-2025-10 window (Sharpe 0.82 vs 0.28 at full slice). IONX
+    # moves from full slice into the sleeve for the same reason SPXL/TQQQ
+    # were discounted: correlated substitutes get no diversification credit.
+    "IONX": 0.15, "QPUX": 0.15, "RGTU": 0.15, "QUBX": 0.15, "QBTX": 0.15,
+}
 VOL_TGT = 0.35
 W_CAP = 2.0
 MA_N = 50
@@ -248,13 +269,17 @@ def _signal_weight(letf: str) -> tuple[Optional[float], dict]:
     if last <= 0:
         return None, _diag()
     series = closes[-(MA_N + RV_N):] + [last]
-    # Unadjusted-split tripwire: a 2x LETF cannot legitimately move >100%
-    # bar-to-bar (underlying would need a >50% day). SMST's 2024-11 reverse
-    # split is missing even from Yahoo's record (+272% phantom day), so no
-    # single data source is trusted blindly -- a jump this size means the
-    # history and/or quote straddle an unadjusted split. Fail safe.
+    # Unadjusted-split tripwire. SMST's 2024-11 reverse split is missing
+    # even from Yahoo's record (+272% phantom day), so no single data
+    # source is trusted blindly -- an outsized jump means the history
+    # and/or quote straddle an unadjusted split. Fail safe. Threshold is
+    # 150%, not 100%: QBTX legitimately printed +104% on 2025-05-08 (QBTS
+    # +51.2% x2, verified vs the underlying), so quantum 2x LETFs can
+    # exceed +100% for real. 1.5 still catches the common crushed-LETF
+    # reverse splits (1:4 and up = +300%+); exactly-1:2 splits rely on the
+    # yfinance adjustment (the primary defense, which caught NVDL).
     for i in range(1, len(series)):
-        if series[i - 1] > 0 and abs(series[i] / series[i - 1] - 1) > 1.0:
+        if series[i - 1] > 0 and abs(series[i] / series[i - 1] - 1) > 1.5:
             logger.warning("[tsunami.trend] %s: >100%% bar-to-bar jump in signal "
                            "window (%.2f -> %.2f) — suspected unadjusted split, no signal",
                            letf, series[i - 1], series[i])

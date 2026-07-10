@@ -119,6 +119,16 @@ class SignalWeight(unittest.TestCase):
         self.assertIsNone(w)
         self.assertIsNone(diag["trending"])
 
+    def test_real_quantum_size_day_passes_tripwire(self):
+        # QBTX printed a REAL +104% day (QBTS +51.2% x2, 2025-05-08) -- a
+        # jump that size must NOT trip the split guard (threshold is 150%).
+        closes = [10.0] * 60 + [20.4] * 20  # +104% mid-history, then flat
+        with patch.object(trend_engine, "_adjusted_closes",
+                          return_value=_closes(closes)),              patch.object(trend_engine.tradier_client, "get_quote",
+                          return_value={"last": 21.0}):
+            w, diag = trend_engine._signal_weight("QBTX")
+        self.assertIsNotNone(w)  # signal computed, not tripped
+
     def test_quote_vs_history_split_mismatch_returns_no_signal(self):
         # Split effective today: history pre-split, live quote post-split.
         closes = [10.0] * 80
@@ -282,7 +292,9 @@ class Config(unittest.TestCase):
         self.assertEqual(trend_engine.START_CASH, 500.0)
         self.assertEqual([l for _, l in trend_engine.PAIRS],
                          ["TSLL", "AMDL", "NVDL", "CONL", "MSTU",
-                          "BITX", "ETHU", "IONX", "UXRP", "SPXL", "TQQQ",
+                          "BITX", "ETHU", "IONX", "UXRP",
+                          "QPUX", "RGTU", "QUBX", "QBTX",
+                          "SPXL", "TQQQ",
                           "SBIT", "ETHD", "SMST", "SPXS", "SQQQ"])
 
     def test_index_sleeve_slice_override(self):
@@ -293,9 +305,13 @@ class Config(unittest.TestCase):
         # 2026-07-09 fractional switch (0.30 * 0.375 = 0.1125).
         for t in ("SPXL", "TQQQ", "SPXS", "SQQQ"):
             self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.1125)
+        # quantum sleeve (2026-07-10): five correlated expressions of one
+        # bet, half slice, IONX folded in
+        for t in ("IONX", "QPUX", "RGTU", "QUBX", "QBTX"):
+            self.assertEqual(trend_engine.SLICE_OVERRIDE[t], 0.15)
         # everything else still uses the global default (no entry here)
         for t in ("TSLL", "AMDL", "NVDL", "CONL", "MSTU", "BITX", "ETHU",
-                  "IONX", "UXRP", "SBIT", "ETHD", "SMST"):
+                  "UXRP", "SBIT", "ETHD", "SMST"):
             self.assertNotIn(t, trend_engine.SLICE_OVERRIDE)
 
     def test_uvxy_dropped(self):
