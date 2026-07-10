@@ -3,16 +3,15 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
-import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes, eodCutoffMinutesCT, formatCTClock } from '@/lib/pt-tiers'
+import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes, eodCutoffMinutesCT, formatCTClock, isSparkStrategyBot } from '@/lib/pt-tiers'
 
 /**
  * Horizontal timeline showing the three PT zones with a real-time "you are here" marker.
  *
- * Zones (CT) — FLAME / SPARK:
- *   Morning  30%  8:30 – 10:30 (FLAME) or 8:30 – 12:00 (SPARK)
- *   Midday   20%  → 1:00
- *   PM       15%  1:00 – {eod cutoff}
- *   EOD            {eod cutoff} – 3:00
+ * Zones (CT):
+ *   FLAME:          Morning 30%  8:30 – 10:30 · Midday 20% → 1:00 · PM 15% → {eod cutoff}
+ *   SPARK / KINDLE: Morning 40%  8:30 – 12:00 · Midday 35% → 1:00 · PM 30% → {eod cutoff}
+ *   EOD             {eod cutoff} – 3:00
  *
  * The EOD boundary is read live from `{bot}_config.eod_cutoff_et` (Central
  * time) so the strip always matches the scanner's real force-close time.
@@ -21,8 +20,9 @@ import { getCTNow, getCTMinutes, isMarketOpen, morningEndMinutes, eodCutoffMinut
  * suppressed for them (return null). INFERNO is HOLD_TO_EOD only after
  * PR #2289; BLAZE is a directional spread with a single fixed PT/SL.
  *
- * Reverted from 50/30/20 to 30/20/15 for FLAME/SPARK on 2026-05-07
- * (commit f249c4ec). pt-tiers.ts is the source of truth for the
+ * SPARK-strategy bots (SPARK/KINDLE) moved to 40/35/30 on 2026-07-02;
+ * FLAME keeps the legacy 30/20/15 (reverted from 50/30/20 on 2026-05-07,
+ * commit f249c4ec). pt-tiers.ts is the source of truth for the
  * percentages — keep this component in sync with it.
  */
 
@@ -68,10 +68,11 @@ export default function PTTimeline({
   const middayLabelTime = MIDDAY_START === 720 ? '12:00' : '10:30'
 
   // Tier percentages — must mirror lib/pt-tiers.ts.
-  // FLAME/SPARK: 30/20/15 (reverted from 50/30/20 on 2026-05-07).
-  const morningPct = '30%'
-  const middayPct = '20%'
-  const pmPct = '15%'
+  // SPARK/KINDLE: 40/35/30 (since 2026-07-02). FLAME: legacy 30/20/15.
+  const sparkStrategy = isSparkStrategyBot(bot)
+  const morningPct = sparkStrategy ? '40%' : '30%'
+  const middayPct = sparkStrategy ? '35%' : '20%'
+  const pmPct = sparkStrategy ? '30%' : '15%'
 
   // Initialize with null to avoid hydration mismatch (server has no CT clock)
   const [ctMins, setCtMins] = useState<number | null>(null)

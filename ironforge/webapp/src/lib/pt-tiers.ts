@@ -1,17 +1,19 @@
 /**
- * Sliding Profit Target tiers — must match the scanner schedule exactly.
+ * Sliding Profit Target tiers — must match the scanner schedule exactly
+ * (scanner.ts getSlidingProfitTarget is the source of truth).
  *
- * Schedule (Central Time) for FLAME / SPARK:
- *   FLAME (morning ends 10:30 AM):
+ * Schedule (Central Time):
+ *   FLAME (legacy 30/20/15, morning ends 10:30 AM):
  *     8:30 – 10:29  → 30% MORNING
  *     10:30 – 12:59 → 20% MIDDAY
  *     1:00 – 2:44   → 15% AFTERNOON
  *
- *   SPARK (morning extended to 12:00 PM per scanner — keeps the close limit
- *   aggressive longer to avoid stuck unfilled limits when the tier slides):
- *     8:30 – 11:59  → 30% MORNING
- *     12:00 – 12:59 → 20% MIDDAY
- *     1:00 – 2:44   → 15% AFTERNOON
+ *   SPARK / KINDLE (SPARK-strategy bots — 40/35/30 since 2026-07-02, morning
+ *   extended to 12:00 PM; keeps the close limit aggressive longer to avoid
+ *   stuck unfilled limits when the tier slides):
+ *     8:30 – 11:59  → 40% MORNING
+ *     12:00 – 12:59 → 35% MIDDAY
+ *     1:00 – 2:44   → 30% AFTERNOON
  *
  *   2:45 PM+        → handled by EOD cutoff
  *
@@ -55,6 +57,18 @@ const AFTERNOON: PTTier = {
   dotColor: 'bg-orange-400',
 }
 
+// SPARK-strategy (SPARK/KINDLE) tiers — 40/35/30, mirrors scanner.ts
+// getSlidingProfitTarget's isSparkStrategy branch (changed 2026-07-02).
+const SPARK_MORNING: PTTier = { ...MORNING, pct: 0.40 }
+const SPARK_MIDDAY: PTTier = { ...MIDDAY, pct: 0.35 }
+const SPARK_AFTERNOON: PTTier = { ...AFTERNOON, pct: 0.30 }
+
+/** SPARK-strategy bots share the scanner's 40/35/30 tier schedule and the
+ *  extended 12:00 PM morning window — mirrors scanner.ts isSparkStrategy(). */
+export function isSparkStrategyBot(bot?: string): boolean {
+  return bot === 'spark' || bot === 'kindle'
+}
+
 /** Get the current CT date object. */
 export function getCTNow(): Date {
   const ct = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' })
@@ -81,7 +95,7 @@ export function isMarketOpen(ctDate?: Date): boolean {
 
 /** Morning-end minute for each bot (must mirror scanner.ts getSlidingProfitTarget). */
 export function morningEndMinutes(bot?: string): number {
-  return bot === 'spark' ? 720 : 630 // 12:00 PM CT for SPARK, else 10:30 AM CT
+  return isSparkStrategyBot(bot) ? 720 : 630 // 12:00 PM CT for SPARK/KINDLE, else 10:30 AM CT
 }
 
 /** Default EOD cutoff in minutes-since-midnight CT (2:45 PM) — mirrors scanner
@@ -120,9 +134,10 @@ export function formatCTClock(minsSinceMidnight: number, withMeridiem = true): s
 /** Get the active PT tier based on current CT time and bot. */
 export function getCurrentPTTier(ctDate?: Date, bot?: string): PTTier {
   const mins = getCTMinutes(ctDate)
-  if (mins < morningEndMinutes(bot)) return MORNING
-  if (mins < 780) return MIDDAY       // before 1:00 PM
-  return AFTERNOON
+  const spark = isSparkStrategyBot(bot)
+  if (mins < morningEndMinutes(bot)) return spark ? SPARK_MORNING : MORNING
+  if (mins < 780) return spark ? SPARK_MIDDAY : MIDDAY       // before 1:00 PM
+  return spark ? SPARK_AFTERNOON : AFTERNOON
 }
 
 /**
@@ -140,13 +155,14 @@ export function secondsUntilNextTier(
   const totalSecs = mins * 60 + secs
   const morningEnd = morningEndMinutes(bot)
 
+  const spark = isSparkStrategyBot(bot)
   if (mins < morningEnd) {
     // Morning → Midday at morningEnd
-    return { seconds: morningEnd * 60 - totalSecs, nextLabel: '20% Midday' }
+    return { seconds: morningEnd * 60 - totalSecs, nextLabel: spark ? '35% Midday' : '20% Midday' }
   }
   if (mins < 780) {
     // Midday → Afternoon at 1:00 PM (780 min = 46800 sec)
-    return { seconds: 46800 - totalSecs, nextLabel: '15% Afternoon' }
+    return { seconds: 46800 - totalSecs, nextLabel: spark ? '30% Afternoon' : '15% Afternoon' }
   }
   if (mins < eodCutoffMin) {
     // Afternoon → EOD at the configured cutoff (Central time). Defaults to
@@ -157,31 +173,35 @@ export function secondsUntilNextTier(
   return null
 }
 
-/** Format a close_reason string for display. Pass bot to get correct PT% for INFERNO. */
+/** Format a close_reason string for display. Pass bot to get correct PT% per schedule. */
 export function formatCloseReason(reason: string, bot?: string): { text: string; color: string } {
   const isInferno = bot === 'inferno'
-  // FLAME/SPARK: 30/20/15 (reverted from 50/30/20 — see scanner.ts).
+  const spark = isSparkStrategyBot(bot)
+  // Scanner writes tier labels uppercase (e.g. 'profit_target_MORNING') —
+  // normalize so both casings match the pretty labels below.
+  const r = reason.toLowerCase()
+  // SPARK/KINDLE: 40/35/30. FLAME: 30/20/15 (reverted from 50/30/20 — see scanner.ts).
   // INFERNO: 50/30/10 displayed label kept; actual scanner behavior is
   // 20/30/50 reversed — a display inconsistency that predates this change.
-  if (reason === 'profit_target_morning')
-    return { text: `Profit Target (Morning ${isInferno ? '50' : '30'}%)`, color: 'text-emerald-400' }
-  if (reason === 'profit_target_midday')
-    return { text: `Profit Target (Midday ${isInferno ? '30' : '20'}%)`, color: 'text-yellow-400' }
-  if (reason === 'profit_target_afternoon')
-    return { text: `Profit Target (Afternoon ${isInferno ? '10' : '15'}%)`, color: 'text-orange-400' }
-  if (reason === 'profit_target')
+  if (r === 'profit_target_morning')
+    return { text: `Profit Target (Morning ${isInferno ? '50' : spark ? '40' : '30'}%)`, color: 'text-emerald-400' }
+  if (r === 'profit_target_midday')
+    return { text: `Profit Target (Midday ${isInferno ? '30' : spark ? '35' : '20'}%)`, color: 'text-yellow-400' }
+  if (r === 'profit_target_afternoon')
+    return { text: `Profit Target (Afternoon ${isInferno ? '10' : spark ? '30' : '15'}%)`, color: 'text-orange-400' }
+  if (r === 'profit_target')
     return { text: 'Profit Target', color: 'text-emerald-400' }
-  if (reason === 'stop_loss')
+  if (r === 'stop_loss')
     return { text: 'Stop Loss', color: 'text-red-400' }
-  if (reason === 'eod_cutoff' || reason === 'eod_safety' || reason === 'eod_safety_no_data')
+  if (r === 'eod_cutoff' || r === 'eod_safety' || r === 'eod_safety_no_data')
     return { text: 'EOD Cutoff', color: 'text-amber-400' }
-  if (reason === 'stale_holdover' || reason === 'stale_overnight_position')
+  if (r === 'stale_holdover' || r === 'stale_overnight_position')
     return { text: 'Stale Holdover', color: 'text-gray-400' }
-  if (reason === 'expired_previous_day')
+  if (r === 'expired_previous_day')
     return { text: 'Expired', color: 'text-blue-400' }
-  if (reason === 'data_feed_failure')
+  if (r === 'data_feed_failure')
     return { text: 'Data Failure', color: 'text-red-400' }
-  if (reason === 'server_restart_recovery')
+  if (r === 'server_restart_recovery')
     return { text: 'Recovery', color: 'text-gray-400' }
   return { text: reason.replace(/_/g, ' '), color: 'text-gray-400' }
 }

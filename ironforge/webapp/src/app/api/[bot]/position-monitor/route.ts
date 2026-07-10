@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, isDirectionalBot, directionalThresholds } from '@/lib/db'
+import { getCurrentPTTier, getCTNow, isSparkStrategyBot } from '@/lib/pt-tiers'
 import {
   getIcMarkToMarket,
   isConfigured,
@@ -129,10 +130,8 @@ export async function GET(
     // (sl=2.0, pt=0.30), which was wildly wrong for INFERNO (sl≈10× +
     // pt=HOLD_TO_EOD/1.0) — the displayed stopLossPrice/profitTargetPrice
     // and distance indicators didn't match what the scanner would actually
-    // fire on. Note: the scanner uses a sliding PT for SPARK (tiers shift
-    // through the day in getSlidingProfitTarget); this displays the base
-    // PT only, which is an approximation. BLAZE keeps its own hardcoded
-    // debit-based thresholds (DEFAULT_BLAZE_CONFIG) and ignores these.
+    // fire on. BLAZE keeps its own hardcoded debit-based thresholds
+    // (DEFAULT_BLAZE_CONFIG) and ignores these.
     let icSlMult = 2.0
     let icPtPct = 0.30
     if (!isDirectionalBot(bot)) {
@@ -151,6 +150,13 @@ export async function GET(
         const ptPct = num(cfgRows[0]?.profit_target_pct)
         if (ptPct > 0) icPtPct = ptPct / 100
       } catch { /* leave icSlMult/icPtPct at the fallback defaults */ }
+    }
+    // SPARK-strategy bots (SPARK/KINDLE) use the scanner's sliding tier
+    // (40/35/30 through the day) and IGNORE the DB profit_target_pct — use
+    // the currently-active tier so the displayed PT price matches the limit
+    // the scanner is actually resting right now.
+    if (isSparkStrategyBot(bot)) {
+      icPtPct = getCurrentPTTier(getCTNow(), bot).pct
     }
 
     let anyLiveQuoteSucceeded = false
@@ -183,8 +189,9 @@ export async function GET(
         // showed a stop the scanner never fires. The actual exit code lives in
         // lib/{blaze,flare}/exit.ts (+pt% / −sl%).
         // IC PT triggers when cost-to-close drops to (1 - pt_pct) × credit.
-        // SPARK pt=0.30 → 0.70 × credit (30% profit captured); INFERNO
-        // pt=1.0 (HOLD_TO_EOD) → 0 (only triggers at full max profit).
+        // SPARK/KINDLE use the live sliding tier (morning 0.40 → 0.60 ×
+        // credit, midday 0.35, afternoon 0.30); INFERNO pt=1.0
+        // (HOLD_TO_EOD) → 0 (only triggers at full max profit).
         const dirThresh = directionalThresholds(bot)
         const profitTargetPrice = isVertical
           ? Math.round(entryDebit * (1 + dirThresh.ptPct / 100) * 10000) / 10000
