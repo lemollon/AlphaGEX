@@ -1,9 +1,10 @@
 """TSUNAMI Discord webhook poster + embed builders.
 
-Reuses the platform-standard ``DISCORD_WEBHOOK_URL`` env var (same one
-used by spreadworks-daily-bot and ironforge FLAME/SPARK). Posts compact
-embed messages for trade events, kill-switch fires, and alert
-notifications.
+Webhook resolution (2026-07-10, Leron: TSUNAMI gets its own channel):
+``TSUNAMI_DISCORD_WEBHOOK_URL`` if set, else the platform-standard
+``DISCORD_WEBHOOK_URL`` (shared with spreadworks-daily-bot and ironforge
+FLAME/SPARK). Posts compact embed messages for trade events, kill-switch
+fires, and alert notifications.
 
 Design choices:
     - Best-effort: webhook failures NEVER block trading. All HTTP errors,
@@ -36,12 +37,19 @@ COLOR_KILL = 0x8E44AD       # purple (kill switch / critical)
 
 _TIMEOUT_SECONDS = 5.0
 _USER_AGENT = "TSUNAMI-monitoring/1.0"
-_ENV_VAR = "DISCORD_WEBHOOK_URL"
+_ENV_VAR = "TSUNAMI_DISCORD_WEBHOOK_URL"   # dedicated TSUNAMI channel
+_FALLBACK_ENV_VAR = "DISCORD_WEBHOOK_URL"  # platform-shared channel
+
+
+def _webhook_from_env() -> str:
+    """Dedicated TSUNAMI webhook if set, else the platform-shared one."""
+    return (os.environ.get(_ENV_VAR, "").strip()
+            or os.environ.get(_FALLBACK_ENV_VAR, "").strip())
 
 
 def is_configured() -> bool:
-    """True when ``DISCORD_WEBHOOK_URL`` is set in the environment."""
-    return bool(os.environ.get(_ENV_VAR, "").strip())
+    """True when a TSUNAMI or platform webhook is set in the environment."""
+    return bool(_webhook_from_env())
 
 
 def post_embed(
@@ -65,9 +73,10 @@ def post_embed(
         webhook_url: override env var; mainly for tests
         session: requests.Session for tests; default uses requests directly
     """
-    url = webhook_url or os.environ.get(_ENV_VAR, "").strip()
+    url = webhook_url or _webhook_from_env()
     if not url:
-        logger.info("[discord] DISCORD_WEBHOOK_URL not set -- skipping post")
+        logger.info("[discord] no TSUNAMI_DISCORD_WEBHOOK_URL or"
+                    " DISCORD_WEBHOOK_URL set -- skipping post")
         return False
 
     embed: dict[str, Any] = {
