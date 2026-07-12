@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { hasValidServiceToken } from '@/lib/auth/session'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
@@ -157,7 +158,7 @@ export async function POST(req: NextRequest) {
           to: u.email,
           firstName: u.first_name,
           summary: `${action} ${units} ${symbol} (${orderType})`,
-          approveUrl: `${req.nextUrl.origin}/account/trades`,
+          approveUrl: `${publicOrigin(req)}/account/trades`,
         })
       })
       .catch((e) => console.error('[trades:create] notify failed:', e))

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
     })
 
     // Send the verification email (non-blocking: failure never blocks the account).
-    const verifyUrl = `${req.nextUrl.origin}/api/auth/verify?token=${encodeURIComponent(rawToken)}`
+    const verifyUrl = `${publicOrigin(req)}/api/auth/verify?token=${encodeURIComponent(rawToken)}`
     try {
       const emailRes = await sendVerificationEmail({ to: n.email, verifyUrl, firstName: n.firstName })
       if (emailRes.sent) {

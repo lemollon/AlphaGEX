@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { hashToken, isExpired } from '@/lib/auth/verification-token'
 import {
   ONBOARDING_COOKIE,
@@ -35,7 +36,7 @@ function clientIp(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
-  const origin = req.nextUrl.origin
+  const origin = publicOrigin(req)
   const fail = () => NextResponse.redirect(`${origin}/login?verifyError=1`)
 
   const raw = req.nextUrl.searchParams.get('token')

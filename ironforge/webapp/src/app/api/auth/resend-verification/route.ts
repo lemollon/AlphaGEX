@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { isValidEmail, normalizeEmail } from '@/lib/signup-validation'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
         `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at) VALUES ($1,$2,$3)`,
         [user.id, hash, expiresAt],
       )
-      const verifyUrl = `${req.nextUrl.origin}/api/auth/verify?token=${encodeURIComponent(raw)}`
+      const verifyUrl = `${publicOrigin(req)}/api/auth/verify?token=${encodeURIComponent(raw)}`
       const emailRes = await sendVerificationEmail({
         to: email,
         verifyUrl,

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { normalizeEmail } from '@/lib/signup-validation'
 import { generateToken } from '@/lib/auth/verification-token'
 import { sendPasswordResetEmail } from '@/lib/email'
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest) {
         `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
         [user.id, hash, expiresAt],
       )
-      const resetUrl = `${req.nextUrl.origin}/reset-password?token=${encodeURIComponent(raw)}`
+      const resetUrl = `${publicOrigin(req)}/reset-password?token=${encodeURIComponent(raw)}`
       try {
         const emailRes = await sendPasswordResetEmail({ to: user.email, resetUrl, firstName: user.first_name })
         if (emailRes.skipped) {
