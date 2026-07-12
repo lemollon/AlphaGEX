@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secret-box'
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       userSecret,
       connectionType: 'trade',
-      customRedirect: `${req.nextUrl.origin}/api/onboarding/brokerage/callback`,
+      customRedirect: `${publicOrigin(req)}/api/onboarding/brokerage/callback`,
     })
     const redirectURI = (login.data as { redirectURI?: string }).redirectURI
     if (!redirectURI) {

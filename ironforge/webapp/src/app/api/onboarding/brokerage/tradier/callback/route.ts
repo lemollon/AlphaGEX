@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import {
   isTradierOAuthConfigured,
   verifyState,
@@ -27,8 +28,8 @@ interface UserRow {
 }
 
 export async function GET(req: NextRequest) {
-  const brokerageStep = new URL('/onboarding/brokerage', req.nextUrl.origin)
-  const complete = new URL('/onboarding/complete', req.nextUrl.origin)
+  const brokerageStep = new URL('/onboarding/brokerage', publicOrigin(req))
+  const complete = new URL('/onboarding/complete', publicOrigin(req))
 
   const code = req.nextUrl.searchParams.get('code')
   const uid = verifyState(req.nextUrl.searchParams.get('state'))

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret } from '@/lib/crypto/secret-box'
@@ -27,8 +28,8 @@ interface UserRow {
 }
 
 export async function GET(req: NextRequest) {
-  const brokerageStep = new URL('/onboarding/brokerage', req.nextUrl.origin)
-  const complete = new URL('/onboarding/complete', req.nextUrl.origin)
+  const brokerageStep = new URL('/onboarding/brokerage', publicOrigin(req))
+  const complete = new URL('/onboarding/complete', publicOrigin(req))
 
   const uid = await resolveCustomerUserId(req)
   if (!uid || !isSnapTradeConfigured() || !isCustomersDbConfigured()) {
