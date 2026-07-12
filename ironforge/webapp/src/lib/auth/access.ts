@@ -1,5 +1,8 @@
 /** Paths reachable without a session. */
 const PUBLIC_EXACT = new Set<string>([
+  // Public marketing site (homepage + How It Works).
+  '/',
+  '/how-it-works',
   '/login',
   '/signup',
   '/pricing',
