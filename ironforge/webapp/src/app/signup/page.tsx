@@ -202,7 +202,6 @@ export default function SignupPage() {
   }
 
   const pwRules = useMemo(() => checkPassword(form.password).rules, [form.password])
-  const valid = useMemo(() => validateSignup(form).ok, [form])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -364,7 +363,7 @@ export default function SignupPage() {
 
               <button
                 type="submit"
-                disabled={!valid || submitting}
+                disabled={submitting}
                 className="flex w-full items-center justify-center gap-2 rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <ShieldSmall />

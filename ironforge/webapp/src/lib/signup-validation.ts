@@ -103,7 +103,7 @@ export function validateSignup(payload: SignupPayload): SignupValidation {
   }
 
   if (!isValidPhone(payload.phone)) {
-    errors.phone = 'Enter a valid mobile phone number.'
+    errors.phone = 'Enter a valid US mobile number, e.g. (555) 123-4567.'
   }
 
   if (!state) errors.state = 'Select your state of residence.'
