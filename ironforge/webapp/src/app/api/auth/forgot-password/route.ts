@@ -40,7 +40,12 @@ export async function POST(req: NextRequest) {
       )
       const resetUrl = `${req.nextUrl.origin}/reset-password?token=${encodeURIComponent(raw)}`
       try {
-        await sendPasswordResetEmail({ to: user.email, resetUrl, firstName: user.first_name })
+        const emailRes = await sendPasswordResetEmail({ to: user.email, resetUrl, firstName: user.first_name })
+        if (emailRes.skipped) {
+          console.warn('[forgot-password] reset email SKIPPED (RESEND_API_KEY/EMAIL_FROM unset)')
+        } else if (emailRes.error) {
+          console.error('[forgot-password] reset email failed:', emailRes.error)
+        }
       } catch (e) {
         console.error('[forgot-password] email send threw:', e)
       }

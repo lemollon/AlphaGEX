@@ -79,6 +79,13 @@ export async function POST(req: NextRequest) {
         } catch (e) {
           console.error('[resend] audit write failed:', e)
         }
+      } else if (emailRes.skipped) {
+        console.warn(
+          '[resend] verification email SKIPPED (RESEND_API_KEY/EMAIL_FROM unset) for',
+          maskEmail(email),
+        )
+      } else if (emailRes.error) {
+        console.error('[resend] verification email failed:', emailRes.error)
       }
     }
   } catch (e) {

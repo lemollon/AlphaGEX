@@ -158,6 +158,11 @@ export async function POST(req: NextRequest) {
       const emailRes = await sendVerificationEmail({ to: n.email, verifyUrl, firstName: n.firstName })
       if (emailRes.sent) {
         await writeAudit(userId, 'EMAIL_VERIFICATION_SENT', ip, ua, { email_masked: maskEmail(n.email) })
+      } else if (emailRes.skipped) {
+        console.warn(
+          '[signup] verification email SKIPPED (RESEND_API_KEY/EMAIL_FROM unset) for',
+          maskEmail(n.email),
+        )
       } else if (emailRes.error) {
         console.error('[signup] verification email failed:', emailRes.error)
       }
