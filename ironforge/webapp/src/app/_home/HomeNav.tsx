@@ -13,12 +13,18 @@ import { MenuIcon, CloseIcon } from './icons'
 export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it-works' }) {
   const [open, setOpen] = useState(false)
   const [isOperator, setIsOperator] = useState(false)
+  const [isCustomer, setIsCustomer] = useState(false)
 
   useEffect(() => {
     fetch('/api/ops/impersonate?status=true')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setIsOperator(Boolean(d?.operator)))
       .catch(() => setIsOperator(false))
+    // Logged-in customers get "Dashboard" instead of Login/Create Account.
+    fetch('/api/auth/customer-me')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsCustomer(Boolean(d?.ok)))
+      .catch(() => setIsCustomer(false))
   }, [])
 
   return (
@@ -58,24 +64,35 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
           >
             How It Works
           </Link>
-          <Link href="/login" className="text-sm text-gray-300 transition-colors hover:text-white">
-            Login
-          </Link>
-          <Link
-            href="/signup"
-            className="rounded-lg border border-[#FD5301] px-4 py-2 text-sm font-semibold text-[#FD5301] transition-colors hover:bg-[#FD5301] hover:text-white"
-          >
-            Create Account
-          </Link>
+          {isCustomer ? (
+            <Link
+              href="/home"
+              className="rounded-lg bg-[#FD5301] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
+            >
+              My Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link href="/login" className="text-sm text-gray-300 transition-colors hover:text-white">
+                Login
+              </Link>
+              <Link
+                href="/signup"
+                className="rounded-lg border border-[#FD5301] px-4 py-2 text-sm font-semibold text-[#FD5301] transition-colors hover:bg-[#FD5301] hover:text-white"
+              >
+                Create Account
+              </Link>
+            </>
+          )}
         </nav>
 
         {/* Mobile: solid CTA + hamburger */}
         <div className="flex items-center gap-3 md:hidden">
           <Link
-            href="/signup"
+            href={isCustomer ? '/home' : '/signup'}
             className="rounded-lg bg-[#FD5301] px-3.5 py-2 text-sm font-semibold text-white"
           >
-            Create Account
+            {isCustomer ? 'My Dashboard' : 'Create Account'}
           </Link>
           <button
             type="button"
@@ -104,9 +121,15 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
             <Link href="/how-it-works" onClick={() => setOpen(false)} className="text-sm text-gray-300">
               How It Works
             </Link>
-            <Link href="/login" onClick={() => setOpen(false)} className="text-sm text-gray-300">
-              Login
-            </Link>
+            {isCustomer ? (
+              <Link href="/home" onClick={() => setOpen(false)} className="text-sm text-gray-300">
+                My Dashboard
+              </Link>
+            ) : (
+              <Link href="/login" onClick={() => setOpen(false)} className="text-sm text-gray-300">
+                Login
+              </Link>
+            )}
           </div>
         </nav>
       ) : null}

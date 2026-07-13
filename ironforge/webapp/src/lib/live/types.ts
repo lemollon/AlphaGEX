@@ -41,11 +41,13 @@ export interface MarketSession {
 }
 
 export interface LiveViewerInfo {
-  bot: string
+  bot: string | null
   allowedBots: string[]
 }
 
 export interface LiveSummary {
+  /** True when the viewer has no live account to show (fresh signup/anonymous). */
+  empty?: boolean
   /** Which live account this payload describes + which the viewer may switch to. */
   viewer?: LiveViewerInfo
   state: CustomerState

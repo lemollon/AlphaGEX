@@ -247,9 +247,9 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
     membership: {
       plan: 'Forge Automate',
       badge: 'Early Access',
-      // Static placeholder matching the approved Home design — no billing/trial
-      // state exists in the DB yet (same precedent as plan/badge above).
-      trial: { label: '5 Day Free Trial', day: 2, total_days: 5, ends_label: 'Ends May 25, 2025' },
+      // Honest-data rule: no billing/trial state exists in the DB yet, so no
+      // fabricated countdown — consumers null-guard and fall back to the badge.
+      trial: null,
     },
     as_of: new Date().toISOString(),
   }

@@ -13,6 +13,11 @@ export const dynamic = 'force-dynamic'
 export async function GET(req: NextRequest) {
   try {
     const viewer = await resolveLiveViewer(req)
+    if (!viewer.bot) {
+      // Viewer has no live account (fresh signup / anonymous): empty state,
+      // never another account's data.
+      return NextResponse.json({ empty: true, viewer })
+    }
     const summary = await getLiveSummary(viewer.bot)
     return NextResponse.json({ ...summary, viewer })
   } catch (err: unknown) {

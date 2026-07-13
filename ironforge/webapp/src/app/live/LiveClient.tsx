@@ -67,7 +67,18 @@ export default function LiveClient() {
       <div className="lg:pl-60">
         <div className="mx-auto max-w-[1200px] px-4 py-5">
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
-          {summaryError && !summary ? (
+          {summary?.empty ? (
+            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+              <h2 className="text-lg font-bold text-white">No trading account connected yet</h2>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
+                Your live dashboard activates once a trading account is connected to your membership.
+                Brokerage connection is coming soon — we&apos;ll email you the moment it&apos;s ready.
+              </p>
+              <a href="/community" className="mt-5 inline-block rounded-md bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500">
+                Visit the Forge Community
+              </a>
+            </div>
+          ) : summaryError && !summary ? (
             <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
               Live data is temporarily unavailable. We&apos;re on it — try refreshing in a moment.
             </div>
