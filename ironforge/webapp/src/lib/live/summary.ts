@@ -2,6 +2,7 @@ import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dte
 import {
   getProductionPauseState,
   getSandboxAccountBalances,
+  getSpark2ProductionBalance,
   getQuoteDetail,
   getIcMarkToMarket,
   calculateIcUnrealizedPnl,
@@ -158,20 +159,31 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
   // Primary: the live Tradier production account (pause-independent — same
   // path the status route uses so pausing never blanks the balance).
   // Fallback: DB ledger (starting_capital + Σ realized) with source flagged.
-  const prodBals = balances.filter(
-    (b) => b.account_type === 'production' && b.total_equity != null,
-  )
+  // Bot-aware balance source: SPARK's production account rows come from
+  // ironforge_accounts; SPARK2's single live account lives in env creds and is
+  // read directly (never SPARK's rows — accounts must not cross-leak).
+  const prodBals = BOT === 'spark'
+    ? balances.filter((b) => b.account_type === 'production' && b.total_equity != null)
+    : []
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'
-  if (prodBals.length > 0) {
+  if (BOT === 'spark2') {
+    const det = await getSpark2ProductionBalance().catch(() => null)
+    if (det?.total_equity != null) {
+      accountValue = Math.round(num(det.total_equity) * 100) / 100
+      todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
+      source = 'tradier'
+    }
+  }
+  if (source !== 'tradier' && prodBals.length > 0) {
     accountValue = Math.round(prodBals.reduce((a, b) => a + num(b.total_equity), 0) * 100) / 100
     // Today's result = broker day realized (close_pl) + open unrealized (open_pl).
     todayPnl = Math.round(
       prodBals.reduce((a, b) => a + num(b.day_pnl) + num(b.unrealized_pnl), 0) * 100,
     ) / 100
     source = 'tradier'
-  } else {
+  } else if (source !== 'tradier') {
     const startingCapital = num(accountRows[0]?.starting_capital)
     if (startingCapital > 0) {
       accountValue = Math.round((startingCapital + num(liveStatsRows[0]?.actual_realized_pnl)) * 100) / 100

@@ -3028,6 +3028,15 @@ export async function getProductionAccountsForBot(botName: string): Promise<Prod
   return result
 }
 
+/** SPARK2's live account balance straight from its env creds — pause-independent
+ * (mirrors the "pausing never blanks the balance" rule the Live page uses for
+ * SPARK). Null when creds are missing/invalid; never fabricated. */
+export async function getSpark2ProductionBalance(): Promise<TradierBalanceDetail | null> {
+  const { apiKey, accountId } = spark2Creds()
+  if (!apiKey || !accountId) return null
+  return getTradierBalanceDetail(apiKey, accountId, PRODUCTION_URL)
+}
+
 export interface TradierBalanceDetail {
   account_id: string | null
   account_number: string | null
