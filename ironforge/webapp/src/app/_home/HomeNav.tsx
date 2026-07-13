@@ -1,14 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
 import { MenuIcon, CloseIcon } from './icons'
 
 /* Sticky top navigation per the handoff spec: logo, Home, How It Works, Login,
- * Create Account on desktop; logo + solid Create Account + hamburger on mobile. */
+ * Create Account on desktop; logo + solid Create Account + hamburger on mobile.
+ * Operators additionally get an "Ops" item next to Home (invisible to everyone
+ * else — same status probe as the AdminBadge, which reveals nothing without an
+ * operator session). */
 export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it-works' }) {
   const [open, setOpen] = useState(false)
+  const [isOperator, setIsOperator] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/ops/impersonate?status=true')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsOperator(Boolean(d?.operator)))
+      .catch(() => setIsOperator(false))
+  }, [])
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
@@ -29,6 +40,14 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
           >
             Home
           </Link>
+          {isOperator ? (
+            <Link
+              href="/spark"
+              className="text-sm font-semibold text-[#FD5301] transition-colors hover:text-[#FF6A1F]"
+            >
+              Ops
+            </Link>
+          ) : null}
           <Link
             href="/how-it-works"
             className={
@@ -77,6 +96,11 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
             <Link href="/" onClick={() => setOpen(false)} className="text-sm font-semibold text-white">
               Home
             </Link>
+            {isOperator ? (
+              <Link href="/spark" onClick={() => setOpen(false)} className="text-sm font-semibold text-[#FD5301]">
+                Ops
+              </Link>
+            ) : null}
             <Link href="/how-it-works" onClick={() => setOpen(false)} className="text-sm text-gray-300">
               How It Works
             </Link>
