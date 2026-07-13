@@ -286,6 +286,19 @@ export default function HomeClient() {
 
   return (
     <CustomerShell membership={summary?.membership ?? null} planVariant="trial">
+      {summary?.empty ? (
+        <div className="rounded-xl border border-white/10 bg-forge-card/80 p-8 text-center">
+          <h2 className="text-lg font-bold text-white">Welcome to IronForge</h2>
+          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
+            Your account is set up. Live trading data appears here once a trading account is
+            connected to your membership — brokerage connection is coming soon, and we&apos;ll
+            email you the moment it&apos;s ready.
+          </p>
+          <a href="/community" className="mt-5 inline-block rounded-md bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500">
+            Visit the Forge Community
+          </a>
+        </div>
+      ) : (
       <div className="flex flex-col gap-4">
         <HeroBanner summary={summary} />
         <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
@@ -302,6 +315,7 @@ export default function HomeClient() {
           </div>
         </div>
       </div>
+      )}
     </CustomerShell>
   )
 }
