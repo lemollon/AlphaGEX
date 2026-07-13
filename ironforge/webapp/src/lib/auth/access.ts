@@ -21,6 +21,9 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/customer-login',
   '/api/auth/customer-logout',
   '/api/auth/customer-me',
+  // Magic admin link — self-guarded by IRONFORGE_ADMIN_KEY (constant-time
+  // compare in-route); must be reachable without a session by design.
+  '/api/ops/admin',
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
