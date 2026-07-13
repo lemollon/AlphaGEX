@@ -89,7 +89,7 @@ function stripMarkdown(s: string | null | undefined): string {
     .trim()
 }
 
-export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' }) {
+export default function LatestBriefCard({ bot }: { bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2' }) {
   // Bot dashboards show INTRADAY briefs only. EOD debriefs surface on /briefings
   // (operator policy 2026-05-10). The legacy {bot}_market_briefs query is now
   // filtered server-side to brief_type IN ('morning', 'intraday'); we always

@@ -38,7 +38,7 @@ export interface VolAlert {
 }
 
 /** The bot kinds that render a tailored volatility banner. */
-export type VolBot = 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
+export type VolBot = 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
 
 /** Tone → color mapping handled by the banner component. */
 export type VolTone = 'warn' | 'bull' | 'bear' | 'info'
