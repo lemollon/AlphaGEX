@@ -185,3 +185,97 @@ export function YouTubeIcon({ className = 'h-4 w-4' }: IconProps) {
     </svg>
   )
 }
+
+/* ── How It Works page icons ───────────────────────────────────────────────── */
+
+export function EyeIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </svg>
+  )
+}
+
+export function SunIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={className} aria-hidden>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+    </svg>
+  )
+}
+
+export function SearchIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={className} aria-hidden>
+      <circle cx="10.5" cy="10.5" r="5.5" />
+      <path d="M14.8 14.8L20 20" />
+    </svg>
+  )
+}
+
+export function TargetIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" className={className} aria-hidden>
+      <circle cx="12" cy="12" r="7" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4" />
+    </svg>
+  )
+}
+
+export function FlagIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M6 21V4" />
+      <path d="M6 5h11.5l-2.6 3.5L17.5 12H6" />
+    </svg>
+  )
+}
+
+export function BoltIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M13 2.5L5 13.5h5.5L11 21.5l8-11h-5.5L13 2.5z" />
+    </svg>
+  )
+}
+
+export function PersonIcon({ className = 'h-5 w-5' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" className={className} aria-hidden>
+      <circle cx="12" cy="8" r="3.4" />
+      <path d="M5.5 20c.8-3.6 3.4-5.4 6.5-5.4s5.7 1.8 6.5 5.4" />
+    </svg>
+  )
+}
+
+export function CalendarCheckIcon({ className = 'h-5 w-5' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <rect x="4" y="5.5" width="16" height="14.5" rx="2" />
+      <path d="M4 10h16M8 3.5v3M16 3.5v3" />
+      <path d="M9 14.5l2.2 2.2 4-4.4" />
+    </svg>
+  )
+}
+
+export function ChartLineIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4 15.5l4.2-4.5 3.1 2.6L17.5 8" />
+      <path d="M14.5 8h3v3" />
+    </svg>
+  )
+}
+
+export function ChartUpSquareIcon({ className = 'h-6 w-6' }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+      <path d="M4 18.5l4-4.3 2.8 2.3 5-5.7" />
+      <path d="M13.2 10.8h2.8v2.8" />
+      <path d="M4 20h16" />
+    </svg>
+  )
+}
