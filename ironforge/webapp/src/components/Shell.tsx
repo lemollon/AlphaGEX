@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation'
 import ClientNav from './ClientNav'
 import ScrollToTop from './ScrollToTop'
+import AdminBadge from './AdminBadge'
 
 /**
  * App chrome wrapper. Operator routes get the global nav; standalone
@@ -34,6 +35,8 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       <ScrollToTop />
       {!isStandalone && <ClientNav />}
       {isStandalone ? children : <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>}
+      {/* Operator-only floating admin pill (renders nothing for everyone else). */}
+      <AdminBadge />
     </>
   )
 }
