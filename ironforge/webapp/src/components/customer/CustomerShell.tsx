@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useIsOperator } from '@/lib/useIsOperator'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import useSWR from 'swr'
@@ -100,6 +101,7 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname()
   const router = useRouter()
+  const isOperator = useIsOperator()
 
   async function handleLogout() {
     try {
@@ -126,6 +128,16 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
+      {isOperator ? (
+        <Link
+          href="/spark"
+          onClick={onNavigate}
+          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400"
+        >
+          <Icon d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />
+          <span>Ops</span>
+        </Link>
+      ) : null}
       {NAV_MAIN.map(renderItem)}
       <div className="mx-4 my-3 border-t border-forge-border" />
       {NAV_SECONDARY.map(renderItem)}

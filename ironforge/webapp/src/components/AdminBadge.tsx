@@ -58,6 +58,12 @@ export default function AdminBadge() {
         <span className="text-gray-400">not impersonating</span>
       )}
       <Link
+        href="/spark"
+        className="rounded-full border border-amber-500/60 px-3 py-1 font-semibold text-amber-500 transition-colors hover:bg-amber-500 hover:text-black"
+      >
+        Ops
+      </Link>
+      <Link
         href="/ops/impersonate"
         className="rounded-full bg-amber-500 px-3 py-1 font-semibold text-black transition-colors hover:bg-amber-400"
       >
