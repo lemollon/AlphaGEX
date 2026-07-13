@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
+import HomeLink from '@/components/HomeLink'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
@@ -27,7 +28,10 @@ export default function ForgotPasswordPage() {
   return (
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-16">
       <div className="mx-auto max-w-md">
-        <div className="mb-6 flex justify-center"><Wordmark /></div>
+        <div className="mb-6 flex justify-center"><Link href="/" aria-label="IronForge home"><Wordmark /></Link></div>
+        <div className="mb-4 flex items-center text-sm text-gray-400">
+          <HomeLink />
+        </div>
         <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-8 shadow-2xl">
           {sent ? (
             <>

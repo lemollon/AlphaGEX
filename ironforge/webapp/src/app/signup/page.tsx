@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
 import { Wordmark } from '@/components/Brand'
+import HomeLink from '@/components/HomeLink'
 import {
   checkPassword,
   validateSignup,
@@ -104,29 +105,6 @@ function CheckTick({ ok }: { ok: boolean }) {
         <circle cx="8" cy="8" r="2.2" fill="#52525b" />
       )}
     </svg>
-  )
-}
-
-function HomeGlyph() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
-      <path d="M4 11l8-7 8 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M6 10v9h12v-9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M10 19v-5h4v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-/** Always-available link back to the home page. */
-function HomeLink({ className = '' }: { className?: string }) {
-  return (
-    <Link
-      href="/"
-      className={`inline-flex items-center gap-1.5 font-medium text-gray-400 transition hover:text-amber-400 ${className}`}
-    >
-      <HomeGlyph />
-      Home
-    </Link>
   )
 }
 
@@ -251,7 +229,9 @@ export default function SignupPage() {
           {/* Left brand panel */}
           <aside className="relative hidden flex-col justify-between gap-10 border-r border-white/10 bg-gradient-to-b from-black/40 to-black/10 p-8 lg:flex">
             <div>
-              <Wordmark />
+              <Link href="/" aria-label="IronForge home" className="inline-flex">
+                <Wordmark />
+              </Link>
               <h2 className="mt-10 text-2xl font-bold leading-tight text-white">
                 Automated<br />Options<br />Execution
               </h2>
