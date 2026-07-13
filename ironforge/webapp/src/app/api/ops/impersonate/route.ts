@@ -30,6 +30,19 @@ interface UserRow {
 
 export async function GET(req: NextRequest) {
   const ops = await getSession()
+
+  // Lightweight status probe for the floating AdminBadge — answers for
+  // everyone (no 401) but reveals nothing unless an operator session exists.
+  if (req.nextUrl.searchParams.get('status') === 'true') {
+    if (!ops.userId) return NextResponse.json({ ok: true, operator: false })
+    const session = await getCustomerSession()
+    return NextResponse.json({
+      ok: true,
+      operator: true,
+      impersonating: session.customerId ? { email: session.email ?? null } : null,
+    })
+  }
+
   if (!ops.userId) {
     return NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 })
   }
