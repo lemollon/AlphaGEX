@@ -63,7 +63,7 @@ export default function RiskForm() {
     return (
       <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-12">
         <div className="mx-auto max-w-lg">
-          <div className="mb-6 flex justify-center"><Wordmark /></div>
+          <div className="mb-6 flex justify-center"><Link href="/" aria-label="IronForge home"><Wordmark /></Link></div>
           <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-8 shadow-2xl">
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-500">Your risk profile</p>
             <h1 className="mt-1 text-2xl font-bold text-white">
@@ -106,7 +106,7 @@ export default function RiskForm() {
   return (
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-12">
       <div className="mx-auto max-w-lg">
-        <div className="mb-6 flex justify-center"><Wordmark /></div>
+        <div className="mb-6 flex justify-center"><Link href="/" aria-label="IronForge home"><Wordmark /></Link></div>
         <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-6 shadow-2xl sm:p-8">
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-500">Step 3 · Risk profile</p>
           <h1 className="mt-1 text-2xl font-bold text-white">Find your best-fit bot</h1>

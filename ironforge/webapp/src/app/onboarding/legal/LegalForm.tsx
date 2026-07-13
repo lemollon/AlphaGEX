@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
 
 /* ── Inline glyphs (custom SVG, no emojis/stock icons) ─────────────── */
@@ -94,7 +95,7 @@ export default function LegalForm() {
     <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-8 sm:py-12">
       <div className="mx-auto max-w-lg">
         <div className="mb-6 flex justify-center">
-          <Wordmark />
+          <Link href="/" aria-label="IronForge home"><Wordmark /></Link>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-6 shadow-2xl sm:p-8">
