@@ -20,7 +20,7 @@ import type { LiveSummary, LiveTrade } from './types'
  * unavailable, fields are null (the UI renders "—"), never fabricated.
  */
 
-const BOT = 'spark'
+import type { LiveBot } from './viewer'
 
 interface HeartbeatDetails {
   action?: string
@@ -51,7 +51,7 @@ function deriveBotState(hbStatus: string, hbAction: string): string {
     : 'unknown'
 }
 
-export async function getLiveSummary(): Promise<LiveSummary> {
+export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`
@@ -243,7 +243,7 @@ export async function getLiveSummary(): Promise<LiveSummary> {
   }
 }
 
-export async function getLiveTrade(): Promise<LiveTrade> {
+export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`

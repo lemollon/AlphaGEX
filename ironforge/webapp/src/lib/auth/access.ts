@@ -39,6 +39,7 @@ const PUBLIC_EXACT = new Set<string>([
   // Middleware-open so the Live page can reach it; POST self-guards in-route
   // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
   '/api/spark/production-pause',
+  '/api/spark2/production-pause',
 ])
 
 export function isPublicPath(pathname: string): boolean {

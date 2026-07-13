@@ -6,7 +6,7 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib
  * honest-data rules as summary.ts (null when unavailable, never fabricated).
  */
 
-const BOT = 'spark'
+import type { LiveBot } from './viewer'
 
 export interface HomeData {
   wealth: {
@@ -25,7 +25,7 @@ export interface HomeData {
   as_of: string
 }
 
-export async function getHomeData(): Promise<HomeData> {
+export async function getHomeData(BOT: LiveBot = 'spark'): Promise<HomeData> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`

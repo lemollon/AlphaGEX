@@ -40,7 +40,14 @@ export interface MarketSession {
   next_open_label: string | null
 }
 
+export interface LiveViewerInfo {
+  bot: string
+  allowedBots: string[]
+}
+
 export interface LiveSummary {
+  /** Which live account this payload describes + which the viewer may switch to. */
+  viewer?: LiveViewerInfo
   state: CustomerState
   market: MarketSession & {
     condition: 'good' | 'caution' | 'no_trading'
