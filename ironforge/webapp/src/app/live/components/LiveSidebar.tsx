@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
+import { useIsOperator } from '@/lib/useIsOperator'
 import { MobileNavDrawer } from '@/components/customer/CustomerShell'
 
 /**
@@ -66,6 +67,8 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
     { label: 'Help', href: '/contact', icon: <Icon d={ICONS.help} /> },
   ]
 
+  const isOperator = useIsOperator()
+
   const renderItem = (item: NavItem) => {
     const baseClass = 'flex items-center gap-3 px-4 py-2.5 text-sm transition-colors'
     if (item.disabled || !item.href) {
@@ -116,6 +119,13 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
           <Link href="/"><Wordmark /></Link>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto pb-4">
+          {isOperator ? (
+            <Link href="/spark"
+              className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400">
+              <Icon d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />
+              <span>Ops</span>
+            </Link>
+          ) : null}
           {mainItems.map(renderItem)}
           <div className="mx-4 my-3 border-t border-forge-border" />
           {secondaryItems.map(renderItem)}
