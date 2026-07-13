@@ -146,6 +146,14 @@ CREATE TABLE IF NOT EXISTS ironforge_production_pause (
   paused_reason TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Customer → live-bot ownership for the account-aware Live page (customer_id =
+-- users.id uuid in the ironforge-customers DB; bots: spark, spark2).
+CREATE TABLE IF NOT EXISTS ironforge_customer_bots (
+  customer_id TEXT NOT NULL,
+  bot TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (customer_id, bot)
+);
 -- Vigil: macro-event blackout calendar (FOMC + custom events)
 CREATE TABLE IF NOT EXISTS ironforge_event_calendar (
   event_id          TEXT PRIMARY KEY,

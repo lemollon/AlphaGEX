@@ -1,7 +1,7 @@
 'use client'
 
 import useSWR, { mutate } from 'swr'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import LiveSidebar from './components/LiveSidebar'
@@ -14,18 +14,36 @@ import TodayPerformanceChart from './components/TodayPerformanceChart'
 import PauseTradingPanel from './components/PauseTradingPanel'
 
 export default function LiveClient() {
+  // Account-aware view: which live bot's account this page shows. The API
+  // authorizes server-side; the header toggle only appears when the viewer
+  // may see more than one account (operators; later, multi-account owners).
+  const [account, setAccount] = useState<'spark' | 'spark2'>('spark')
+  useEffect(() => {
+    const a = new URLSearchParams(window.location.search).get('account')
+    if (a === 'spark2') setAccount('spark2')
+  }, [])
+  const switchAccount = (next: 'spark' | 'spark2') => {
+    setAccount(next)
+    const url = new URL(window.location.href)
+    if (next === 'spark') url.searchParams.delete('account')
+    else url.searchParams.set('account', next)
+    window.history.replaceState(null, '', url.toString())
+  }
+
+  const summaryKey = `/api/live/summary?account=${account}`
+  const tradeKey = `/api/live/trade?account=${account}`
   const { data: summary, error: summaryError } = useSWR<LiveSummary>(
-    '/api/live/summary', fetcher, { refreshInterval: 60_000 },
+    summaryKey, fetcher, { refreshInterval: 60_000 },
   )
   const { data: trade, error: tradeError } = useSWR<LiveTrade>(
-    '/api/live/trade', fetcher, { refreshInterval: 30_000 },
+    tradeKey, fetcher, { refreshInterval: 30_000 },
   )
   const [pausePending, setPausePending] = useState(false)
 
   async function handlePauseToggle(nextPaused: boolean, password: string) {
     setPausePending(true)
     try {
-      const res = await fetch('/api/spark/production-pause', {
+      const res = await fetch(`/api/${account}/production-pause`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -37,7 +55,7 @@ export default function LiveClient() {
       })
       if (res.status === 403) throw new Error('password_required')
       if (!res.ok) throw new Error(`${res.status}`)
-      await Promise.all([mutate('/api/live/summary'), mutate('/api/live/trade')])
+      await Promise.all([mutate(summaryKey), mutate(tradeKey)])
     } finally {
       setPausePending(false)
     }
@@ -48,7 +66,7 @@ export default function LiveClient() {
       <LiveSidebar membership={summary?.membership ?? null} />
       <div className="lg:pl-60">
         <div className="mx-auto max-w-[1200px] px-4 py-5">
-          <LiveHeader />
+          <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
           {summaryError && !summary ? (
             <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
               Live data is temporarily unavailable. We&apos;re on it — try refreshing in a moment.
