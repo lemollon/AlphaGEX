@@ -97,8 +97,15 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
  * NOTE: the 30%-BP cap is intentionally NOT gated on this — it stays SPARK-only;
  * KINDLE's max_contracts:1 is its risk control.
  */
+/** SPARK's v2 sizing/gates (VIX cap 40, 0.7-SD credit walk-in floor, 30%-BP cap).
+ * SPARK2 runs the identical ruleset on the second live account. KINDLE (retired)
+ * intentionally never had these — its 1-contract ceiling was the risk control. */
+function isSparkV2Sizing(name: string): boolean {
+  return name === 'spark' || name === 'spark2'
+}
+
 function isSparkStrategy(name: string): boolean {
-  return name === 'spark' || name === 'kindle'
+  return name === 'spark' || name === 'kindle' || name === 'spark2'
 }
 
 /**
@@ -112,7 +119,7 @@ function isSparkStrategy(name: string): boolean {
  * constant as a VALUE (spark_* tables) — those are intentionally NOT changed.
  */
 function isProductionBot(name: string): boolean {
-  return name === 'spark' || name === 'kindle'
+  return name === 'spark' || name === 'kindle' || name === 'spark2'
 }
 
 // Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
@@ -146,12 +153,14 @@ const BOTS = [
   { name: 'flame', dte: '2DTE', minDte: 2 },
   { name: 'spark', dte: '1DTE', minDte: 1 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
-  // KINDLE: a SECOND 1DTE Iron Condor that runs SPARK's exact validated strategy
-  // (swing/no-stop, neg-gamma 1.5-SD widen) but on its OWN tables/config/account,
-  // sized for a tiny ($500) real-money account: $2 wings, max 1 contract. Isolated
-  // from SPARK — see isSparkStrategy() (shares strategy) vs PRODUCTION_BOT (separate
-  // production identity, wired in stage 2).
-  { name: 'kindle', dte: '1DTE', minDte: 1 },
+  // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
+  // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
+  // 30%-BP cap) on the SECOND live account (ex-KINDLE 6YB***95) — own tables/
+  // config/creds (TRADIER_SPARK2_* env, fallback TRADIER_KINDLE_*), physically
+  // isolated from SPARK's Iron Viper account. Born paused. KINDLE is RETIRED:
+  // removed from this roster (never scans/trades again); its tables, pages and
+  // history remain readable.
+  { name: 'spark2', dte: '1DTE', minDte: 1 },
 ] as const
 
 type BotDef = (typeof BOTS)[number]
@@ -213,6 +222,12 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
   kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
+  // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
+  // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
+  // starting_capital 500 is the paper-shadow seed only — production sizing
+  // comes from real Tradier account equity. NOTE: under the 30% cap a $5-wing
+  // contract (~$475 collateral) needs ≈$1.6k+ account equity to size ≥1ct.
+  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 500, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
@@ -2875,7 +2890,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // the moves. 40 kept (not removed entirely) as the catastrophic-vol circuit
   // breaker; the "no cap" variant's extra gain was one regime (2020 COVID).
   // Other bots (FLAME/INFERNO/KINDLE) keep the conservative 32.
-  const vixCap = bot.name === 'spark' ? 40 : 32
+  const vixCap = isSparkV2Sizing(bot.name) ? 40 : 32
   if (vix > vixCap) return `skip:vix_too_high(${vix.toFixed(1)}>cap${vixCap})`
 
   // Resolve the primary person for this bot (used for position attribution)
@@ -3054,8 +3069,10 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   //   KINDLE — still NO walk-in (fixed 1.2 SD): untested on its $2-wing/$490
   //            survival account; its gates are min_credit_pct_width + skip_neg_gamma.
   //   INFERNO/paper bots — keep legacy walk-in to 0.5 SD.
-  const sdFloor = bot.name === 'spark' ? 0.7 : SD_FLOOR
-  if (bot.name !== 'kindle') {
+  const sdFloor = isSparkV2Sizing(bot.name) ? 0.7 : SD_FLOOR
+  // (KINDLE — the one bot that skipped the walk-in — is retired from the
+  // roster, so every scanned bot walks in now. SPARK2 uses the 0.7-SD floor.)
+  {
     while ((!credits || credits.totalCredit < botCfg.min_credit) && usedSd - SD_STEP >= sdFloor) {
       usedSd = Math.round((usedSd - SD_STEP) * 10) / 10
       strikes = calculateStrikes(spot, expectedMove, usedSd, cfg(bot).wing_width)
@@ -3096,7 +3113,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // at +$80,228 (6.5yr, 3x return) with a 38.6% worst account slide — the
   // report recommended 20%/2ct; operator explicitly chose the 30% row knowing
   // the drawdown. Other bots use bp_pct.
-  const effBpPct = bot.name === 'spark' ? Math.min(botCfg.bp_pct, 0.30) : botCfg.bp_pct
+  const effBpPct = isSparkV2Sizing(bot.name) ? Math.min(botCfg.bp_pct, 0.30) : botCfg.bp_pct
   const usableBP = buyingPower * effBpPct
   const bpContracts = Math.floor(usableBP / collateralPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
@@ -3239,13 +3256,14 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Production-only mode: sandbox already traded, just need production ──
-    // KINDLE is PRODUCTION-ONLY: it always takes this branch (never the
-    // sandbox-fill + paper-insert path below), so it places ONLY on its real
-    // account 6YB70795 (productionOnly:true) and records ONLY real positions
-    // into kindle_positions (account_type='production'). This makes the /kindle
-    // dashboard a true mirror of the live account and stops the paper-mirror
-    // from consuming the daily trade limit. (SPARK keeps the sandbox-mirror.)
-    if (sandboxAlreadyTraded || bot.name === 'kindle') {
+    // SPARK2 is PRODUCTION-ONLY (inherited from retired KINDLE): it always
+    // takes this branch (never the sandbox-fill + paper-insert path below), so
+    // it places ONLY on its real account (ex-KINDLE 6YB***95, productionOnly:
+    // true) and records ONLY real positions into spark2_positions
+    // (account_type='production'). This makes the /spark2 dashboard a true
+    // mirror of the live account and stops the paper-mirror from consuming the
+    // daily trade limit. (SPARK keeps the sandbox-mirror.)
+    if (sandboxAlreadyTraded || bot.name === 'spark2') {
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'
       }

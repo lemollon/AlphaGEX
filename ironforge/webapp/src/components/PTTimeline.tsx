@@ -43,7 +43,7 @@ export default function PTTimeline({
   bot,
   accountType = 'sandbox',
 }: {
-  bot?: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
+  bot?: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
   accountType?: 'sandbox' | 'production'
 }) {
   // INFERNO (HOLD_TO_EOD after PR #2289) and BLAZE (directional, single

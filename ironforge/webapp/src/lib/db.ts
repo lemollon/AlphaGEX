@@ -70,13 +70,19 @@ export function dteMode(bot: string): string | null {
   if (bot === 'inferno') return '0DTE'
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
-  if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (SPARK strategy, $500 live acct)
+  if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (retired 2026-07-13; history only)
+  if (bot === 'spark2') return '1DTE' // SPARK2: SPARK's full v2 config on the second live account
   return null
 }
 
 // ---- Auto-create tables on first use ----
 
 let tablesReady = false
+
+/** Every bot with per-bot tables. SPARK2 (2026-07-13) = SPARK's full v2 config on
+ * the second live account (ex-KINDLE 6YB***95). KINDLE is retired from scanning
+ * but keeps tables/history. */
+const ALL_BOTS = ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle', 'spark2'] as const
 
 const INIT_DDL = `
 CREATE TABLE IF NOT EXISTS bot_heartbeats (
@@ -212,7 +218,7 @@ CREATE TABLE IF NOT EXISTS forge_briefings_meta (
   retry_count         INT DEFAULT 0,
   PRIMARY KEY (bot, brief_type)
 );
-` + ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle'].map(bot => `
+` + ALL_BOTS.map(bot => `
 CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   starting_capital NUMERIC(12,2) NOT NULL,
@@ -506,8 +512,18 @@ async function ensureTables(): Promise<void> {
       )
     } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
 
+    // SPARK2 born paused (2026-07-13): same guarantee as KINDLE — cannot place a
+    // real order until an explicit, deliberate unpause after preflight.
+    try {
+      await client.query(
+        `INSERT INTO ironforge_production_pause (bot_name, paused, paused_by, paused_reason)
+         VALUES ('SPARK2', TRUE, 'system', 'born paused — awaiting rotated Tradier creds + preflight + supervised first trade')
+         ON CONFLICT (bot_name) DO NOTHING`,
+      )
+    } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
+
     // Add missing columns to existing positions tables (safe to run repeatedly)
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
                           'kelly_raw NUMERIC(8,4)', 'kelly_half NUMERIC(8,4)', 'kelly_size_pct NUMERIC(6,4)']) {
         try {
@@ -589,7 +605,7 @@ async function ensureTables(): Promise<void> {
     // deployed backend, so the migration must also run here. Without these
     // columns the scanner throws `column "trailing_min_cost" does not exist`
     // every cycle and the equity snapshot writer never runs.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS) {
       for (const col of ['trailing_min_cost NUMERIC(8, 4)', 'trailing_pt_fired_at_ms BIGINT']) {
         try {
           await client.query(`ALTER TABLE ${bot}_positions ADD COLUMN IF NOT EXISTS ${col}`)
@@ -642,7 +658,7 @@ async function ensureTables(): Promise<void> {
     // ~40-day option timesales window. Originally SPARK-only; extended to
     // FLAME and INFERNO so the same Hypo column / dual equity line ships
     // for all three bots.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS) {
       for (const col of [
         'hypothetical_eod_pnl NUMERIC(12,2)',
         'hypothetical_eod_spot NUMERIC(10,4)',
@@ -670,7 +686,7 @@ async function ensureTables(): Promise<void> {
     // FLAME, INFERNO and the directional bots BLAZE/FLARE get their own tables
     // so each bot's Market-Risk Brief card has somewhere to land. Schema
     // mirrors spark_market_briefs (incl. the GEX profile columns).
-    for (const bot of ['flame', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS.filter((b) => b !== 'spark')) {
       try {
         await client.query(`
           CREATE TABLE IF NOT EXISTS ${bot}_market_briefs (
@@ -705,7 +721,7 @@ async function ensureTables(): Promise<void> {
     // Migrate the GEX profile columns onto any pre-existing market_briefs
     // tables (spark/flame/inferno were created before these columns). Additive
     // ALTERs — safe to run every boot.
-    for (const bot of ['spark', 'flame', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS) {
       for (const col of [
         'gex_regime TEXT',
         'gex_flip NUMERIC(10,4)',
@@ -743,7 +759,7 @@ async function ensureTables(): Promise<void> {
     // Old rows were backfilled with account_type='sandbox' DEFAULT (see the
     // ALTER ADD COLUMN above) so v2's (trade_date, person) uniqueness implies
     // v3's uniqueness — the swap is safe on already-populated tables.
-    for (const bot of ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle']) {
+    for (const bot of ALL_BOTS) {
       try {
         // Drop the original v1 constraint if it lingers from a very old
         // deployment.
@@ -1192,7 +1208,7 @@ export function escapeSql(val: string): string {
 /** Validate bot name parameter — flame, spark, inferno, blaze, flare, or kindle allowed. */
 export function validateBot(bot: string): string | null {
   const b = bot.toLowerCase()
-  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle' && b !== 'spark2') return null
   return b
 }
 

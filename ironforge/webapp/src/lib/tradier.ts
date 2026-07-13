@@ -802,6 +802,17 @@ interface BotAccountConfig {
   bpShare: Record<string, number>
 }
 
+/** SPARK2's live-account creds: TRADIER_SPARK2_* env, falling back to the old
+ * TRADIER_KINDLE_* names (same physical account 6YB***95 — KINDLE is retired,
+ * so whichever env name the rotated key lands under, SPARK2 finds it). Fail
+ * CLOSED: missing creds ⇒ zero production accounts ⇒ no order can be placed. */
+function spark2Creds(): { apiKey: string | undefined; accountId: string | undefined } {
+  return {
+    apiKey: process.env.TRADIER_SPARK2_API_KEY || process.env.TRADIER_KINDLE_API_KEY,
+    accountId: process.env.TRADIER_SPARK2_ACCOUNT_ID || process.env.TRADIER_KINDLE_ACCOUNT_ID,
+  }
+}
+
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
     accounts: [],  // Paper-only — no sandbox orders
@@ -836,7 +847,7 @@ export const PRODUCTION_BOT = 'spark'
  * kill-switch row (born paused) — being in this allowlist does NOT mean it trades.
  */
 export function isProductionBot(name: string): boolean {
-  return name === 'spark' || name === 'kindle'
+  return name === 'spark' || name === 'kindle' || name === 'spark2'
 }
 
 /** Get sandbox accounts that a specific bot trades on. */
@@ -1482,6 +1493,17 @@ export async function placeIcOrderAllAccounts(
       eligibleAccounts = [
         ...eligibleAccounts,
         { name: 'Kindle', apiKey: kKey, baseUrl: PRODUCTION_URL, type: 'production' },
+      ]
+    }
+  }
+  // SPARK2: same env-based inject (its account is not in ironforge_accounts).
+  // Still subject to the pause check + isProductionBot gate downstream.
+  if (botName?.toLowerCase() === 'spark2' && !opts?.sandboxOnly) {
+    const { apiKey: s2Key, accountId: s2Acct } = spark2Creds()
+    if (s2Key && s2Acct && !eligibleAccounts.some((a) => a.type === 'production' && a.name === 'Spark2')) {
+      eligibleAccounts = [
+        ...eligibleAccounts,
+        { name: 'Spark2', apiKey: s2Key, baseUrl: PRODUCTION_URL, type: 'production' },
       ]
     }
   }
@@ -2416,6 +2438,14 @@ export async function closeIcOrderAllAccounts(
       accounts = [...accounts, { name: 'Kindle', apiKey: kKey, baseUrl: PRODUCTION_URL, type: 'production' }]
     }
   }
+  // SPARK2 closes: same inject, keyed on the SPARK2- position-id tag so OPEN and
+  // CLOSE both reach the live account (mirrors the KINDLE inject above).
+  if (accountType === 'production' && (tag ?? '').toUpperCase().includes('SPARK2')) {
+    const { apiKey: s2Key, accountId: s2Acct } = spark2Creds()
+    if (s2Key && s2Acct && !accounts.some(a => a.type === 'production' && a.name === 'Spark2')) {
+      accounts = [...accounts, { name: 'Spark2', apiKey: s2Key, baseUrl: PRODUCTION_URL, type: 'production' }]
+    }
+  }
 
   await Promise.all(
     accounts.map(async (acct) => {
@@ -2968,6 +2998,16 @@ export async function getProductionAccountsForBot(botName: string): Promise<Prod
   // ironforge_accounts DB — so it is physically isolated from SPARK's accounts and
   // can never resolve SPARK's (Logan) production row. Fail CLOSED: if either env var
   // is missing, return zero accounts (no order can be placed).
+  // SPARK2: env-based creds (never the ironforge_accounts DB) — physically
+  // isolated from SPARK's production rows, same isolation contract as KINDLE.
+  if (botName.toLowerCase() === 'spark2') {
+    const { apiKey, accountId } = spark2Creds()
+    if (!apiKey || !accountId) {
+      console.warn('[tradier] SPARK2 production creds (TRADIER_SPARK2_* / TRADIER_KINDLE_*) not set — zero production accounts.')
+      return []
+    }
+    return [{ name: 'Spark2', apiKey, baseUrl: PRODUCTION_URL, accountId }]
+  }
   if (botName.toLowerCase() === 'kindle') {
     const apiKey = process.env.TRADIER_KINDLE_API_KEY
     const accountId = process.env.TRADIER_KINDLE_ACCOUNT_ID
