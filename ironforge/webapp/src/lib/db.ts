@@ -802,7 +802,7 @@ async function ensureTables(): Promise<void> {
     // SPARK production/Logan on 2026-04-20. Deactivate everything except the
     // highest-id row per (bot, dte_mode, account_type, person) tuple, then
     // enforce a partial unique index so the race can't happen again.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE'], ['spark2', '1DTE']] as const) {
       try {
         await client.query(
           `UPDATE ${bot}_paper_account SET is_active = FALSE
@@ -832,7 +832,7 @@ async function ensureTables(): Promise<void> {
     // race window; the partial unique index above is the actual guarantee.
     // A concurrent INSERT that loses the race trips the index and is swallowed
     // here so ensureTables() doesn't abort the whole transaction.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE'], ['spark2', '1DTE']] as const) {
       try {
         await client.query(
           `INSERT INTO ${bot}_paper_account
@@ -881,6 +881,28 @@ async function ensureTables(): Promise<void> {
       }
     } catch (err) {
       console.warn('  SPARK production paper_account seed failed (non-fatal):', err)
+    }
+
+    // Seed SPARK2's production paper_account ledger row. SPARK2's live account
+    // comes from env creds (never ironforge_accounts), and the scanner books its
+    // production fills under person='Spark2' (the ProductionAccount name from
+    // tradier.ts). Without this row the customer Live page reads is_active as
+    // false and shows "Paused" forever, and collateral/BP bookkeeping updates
+    // hit zero rows. Seeded at the account's funding value ($2,000); the Live
+    // page balance itself always comes from Tradier, not this ledger.
+    try {
+      await client.query(
+        `INSERT INTO spark2_paper_account
+          (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+           is_active, dte_mode, account_type, person)
+         SELECT 2000, 2000, 0, 2000, 2000, 0, TRUE, '1DTE', 'production', 'Spark2'
+         WHERE NOT EXISTS (
+           SELECT 1 FROM spark2_paper_account
+           WHERE account_type = 'production' AND is_active = TRUE
+         )`,
+      )
+    } catch (err) {
+      console.warn('  SPARK2 production paper_account seed failed (non-fatal):', err)
     }
 
     // Normalize ironforge_accounts.bot on production accounts to own SPARK.
