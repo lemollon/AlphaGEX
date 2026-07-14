@@ -1224,7 +1224,10 @@ async function monitorSinglePosition(
       // If past EOD cutoff, cancel the pending limit order and fall through
       // to the normal EOD market close logic below. A pending limit order
       // should never block the EOD safety close.
-      if (isAfterEodCutoff(ct, bot)) {
+      // SWING HOLD: on a NON-expiry day, SPARK-strategy positions are not
+      // EOD-closed (they may ride overnight), so leave the pending close
+      // order to its normal reprice/fill management instead of canceling it.
+      if (isAfterEodCutoff(ct, bot) && !(isSparkStrategy(bot.name) && expiration > ct.toISOString().slice(0, 10))) {
         console.log(
           `[scanner] ${bot.name.toUpperCase()} ${pid}: Past EOD cutoff with pending order ${userPending.order_id} — ` +
           `canceling limit order and falling through to EOD market close`,
@@ -1893,10 +1896,24 @@ async function monitorSinglePosition(
   // Check if position is from a prior day (stale holdover)
   const openDate = pos.open_time ? new Date(pos.open_time).toISOString().slice(0, 10) : null
   const todayStr = ct.toISOString().slice(0, 10)
-  const isStaleHoldover = openDate !== null && openDate < todayStr
+  // SWING HOLD (2026-07-14, operator parameters): SPARK-strategy bots are 1DTE
+  // swings — a position opened yesterday that expires TODAY is the intended
+  // overnight hold, not a stale holdover. Stale for them = past expiration.
+  // Other bots keep the legacy prior-day rule.
+  const swingHold = isSparkStrategy(bot.name)
+  const isStaleHoldover = swingHold
+    ? expiration < todayStr
+    : openDate !== null && openDate < todayStr
 
-  // EOD cutoff or stale holdover → force close
-  const isEod = isAfterEodCutoff(ct, bot)
+  // EOD cutoff or stale holdover → force close.
+  // SWING HOLD: on a NON-expiry day the 14:45 CT cutoff only banks winners —
+  // red positions ride overnight to their expiry day. That decision needs
+  // cost-to-close, so it happens AFTER the MTM fetch below (eodSwingDefer).
+  // On the expiry day the cutoff closes unconditionally: SPY options are
+  // physically settled, never hold through expiration.
+  const isEodRaw = isAfterEodCutoff(ct, bot)
+  const eodSwingDefer = swingHold && isEodRaw && expiration > todayStr
+  const isEod = isEodRaw && !eodSwingDefer
   if (isEod || isStaleHoldover) {
     const reason = isStaleHoldover ? 'stale_holdover' : 'eod_cutoff'
     // Commit R1: DB-level close-trigger log BEFORE we place any orders.
@@ -2132,6 +2149,91 @@ async function monitorSinglePosition(
       contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast,
       'debit', initialLimitPrice)
     return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
+  }
+
+  // SWING HOLD (2026-07-14): past the 14:45 CT cutoff on a NON-expiry day.
+  // Green at the worst-case executable cost → bank it now as a normal
+  // eod_cutoff close (same reason/labels as before). Red → ride overnight to
+  // the expiry day, where the PT tiers get a fresh session and the expiry-day
+  // 14:45 cutoff is the final exit. Known tail: overnight gaps are unhedgeable
+  // by any exit rule — accepted as part of the swing parameter set.
+  if (eodSwingDefer) {
+    if (costToClose < entryCredit) {
+      try {
+        await dbExecute(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            'CLOSE_TRIGGER',
+            `EOD_CUTOFF_FIRED pos=${pid} ct_time=${ct.toISOString()} ` +
+            `entry_credit=${entryCredit.toFixed(4)} contracts=${contracts} ` +
+            `swing_green_bank=true cost_to_close=${costToClose.toFixed(4)}`,
+            JSON.stringify({
+              trigger: 'eod_cutoff',
+              position_id: pid,
+              entry_credit: entryCredit,
+              contracts,
+              swing_green_bank: true,
+              cost_to_close: costToClose,
+              expiration,
+            }),
+            bot.dte,
+            pos.person ?? null,
+          ],
+        )
+      } catch { /* log failure must not block close */ }
+      try {
+        await closePosition(bot, pid, ticker, expiration,
+          num(pos.put_short_strike), num(pos.put_long_strike),
+          num(pos.call_short_strike), num(pos.call_long_strike),
+          contracts, entryCredit, collateral, 'eod_cutoff', costToClose)
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(`[scanner] ${bot.name.toUpperCase()}: Swing green-bank close failed, retrying at entry credit: ${msg}`)
+        await closePosition(bot, pid, ticker, expiration,
+          num(pos.put_short_strike), num(pos.put_long_strike),
+          num(pos.call_short_strike), num(pos.call_long_strike),
+          contracts, entryCredit, collateral, 'eod_cutoff', entryCredit)
+      }
+      _mtmFailureCounts.delete(pid)
+      return { status: `closed:eod_cutoff@${costToClose.toFixed(4)}(swing_green_bank)`, unrealizedPnl: 0 }
+    }
+
+    // Red (or break-even) at the cutoff → hold overnight. DB-log once per day.
+    if (_swingHoldLogged[pid] !== todayStr) {
+      _swingHoldLogged[pid] = todayStr
+      try {
+        await dbExecute(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            'SWING_HOLD',
+            `SWING_HOLD_OVERNIGHT pos=${pid} ct_time=${ct.toISOString()} ` +
+            `entry_credit=${entryCredit.toFixed(4)} cost_to_close=${costToClose.toFixed(4)} ` +
+            `contracts=${contracts} expiration=${expiration} — red at EOD cutoff, riding to expiry day`,
+            JSON.stringify({
+              trigger: 'swing_hold_overnight',
+              position_id: pid,
+              entry_credit: entryCredit,
+              cost_to_close: costToClose,
+              contracts,
+              expiration,
+            }),
+            bot.dte,
+            pos.person ?? null,
+          ],
+        )
+      } catch { /* best-effort */ }
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} ${pid}: SWING HOLD — red at EOD cutoff ` +
+        `(cost=$${costToClose.toFixed(4)} vs credit=$${entryCredit.toFixed(4)}), holding to expiry ${expiration}`,
+      )
+    }
+    const holdPnl = Math.round((entryCredit - costToCloseLast) * 100 * contracts * 100) / 100
+    return {
+      status: `monitoring:swing_hold_overnight mtm=${costToClose.toFixed(4)} uPnL=$${holdPnl.toFixed(2)} exp=${expiration}`,
+      unrealizedPnl: holdPnl,
+    }
   }
 
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
@@ -4881,6 +4983,12 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
       return
     }
 
+    // SWING HOLD: an open SPARK-strategy position that expires TODAY but was
+    // opened yesterday is the deliberate overnight hold — on its expiry
+    // morning it is still live (managed to the 14:45 CT cutoff), NOT a stale
+    // holdover. Exempt its legs from the stale sweep.
+    const swingExempt = await getSwingHoldExemptSymbols(todayStr)
+
     let totalStale = 0
     let totalClosed = 0
     let totalFailed = 0
@@ -4906,8 +5014,8 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
           // Today's 0DTE holdovers are from trades opened on previous days
           // (e.g., FLAME 2DTE opened Friday → 0DTE Tuesday). These consume
           // margin and block new orders even though the paper position was
-          // already closed at EOD.
-          if (expDate <= todayStr) {
+          // already closed at EOD. Swing-hold legs are exempt (see above).
+          if (expDate <= todayStr && !swingExempt.has(symbol)) {
             acctStale++
             staleSymbols.push(symbol)
             console.log(`[scanner] SANDBOX CLEANUP [${acct.name}]: Stale position ${symbol} (exp ${expDate})`)
@@ -4921,7 +5029,11 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
         console.log(
           `[scanner] SANDBOX CLEANUP [${acct.name}]: Closing ${staleSymbols.length} stale positions...`,
         )
-        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
+        // When swing holds exist, close ONLY the stale symbols (targeted) —
+        // the nuke-all variant would flatten the held legs too.
+        const result = swingExempt.size > 0
+          ? await closeOrphanSandboxPositions(acct.apiKey, acct.name, new Set(staleSymbols), acct.baseUrl)
+          : await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
         acctClosed = result.closed
         acctFailed = result.failed
         for (const detail of result.details) {
@@ -4951,7 +5063,7 @@ async function dailySandboxCleanup(ct: Date): Promise<void> {
           try {
             const datePart = pos.symbol.slice(3, 9)
             const expDate = `20${datePart.slice(0, 2)}-${datePart.slice(2, 4)}-${datePart.slice(4, 6)}`
-            if (expDate <= todayStr) {
+            if (expDate <= todayStr && !swingExempt.has(pos.symbol)) {
               remainingStale++
               console.warn(`[scanner] SANDBOX CLEANUP: STILL OPEN after close attempt: ${acct.name} ${pos.symbol} x${pos.quantity}`)
             }
@@ -5158,15 +5270,20 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
 
   const todayYYMMDD = ct.toISOString().slice(2, 10).replace(/-/g, '') // YYMMDD
 
+  // SWING HOLD: legs of open SPARK-strategy positions expiring AFTER today are
+  // deliberate overnight holds — the emergency close must not flatten them.
+  const tomorrowStr = new Date(ct.getTime() + 24 * 3600 * 1000).toISOString().slice(0, 10)
+  const swingExempt = await getSwingHoldExemptSymbols(tomorrowStr)
+
   for (const acct of accounts) {
     try {
       const positions = await getSandboxAccountPositions(acct.apiKey, undefined, acct.baseUrl)
-      // Filter to today's or future positions
+      // Filter to today's or future positions, minus swing-hold exemptions
       const todayPositions = positions.filter(p => {
         const symbol = p.symbol
         if (!symbol || symbol.length < 9) return false
         const datePart = symbol.slice(3, 9) // YYMMDD
-        return datePart >= todayYYMMDD && p.quantity !== 0
+        return datePart >= todayYYMMDD && p.quantity !== 0 && !swingExempt.has(symbol)
       })
 
       if (todayPositions.length > 0) {
@@ -5175,8 +5292,12 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
           `${todayPositions.length} positions still open — EMERGENCY CLOSING!`,
         )
 
-        // Actually close the stranded positions instead of just logging
-        const result = await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
+        // Actually close the stranded positions instead of just logging.
+        // When swing holds exist in this account, close ONLY the stranded
+        // symbols (targeted) — the nuke-all variant would flatten the holds.
+        const result = swingExempt.size > 0
+          ? await closeOrphanSandboxPositions(acct.apiKey, acct.name, new Set(todayPositions.map(p => p.symbol)), acct.baseUrl)
+          : await emergencyCloseSandboxPositions(acct.apiKey, acct.name, acct.baseUrl)
 
         await query(
           `INSERT INTO ${botTable(PRODUCTION_BOT, 'logs')} (level, message, details, dte_mode)
@@ -5208,6 +5329,43 @@ async function postEodSandboxVerify(ct: Date): Promise<void> {
 
 let _lastSafetyNetDate = ''
 
+// SWING HOLD: per-position "held overnight" DB-log dedup (pid → YYYY-MM-DD),
+// so the hold decision is logged once a day instead of every 1-min cycle.
+const _swingHoldLogged: { [pid: string]: string } = {}
+
+/**
+ * SWING HOLD exemption set: OCC symbols of all 4 legs of every OPEN
+ * SPARK-strategy position whose expiration is on/after `minExpInclusive`.
+ * The EOD/cleanup backstops must not treat these broker positions as
+ * stranded — they are deliberate overnight holds.
+ */
+async function getSwingHoldExemptSymbols(minExpInclusive: string): Promise<Set<string>> {
+  const exempt = new Set<string>()
+  for (const b of BOTS) {
+    if (!isSparkStrategy(b.name)) continue
+    try {
+      const rows = await query(
+        `SELECT ticker, expiration,
+                put_short_strike, put_long_strike,
+                call_short_strike, call_long_strike
+         FROM ${botTable(b.name, 'positions')}
+         WHERE status = 'open' AND dte_mode = $1`,
+        [b.dte],
+      )
+      for (const r of rows) {
+        const exp = r.expiration?.toISOString?.()?.slice(0, 10) || String(r.expiration).slice(0, 10)
+        if (exp < minExpInclusive) continue
+        const t = r.ticker || 'SPY'
+        if (num(r.put_short_strike) > 0) exempt.add(buildOccSymbol(t, exp, num(r.put_short_strike), 'P'))
+        if (num(r.put_long_strike) > 0) exempt.add(buildOccSymbol(t, exp, num(r.put_long_strike), 'P'))
+        if (num(r.call_short_strike) > 0) exempt.add(buildOccSymbol(t, exp, num(r.call_short_strike), 'C'))
+        if (num(r.call_long_strike) > 0) exempt.add(buildOccSymbol(t, exp, num(r.call_long_strike), 'C'))
+      }
+    } catch { /* best-effort — an unreadable table must not block the sweep */ }
+  }
+  return exempt
+}
+
 async function eodSafetyNetSweep(ct: Date): Promise<void> {
   const hhmm = ctHHMM(ct)
   // Only run between 2:55-3:05 PM CT
@@ -5222,7 +5380,7 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
 
   for (const bot of BOTS) {
     try {
-      const openRows = await query(
+      const allOpenRows = await query(
         `SELECT position_id, ticker, expiration,
                 put_short_strike, put_long_strike,
                 call_short_strike, call_long_strike,
@@ -5231,6 +5389,23 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
          WHERE status = 'open' AND dte_mode = $1`,
         [bot.dte],
       )
+
+      // SWING HOLD: SPARK-strategy positions expiring AFTER today are
+      // deliberate overnight holds, not stranded — the safety net must
+      // not flatten them. Expiry-day (or past-expiry) positions are still
+      // swept as before.
+      const openRows = isSparkStrategy(bot.name)
+        ? allOpenRows.filter(pos => {
+            const exp = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
+            return exp <= todayStr
+          })
+        : allOpenRows
+      if (allOpenRows.length > openRows.length) {
+        console.log(
+          `[scanner] EOD SAFETY NET: ${bot.name.toUpperCase()} skipping ` +
+          `${allOpenRows.length - openRows.length} swing-hold position(s) expiring after ${todayStr}`,
+        )
+      }
 
       if (openRows.length === 0) continue
 
