@@ -3071,8 +3071,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
+  // SPARK2 is PRODUCTION-ONLY: it never opens paper positions, so paper-BP
+  // gates must not block it from reaching its production entry branch. Its
+  // $500 paper shadow can never cover a $5-wing IC (~$470 collateral), which
+  // otherwise dead-ends every scan at skip:insufficient_bp. Production sizing
+  // happens inside placeIcOrderAllAccounts from real Tradier OBP.
+  const productionOnlyBot = bot.name === 'spark2'
+
   // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
-  if (buyingPower < 200 && !sandboxAlreadyTraded) return `skip:low_bp($${buyingPower.toFixed(0)})`
+  if (buyingPower < 200 && !sandboxAlreadyTraded && !productionOnlyBot) return `skip:low_bp($${buyingPower.toFixed(0)})`
 
   const expectedMove = (vix / 100 / Math.sqrt(252)) * spot
 
@@ -3219,7 +3226,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const usableBP = buyingPower * effBpPct
   const bpContracts = Math.floor(usableBP / collateralPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
-  if (bpContracts < 1 && !sandboxAlreadyTraded) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
+  if (bpContracts < 1 && !sandboxAlreadyTraded && !productionOnlyBot) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
   const SCANNER_MAX_CONTRACTS = 200
   // In production-only mode, use a nominal maxContracts — placeIcOrderAllAccounts re-sizes
   // based on real Tradier account equity anyway

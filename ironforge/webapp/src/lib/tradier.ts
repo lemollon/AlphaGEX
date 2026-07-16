@@ -1588,8 +1588,13 @@ export async function placeIcOrderAllAccounts(
         // 2026-07-07 compounding sim quantified 30%/3ct at 3x return with a
         // 38.6% worst account slide (Part-2 report recommended 20%/2ct; operator
         // explicitly chose 30% knowing the drawdown).
-        // SPARK-only, matching the paper cap; KINDLE's risk control is max_contracts:1.
-        prodBpPct = botName === 'spark' ? Math.min(prodCfg.bp_pct, 0.30) : prodCfg.bp_pct
+        // Applies to both SPARK v2 bots (spark + spark2), matching the paper
+        // path's isSparkV2Sizing 0.30 clamp — spark2's production config row
+        // carries bp_pct 0.85 (a copy of spark's DB row) and without this clamp
+        // it would deploy 85% of real OBP. KINDLE's risk control is max_contracts:1.
+        prodBpPct = botName === 'spark' || botName === 'spark2'
+          ? Math.min(prodCfg.bp_pct, 0.30)
+          : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
         productionConfigOk = true
       } else {
