@@ -40,7 +40,7 @@ export default function LiveClient() {
   )
   const [pausePending, setPausePending] = useState(false)
 
-  async function handlePauseToggle(nextPaused: boolean, password: string) {
+  async function handlePauseToggle(nextPaused: boolean) {
     setPausePending(true)
     try {
       const res = await fetch(`/api/${account}/production-pause`, {
@@ -50,10 +50,8 @@ export default function LiveClient() {
           paused: nextPaused,
           reason: nextPaused ? 'customer_pause' : 'customer_resume',
           by: 'live_page',
-          password,
         }),
       })
-      if (res.status === 403) throw new Error('password_required')
       if (!res.ok) throw new Error(`${res.status}`)
       await Promise.all([mutate(summaryKey), mutate(tradeKey)])
     } finally {

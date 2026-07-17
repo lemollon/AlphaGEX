@@ -6,36 +6,26 @@
  *   Only meaningful for PRODUCTION_BOT — other bots always return `paused:false`.
  *
  * POST /api/{bot}/production-pause
- *   Body: { "paused": boolean, "reason": "optional string", "by": "optional actor",
- *           "password": "required unless an operator session is present" }
+ *   Body: { "paused": boolean, "reason": "optional string", "by": "optional actor" }
  *   Toggles pause state for PRODUCTION_BOT. When paused:
  *     - scanner skips production orders (paper/sandbox continue untouched)
  *     - tradier.ts placeIcOrderAllAccounts drops production accounts defensively
  *     - preflight-live surfaces the pause as an informational advisory
  *   Returns the updated state.
  *
- * POST is self-guarded (the path is middleware-open so the customer Live page
- * can reach it): the caller must either hold a valid operator session or send
- * `password` matching the IRONFORGE_PAUSE_PASSWORD env var. When the env var
- * is unset the password path is disabled entirely (fail-closed, session only).
+ * AUTH: NONE — OPERATOR DECISION 2026-07-17. Leron: "I don't want IronForge to
+ * have passwords on trading"; offered pause-open/resume-gated and session-only
+ * alternatives, he explicitly chose fully open (both directions, no password,
+ * no session). The tradeoff (anyone reaching the public Live page can pause or
+ * resume production trading) was stated and accepted. The old
+ * IRONFORGE_PAUSE_PASSWORD path is deleted; the env var is inert.
  *
  * Only PRODUCTION_BOT accepts POST. Other bots receive 400 because pausing
  * production for a bot that never had production accounts is meaningless.
  */
-import { createHash, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbExecute, validateBot } from '@/lib/db'
-import { getSession } from '@/lib/auth/server'
 import { PRODUCTION_BOT, isProductionBot, getProductionPauseState } from '@/lib/tradier'
-
-/** Constant-time password check; sha256 first so length never leaks. */
-function pausePasswordMatches(candidate: string): boolean {
-  const expected = process.env.IRONFORGE_PAUSE_PASSWORD
-  if (!expected) return false
-  const a = createHash('sha256').update(candidate).digest()
-  const b = createHash('sha256').update(expected).digest()
-  return timingSafeEqual(a, b)
-}
 
 export const dynamic = 'force-dynamic'
 
@@ -81,28 +71,14 @@ export async function POST(
     )
   }
 
-  let body: { paused?: unknown; reason?: unknown; by?: unknown; password?: unknown }
+  let body: { paused?: unknown; reason?: unknown; by?: unknown }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  // Auth: operator session OR the shared pause password. Session read never
-  // throws the request into a 500 — a broken cookie just falls through to
-  // the password check.
-  let authorized = false
-  try {
-    const session = await getSession()
-    authorized = Boolean(session.userId)
-  } catch { /* no/invalid operator session — try the password */ }
-  if (!authorized && typeof body.password === 'string' && pausePasswordMatches(body.password)) {
-    authorized = true
-  }
-  if (!authorized) {
-    return NextResponse.json({ error: 'password_required' }, { status: 403 })
-  }
-
+  // No auth — operator decision 2026-07-17 (see header comment).
   const paused = body.paused === true
   const reason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : null
   const by = typeof body.by === 'string' ? body.by.slice(0, 120) : 'ui'

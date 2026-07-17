@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import type { CustomerState } from '@/lib/live/types'
 
+// No password — operator decision 2026-07-17 ("no passwords on trading").
+// A two-tap confirm remains purely as accidental-tap protection.
 export default function PauseTradingPanel({
   state,
   pending,
@@ -10,31 +12,21 @@ export default function PauseTradingPanel({
 }: {
   state: CustomerState | null
   pending: boolean
-  onToggle: (nextPaused: boolean, password: string) => Promise<void>
+  onToggle: (nextPaused: boolean) => Promise<void>
 }) {
   const [confirming, setConfirming] = useState(false)
-  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const paused = state?.paused ?? false
   const showResume = paused && (state?.can_resume ?? false)
   const disabled = pending || !state || (paused && !state.can_resume)
 
   async function handleConfirm() {
-    if (!password) {
-      setError('Enter the trading password to continue.')
-      return
-    }
     setError(null)
     try {
-      await onToggle(!paused, password)
+      await onToggle(!paused)
       setConfirming(false)
-      setPassword('')
-    } catch (e: unknown) {
-      setError(
-        e instanceof Error && e.message === 'password_required'
-          ? 'Incorrect password.'
-          : "That didn't go through — please try again.",
-      )
+    } catch {
+      setError("That didn't go through — please try again.")
     }
   }
 
@@ -68,19 +60,10 @@ export default function PauseTradingPanel({
         </button>
       ) : (
         <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleConfirm() }}
-            placeholder="Trading password"
-            autoFocus
-            className="flex-1 rounded-lg border border-forge-border bg-forge-bg px-3 py-3 text-sm text-white placeholder-gray-500 outline-none focus:border-spark"
-          />
           <button
             onClick={handleConfirm}
             disabled={pending}
-            className={`rounded-lg px-5 py-3 font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`flex-1 rounded-lg px-5 py-3 font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               showResume ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-spark hover:bg-spark-dark'
             }`}
           >
@@ -89,7 +72,7 @@ export default function PauseTradingPanel({
               : (showResume ? 'Confirm Resume' : 'Confirm Pause')}
           </button>
           <button
-            onClick={() => { setConfirming(false); setPassword(''); setError(null) }}
+            onClick={() => { setConfirming(false); setError(null) }}
             disabled={pending}
             className="rounded-lg border border-forge-border px-5 py-3 text-sm text-gray-400 transition-colors hover:text-white"
           >
