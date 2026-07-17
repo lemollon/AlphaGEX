@@ -218,9 +218,18 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
     : 'Conditions are favorable for your strategy.'
   const outlook = blocked ? 'Protective' : caution ? 'Cautious' : 'Favorable'
 
+  // Day P&L per point = equity − day-open BALANCE (not day-open equity). Balance only
+  // moves on closes, so an overnight swing-hold's unrealized carry shows from the first
+  // tick and the curve TERMINATES at the same number the "Today's Result" headline shows.
+  // (2026-07-17 bug: anchoring at day-open EQUITY baked SPARK2's −$259 overnight carry
+  // into the baseline — a −$208 day rendered as a +$220 green mountain.)
+  const dayOpenBalance = intradayRows.length ? num(intradayRows[0].balance) : null
   const intraday = intradayRows.map((r) => ({
     timestamp: String(r.snapshot_time),
     equity: Math.round((num(r.balance) + num(r.unrealized_pnl)) * 100) / 100,
+    pnl: dayOpenBalance != null
+      ? Math.round((num(r.balance) + num(r.unrealized_pnl) - dayOpenBalance) * 100) / 100
+      : null,
   }))
 
   return {
@@ -270,13 +279,19 @@ export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
        WHERE status = 'open' ${dteFilter} ${prodFilter}
        ORDER BY open_time DESC`,
     ),
-    // Today's unrealized-P&L stream for the mini chart — real scanner
-    // snapshots, minute-bucketed like the intraday equity curve.
+    // Today's day-P&L stream for the mini chart — real scanner snapshots,
+    // minute-bucketed like the intraday equity curve. realized_pnl in snapshots
+    // is LIFETIME-cumulative, so day-realized = realized − first bucket's realized;
+    // adding it keeps the curve continuous through a close instead of snapping to
+    // $0 when unrealized zeroes out (the 2026-07-17 "green line ends at $0 on a
+    // −$208 day" bug).
     dbQuery(
-      `SELECT bucket AS snapshot_time, SUM(unrealized_pnl) AS unrealized_pnl
+      `SELECT bucket AS snapshot_time,
+              SUM(unrealized_pnl) AS unrealized_pnl,
+              SUM(realized_pnl) AS realized_pnl
        FROM (
          SELECT date_trunc('minute', snapshot_time) AS bucket,
-                unrealized_pnl,
+                unrealized_pnl, realized_pnl,
                 ROW_NUMBER() OVER (
                   PARTITION BY date_trunc('minute', snapshot_time),
                                person, COALESCE(account_type, 'sandbox')
@@ -292,16 +307,17 @@ export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
     ),
   ])
 
+  const openRealized = sparkSeriesRows.length ? num(sparkSeriesRows[0].realized_pnl) : 0
   const sparkSeries = sparkSeriesRows.map((r) => ({
     timestamp: String(r.snapshot_time),
-    pnl: Math.round(num(r.unrealized_pnl) * 100) / 100,
+    pnl: Math.round((num(r.unrealized_pnl) + num(r.realized_pnl) - openRealized) * 100) / 100,
   }))
 
   if (positionRows.length === 0) {
     // No open trade — surface today's realized result when trading is done.
     const todaysClosed = await dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) as pnl,
-              COALESCE(SUM(total_credit * contracts * 100), 0) as credit_dollars,
+              COALESCE(SUM(collateral_required), 0) as risk_dollars,
               COUNT(*) as cnt
        FROM ${botTable(BOT, 'positions')}
        WHERE status IN ('closed', 'expired')
@@ -311,7 +327,9 @@ export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
     )
     const closedCount = int(todaysClosed[0]?.cnt)
     const pnl = Math.round(num(todaysClosed[0]?.pnl) * 100) / 100
-    const creditDollars = num(todaysClosed[0]?.credit_dollars)
+    // % of the capital that was at risk (collateral), not % of the credit — a $27-credit
+    // IC that loses $208 is −44% of its $473 risk, not "−770%" (the 2026-07-17 readout).
+    const riskDollars = num(todaysClosed[0]?.risk_dollars)
     return {
       active: false,
       opened_at: null,
@@ -324,7 +342,7 @@ export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
       today_result: closedCount > 0
         ? {
             pnl,
-            pct: creditDollars > 0 ? Math.round((pnl / creditDollars) * 10000) / 100 : null,
+            pct: riskDollars > 0 ? Math.round((pnl / riskDollars) * 10000) / 100 : null,
           }
         : null,
     }
@@ -357,8 +375,11 @@ export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
         const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
         const mtmLast = mtm.cost_to_close_last
         unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
-        unrealizedPnlPct = entryCredit > 0
-          ? Math.round(((entryCredit - Math.min(Math.max(0, mtmLast), spreadWidth)) / entryCredit) * 10000) / 100
+        // % of capital at risk (width − credit), matching today_result.pct — the old
+        // %-of-credit read exploded on losers (a $27-credit IC down $208 showed −770%).
+        const riskDollars = contracts * (spreadWidth - entryCredit) * 100
+        unrealizedPnlPct = riskDollars > 0 && unrealizedPnl != null
+          ? Math.round((unrealizedPnl / riskDollars) * 10000) / 100
           : null
         pnlSource = 'live'
       }
