@@ -48,7 +48,10 @@ export default function LiveTradeCard({
   const series = trade?.spark_series ?? []
   const showChart = series.length >= 2
   const lastPnl = series.length ? series[series.length - 1].pnl : 0
-  const chartColor = lastPnl >= 0 ? '#34d399' : '#f87171'
+  // Color by the OUTCOME the card reports, not the raw last series point — post-close
+  // snapshots used to zero out and paint a −$208 day green (2026-07-17 fix).
+  const outcomePnl = pnl ?? lastPnl
+  const chartColor = outcomePnl >= 0 ? '#34d399' : '#f87171'
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -124,7 +127,7 @@ export default function LiveTradeCard({
                           dataKey="pnl"
                           stroke={chartColor}
                           strokeWidth={2}
-                          fill={lastPnl >= 0 ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)'}
+                          fill={outcomePnl >= 0 ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)'}
                           isAnimationActive={false}
                           dot={false}
                         />

@@ -70,7 +70,9 @@ export interface LiveSummary {
     today_pnl_pct: number | null
     source: 'tradier' | 'paper_account'
   }
-  intraday: Array<{ timestamp: string; equity: number }>
+  // pnl = day P&L anchored at day-open BALANCE (includes an overnight hold's carry, so the
+  // curve ends where "Today's Result" reads); equity = absolute value for the tooltip.
+  intraday: Array<{ timestamp: string; equity: number; pnl?: number | null }>
   membership: {
     plan: string
     badge: string

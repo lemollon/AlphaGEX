@@ -30,10 +30,15 @@ export default function TodayPerformanceChart({
   const raw = intraday ?? []
   const showChart = raw.length >= 2
   const dayOpenEquity = raw.length ? raw[0].equity : null
-  // Mock's axis reads as ±$ change on the day — same curve, day-open-relative
-  // scale. Tooltip still reports the absolute account value.
+  // ±$ on the day: prefer the server's day-P&L (anchored at day-open BALANCE, so an
+  // overnight hold's carry shows from the first tick and the curve ends where the
+  // "Today's Result" headline reads — the 2026-07-17 fix). Fall back to the old
+  // equity-relative delta for cached payloads without `pnl`.
   const series = dayOpenEquity != null
-    ? raw.map((p) => ({ ...p, delta: Math.round((p.equity - dayOpenEquity) * 100) / 100 }))
+    ? raw.map((p) => ({
+        ...p,
+        delta: p.pnl ?? Math.round((p.equity - dayOpenEquity) * 100) / 100,
+      }))
     : []
   const todayPositive = (account?.today_pnl ?? 0) >= 0
 
