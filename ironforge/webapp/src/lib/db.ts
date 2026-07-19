@@ -1187,9 +1187,25 @@ async function ensureTables(): Promise<void> {
 
     // Start the scan loop in THIS process (same as API routes).
     // Dynamic import avoids circular dependency (scanner imports db).
-    import('./scanner')
-      .then(m => m.ensureScannerStarted())
-      .catch(err => console.error('Scanner start failed:', err))
+    //
+    // GATED, DEFAULT OFF. The scanner places REAL orders, so exactly one process
+    // in the fleet may run it. This app is deployed as two Render services (the
+    // customer site and the operator console) off the same image; only the one
+    // with SCANNER_ENABLED=true scans. Default-off is deliberate: a new or
+    // misconfigured service must be silent, never trading.
+    //
+    // This flag alone is NOT sufficient — it does not stop two INSTANCES of the
+    // same service (scale-out, or the overlap window during a zero-downtime
+    // deploy) from both scanning. startScanner() additionally takes a Postgres
+    // advisory lock, which is the guarantee that actually holds. Both layers are
+    // intentional; do not remove either.
+    if (process.env.SCANNER_ENABLED === 'true') {
+      import('./scanner')
+        .then(m => m.ensureScannerStarted())
+        .catch(err => console.error('Scanner start failed:', err))
+    } else {
+      console.log('[scanner] not started — SCANNER_ENABLED is not "true" (this process serves web traffic only)')
+    }
   } catch (err) {
     console.error('ensureTables failed:', err)
   } finally {

@@ -16,10 +16,20 @@ services:
     runtime: node
     plan: free
     rootDir: ironforge/webapp
+    # The scanner places REAL orders and must run in exactly ONE process. Two
+    # instances of this service would each start a scan loop. A Postgres advisory
+    # lock (src/lib/scanner-lock.ts) is the real guarantee, but pin the count too
+    # so the invariant is stated here and not merely implied by the plan tier.
+    numInstances: 1
     buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
     startCommand: node start.js
     healthCheckPath: /api/health
     envVars:
+      # Master switch for the in-process trading scanner. DEFAULT OFF in code —
+      # a service without this set to exactly "true" serves web traffic and never
+      # trades. Set true on ONLY ONE service. See src/lib/db.ts ensureTables().
+      - key: SCANNER_ENABLED
+        value: "true"
       - key: DATABASE_URL
         fromDatabase:
           name: ironforge-db
