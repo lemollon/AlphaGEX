@@ -21,7 +21,7 @@ import type { LiveSummary, LiveTrade } from './types'
  * unavailable, fields are null (the UI renders "—"), never fabricated.
  */
 
-import type { LiveBot } from './viewer'
+import { resolveAccountMode, ledgerFilter, LIVE_BOT_LABEL, PAPER_DISCLOSURE, type LiveBot } from './viewer'
 
 interface HeartbeatDetails {
   action?: string
@@ -55,7 +55,7 @@ function deriveBotState(hbStatus: string, hbAction: string): string {
 export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`
+  const prodFilter = ledgerFilter(BOT)
 
   const [
     heartbeatRows,
@@ -153,6 +153,7 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
     todayTradesClosed,
     sessionOpen: session.open,
     heartbeatAgeMin,
+    agent: LIVE_BOT_LABEL[BOT],
   })
 
   // --- Account value + today's result -----------------------------------
@@ -162,13 +163,17 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
   // Bot-aware balance source: SPARK's production account rows come from
   // ironforge_accounts; SPARK2's single live account lives in env creds and is
   // read directly (never SPARK's rows — accounts must not cross-leak).
-  const prodBals = BOT === 'spark'
+  // Paper bots (FLAME) have no broker account at all: never consult Tradier for
+  // them, always derive from the paper ledger below. Guarding explicitly rather
+  // than relying on the per-bot branches falling through to the same place.
+  const paper = resolveAccountMode(BOT) === 'paper'
+  const prodBals = BOT === 'spark' && !paper
     ? balances.filter((b) => b.account_type === 'production' && b.total_equity != null)
     : []
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'
-  if (BOT === 'spark2') {
+  if (BOT === 'spark2' && !paper) {
     const det = await getSpark2ProductionBalance().catch(() => null)
     if (det?.total_equity != null) {
       accountValue = Math.round(num(det.total_equity) * 100) / 100
@@ -214,7 +219,7 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
     blocked ? 'no_trading' : caution ? 'caution' : 'good'
   const conditionLine =
     blocked ? 'Conditions do not meet your protection standards today.'
-    : caution ? 'Conditions are mixed — Spark is being extra selective.'
+    : caution ? `Conditions are mixed — ${LIVE_BOT_LABEL[BOT]} is being extra selective.`
     : 'Conditions are favorable for your strategy.'
   const outlook = blocked ? 'Protective' : caution ? 'Cautious' : 'Favorable'
 
@@ -251,6 +256,8 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
       today_pnl: todayPnl,
       today_pnl_pct: todayPnlPct,
       source,
+      mode: resolveAccountMode(BOT),
+      disclosure: paper ? PAPER_DISCLOSURE : null,
     },
     intraday,
     membership: {
@@ -267,7 +274,7 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
 export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`
+  const prodFilter = ledgerFilter(BOT)
 
   const [positionRows, sparkSeriesRows] = await Promise.all([
     dbQuery(

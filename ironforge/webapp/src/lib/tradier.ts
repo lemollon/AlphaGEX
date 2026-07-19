@@ -815,7 +815,10 @@ function spark2Creds(): { apiKey: string | undefined; accountId: string | undefi
 
 const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
   flame: {
-    accounts: [],  // Paper-only — no sandbox orders
+    // No SANDBOX accounts. FLAME's live account (when armed) is injected from
+    // TRADIER_FLAME_* env in getProductionAccountsForBot, the same way SPARK2's
+    // and KINDLE's are — it is not in ironforge_accounts.
+    accounts: [],
     bpShare:  {},
   },
   spark: {
@@ -838,16 +841,50 @@ const BOT_ACCOUNTS: Record<string, BotAccountConfig> = {
  */
 export const PRODUCTION_BOT = 'spark'
 
+/** FLAME's live-account creds. Separate env names from SPARK/SPARK2 so FLAME can
+ *  never route an order into another bot's account. Fail CLOSED: missing creds ⇒
+ *  zero production accounts ⇒ no order can be placed. */
+function flameCreds(): { apiKey: string | undefined; accountId: string | undefined } {
+  return {
+    apiKey: process.env.TRADIER_FLAME_API_KEY,
+    accountId: process.env.TRADIER_FLAME_ACCOUNT_ID,
+  }
+}
+
+/**
+ * FLAME real-money arm switch — DEFAULT OFF, and deliberately not a code default.
+ *
+ * FLAME (2DTE SPY bull put credit spread) backtested NEGATIVE-EV at executable
+ * fills across every configuration tested (SD 1.0/1.5, fixed/dynamic wings,
+ * SMA50 trend filter, GEX gate): −$1.98 to −$5.08 per contract, with 2022 at
+ * −$8 to −$43. It is wired for live trading so the path is testable and ready,
+ * but it must NOT ship armed. Three independent conditions are required:
+ *
+ *   1. IRONFORGE_FLAME_LIVE === 'true'   (runtime env knob — the deliberate flip)
+ *   2. TRADIER_FLAME_API_KEY + TRADIER_FLAME_ACCOUNT_ID both set
+ *   3. an unpaused ironforge_production_pause row for FLAME (born paused)
+ *
+ * Deploying this code changes nothing on its own. Removing any one of these
+ * conditions must not silently re-arm the bot.
+ */
+export function isFlameLiveArmed(): boolean {
+  if (process.env.IRONFORGE_FLAME_LIVE !== 'true') return false
+  const { apiKey, accountId } = flameCreds()
+  return Boolean(apiKey && accountId)
+}
+
 /**
  * Bots allowed to place real-money production orders. SPARK trades the existing
  * live account (from ironforge_accounts); KINDLE trades a separate $500 account
  * whose creds come from TRADIER_KINDLE_* env (see getProductionAccountsForBot).
  * For 'spark' this returns true exactly where the old `=== PRODUCTION_BOT` did,
- * so SPARK's routing is unchanged. KINDLE is additionally gated by a paused
- * kill-switch row (born paused) — being in this allowlist does NOT mean it trades.
+ * so SPARK's routing is unchanged. KINDLE and FLAME are additionally gated by a
+ * paused kill-switch row (born paused) — being in this allowlist does NOT mean
+ * they trade. FLAME is further gated by isFlameLiveArmed() and is OFF by default.
  */
 export function isProductionBot(name: string): boolean {
   return name === 'spark' || name === 'kindle' || name === 'spark2'
+    || (name === 'flame' && isFlameLiveArmed())
 }
 
 /** Get sandbox accounts that a specific bot trades on. */
@@ -3012,6 +3049,14 @@ export async function getProductionAccountsForBot(botName: string): Promise<Prod
       return []
     }
     return [{ name: 'Spark2', apiKey, baseUrl: PRODUCTION_URL, accountId }]
+  }
+  if (botName.toLowerCase() === 'flame') {
+    // Fail closed twice: the arm knob AND the creds. Without both, FLAME has
+    // zero production accounts and physically cannot place a real order.
+    if (!isFlameLiveArmed()) return []
+    const { apiKey, accountId } = flameCreds()
+    if (!apiKey || !accountId) return []
+    return [{ name: 'Flame', apiKey, baseUrl: PRODUCTION_URL, accountId }]
   }
   if (botName.toLowerCase() === 'kindle') {
     const apiKey = process.env.TRADIER_KINDLE_API_KEY

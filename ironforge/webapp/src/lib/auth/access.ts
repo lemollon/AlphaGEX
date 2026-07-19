@@ -40,6 +40,9 @@ const PUBLIC_EXACT = new Set<string>([
   // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
   '/api/spark/production-pause',
   '/api/spark2/production-pause',
+  // FLAME is paper-only today, but the Live page renders the same pause control
+  // for it, so the route must be reachable on the same terms as the SPARK ones.
+  '/api/flame/production-pause',
 ])
 
 export function isPublicPath(pathname: string): boolean {

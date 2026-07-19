@@ -3,6 +3,7 @@
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveViewerInfo } from '@/lib/live/types'
+import { LIVE_BOT_ACCENT, LIVE_BOT_PILL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 
 interface CustomerMe {
   ok: boolean
@@ -11,10 +12,8 @@ interface CustomerMe {
 
 interface LiveHeaderProps {
   viewer?: LiveViewerInfo | null
-  onSwitch?: (bot: 'spark' | 'spark2') => void
+  onSwitch?: (bot: LiveBot) => void
 }
-
-const ACCOUNT_LABELS: Record<string, string> = { spark: 'SPARK', spark2: 'SPARK2' }
 
 export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
   // Public route: 401s cleanly when signed out — chip just falls back.
@@ -31,20 +30,33 @@ export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
       <div className="flex items-center gap-4">
         {viewer && viewer.allowedBots.length > 1 && onSwitch ? (
           <div className="flex items-center overflow-hidden rounded-lg border border-forge-border text-xs font-semibold">
-            {viewer.allowedBots.map((b) => (
-              <button
-                key={b}
-                type="button"
-                onClick={() => onSwitch(b as 'spark' | 'spark2')}
-                className={
-                  b === viewer.bot
-                    ? 'bg-spark/20 px-3 py-1.5 text-spark'
-                    : 'px-3 py-1.5 text-gray-400 transition-colors hover:text-white'
-                }
-              >
-                {ACCOUNT_LABELS[b] ?? b.toUpperCase()}
-              </button>
-            ))}
+            {viewer.allowedBots.filter(isLiveBot).map((b) => {
+              const active = b === viewer.bot
+              const isPaper = (viewer.paperBots ?? []).includes(b)
+              // Strategy accent is identity, not mode: Flame is orange whether
+              // it is on paper or live money; Spark accounts are blue.
+              const activeClass = LIVE_BOT_ACCENT[b] === 'flame'
+                ? 'bg-flame/20 px-3 py-1.5 text-flame'
+                : 'bg-spark/20 px-3 py-1.5 text-spark'
+              return (
+                <button
+                  key={b}
+                  type="button"
+                  onClick={() => onSwitch(b)}
+                  title={isPaper ? 'Paper trading — simulated, no real orders' : undefined}
+                  className={
+                    active ? activeClass : 'px-3 py-1.5 text-gray-400 transition-colors hover:text-white'
+                  }
+                >
+                  {LIVE_BOT_PILL[b]}
+                  {isPaper ? (
+                    <span className="ml-1.5 rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">
+                      Paper
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
           </div>
         ) : null}
         <div className="relative">
