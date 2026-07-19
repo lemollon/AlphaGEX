@@ -7,6 +7,7 @@ import { Wordmark } from '@/components/Brand'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { MobileNavDrawer } from '@/components/customer/CustomerShell'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
+import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 
 /**
  * Left rail for the customer Live page — keeps the original IronForge
@@ -79,6 +80,13 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
   ]
 
   const isOperator = useIsOperator()
+  // Drop nav entries this deployment does not serve (e.g. "Performance → /spark"
+  // is an operator console page and must not appear on the customer site).
+  const surface = clientSurface()
+  const visibleMain = filterNavBySurface(mainItems, surface)
+  const visibleSecondary = filterNavBySurface(secondaryItems, surface)
+  // The Ops shortcut is operator-only chrome; never ship it on the customer site.
+  const showOps = isOperator && servesPath(surface, '/spark')
 
   const renderItem = (item: NavItem) => {
     const baseClass = 'flex items-center gap-3 px-4 py-2.5 text-sm transition-colors'
@@ -173,14 +181,14 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
           <Link href="/"><Wordmark /></Link>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto pb-4">
-          {isOperator ? (
+          {showOps ? (
             <Link href="/spark"
               className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400">
               <Icon d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />
               <span>Ops</span>
             </Link>
           ) : null}
-          {mainItems.map((item) =>
+          {visibleMain.map((item) =>
             item.label === 'Live' ? (
               <div key="live-group">
                 {renderItem(item)}
@@ -191,7 +199,7 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
             ),
           )}
           <div className="mx-4 my-3 border-t border-forge-border" />
-          {secondaryItems.map(renderItem)}
+          {visibleSecondary.map(renderItem)}
           <div className="mx-4 my-3 border-t border-forge-border" />
           <button onClick={handleLogout}
             className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">

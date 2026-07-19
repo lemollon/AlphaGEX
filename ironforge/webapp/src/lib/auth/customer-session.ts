@@ -20,7 +20,22 @@ export interface CustomerSessionData {
 export const CUSTOMER_SESSION_COOKIE = 'ironforge_customer'
 
 export const customerSessionOptions: SessionOptions = {
-  password: process.env.IRONFORGE_SESSION_SECRET || '',
+  // Distinct secret from the OPERATOR session where one is configured.
+  //
+  // Both cookies were previously sealed with IRONFORGE_SESSION_SECRET and told
+  // apart only by cookie NAME. That is safe today (both are host-only, so they
+  // never travel to the same host), but it means an operator-issued sealed blob
+  // decrypts cleanly as a customer session. Once the app is split across
+  // ops.ironforge.trade and ironforge.trade, anything that later introduces a
+  // parent-domain cookie turns that into a live privilege-escalation path.
+  //
+  // Falls back to the shared secret so nothing breaks before the new var is set.
+  // Setting IRONFORGE_CUSTOMER_SESSION_SECRET invalidates existing customer
+  // sessions once (customers re-login); operator sessions are unaffected.
+  password:
+    process.env.IRONFORGE_CUSTOMER_SESSION_SECRET ||
+    process.env.IRONFORGE_SESSION_SECRET ||
+    '',
   cookieName: CUSTOMER_SESSION_COOKIE,
   cookieOptions: {
     httpOnly: true,

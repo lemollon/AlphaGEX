@@ -1,7 +1,29 @@
 # IronForge on Render
 # ====================
-# FLAME (2DTE) + SPARK (1DTE) + INFERNO (0DTE) Iron Condor paper trading bots.
+# FLAME (2DTE) + SPARK (1DTE) + INFERNO (0DTE) Iron Condor bots.
 # The scan loop runs INSIDE the Next.js webapp (no separate workers).
+#
+# TWO SERVICES, ONE IMAGE
+#   ironforge-dashboard → operator console (ops.ironforge.trade). Runs the
+#                         scanner. Holds the Tradier credentials.
+#   ironforge-customer  → customer product (ironforge.trade). No scanner, no
+#                         broker credentials — that omission is the point.
+# Which half a service serves is IRONFORGE_MODE; see src/lib/surface.ts.
+#
+# ⚠️ THIS FILE DESCRIBES THE END STATE, NOT THE CUTOVER.
+# Setting IRONFORGE_MODE=operator on the service that currently answers
+# ironforge.trade will 404 /live, /home and /community for customers. Do not
+# apply that value until the customer service is live and DNS has moved. The
+# safe order is:
+#   1. Stand up ironforge-customer, verify it.
+#   2. Point ironforge.trade at it and ops.ironforge.trade at the console.
+#   3. Only then set IRONFORGE_MODE=operator on the console.
+# An unset IRONFORGE_MODE means "serve everything" — today's behaviour — so
+# leaving it off during the transition is safe.
+#
+# NOTE: the live service is currently named `ironforge` and is managed from the
+# Render dashboard, so env changes there must be made in the UI; this file is
+# the source of truth for intent, not necessarily for what is deployed.
 
 databases:
   - name: ironforge-db
@@ -59,3 +81,64 @@ services:
         value: production
       - key: ALPHAGEX_API_BASE
         value: https://alphagex-api.onrender.com
+      # Operator console: bot dashboards, accounts, backtests. Serves ops.ironforge.trade.
+      - key: IRONFORGE_MODE
+        value: operator
+      # Client mirror — Next inlines NEXT_PUBLIC_* at BUILD time, so this must be
+      # present during the build for nav filtering to apply. Same value as above.
+      - key: NEXT_PUBLIC_IRONFORGE_MODE
+        value: operator
+
+  # ---- Customer site (ironforge.trade) ----
+  # Same image, same database, no trading credentials and no scanner.
+  - type: web
+    name: ironforge-customer
+    runtime: node
+    plan: starter
+    rootDir: ironforge/webapp
+    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: node start.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-db
+          property: connectionString
+      # Customer accounts live in their own database (see lib/customers-db.ts).
+      - key: CUSTOMERS_DATABASE_URL
+        sync: false
+      - key: IRONFORGE_MODE
+        value: customer
+      - key: NEXT_PUBLIC_IRONFORGE_MODE
+        value: customer
+      # SCANNER_ENABLED deliberately ABSENT. The scanner defaults off; this
+      # service must never place orders. Do not add it here.
+      - key: IRONFORGE_SESSION_SECRET
+        sync: false
+      # Distinct from the operator session secret so an operator-sealed cookie
+      # cannot decrypt as a customer session. See lib/auth/customer-session.ts.
+      - key: IRONFORGE_CUSTOMER_SESSION_SECRET
+        sync: false
+      - key: IRONFORGE_SERVICE_TOKEN
+        sync: false
+      # Customer-side integrations only. NO TRADIER_* KEYS ON THIS SERVICE —
+      # that omission is the point of the split: a compromise here yields no
+      # broker access.
+      - key: SNAPTRADE_CLIENT_ID
+        sync: false
+      - key: SNAPTRADE_CONSUMER_KEY
+        sync: false
+      - key: SNAPTRADE_SECRET_KEY
+        sync: false
+      - key: SNAPTRADE_WEBHOOK_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Needed by the Live page's Pause control, which posts to
+      # /api/{bot}/production-pause (self-guarded in-route).
+      - key: IRONFORGE_PAUSE_PASSWORD
+        sync: false
+      - key: NODE_ENV
+        value: production
