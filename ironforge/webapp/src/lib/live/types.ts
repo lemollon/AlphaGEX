@@ -43,6 +43,8 @@ export interface MarketSession {
 export interface LiveViewerInfo {
   bot: string | null
   allowedBots: string[]
+  /** Bots currently on simulated money — drives the "Paper" badge client-side. */
+  paperBots?: string[]
 }
 
 export interface LiveSummary {
@@ -69,6 +71,14 @@ export interface LiveSummary {
     today_pnl: number | null
     today_pnl_pct: number | null
     source: 'tradier' | 'paper_account'
+    /**
+     * 'paper' = simulated money. The UI MUST render the paper badge/disclosure
+     * whenever this is 'paper' — the rest of the page (account value, Today's
+     * Result, Pause Trading) reads as real money otherwise.
+     */
+    mode: 'production' | 'paper'
+    /** Non-null only in paper mode; the exact disclosure copy to display. */
+    disclosure: string | null
   }
   // pnl = day P&L anchored at day-open BALANCE (includes an overnight hold's carry, so the
   // curve ends where "Today's Result" reads); equity = absolute value for the tooltip.

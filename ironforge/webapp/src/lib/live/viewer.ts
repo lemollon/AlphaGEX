@@ -17,16 +17,49 @@ import { dbQuery } from '@/lib/db'
  * what `allowedBots` says.
  */
 
-export const LIVE_BOTS = ['spark', 'spark2'] as const
-export type LiveBot = (typeof LIVE_BOTS)[number]
+// Registry lives in ./bots (no server imports) so client components can use it
+// too. Re-exported here to keep existing server-side import sites unchanged.
+export {
+  LIVE_BOTS,
+  LIVE_BOT_MODE,
+  LIVE_BOT_LABEL,
+  LIVE_BOT_PILL,
+  LIVE_BOT_TAGLINE,
+  PAPER_DISCLOSURE,
+  accountMode,
+  isPaperBot,
+  isLiveBot,
+} from './bots'
+export type { LiveBot, LiveAccountMode } from './bots'
+
+import { LIVE_BOTS, LIVE_BOT_MODE, isLiveBot, type LiveBot, type LiveAccountMode } from './bots'
+import { isFlameLiveArmed } from '@/lib/tradier'
+
+/**
+ * Effective account mode, resolved at request time.
+ *
+ * LIVE_BOT_MODE is the DECLARED default (client-safe, no env access). FLAME is
+ * declared 'paper' and stays that way until it is genuinely armed for live
+ * trading — at which point the page must stop showing the paper badge and start
+ * reading the production ledger. Resolving here keeps the badge honest in both
+ * directions instead of drifting out of sync with the arm switch.
+ */
+export function resolveAccountMode(bot: LiveBot): LiveAccountMode {
+  if (bot === 'flame') return isFlameLiveArmed() ? 'production' : 'paper'
+  return LIVE_BOT_MODE[bot]
+}
+
+export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
+  return bots.filter((b) => resolveAccountMode(b) === 'paper')
+}
+
 export interface LiveViewer {
   /** null = this viewer is not authorized for any live account (empty state). */
   bot: LiveBot | null
   allowedBots: LiveBot[]
-}
-
-function isLiveBot(v: string | null): v is LiveBot {
-  return v === 'spark' || v === 'spark2'
+  /** Subset of allowedBots currently running on simulated money. Drives the
+   *  "Paper" badge on the strategy pills/rail without the client needing env. */
+  paperBots: LiveBot[]
 }
 
 export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
@@ -53,5 +86,5 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
 
   const requested = req.nextUrl.searchParams.get('account')
   const bot = isLiveBot(requested) && allowed.includes(requested) ? requested : (allowed[0] ?? null)
-  return { bot, allowedBots: allowed }
+  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed) }
 }

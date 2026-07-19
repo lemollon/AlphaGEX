@@ -24,6 +24,11 @@ export interface StateInput {
   sessionOpen: boolean
   /** minutes since last heartbeat; null when no heartbeat row exists */
   heartbeatAgeMin: number | null
+  /**
+   * Customer-facing agent name used in every headline/subtitle ("Flame is
+   * Working"). Defaults to Spark so existing call sites are unchanged.
+   */
+  agent?: string
 }
 
 const STALE_HEARTBEAT_MIN = 15
@@ -36,12 +41,13 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   const {
     botState, lastScanReason, paused, isActive,
     openPositions, todayTradesClosed, sessionOpen, heartbeatAgeMin,
+    agent = 'Spark',
   } = input
 
   if (paused) {
     return {
       key: 'PAUSED',
-      headline: 'Spark is Paused',
+      headline: `${agent} is Paused`,
       subtitle: 'You paused trading. Open positions are still being managed safely.',
       check_line: null,
       dot: 'amber',
@@ -54,7 +60,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   if (!isActive) {
     return {
       key: 'PAUSED',
-      headline: 'Spark is Paused',
+      headline: `${agent} is Paused`,
       subtitle: 'Trading is temporarily disabled. Open positions are still being managed safely.',
       check_line: null,
       dot: 'amber',
@@ -70,7 +76,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   if (botState === 'error' || heartbeatStale) {
     return {
       key: 'ACTION_REQUIRED',
-      headline: 'Spark Needs Attention',
+      headline: `${agent} Needs Attention`,
       subtitle: 'We hit a technical issue and are looking into it. Your account is protected by defined-risk positions.',
       check_line: null,
       dot: 'red',
@@ -83,7 +89,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   if (openPositions > 0 && (botState === 'awaiting_fill' || botState === 'pending_fill')) {
     return {
       key: 'TRADE_ACTIVE',
-      headline: 'Spark Found a Trade',
+      headline: `${agent} Found a Trade`,
       subtitle: 'Opening a position now.',
       check_line: null,
       dot: 'blue',
@@ -96,7 +102,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
   if (openPositions > 0) {
     return {
       key: 'MONITORING_POSITION',
-      headline: 'Spark is Working',
+      headline: `${agent} is Working`,
       subtitle: 'Monitoring markets and protecting your account.',
       check_line: 'No action required.',
       dot: 'green',
@@ -123,7 +129,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
     return {
       key: 'BLOCKED',
       headline: 'No Trading Today',
-      subtitle: "Market conditions aren't right, so Spark is sitting this one out. That's the strategy working.",
+      subtitle: `Market conditions aren’t right, so ${agent} is sitting this one out. That’s the strategy working.`,
       check_line: null,
       dot: 'gray',
       timeline_step: null,
@@ -136,7 +142,7 @@ export function deriveCustomerState(input: StateInput): CustomerState {
     return {
       key: 'WORKING_WAITING',
       headline: 'Looking for an Opportunity',
-      subtitle: 'Spark is scanning the market for a high-quality setup.',
+      subtitle: `${agent} is scanning the market for a high-quality setup.`,
       check_line: 'No action required.',
       dot: 'blue',
       timeline_step: 0,
@@ -147,8 +153,8 @@ export function deriveCustomerState(input: StateInput): CustomerState {
 
   return {
     key: 'WORKING_WAITING',
-    headline: 'Spark is Standing By',
-    subtitle: 'Markets are closed. Spark resumes at the next market open.',
+    headline: `${agent} is Standing By`,
+    subtitle: `Markets are closed. ${agent} resumes at the next market open.`,
     check_line: 'No action required.',
     dot: 'gray',
     timeline_step: null,

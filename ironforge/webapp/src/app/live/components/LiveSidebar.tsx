@@ -6,6 +6,7 @@ import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { MobileNavDrawer } from '@/components/customer/CustomerShell'
+import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 
 /**
  * Left rail for the customer Live page — keeps the original IronForge
@@ -42,7 +43,17 @@ const ICONS = {
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',
 }
 
-export default function LiveSidebar({ membership }: { membership: { plan: string; badge: string } | null }) {
+interface LiveSidebarProps {
+  membership: { plan: string; badge: string } | null
+  /** Strategies this viewer may see. Submenu is hidden when fewer than 2. */
+  bots?: LiveBot[]
+  activeBot?: LiveBot | null
+  /** Bots on simulated money — drives the "Paper" chip. */
+  paperBots?: string[]
+  onSwitch?: (bot: LiveBot) => void
+}
+
+export default function LiveSidebar({ membership, bots, activeBot, paperBots, onSwitch }: LiveSidebarProps) {
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -98,6 +109,49 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
     )
   }
 
+  // Nested strategy selector beneath Live. Per the Live-dashboard handoff: Live
+  // stays the single parent destination; Spark/Flame are child rows that swap
+  // the dashboard's data scope and accent without duplicating the app shell.
+  // Hidden entirely when the viewer is entitled to only one strategy.
+  const strategyBots = (bots ?? []).filter(isLiveBot)
+  const paperSet = new Set(paperBots ?? [])
+  const strategyChildren = strategyBots.length > 1 && onSwitch ? (
+    <div className="ml-6 mr-3 space-y-0.5 rounded-lg bg-black/20 py-2">
+      {strategyBots.map((b) => {
+        const active = b === activeBot
+        const paper = paperSet.has(b)
+        // Accent = strategy identity (Flame orange / Spark blue), independent
+        // of whether the strategy is on paper or live money.
+        const flameAccent = LIVE_BOT_ACCENT[b] === 'flame'
+        const accent = flameAccent ? 'text-flame' : 'text-spark'
+        const dot = flameAccent ? 'bg-flame' : 'bg-spark'
+        return (
+          <button
+            key={b}
+            type="button"
+            onClick={() => onSwitch(b)}
+            aria-current={active ? 'true' : undefined}
+            className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 text-sm transition-colors ${
+              active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor"
+              className={`h-4 w-4 shrink-0 ${accent}`}>
+              <path d="M12 2c1.5 3.5-.5 5.5-2 7.5S8 14 9.5 15.5c.5-1.5 1.5-2.5 2.5-3 .5 2 2 3 2 5a4 4 0 1 1-8 0c0-4.5 4-6 4-10 0-2 1-4 2-5.5z" />
+            </svg>
+            <span>{LIVE_BOT_LABEL[b]}</span>
+            {paper ? (
+              <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">
+                Paper
+              </span>
+            ) : null}
+            <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
+          </button>
+        )
+      })}
+    </div>
+  ) : null
+
   return (
     <>
       {/* Mobile top bar */}
@@ -126,7 +180,16 @@ export default function LiveSidebar({ membership }: { membership: { plan: string
               <span>Ops</span>
             </Link>
           ) : null}
-          {mainItems.map(renderItem)}
+          {mainItems.map((item) =>
+            item.label === 'Live' ? (
+              <div key="live-group">
+                {renderItem(item)}
+                {strategyChildren}
+              </div>
+            ) : (
+              renderItem(item)
+            ),
+          )}
           <div className="mx-4 my-3 border-t border-forge-border" />
           {secondaryItems.map(renderItem)}
           <div className="mx-4 my-3 border-t border-forge-border" />

@@ -4,6 +4,7 @@ import useSWR, { mutate } from 'swr'
 import { useEffect, useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
+import { LIVE_BOTS, type LiveBot } from '@/lib/live/bots'
 import LiveSidebar from './components/LiveSidebar'
 import LiveHeader from './components/LiveHeader'
 import SparkHeroCard from './components/SparkHeroCard'
@@ -17,12 +18,14 @@ export default function LiveClient() {
   // Account-aware view: which live bot's account this page shows. The API
   // authorizes server-side; the header toggle only appears when the viewer
   // may see more than one account (operators; later, multi-account owners).
-  const [account, setAccount] = useState<'spark' | 'spark2'>('spark')
+  const [account, setAccount] = useState<LiveBot>('spark')
   useEffect(() => {
     const a = new URLSearchParams(window.location.search).get('account')
-    if (a === 'spark2') setAccount('spark2')
+    if (a && a !== 'spark' && (LIVE_BOTS as readonly string[]).includes(a)) {
+      setAccount(a as LiveBot)
+    }
   }, [])
-  const switchAccount = (next: 'spark' | 'spark2') => {
+  const switchAccount = (next: LiveBot) => {
     setAccount(next)
     const url = new URL(window.location.href)
     if (next === 'spark') url.searchParams.delete('account')
@@ -63,7 +66,13 @@ export default function LiveClient() {
 
   return (
     <div className="min-h-screen bg-forge-bg">
-      <LiveSidebar membership={summary?.membership ?? null} />
+      <LiveSidebar
+        membership={summary?.membership ?? null}
+        bots={(summary?.viewer?.allowedBots ?? []) as LiveBot[]}
+        activeBot={account}
+        paperBots={summary?.viewer?.paperBots ?? []}
+        onSwitch={switchAccount}
+      />
       <div className="lg:pl-60">
         <div className="mx-auto max-w-[1200px] px-4 py-5">
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
@@ -84,6 +93,20 @@ export default function LiveClient() {
             </div>
           ) : (
             <div className="mt-4 flex flex-col gap-4">
+              {/* Paper-mode disclosure. Every number below this line (account
+                  value, Today's Result, the chart) is simulated for a paper bot,
+                  and the page's copy otherwise reads as real money — so this
+                  banner is not optional dressing. */}
+              {summary?.account.mode === 'paper' && summary.account.disclosure ? (
+                <div className="order-0 flex items-start gap-2.5 rounded-xl border border-flame/30 bg-flame/10 px-4 py-3">
+                  <span className="mt-px rounded bg-flame/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-flame">
+                    Paper
+                  </span>
+                  <p className="text-sm leading-relaxed text-gray-300">
+                    {summary.account.disclosure}
+                  </p>
+                </div>
+              ) : null}
               <div className="order-1">
                 <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} />
               </div>
