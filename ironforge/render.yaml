@@ -1,29 +1,38 @@
 # IronForge on Render
 # ====================
-# FLAME (2DTE) + SPARK (1DTE) + INFERNO (0DTE) Iron Condor bots.
-# The scan loop runs INSIDE the Next.js webapp (no separate workers).
+# TWO SERVICES, ONE IMAGE. Which half a service serves is IRONFORGE_MODE
+# (src/lib/surface.ts). An unset value means "serve everything" — today's
+# behaviour — so a service that forgets the variable degrades to the status quo
+# rather than 404ing half the app.
 #
-# TWO SERVICES, ONE IMAGE
-#   ironforge-dashboard → operator console (ops.ironforge.trade). Runs the
-#                         scanner. Holds the Tradier credentials.
-#   ironforge-customer  → customer product (ironforge.trade). No scanner, no
-#                         broker credentials — that omission is the point.
-# Which half a service serves is IRONFORGE_MODE; see src/lib/surface.ts.
+#   ironforge-product  →  ironforge.trade        THE REAL BUSINESS
+#       SPARK, SPARK2, FLAME. The live broker accounts. Everything a paying
+#       customer sees. HOLDS THE BROKER CREDENTIALS and RUNS THE TRADING ENGINE.
 #
-# ⚠️ THIS FILE DESCRIBES THE END STATE, NOT THE CUTOVER.
-# Setting IRONFORGE_MODE=operator on the service that currently answers
-# ironforge.trade will 404 /live, /home and /community for customers. Do not
-# apply that value until the customer service is live and DNS has moved. The
-# safe order is:
-#   1. Stand up ironforge-customer, verify it.
-#   2. Point ironforge.trade at it and ops.ironforge.trade at the console.
-#   3. Only then set IRONFORGE_MODE=operator on the console.
-# An unset IRONFORGE_MODE means "serve everything" — today's behaviour — so
-# leaving it off during the transition is safe.
+#   ironforge-lab      →  ironforge-899p.onrender.com     PRIVATE RESEARCH
+#       INFERNO, BLAZE, FLARE, KINDLE, EMBER backtests, GEX/volatility/briefings.
+#       NO live money. NO account credentials. It DISPLAYS results the product
+#       engine wrote; it does not drive trading.
 #
-# NOTE: the live service is currently named `ironforge` and is managed from the
-# Render dashboard, so env changes there must be made in the UI; this file is
-# the source of truth for intent, not necessarily for what is deployed.
+# WHY THE ENGINE LIVES ON PRODUCT
+# One engine scans every bot, so the lab's paper bots keep running without the
+# lab holding any credentials. Two engines would need per-service bot rosters and
+# per-group locks — more machinery, more to go wrong. The lab keeps a market-data
+# key so its pages can price paper positions, but it has no production account
+# credentials, so isProductionBot() + getProductionAccountsForBot() make placing a
+# live order impossible in code, not merely by configuration.
+#
+# ⚠️ CUTOVER ORDER MATTERS. See the plan; briefly:
+#   1. Create ironforge-product, verify it, THEN move the ironforge.trade domain.
+#   2. Only then set IRONFORGE_MODE=lab and remove SCANNER_ENABLED + the account
+#      credentials from the existing service.
+# Both services may briefly have SCANNER_ENABLED during the handover — that is
+# safe: the Postgres advisory lock in src/lib/scanner-lock.ts guarantees exactly
+# one engine regardless, which is precisely what it was built for.
+#
+# NOTE: the existing service is named `ironforge` in the dashboard and is managed
+# there, so its env changes must be made in the UI. This file is the source of
+# truth for INTENT, not necessarily for what is currently deployed.
 
 databases:
   - name: ironforge-db
@@ -32,74 +41,31 @@ databases:
     user: ironforge
 
 services:
-  # ---- Next.js Dashboard + Scanner ----
+  # ---- PRODUCT: the real business (ironforge.trade) ----
   - type: web
-    name: ironforge-dashboard
+    name: ironforge-product
     runtime: node
-    plan: free
+    plan: starter
     rootDir: ironforge/webapp
-    # The scanner places REAL orders and must run in exactly ONE process. Two
-    # instances of this service would each start a scan loop. A Postgres advisory
-    # lock (src/lib/scanner-lock.ts) is the real guarantee, but pin the count too
-    # so the invariant is stated here and not merely implied by the plan tier.
+    # The engine places REAL orders and must run in exactly ONE process. The
+    # advisory lock is the real guarantee; pinning the count states the invariant
+    # here too rather than leaving it implied by the plan tier.
     numInstances: 1
     buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
     startCommand: node start.js
     healthCheckPath: /api/health
     envVars:
-      # Master switch for the in-process trading scanner. DEFAULT OFF in code —
-      # a service without this set to exactly "true" serves web traffic and never
-      # trades. Set true on ONLY ONE service. See src/lib/db.ts ensureTables().
+      - key: IRONFORGE_MODE
+        value: product
+      # Client mirror — Next inlines NEXT_PUBLIC_* at BUILD time, so it must be
+      # present during the build for nav filtering to apply.
+      - key: NEXT_PUBLIC_IRONFORGE_MODE
+        value: product
+      # Master switch for the in-process trading engine. DEFAULT OFF in code — a
+      # service without this set to exactly "true" serves web traffic and never
+      # trades. See src/lib/db.ts ensureTables().
       - key: SCANNER_ENABLED
         value: "true"
-      - key: DATABASE_URL
-        fromDatabase:
-          name: ironforge-db
-          property: connectionString
-      - key: TRADIER_API_KEY
-        sync: false
-      # TRADIER_BASE_URL intentionally omitted — defaults to production
-      # (https://api.tradier.com/v1) for live market data quotes.
-      # Sandbox orders use the hardcoded SANDBOX_URL in tradier.ts.
-      - key: TRADIER_SANDBOX_KEY_USER
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_MATT
-        sync: false
-      - key: TRADIER_SANDBOX_KEY_LOGAN
-        sync: false
-      - key: IRONFORGE_SESSION_SECRET
-        sync: false
-      - key: IRONFORGE_SERVICE_TOKEN
-        sync: false
-      - key: IRONFORGE_SEED_TOKEN
-        sync: false
-      - key: IRONFORGE_API_URL
-        sync: false
-      - key: DISCORD_WEBHOOK_URL
-        sync: false
-      - key: NODE_ENV
-        value: production
-      - key: ALPHAGEX_API_BASE
-        value: https://alphagex-api.onrender.com
-      # Operator console: bot dashboards, accounts, backtests. Serves ops.ironforge.trade.
-      - key: IRONFORGE_MODE
-        value: operator
-      # Client mirror — Next inlines NEXT_PUBLIC_* at BUILD time, so this must be
-      # present during the build for nav filtering to apply. Same value as above.
-      - key: NEXT_PUBLIC_IRONFORGE_MODE
-        value: operator
-
-  # ---- Customer site (ironforge.trade) ----
-  # Same image, same database, no trading credentials and no scanner.
-  - type: web
-    name: ironforge-customer
-    runtime: node
-    plan: starter
-    rootDir: ironforge/webapp
-    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
-    startCommand: node start.js
-    healthCheckPath: /api/health
-    envVars:
       - key: DATABASE_URL
         fromDatabase:
           name: ironforge-db
@@ -107,12 +73,21 @@ services:
       # Customer accounts live in their own database (see lib/customers-db.ts).
       - key: CUSTOMERS_DATABASE_URL
         sync: false
-      - key: IRONFORGE_MODE
-        value: customer
-      - key: NEXT_PUBLIC_IRONFORGE_MODE
-        value: customer
-      # SCANNER_ENABLED deliberately ABSENT. The scanner defaults off; this
-      # service must never place orders. Do not add it here.
+      # Broker credentials — live money. These exist on THIS SERVICE ONLY.
+      - key: TRADIER_API_KEY
+        sync: false
+      # TRADIER_BASE_URL intentionally omitted — defaults to production for live
+      # market-data quotes. Sandbox orders use the hardcoded SANDBOX_URL.
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_MATT
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_LOGAN
+        sync: false
+      - key: TRADIER_SPARK2_API_KEY
+        sync: false
+      - key: TRADIER_SPARK2_ACCOUNT_ID
+        sync: false
       - key: IRONFORGE_SESSION_SECRET
         sync: false
       # Distinct from the operator session secret so an operator-sealed cookie
@@ -121,9 +96,11 @@ services:
         sync: false
       - key: IRONFORGE_SERVICE_TOKEN
         sync: false
-      # Customer-side integrations only. NO TRADIER_* KEYS ON THIS SERVICE —
-      # that omission is the point of the split: a compromise here yields no
-      # broker access.
+      - key: IRONFORGE_ADMIN_KEY
+        sync: false
+      - key: IRONFORGE_PAUSE_PASSWORD
+        sync: false
+      # Customer-side integrations.
       - key: SNAPTRADE_CLIENT_ID
         sync: false
       - key: SNAPTRADE_CONSUMER_KEY
@@ -136,9 +113,51 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
-      # Needed by the Live page's Pause control, which posts to
-      # /api/{bot}/production-pause (self-guarded in-route).
-      - key: IRONFORGE_PAUSE_PASSWORD
+      - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: NODE_ENV
+        value: production
+
+  # ---- LAB: private research (ironforge-899p.onrender.com) ----
+  - type: web
+    name: ironforge-lab
+    runtime: node
+    plan: starter
+    rootDir: ironforge/webapp
+    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public
+    startCommand: node start.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: IRONFORGE_MODE
+        value: lab
+      - key: NEXT_PUBLIC_IRONFORGE_MODE
+        value: lab
+      # SCANNER_ENABLED deliberately ABSENT. The engine defaults off; the lab
+      # must never place an order. Do not add it here.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-db
+          property: connectionString
+      # Market-data key ONLY — used for quotes and option chains so research
+      # pages can price paper positions. NO production account credentials
+      # (TRADIER_SPARK2_*, account IDs) live here, so isProductionBot() and
+      # getProductionAccountsForBot() make a live order impossible in code.
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: IRONFORGE_SESSION_SECRET
+        sync: false
+      - key: IRONFORGE_SERVICE_TOKEN
+        sync: false
+      - key: IRONFORGE_ADMIN_KEY
+        sync: false
+      # Research tooling.
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ALPHAGEX_API_BASE
+        value: https://alphagex-api.onrender.com
       - key: NODE_ENV
         value: production
