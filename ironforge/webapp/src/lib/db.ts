@@ -25,6 +25,9 @@ function getPool(): Pool {
 const DB_PREFIX: Record<string, string> = {
   flame: 'flame',
   spark: 'spark',
+  // Same values the `|| bot` fallthrough already produced — listed explicitly so
+  // SPARK2 (a live-money bot) does not depend on an implicit default.
+  spark2: 'spark2',
   inferno: 'inferno',
   blaze: 'blaze',
   flare: 'flare',
@@ -35,6 +38,7 @@ const DB_PREFIX: Record<string, string> = {
 const HEARTBEAT_MAP: Record<string, string> = {
   flame: 'FLAME',
   spark: 'SPARK',
+  spark2: 'SPARK2',
   inferno: 'INFERNO',
   blaze: 'BLAZE',
   flare: 'FLARE',

@@ -53,6 +53,24 @@ export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
   return bots.filter((b) => resolveAccountMode(b) === 'paper')
 }
 
+/**
+ * Ledger filter for a bot's customer-facing queries.
+ *
+ * Production bots (SPARK/SPARK2) read only account_type='production' rows.
+ * Paper bots (FLAME) have no production rows by construction — they read the
+ * complement, so their pages show the paper ledger instead of rendering empty.
+ * NULL account_type is treated as sandbox/paper by the same COALESCE the
+ * production filter uses, so the two branches partition the table exactly.
+ *
+ * Shared by summary.ts and home.ts — both must scope identically or the Home
+ * page and the Live page will disagree about the same bot's money.
+ */
+export function ledgerFilter(bot: LiveBot): string {
+  return resolveAccountMode(bot) === 'production'
+    ? `AND COALESCE(account_type, 'sandbox') = 'production'`
+    : `AND COALESCE(account_type, 'sandbox') <> 'production'`
+}
+
 export interface LiveViewer {
   /** null = this viewer is not authorized for any live account (empty state). */
   bot: LiveBot | null

@@ -2,11 +2,12 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib
 
 /**
  * Customer Home dashboard payload — wealth snapshot aggregates and a
- * customer-clean recent-trades list. Same SPARK-production scoping and
- * honest-data rules as summary.ts (null when unavailable, never fabricated).
+ * customer-clean recent-trades list. Scoped per bot via the same ledgerFilter
+ * summary.ts uses (production rows for SPARK/SPARK2, paper rows for FLAME), with
+ * the same honest-data rules (null when unavailable, never fabricated).
  */
 
-import type { LiveBot } from './viewer'
+import { ledgerFilter, type LiveBot } from './viewer'
 
 export interface HomeData {
   wealth: {
@@ -28,7 +29,7 @@ export interface HomeData {
 export async function getHomeData(BOT: LiveBot = 'spark'): Promise<HomeData> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = `AND COALESCE(account_type, 'sandbox') = 'production'`
+  const prodFilter = ledgerFilter(BOT)
   const closedFilter = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prodFilter}`
 
   const [incomeRows, accountRows, lifetimeRows, tradeRows, yesterdayRows] = await Promise.all([

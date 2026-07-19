@@ -21,22 +21,7 @@ import type { LiveSummary, LiveTrade } from './types'
  * unavailable, fields are null (the UI renders "—"), never fabricated.
  */
 
-import { resolveAccountMode, LIVE_BOT_LABEL, PAPER_DISCLOSURE, type LiveBot } from './viewer'
-
-/**
- * Ledger filter for the viewer's bot.
- *
- * Production bots (SPARK/SPARK2) read only account_type='production' rows.
- * Paper bots (FLAME) have no production rows by construction — they read the
- * complement, so the page shows the paper ledger instead of rendering empty.
- * NULL account_type is treated as sandbox/paper by the same COALESCE the
- * production filter uses, so the two branches partition the table exactly.
- */
-function ledgerFilter(bot: LiveBot): string {
-  return resolveAccountMode(bot) === 'production'
-    ? `AND COALESCE(account_type, 'sandbox') = 'production'`
-    : `AND COALESCE(account_type, 'sandbox') <> 'production'`
-}
+import { resolveAccountMode, ledgerFilter, LIVE_BOT_LABEL, PAPER_DISCLOSURE, type LiveBot } from './viewer'
 
 interface HeartbeatDetails {
   action?: string

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { botTable, heartbeatName } from '@/lib/db'
 import {
   LIVE_BOTS,
   LIVE_BOT_MODE,
@@ -88,5 +89,28 @@ describe('ledger partition', () => {
   it('treats NULL account_type as paper, not production', () => {
     expect(bucket(null, 'paper')).toBe(true)
     expect(bucket(null, 'production')).toBe(false)
+  })
+})
+
+describe('db registry for live bots', () => {
+  // spark2/flame were resolved by the `DB_PREFIX[bot] || bot` fallthrough before
+  // being listed explicitly. These pin the resolved values so making the registry
+  // explicit stays a no-op — a wrong prefix here would silently repoint a
+  // live-money bot at another bot's tables.
+  it('maps each live bot to its own table prefix', () => {
+    expect(botTable('spark', 'positions')).toBe('spark_positions')
+    expect(botTable('spark2', 'positions')).toBe('spark2_positions')
+    expect(botTable('flame', 'positions')).toBe('flame_positions')
+  })
+
+  it('gives every live bot a distinct table namespace', () => {
+    const prefixes = LIVE_BOTS.map((b: LiveBot) => botTable(b, 'positions'))
+    expect(new Set(prefixes).size).toBe(LIVE_BOTS.length)
+  })
+
+  it('maps each live bot to its own heartbeat name', () => {
+    expect(heartbeatName('spark')).toBe('SPARK')
+    expect(heartbeatName('spark2')).toBe('SPARK2')
+    expect(heartbeatName('flame')).toBe('FLAME')
   })
 })
