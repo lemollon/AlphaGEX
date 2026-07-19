@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
+import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 
 /**
  * Shared chrome for the customer Home + Community pages (per the approved
@@ -128,7 +129,10 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
-      {isOperator ? (
+      {/* Operator-only shortcut into the bot console. Hidden entirely on the
+          customer deployment — that surface 404s /spark, so the link would be
+          dead, and operator chrome should not ship to customers at all. */}
+      {isOperator && servesPath(clientSurface(), '/spark') ? (
         <Link
           href="/spark"
           onClick={onNavigate}
@@ -138,9 +142,9 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
           <span>Ops</span>
         </Link>
       ) : null}
-      {NAV_MAIN.map(renderItem)}
+      {filterNavBySurface(NAV_MAIN).map(renderItem)}
       <div className="mx-4 my-3 border-t border-forge-border" />
-      {NAV_SECONDARY.map(renderItem)}
+      {filterNavBySurface(NAV_SECONDARY).map(renderItem)}
       <div className="mx-4 my-3 border-t border-forge-border" />
       <button onClick={handleLogout}
         className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
@@ -202,7 +206,7 @@ function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
         </button>
         <LogoLockup />
         <nav className="hidden h-full items-center gap-6 md:flex">
-          {NAV_MAIN.map((item) => {
+          {filterNavBySurface(NAV_MAIN).map((item) => {
             const active = pathname === item.href
             return (
               <Link key={item.href} href={item.href}

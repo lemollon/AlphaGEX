@@ -4,8 +4,25 @@ import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/au
 import { decideAccess } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
+import { resolveSurface, servesPath } from '@/lib/surface'
 
 export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl
+
+  // Surface split — deliberately BEFORE the public-mode bypass below.
+  //
+  // This app is deployed twice from one image (customer site / operator console).
+  // A route belonging to the other half is 404, not 401: the public service should
+  // not even admit that /accounts exists. Placing this first means IRONFORGE_PUBLIC_MODE
+  // can never re-expose operator routes on the customer domain — the two flags
+  // compose safely instead of one overriding the other.
+  //
+  // Unset IRONFORGE_MODE → 'both' → this is a no-op (today's behaviour).
+  const surface = resolveSurface(process.env.IRONFORGE_MODE)
+  if (!servesPath(surface, pathname)) {
+    return new NextResponse(null, { status: 404 })
+  }
+
   // Placeholder mode: while public access is on, the login wall is dormant and the
   // whole site is open (until invite/signup goes live). Fail-secure — ANY value other
   // than the exact string 'true' leaves the gate enforced, so losing the env var locks
@@ -14,7 +31,6 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  const { pathname } = req.nextUrl
   const isApi = pathname.startsWith('/api/')
   const hasServiceToken = hasValidServiceToken(req.headers.get('x-ironforge-service'))
 

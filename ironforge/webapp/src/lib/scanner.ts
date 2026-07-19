@@ -24,6 +24,7 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY } from './db'
+import { acquireScannerLock } from './scanner-lock'
 import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
 import { postFlameOpen, postFlameClose } from './discord'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
@@ -5811,6 +5812,9 @@ async function scanBot(bot: BotDef): Promise<void> {
 
 let _intervalId: ReturnType<typeof setInterval> | null = null
 let _started = false
+// Guards against a second ensureScannerStarted() racing in while the first
+// call is still awaiting the lock (ensureTables can be re-entered on cold start).
+let _startPending = false
 let _scanCount = 0
 let _running = false
 let _scanStartedAt: number | null = null
@@ -6233,7 +6237,15 @@ function safeDrainAttioQueue(): void {
     .finally(() => { _attioRetryRunning = false })
 }
 
-export function startScanner(): void {
+/**
+ * Register the scan loop and all satellite intervals.
+ *
+ * PRECONDITION: the caller MUST already hold the cluster-wide scanner lock.
+ * Everything below places real orders or mutates broker/DB state, so this is
+ * only ever reached via ensureScannerStarted(), which acquires the lock first.
+ * Do not call this directly.
+ */
+function startScannerLocked(): void {
   if (_started) return
   _started = true
 
@@ -6267,9 +6279,41 @@ export function startScanner(): void {
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
 }
 
-/** Called by db.ts ensureTables to start scanner in the API route process */
+/**
+ * Called by db.ts ensureTables. Starts the scanner in THIS process only if it
+ * can claim the cluster-wide singleton lock.
+ *
+ * Fire-and-forget by design: db.ts must not block table setup (and therefore
+ * every request) on acquiring a lock. If the lock is unavailable this process
+ * simply never registers any interval and serves web traffic normally.
+ */
 export function ensureScannerStarted(): void {
-  startScanner()
+  if (_started || _startPending) return
+  _startPending = true
+
+  void acquireScannerLock()
+    .then((locked) => {
+      if (locked) {
+        startScannerLocked()
+      } else {
+        console.log('[scanner] lock not acquired — this process will not scan')
+      }
+    })
+    .catch((err) => {
+      // acquireScannerLock already fails closed; this is belt-and-braces.
+      console.error('[scanner] lock acquisition threw — not scanning:', err)
+    })
+    .finally(() => {
+      _startPending = false
+    })
+}
+
+/**
+ * Test/diagnostic accessor. True once the intervals are registered — i.e. this
+ * process won the lock and is the one placing orders.
+ */
+export function isScannerRunning(): boolean {
+  return _started
 }
 
 /* ------------------------------------------------------------------ */
