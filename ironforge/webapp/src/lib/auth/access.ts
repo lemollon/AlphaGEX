@@ -36,8 +36,10 @@ const PUBLIC_EXACT = new Set<string>([
   // treatment as /live; write APIs self-guard the customer session in-route).
   '/home',
   '/community',
-  // Middleware-open so the Live page can reach it; POST self-guards in-route
-  // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
+  // Middleware-open so the Live page can reach it. POST is UNAUTHENTICATED by
+  // operator decision 2026-07-17 ("no passwords on trading") — anyone reaching
+  // the Live page can pause/resume; tradeoff stated and accepted. GET is
+  // read-only state.
   '/api/spark/production-pause',
   '/api/spark2/production-pause',
   // FLAME is paper-only today, but the Live page renders the same pause control
