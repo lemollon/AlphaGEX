@@ -72,11 +72,10 @@ export const OPERATOR_PAGES: readonly string[] = [
   '/gex',
   '/volatility',
   '/calendar',
-  '/ops/login',
 ]
 
 /** Page prefixes served by the operator console. */
-export const OPERATOR_PAGE_PREFIXES: readonly string[] = ['/briefings', '/calendar/', '/ops/']
+export const OPERATOR_PAGE_PREFIXES: readonly string[] = ['/briefings', '/calendar/']
 
 /**
  * Operator API namespaces. `/api/[bot]/*` is the bot console API and
@@ -85,7 +84,6 @@ export const OPERATOR_PAGE_PREFIXES: readonly string[] = ['/briefings', '/calend
  */
 export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/accounts/',
-  '/api/ops/',
   '/api/ember/',
   '/api/briefings/',
   '/api/calendar/',
@@ -117,8 +115,22 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
 ]
 
 /** Shared infrastructure endpoints both services need. */
-export const SHARED_API_PREFIXES: readonly string[] = ['/api/auth/']
+export const SHARED_API_PREFIXES: readonly string[] = ['/api/auth/', '/api/ops/']
 export const SHARED_API_EXACT: readonly string[] = ['/api/health']
+
+/**
+ * Operator sign-in, served by BOTH deployments.
+ *
+ * This is the door the operator uses, not customer content. Classifying it as
+ * operator-only 404'd /ops/login and the /api/ops/admin magic link on the
+ * customer site, leaving no way to obtain an operator session there at all —
+ * so the admin badge and any operator-only affordance silently disappeared.
+ *
+ * Exposing it costs nothing: reaching the page still requires credentials or
+ * the admin key, both of which are checked in-route. Hiding a login form is not
+ * a security control; withholding the credentials is.
+ */
+export const SHARED_PAGE_PREFIXES: readonly string[] = ['/ops']
 
 function matches(pathname: string, exact: readonly string[], prefixes: readonly string[]): boolean {
   if (exact.includes(pathname)) return true
@@ -137,6 +149,8 @@ export function servesPath(surface: Surface, pathname: string): boolean {
   if (surface === 'both') return true
 
   if (matches(pathname, SHARED_API_EXACT, SHARED_API_PREFIXES)) return true
+  // Operator sign-in lives on both deployments — see SHARED_PAGE_PREFIXES.
+  if (matches(pathname, [], SHARED_PAGE_PREFIXES)) return true
 
   const isCustomer =
     matches(pathname, CUSTOMER_PAGES, CUSTOMER_PAGE_PREFIXES) ||
