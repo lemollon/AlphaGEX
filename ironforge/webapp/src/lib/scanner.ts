@@ -6287,25 +6287,46 @@ function startScannerLocked(): void {
  * every request) on acquiring a lock. If the lock is unavailable this process
  * simply never registers any interval and serves web traffic normally.
  */
+const LOCK_RETRY_MS = 30_000
+
 export function ensureScannerStarted(): void {
   if (_started || _startPending) return
   _startPending = true
+  void attemptLockAndStart()
+}
 
-  void acquireScannerLock()
-    .then((locked) => {
-      if (locked) {
-        startScannerLocked()
-      } else {
-        console.log('[scanner] lock not acquired — this process will not scan')
-      }
-    })
-    .catch((err) => {
-      // acquireScannerLock already fails closed; this is belt-and-braces.
-      console.error('[scanner] lock acquisition threw — not scanning:', err)
-    })
-    .finally(() => {
+/**
+ * Acquire the singleton lock and start scanning; if the lock is held by another
+ * process, RETRY every 30s until it frees.
+ *
+ * WHY THE RETRY MATTERS. On every deploy Render boots the new instance while the
+ * old one is still draining. The new process's first DB query triggers this and
+ * the lock is momentarily still held by the old instance, so acquisition fails.
+ * Without a retry the new process gave up permanently — and since the scanner
+ * only starts once per process, the fleet ended up with ZERO scanners after a
+ * deploy, silently, until a human forced another restart. That bit us three
+ * times on 2026-07-20. Retrying means the new instance picks up the lock within
+ * one interval of the old one draining, with no human intervention.
+ *
+ * Still fail-CLOSED per attempt: acquireScannerLock only returns true when this
+ * process actually holds the advisory lock, so at most one process ever scans.
+ */
+async function attemptLockAndStart(): Promise<void> {
+  try {
+    const locked = await acquireScannerLock()
+    if (locked) {
+      startScannerLocked()
       _startPending = false
-    })
+      return
+    }
+    console.log(`[scanner] lock held by another process — retrying in ${LOCK_RETRY_MS / 1000}s`)
+  } catch (err) {
+    // acquireScannerLock already fails closed; log and retry rather than give up.
+    console.error('[scanner] lock acquisition error — retrying:', err)
+  }
+  // Not started yet: schedule another attempt. Keep _startPending true so a
+  // concurrent ensureScannerStarted() call does not spawn a second retry loop.
+  setTimeout(() => { void attemptLockAndStart() }, LOCK_RETRY_MS)
 }
 
 /**

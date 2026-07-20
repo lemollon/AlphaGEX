@@ -175,12 +175,16 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
       <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
         membership={membership} planVariant="active" />
 
-      {/* Desktop rail */}
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-forge-border bg-forge-bg lg:flex">
-        <div className="px-4 py-5">
+      {/* Desktop rail. The whole rail scrolls as one column (overflow-y-auto on
+          the aside), rather than only the nav scrolling with a pinned card below
+          it — that older layout clipped the bottom items (Trade History → Log
+          Out) off short viewports with no visible scrollbar. The membership card
+          gets mt-auto so it still sits at the bottom when there's room. */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-forge-border bg-forge-bg lg:flex">
+        <div className="shrink-0 px-4 py-5">
           <Link href="/"><Wordmark /></Link>
         </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto pb-4">
+        <nav className="shrink-0 space-y-0.5 pb-4">
           {showOps ? (
             <Link href="/spark"
               className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400">
@@ -207,7 +211,7 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
             <span>Log Out</span>
           </button>
         </nav>
-        <div className="p-4">
+        <div className="mt-auto shrink-0 p-4">
           <div className="rounded-xl border border-amber-900/40 bg-forge-card p-4">
             <div className="font-display text-base text-amber-500">
               {membership?.plan ?? 'Forge Automate'}

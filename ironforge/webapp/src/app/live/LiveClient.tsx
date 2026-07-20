@@ -108,7 +108,7 @@ export default function LiveClient() {
                 </div>
               ) : null}
               <div className="order-1">
-                <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} />
+                <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
               </div>
               <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
                 <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} />

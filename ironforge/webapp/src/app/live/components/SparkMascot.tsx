@@ -19,10 +19,22 @@ const VARIANT_SRCS = [
   '/spark-anim/09-heartbeat-flare.webp',
 ]
 const STATIC_SRC = '/spark-mascot.png'
+// Flame has no animation set yet (only the blue Spark clips exist), so it shows
+// the orange still. An animated orange flame is a follow-up; wiring the variant
+// here means dropping in a flame-anim/ set later is the only remaining step.
+const FLAME_SRC = '/home/flame-mascot-glow.png'
 const ROTATE_EVERY_MS = 15_000
 const VARIANT_PLAY_MS = 7_200 // one full loop pass (86 frames @ 12fps)
 
-export default function SparkMascot({ className }: { className: string }) {
+export default function SparkMascot({
+  className,
+  variant = 'spark',
+}: {
+  className: string
+  /** Which strategy's mascot — Flame is orange, Spark is the animated blue. */
+  variant?: 'spark' | 'flame'
+}) {
+  const isFlame = variant === 'flame'
   const [src, setSrc] = useState(IDLE_SRC)
   const [reducedMotion, setReducedMotion] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -37,7 +49,8 @@ export default function SparkMascot({ className }: { className: string }) {
   }, [])
 
   useEffect(() => {
-    if (reducedMotion || failed) return
+    // Flame has no animation clips — it stays on the orange still.
+    if (reducedMotion || failed || isFlame) return
     let playTimer: ReturnType<typeof setTimeout> | undefined
     const rotateTimer = setInterval(() => {
       const variant = VARIANT_SRCS[nextIdx.current % VARIANT_SRCS.length]
@@ -54,15 +67,15 @@ export default function SparkMascot({ className }: { className: string }) {
       clearInterval(rotateTimer)
       if (playTimer) clearTimeout(playTimer)
     }
-  }, [reducedMotion, failed])
+  }, [reducedMotion, failed, isFlame])
 
-  const effectiveSrc = reducedMotion || failed ? STATIC_SRC : src
+  const effectiveSrc = isFlame ? FLAME_SRC : reducedMotion || failed ? STATIC_SRC : src
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={effectiveSrc}
-      alt="Spark"
+      alt={isFlame ? 'Flame' : 'Spark'}
       width={96}
       height={96}
       className={className}

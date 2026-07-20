@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { CustomerState, LiveSummary } from '@/lib/live/types'
 import { getCTMinutes } from '@/lib/pt-tiers'
+import { LIVE_BOT_ACCENT, type LiveBot } from '@/lib/live/bots'
 import SparkMascot from './SparkMascot'
 
 const DOT_CLASS: Record<CustomerState['dot'], string> = {
@@ -24,10 +25,14 @@ function closesInLabel(closesAtMin: number): string | null {
 export default function SparkHeroCard({
   state,
   market,
+  bot = 'spark',
 }: {
   state: CustomerState | null
   market: LiveSummary['market'] | null
+  /** Active strategy — drives the mascot (orange Flame vs animated blue Spark). */
+  bot?: LiveBot
 }) {
+  const accent = LIVE_BOT_ACCENT[bot] // 'flame' | 'spark' — identity, not mode
   // Re-derive the countdown each minute without refetching.
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -39,8 +44,10 @@ export default function SparkHeroCard({
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
         <div className="flex flex-1 items-center gap-4">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-forge-bg ring-1 ring-spark/25 sm:h-24 sm:w-24">
-            <SparkMascot className="h-full w-full rounded-2xl mix-blend-screen" />
+          <div className={`flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-forge-bg ring-1 sm:h-24 sm:w-24 ${
+            accent === 'flame' ? 'ring-flame/25' : 'ring-spark/25'
+          }`}>
+            <SparkMascot className="h-full w-full rounded-2xl mix-blend-screen" variant={accent} />
           </div>
           <div>
             {state ? (
