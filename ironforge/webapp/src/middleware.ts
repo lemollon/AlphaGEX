@@ -4,7 +4,7 @@ import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/au
 import { decideAccess } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
-import { resolveSurface, servesPath } from '@/lib/surface'
+import { resolveSurface, servesPath, OPERATOR_LANDING } from '@/lib/surface'
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
@@ -19,6 +19,18 @@ export async function middleware(req: NextRequest) {
   //
   // Unset IRONFORGE_MODE → 'both' → this is a no-op (today's behaviour).
   const surface = resolveSurface(process.env.IRONFORGE_MODE)
+
+  // Landing page for the operator console. '/' is the customer marketing page,
+  // so on the operator surface it would 404 — meaning the console's own root URL
+  // greets you with "page can't be found". Send it to the first bot dashboard
+  // instead. Only '/' is redirected; every other customer route still 404s, which
+  // is the point of the split.
+  if (surface === 'operator' && pathname === '/') {
+    const url = req.nextUrl.clone()
+    url.pathname = OPERATOR_LANDING
+    return NextResponse.redirect(url)
+  }
+
   if (!servesPath(surface, pathname)) {
     return new NextResponse(null, { status: 404 })
   }

@@ -7,6 +7,7 @@ import {
   CUSTOMER_PAGES,
   OPERATOR_PAGES,
   CUSTOMER_API_EXCEPTIONS,
+  OPERATOR_LANDING,
 } from '../surface'
 
 /**
@@ -165,5 +166,23 @@ describe('route classification is complete', () => {
       unclassified,
       `these pages are not classified in surface.ts and would be served by BOTH sites: ${unclassified.join(', ')}`,
     ).toEqual([])
+  })
+})
+
+describe('operator landing page', () => {
+  // '/' belongs to the customer surface, so the operator console redirects it.
+  // If OPERATOR_LANDING ever pointed at a route the operator surface does NOT
+  // serve, the console's root URL would redirect straight into a 404.
+  it('is a route the operator surface actually serves', () => {
+    expect(servesPath('operator', OPERATOR_LANDING)).toBe(true)
+  })
+
+  it('is not a customer route', () => {
+    expect(servesPath('customer', OPERATOR_LANDING)).toBe(false)
+  })
+
+  it("confirms '/' is why the redirect is needed", () => {
+    expect(servesPath('operator', '/')).toBe(false)
+    expect(servesPath('customer', '/')).toBe(true)
   })
 })

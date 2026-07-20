@@ -22,6 +22,15 @@
 
 export type Surface = 'customer' | 'operator' | 'both'
 
+/**
+ * Where '/' sends you on the operator console.
+ *
+ * '/' belongs to the customer surface (marketing homepage), so without this the
+ * operator console's own root URL renders a 404. Must be a path the operator
+ * surface actually serves — the accompanying test asserts that.
+ */
+export const OPERATOR_LANDING = '/spark'
+
 export function resolveSurface(raw?: string | null): Surface {
   return raw === 'customer' ? 'customer' : raw === 'operator' ? 'operator' : 'both'
 }
