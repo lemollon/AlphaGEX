@@ -2,30 +2,40 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { Wordmark } from '@/components/Brand'
 import { MenuIcon, CloseIcon } from './icons'
 
-/* Sticky top navigation per the handoff spec: logo, Home, How It Works, Login,
- * Create Account on desktop; logo + solid Create Account + hamburger on mobile.
- * Operators additionally get an "Ops" item next to Home (invisible to everyone
- * else — same status probe as the AdminBadge, which reveals nothing without an
- * operator session). */
-export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it-works' }) {
+/* Sticky top navigation for the public homepage: logo, the customer-facing
+ * pages, then Login / Create Account (or My Dashboard once signed in). No "Ops"
+ * item — the operator console lives on its own deployment and must not be linked
+ * from the customer site. */
+
+const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
+  { href: '/', label: 'Home' },
+  { href: '/how-it-works', label: 'How It Works' },
+  { href: '/pricing', label: 'Pricing' },
+  { href: '/live', label: 'Live' },
+  { href: '/community', label: 'Community' },
+]
+
+// `active` is retained for backward compatibility with existing callers
+// (page.tsx passes "home"); the current page is now derived from the pathname.
+export default function HomeNav({ active: _active }: { active?: string } = {}) {
   const [open, setOpen] = useState(false)
-  const [isOperator, setIsOperator] = useState(false)
   const [isCustomer, setIsCustomer] = useState(false)
+  const pathname = usePathname()
 
   useEffect(() => {
-    fetch('/api/ops/impersonate?status=true')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setIsOperator(Boolean(d?.operator)))
-      .catch(() => setIsOperator(false))
-    // Logged-in customers get "Dashboard" instead of Login/Create Account.
+    // Logged-in customers get "My Dashboard" instead of Login/Create Account.
     fetch('/api/auth/customer-me')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setIsCustomer(Boolean(d?.ok)))
       .catch(() => setIsCustomer(false))
   }, [])
+
+  const isActive = (href: string) =>
+    href === '/' ? pathname === '/' : pathname.startsWith(href)
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
@@ -36,34 +46,19 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
 
         {/* Desktop links */}
         <nav className="hidden items-center gap-8 md:flex">
-          <Link
-            href="/"
-            className={
-              active === 'home'
-                ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
-                : 'text-sm text-gray-300 transition-colors hover:text-white'
-            }
-          >
-            Home
-          </Link>
-          {isOperator ? (
+          {NAV_LINKS.map((link) => (
             <Link
-              href="/spark"
-              className="text-sm font-semibold text-[#FD5301] transition-colors hover:text-[#FF6A1F]"
+              key={link.href}
+              href={link.href}
+              className={
+                isActive(link.href)
+                  ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
+                  : 'text-sm text-gray-300 transition-colors hover:text-white'
+              }
             >
-              Ops
+              {link.label}
             </Link>
-          ) : null}
-          <Link
-            href="/how-it-works"
-            className={
-              active === 'how-it-works'
-                ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
-                : 'text-sm text-gray-300 transition-colors hover:text-white'
-            }
-          >
-            How It Works
-          </Link>
+          ))}
           {isCustomer ? (
             <Link
               href="/home"
@@ -110,17 +105,20 @@ export default function HomeNav({ active = 'home' }: { active?: 'home' | 'how-it
       {open ? (
         <nav className="border-t border-white/10 bg-black px-5 py-4 md:hidden">
           <div className="flex flex-col gap-4">
-            <Link href="/" onClick={() => setOpen(false)} className="text-sm font-semibold text-white">
-              Home
-            </Link>
-            {isOperator ? (
-              <Link href="/spark" onClick={() => setOpen(false)} className="text-sm font-semibold text-[#FD5301]">
-                Ops
+            {NAV_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className={
+                  isActive(link.href)
+                    ? 'text-sm font-semibold text-white'
+                    : 'text-sm text-gray-300'
+                }
+              >
+                {link.label}
               </Link>
-            ) : null}
-            <Link href="/how-it-works" onClick={() => setOpen(false)} className="text-sm text-gray-300">
-              How It Works
-            </Link>
+            ))}
             {isCustomer ? (
               <Link href="/home" onClick={() => setOpen(false)} className="text-sm text-gray-300">
                 My Dashboard
