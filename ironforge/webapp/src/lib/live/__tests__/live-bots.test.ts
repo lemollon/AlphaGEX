@@ -41,17 +41,16 @@ describe('live bot registry', () => {
 })
 
 describe('account mode', () => {
-  it('declares spark as the only production account', () => {
-    expect(accountMode('spark')).toBe('production')
+  it('declares flame as paper and the spark accounts as production', () => {
     expect(accountMode('flame')).toBe('paper')
-    // SPARK2 runs the SPARK config on a non-funded account (operator, 2026-07-21).
-    expect(accountMode('spark2')).toBe('paper')
+    expect(accountMode('spark')).toBe('production')
+    expect(accountMode('spark2')).toBe('production')
   })
 
-  it('flags flame and spark2 as paper, spark as real money', () => {
+  it('flags only flame as paper', () => {
     expect(isPaperBot('flame')).toBe(true)
-    expect(isPaperBot('spark2')).toBe(true)
     expect(isPaperBot('spark')).toBe(false)
+    expect(isPaperBot('spark2')).toBe(false)
   })
 })
 

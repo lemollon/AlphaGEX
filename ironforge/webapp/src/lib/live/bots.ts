@@ -24,28 +24,27 @@ export type LiveAccountMode = 'production' | 'paper'
 
 export const LIVE_BOT_MODE: Record<LiveBot, LiveAccountMode> = {
   spark: 'production',
-  // SPARK2 runs the SPARK config on a second, NON-funded account — it is paper,
-  // confirmed by the operator 2026-07-21. Its historical rows were written with
-  // account_type='production' before this was corrected; they were re-tagged to
-  // 'sandbox' at the same time as this flag so ledgerFilter() still finds them.
-  spark2: 'paper',
+  // SPARK2 stays 'production' — the account holds real money (7/16 first trade
+  // moved option BP $2,000 -> $1,526.64). Briefly flipped to 'paper' on 7/21;
+  // that made the page read the stale ex-KINDLE $500 sandbox seed and render
+  // $500 - $208 = $292. Reverted. Don't flip it without fixing that seed first.
+  spark2: 'production',
   flame: 'paper',
 }
 
 /** Customer-facing agent name (drives hero copy, pause text, disclosures).
- *  spark2 is "Spark paper", not "Spark" — it runs the same strategy on a
- *  non-funded account, and two identical "Spark" rows in the strategy rail and
- *  on Performance would read as one live account listed twice. */
+ *  spark2 is "Spark 2", not "Spark" — otherwise the two live accounts render as
+ *  two identical "Spark" rows in the strategy rail and on Performance. */
 export const LIVE_BOT_LABEL: Record<LiveBot, string> = {
   spark: 'Spark',
-  spark2: 'Spark paper',
+  spark2: 'Spark 2',
   flame: 'Flame',
 }
 
 /** Toggle-pill label — distinguishes the two SPARK accounts. */
 export const LIVE_BOT_PILL: Record<LiveBot, string> = {
   spark: 'SPARK',
-  spark2: 'SPARK PAPER',
+  spark2: 'SPARK2',
   flame: 'FLAME',
 }
 

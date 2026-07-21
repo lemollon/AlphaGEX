@@ -97,13 +97,19 @@ export async function POST(
     )
   }
 
+  // ?to=production reverses the correction. The forward direction stapled a real
+  // -$208 settlement onto the stale ex-KINDLE $500 paper seed and the Live page
+  // rendered $292 — so the undo path has to be as available as the do path.
+  const to = req.nextUrl.searchParams.get('to') === 'production' ? 'production' : 'sandbox'
+  const from = to === 'production' ? 'sandbox' : 'production'
+
   const before = await breakdown(bot)
-  const pending = RETAG_TABLES.reduce((n, t) => n + (before[t]?.production ?? 0), 0)
+  const pending = RETAG_TABLES.reduce((n, t) => n + (before[t]?.[from] ?? 0), 0)
   if (pending > MAX_EXPECTED_ROWS) {
     // More rows than this correction ever described means the assumption behind
     // it no longer holds. Stop rather than rewrite a ledger nobody reviewed.
     return NextResponse.json(
-      { error: `Refusing: ${pending} production rows exceeds the ${MAX_EXPECTED_ROWS}-row guard`, breakdown: before },
+      { error: `Refusing: ${pending} ${from} rows exceeds the ${MAX_EXPECTED_ROWS}-row guard`, breakdown: before },
       { status: 409 },
     )
   }
@@ -111,17 +117,18 @@ export async function POST(
   for (const t of RETAG_TABLES) {
     await dbExecute(
       `UPDATE ${botTable(bot, t)}
-          SET account_type = 'sandbox'
-        WHERE account_type = 'production'`,
+          SET account_type = '${to}'
+        WHERE account_type = '${from}'`,
     )
   }
 
   const after = await breakdown(bot)
   return NextResponse.json({
     bot,
+    direction: `${from} -> ${to}`,
     retagged: pending,
     before,
     after,
-    ok: RETAG_TABLES.every((t) => (after[t]?.production ?? 0) === 0),
+    ok: RETAG_TABLES.every((t) => (after[t]?.[from] ?? 0) === 0),
   })
 }
