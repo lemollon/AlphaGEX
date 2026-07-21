@@ -130,7 +130,14 @@ function isSparkStrategy(name: string): boolean {
  * constant as a VALUE (spark_* tables) — those are intentionally NOT changed.
  */
 function isProductionBot(name: string): boolean {
-  return name === 'spark' || name === 'kindle' || name === 'spark2'
+  // spark2 REMOVED 2026-07-21 (operator): it is now a genuine paper bot.
+  // It had been routing real orders while the customer Live page labelled it
+  // PAPER with a $10,000 simulated balance -- and the real account could not
+  // fund even one contract, so it skipped `production_only_no_fills` on every
+  // scan from 2026-07-17 (301/370, then 319/388, then 73/73) while the page
+  // told the customer it was "looking for an opportunity". It now trades its
+  // own paper ledger and the page tells the truth.
+  return name === 'spark' || name === 'kindle'
 }
 
 // Per-bot consecutive sandbox rejection tracking to avoid spamming Tradier
@@ -3106,12 +3113,13 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
-  // SPARK2 is PRODUCTION-ONLY: it never opens paper positions, so paper-BP
-  // gates must not block it from reaching its production entry branch. Its
-  // $500 paper shadow can never cover a $5-wing IC (~$470 collateral), which
-  // otherwise dead-ends every scan at skip:insufficient_bp. Production sizing
-  // happens inside placeIcOrderAllAccounts from real Tradier OBP.
-  const productionOnlyBot = bot.name === 'spark2'
+  // PRODUCTION-ONLY mode. spark2 was here until 2026-07-21, when it became a
+  // genuine paper bot (see isProductionBot). The paper-BP exemption existed
+  // because its paper shadow was seeded at $500 and could never cover a $5-wing
+  // IC; that seed is now $10,000, so the normal paper-BP gates apply and are
+  // correct. No bot currently needs the exemption -- kept as an explicit
+  // constant rather than deleted so re-enabling it is a one-line change.
+  const productionOnlyBot = false
 
   // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
   if (buyingPower < 200 && !sandboxAlreadyTraded && !productionOnlyBot) return `skip:low_bp($${buyingPower.toFixed(0)})`
@@ -3442,14 +3450,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Production-only mode: sandbox already traded, just need production ──
-    // SPARK2 is PRODUCTION-ONLY (inherited from retired KINDLE): it always
-    // takes this branch (never the sandbox-fill + paper-insert path below), so
-    // it places ONLY on its real account (ex-KINDLE 6YB***95, productionOnly:
-    // true) and records ONLY real positions into spark2_positions
-    // (account_type='production'). This makes the /spark2 dashboard a true
-    // mirror of the live account and stops the paper-mirror from consuming the
-    // daily trade limit. (SPARK keeps the sandbox-mirror.)
-    if (sandboxAlreadyTraded || bot.name === 'spark2') {
+    // SPARK2 used to force this branch unconditionally (inherited from retired
+    // KINDLE), placing only on its real ex-KINDLE account. That was removed on
+    // 2026-07-21 when spark2 became a genuine paper bot -- see isProductionBot.
+    // Only SPARK reaches this branch now, and only when its sandbox mirror has
+    // already filled for the day.
+    if (sandboxAlreadyTraded) {
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'
       }
