@@ -42,6 +42,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/pricing',
   '/live',
   '/home',
+  '/performance',
   '/community',
   '/account/trades',
   '/login',
