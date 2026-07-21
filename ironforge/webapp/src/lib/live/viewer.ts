@@ -80,26 +80,48 @@ export interface LiveViewer {
   paperBots: LiveBot[]
 }
 
+/**
+ * OPEN MODE — set by IRONFORGE_LIVE_OPEN=true.
+ *
+ * While the site is being reviewed, every visitor sees every live bot, exactly
+ * as an operator does: no login, no ironforge_customer_bots mapping. Operator
+ * decision 2026-07-21 ("just make the site open", "we will worry about security
+ * later") — it exists so a reviewer sees the same page the owner does.
+ *
+ * This publishes real account balances to anyone with the URL. It is a
+ * temporary review setting, NOT the launch configuration: unset the variable to
+ * restore per-viewer scoping. Fail-safe by omission — anything other than the
+ * exact string 'true' leaves the normal gating in place, so losing the env var
+ * closes access rather than opening it.
+ */
+function isOpenMode(): boolean {
+  return process.env.IRONFORGE_LIVE_OPEN === 'true'
+}
+
 export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   let allowed: LiveBot[] = []
 
-  try {
-    const ops = await getSession()
-    if (ops.userId) {
-      allowed = [...LIVE_BOTS]
-    } else {
-      const customer = await getCustomerSession()
-      if (customer.customerId) {
-        const rows = await dbQuery<{ bot: string }>(
-          `SELECT bot FROM ironforge_customer_bots WHERE customer_id = $1`,
-          [customer.customerId],
-        )
-        allowed = rows.map((r) => r.bot).filter(isLiveBot)
+  if (isOpenMode()) {
+    allowed = [...LIVE_BOTS]
+  } else {
+    try {
+      const ops = await getSession()
+      if (ops.userId) {
+        allowed = [...LIVE_BOTS]
+      } else {
+        const customer = await getCustomerSession()
+        if (customer.customerId) {
+          const rows = await dbQuery<{ bot: string }>(
+            `SELECT bot FROM ironforge_customer_bots WHERE customer_id = $1`,
+            [customer.customerId],
+          )
+          allowed = rows.map((r) => r.bot).filter(isLiveBot)
+        }
       }
+    } catch {
+      // Fail closed: no account visibility on any error.
+      allowed = []
     }
-  } catch {
-    // Fail closed: no account visibility on any error.
-    allowed = []
   }
 
   const requested = req.nextUrl.searchParams.get('account')

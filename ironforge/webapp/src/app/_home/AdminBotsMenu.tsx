@@ -32,9 +32,15 @@ const BOT_LINKS: ReadonlyArray<BotLink> = LIVE_BOTS.map((bot) => ({
   note: LIVE_BOT_MODE[bot] === 'paper' ? 'paper' : 'live money',
 }))
 
+// Open review mode (see lib/live/viewer.ts): show the menu to everyone, since
+// the pages it links to are ungated too. Next inlines NEXT_PUBLIC_* at BUILD
+// time, so this must be set during the build, not just at runtime.
+const OPEN_MODE = process.env.NEXT_PUBLIC_IRONFORGE_LIVE_OPEN === 'true'
+
 function useIsOperator(): boolean {
-  const [isOperator, setIsOperator] = useState(false)
+  const [isOperator, setIsOperator] = useState(OPEN_MODE)
   useEffect(() => {
+    if (OPEN_MODE) return
     fetch('/api/ops/impersonate?status=true')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setIsOperator(Boolean(d?.operator) && !d?.impersonating))
