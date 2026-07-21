@@ -41,16 +41,16 @@ describe('live bot registry', () => {
 })
 
 describe('account mode', () => {
-  it('declares flame as paper and the spark accounts as production', () => {
+  it('declares spark as the only production account', () => {
     expect(accountMode('flame')).toBe('paper')
     expect(accountMode('spark')).toBe('production')
-    expect(accountMode('spark2')).toBe('production')
+    expect(accountMode('spark2')).toBe('paper')
   })
 
-  it('flags only flame as paper', () => {
+  it('flags flame and spark2 as paper', () => {
     expect(isPaperBot('flame')).toBe(true)
     expect(isPaperBot('spark')).toBe(false)
-    expect(isPaperBot('spark2')).toBe(false)
+    expect(isPaperBot('spark2')).toBe(true)
   })
 })
 

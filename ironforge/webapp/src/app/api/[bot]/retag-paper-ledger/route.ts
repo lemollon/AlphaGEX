@@ -29,7 +29,7 @@
  * radius is stated, not implied.
  */
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, int, validateBot } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, int, num, validateBot } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -122,11 +122,43 @@ export async function POST(
     )
   }
 
+  // ?seed=N reseeds the sandbox paper_account's starting_capital. The paper
+  // branch of the Live summary computes account value as
+  // starting_capital + realized_pnl, so a stale seed (this row carried the
+  // ex-KINDLE $500) makes every balance on the bot wrong no matter how the
+  // rows are tagged. Paper capital is arbitrary by definition — $10k is the
+  // house default for these bots.
+  const seedRaw = req.nextUrl.searchParams.get('seed')
+  let reseeded: { starting_capital: number; current_balance: number } | null = null
+  if (seedRaw != null) {
+    const seed = Number(seedRaw)
+    if (!Number.isFinite(seed) || seed <= 0) {
+      return NextResponse.json({ error: `Invalid seed: ${seedRaw}` }, { status: 400 })
+    }
+    const [pnlRow] = await dbQuery<{ pnl: number }>(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS pnl
+         FROM ${botTable(bot, 'positions')}
+        WHERE COALESCE(account_type, 'sandbox') <> 'production'
+          AND status IN ('closed', 'expired')`,
+    )
+    const balance = seed + num(pnlRow?.pnl)
+    await dbExecute(
+      `UPDATE ${botTable(bot, 'paper_account')}
+          SET starting_capital = ${seed},
+              current_balance  = ${balance},
+              cumulative_pnl   = ${num(pnlRow?.pnl)},
+              buying_power     = ${balance} - COALESCE(collateral_in_use, 0)
+        WHERE COALESCE(account_type, 'sandbox') <> 'production'`,
+    )
+    reseeded = { starting_capital: seed, current_balance: balance }
+  }
+
   const after = await breakdown(bot)
   return NextResponse.json({
     bot,
     direction: `${from} -> ${to}`,
     retagged: pending,
+    reseeded,
     before,
     after,
     ok: RETAG_TABLES.every((t) => (after[t]?.[from] ?? 0) === 0),

@@ -24,27 +24,27 @@ export type LiveAccountMode = 'production' | 'paper'
 
 export const LIVE_BOT_MODE: Record<LiveBot, LiveAccountMode> = {
   spark: 'production',
-  // SPARK2 stays 'production' — the account holds real money (7/16 first trade
-  // moved option BP $2,000 -> $1,526.64). Briefly flipped to 'paper' on 7/21;
-  // that made the page read the stale ex-KINDLE $500 sandbox seed and render
-  // $500 - $208 = $292. Reverted. Don't flip it without fixing that seed first.
-  spark2: 'production',
+  // SPARK2 is paper (operator, 2026-07-21). Its sandbox paper_account carried
+  // the ex-KINDLE $500 seed, which is what made the first attempt at this render
+  // $500 - $208 = $292; reseeded to the $10k house default at the same time.
+  // Paper capital is arbitrary, so the seed is a choice, not a measurement.
+  spark2: 'paper',
   flame: 'paper',
 }
 
 /** Customer-facing agent name (drives hero copy, pause text, disclosures).
- *  spark2 is "Spark 2", not "Spark" — otherwise the two live accounts render as
+ *  spark2 is "Spark paper", not "Spark" — otherwise the two accounts render as
  *  two identical "Spark" rows in the strategy rail and on Performance. */
 export const LIVE_BOT_LABEL: Record<LiveBot, string> = {
   spark: 'Spark',
-  spark2: 'Spark 2',
+  spark2: 'Spark paper',
   flame: 'Flame',
 }
 
 /** Toggle-pill label — distinguishes the two SPARK accounts. */
 export const LIVE_BOT_PILL: Record<LiveBot, string> = {
   spark: 'SPARK',
-  spark2: 'SPARK2',
+  spark2: 'SPARK PAPER',
   flame: 'FLAME',
 }
 
