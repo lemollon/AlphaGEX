@@ -3,6 +3,7 @@
 import { Area, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { CustomerState, LiveTrade } from '@/lib/live/types'
 import { formatDollarPnl } from '@/lib/format'
+import type { AccentTheme } from './accent'
 
 function formatCT(iso: string | null): string {
   if (!iso) return '—'
@@ -36,10 +37,12 @@ export default function LiveTradeCard({
   trade,
   error,
   state,
+  accent,
 }: {
   trade: LiveTrade | null
   error: boolean
   state: CustomerState | null
+  accent: AccentTheme
 }) {
   const label = statusLabel(trade, state)
   const pnl = trade?.active ? trade.unrealized_pnl : trade?.today_result?.pnl ?? null
@@ -55,22 +58,22 @@ export default function LiveTradeCard({
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-spark">Live Trade</h3>
+      <h3 className={`text-xs font-semibold uppercase tracking-widest ${accent.text}`}>Live Trade</h3>
 
       {error && !trade ? (
         <p className="mt-4 text-sm text-gray-400">Live trade data is temporarily unavailable.</p>
       ) : (
         <>
           <div className="mt-3 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-full border border-spark/40 bg-spark/10">
+            <div className={`flex h-11 w-11 items-center justify-center rounded-full border ${accent.chip}`}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-spark">
+                strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
                 <path d="M3 17l6-6 4 4 8-8m0 0h-5m5 0v5" />
               </svg>
             </div>
             <div>
               <div className="text-lg font-semibold text-white">{label.title}</div>
-              <div className="text-sm text-spark">{label.sub}</div>
+              <div className={`text-sm ${accent.text}`}>{label.sub}</div>
             </div>
           </div>
 
@@ -145,7 +148,7 @@ export default function LiveTradeCard({
               </div>
               {trade.active && (
                 <div className="mt-2 flex items-center gap-1.5 text-xs text-gray-500">
-                  <span className="h-1.5 w-1.5 rounded-full bg-spark" />
+                  <span className={`h-1.5 w-1.5 rounded-full ${accent.dot}`} />
                   Live updates every 30 seconds
                   {trade.pnl_source === 'scanner_snapshot' && ' · as of last check'}
                 </div>

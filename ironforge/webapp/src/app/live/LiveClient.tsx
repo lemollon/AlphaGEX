@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import { LIVE_BOTS, type LiveBot } from '@/lib/live/bots'
+import { accentFor } from './components/accent'
 import LiveSidebar from './components/LiveSidebar'
 import LiveHeader from './components/LiveHeader'
 import SparkHeroCard from './components/SparkHeroCard'
@@ -42,6 +43,8 @@ export default function LiveClient() {
     tradeKey, fetcher, { refreshInterval: 30_000 },
   )
   const [pausePending, setPausePending] = useState(false)
+  // The whole surface takes the active bot's identity colour (Spark blue / Flame orange).
+  const accent = accentFor(account)
 
   async function handlePauseToggle(nextPaused: boolean, password: string) {
     setPausePending(true)
@@ -111,21 +114,22 @@ export default function LiveClient() {
                 <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
               </div>
               <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
-                <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} />
-                <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} />
+                <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} />
+                <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
               </div>
               {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
               <div className="order-4 lg:order-3">
-                <MarketConditionsCard market={summary?.market ?? null} />
+                <MarketConditionsCard market={summary?.market ?? null} accent={accent} />
               </div>
               <div className="order-3 lg:order-4">
-                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} />
+                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
               <div className="order-5">
                 <PauseTradingPanel
                   state={summary?.state ?? null}
                   pending={pausePending}
                   onToggle={handlePauseToggle}
+                  accent={accent}
                 />
               </div>
             </div>
