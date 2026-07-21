@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY, escapeSql } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
+import { isSparkStrategyBot } from '@/lib/pt-tiers'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,6 +46,22 @@ export async function POST(
     return NextResponse.json({ error: 'Not past EOD cutoff (2:45 PM CT)', ct_minutes: ctMins }, { status: 400 })
   }
 
+  // SWING HOLD (2026-07-21). SPARK-strategy bots (SPARK/SPARK2/KINDLE) are 1DTE
+  // swings: at the 14:45 CT cutoff on a NON-expiry day the scanner deliberately
+  // holds a red position overnight to its expiry day (scanner.ts eodSwingDefer).
+  // This route is a SECOND, older implementation of the EOD close, fired by the
+  // BotDashboard position-monitor poll. It had no expiration awareness, so it
+  // walked the same table minutes later and flattened exactly the positions the
+  // scanner had just decided to hold — observed 2026-07-20, where both the live
+  // and paper SPARK positions logged SWING_HOLD_OVERNIGHT at 14:45:05 CT and
+  // were then force-closed at 15:13 CT. PR #2533 made the scanner's own
+  // backstops expiry-aware but never touched this route.
+  //
+  // Positions expiring AFTER today are intended holds, not stranded — leave them
+  // to the scanner. Expiry-day (and past-expiry) positions still close here.
+  const swingBot = isSparkStrategyBot(bot)
+  const swingHoldFilter = swingBot ? `AND expiration <= ${CT_TODAY}` : ''
+
   try {
     // 1. Find all open positions (optionally filtered by person)
     const openPositions = await dbQuery(
@@ -54,7 +71,7 @@ export async function POST(
               contracts, spread_width, total_credit, max_loss,
               collateral_required, sandbox_order_id, account_type, person
        FROM ${botTable(bot, 'positions')}
-       WHERE status = 'open' AND dte_mode = $1 ${personFilter}
+       WHERE status = 'open' AND dte_mode = $1 ${personFilter} ${swingHoldFilter}
        ORDER BY open_time DESC`,
       posParams,
     )
@@ -80,8 +97,15 @@ export async function POST(
       const ticker = pos.ticker || 'SPY'
       const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || (pos.expiration ? String(pos.expiration).slice(0, 10) : '')
 
-      // Get MTM close price
+      // Get MTM close price.
+      // mtmOk tracks whether we actually OBTAINED a price, as distinct from
+      // getting a price of zero. The old code could not tell those apart: a
+      // failed/absent quote left closePrice at its 0 initialiser and was then
+      // booked as a real $0.00 fill — i.e. the full credit as profit. On
+      // 2026-07-20 that turned a paper SPARK position that was DOWN $222 at the
+      // cutoff into a booked +$270. Never book a close we could not price.
       let closePrice = 0
+      let mtmOk = false
       if (isConfigured()) {
         try {
           const mtm = await getIcMarkToMarket(
@@ -90,9 +114,12 @@ export async function POST(
             num(pos.call_short_strike), num(pos.call_long_strike),
             totalCredit,
           )
-          if (mtm) closePrice = mtm.cost_to_close
+          if (mtm) {
+            closePrice = mtm.cost_to_close
+            mtmOk = true
+          }
         } catch {
-          // Use 0 as fallback (expired options worth $0)
+          // Leave mtmOk false — handled by the unpriced-close guard below.
         }
       }
 
@@ -123,8 +150,38 @@ export async function POST(
         ? `${posPerson}:production`
         : 'User:sandbox'
       const primaryClose = sandboxCloseInfo[primaryKey] ?? sandboxCloseInfo['User']
-      if (primaryClose?.fill_price != null && primaryClose.fill_price > 0) {
-        effectivePrice = primaryClose.fill_price
+      const brokerFillPrice = primaryClose?.fill_price
+      const brokerFilled = brokerFillPrice != null && brokerFillPrice > 0
+      if (brokerFilled) {
+        effectivePrice = brokerFillPrice
+      }
+
+      // UNPRICED-CLOSE GUARD (2026-07-21). If neither the MTM quote nor a real
+      // broker fill produced a price, we do NOT know what this position is
+      // worth. Booking it anyway records effectivePrice = 0 = maximum profit,
+      // which silently inflates the equity curve (the 2026-07-20 +$270 phantom).
+      // Leave the position OPEN and let the scanner close it on a later cycle
+      // with real quotes, or the expiry-day sweep handle it.
+      if (!mtmOk && !brokerFilled) {
+        await dbExecute(
+          `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
+           VALUES ('SKIP', $1, $2, $3)`,
+          [
+            `EOD SKIP: ${positionId} left open — no MTM quote and no broker fill, ` +
+            `refusing to book a phantom $0.00 close (would have shown ` +
+            `$${(totalCredit * 100 * contracts).toFixed(2)} profit)`,
+            JSON.stringify({
+              position_id: positionId,
+              skip_reason: 'unpriced_close',
+              entry_credit: totalCredit,
+              contracts,
+              expiration,
+              source: 'webapp_eod_close',
+            }),
+            dte,
+          ],
+        )
+        continue
       }
 
       // Calculate P&L

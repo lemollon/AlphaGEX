@@ -63,10 +63,15 @@ const SPARK_MORNING: PTTier = { ...MORNING, pct: 0.40 }
 const SPARK_MIDDAY: PTTier = { ...MIDDAY, pct: 0.35 }
 const SPARK_AFTERNOON: PTTier = { ...AFTERNOON, pct: 0.30 }
 
-/** SPARK-strategy bots share the scanner's 40/35/30 tier schedule and the
- *  extended 12:00 PM morning window — mirrors scanner.ts isSparkStrategy(). */
+/** SPARK-strategy bots share the scanner's 40/35/30 tier schedule, the
+ *  extended 12:00 PM morning window, and the overnight swing hold — mirrors
+ *  scanner.ts isSparkStrategy().
+ *  spark2 added 2026-07-21: this helper had drifted from the scanner's
+ *  isSparkStrategy() (which has included spark2 since 2026-07-13), so SPARK2
+ *  was rendering legacy 30/20/15 tiers and — more seriously — would not have
+ *  been recognised as a swing-hold bot by the eod-close route below. */
 export function isSparkStrategyBot(bot?: string): boolean {
-  return bot === 'spark' || bot === 'kindle'
+  return bot === 'spark' || bot === 'kindle' || bot === 'spark2'
 }
 
 /** Get the current CT date object. */
