@@ -883,7 +883,9 @@ export function isFlameLiveArmed(): boolean {
  * they trade. FLAME is further gated by isFlameLiveArmed() and is OFF by default.
  */
 export function isProductionBot(name: string): boolean {
-  return name === 'spark' || name === 'kindle' || name === 'spark2'
+  // spark2 REMOVED 2026-07-21 (operator): now a genuine paper bot. Must stay in
+  // sync with scanner.ts isProductionBot -- see the note there.
+  return name === 'spark' || name === 'kindle'
     || (name === 'flame' && isFlameLiveArmed())
 }
 
@@ -1533,17 +1535,12 @@ export async function placeIcOrderAllAccounts(
       ]
     }
   }
-  // SPARK2: same env-based inject (its account is not in ironforge_accounts).
-  // Still subject to the pause check + isProductionBot gate downstream.
-  if (botName?.toLowerCase() === 'spark2' && !opts?.sandboxOnly) {
-    const { apiKey: s2Key, accountId: s2Acct } = spark2Creds()
-    if (s2Key && s2Acct && !eligibleAccounts.some((a) => a.type === 'production' && a.name === 'Spark2')) {
-      eligibleAccounts = [
-        ...eligibleAccounts,
-        { name: 'Spark2', apiKey: s2Key, baseUrl: PRODUCTION_URL, type: 'production' },
-      ]
-    }
-  }
+  // SPARK2 production-account injection REMOVED 2026-07-21 (operator): spark2 is
+  // a genuine paper bot now, so no real Tradier account may be attached to its
+  // orders. spark2Creds() is still used by the balance/close paths to read and
+  // reconcile the historical real position opened 2026-07-16, but nothing new
+  // is ever placed on it. Re-enabling live routing requires restoring BOTH this
+  // block and spark2 in isProductionBot (here and in scanner.ts).
 
   console.log(
     `[tradier] placeIcOrderAllAccounts: bot=${botName ?? 'ALL'}, ` +
