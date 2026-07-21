@@ -101,6 +101,16 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 /** SPARK's v2 sizing/gates (VIX cap 40, 0.7-SD credit walk-in floor, 30%-BP cap).
  * SPARK2 runs the identical ruleset on the second live account. KINDLE (retired)
  * intentionally never had these — its 1-contract ceiling was the risk control. */
+/** Regime-conditional BP caps for the SPARK v2 bots (2026-07-21).
+ *  Percent-of-buying-power, NOT a contract count — size must scale with the
+ *  account as it grows. Determinism comes from sizing off the full-width
+ *  margin (width * 100) rather than net collateral, so a rich-credit day
+ *  cannot float the count one contract higher. See the sizing block below.
+ *  Raising either of these is a real-money risk change - the scanner path
+ *  here and the production path in tradier.ts must move together. */
+const SPARK_BP_CAP_POS = 0.50   // positive net GEX
+const SPARK_BP_CAP_NEG = 0.20   // negative OR UNKNOWN net GEX (fail-safe)
+
 function isSparkV2Sizing(name: string): boolean {
   return name === 'spark' || name === 'spark2'
 }
@@ -3255,9 +3265,43 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // carries 3 contracts = a $1,416 max loss = ~28% of the account in one night.
   // 20% was the level the 2026-07-07 compounding sim (spark_compounding_bp_sim_
   // 2026_07_07.py) recommended before the operator overrode to 30% on 7/08.
-  const effBpPct = isSparkV2Sizing(bot.name) ? Math.min(botCfg.bp_pct, 0.20) : botCfg.bp_pct
+  // REGIME-CONDITIONAL SIZING (2026-07-21, operator decision).
+  // SPARK swings with NO hard stop, so size is the only risk control. The two
+  // gamma regimes have very different risk per contract (warehouse n=1315,
+  // 2020-01..2026-06):
+  //
+  //            mean/ct   stdev   worst day
+  //   POS GEX  +$17.22    33.6      -$250   sd ratio 2.71 +/- 0.11,
+  //   NEG GEX  +$23.04    91.1      -$295   Brown-Forsythe p = 0.0002
+  //
+  // Positive-gamma days carry ~1/3 the variance for a similar mean, so
+  // contracts there cost far less drawdown. 50% BP on POS / 20% on NEG
+  // returned +59% over flat 20% across the same 1,315 trades at a slightly
+  // LOWER max drawdown (25.5% vs 26.8%). Cost is a worse single day.
+  //
+  // Supersedes the flat 0.20 clamp set earlier the same day. That earlier
+  // "cut negative gamma" reasoning used mu/sigma^2 — the small-bet quadratic
+  // approximation, which penalises UPSIDE variance equally. The exact
+  // E[log(1+Nx/W)] growth calc shows NEG has HIGHER growth than POS at every
+  // size, so cutting NEG was the wrong direction; the right move is to ADD on
+  // POS where variance is cheap.
+  //
+  // FAIL-SAFE: a null net-GEX read (Tradier chain call failed) is NOT positive
+  // gamma. Unknown regime gets the LOW cap, never the high one.
+  const posGammaSizing = spkNetGex !== null && spkNetGex >= 0
+  const regimeBpCap = posGammaSizing ? SPARK_BP_CAP_POS : SPARK_BP_CAP_NEG
+  const effBpPct = isSparkV2Sizing(bot.name) ? Math.min(botCfg.bp_pct, regimeBpCap) : botCfg.bp_pct
   const usableBP = buyingPower * effBpPct
-  const bpContracts = Math.floor(usableBP / collateralPer)
+  // Size off FULL-WIDTH margin for the v2 bots, not net collateral. Net
+  // collateral is (width - credit) * 100, so it shrinks as credit richens and
+  // the contract count floats: at 50% BP that put 2% of backtest days at 6ct
+  // instead of 5ct. Full-width margin is credit-independent, matches what
+  // Tradier actually holds, and matches the production path's brokerMarginPer
+  // — so the count is deterministic while still scaling with account equity.
+  const sizingMarginPer = isSparkV2Sizing(bot.name)
+    ? cfg(bot).wing_width * 100
+    : collateralPer
+  const bpContracts = Math.floor(usableBP / sizingMarginPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
   if (bpContracts < 1 && !sandboxAlreadyTraded && !productionOnlyBot) return `skip:insufficient_bp($${usableBP.toFixed(0)} < $${collateralPer.toFixed(0)}/contract)`
   const SCANNER_MAX_CONTRACTS = 200
@@ -3429,7 +3473,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit, positionId, bot.name,
-          { productionOnly: true },
+          { productionOnly: true, gexPosGamma: posGammaSizing },
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -3681,7 +3725,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
         maxContracts, credits.totalCredit, positionId, bot.name,
-        prodAlreadyTradedToday ? { sandboxOnly: true } : undefined,
+        prodAlreadyTradedToday
+          ? { sandboxOnly: true, gexPosGamma: posGammaSizing }
+          : { gexPosGamma: posGammaSizing },
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -3891,7 +3937,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
           'SPY', expiration,
           strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit, positionId, bot.name,
-          { sandboxOnly: true },
+          { sandboxOnly: true, gexPosGamma: posGammaSizing },
         )
         for (const [key, info] of Object.entries(retryResults)) {
           if (info.account_type !== 'production') {
@@ -4010,6 +4056,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         'SPY', expiration,
         strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
         maxContracts, credits.totalCredit, positionId, bot.name,
+        { gexPosGamma: posGammaSizing },
       )
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
