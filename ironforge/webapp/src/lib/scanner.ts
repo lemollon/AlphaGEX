@@ -225,10 +225,14 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, skip_neg_gamma: true },
   // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
   // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
-  // starting_capital 500 is the paper-shadow seed only — production sizing
-  // comes from real Tradier account equity. NOTE: under the 30% cap a $5-wing
-  // contract (~$475 collateral) needs ≈$1.6k+ account equity to size ≥1ct.
-  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 500, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
+  // starting_capital is the PAPER seed — it is what syncSandboxCapital() writes
+  // to spark2_paper_account every cycle, so it is the number the customer Live
+  // page shows. Raised 500 -> 10000 on 2026-07-21 per the operator: spark2 is a
+  // paper account and paper capital is arbitrary, so it uses the same $10k house
+  // default as the other paper bots. (The old 500 was inherited from KINDLE and
+  // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
+  // change it HERE or the scanner syncs it straight back.
+  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, skip_neg_gamma: false },
 }
 
 /** Numeric-valued config keys only — the DB override path writes numbers, so it
