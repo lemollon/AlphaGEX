@@ -3,30 +3,34 @@
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { BOT_COLORS } from '@/lib/botColors'
+import { LIVE_BOTS, LIVE_BOT_PILL, LIVE_BOT_MODE } from '@/lib/live/bots'
 
 /* Admin-only "Bots" menu for the public homepage nav.
  *
  * The customer masthead deliberately links only customer-facing pages, so an
- * operator browsing ironforge.trade had no way to reach a bot dashboard without
- * typing the URL. This adds a single dropdown that lists every bot console —
- * rendered ONLY when the operator status probe answers operator:true, and hidden
- * while impersonating a customer (you're looking at the customer's site then).
- * For visitors and customers the probe reveals nothing and this renders null. */
+ * operator browsing ironforge.trade had no way to jump straight to a bot without
+ * hand-editing the URL. This adds a single dropdown — rendered ONLY when the
+ * operator status probe answers operator:true, and hidden while impersonating a
+ * customer (you're looking at the customer's site then). For visitors and
+ * customers the probe reveals nothing and this renders null.
+ *
+ * IT MUST ONLY LINK CUSTOMER-SURFACE ROUTES. The operator consoles (/spark,
+ * /flame, /inferno, /compare …) are served by the OTHER deployment and are 404
+ * here by design — see lib/surface.ts. So the entries are the live bots from
+ * lib/live/bots.ts, pointed at the Live page's account view, which this surface
+ * does serve. Deriving the list from LIVE_BOTS means a bot added there shows up
+ * here automatically and a link can never point at a route we 404. */
 
 type BotLink = { href: string; label: string; dot?: string; note?: string }
 
-// Every bot console, in the same order as the operator nav.
-const BOT_LINKS: ReadonlyArray<BotLink> = [
-  { href: '/spark', label: 'SPARK', dot: BOT_COLORS.spark, note: '1DTE IC' },
-  { href: '/spark2', label: 'SPARK2', dot: BOT_COLORS.spark2, note: '1DTE IC · acct 2' },
-  { href: '/flame', label: 'FLAME', dot: BOT_COLORS.flame, note: '2DTE IC' },
-  { href: '/inferno', label: 'INFERNO', dot: BOT_COLORS.inferno, note: '0DTE IC' },
-  { href: '/blaze', label: 'BLAZE', dot: BOT_COLORS.blaze, note: '1DTE directional' },
-  { href: '/flare', label: 'FLARE', dot: BOT_COLORS.flare, note: '0DTE directional' },
-  { href: '/kindle', label: 'KINDLE', dot: BOT_COLORS.kindle, note: 'retired · history' },
-  { href: '/ember', label: 'EMBER', note: 'research' },
-  { href: '/compare', label: 'Compare all', note: 'side-by-side' },
-]
+// The live bots, in registry order, each linking to its Live account view.
+// '/live' with no param is SPARK — matches how LiveClient normalises the URL.
+const BOT_LINKS: ReadonlyArray<BotLink> = LIVE_BOTS.map((bot) => ({
+  href: bot === 'spark' ? '/live' : `/live?account=${bot}`,
+  label: LIVE_BOT_PILL[bot],
+  dot: BOT_COLORS[bot],
+  note: LIVE_BOT_MODE[bot] === 'paper' ? 'paper' : 'live money',
+}))
 
 function useIsOperator(): boolean {
   const [isOperator, setIsOperator] = useState(false)
