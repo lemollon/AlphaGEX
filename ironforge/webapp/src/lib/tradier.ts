@@ -1483,7 +1483,7 @@ export async function placeIcOrderAllAccounts(
   totalCredit: number,
   tag?: string,
   botName?: string,
-  opts?: { sandboxOnly?: boolean; productionOnly?: boolean },
+  opts?: { sandboxOnly?: boolean; productionOnly?: boolean; gexPosGamma?: boolean },
 ): Promise<Record<string, SandboxOrderInfo>> {
   await ensureSandboxAccountsLoaded()
   const results: Record<string, SandboxOrderInfo> = {}
@@ -1638,10 +1638,33 @@ export async function placeIcOrderAllAccounts(
         // unhedgeable overnight gap: 30% on a $5k account = 3ct = $1,416 max loss
         // = ~28% of the account in one night. Must stay in sync with the paper
         // path's isSparkV2Sizing clamp in scanner.ts.
-        prodBpPct = botName === 'spark' || botName === 'spark2'
-          ? Math.min(prodCfg.bp_pct, 0.20)
-          : prodCfg.bp_pct
+        // REGIME-CONDITIONAL CAP (2026-07-21). Mirrors scanner.ts
+        // SPARK_BP_CAP_POS / SPARK_BP_CAP_NEG — these MUST stay in sync.
+        // Positive-gamma days carry ~1/3 the per-contract variance (sd 33.6 vs
+        // 91.1, Brown-Forsythe p=0.0002 over n=1315), so contracts there buy far
+        // less drawdown. 50% BP on POS / 20% on NEG beat flat 20% by +59% at a
+        // slightly lower max drawdown in the warehouse replay.
+        //
+        // This is a PERCENT of buying power, deliberately not a contract cap —
+        // size must scale as the account grows. Determinism comes for free on
+        // this path: sizing already divides by brokerMarginPer (width * 100),
+        // which is credit-independent.
+        //
+        // FAIL-SAFE: gexPosGamma is only true when the scanner actually READ a
+        // non-negative net GEX. Undefined (no regime passed) or a failed GEX
+        // read both fall to the LOW cap — unknown never gets the big size.
+        const posGamma = opts?.gexPosGamma === true
+        const regimeCap = posGamma ? 0.50 : 0.20
+        const isV2 = botName === 'spark' || botName === 'spark2'
+        prodBpPct = isV2 ? Math.min(prodCfg.bp_pct, regimeCap) : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
+        if (isV2) {
+          console.log(
+            `[tradier] ${botName.toUpperCase()} regime sizing: ` +
+            `gex=${posGamma ? 'POSITIVE' : 'NEGATIVE/UNKNOWN'} ` +
+            `bp_cap=${(regimeCap * 100).toFixed(0)}%`,
+          )
+        }
         productionConfigOk = true
       } else {
         console.error(
