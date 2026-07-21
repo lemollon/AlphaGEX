@@ -5,11 +5,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Wordmark } from '@/components/Brand'
 import { MenuIcon, CloseIcon } from './icons'
+import { AdminBotsMenu, AdminBotsMobileLinks } from './AdminBotsMenu'
 
 /* Sticky top navigation for the public homepage: logo, the customer-facing
- * pages, then Login / Create Account (or My Dashboard once signed in). No "Ops"
- * item — the operator console lives on its own deployment and must not be linked
- * from the customer site. */
+ * pages, then Login / Create Account (or My Dashboard once signed in). Nothing
+ * operator-facing is exposed to customers or visitors: the one exception is the
+ * "Bots" dropdown, which self-guards on the operator status probe and renders
+ * null for everyone else (see AdminBotsMenu). */
 
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
@@ -67,6 +69,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
               {link.label}
             </Link>
           ))}
+          <AdminBotsMenu />
           {isCustomer ? (
             <Link
               href="/home"
@@ -127,6 +130,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
                 {link.label}
               </Link>
             ))}
+            <AdminBotsMobileLinks onNavigate={() => setOpen(false)} />
             {isCustomer ? (
               <Link href="/home" onClick={() => setOpen(false)} className="text-sm text-gray-300">
                 My Dashboard
