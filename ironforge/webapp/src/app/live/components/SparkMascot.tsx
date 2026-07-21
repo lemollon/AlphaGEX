@@ -19,10 +19,11 @@ const VARIANT_SRCS = [
   '/spark-anim/09-heartbeat-flare.webp',
 ]
 const STATIC_SRC = '/spark-mascot.png'
-// Flame has no animation set yet (only the blue Spark clips exist), so it shows
-// the orange still. An animated orange flame is a follow-up; wiring the variant
-// here means dropping in a flame-anim/ set later is the only remaining step.
-const FLAME_SRC = '/home/flame-mascot-glow.png'
+// Flame is the SAME mascot as Spark, recoloured to orange with a CSS filter, so
+// it animates using Spark's clips instead of sitting on a static PNG. Tuned
+// against the old orange still (/home/flame-mascot-glow.png): hue-rotate lands
+// the blue body on Forge orange, the light saturation bump keeps it vivid.
+const FLAME_FILTER = 'hue-rotate(165deg) saturate(1.3)'
 const ROTATE_EVERY_MS = 15_000
 const VARIANT_PLAY_MS = 7_200 // one full loop pass (86 frames @ 12fps)
 
@@ -49,8 +50,8 @@ export default function SparkMascot({
   }, [])
 
   useEffect(() => {
-    // Flame has no animation clips — it stays on the orange still.
-    if (reducedMotion || failed || isFlame) return
+    // Flame animates too — same clips as Spark, recoloured by CSS below.
+    if (reducedMotion || failed) return
     let playTimer: ReturnType<typeof setTimeout> | undefined
     const rotateTimer = setInterval(() => {
       const variant = VARIANT_SRCS[nextIdx.current % VARIANT_SRCS.length]
@@ -67,9 +68,9 @@ export default function SparkMascot({
       clearInterval(rotateTimer)
       if (playTimer) clearTimeout(playTimer)
     }
-  }, [reducedMotion, failed, isFlame])
+  }, [reducedMotion, failed])
 
-  const effectiveSrc = isFlame ? FLAME_SRC : reducedMotion || failed ? STATIC_SRC : src
+  const effectiveSrc = reducedMotion || failed ? STATIC_SRC : src
 
   return (
     // eslint-disable-next-line @next/next/no-img-element
@@ -79,6 +80,7 @@ export default function SparkMascot({
       width={96}
       height={96}
       className={className}
+      style={isFlame ? { filter: FLAME_FILTER } : undefined}
       onError={() => setFailed(true)}
     />
   )
