@@ -1,6 +1,7 @@
 'use client'
 
 import type { CustomerState } from '@/lib/live/types'
+import type { AccentTheme } from './accent'
 
 const STEPS = [
   { n: 1, label: 'Trade Opened' },
@@ -32,9 +33,11 @@ function explainer(state: CustomerState | null): string {
 export default function NowTimelineCard({
   state,
   openedAt,
+  accent,
 }: {
   state: CustomerState | null
   openedAt: string | null
+  accent: AccentTheme
 }) {
   const step = state?.timeline_step ?? null
   const complete = state?.key === 'TRADE_COMPLETE'
@@ -49,7 +52,7 @@ export default function NowTimelineCard({
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-spark">
+      <h3 className={`text-xs font-semibold uppercase tracking-widest ${accent.text}`}>
         What is happening right now?
       </h3>
       <div className="mt-6 flex items-start">
@@ -59,13 +62,13 @@ export default function NowTimelineCard({
           return (
             <div key={s.n} className="flex flex-1 flex-col items-center">
               <div className="flex w-full items-center">
-                <div className={`h-0.5 flex-1 ${i === 0 ? 'bg-transparent' : done || current ? 'bg-spark/60' : 'bg-forge-border'}`} />
+                <div className={`h-0.5 flex-1 ${i === 0 ? 'bg-transparent' : done || current ? accent.line : 'bg-forge-border'}`} />
                 <div
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
                     done
-                      ? 'bg-spark/80'
+                      ? accent.stepDone
                       : current
-                        ? 'animate-pulse bg-spark ring-4 ring-spark/25'
+                        ? accent.stepCurrent
                         : 'border-2 border-forge-border bg-forge-card'
                   }`}
                 >
@@ -77,12 +80,12 @@ export default function NowTimelineCard({
                   )}
                   {current && <div className="h-2.5 w-2.5 rounded-full bg-white" />}
                 </div>
-                <div className={`h-0.5 flex-1 ${i === STEPS.length - 1 ? 'bg-transparent' : done ? 'bg-spark/60' : 'bg-forge-border'}`} />
+                <div className={`h-0.5 flex-1 ${i === STEPS.length - 1 ? 'bg-transparent' : done ? accent.line : 'bg-forge-border'}`} />
               </div>
               <div className={`mt-2.5 px-1 text-center text-xs leading-tight ${current ? 'font-medium text-white' : done ? 'text-gray-300' : 'text-gray-500'}`}>
                 {s.label}
               </div>
-              {current && <div className="mt-1 text-xs font-medium text-spark">Live</div>}
+              {current && <div className={`mt-1 text-xs font-medium ${accent.text}`}>Live</div>}
               {s.n === 1 && (done || current) && openedLabel && (
                 <div className="mt-1 text-xs text-gray-500">{openedLabel}</div>
               )}

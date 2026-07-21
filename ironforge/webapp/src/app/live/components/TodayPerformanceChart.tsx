@@ -2,7 +2,7 @@
 
 import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { LiveSummary } from '@/lib/live/types'
-import { BOT_COLORS } from '@/lib/botColors'
+import type { AccentTheme } from './accent'
 import { formatDollarPnl } from '@/lib/format'
 
 function formatTime(iso: string): string {
@@ -22,10 +22,12 @@ export default function TodayPerformanceChart({
   account,
   intraday,
   marketOpen,
+  accent,
 }: {
   account: LiveSummary['account'] | null
   intraday: LiveSummary['intraday'] | null
   marketOpen: boolean
+  accent: AccentTheme
 }) {
   const raw = intraday ?? []
   const showChart = raw.length >= 2
@@ -44,7 +46,7 @@ export default function TodayPerformanceChart({
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-spark">
+      <h3 className={`text-xs font-semibold uppercase tracking-widest ${accent.text}`}>
         Today&apos;s Performance
       </h3>
 
@@ -107,9 +109,9 @@ export default function TodayPerformanceChart({
                 <Area
                   type="monotone"
                   dataKey="delta"
-                  stroke={BOT_COLORS.spark}
+                  stroke={accent.chartHex}
                   strokeWidth={2}
-                  fill="rgba(59,130,246,0.2)"
+                  fill={accent.chartFill}
                   isAnimationActive={false}
                   dot={false}
                 />

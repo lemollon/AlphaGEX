@@ -2,15 +2,18 @@
 
 import { useState } from 'react'
 import type { CustomerState } from '@/lib/live/types'
+import type { AccentTheme } from './accent'
 
 export default function PauseTradingPanel({
   state,
   pending,
   onToggle,
+  accent,
 }: {
   state: CustomerState | null
   pending: boolean
   onToggle: (nextPaused: boolean, password: string) => Promise<void>
+  accent: AccentTheme
 }) {
   const [confirming, setConfirming] = useState(false)
   const [password, setPassword] = useState('')
@@ -47,7 +50,7 @@ export default function PauseTradingPanel({
           className={`flex w-full items-center justify-center gap-2 rounded-lg py-3 font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             showResume
               ? 'bg-emerald-600 hover:bg-emerald-500'
-              : 'bg-spark hover:bg-spark-dark'
+              : accent.button
           }`}
         >
           {showResume ? (
@@ -75,13 +78,13 @@ export default function PauseTradingPanel({
             onKeyDown={(e) => { if (e.key === 'Enter') handleConfirm() }}
             placeholder="Trading password"
             autoFocus
-            className="flex-1 rounded-lg border border-forge-border bg-forge-bg px-3 py-3 text-sm text-white placeholder-gray-500 outline-none focus:border-spark"
+            className={`flex-1 rounded-lg border border-forge-border bg-forge-bg px-3 py-3 text-sm text-white placeholder-gray-500 outline-none ${accent.focus}`}
           />
           <button
             onClick={handleConfirm}
             disabled={pending}
             className={`rounded-lg px-5 py-3 font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              showResume ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-spark hover:bg-spark-dark'
+              showResume ? 'bg-emerald-600 hover:bg-emerald-500' : accent.button
             }`}
           >
             {pending

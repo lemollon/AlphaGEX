@@ -1,6 +1,7 @@
 'use client'
 
 import type { LiveSummary } from '@/lib/live/types'
+import type { AccentTheme } from './accent'
 
 const CONDITION_STYLE = {
   good: { label: 'Good', text: 'text-emerald-400' },
@@ -34,13 +35,13 @@ function Metric({
   )
 }
 
-export default function MarketConditionsCard({ market }: { market: LiveSummary['market'] | null }) {
+export default function MarketConditionsCard({ market, accent }: { market: LiveSummary['market'] | null; accent: AccentTheme }) {
   const cond = market ? CONDITION_STYLE[market.condition] : null
   const asOf = market ? formatCTStamp(market.vix_as_of) : null
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-      <h3 className="text-xs font-semibold uppercase tracking-widest text-spark">Market Conditions</h3>
+      <h3 className={`text-xs font-semibold uppercase tracking-widest ${accent.text}`}>Market Conditions</h3>
       {!market ? (
         <div className="mt-4 h-16 animate-pulse rounded-lg bg-forge-border/50" />
       ) : (
