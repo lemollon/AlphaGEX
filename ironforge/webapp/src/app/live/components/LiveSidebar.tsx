@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
 import { useIsOperator } from '@/lib/useIsOperator'
@@ -56,6 +56,7 @@ interface LiveSidebarProps {
 
 export default function LiveSidebar({ membership, bots, activeBot, paperBots, onSwitch }: LiveSidebarProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
 
   async function handleLogout() {
@@ -66,10 +67,13 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
     }
   }
 
+  // Active state follows the real route (usePathname) rather than a hardcoded
+  // flag, so Live / Performance / Home each highlight on their own page — the
+  // rail no longer shows "Live" active everywhere it's rendered.
   const mainItems: NavItem[] = [
     { label: 'Home', href: '/home', icon: <Icon d={ICONS.home} /> },
-    { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} />, active: true },
-    { label: 'Performance', href: '/spark', icon: <Icon d={ICONS.performance} /> },
+    { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} /> },
+    { label: 'Performance', href: '/performance', icon: <Icon d={ICONS.performance} /> },
     { label: 'Community', href: '/community', icon: <Icon d={ICONS.community} /> },
   ]
   const secondaryItems: NavItem[] = [
@@ -90,6 +94,7 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
 
   const renderItem = (item: NavItem) => {
     const baseClass = 'flex items-center gap-3 px-4 py-2.5 text-sm transition-colors'
+    const active = item.active ?? (item.href != null && pathname === item.href)
     if (item.disabled || !item.href) {
       return (
         <div key={item.label} className={`${baseClass} cursor-not-allowed text-gray-600`}>
@@ -99,7 +104,7 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
         </div>
       )
     }
-    if (item.active) {
+    if (active) {
       return (
         <Link key={item.label} href={item.href}
           className={`${baseClass} border-l-2 border-amber-500 bg-amber-500/10 font-medium text-amber-500`}>
