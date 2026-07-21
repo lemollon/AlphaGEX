@@ -1629,8 +1629,17 @@ export async function placeIcOrderAllAccounts(
         // path's isSparkV2Sizing 0.30 clamp — spark2's production config row
         // carries bp_pct 0.85 (a copy of spark's DB row) and without this clamp
         // it would deploy 85% of real OBP. KINDLE's risk control is max_contracts:1.
+        // Cap lowered 0.30 → 0.20 on 2026-07-21 per operator decision, reverting
+        // to the level the compounding sim originally recommended. The 7/08 raise
+        // to 30% was made while the 2026-07-14 swing hold was (unknowingly) never
+        // in force — the eod-close route flattened every overnight hold until
+        // PR #2549, so the bug was acting as an accidental stop. With the hold now
+        // live and no hard stop, size is the sole risk control against an
+        // unhedgeable overnight gap: 30% on a $5k account = 3ct = $1,416 max loss
+        // = ~28% of the account in one night. Must stay in sync with the paper
+        // path's isSparkV2Sizing clamp in scanner.ts.
         prodBpPct = botName === 'spark' || botName === 'spark2'
-          ? Math.min(prodCfg.bp_pct, 0.30)
+          ? Math.min(prodCfg.bp_pct, 0.20)
           : prodCfg.bp_pct
         prodMaxContracts = Math.max(0, prodCfg.max_contracts)
         productionConfigOk = true

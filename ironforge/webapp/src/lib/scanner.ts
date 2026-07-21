@@ -3223,7 +3223,15 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // at +$80,228 (6.5yr, 3x return) with a 38.6% worst account slide — the
   // report recommended 20%/2ct; operator explicitly chose the 30% row knowing
   // the drawdown. Other bots use bp_pct.
-  const effBpPct = isSparkV2Sizing(bot.name) ? Math.min(botCfg.bp_pct, 0.30) : botCfg.bp_pct
+  // 0.30 → 0.20 on 2026-07-21 per operator decision. Context: the 2026-07-14
+  // swing hold was never actually in force (the eod-close route flattened every
+  // hold until PR #2549 fixed it on 7/21), so the broken exit had been acting as
+  // an accidental stop loss. With the hold now live and NO hard stop, size is the
+  // only risk control on an unhedgeable overnight gap: at 30% BP a $5k account
+  // carries 3 contracts = a $1,416 max loss = ~28% of the account in one night.
+  // 20% was the level the 2026-07-07 compounding sim (spark_compounding_bp_sim_
+  // 2026_07_07.py) recommended before the operator overrode to 30% on 7/08.
+  const effBpPct = isSparkV2Sizing(bot.name) ? Math.min(botCfg.bp_pct, 0.20) : botCfg.bp_pct
   const usableBP = buyingPower * effBpPct
   const bpContracts = Math.floor(usableBP / collateralPer)
   // Paper BP check — skip in production-only mode (production sizes via Tradier account equity)
