@@ -825,6 +825,26 @@ function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMod
   }
 }
 
+/** Gamma-regime label stored on a position row.
+ *  Prefers the SELF-COMPUTED net GEX -- that is the number the strategy
+ *  actually acts on (1.2 vs 1.5 SD). Falls back to the Trading Volatility
+ *  vendor read for bots that do not self-compute (FLAME/INFERNO).
+ *  'UNKNOWN' only when neither source is available.
+ *
+ *  Added 2026-07-21: every position row ever written carried the literals
+ *  `0, 0, 'UNKNOWN', 0, 0` for call_wall/put_wall/gex_regime/flip_point/net_gex,
+ *  so the live database could not answer "what gamma regime was this trade
+ *  opened in" -- the regime had to be reconstructed from the offline warehouse.
+ *  net_gex/flip_point are now written as NULL when genuinely unknown, so a
+ *  missing read is distinguishable from a true zero. */
+function gexRegimeLabel(netGex: number | null, tv: TvMarketStructure | null): string {
+  if (netGex !== null) return netGex < 0 ? 'NEGATIVE' : 'POSITIVE'
+  const tone = tv?.gammaToneState ?? ''
+  if (tone.includes('negative')) return 'NEGATIVE'
+  if (tone.includes('positive')) return 'POSITIVE'
+  return 'UNKNOWN'
+}
+
 /* ------------------------------------------------------------------ */
 /*  Net-GEX regime gate (flag-gated) — cached once per CT day          */
 /* ------------------------------------------------------------------ */
@@ -3477,8 +3497,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
               prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
               prodCollateral,
               spot, vix, expectedMove,
-              0, 0, 'UNKNOWN',
-              0, 0,
+              0, 0, gexRegimeLabel(spkNetGex, tvGex),
+              tvGex?.gammaFlipPrice ?? null, spkNetGex,
               adv.confidence, adv.winProbability, adv.advice,
               adv.reasoning, JSON.stringify(adv.topFactors), false,
               false, spreadWidth, spreadWidth,
@@ -3759,8 +3779,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
             prodCollateral,
             spot, vix, expectedMove,
-            0, 0, 'UNKNOWN',
-            0, 0,
+            0, 0, gexRegimeLabel(spkNetGex, tvGex),
+            tvGex?.gammaFlipPrice ?? null, spkNetGex,
             adv.confidence, adv.winProbability, adv.advice,
             adv.reasoning, JSON.stringify(adv.topFactors), false,
             false, spreadWidth, spreadWidth,
@@ -3969,8 +3989,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
       effectiveContracts, spreadWidth, effectiveCredit, effectiveMaxLoss, effectiveMaxProfit,
       effectiveCollateral,
       spot, vix, expectedMove,
-      0, 0, 'UNKNOWN',
-      0, 0,
+      0, 0, gexRegimeLabel(spkNetGex, tvGex),
+      tvGex?.gammaFlipPrice ?? null, spkNetGex,
       adv.confidence, adv.winProbability, adv.advice,
       adv.reasoning, JSON.stringify(adv.topFactors), false,
       false, spreadWidth, spreadWidth,
@@ -4073,8 +4093,8 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             prodContracts, spreadWidth, prodCredit, prodMaxLoss, prodMaxProfit,
             prodCollateral,
             spot, vix, expectedMove,
-            0, 0, 'UNKNOWN',
-            0, 0,
+            0, 0, gexRegimeLabel(spkNetGex, tvGex),
+            tvGex?.gammaFlipPrice ?? null, spkNetGex,
             adv.confidence, adv.winProbability, adv.advice,
             adv.reasoning, JSON.stringify(adv.topFactors), false,
             false, spreadWidth, spreadWidth,
