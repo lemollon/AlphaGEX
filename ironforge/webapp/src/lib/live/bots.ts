@@ -24,23 +24,28 @@ export type LiveAccountMode = 'production' | 'paper'
 
 export const LIVE_BOT_MODE: Record<LiveBot, LiveAccountMode> = {
   spark: 'production',
-  spark2: 'production',
+  // SPARK2 runs the SPARK config on a second, NON-funded account — it is paper,
+  // confirmed by the operator 2026-07-21. Its historical rows were written with
+  // account_type='production' before this was corrected; they were re-tagged to
+  // 'sandbox' at the same time as this flag so ledgerFilter() still finds them.
+  spark2: 'paper',
   flame: 'paper',
 }
 
 /** Customer-facing agent name (drives hero copy, pause text, disclosures).
- *  spark2 is "Spark 2", not "Spark" — otherwise the two live accounts render as
- *  two identical "Spark" rows in the strategy rail and on Performance. */
+ *  spark2 is "Spark paper", not "Spark" — it runs the same strategy on a
+ *  non-funded account, and two identical "Spark" rows in the strategy rail and
+ *  on Performance would read as one live account listed twice. */
 export const LIVE_BOT_LABEL: Record<LiveBot, string> = {
   spark: 'Spark',
-  spark2: 'Spark 2',
+  spark2: 'Spark paper',
   flame: 'Flame',
 }
 
 /** Toggle-pill label — distinguishes the two SPARK accounts. */
 export const LIVE_BOT_PILL: Record<LiveBot, string> = {
   spark: 'SPARK',
-  spark2: 'SPARK2',
+  spark2: 'SPARK PAPER',
   flame: 'FLAME',
 }
 
@@ -61,8 +66,13 @@ export const LIVE_BOT_TAGLINE: Record<LiveBot, string> = {
   flame: 'Two-day SPY put credit spreads',
 }
 
-export const PAPER_DISCLOSURE =
-  'Simulated results. Flame is in paper trading — no real orders are placed and no real money is at risk.'
+/** Simulated-results disclosure, named for the bot it is shown against.
+ *  More than one bot is on paper now, so this must never hardcode a name —
+ *  a disclosure that says "Flame" on Spark paper's page is a false statement
+ *  about which account is simulated. */
+export function paperDisclosure(bot: LiveBot): string {
+  return `Simulated results. ${LIVE_BOT_LABEL[bot]} is in paper trading — no real orders are placed and no real money is at risk.`
+}
 
 export function accountMode(bot: LiveBot): LiveAccountMode {
   return LIVE_BOT_MODE[bot]

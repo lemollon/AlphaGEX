@@ -21,7 +21,7 @@ import type { LiveSummary, LiveTrade } from './types'
  * unavailable, fields are null (the UI renders "—"), never fabricated.
  */
 
-import { resolveAccountMode, ledgerFilter, LIVE_BOT_LABEL, PAPER_DISCLOSURE, type LiveBot } from './viewer'
+import { resolveAccountMode, ledgerFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
 
 interface HeartbeatDetails {
   action?: string
@@ -257,7 +257,7 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
       today_pnl_pct: todayPnlPct,
       source,
       mode: resolveAccountMode(BOT),
-      disclosure: paper ? PAPER_DISCLOSURE : null,
+      disclosure: paper ? paperDisclosure(BOT) : null,
     },
     intraday,
     membership: {
