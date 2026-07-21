@@ -37,6 +37,14 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
+  // Live and Community are app pages that require an account. For a logged-out
+  // visitor, sending them there just bounces to a login wall — a dead-end. Point
+  // those two at signup instead, so the click becomes "create an account to see
+  // it" rather than a locked door. Marketing pages (how-it-works, pricing) and
+  // signed-in customers are unaffected.
+  const linkHref = (href: string) =>
+    !isCustomer && (href === '/live' || href === '/community') ? '/signup' : href
+
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
       <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-5 md:px-8">
@@ -49,7 +57,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
           {NAV_LINKS.map((link) => (
             <Link
               key={link.href}
-              href={link.href}
+              href={linkHref(link.href)}
               className={
                 isActive(link.href)
                   ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
@@ -108,7 +116,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
-                href={link.href}
+                href={linkHref(link.href)}
                 onClick={() => setOpen(false)}
                 className={
                   isActive(link.href)

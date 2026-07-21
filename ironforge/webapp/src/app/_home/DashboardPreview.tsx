@@ -35,7 +35,12 @@ export function DailyBriefList({ compact = false }: { compact?: boolean }) {
 
 export default function DashboardPreview() {
   return (
-    <div className="rounded-2xl border border-white/10 bg-[#0A0B0C] p-3 shadow-2xl shadow-black/60">
+    <div className="relative rounded-2xl border border-white/10 bg-[#0A0B0C] p-3 shadow-2xl shadow-black/60">
+      {/* Figures are illustrative static copy, not a live account — label it so a
+          first-time visitor never reads the sample numbers as real. */}
+      <span className="absolute right-3 top-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
+        Example
+      </span>
       {/* Top strip: agent status / account value / P&L / outlook */}
       <div className="grid grid-cols-4 divide-x divide-white/10 rounded-xl border border-white/10 bg-[#0C0D0E]">
         <div className="p-3.5">
