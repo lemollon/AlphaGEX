@@ -25,7 +25,7 @@ export {
   LIVE_BOT_LABEL,
   LIVE_BOT_PILL,
   LIVE_BOT_TAGLINE,
-  PAPER_DISCLOSURE,
+  paperDisclosure,
   accountMode,
   isPaperBot,
   isLiveBot,
