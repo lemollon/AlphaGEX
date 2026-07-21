@@ -71,7 +71,9 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
   // flag, so Live / Performance / Home each highlight on their own page — the
   // rail no longer shows "Live" active everywhere it's rendered.
   const mainItems: NavItem[] = [
-    { label: 'Home', href: '/home', icon: <Icon d={ICONS.home} /> },
+    // "Dashboard" not "Home" — the wordmark above already goes to the marketing
+    // home (/), so a second "Home" pointing at /home read as a collision.
+    { label: 'Dashboard', href: '/home', icon: <Icon d={ICONS.home} /> },
     { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} /> },
     { label: 'Performance', href: '/performance', icon: <Icon d={ICONS.performance} /> },
     { label: 'Community', href: '/community', icon: <Icon d={ICONS.community} /> },

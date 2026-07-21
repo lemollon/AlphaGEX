@@ -28,10 +28,12 @@ export const LIVE_BOT_MODE: Record<LiveBot, LiveAccountMode> = {
   flame: 'paper',
 }
 
-/** Customer-facing agent name (drives hero copy, pause text, disclosures). */
+/** Customer-facing agent name (drives hero copy, pause text, disclosures).
+ *  spark2 is "Spark 2", not "Spark" — otherwise the two live accounts render as
+ *  two identical "Spark" rows in the strategy rail and on Performance. */
 export const LIVE_BOT_LABEL: Record<LiveBot, string> = {
   spark: 'Spark',
-  spark2: 'Spark',
+  spark2: 'Spark 2',
   flame: 'Flame',
 }
 
