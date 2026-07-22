@@ -340,62 +340,23 @@ export async function GET(
       }
     }
 
-    // FLAME sandbox mirror: balance/BP/P&L come from the Tradier User sandbox
-    // account, not the DB paper_account. The scanner re-seeds paper_account
-    // with DEFAULT_CONFIG.starting_capital each cycle, so paper_account alone
-    // would never reflect the real Tradier balance. This mirrors the SPARK
-    // Live-mode override pattern but scoped to User sandbox.
+    // FLAME reads its OWN paper ledger — no Tradier mirror.
     //
-    // On any Tradier failure we keep the paper_account-derived values already
-    // computed above and set source_error — no fabrication.
-    if (bot === 'flame') {
-      try {
-        const accts = await getLoadedSandboxAccountsAsync()
-        const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
-        if (userAcct) {
-          const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
-          if (accountId) {
-            const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
-            if (bal && bal.total_equity != null) {
-              balance = Math.round(bal.total_equity * 100) / 100
-              if (bal.option_buying_power != null) {
-                buyingPower = Math.round(bal.option_buying_power * 100) / 100
-                liveCollateral = Math.round(Math.max(0, bal.total_equity - bal.option_buying_power) * 100) / 100
-              }
-              if (bal.open_pl != null) {
-                tradierOpenPlOverride = Math.round(bal.open_pl * 100) / 100
-              }
-              // FLAME is PAPER ONLY — no orders are placed against the User
-              // sandbox, so Tradier's close_pl on that account reflects non-
-              // FLAME activity (manual trades, other operators, settled stale
-              // positions). Mirroring it here makes "Realized Today" diverge
-              // from FLAME's actual paper P&L: the equity chart and close-
-              // reason breakdown both read flame_positions.realized_pnl and
-              // showed +$432 from the day's PT trade while the top card said
-              // -$386 from the shared sandbox's day P&L.
-              //
-              // Keep balance/BP/unrealized mirrored to Tradier (the operator
-              // wants to see the live dollar balance on the User account),
-              // but leave realizedPnl/todayRealizedPnl on the flame_positions
-              // values already computed above. Back-compute starting_capital
-              // off that same realized number so the card math stays
-              // consistent (balance = starting_capital + realizedPnl).
-              startingCapital = Math.round((balance - realizedPnl) * 100) / 100
-              accountSource = 'tradier'
-            } else {
-              tradierBalanceFetchError = 'no_user_sandbox_balance_returned'
-            }
-          } else {
-            tradierBalanceFetchError = 'no_account_id_for_user_sandbox_key'
-          }
-        } else {
-          tradierBalanceFetchError = 'no_user_sandbox_account_loaded'
-        }
-      } catch (err: unknown) {
-        tradierBalanceFetchError = err instanceof Error ? err.message : String(err)
-        console.warn(`[status] flame: User sandbox balance fetch failed (${tradierBalanceFetchError}) — falling back to paper_account`)
-      }
-    }
+    // This block previously overwrote balance/buying_power/collateral with the
+    // Tradier "User" SANDBOX account's equity. That account is co-tenanted, which
+    // the old comment here already conceded for close_pl ("reflects non-FLAME
+    // activity") — but total_equity is contaminated by exactly the same activity,
+    // so mirroring it made the operator console read $42,299 while the customer
+    // Live page (which never consults Tradier for paper bots) read $13,947 for the
+    // same bot on the same day, and turned "+3.3% of acct" into "+9.97%".
+    //
+    // Its stated justification — "the scanner re-seeds paper_account with
+    // starting_capital each cycle, so paper_account alone would never reflect the
+    // real Tradier balance" — no longer holds: FLAME now sizes off its own paper
+    // account (see tryOpenFlamePutSpread), so paper_account IS the account.
+    //
+    // balance / startingCapital / buyingPower computed above from flame_positions
+    // and flame_paper_account now stand unmodified.
 
     // Compute live unrealized P&L from open positions via Tradier
     let unrealizedPnl: number | null = null
