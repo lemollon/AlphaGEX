@@ -37,7 +37,6 @@ import {
   getIcEntryCredit,
   getPutSpreadEntryCredit,
   getPutSpreadMarkToMarket,
-  getTradierBalanceDetail,
   getIcMarkToMarket,
   isConfigured,
   isConfiguredAsync,
@@ -2787,23 +2786,33 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   )
   if (int(openRows[0]?.cnt) >= 1) return 'skip:already_open'
 
-  // --- Account balance from live Tradier User sandbox ---
-  // Same source the /flame dashboard mirrors from — keeps sizing
-  // consistent with what the user sees.
-  let accountBalance: number | null = null
-  try {
-    const accts = await getLoadedSandboxAccountsAsync()
-    const userAcct = accts.find((a) => a.name === 'User' && a.type === 'sandbox')
-    if (userAcct) {
-      const accountId = await getAccountIdForKey(userAcct.apiKey, userAcct.baseUrl)
-      if (accountId) {
-        const bal = await getTradierBalanceDetail(userAcct.apiKey, accountId, userAcct.baseUrl)
-        if (bal?.total_equity != null) accountBalance = bal.total_equity
-      }
-    }
-  } catch { /* fall through */ }
-  if (accountBalance == null || accountBalance <= 0) {
-    return 'skip:no_tradier_balance'
+  // --- Account balance from FLAME'S OWN paper ledger ---
+  // This previously read the shared Tradier "User" sandbox balance. That account
+  // is co-tenanted with other systems, so FLAME's position size tracked THEIR
+  // activity rather than its own P&L: contracts went 20 -> 16 (Apr/May, matching
+  // a $10k account) then jumped to 124-127 (Jun onward, ~$62k collateral) with no
+  // config change, while the ledger still reported $10,000 capital. Return
+  // percentages were consequently ~4x overstated on every dashboard.
+  //
+  // Sizing now compounds off the same balance the ledger and the dashboards
+  // report, so "% of account" means one thing everywhere. Seeded from the
+  // configurable starting_capital knob ($10,000) on the first-ever trade.
+  const seedCapital = cfg(bot).starting_capital
+  const acctRows = await query(
+    `SELECT id, current_balance, collateral_in_use
+     FROM ${botTable(bot.name, 'paper_account')}
+     WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+     ORDER BY id DESC LIMIT 1`,
+    [bot.dte],
+  )
+  const acctId = acctRows[0]?.id ?? null
+  // Available buying power, not gross balance: collateral already committed to an
+  // open position must not be sized against a second time.
+  const accountBalance = acctId == null
+    ? seedCapital
+    : num(acctRows[0].current_balance) - num(acctRows[0].collateral_in_use)
+  if (!(accountBalance > 0)) {
+    return `skip:no_paper_balance(bal=$${accountBalance.toFixed(0)})`
   }
 
   // --- Strikes (put-only, 1.0 SD OTM) ---
@@ -2842,16 +2851,11 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
   // --- Record position (paper-only) ---
   const positionId = `FLAME-${target.getFullYear()}${String(target.getMonth() + 1).padStart(2, '0')}${String(target.getDate()).padStart(2, '0')}-PCS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  // Ensure a paper_account row exists; create with Tradier balance if missing.
-  // Scanner re-seeds paper_account.starting_capital elsewhere; we just need
-  // an is_active=TRUE row to UPDATE collateral/BP on.
-  const acctRows = await query(
-    `SELECT id FROM ${botTable(bot.name, 'paper_account')}
-     WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-     ORDER BY id DESC LIMIT 1`,
-    [bot.dte],
-  )
-  const acctId = acctRows[0]?.id ?? null
+  // Ensure a paper_account row exists (acctId was resolved during sizing above).
+  // Seeded from the configured starting_capital, NOT from a broker balance —
+  // seeding from Tradier is how a row with starting_capital = $3,840.20 was
+  // created previously, which then misreports every return percentage derived
+  // from it.
   if (acctId == null) {
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
@@ -2859,7 +2863,7 @@ async function tryOpenFlamePutSpread(bot: BotDef, spot: number, vix: number): Pr
           buying_power, total_trades, high_water_mark, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
        VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
-      [accountBalance, bot.dte],
+      [seedCapital, bot.dte],
     )
   }
 
