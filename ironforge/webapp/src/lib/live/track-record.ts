@@ -20,9 +20,27 @@ import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT, LIVE_BOT_TAGLINE, type LiveBot } from 
  * performance claim we cannot stand behind.
  */
 
-/** Bots shown publicly. SPARK2 is a migration twin of SPARK (two near-identical
- *  curves confuse more than they prove) and INFERNO is not a customer product. */
-export const PUBLIC_BOTS: readonly LiveBot[] = ['spark', 'flame'] as const
+/**
+ * Bots shown publicly.
+ *
+ * SPARK2 is a migration twin of SPARK (two near-identical curves confuse more
+ * than they prove) and INFERNO is not a customer product.
+ *
+ * FLAME IS WITHHELD (2026-07-22). Its ledger is not currently publishable:
+ *   - flame_paper_account.current_balance reads ~$42,299 while
+ *     starting_capital ($10,000) + Σ realized_pnl ($3,947) = $13,947 — roughly
+ *     $28k of unexplained drift (the "Balance Drift" failure in
+ *     ironforge/CLAUDE.md).
+ *   - The scanner sizes from that drifted balance, so daily P&L swings jump from
+ *     ~±$300 (Apr–May) to ~±$3,000 (Jun onward) with no config change. The
+ *     cumulative curve therefore mixes two sizing eras, and any drawdown or
+ *     return computed across it is meaningless.
+ *
+ * Restore FLAME only after `GET /api/flame/fix-collateral` establishes ground
+ * truth AND the curve is scoped to a single era. Publishing an era-mixed record
+ * as marketing is a performance claim we cannot support.
+ */
+export const PUBLIC_BOTS: readonly LiveBot[] = ['spark'] as const
 
 export interface PublicBotRecord {
   bot: LiveBot
