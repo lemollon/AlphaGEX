@@ -64,15 +64,15 @@ function ctDate(v: unknown): string {
   return v ? String(v).slice(0, 10) : ''
 }
 
-/** "SPY 618p/613p 628c/633c" from whichever strike columns are populated. */
+/** "SPY 618/613p 628/633c" from the iron-condor strike columns. */
 function structureOf(r: Record<string, unknown>): string | null {
-  const sp = num(r.short_put), lp = num(r.long_put)
-  const sc = num(r.short_call), lc = num(r.long_call)
-  if (!sp && !sc) return null
+  const ps = num(r.put_short_strike), pl = num(r.put_long_strike)
+  const cs = num(r.call_short_strike), cl = num(r.call_long_strike)
+  if (!ps && !cs) return null
   const ticker = r.ticker ? String(r.ticker) : 'SPY'
   const parts: string[] = []
-  if (sp) parts.push(`${sp}p/${lp || ''}p`)
-  if (sc) parts.push(`${sc}c/${lc || ''}c`)
+  if (ps) parts.push(`${ps}/${pl}p`)
+  if (cs) parts.push(`${cs}/${cl}c`)
   return `${ticker} ${parts.join(' ')}`.trim()
 }
 
@@ -141,8 +141,9 @@ async function loadTrades(bot: LiveBot, limit: number): Promise<PublicTrade[]> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const rows = await dbQuery(
-    `SELECT close_time, ticker, short_put, long_put, short_call, long_call,
-            net_credit, close_reason, realized_pnl
+    `SELECT close_time, ticker,
+            put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+            total_credit, close_reason, realized_pnl
      FROM ${botTable(bot, 'positions')}
      WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
        ${dteFilter} ${ledgerFilter(bot)}
@@ -157,7 +158,7 @@ async function loadTrades(bot: LiveBot, limit: number): Promise<PublicTrade[]> {
       label: LIVE_BOT_LABEL[bot],
       paper,
       structure: structureOf(r),
-      credit: r.net_credit != null ? Math.round(num(r.net_credit) * 100) / 100 : null,
+      credit: r.total_credit != null ? Math.round(num(r.total_credit) * 100) / 100 : null,
       outcome: r.close_reason ? String(r.close_reason) : null,
       pnl: Math.round(num(r.realized_pnl) * 100) / 100,
     }))
