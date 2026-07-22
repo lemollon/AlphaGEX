@@ -21,7 +21,7 @@ import type { LiveSummary, LiveTrade } from './types'
  * unavailable, fields are null (the UI renders "—"), never fabricated.
  */
 
-import { resolveAccountMode, ledgerFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
+import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
 
 interface HeartbeatDetails {
   action?: string
@@ -58,11 +58,11 @@ export async function getLiveSummary(
    * Operators only. Permits summing multiple production accounts into one
    * balance (the fleet view). See the MULTI-ACCOUNT SAFETY note below.
    */
-  { allowAggregate = false }: { allowAggregate?: boolean } = {},
+  { allowAggregate = false, person = null }: { allowAggregate?: boolean; person?: string | null } = {},
 ): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = ledgerFilter(BOT)
+  const prodFilter = scopeFilter(BOT, person)
 
   const [
     heartbeatRows,
@@ -175,7 +175,12 @@ export async function getLiveSummary(
   // than relying on the per-bot branches falling through to the same place.
   const paper = resolveAccountMode(BOT) === 'paper'
   const allProdBals = BOT === 'spark' && !paper
-    ? balances.filter((b) => b.account_type === 'production' && b.total_equity != null)
+    ? balances.filter((b) =>
+        b.account_type === 'production' &&
+        b.total_equity != null &&
+        // Scope to the owner when the viewer is pinned to one (customers).
+        // ironforge_accounts.person is surfaced as SandboxAccountBalance.name.
+        (person == null || b.name === person))
     : []
   // MULTI-ACCOUNT SAFETY. The lines below SUM every production account for the bot.
   // That is correct for an operator (it is the fleet total) and catastrophically
@@ -297,10 +302,10 @@ export async function getLiveSummary(
   }
 }
 
-export async function getLiveTrade(BOT: LiveBot = 'spark'): Promise<LiveTrade> {
+export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null = null): Promise<LiveTrade> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = ledgerFilter(BOT)
+  const prodFilter = scopeFilter(BOT, person)
 
   const [positionRows, sparkSeriesRows] = await Promise.all([
     dbQuery(

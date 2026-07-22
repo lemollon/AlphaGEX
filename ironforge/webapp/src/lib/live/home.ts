@@ -7,7 +7,7 @@ import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib
  * the same honest-data rules (null when unavailable, never fabricated).
  */
 
-import { ledgerFilter, type LiveBot } from './viewer'
+import { scopeFilter, type LiveBot } from './viewer'
 
 export interface HomeData {
   wealth: {
@@ -26,10 +26,10 @@ export interface HomeData {
   as_of: string
 }
 
-export async function getHomeData(BOT: LiveBot = 'spark'): Promise<HomeData> {
+export async function getHomeData(BOT: LiveBot = 'spark', person: string | null = null): Promise<HomeData> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prodFilter = ledgerFilter(BOT)
+  const prodFilter = scopeFilter(BOT, person)
   const closedFilter = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prodFilter}`
 
   const [incomeRows, accountRows, lifetimeRows, tradeRows, yesterdayRows] = await Promise.all([

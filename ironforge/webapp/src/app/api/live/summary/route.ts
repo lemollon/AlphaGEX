@@ -18,7 +18,10 @@ export async function GET(req: NextRequest) {
       // never another account's data.
       return NextResponse.json({ empty: true, viewer })
     }
-    const summary = await getLiveSummary(viewer.bot, { allowAggregate: viewer.isOperator })
+    const summary = await getLiveSummary(viewer.bot, {
+      allowAggregate: viewer.isOperator,
+      person: viewer.person,
+    })
     return NextResponse.json({ ...summary, viewer })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

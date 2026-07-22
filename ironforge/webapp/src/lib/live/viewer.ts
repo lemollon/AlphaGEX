@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { getSession } from '@/lib/auth/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
-import { dbQuery } from '@/lib/db'
+import { dbQuery, escapeSql } from '@/lib/db'
 
 /**
  * Account-aware Live page: which live-money bots may this viewer see?
@@ -71,6 +71,29 @@ export function ledgerFilter(bot: LiveBot): string {
     : `AND COALESCE(account_type, 'sandbox') <> 'production'`
 }
 
+/**
+ * Restrict a bot's rows to ONE account owner.
+ *
+ * `{bot}_positions`, `{bot}_paper_account` and `{bot}_equity_snapshots` all carry a
+ * `person` column, and scanner.ts already trades each person independently
+ * ("Sync PRODUCTION paper_accounts (each person independently)"). The customer read
+ * path did not scope to it, so every balance query SUMMED all owners — correct for an
+ * operator (the fleet total), and a cross-customer leak the moment a second person's
+ * account exists.
+ *
+ * null/empty => no restriction (operator fleet view). Callers must decide: a CUSTOMER
+ * with no person mapping must not be handed an unscoped query.
+ */
+export function personFilter(person: string | null | undefined): string {
+  if (!person) return ''
+  return `AND person = '${escapeSql(person)}'`
+}
+
+/** ledgerFilter + personFilter — the pair every customer-facing query needs. */
+export function scopeFilter(bot: LiveBot, person: string | null | undefined): string {
+  return `${ledgerFilter(bot)} ${personFilter(person)}`
+}
+
 export interface LiveViewer {
   /** null = this viewer is not authorized for any live account (empty state). */
   bot: LiveBot | null
@@ -82,6 +105,14 @@ export interface LiveViewer {
    * customer must never be handed the fleet total as "your account".
    */
   isOperator: boolean
+  /**
+   * Account owner (ironforge_accounts.person) for the SELECTED bot, from
+   * ironforge_customer_bots.person. null for operators (fleet view) and for
+   * customers whose mapping predates per-account scoping.
+   */
+  person: string | null
+  /** bot -> account owner, for multi-bot views (Performance). */
+  persons: Record<string, string | null>
   /** Subset of allowedBots currently running on simulated money. Drives the
    *  "Paper" badge on the strategy pills/rail without the client needing env. */
   paperBots: LiveBot[]
@@ -108,6 +139,8 @@ function isOpenMode(): boolean {
 export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   let allowed: LiveBot[] = []
   let isOperator = false
+  // bot -> account owner, from ironforge_customer_bots.person. Empty for operators.
+  const personByBot = new Map<string, string>()
 
   if (isOpenMode()) {
     allowed = [...LIVE_BOTS]
@@ -121,11 +154,14 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
       } else {
         const customer = await getCustomerSession()
         if (customer.customerId) {
-          const rows = await dbQuery<{ bot: string }>(
-            `SELECT bot FROM ironforge_customer_bots WHERE customer_id = $1`,
+          const rows = await dbQuery<{ bot: string; person: string | null }>(
+            `SELECT bot, person FROM ironforge_customer_bots WHERE customer_id = $1`,
             [customer.customerId],
           )
           allowed = rows.map((r) => r.bot).filter(isLiveBot)
+          for (const r of rows) {
+            if (r.person) personByBot.set(r.bot, r.person)
+          }
         }
       }
     } catch {
@@ -137,5 +173,10 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
 
   const requested = req.nextUrl.searchParams.get('account')
   const bot = isLiveBot(requested) && allowed.includes(requested) ? requested : (allowed[0] ?? null)
-  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed), isOperator }
+  // Operators keep the unscoped fleet view; customers are pinned to their own
+  // account when one is mapped.
+  const person = isOperator || bot == null ? null : (personByBot.get(bot) ?? null)
+  const persons: Record<string, string | null> = {}
+  for (const b of allowed) persons[b] = isOperator ? null : (personByBot.get(b) ?? null)
+  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed), isOperator, person, persons }
 }
