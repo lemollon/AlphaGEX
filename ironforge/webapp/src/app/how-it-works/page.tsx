@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
+import PerformanceOverviewCard from './PerformanceOverviewCard'
 import HomeNav from '../_home/HomeNav'
 import {
   ShieldIcon,
@@ -45,13 +46,6 @@ const CONFIG = {
     description: 'Automated trading powered by real-time analysis and disciplined execution.',
     trustNotes: ['No long-term commitment', 'Cancel anytime'],
   },
-  // Static fallback values from the approved rendering (spec §6.2: placeholder
-  // marketing figures for UI reference; no marketing-metrics API exists yet).
-  performance: {
-    totalReturnPct: '+18.74%',
-    tradesExecuted: '128',
-    winRatePct: '74%',
-  },
   principles: [
     { icon: ShieldIcon, title: 'Discipline First', copy: 'Every trade follows predefined rules.' },
     { icon: BarsIcon, title: 'Data Driven', copy: 'Decisions powered by real-time analysis.' },
@@ -94,73 +88,6 @@ const CONFIG = {
     { icon: ChartUpSquareIcon, label: 'Performance Dashboard', accent: 'orange', boxed: true },
   ],
 } as const
-
-/* ── Performance overview chart (static, matches approved rendering) ───────── */
-
-function PerformanceChart() {
-  const points =
-    '0,86 8,82 14,85 22,78 30,81 38,73 44,77 52,69 60,73 66,64 74,68 82,60 88,64 96,55 104,59 112,51 118,55 126,46 134,50 142,42 148,46 156,38 164,42 172,34 178,38 186,30 194,34 202,26 208,30 216,23 224,27 232,19 240,23 248,15 254,19 262,11 270,15 278,8'
-  return (
-    <svg
-      viewBox="0 0 280 100"
-      className="h-36 w-full md:h-44"
-      preserveAspectRatio="none"
-      role="img"
-      aria-label="Performance trend: total return rising from below 0% in January to about 20% in May"
-    >
-      <defs>
-        <linearGradient id="hiw-perf-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#56C62B" stopOpacity="0.32" />
-          <stop offset="100%" stopColor="#56C62B" stopOpacity="0.02" />
-        </linearGradient>
-      </defs>
-      {[14, 39, 64, 89].map((y) => (
-        <line key={y} x1="0" y1={y} x2="280" y2={y} stroke="#2B2B2B" strokeWidth="0.5" />
-      ))}
-      <polygon points={`0,100 ${points} 280,100`} fill="url(#hiw-perf-fill)" />
-      <polyline points={points} fill="none" stroke="#56C62B" strokeWidth="1.8" />
-    </svg>
-  )
-}
-
-function PerformanceOverviewCard() {
-  const stats = [
-    { label: 'Total Return', value: CONFIG.performance.totalReturnPct, green: true },
-    { label: 'Trades Executed', value: CONFIG.performance.tradesExecuted, green: false },
-    { label: 'Win Rate', value: CONFIG.performance.winRatePct, green: false },
-  ]
-  return (
-    <div className="rounded-2xl border border-[#2B2B2B] bg-[#141414]/80 p-5 shadow-[0_12px_32px_rgba(0,0,0,.28)]">
-      <div className="text-sm text-gray-200">Performance Overview</div>
-      <div className="mt-3 grid grid-cols-3 gap-3">
-        {stats.map(({ label, value, green }) => (
-          <div key={label} className="rounded-lg border border-[#2B2B2B] bg-[#0E0F0F] px-3 py-2.5">
-            <div className="text-[11px] text-[#B8B8B8]">{label}</div>
-            <div className={`mt-1 text-lg font-bold ${green ? 'text-[#56C62B]' : 'text-white'}`}>{value}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-4 flex gap-2">
-        <div className="flex flex-col justify-between py-0.5 text-right text-[10px] text-[#B8B8B8]">
-          <span>20%</span>
-          <span>10%</span>
-          <span>0%</span>
-          <span>-10%</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <PerformanceChart />
-          <div className="mt-1.5 flex justify-between px-1 text-[10px] text-[#B8B8B8]">
-            <span>JAN</span>
-            <span>FEB</span>
-            <span>MAR</span>
-            <span>APR</span>
-            <span>MAY</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 /* ── Sections ──────────────────────────────────────────────────────────────── */
 

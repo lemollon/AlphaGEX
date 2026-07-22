@@ -52,7 +52,14 @@ function deriveBotState(hbStatus: string, hbAction: string): string {
     : 'unknown'
 }
 
-export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummary> {
+export async function getLiveSummary(
+  BOT: LiveBot = 'spark',
+  /**
+   * Operators only. Permits summing multiple production accounts into one
+   * balance (the fleet view). See the MULTI-ACCOUNT SAFETY note below.
+   */
+  { allowAggregate = false }: { allowAggregate?: boolean } = {},
+): Promise<LiveSummary> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const prodFilter = ledgerFilter(BOT)
@@ -167,9 +174,28 @@ export async function getLiveSummary(BOT: LiveBot = 'spark'): Promise<LiveSummar
   // them, always derive from the paper ledger below. Guarding explicitly rather
   // than relying on the per-bot branches falling through to the same place.
   const paper = resolveAccountMode(BOT) === 'paper'
-  const prodBals = BOT === 'spark' && !paper
+  const allProdBals = BOT === 'spark' && !paper
     ? balances.filter((b) => b.account_type === 'production' && b.total_equity != null)
     : []
+  // MULTI-ACCOUNT SAFETY. The lines below SUM every production account for the bot.
+  // That is correct for an operator (it is the fleet total) and catastrophically
+  // wrong for a customer the moment a second person's Tradier account exists in
+  // ironforge_accounts — every customer's "Your account" would become everyone's
+  // money. The scanner already trades each `person` independently
+  // (scanner.ts: "Sync PRODUCTION paper_accounts (each person independently)"),
+  // so a second account is an expected future state, not a hypothetical.
+  //
+  // Until ironforge_customer_bots carries the owning `person` and these queries
+  // scope to it, refuse to aggregate for a non-operator. Showing an honest empty
+  // state beats showing someone else's balance.
+  const aggregateBlocked = !allowAggregate && allProdBals.length > 1
+  const prodBals = aggregateBlocked ? [] : allProdBals
+  if (aggregateBlocked) {
+    console.warn(
+      `[live/summary] ${BOT}: ${allProdBals.length} production accounts but viewer is not ` +
+      `an operator — refusing to aggregate. Scope by person before onboarding a 2nd account.`,
+    )
+  }
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'

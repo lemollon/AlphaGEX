@@ -75,6 +75,13 @@ export interface LiveViewer {
   /** null = this viewer is not authorized for any live account (empty state). */
   bot: LiveBot | null
   allowedBots: LiveBot[]
+  /**
+   * True for operators (and for the IRONFORGE_LIVE_OPEN review mode, which is
+   * defined as "see what the owner sees"). Only an operator may be shown an
+   * AGGREGATE across every production account of a bot — see summary.ts. A
+   * customer must never be handed the fleet total as "your account".
+   */
+  isOperator: boolean
   /** Subset of allowedBots currently running on simulated money. Drives the
    *  "Paper" badge on the strategy pills/rail without the client needing env. */
   paperBots: LiveBot[]
@@ -100,14 +107,17 @@ function isOpenMode(): boolean {
 
 export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   let allowed: LiveBot[] = []
+  let isOperator = false
 
   if (isOpenMode()) {
     allowed = [...LIVE_BOTS]
+    isOperator = true
   } else {
     try {
       const ops = await getSession()
       if (ops.userId) {
         allowed = [...LIVE_BOTS]
+        isOperator = true
       } else {
         const customer = await getCustomerSession()
         if (customer.customerId) {
@@ -121,10 +131,11 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
     } catch {
       // Fail closed: no account visibility on any error.
       allowed = []
+      isOperator = false
     }
   }
 
   const requested = req.nextUrl.searchParams.get('account')
   const bot = isLiveBot(requested) && allowed.includes(requested) ? requested : (allowed[0] ?? null)
-  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed) }
+  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed), isOperator }
 }
