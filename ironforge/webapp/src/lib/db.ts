@@ -158,6 +158,11 @@ CREATE TABLE IF NOT EXISTS ironforge_customer_bots (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (customer_id, bot)
 );
+-- Which ACCOUNT (ironforge_accounts.person) this customer owns for this bot.
+-- Without it the customer read path sums every owner's rows: correct as a fleet
+-- view for an operator, a cross-customer leak once a 2nd person's account exists.
+-- NULL = unscoped; only safe for a single-account deployment.
+ALTER TABLE ironforge_customer_bots ADD COLUMN IF NOT EXISTS person TEXT;
 -- Vigil: macro-event blackout calendar (FOMC + custom events)
 CREATE TABLE IF NOT EXISTS ironforge_event_calendar (
   event_id          TEXT PRIMARY KEY,

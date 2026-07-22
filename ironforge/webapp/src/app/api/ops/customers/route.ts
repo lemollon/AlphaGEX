@@ -59,7 +59,7 @@ export async function GET() {
   )
   // Bot mappings live in the bot DB, keyed by customers-DB users.id (as text).
   const maps = await dbQuery<{ customer_id: string; bot: string }>(
-    `SELECT customer_id, bot FROM ironforge_customer_bots`,
+    `SELECT customer_id, bot, person FROM ironforge_customer_bots`,
   )
   const byCustomer = new Map<string, string[]>()
   for (const m of maps) {
@@ -115,14 +115,22 @@ export async function POST(req: NextRequest) {
     if (exists.length === 0) return NextResponse.json({ ok: false, error: 'No such customer.' }, { status: 404 })
 
     if (action === 'map') {
+      // person = which ironforge_accounts owner this customer's money lives in.
+      // Optional, but WITHOUT it the customer's balance queries are unscoped and
+      // will sum every owner's rows once a second account exists. Re-mapping the
+      // same bot updates the owner rather than silently keeping the old one.
+      const person = typeof body.person === 'string' && body.person.trim()
+        ? body.person.trim()
+        : null
       await dbExecute(
-        `INSERT INTO ironforge_customer_bots (customer_id, bot) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-        [customerId, bot],
+        `INSERT INTO ironforge_customer_bots (customer_id, bot, person) VALUES ($1, $2, $3)
+         ON CONFLICT (customer_id, bot) DO UPDATE SET person = EXCLUDED.person`,
+        [customerId, bot, person],
       )
     } else {
       await dbExecute(`DELETE FROM ironforge_customer_bots WHERE customer_id = $1 AND bot = $2`, [customerId, bot])
     }
-    await audit(customerId, action === 'map' ? 'OPS_BOT_MAPPED' : 'OPS_BOT_UNMAPPED', gate.who, { bot })
+    await audit(customerId, action === 'map' ? 'OPS_BOT_MAPPED' : 'OPS_BOT_UNMAPPED', gate.who, { bot, person: body.person ?? null })
     return NextResponse.json({ ok: true })
   }
 

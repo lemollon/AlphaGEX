@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       // never another account's data.
       return NextResponse.json({ empty: true, viewer })
     }
-    return NextResponse.json(await getLiveTrade(viewer.bot))
+    return NextResponse.json(await getLiveTrade(viewer.bot, viewer.person))
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json({ error: msg }, { status: 500 })

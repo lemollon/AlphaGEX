@@ -1,5 +1,5 @@
 import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
-import { ledgerFilter, resolveAccountMode, type LiveBot } from './viewer'
+import { scopeFilter, resolveAccountMode, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT } from './bots'
 
 /**
@@ -56,10 +56,10 @@ function ctDate(v: unknown): string {
   return v ? String(v).slice(0, 10) : ''
 }
 
-async function loadBot(bot: LiveBot): Promise<RawBot> {
+async function loadBot(bot: LiveBot, person: string | null = null): Promise<RawBot> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prod = ledgerFilter(bot)
+  const prod = scopeFilter(bot, person)
   const closed = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prod}`
 
   const [statRows, capRows, pointRows] = await Promise.all([
@@ -106,8 +106,11 @@ async function loadBot(bot: LiveBot): Promise<RawBot> {
   }
 }
 
-export async function getPerformance(bots: LiveBot[]): Promise<PerformanceData> {
-  const raws = await Promise.all(bots.map(loadBot))
+export async function getPerformance(
+  bots: LiveBot[],
+  persons: Record<string, string | null> = {},
+): Promise<PerformanceData> {
+  const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null)))
   const perfBots = raws.map((r) => r.perf)
 
   const round2 = (v: number) => Math.round(v * 100) / 100

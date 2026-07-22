@@ -15,6 +15,6 @@ export async function GET(req: NextRequest) {
   if (viewer.allowedBots.length === 0) {
     return NextResponse.json({ empty: true, viewer })
   }
-  const data = await getPerformance(viewer.allowedBots)
+  const data = await getPerformance(viewer.allowedBots, viewer.persons)
   return NextResponse.json({ ...data, viewer })
 }
