@@ -14,10 +14,13 @@
  *     - preflight-live surfaces the pause as an informational advisory
  *   Returns the updated state.
  *
- * POST is self-guarded (the path is middleware-open so the customer Live page
- * can reach it): the caller must either hold a valid operator session or send
- * `password` matching the IRONFORGE_PAUSE_PASSWORD env var. When the env var
- * is unset the password path is disabled entirely (fail-closed, session only).
+ * POST is self-guarded. The caller must be ONE of:
+ *   - an operator session, or
+ *   - a customer session that OWNS this bot (resolveLiveViewer.allowedBots), or
+ *   - a holder of IRONFORGE_PAUSE_PASSWORD (legacy operator fallback; disabled
+ *     entirely when the env var is unset — fail closed).
+ * Ownership matters: without it, any password holder could pause any customer's
+ * bot. Middleware additionally requires a session to reach this path at all.
  *
  * Only PRODUCTION_BOT accepts POST. Other bots receive 400 because pausing
  * production for a bot that never had production accounts is meaningless.
@@ -26,6 +29,8 @@ import { createHash, timingSafeEqual } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { dbExecute, validateBot } from '@/lib/db'
 import { getSession } from '@/lib/auth/server'
+import { resolveLiveViewer } from '@/lib/live/viewer'
+import type { LiveBot } from '@/lib/live/bots'
 import { PRODUCTION_BOT, isProductionBot, getProductionPauseState } from '@/lib/tradier'
 
 /** Constant-time password check; sha256 first so length never leaks. */
@@ -88,24 +93,48 @@ export async function POST(
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  // Auth: operator session OR the shared pause password. Session read never
-  // throws the request into a 500 — a broken cookie just falls through to
-  // the password check.
+  // Auth, in order of preference:
+  //   1. operator session          — may pause any bot
+  //   2. customer session + OWNERSHIP of this bot (resolveLiveViewer)
+  //   3. the shared pause password — legacy operator fallback
+  //
+  // (2) is the point of this block. Previously any caller holding the shared
+  // password could pause any bot, so one customer could stop another customer's
+  // trading. Ownership is resolved through the same path the Live page uses, so
+  // a viewer can only pause a bot that appears in their own allowedBots.
   let authorized = false
+  let actor = 'ui'
   try {
     const session = await getSession()
-    authorized = Boolean(session.userId)
-  } catch { /* no/invalid operator session — try the password */ }
+    if (session.userId) {
+      authorized = true
+      actor = 'operator'
+    }
+  } catch { /* no/invalid operator session — fall through */ }
+
+  if (!authorized) {
+    try {
+      const viewer = await resolveLiveViewer(req)
+      // isOperator covers IRONFORGE_LIVE_OPEN review mode, which is defined as
+      // "see what the owner sees"; ownership still has to include this bot.
+      if (viewer.allowedBots.includes(bot as LiveBot)) {
+        authorized = true
+        actor = viewer.isOperator ? 'operator' : 'customer'
+      }
+    } catch { /* fail closed — fall through to the password path */ }
+  }
+
   if (!authorized && typeof body.password === 'string' && pausePasswordMatches(body.password)) {
     authorized = true
+    actor = 'password'
   }
   if (!authorized) {
-    return NextResponse.json({ error: 'password_required' }, { status: 403 })
+    return NextResponse.json({ error: 'not_authorized' }, { status: 403 })
   }
 
   const paused = body.paused === true
   const reason = typeof body.reason === 'string' ? body.reason.slice(0, 500) : null
-  const by = typeof body.by === 'string' ? body.by.slice(0, 120) : 'ui'
+  const by = typeof body.by === 'string' ? body.by.slice(0, 120) : actor
 
   try {
     // Upsert the single pause row for this bot. When paused flips to true

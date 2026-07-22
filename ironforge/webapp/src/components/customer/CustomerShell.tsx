@@ -25,7 +25,10 @@ interface CustomerMe {
 const NAV_MAIN = [
   { label: 'Home', href: '/home', icon: 'M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z' },
   { label: 'Live', href: '/live', icon: 'M3 12h4l3-8 4 16 3-8h4' },
-  { label: 'Performance', href: '/spark', icon: 'M4 20V10m6 10V4m6 16v-7m-13 7h15' },
+  // /performance — the CUSTOMER's own combined history. This pointed at /spark (the
+  // operator bot console), which filterNavBySurface strips on the customer surface,
+  // leaving /performance with no route into it at all.
+  { label: 'Performance', href: '/performance', icon: 'M4 20V10m6 10V4m6 16v-7m-13 7h15' },
   { label: 'Community', href: '/community', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M11 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0' },
 ]
 

@@ -16,6 +16,8 @@ import { AdminBotsMenu, AdminBotsMobileLinks } from './AdminBotsMenu'
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
+  // Public proof surface — reachable with no account, unlike /live and /performance.
+  { href: '/track-record', label: 'Track Record' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/live', label: 'Live' },
   { href: '/community', label: 'Community' },

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getIronSession } from 'iron-session'
 import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/auth/session'
-import { decideAccess } from '@/lib/auth/access'
+import { decideAccess, isCustomerPath } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
 import { resolveSurface, servesPath, OPERATOR_LANDING } from '@/lib/surface'
@@ -56,6 +56,23 @@ export async function middleware(req: NextRequest) {
     hasSession = false
   }
 
+  // Customer session, read once and reused by both the onboarding branch and the
+  // main access decision. Edge-safe (iron-session uses Web Crypto). Read lazily so
+  // an operator/public request never pays for a second cookie decrypt.
+  let _customerChecked = false
+  let _hasCustomerSession = false
+  const customerSession = async (): Promise<boolean> => {
+    if (_customerChecked) return _hasCustomerSession
+    _customerChecked = true
+    try {
+      const cs = await getIronSession<CustomerSessionData>(req, res, customerSessionOptions)
+      _hasCustomerSession = Boolean(cs.customerId)
+    } catch {
+      _hasCustomerSession = false
+    }
+    return _hasCustomerSession
+  }
+
   // Onboarding funnel (sub-project F): reachable by a holder of a valid signed
   // onboarding cookie even though they have no login session yet. Operators (session)
   // and internal callers (service token) pass too. Everyone else is bounced to login.
@@ -68,14 +85,7 @@ export async function middleware(req: NextRequest) {
     const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)
     if (claims) return res
     // A logged-in customer can resume onboarding via their own session cookie.
-    let hasCustomerSession = false
-    try {
-      const cs = await getIronSession<CustomerSessionData>(req, res, customerSessionOptions)
-      hasCustomerSession = Boolean(cs.customerId)
-    } catch {
-      hasCustomerSession = false
-    }
-    if (hasCustomerSession) return res
+    if (await customerSession()) return res
     if (isApi) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
     const url = req.nextUrl.clone()
     url.pathname = '/login'
@@ -83,14 +93,25 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  const decision = decideAccess({ pathname, isApi, hasSession, hasServiceToken })
+  // Customer-surface paths need the customer cookie; everything else decides on the
+  // operator session alone, so we only pay for the extra decrypt where it matters.
+  const hasCustomerSession = isCustomerPath(pathname) ? await customerSession() : false
+
+  const decision = decideAccess({
+    pathname,
+    isApi,
+    hasSession,
+    hasCustomerSession,
+    hasServiceToken,
+  })
   if (decision === 'allow') return res
   if (decision === 'unauthorized') {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
-  // Operator wall → operator login (customers use /login).
   const url = req.nextUrl.clone()
-  url.pathname = '/ops/login'
+  // Customer surface → customer door; operator surface → operator door. Sending a
+  // customer to /ops/login is a dead end: they have no operator credentials.
+  url.pathname = decision === 'redirect-customer-login' ? '/login' : '/ops/login'
   url.searchParams.set('next', pathname)
   return NextResponse.redirect(url)
 }

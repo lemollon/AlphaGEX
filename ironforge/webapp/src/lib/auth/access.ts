@@ -27,47 +27,75 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
-  // Customer trade-approval UI: page shell loads for anyone; the data API self-guards
-  // the customer session, so the page shows a sign-in prompt when unauthenticated.
-  '/account/trades',
-  // Customer Live page (site not launched; ungated while dark).
-  '/live',
-  // Customer Home dashboard + Forge Community pages (same ungated-while-dark
-  // treatment as /live; write APIs self-guard the customer session in-route).
+  // Public proof surface: the paper/live track record shown to prospects. Read-only
+  // aggregate of CLOSED trades — no balances, no open positions, no controls.
+  '/track-record',
+])
+
+/**
+ * Paths that require a CUSTOMER session (an operator session also satisfies them).
+ *
+ * These were previously in PUBLIC_EXACT under an "ungated while dark" comment.
+ * They render a person's own money, so they are gated on identity — not on the
+ * IRONFORGE_LIVE_OPEN review flag, which only scopes WHICH bots a viewer may see.
+ *
+ * Unauthenticated page requests go to /login (the CUSTOMER door), never /ops/login.
+ */
+const CUSTOMER_EXACT = new Set<string>([
   '/home',
+  '/live',
+  '/performance',
   '/community',
-  // Middleware-open so the Live page can reach it; POST self-guards in-route
-  // (operator session OR IRONFORGE_PAUSE_PASSWORD). GET is read-only state.
+  '/account/trades',
+  // The Live page's Pause control. Self-guards ownership in-route; this only
+  // establishes that an anonymous caller can never reach it at all.
   '/api/spark/production-pause',
   '/api/spark2/production-pause',
-  // FLAME is paper-only today, but the Live page renders the same pause control
-  // for it, so the route must be reachable on the same terms as the SPARK ones.
   '/api/flame/production-pause',
 ])
+
+export function isCustomerPath(pathname: string): boolean {
+  // Customer Live/Home/Performance aggregation APIs. resolveLiveViewer() already
+  // fails closed, but an anonymous caller should not reach them at all.
+  if (pathname.startsWith('/api/live/')) return true
+  return CUSTOMER_EXACT.has(pathname)
+}
 
 export function isPublicPath(pathname: string): boolean {
   // All /api/brokerage/* routes are middleware-open and self-guarded in-route
   // (webhook → shared secret, customer routes → customer session, internal → service
-  // token). Middleware only recognizes the OPERATOR session, so customer-facing
-  // brokerage APIs must bypass it here and enforce their own auth.
+  // token). The webhook has no session of any kind, so it cannot be customer-gated.
   if (pathname.startsWith('/api/brokerage/')) return true
-  // Customer-shaped Live page aggregation APIs; read-only, no operator internals.
-  if (pathname.startsWith('/api/live/')) return true
-  // Forge Community APIs: GET is public-read; POSTs self-guard the customer session.
+  // Public track-record payload: closed-trade aggregates only, no account state.
+  if (pathname.startsWith('/api/public/')) return true
+  // Forge Community APIs: GET is public-read (drives the locked preview for
+  // anonymous visitors); POSTs self-guard the customer session in-route.
   if (pathname.startsWith('/api/community/')) return true
   return PUBLIC_EXACT.has(pathname)
 }
 
-export type AccessDecision = 'allow' | 'redirect-login' | 'unauthorized'
+export type AccessDecision =
+  | 'allow'
+  | 'redirect-login'
+  | 'redirect-customer-login'
+  | 'unauthorized'
 
 export function decideAccess(opts: {
   pathname: string
   isApi: boolean
   hasSession: boolean
+  hasCustomerSession?: boolean
   hasServiceToken: boolean
 }): AccessDecision {
   if (opts.hasServiceToken) return 'allow'
   if (isPublicPath(opts.pathname)) return 'allow'
+  // Operators may see everything, including the customer surface.
   if (opts.hasSession) return 'allow'
+  if (isCustomerPath(opts.pathname)) {
+    if (opts.hasCustomerSession) return 'allow'
+    // Bounce to the CUSTOMER door. Sending a customer to /ops/login is the
+    // failure mode this branch exists to prevent.
+    return opts.isApi ? 'unauthorized' : 'redirect-customer-login'
+  }
   return opts.isApi ? 'unauthorized' : 'redirect-login'
 }

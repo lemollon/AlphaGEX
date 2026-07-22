@@ -43,6 +43,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/live',
   '/home',
   '/performance',
+  '/track-record',
   '/community',
   '/account/trades',
   '/login',
@@ -109,6 +110,8 @@ export const CUSTOMER_API_EXCEPTIONS: readonly string[] = [
  * writes; no operator internals.
  */
 export const CUSTOMER_API_PREFIXES: readonly string[] = [
+  // Public track-record payload (closed trades only — no balances, no positions).
+  '/api/public/',
   '/api/live/',
   '/api/community/',
   '/api/brokerage/',
