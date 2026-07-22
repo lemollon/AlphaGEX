@@ -15,6 +15,11 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const isStandalone =
     pathname === '/' ||
     pathname === '/how-it-works' ||
+    // Public proof page. Omitting it rendered the OPERATOR nav (SPARK/INFERNO/
+    // BLAZE/Compare, "Signed in as Admin") on a page built for prospects — and
+    // Nav.tsx has no surface filtering, so those links 404 on the customer
+    // deployment. It carries its own chrome like every other marketing screen.
+    pathname === '/track-record' ||
     pathname === '/signup' ||
     pathname === '/pricing' ||
     pathname === '/contact' ||
