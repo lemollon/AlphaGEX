@@ -19,6 +19,32 @@ export class StripeNotConfiguredError extends Error {
   }
 }
 
+/** A Stripe API error, carrying the structured fields so callers can branch on `code`/`param`. */
+export class StripeApiError extends Error {
+  code?: string
+  type?: string
+  param?: string
+  statusCode: number
+  constructor(status: number, err?: { message?: string; code?: string; type?: string; param?: string }) {
+    super(err?.message || `Stripe ${status}`)
+    this.name = 'StripeApiError'
+    this.statusCode = status
+    this.code = err?.code
+    this.type = err?.type
+    this.param = err?.param
+  }
+}
+
+/**
+ * True when the error is Stripe complaining that a customer id doesn't exist under the current key
+ * — e.g. a stored id from the wrong mode (test vs live), or a customer deleted in the dashboard.
+ * We self-heal these by recreating the customer.
+ */
+export function isMissingCustomerError(e: unknown): boolean {
+  if (!(e instanceof StripeApiError)) return false
+  return e.code === 'resource_missing' && (e.param === 'customer' || /No such customer/i.test(e.message))
+}
+
 /** The secret key, trimmed of stray whitespace/newlines that break the Authorization header. */
 function secretKey(): string | undefined {
   const k = process.env.STRIPE_SECRET_KEY?.trim()
@@ -78,10 +104,18 @@ async function stripeRequest<T = any>(
   const res = await fetch(url, { method, headers, body })
   const json = await res.json().catch(() => ({}))
   if (!res.ok) {
-    const msg = (json as { error?: { message?: string } })?.error?.message || `Stripe ${res.status}`
-    throw new Error(msg)
+    throw new StripeApiError(res.status, (json as { error?: any })?.error)
   }
   return json as T
+}
+
+/** Creates a fresh Stripe customer (used by callers, and by self-heal when a stored id is stale). */
+export async function createCustomer(opts: { email?: string | null; userId: string }): Promise<string> {
+  const created = await stripeRequest<{ id: string }>('POST', '/customers', {
+    ...(opts.email ? { email: opts.email } : {}),
+    metadata: { ironforge_user_id: opts.userId },
+  })
+  return created.id
 }
 
 interface StripeList<T> {
@@ -105,11 +139,7 @@ export async function getOrCreateCustomer(opts: {
   userId: string
 }): Promise<string> {
   if (opts.existingId) return opts.existingId
-  const created = await stripeRequest<{ id: string }>('POST', '/customers', {
-    ...(opts.email ? { email: opts.email } : {}),
-    metadata: { ironforge_user_id: opts.userId },
-  })
-  return created.id
+  return createCustomer({ email: opts.email, userId: opts.userId })
 }
 
 /** Creates a subscription-mode Checkout Session and returns its hosted url. */
