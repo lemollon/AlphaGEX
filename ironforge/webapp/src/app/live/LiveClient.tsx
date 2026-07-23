@@ -15,6 +15,31 @@ import MarketConditionsCard from './components/MarketConditionsCard'
 import TodayPerformanceChart from './components/TodayPerformanceChart'
 import PauseTradingPanel from './components/PauseTradingPanel'
 
+/** Non-customer /live conversion CTAs — one per strategy, Spark then Flame.
+ *  Both link into the existing signup flow with the bot preselected. */
+const SIGNUP_CTAS = [
+  {
+    slug: 'spark',
+    name: 'Spark',
+    tagline: 'Next-day SPY spreads',
+    pill: 'Live',
+    mascot: '/home/spark-mascot-glow.png',
+    cardClass: 'border-spark/40 bg-spark/5 hover:bg-spark/10',
+    pillClass: 'bg-spark/20 text-spark',
+    btnClass: 'bg-spark group-hover:brightness-110',
+  },
+  {
+    slug: 'flame',
+    name: 'Flame',
+    tagline: 'Two-day SPY put credit spreads',
+    pill: 'Paper',
+    mascot: '/home/flame-mascot-glow.png',
+    cardClass: 'border-flame/40 bg-flame/5 hover:bg-flame/10',
+    pillClass: 'bg-flame/20 text-flame',
+    btnClass: 'bg-flame group-hover:brightness-110',
+  },
+] as const
+
 export default function LiveClient() {
   // Account-aware view: which live bot's account this page shows. The API
   // authorizes server-side; the header toggle only appears when the viewer
@@ -80,15 +105,42 @@ export default function LiveClient() {
         <div className="mx-auto max-w-[1200px] px-4 py-5">
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
           {summary?.empty ? (
-            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-              <h2 className="text-lg font-bold text-white">No trading account connected yet</h2>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
-                Your live dashboard activates once a trading account is connected to your membership.
-                Brokerage connection is coming soon — we&apos;ll email you the moment it&apos;s ready.
-              </p>
-              <a href="/community" className="mt-5 inline-block rounded-md bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500">
-                Visit the Forge Community
-              </a>
+            /* Non-customer (anonymous / no bot mapped) — this is a conversion
+               surface, not a dashboard. Show a signup CTA for each strategy
+               (Spark, then Flame). Live paper results live on /track-record.
+               Customers with a mapped bot never reach this branch. */
+            <div className="mt-4">
+              <div className="text-center">
+                <h2 className="font-display text-2xl tracking-wide text-white">Put a bot to work</h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
+                  Start a dedicated account for a strategy and it trades the same disciplined
+                  rules every session. Watch the live paper track record on{' '}
+                  <a href="/track-record" className="font-semibold text-amber-500 hover:text-amber-400">Track Record</a>.
+                </p>
+              </div>
+              <div className="mx-auto mt-6 grid max-w-xl gap-4">
+                {SIGNUP_CTAS.map((c) => (
+                  <a
+                    key={c.slug}
+                    href={`/signup?bot=${c.slug}`}
+                    className={`group flex items-center gap-4 rounded-xl border p-5 transition ${c.cardClass}`}
+                  >
+                    <img src={c.mascot} alt="" className="h-14 w-14 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base font-bold text-white">{c.name}</span>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${c.pillClass}`}>
+                          {c.pill}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-sm text-gray-400">{c.tagline}</p>
+                    </div>
+                    <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-white transition ${c.btnClass}`}>
+                      Sign up
+                    </span>
+                  </a>
+                ))}
+              </div>
             </div>
           ) : summaryError && !summary ? (
             <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">

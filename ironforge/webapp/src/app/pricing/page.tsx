@@ -126,7 +126,10 @@ const TIERS: Tier[] = [
   {
     name: 'FORGE PRO',
     tagline: 'RUN MULTIPLE STRATEGIES WITH MAXIMUM FLEXIBILITY.',
-    price: 100,
+    // $75 for two bots — matches BOTH_PLAN.priceMonthly in lib/billing/plans.ts,
+    // which is what checkout actually charges. The page had 100 hardcoded, so it
+    // contradicted the real billed price (corrected 2026-07-23 per operator).
+    price: 75,
     glyph: <GridGlyph />,
     cta: 'GO PRO',
     plusLabel: 'Everything in Community, plus:',
