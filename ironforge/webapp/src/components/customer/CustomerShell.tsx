@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
+import { Wordmark } from '@/components/Brand'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 
 /**
@@ -49,14 +50,11 @@ function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: st
 }
 
 function LogoLockup() {
+  // Single shared wordmark — was a different mark image (forge-logo-mark.png) + the
+  // wrong amber; now identical to every other nav.
   return (
-    <Link href="/home" className="flex items-center gap-2.5">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/forge-logo-mark.png" alt="IronForge" className="h-8 w-8 rounded-lg" />
-      <span className="text-lg font-bold tracking-tight">
-        <span className="text-white">IRON</span>
-        <span className="text-amber-500">FORGE</span>
-      </span>
+    <Link href="/home" aria-label="IronForge home">
+      <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
     </Link>
   )
 }

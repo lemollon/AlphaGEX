@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { Wordmark } from '@/components/Brand'
 import { useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
@@ -175,10 +176,8 @@ export default function Nav() {
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-4">
         {/* Logo + subtitle underneath, left-aligned */}
         <div className="flex flex-col items-start shrink-0">
-          <Link href="/" className="text-xl font-bold font-display flex items-center gap-1.5">
-            <img src="/ironforge-mark.png" alt="" className="h-7 w-auto inline-block" />
-            <span className="text-white">Iron</span>
-            <span className="text-amber-400">Forge</span>
+          <Link href="/" aria-label="IronForge home">
+            <Wordmark markClass="h-7 w-auto" textClass="text-xl" />
           </Link>
           {/* Proverbs verse — hidden on small screens to keep the bar compact */}
           <span
