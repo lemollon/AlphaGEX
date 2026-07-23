@@ -1,5 +1,4 @@
 import { dbQuery, botTable, num, escapeSql, dteMode } from '@/lib/db'
-import { ledgerFilter, resolveAccountMode } from './viewer'
 import { LIVE_BOT_TAGLINE, type LiveBot } from './bots'
 
 /**
@@ -7,17 +6,19 @@ import { LIVE_BOT_TAGLINE, type LiveBot } from './bots'
  *
  * MIRRORS THE LEGACY OPERATOR DASHBOARDS (/spark, /flame). It computes the same
  * stats those pages show — total trades, win rate, realised P&L, profit factor,
- * best/worst, streak — from the same {bot}_positions ledger via ledgerFilter().
- * Because both read one source, the public number and the operator number can
- * never drift apart. (Do NOT derive numbers from the raw /api/{bot}/trades feed;
- * that returns a capped, differently-scoped slice and will disagree with the chart.)
+ * best/worst, streak — from ALL closed {bot}_positions rows (every account_type),
+ * exactly like the legacy /performance route. Do NOT apply the customer ledgerFilter
+ * here: it would restrict SPARK to its ~20 production trades (+$101) and miss the
+ * 106-trade combined record (+$20,544) the legacy dashboard actually shows. And do
+ * NOT derive numbers from the raw /api/{bot}/trades feed — it is capped and disagrees
+ * with the chart.
  *
  * Never exposes a live balance, an open position, a control, or per-customer state
  * — only realised P&L on CLOSED trades.
  *
  * Honesty rules on this page:
- *   - Every card carries its real mode. SPARK is the production account (LIVE);
- *     FLAME is paper (SIMULATED). Never render one as the other.
+ *   - Both cards read SIMULATED (see MODE below): FLAME is paper, and SPARK's
+ *     headline record is ~99.5% sandbox. Never dress a simulated record as live.
  *   - WIN RATE leads (large samples, sizing-independent, credible). Net P&L and the
  *     equity-curve SHAPE are shown honestly, losing days included.
  *   - No return-on-capital %: both accounts' historical position sizing tracked a
@@ -29,6 +30,13 @@ import { LIVE_BOT_TAGLINE, type LiveBot } from './bots'
 export const PUBLIC_BOTS: readonly LiveBot[] = ['spark', 'flame'] as const
 
 const DISPLAY_NAME: Record<string, string> = { spark: 'SPARK', flame: 'FLAME' }
+/**
+ * Public badge. Both records are simulated: FLAME is a paper account, and SPARK's
+ * headline 106-trade / +$20,544 record is overwhelmingly sandbox — only ~$101 of it
+ * traded the production account. Presenting the combined record as "Live" would
+ * overstate it, so both read SIMULATED, matching the paper basis of the legacy pages.
+ */
+const MODE: Record<string, 'live' | 'paper'> = { spark: 'paper', flame: 'paper' }
 /** Mascot art key: public/home/{key}-mascot-glow.png */
 const MASCOT_KEY: Record<string, 'spark' | 'flame'> = { spark: 'spark', flame: 'flame' }
 
@@ -163,7 +171,7 @@ async function loadBot(bot: LiveBot): Promise<SalesBot> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
   const closed =
-    `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${ledgerFilter(bot)}`
+    `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter}`
 
   // One fetch of every closed trade (spark ~106, flame ~57 — small). All-time and
   // both windows are derived from it, so the lifetime strip matches the legacy
@@ -192,7 +200,7 @@ async function loadBot(bot: LiveBot): Promise<SalesBot> {
     key: MASCOT_KEY[bot] ?? 'spark',
     name: DISPLAY_NAME[bot] ?? bot.toUpperCase(),
     tagline: LIVE_BOT_TAGLINE[bot],
-    mode: resolveAccountMode(bot) === 'production' ? 'live' : 'paper',
+    mode: MODE[bot] ?? 'paper',
     first_trade: all.length ? all[0].ct_date : null,
     streak: streakOf(all),
     allTime: statsOf(all),
@@ -220,10 +228,10 @@ async function loadTrades(bot: LiveBot, limit: number): Promise<PublicTrade[]> {
             put_short_strike, put_long_strike, call_short_strike, call_long_strike,
             total_credit, close_reason, realized_pnl
      FROM ${botTable(bot, 'positions')}
-     WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${ledgerFilter(bot)}
+     WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter}
      ORDER BY close_time DESC LIMIT ${limit}`,
   )
-  const mode: 'live' | 'paper' = resolveAccountMode(bot) === 'production' ? 'live' : 'paper'
+  const mode: 'live' | 'paper' = MODE[bot] ?? 'paper'
   return rows
     .filter((r) => r.close_time)
     .map((r) => ({
