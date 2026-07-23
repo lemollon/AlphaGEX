@@ -222,7 +222,7 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
         <div className="mt-auto shrink-0 p-4">
           <div className="rounded-xl border border-amber-900/40 bg-forge-card p-4">
             <div className="font-display text-base text-amber-500">
-              {membership?.plan ?? 'Forge Automate'}
+              {membership?.plan ?? 'IronForge Membership'}
             </div>
             <div className="mt-2 inline-block rounded-full border border-spark/30 bg-spark/15 px-2.5 py-0.5 text-xs text-spark">
               {membership?.badge ?? 'Early Access'}

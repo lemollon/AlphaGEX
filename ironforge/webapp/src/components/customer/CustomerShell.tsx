@@ -66,7 +66,7 @@ export interface PlanCardData {
 }
 
 function PlanCard({ membership, variant }: { membership: PlanCardData | null; variant: 'trial' | 'active' }) {
-  const plan = membership?.plan ?? 'Forge Automate'
+  const plan = membership?.plan ?? 'IronForge Membership'
   const trial = membership?.trial ?? null
   const pct = trial ? Math.min(100, Math.max(0, Math.round((trial.day / trial.total_days) * 100))) : 0
   return (

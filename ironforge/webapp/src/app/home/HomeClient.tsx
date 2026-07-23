@@ -150,7 +150,7 @@ function MembershipCard({ summary }: { summary: LiveSummary | undefined }) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/forge-logo-mark.png" alt="" className="h-12 w-12 rounded-full ring-1 ring-amber-500/50" />
         <div>
-          <div className="font-display text-lg text-amber-500">{membership?.plan ?? 'Forge Automate'}</div>
+          <div className="font-display text-lg text-amber-500">{membership?.plan ?? 'IronForge Membership'}</div>
           <div className="mt-1 inline-block rounded-full border border-forge-border bg-forge-bg px-2.5 py-0.5 text-[11px] text-gray-200">
             {membership?.trial?.label ?? membership?.badge ?? 'Early Access'}
           </div>

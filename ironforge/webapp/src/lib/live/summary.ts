@@ -292,7 +292,7 @@ export async function getLiveSummary(
     },
     intraday,
     membership: {
-      plan: 'Forge Automate',
+      plan: 'IronForge Membership',
       badge: 'Early Access',
       // Honest-data rule: no billing/trial state exists in the DB yet, so no
       // fabricated countdown — consumers null-guard and fall back to the badge.
