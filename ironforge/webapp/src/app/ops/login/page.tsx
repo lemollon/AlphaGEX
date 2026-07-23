@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { Wordmark } from '@/components/Brand'
 
 function LoginForm() {
   const router = useRouter()
@@ -41,11 +42,8 @@ function LoginForm() {
 
   return (
     <div className="max-w-sm mx-auto mt-24">
-      <div className="flex items-center gap-2 justify-center mb-6">
-        <img src="/ironforge-mark.png" alt="" className="h-8 w-auto" />
-        <span className="text-2xl font-bold">
-          <span className="text-white">Iron</span><span className="text-amber-400">Forge</span>
-        </span>
+      <div className="flex items-center justify-center mb-6">
+        <Wordmark markClass="h-8 w-auto" textClass="text-2xl" />
       </div>
       {params.get('verified') === '1' && (
         <p className="mb-4 rounded border border-amber-700/40 bg-amber-950/30 px-3 py-2 text-center text-sm text-amber-300">
