@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import useSWR from 'swr'
 import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { fetcher } from '@/lib/fetcher'
@@ -68,21 +69,68 @@ export default function PerformanceClient() {
 
 function PerformanceBody({ data }: { data: PerformanceData }) {
   const { bots, combined, equity_curve } = data
-  const positive = combined.total_pnl >= 0
-  // Single strategy → its own colour; multiple → the IronForge gold, since the
-  // curve is the blend of every strategy, not any one of them.
-  const curveHex = bots.length === 1 ? BOT_COLORS[bots[0].accent] : '#f59e0b'
-  const curveFill = bots.length === 1
-    ? (bots[0].accent === 'flame' ? 'rgba(255,85,0,0.18)' : 'rgba(59,130,246,0.18)')
-    : 'rgba(245,158,11,0.16)'
+  // Per-strategy toggle: 'all' shows the blended account; a bot shows only its
+  // own numbers AND its own curve. Shown only when the viewer owns >1 strategy.
+  const [sel, setSel] = useState<'all' | LiveBot>('all')
+  const active = sel !== 'all' ? bots.find((b) => b.bot === sel) : undefined
+
+  const view = active
+    ? {
+        account_value: active.account_value,
+        starting_capital: active.starting_capital,
+        total_pnl: active.total_pnl,
+        return_pct: active.return_pct,
+        win_rate: active.win_rate,
+        trades: active.trades,
+        weekly: active.weekly,
+        monthly: active.monthly,
+        best_day: null as number | null,
+        curve: active.curve,
+        accent: active.accent as 'spark' | 'flame' | null,
+        label: active.label,
+      }
+    : {
+        account_value: combined.account_value,
+        starting_capital: combined.starting_capital,
+        total_pnl: combined.total_pnl,
+        return_pct: combined.total_return_pct,
+        win_rate: combined.win_rate,
+        trades: combined.total_trades,
+        weekly: combined.weekly,
+        monthly: combined.monthly,
+        best_day: combined.best_day,
+        curve: equity_curve,
+        accent: bots.length === 1 ? bots[0].accent : null,
+        label: bots.map((b) => b.label).join(' + '),
+      }
+
+  const positive = view.total_pnl >= 0
+  const curveHex = view.accent ? BOT_COLORS[view.accent] : '#f59e0b'
+  const curveFill = view.accent === 'flame'
+    ? 'rgba(255,85,0,0.18)'
+    : view.accent === 'spark'
+      ? 'rgba(59,130,246,0.18)'
+      : 'rgba(245,158,11,0.16)'
+  const wins = view.win_rate != null ? Math.round((view.win_rate / 100) * view.trades) : null
+  const pctLabel = (v: number | null) => (v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`)
 
   return (
     <div className="mt-4 flex flex-col gap-4">
-      {/* Hero: the strategy mascots + combined account value */}
+      {/* Per-strategy toggle */}
+      {bots.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <TogglePill label="All strategies" active={sel === 'all'} onClick={() => setSel('all')} accent={null} />
+          {bots.map((b) => (
+            <TogglePill key={b.bot} label={b.label} active={sel === b.bot} onClick={() => setSel(b.bot)} accent={b.accent} paper={b.paper} />
+          ))}
+        </div>
+      )}
+
+      {/* Hero: mascot(s) + account value for the current view */}
       <section className="rounded-xl border border-forge-border bg-forge-card/80 p-5">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
           <div className="flex shrink-0 gap-3">
-            {bots.map((b) => (
+            {(active ? [active] : bots).map((b) => (
               <div
                 key={b.bot}
                 className={`flex h-16 w-16 items-center justify-center rounded-2xl bg-forge-bg ring-1 sm:h-20 sm:w-20 ${
@@ -95,51 +143,51 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
           </div>
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              {bots.length > 1 ? 'Total Account Value' : 'Account Value'}
+              {active || bots.length === 1 ? 'Account Value' : 'Total Account Value'}
             </div>
-            <div className="mt-1 font-mono text-4xl font-bold text-white">{formatMoney(combined.account_value)}</div>
-            <div className="mt-1 text-sm text-gray-400">
-              {bots.map((b) => b.label).join(' + ')} · started {formatMoney(combined.starting_capital)}
-            </div>
-            {combined.total_return_pct != null && (
+            <div className="mt-1 font-mono text-4xl font-bold text-white">{formatMoney(view.account_value)}</div>
+            <div className="mt-1 text-sm text-gray-400">{view.label} · started {formatMoney(view.starting_capital)}</div>
+            {view.return_pct != null && (
               <div
                 className={`mt-3 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm font-semibold ${
-                  positive
-                    ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400'
-                    : 'border-red-500/25 bg-red-500/10 text-red-400'
+                  positive ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-400' : 'border-red-500/25 bg-red-500/10 text-red-400'
                 }`}
               >
-                {positive ? '▲' : '▼'} {combined.total_return_pct > 0 ? '+' : ''}
-                {combined.total_return_pct.toFixed(2)}% all time
+                {positive ? '▲' : '▼'} {pctLabel(view.return_pct)} all time
               </div>
             )}
           </div>
         </div>
       </section>
 
+      {/* Wealth KPIs — moved here from the Home dashboard */}
+      <div className="grid grid-cols-3 gap-4">
+        <StatTile label="This Week" value={formatDollarPnl(view.weekly)} valueClass={view.weekly >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="Realized income" />
+        <StatTile label="This Month" value={formatDollarPnl(view.monthly)} valueClass={view.monthly >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="Realized income" />
+        <StatTile label="Lifetime Return" value={pctLabel(view.return_pct)} valueClass={(view.return_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'} sub="All time" />
+      </div>
+
       {/* Stat tiles */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatTile
-          label="Total P&L"
-          value={formatDollarPnl(combined.total_pnl)}
-          valueClass={positive ? 'text-emerald-400' : 'text-red-400'}
-        />
-        <StatTile label="Win Rate" value={combined.win_rate != null ? `${combined.win_rate.toFixed(1)}%` : '—'} sub={`${combined.wins} wins · ${combined.losses} losses`} />
-        <StatTile label="Total Trades" value={String(combined.total_trades)} />
+        <StatTile label="Total P&L" value={formatDollarPnl(view.total_pnl)} valueClass={positive ? 'text-emerald-400' : 'text-red-400'} />
+        <StatTile label="Win Rate" value={view.win_rate != null ? `${view.win_rate.toFixed(1)}%` : '—'} sub={wins != null ? `${wins} wins · ${view.trades - wins} losses` : undefined} />
+        <StatTile label="Total Trades" value={String(view.trades)} />
         <StatTile
           label="Best Day"
-          value={combined.best_day != null ? formatDollarPnl(combined.best_day) : '—'}
-          valueClass={combined.best_day != null && combined.best_day >= 0 ? 'text-emerald-400' : undefined}
+          value={view.best_day != null ? formatDollarPnl(view.best_day) : '—'}
+          valueClass={view.best_day != null && view.best_day >= 0 ? 'text-emerald-400' : undefined}
         />
       </div>
 
-      {/* Equity curve */}
+      {/* Equity curve — follows the selected strategy, refreshes every 60s (live) */}
       <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-amber-500">Equity Curve</h3>
-        {equity_curve.length >= 2 ? (
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-amber-500">
+          Equity Curve{active ? ` · ${active.label}` : ''}
+        </h3>
+        {view.curve.length >= 2 ? (
           <div className="mt-3 h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={equity_curve} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+              <ComposedChart data={view.curve} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                 <XAxis dataKey="t" tickFormatter={formatCT} stroke="#44403c" tick={{ fill: '#a8a29e', fontSize: 11 }} minTickGap={56} />
                 <YAxis
                   orientation="right"
@@ -149,7 +197,7 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
                   domain={['auto', 'auto']}
                   width={72}
                 />
-                <ReferenceLine y={combined.starting_capital} stroke="#78716c" strokeDasharray="4 4" />
+                <ReferenceLine y={view.starting_capital} stroke="#78716c" strokeDasharray="4 4" />
                 <Tooltip
                   contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8, fontSize: 12 }}
                   labelFormatter={(iso: string) => formatCT(iso)}
@@ -163,38 +211,27 @@ function PerformanceBody({ data }: { data: PerformanceData }) {
           <p className="mt-3 pb-2 text-sm text-gray-500">Your equity curve appears once trades close.</p>
         )}
       </section>
-
-      {/* Per-strategy contribution — only when more than one strategy */}
-      {bots.length > 1 && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {bots.map((b) => {
-            const bp = b.total_pnl >= 0
-            return (
-              <section key={b.bot} className="flex items-center gap-4 rounded-xl border border-forge-border bg-forge-card/80 p-4">
-                <div className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-forge-bg ring-1 ${b.accent === 'flame' ? 'ring-flame/25' : 'ring-spark/25'}`}>
-                  <SparkMascot className="h-full w-full rounded-xl mix-blend-screen" variant={b.accent} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-white">{b.label}</span>
-                    {b.paper && (
-                      <span className="rounded bg-gray-700 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {b.win_rate != null ? `${b.win_rate.toFixed(1)}% win rate` : '—'} · {b.trades} trades
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className={`font-mono text-lg font-bold ${bp ? 'text-emerald-400' : 'text-red-400'}`}>{formatDollarPnl(b.total_pnl)}</div>
-                  <div className="text-xs text-gray-500">{formatMoney(b.account_value)}</div>
-                </div>
-              </section>
-            )
-          })}
-        </div>
-      )}
     </div>
+  )
+}
+
+function TogglePill({ label, active, onClick, accent, paper }: { label: string; active: boolean; onClick: () => void; accent: 'spark' | 'flame' | null; paper?: boolean }) {
+  const activeClass = accent === 'flame'
+    ? 'border-flame/40 bg-flame/15 text-flame'
+    : accent === 'spark'
+      ? 'border-spark/40 bg-spark/15 text-spark'
+      : 'border-amber-500/40 bg-amber-500/15 text-amber-400'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+        active ? activeClass : 'border-forge-border text-gray-400 hover:text-white'
+      }`}
+    >
+      {label}
+      {paper && <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>}
+    </button>
   )
 }
 
