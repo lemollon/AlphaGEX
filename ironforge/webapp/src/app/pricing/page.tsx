@@ -130,7 +130,7 @@ const TIERS: Tier[] = [
     glyph: <GridGlyph />,
     cta: 'GO PRO',
     plusLabel: 'Everything in Community, plus:',
-    features: ['Up to 4 Active Bots'],
+    features: ['Up to 2 Active Bots'],
   },
 ]
 

@@ -59,9 +59,21 @@ export default function PerformanceOverviewCard() {
     refreshInterval: 300_000,
   })
 
-  // Headline the real-money strategy when there is one; otherwise the first bot.
+  // Headline the live strategy when there is one; otherwise the first bot.
   const bots = data?.bots ?? []
-  const lead = bots.find((b) => !b.paper) ?? bots[0]
+  const leadBot = bots.find((b) => b.mode === 'live') ?? bots[0]
+  // Flatten to the fields this card reads (lifetime figures for the hero).
+  const lead = leadBot
+    ? {
+        name: leadBot.name,
+        paper: leadBot.mode !== 'live',
+        total_pnl: leadBot.allTime.net_pnl,
+        trades: leadBot.allTime.trades,
+        win_rate: leadBot.allTime.win_rate,
+        curve: leadBot.allTime.curve,
+        first_trade: leadBot.first_trade,
+      }
+    : null
 
   const shell = (children: React.ReactNode) => (
     <div className="rounded-2xl border border-[#2B2B2B] bg-[#141414]/80 p-5 shadow-[0_12px_32px_rgba(0,0,0,.28)]">
@@ -102,7 +114,7 @@ export default function PerformanceOverviewCard() {
   return shell(
     <>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm text-gray-200">{lead.label} — performance</div>
+        <div className="text-sm text-gray-200">{lead.name} — performance</div>
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
           lead.paper
             ? 'border border-sky-700/50 bg-sky-950/40 text-sky-400'
