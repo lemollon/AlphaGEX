@@ -18,18 +18,36 @@ export interface BrokerOption {
   name: string
 }
 
-// Popular SnapTrade brokers, used only when the live partner list is unavailable. Slugs follow
-// SnapTrade's integrations page. Order roughly by US options-trader popularity.
+// IronForge runs US equity-OPTIONS strategies (SPX/SPY iron condors), so the dropdown must only
+// offer brokers that can actually place those trades. SnapTrade's raw partner list also includes
+// crypto exchanges (Coinbase, Binance, Kraken) and international brokers (Wealthsimple, Questrade,
+// Trading212, Stake AU, Webull Canada, moomoo) — connecting one of those would succeed but the bot
+// could never trade, so we filter to this allowlist of US options-capable SnapTrade slugs. Keep it
+// a superset: brokers not yet enabled on our SnapTrade account simply won't appear until they are.
+const OPTIONS_CAPABLE_SLUGS = new Set<string>([
+  'TASTYTRADE',
+  'ETRADE',
+  'WEBULL-US',
+  'PUBLIC',
+  'ROBINHOOD',
+  'SCHWAB',
+  'FIDELITY',
+  'TRADESTATION',
+  'INTERACTIVE-BROKERS',
+  'IBKR',
+])
+
+function isOptionsCapable(slug: string): boolean {
+  return OPTIONS_CAPABLE_SLUGS.has(slug.toUpperCase())
+}
+
+// Shown only when the live partner list is unavailable (keys unset / API error). Options-capable
+// US brokers only, same rationale as the allowlist above.
 const FALLBACK_BROKERS: BrokerOption[] = [
-  { slug: 'ROBINHOOD', name: 'Robinhood' },
-  { slug: 'WEBULL', name: 'Webull' },
   { slug: 'TASTYTRADE', name: 'tastytrade' },
   { slug: 'ETRADE', name: 'E*TRADE' },
-  { slug: 'FIDELITY', name: 'Fidelity' },
-  { slug: 'SCHWAB', name: 'Charles Schwab' },
-  { slug: 'TRADESTATION', name: 'TradeStation' },
-  { slug: 'VANGUARD', name: 'Vanguard' },
-  { slug: 'ALPACA', name: 'Alpaca' },
+  { slug: 'WEBULL-US', name: 'Webull' },
+  { slug: 'PUBLIC', name: 'Public' },
 ]
 
 interface Brokerage {
@@ -53,9 +71,16 @@ export async function GET() {
     const allowed = (info.data?.allowed_brokerages ?? []) as Brokerage[]
 
     const brokers: BrokerOption[] = allowed
-      // Live, connectable, trade-capable brokers only. allows_trading is null for some brokers
-      // that still support trading, so only exclude an explicit false.
-      .filter((b) => b.slug && b.enabled !== false && !b.maintenance_mode && b.allows_trading !== false)
+      // Live, connectable, trade-capable, US options-capable brokers only. allows_trading is null
+      // for some brokers that still support trading, so only exclude an explicit false.
+      .filter(
+        (b) =>
+          b.slug &&
+          b.enabled !== false &&
+          !b.maintenance_mode &&
+          b.allows_trading !== false &&
+          isOptionsCapable(b.slug),
+      )
       .map((b) => ({ slug: b.slug as string, name: b.display_name || b.name || (b.slug as string) }))
       .sort((a, b) => a.name.localeCompare(b.name))
 
