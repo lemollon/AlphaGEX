@@ -44,6 +44,9 @@ const PUBLIC_EXACT = new Set<string>([
 const CUSTOMER_EXACT = new Set<string>([
   '/home',
   '/live',
+  // Per-bot "Open Account" (subscribe) pages — render the customer's own setup + pricing.
+  '/live/spark/open',
+  '/live/flame/open',
   '/performance',
   '/community',
   '/account/trades',
@@ -66,6 +69,9 @@ export function isPublicPath(pathname: string): boolean {
   // (webhook → shared secret, customer routes → customer session, internal → service
   // token). The webhook has no session of any kind, so it cannot be customer-gated.
   if (pathname.startsWith('/api/brokerage/')) return true
+  // All /api/billing/* routes are middleware-open and self-guarded in-route (checkout → customer
+  // session, webhook → Stripe signature). The webhook has no session, so it cannot be gated here.
+  if (pathname.startsWith('/api/billing/')) return true
   // Public track-record payload: closed-trade aggregates only, no account state.
   if (pathname.startsWith('/api/public/')) return true
   // Forge Community APIs: GET is public-read (drives the locked preview for

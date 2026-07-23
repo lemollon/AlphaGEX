@@ -41,6 +41,8 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/how-it-works',
   '/pricing',
   '/live',
+  '/live/spark/open',
+  '/live/flame/open',
   '/home',
   '/performance',
   '/track-record',
@@ -116,6 +118,7 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
   '/api/community/',
   '/api/brokerage/',
   '/api/onboarding/',
+  '/api/billing/',
 ]
 
 /** Shared infrastructure endpoints both services need. */
