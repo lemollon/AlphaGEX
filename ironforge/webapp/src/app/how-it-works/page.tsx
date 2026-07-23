@@ -115,7 +115,7 @@ function HeroSection() {
             className="inline-flex flex-col items-center justify-center whitespace-nowrap rounded-lg bg-[#4DAA2B] px-6 py-2 text-white transition-[filter] hover:brightness-110"
           >
             <span className="text-[15px] font-semibold leading-tight">Start 5-Day Free Trial</span>
-            <span className="text-[11px] leading-tight text-white/85">Forge Automate</span>
+            <span className="text-[11px] leading-tight text-white/85">IronForge</span>
           </Link>
         </div>
         <ul className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -328,7 +328,7 @@ function FinalCTA() {
           <span className="mx-6 hidden h-4 w-px bg-[#2B2B2B] sm:block" aria-hidden />
           <span className="flex items-center gap-2 text-[13px] text-gray-300">
             <CalendarCheckIcon className="h-[18px] w-[18px] text-[#56C62B]" />
-            Try Forge Automate free for 5 trading days.
+            Try IronForge free for 5 trading days.
           </span>
         </div>
       </div>

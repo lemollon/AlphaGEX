@@ -26,7 +26,7 @@ export default function ContactPage() {
 
       <LegalSection heading="Billing &amp; subscriptions">
         <p>
-          For questions about a charge, your plan, the Forge Automate free trial, or to cancel a
+          For questions about a charge, your plan, the free trial, or to cancel a
           subscription, email{' '}
           <a href="mailto:leron@ironforge.trade" className="text-amber-500 hover:underline">
             leron@ironforge.trade
