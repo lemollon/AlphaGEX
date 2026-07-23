@@ -228,6 +228,25 @@ CREATE TABLE IF NOT EXISTS community_forge_posts (
   message_id UUID REFERENCES community_messages(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Billing (Stripe subscriptions; see lib/billing/*). A customer subscribes to a
+-- bot ("spark"/"flame") or the "both" bundle via Stripe Checkout. stripe_customer_id
+-- is the one Stripe Customer per user; one subscription row per bot they run.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+CREATE TABLE IF NOT EXISTS customer_bot_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  bot TEXT NOT NULL,                                 -- spark | flame
+  status TEXT NOT NULL,                              -- trialing | active | past_due | canceled | incomplete
+  stripe_subscription_id TEXT,
+  price_lookup_key TEXT,                             -- spark_monthly | flame_monthly | both_monthly
+  current_period_end TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, bot)
+);
+CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_user ON customer_bot_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_sub ON customer_bot_subscriptions(stripe_subscription_id);
 `
 
 let _ensured: Promise<void> | null = null
