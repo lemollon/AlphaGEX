@@ -25,6 +25,16 @@ export async function POST(req: NextRequest) {
   const uid = await resolveCustomerUserId(req)
   if (!uid) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
+  // Optional broker slug from the "Choose your broker" dropdown. When present, SnapTrade opens the
+  // connection portal directly to that brokerage; when absent, the portal shows the full list.
+  let broker: string | undefined
+  try {
+    const body = (await req.json().catch(() => null)) as { broker?: unknown } | null
+    if (body && typeof body.broker === 'string' && body.broker.trim()) broker = body.broker.trim()
+  } catch {
+    // no/invalid body — fine, fall through to the full-list portal
+  }
+
   if (!isSnapTradeConfigured() || !isCustomersDbConfigured()) {
     return NextResponse.json(
       { ok: false, error: 'Brokerage connection is temporarily unavailable. Please try again shortly.' },
@@ -58,6 +68,7 @@ export async function POST(req: NextRequest) {
       userSecret,
       connectionType: 'trade',
       customRedirect: `${publicOrigin(req)}/api/onboarding/brokerage/callback`,
+      ...(broker ? { broker } : {}),
     })
     const redirectURI = (login.data as { redirectURI?: string }).redirectURI
     if (!redirectURI) {
@@ -66,7 +77,7 @@ export async function POST(req: NextRequest) {
 
     await customerExecute(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BROKERAGE_CONNECT_STARTED', $2)`,
-      [user.id, JSON.stringify({})],
+      [user.id, JSON.stringify(broker ? { broker } : {})],
     ).catch(() => {})
 
     return NextResponse.json({ ok: true, redirectURI })
