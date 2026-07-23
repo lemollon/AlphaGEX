@@ -294,7 +294,9 @@ export default function HomeClient() {
         <HeroBanner summary={summary} />
         <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
           <div className="flex flex-col gap-4">
-            <WealthSnapshot summary={summary} home={home} />
+            {/* Wealth Snapshot (Weekly/Monthly/Lifetime + Portfolio Value) moved to
+                the Performance page on 2026-07-23; Account Value already shows in
+                the hero above, so it was duplicated here. */}
             <div className="grid gap-4 xl:grid-cols-[1fr_1.35fr]">
               <DailyBrief summary={summary} home={home} />
               <RecentTrades home={home} error={Boolean(homeError)} />

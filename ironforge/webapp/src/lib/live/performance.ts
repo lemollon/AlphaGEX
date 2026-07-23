@@ -20,6 +20,15 @@ export interface BotPerf {
   total_pnl: number
   win_rate: number | null
   trades: number
+  /** All-time return on the pooled starting capital, percent. null when no base. */
+  return_pct: number | null
+  /** Realised P&L over the trailing 7 / 30 days (the Wealth-Snapshot KPIs,
+   *  now shown on Performance and switchable per strategy). */
+  weekly: number
+  monthly: number
+  /** This bot's own cumulative-realised equity curve, so the per-strategy
+   *  toggle switches the chart, not just the numbers. */
+  curve: EquityPoint[]
 }
 
 export interface EquityPoint {
@@ -39,13 +48,40 @@ export interface PerformanceData {
     wins: number
     losses: number
     best_day: number | null
+    /** Combined trailing 7 / 30-day realised P&L (Wealth-Snapshot KPIs). */
+    weekly: number
+    monthly: number
   }
   equity_curve: EquityPoint[]
   as_of: string
 }
 
+/** Build a cumulative-realised equity curve from dated P&L points on top of a base. */
+function buildCurve(points: Array<{ t: number; pnl: number }>, base: number): EquityPoint[] {
+  const sorted = [...points].sort((a, b) => a.t - b.t)
+  const r2 = (v: number) => Math.round(v * 100) / 100
+  const out: EquityPoint[] = []
+  let run = 0
+  for (const p of sorted) {
+    run += p.pnl
+    out.push({ t: new Date(p.t).toISOString(), equity: r2(base + run) })
+  }
+  if (out.length) out.unshift({ t: new Date(sorted[0].t).toISOString(), equity: r2(base) })
+  return out
+}
+
+/** Sum P&L of points whose timestamp is within the trailing `days`. */
+function trailing(points: Array<{ t: number; pnl: number }>, days: number, nowMs: number): number {
+  const cut = nowMs - days * 86_400_000
+  const s = points.reduce((a, p) => (p.t >= cut ? a + p.pnl : a), 0)
+  return Math.round(s * 100) / 100
+}
+
+/** Base per-bot stats before getPerformance enriches with curve + trailing KPIs. */
+type BasePerf = Omit<BotPerf, 'return_pct' | 'weekly' | 'monthly' | 'curve'>
+
 interface RawBot {
-  perf: BotPerf
+  perf: BasePerf
   wins: number
   /** Per-closed-trade points for the combined equity curve + best-day grouping. */
   points: Array<{ t: number; day: string; pnl: number }>
@@ -111,7 +147,18 @@ export async function getPerformance(
   persons: Record<string, string | null> = {},
 ): Promise<PerformanceData> {
   const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null)))
-  const perfBots = raws.map((r) => r.perf)
+  const nowMs = Date.now()
+  // Enrich each bot with its own curve + trailing KPIs so the per-strategy
+  // toggle on the Performance page switches the chart and the income tiles.
+  const perfBots = raws.map((r) => ({
+    ...r.perf,
+    return_pct: r.perf.starting_capital > 0
+      ? Math.round((r.perf.total_pnl / r.perf.starting_capital) * 10000) / 100
+      : null,
+    weekly: trailing(r.points, 7, nowMs),
+    monthly: trailing(r.points, 30, nowMs),
+    curve: buildCurve(r.points, r.perf.starting_capital),
+  }))
 
   const round2 = (v: number) => Math.round(v * 100) / 100
   const startingCapital = round2(perfBots.reduce((s, b) => s + b.starting_capital, 0))
@@ -152,6 +199,8 @@ export async function getPerformance(
       wins,
       losses: totalTrades - wins,
       best_day: bestDay,
+      weekly: round2(perfBots.reduce((s, b) => s + b.weekly, 0)),
+      monthly: round2(perfBots.reduce((s, b) => s + b.monthly, 0)),
     },
     equity_curve: curve,
     as_of: new Date().toISOString(),
