@@ -23,11 +23,41 @@ export default async function OnboardingBrokeragePage() {
           before it&apos;s placed.
         </p>
 
-        <ul className="mt-6 space-y-3 text-sm text-gray-300">
-          <li className="flex gap-2"><span className="text-amber-500">•</span> Bank-level security — we never see your brokerage password.</li>
-          <li className="flex gap-2"><span className="text-amber-500">•</span> You approve each trade at placement time.</li>
-          <li className="flex gap-2"><span className="text-amber-500">•</span> Disconnect anytime from your account settings.</li>
+        <ul className="mt-8 space-y-5 border-t border-white/10 pt-6">
+          <li className="flex items-start gap-3">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3l7 3v5c0 4.4-3 8-7 10-4-2-7-5.6-7-10V6l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              <rect x="9.25" y="10.5" width="5.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M10.5 10.5V9.25a1.5 1.5 0 013 0v1.25" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+            <div>
+              <div className="text-sm font-semibold text-white">Bank-level security</div>
+              <div className="text-sm text-gray-400">We never see your brokerage password.</div>
+            </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M8 12.5l2.5 2.5L16 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <div>
+              <div className="text-sm font-semibold text-white">You stay in control</div>
+              <div className="text-sm text-gray-400">You approve each trade at placement time.</div>
+            </div>
+          </li>
+          <li className="flex items-start gap-3">
+            <svg aria-hidden="true" className="mt-0.5 h-6 w-6 shrink-0 text-[#FD5301]" viewBox="0 0 24 24" fill="none">
+              <path d="M12 3v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M6.5 7a8 8 0 1011 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <div>
+              <div className="text-sm font-semibold text-white">Disconnect anytime</div>
+              <div className="text-sm text-gray-400">Disconnect anytime from your account settings.</div>
+            </div>
+          </li>
         </ul>
+
+        <div className="mt-6 border-t border-white/10 pt-2" />
 
         <BrokerageConnectClient />
       </div>
