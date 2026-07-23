@@ -1,11 +1,12 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
-import type { TrackRecord, PublicBotRecord } from '@/lib/live/track-record'
+import type { TrackRecord, SalesBot, Stats, PublicTrade } from '@/lib/live/track-record'
 
-/* ── helpers ─────────────────────────────────────────────────────────── */
+/* ── format ──────────────────────────────────────────────────────────── */
 
 function money(v: number | null | undefined, signed = true): string {
   if (v == null || Number.isNaN(v)) return '—'
@@ -14,21 +15,30 @@ function money(v: number | null | undefined, signed = true): string {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   })}`
 }
-
+function money0(v: number | null | undefined, signed = true): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  const sign = signed && v > 0 ? '+' : v < 0 ? '−' : ''
+  return `${sign}$${Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
 function niceDate(d: string | null): string {
   if (!d) return '—'
   const [y, m, day] = d.split('-')
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  return `${Number(day)} ${months[Number(m) - 1] ?? ''} ${y?.slice(2) ?? ''}`
+  const M = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  return `${Number(day)} ${M[Number(m) - 1] ?? ''} ${y?.slice(2) ?? ''}`
 }
 
-/** Cumulative realised-P&L sparkline. Not an account balance — starts at zero. */
-function Curve({ points, accent }: { points: Array<{ pnl: number }>; accent: string }) {
+const ACCENT = {
+  spark: { hex: '#3B9EFF', glow: 'rgba(59,158,255,0.55)', ring: 'border-sky-500/40' },
+  flame: { hex: '#E8531F', glow: 'rgba(232,83,31,0.55)', ring: 'border-amber-500/40' },
+} as const
+
+/* ── curve ───────────────────────────────────────────────────────────── */
+
+function Curve({ points, hex }: { points: Array<{ pnl: number }>; hex: string }) {
   if (points.length < 2) {
     return (
-      <div className="flex h-14 items-center text-xs text-gray-600">
-        Not enough closed trades to chart yet
+      <div className="flex h-24 items-center justify-center text-xs text-gray-600">
+        Not enough closed trades in this window yet
       </div>
     )
   }
@@ -36,240 +46,330 @@ function Curve({ points, accent }: { points: Array<{ pnl: number }>; accent: str
   const min = Math.min(0, ...vals)
   const max = Math.max(0, ...vals)
   const span = max - min || 1
-  const W = 240, H = 56
-  const d = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1)) * W
-      const y = H - ((p.pnl - min) / span) * H
-      return `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+  const W = 320, H = 96
+  const xy = points.map((p, i) => {
+    const x = (i / (points.length - 1)) * W
+    const y = H - ((p.pnl - min) / span) * H
+    return [x, y] as const
+  })
+  const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
+  const area = `${line} L${W},${H} L0,${H} Z`
   const zeroY = H - ((0 - min) / span) * H
+  const id = `g-${hex.slice(1)}`
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-14 w-full" preserveAspectRatio="none"
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-24 w-full" preserveAspectRatio="none"
       role="img" aria-label="Cumulative realised profit and loss">
-      <line x1="0" y1={zeroY} x2={W} y2={zeroY} stroke="currentColor"
-        className="text-white/15" strokeWidth="1" strokeDasharray="3 3" />
-      <path d={d} fill="none" stroke={accent} strokeWidth="2"
-        strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={hex} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={hex} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <line x1="0" y1={zeroY} x2={W} y2={zeroY} stroke="currentColor" className="text-white/15"
+        strokeWidth="1" strokeDasharray="3 3" />
+      <path d={area} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke={hex} strokeWidth="2.25" strokeLinejoin="round"
+        strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      <circle cx={xy[xy.length - 1][0]} cy={xy[xy.length - 1][1]} r="3.2" fill={hex} />
     </svg>
   )
 }
 
-function ModeBadge({ paper }: { paper: boolean }) {
-  return paper ? (
-    <span className="rounded-full border border-sky-700/50 bg-sky-950/40 px-2 py-0.5
-      text-[10px] font-bold uppercase tracking-wider text-sky-400">
-      Paper account
-    </span>
-  ) : (
-    <span className="rounded-full border border-amber-700/50 bg-amber-950/40 px-2 py-0.5
-      text-[10px] font-bold uppercase tracking-wider text-amber-400">
-      Live account
-    </span>
-  )
-}
+/* ── strategy card ───────────────────────────────────────────────────── */
 
 function Stat({ label, value, tone = 'default' }: {
   label: string; value: string; tone?: 'default' | 'good' | 'bad'
 }) {
-  const tint = tone === 'good' ? 'text-emerald-400'
-    : tone === 'bad' ? 'text-red-400' : 'text-gray-200'
+  const c = tone === 'good' ? 'text-emerald-400' : tone === 'bad' ? 'text-red-400' : 'text-gray-100'
   return (
-    <div className="flex items-baseline justify-between border-b border-white/5 py-1.5 last:border-0">
-      <span className="text-xs text-gray-500">{label}</span>
-      <span className={`font-mono text-sm tabular-nums ${tint}`}>{value}</span>
+    <div className="flex flex-col">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">{label}</span>
+      <span className={`font-mono text-sm tabular-nums ${c}`}>{value}</span>
     </div>
   )
 }
 
-function BotCard({ b }: { b: PublicBotRecord }) {
-  const accent = b.accent === 'flame' ? '#E8531F' : '#3B9EFF'
+function StrategyCard({ b, win }: { b: SalesBot; win: 'd7' | 'd30' }) {
+  const a = ACCENT[b.key]
+  const s: Stats = b.windows[win]
+  const lifeWin = b.allTime.win_rate
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-forge-card p-5">
-      <div className="mb-1 flex items-center justify-between gap-3">
-        <h3 className="font-display text-lg text-white">{b.label}</h3>
-        <ModeBadge paper={b.paper} />
+    <div className={`relative overflow-hidden rounded-2xl border ${a.ring} bg-forge-card`}>
+      <div className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full opacity-40 blur-2xl"
+        style={{ background: a.glow }} />
+
+      {/* header */}
+      <div className="flex items-center gap-3 border-b border-white/5 p-5">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`/home/${b.key}-mascot-glow.png`} alt="" className="h-14 w-14 shrink-0"
+          style={{ filter: `drop-shadow(0 0 12px ${a.glow})` }} />
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="font-display text-2xl leading-none text-white">{b.name}</h3>
+            <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+              b.mode === 'live'
+                ? 'border-emerald-600/50 bg-emerald-950/40 text-emerald-400'
+                : 'border-sky-700/50 bg-sky-950/40 text-sky-400'}`}>
+              {b.mode === 'live' ? 'Live account' : 'Simulated'}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-xs text-gray-500">{b.tagline}</p>
+        </div>
       </div>
-      <p className="mb-4 text-xs text-gray-500">{b.tagline}</p>
 
-      <div className="mb-1 flex items-baseline gap-2">
-        <span className={`font-mono text-2xl tabular-nums ${
-          b.total_pnl > 0 ? 'text-emerald-400' : b.total_pnl < 0 ? 'text-red-400' : 'text-gray-300'
-        }`}>
-          {money(b.total_pnl)}
-        </span>
-        <span className="text-xs text-gray-500">
-          realised{b.first_trade ? ` since ${niceDate(b.first_trade)}` : ''}
-        </span>
+      {/* win-rate hero */}
+      <div className="flex items-end justify-between px-5 pt-5">
+        <div>
+          <div className="font-display text-5xl leading-none text-white">
+            {s.win_rate == null ? '—' : `${s.win_rate}%`}
+          </div>
+          <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+            trades closed green · {win === 'd7' ? 'last 7 days' : 'last 30 days'}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className={`font-mono text-xl tabular-nums ${
+            s.net_pnl > 0 ? 'text-emerald-400' : s.net_pnl < 0 ? 'text-red-400' : 'text-gray-300'}`}>
+            {money0(s.net_pnl)}
+          </div>
+          <div className="text-[11px] text-gray-500">{s.trades} trades</div>
+        </div>
       </div>
 
-      <div className="mb-4" style={{ color: accent }}>
-        <Curve points={b.curve} accent={accent} />
+      {/* curve */}
+      <div className="px-3 pt-3" style={{ color: a.hex }}>
+        <Curve points={s.curve} hex={a.hex} />
       </div>
 
-      <Stat label="Win rate" value={b.win_rate == null ? '—' : `${b.win_rate}%`} />
-      <Stat label="Trades closed" value={String(b.trades)} />
-      <Stat label="Best day" value={money(b.best_day)}
-        tone={b.best_day != null && b.best_day > 0 ? 'good' : 'default'} />
-      <Stat label="Worst day" value={money(b.worst_day)}
-        tone={b.worst_day != null && b.worst_day < 0 ? 'bad' : 'default'} />
-      <Stat label="Max drawdown" value={money(b.max_drawdown)}
-        tone={b.max_drawdown != null && b.max_drawdown < 0 ? 'bad' : 'default'} />
+      {/* window stat row */}
+      <div className="grid grid-cols-4 gap-2 px-5 pb-4 pt-1">
+        <Stat label="Green days" value={`${s.green_days}/${s.total_days}`} />
+        <Stat label="Best day" value={money0(s.best_day)} tone={s.best_day && s.best_day > 0 ? 'good' : 'default'} />
+        <Stat label="Worst day" value={money0(s.worst_day)} tone={s.worst_day && s.worst_day < 0 ? 'bad' : 'default'} />
+        <Stat label="Avg win/loss"
+          value={s.avg_win != null || s.avg_loss != null ? `${money0(s.avg_win, false)} / ${money0(s.avg_loss, false)}` : '—'} />
+      </div>
 
-      <p className="mt-4 text-[11px] leading-relaxed text-gray-500">
-        {b.paper
-          ? 'Simulated execution on live market data. No money at risk.'
-          : 'Real money, traded in our own brokerage account.'}
-      </p>
+      {/* lifetime credibility strip */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-white/5 bg-black/20 px-5 py-3 text-xs">
+        <span className="text-gray-500">Lifetime:</span>
+        <span className="text-gray-200"><b className="text-white">{lifeWin == null ? '—' : `${lifeWin}%`}</b> win rate</span>
+        <span className="text-gray-200"><b className="text-white">{b.allTime.trades}</b> trades</span>
+        <span className="text-gray-200">profit factor <b className="text-white">{b.allTime.profit_factor ?? '—'}</b></span>
+        {b.streak && (
+          <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+            b.streak.endsWith('W') ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}>
+            {b.streak.endsWith('W') ? `${b.streak.slice(0, -1)} wins in a row` : `${b.streak.slice(0, -1)} losses`}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
 
 /* ── page ────────────────────────────────────────────────────────────── */
 
+function WhyCol({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-forge-card/60 p-5">
+      <h3 className="font-display text-lg text-amber-500">{title}</h3>
+      <p className="mt-2 text-sm leading-relaxed text-gray-400">{body}</p>
+    </div>
+  )
+}
+
+function Dot() {
+  return <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" />
+}
+
 export default function TrackRecordClient() {
+  const [win, setWin] = useState<'d7' | 'd30'>('d30')
   const { data, error, isLoading } = useSWR<TrackRecord>(
     '/api/public/track-record', fetcher, { refreshInterval: 300_000 },
   )
-
   const bots = data?.bots ?? []
-  const trades = data?.trades ?? []
-  const anyLive = bots.some((b) => !b.paper)
-  const anyPaper = bots.some((b) => b.paper)
+  const trades: PublicTrade[] = data?.trades ?? []
 
   return (
-    <div className="min-h-screen bg-forge-bg bg-ember-glow px-4 py-10 sm:py-14">
-      <div className="mx-auto max-w-5xl">
+    <div className="min-h-screen bg-forge-bg bg-ember-glow">
+      <div className="mx-auto max-w-5xl px-4 py-12 sm:py-16">
 
-        <header className="mb-8">
-          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-amber-500">
-            Track record
+        {/* HERO */}
+        <header className="mx-auto max-w-3xl text-center">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-500">
+            The real track record
           </p>
-          <h1 className="mt-2 font-display text-3xl text-white sm:text-4xl">
-            Every trade these bots have closed.
+          <h1 className="mt-3 font-display text-4xl leading-[1.05] text-white sm:text-5xl">
+            The setup was never your problem.
+            <br /><span className="text-amber-500">Sticking to it was.</span>
           </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-400">
-            Each strategy below runs on live market data. The figures are realised
-            profit and loss on closed trades — not projections, not a backtest.
-            Each card states whether it traded real money or a simulated account.
+          <p className="mx-auto mt-5 max-w-2xl text-[15px] leading-relaxed text-gray-400">
+            You know the trade. You just don&apos;t always take it — or you take it, then bail the
+            second it dips. IronForge doesn&apos;t blink. It runs the same disciplined rules every
+            session and logs every result, win or loss. Here is that record, live.
           </p>
+          <div className="mt-7 flex flex-wrap justify-center gap-3">
+            <Link href="/signup" className="rounded-md bg-amber-600 px-7 py-3 text-sm font-bold text-white shadow-lg shadow-amber-900/30 transition hover:bg-amber-500">
+              Put a bot to work
+            </Link>
+            <a href="#trades" className="rounded-md border border-white/15 px-7 py-3 text-sm font-semibold text-gray-200 transition hover:border-white/30">
+              See every trade
+            </a>
+          </div>
         </header>
 
-        {isLoading && (
-          <div className="rounded-2xl border border-white/10 bg-forge-card p-8 text-sm text-gray-500">
-            Loading the record…
+        {/* WINDOW TOGGLE */}
+        <div className="mt-12 flex flex-wrap items-center justify-center gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Performance over the</span>
+          <div className="inline-flex rounded-lg border border-white/10 bg-forge-card p-1">
+            {([['d7', 'Last 7 days'], ['d30', 'Last 30 days']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setWin(k)}
+                className={`rounded-md px-4 py-1.5 text-sm font-semibold transition ${
+                  win === k ? 'bg-amber-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+                {label}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
 
-        {error && (
-          <div className="rounded-2xl border border-red-900/50 bg-red-950/20 p-6 text-sm text-red-300">
-            We couldn&apos;t load the track record just now. Please try again shortly.
-          </div>
-        )}
-
-        {!isLoading && !error && (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {bots.map((b) => <BotCard key={b.bot} b={b} />)}
+        {/* STRATEGY CARDS */}
+        <div className="mt-6">
+          {isLoading && (
+            <div className="grid gap-5 sm:grid-cols-2">
+              {[0, 1].map((i) => <div key={i} className="h-80 animate-pulse rounded-2xl border border-white/10 bg-forge-card/60" />)}
             </div>
+          )}
+          {error && (
+            <div className="rounded-2xl border border-red-900/50 bg-red-950/20 p-6 text-center text-sm text-red-300">
+              We couldn&apos;t load the record just now — please try again shortly.
+            </div>
+          )}
+          {!isLoading && !error && (
+            <div className="grid gap-5 sm:grid-cols-2">
+              {bots.map((b) => <StrategyCard key={b.bot} b={b} win={win} />)}
+            </div>
+          )}
+          <p className="mt-4 text-center text-xs text-gray-500">
+            Win rate leads because it can&apos;t be inflated by position size — a win is a win.
+            Net dollars and the curve are shown exactly as they happened, losing days included.
+          </p>
+        </div>
 
-            {(anyLive && anyPaper) && (
-              <p className="mt-4 rounded-xl border border-amber-900/40 bg-amber-950/15 p-3
-                text-[11px] leading-relaxed text-amber-200/80">
-                These strategies are not on equal footing: one traded real money and one
-                traded a simulated account. Compare them with that in mind — a simulated
-                record has no slippage risk and no funding constraint.
+        {/* WHY AUTOMATION */}
+        <section className="mt-16">
+          <h2 className="text-center font-display text-2xl text-white">Why the bot beats you at your own strategy</h2>
+          <p className="mx-auto mt-2 max-w-2xl text-center text-sm text-gray-400">
+            It isn&apos;t smarter than you. It&apos;s just not scared, not bored, and not tired at 2:59 PM.
+          </p>
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <WhyCol title="It never flinches"
+              body="No revenge trades. No 'just one more.' No moving a stop because you have a feeling. The rules that produced the win rate above are the rules it runs — every time, without exception." />
+            <WhyCol title="Your worst enemy sits out"
+              body="Fear and greed close more accounts than bad setups do. The most expensive trade most people make is the good one they abandoned at the worst possible moment. The bot can't abandon it." />
+            <WhyCol title="Nothing is hidden"
+              body="Every trade it takes is logged and shown here — the losses too. You are not buying a screenshot. You are watching a system work in the open, in real time." />
+          </div>
+        </section>
+
+        {/* TRADES */}
+        <section id="trades" className="mt-16">
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="font-display text-2xl text-white">Every trade. Win or lose.</h2>
+            <span className="text-xs text-gray-500">most recent {trades.length}</span>
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-white/10 bg-forge-card">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-[10px] uppercase tracking-wider text-gray-500">
+                  <th className="px-4 py-2.5 font-semibold">Date</th>
+                  <th className="px-4 py-2.5 font-semibold">Strategy</th>
+                  <th className="px-4 py-2.5 font-semibold">Structure</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Credit</th>
+                  <th className="px-4 py-2.5 font-semibold">Closed</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trades.length === 0 && !isLoading && (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">No closed trades yet.</td></tr>
+                )}
+                {trades.map((t, i) => (
+                  <tr key={`${t.bot}-${t.date}-${i}`} className="border-b border-white/5 last:border-0">
+                    <td className="whitespace-nowrap px-4 py-2 text-gray-400">{niceDate(t.date)}</td>
+                    <td className="whitespace-nowrap px-4 py-2">
+                      <span style={{ color: ACCENT[t.key].hex }} className="font-semibold">{t.name}</span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-gray-400">{t.structure ?? '—'}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right font-mono tabular-nums text-gray-400">
+                      {t.credit == null ? '—' : `$${t.credit.toFixed(2)}`}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-xs text-gray-500">{t.outcome ?? '—'}</td>
+                    <td className={`whitespace-nowrap px-4 py-2 text-right font-mono tabular-nums ${
+                      t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                      {money(t.pnl)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* FOUNDING / SCARCITY */}
+        <section className="mt-16 overflow-hidden rounded-2xl border border-amber-600/40 bg-gradient-to-br from-amber-950/30 via-forge-card/70 to-amber-950/15 p-7 sm:p-9">
+          <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-500">Founding members — first 100 only</p>
+              <h2 className="mt-2 font-display text-2xl text-white sm:text-3xl">Lock $50/month. For life.</h2>
+              <p className="mt-2 max-w-lg text-sm leading-relaxed text-gray-300">
+                The first 100 accounts keep founding pricing for as long as they stay — even after
+                the price rises for everyone else. Every month on the sidelines is a month of this
+                track record you only watched.
               </p>
-            )}
+              <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-gray-400">
+                <li className="flex items-center gap-1.5"><Dot /> $50/mo locked while active</li>
+                <li className="flex items-center gap-1.5"><Dot /> Cancel anytime — no lock-in</li>
+                <li className="flex items-center gap-1.5"><Dot /> Priority on every new strategy</li>
+              </ul>
+            </div>
+            <div className="shrink-0">
+              <Link href="/signup?plan=founder" className="block rounded-md bg-amber-600 px-8 py-4 text-center text-base font-bold text-white shadow-lg shadow-amber-900/30 transition hover:bg-amber-500">
+                Claim a founding seat
+              </Link>
+              <Link href="/pricing" className="mt-2 block text-center text-xs text-amber-500 hover:text-amber-400">
+                See all plans →
+              </Link>
+            </div>
+          </div>
+        </section>
 
-            <section className="mt-10">
-              <div className="mb-3 flex items-baseline justify-between">
-                <h2 className="font-display text-lg text-white">Closed trades</h2>
-                <span className="text-xs text-gray-500">most recent {trades.length}</span>
-              </div>
-              <div className="overflow-x-auto rounded-2xl border border-white/10 bg-forge-card">
-                <table className="w-full min-w-[640px] text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-white/10 text-[10px] uppercase tracking-wider text-gray-500">
-                      <th className="px-4 py-2.5 font-semibold">Date</th>
-                      <th className="px-4 py-2.5 font-semibold">Strategy</th>
-                      <th className="px-4 py-2.5 font-semibold">Structure</th>
-                      <th className="px-4 py-2.5 text-right font-semibold">Credit</th>
-                      <th className="px-4 py-2.5 font-semibold">Closed</th>
-                      <th className="px-4 py-2.5 text-right font-semibold">Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.length === 0 && (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">
-                        No closed trades yet.
-                      </td></tr>
-                    )}
-                    {trades.map((t, i) => (
-                      <tr key={`${t.bot}-${t.date}-${i}`} className="border-b border-white/5 last:border-0">
-                        <td className="whitespace-nowrap px-4 py-2 text-gray-400">{niceDate(t.date)}</td>
-                        <td className="whitespace-nowrap px-4 py-2">
-                          <span className="text-gray-200">{t.label}</span>
-                          {t.paper && <span className="ml-1.5 text-[10px] text-sky-500">paper</span>}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-gray-400">
-                          {t.structure ?? '—'}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-right font-mono tabular-nums text-gray-400">
-                          {t.credit == null ? '—' : `$${t.credit.toFixed(2)}`}
-                        </td>
-                        <td className="whitespace-nowrap px-4 py-2 text-xs text-gray-500">
-                          {t.outcome ?? '—'}
-                        </td>
-                        <td className={`whitespace-nowrap px-4 py-2 text-right font-mono tabular-nums ${
-                          t.pnl > 0 ? 'text-emerald-400' : t.pnl < 0 ? 'text-red-400' : 'text-gray-400'
-                        }`}>
-                          {money(t.pnl)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+        {/* FINAL CTA */}
+        <section className="mt-14 text-center">
+          <h2 className="mx-auto max-w-2xl font-display text-3xl leading-tight text-white">
+            Next month&apos;s track record is being written right now.
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-gray-400">
+            The bot takes the trade at 9:41, the notification hits your phone, and you get back to
+            your day. Or you keep watching from here. Your call.
+          </p>
+          <Link href="/signup" className="mt-6 inline-block rounded-md bg-amber-600 px-8 py-3.5 text-sm font-bold text-white shadow-lg shadow-amber-900/30 transition hover:bg-amber-500">
+            Create your account
+          </Link>
+          <p className="mt-3 text-xs text-gray-500">No long-term commitment · Cancel anytime</p>
+        </section>
 
-            <section className="mt-10 rounded-2xl border border-amber-600/40
-              bg-gradient-to-r from-amber-950/25 via-forge-card/70 to-amber-950/15 p-6 text-center">
-              <h2 className="font-display text-xl text-white">
-                Run one of these on your own brokerage.
-              </h2>
-              <p className="mx-auto mt-2 max-w-xl text-sm text-gray-400">
-                You connect your account, the bot places the trades, and you can pause it
-                at any time.
-              </p>
-              <div className="mt-5 flex flex-wrap justify-center gap-3">
-                <Link href="/signup"
-                  className="rounded-md bg-amber-600 px-6 py-3 text-sm font-bold text-white
-                    transition hover:bg-amber-500">
-                  Create your account
-                </Link>
-                <Link href="/pricing"
-                  className="rounded-md border border-amber-600/60 px-6 py-3 text-sm
-                    font-semibold text-amber-500 transition hover:bg-amber-600/10">
-                  See pricing
-                </Link>
-              </div>
-            </section>
-
-            <p className="mt-8 text-[11px] leading-relaxed text-gray-600">
-              Past performance is not indicative of future results. Options trading
-              involves risk, including the possible loss of principal. Figures are
-              realised profit and loss on closed positions and exclude commissions
-              unless otherwise stated. Nothing here is investment advice.
-              {data?.generated_at && (
-                <> Updated {new Date(data.generated_at).toLocaleString('en-US', {
-                  dateStyle: 'medium', timeStyle: 'short',
-                })}.</>
-              )}
-            </p>
-          </>
-        )}
+        {/* DISCLOSURE */}
+        <p className="mt-12 border-t border-white/5 pt-6 text-[11px] leading-relaxed text-gray-600">
+          SPARK figures are from a live production account; FLAME figures are simulated (paper) on
+          live market data — no real money is at risk in FLAME. All figures are realised profit and
+          loss on closed positions and exclude commissions unless stated. Options trading involves
+          substantial risk, including the possible loss of principal, and is not suitable for every
+          investor. Past performance is not indicative of future results. Nothing on this page is
+          investment, tax, or legal advice.
+          {data?.generated_at && (
+            <> Updated {new Date(data.generated_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}.</>
+          )}
+        </p>
       </div>
     </div>
   )

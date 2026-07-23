@@ -6,6 +6,7 @@ import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
 import type { HomeData } from '@/lib/live/home'
 import CustomerShell from '@/components/customer/CustomerShell'
+import EmptyState from './EmptyState'
 
 /** Customer Home dashboard — hero status banner, wealth snapshot, membership,
  *  daily brief, recent trades, community entry (per the approved design). */
@@ -287,17 +288,7 @@ export default function HomeClient() {
   return (
     <CustomerShell membership={summary?.membership ?? null} planVariant="trial">
       {summary?.empty ? (
-        <div className="rounded-xl border border-white/10 bg-forge-card/80 p-8 text-center">
-          <h2 className="text-lg font-bold text-white">Welcome to IronForge</h2>
-          <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
-            Your account is set up. Live trading data appears here once a trading account is
-            connected to your membership — brokerage connection is coming soon, and we&apos;ll
-            email you the moment it&apos;s ready.
-          </p>
-          <a href="/community" className="mt-5 inline-block rounded-md bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-amber-500">
-            Visit the Forge Community
-          </a>
-        </div>
+        <EmptyState />
       ) : (
       <div className="flex flex-col gap-4">
         <HeroBanner summary={summary} />
