@@ -320,20 +320,21 @@ export default function TrackRecordClient() {
           <div className="flex flex-col items-start gap-6 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-500">Founding members — first 100 only</p>
-              <h2 className="mt-2 font-display text-2xl text-white sm:text-3xl">Lock $50/month. For life.</h2>
+              <h2 className="mt-2 font-display text-2xl text-white sm:text-3xl">2 bots for $50/month. For life.</h2>
               <p className="mt-2 max-w-lg text-sm leading-relaxed text-gray-300">
-                The first 100 accounts keep founding pricing for as long as they stay — even after
-                the price rises for everyone else. Every month on the sidelines is a month of this
-                track record you only watched.
+                Use code <span className="font-mono font-bold text-amber-400">FORGE50</span> at signup —
+                the first 100 accounts run <b className="text-white">two</b> strategies for $50/mo (the
+                Pro plan at the Starter price), locked for as long as they stay. Every month on the
+                sidelines is a month of this track record you only watched.
               </p>
               <ul className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-gray-400">
-                <li className="flex items-center gap-1.5"><Dot /> $50/mo locked while active</li>
+                <li className="flex items-center gap-1.5"><Dot /> 2 active bots · $50/mo locked</li>
                 <li className="flex items-center gap-1.5"><Dot /> Cancel anytime — no lock-in</li>
                 <li className="flex items-center gap-1.5"><Dot /> Priority on every new strategy</li>
               </ul>
             </div>
             <div className="shrink-0">
-              <Link href="/signup?plan=founder" className="block rounded-md bg-amber-600 px-8 py-4 text-center text-base font-bold text-white shadow-lg shadow-amber-900/30 transition hover:bg-amber-500">
+              <Link href="/signup?code=FORGE50" className="block rounded-md bg-amber-600 px-8 py-4 text-center text-base font-bold text-white shadow-lg shadow-amber-900/30 transition hover:bg-amber-500">
                 Claim a founding seat
               </Link>
               <Link href="/pricing" className="mt-2 block text-center text-xs text-amber-500 hover:text-amber-400">

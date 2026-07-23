@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import { validateSignup, type SignupPayload } from '@/lib/signup-validation'
 import { hashPassword } from '@/lib/auth/password'
+import { lookupPromo } from '@/lib/promo'
 import { generateToken, TOKEN_TTL_MS } from '@/lib/auth/verification-token'
 import { sendVerificationEmail } from '@/lib/email'
 import { syncContactToAttio, enqueueAttioSync } from '@/lib/attio'
@@ -92,6 +93,9 @@ export async function POST(req: NextRequest) {
   const ip = clientIp(req)
   const ua = req.headers.get('user-agent')
   const n = result.normalized
+  // Founding promo (e.g. FORGE50). Validated against the static list; stored
+  // canonical (UPPERCASE) or null. Honoured at activation — see lib/promo.ts.
+  const promoCode = lookupPromo((body as { promoCode?: string }).promoCode)?.code ?? null
 
   try {
     const existing = await customerQuery<{ id: string }>(
@@ -118,9 +122,9 @@ export async function POST(req: NextRequest) {
     const userId = await customerTransaction<string>(async (run) => {
       const rows = await run(
         `INSERT INTO users
-           (password_hash, first_name, last_name, email, phone, state, referral_code,
+           (password_hash, first_name, last_name, email, phone, state, referral_code, promo_code,
             age_confirmed, no_advice_acknowledged, electronic_comm_consent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
          RETURNING id`,
         [
           passwordHash,
@@ -130,6 +134,7 @@ export async function POST(req: NextRequest) {
           n.phone,
           n.state,
           n.referralCode || null,
+          promoCode,
           payload.ageConfirmed,
           payload.noAdviceAcknowledged,
           payload.electronicCommConsent,
@@ -148,6 +153,7 @@ export async function POST(req: NextRequest) {
       source: 'signup',
       state: n.state,
       referral_code: n.referralCode || null,
+      promo_code: promoCode,
       age_confirmed: payload.ageConfirmed,
       no_advice_acknowledged: payload.noAdviceAcknowledged,
       electronic_comm_consent: payload.electronicCommConsent,

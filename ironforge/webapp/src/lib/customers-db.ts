@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS users (
   phone TEXT NOT NULL,
   state TEXT NOT NULL,
   referral_code TEXT,
+  promo_code TEXT,
   account_status TEXT NOT NULL DEFAULT 'pending_email_verification',
   onboarding_step TEXT NOT NULL DEFAULT 'account_created',
   email_verified BOOLEAN NOT NULL DEFAULT FALSE,
@@ -117,6 +118,10 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON password_reset_tokens(token_hash);
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+
+-- Founding promo captured at signup (e.g. FORGE50). Honoured at activation until
+-- billing/Stripe lands; then it becomes a real coupon. See lib/promo.ts.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS promo_code TEXT;
 
 -- Brokerage connection (Model A: customers link their own brokerage via SnapTrade) --
 ALTER TABLE users ADD COLUMN IF NOT EXISTS snaptrade_user_id TEXT;

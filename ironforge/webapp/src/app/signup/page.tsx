@@ -1,10 +1,11 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { US_STATES } from '@/lib/us-states'
 import { Wordmark } from '@/components/Brand'
 import HomeLink from '@/components/HomeLink'
+import type { Promo } from '@/lib/promo'
 import {
   checkPassword,
   validateSignup,
@@ -111,7 +112,8 @@ function CheckTick({ ok }: { ok: boolean }) {
 /* ── Field primitives ──────────────────────────────────────────────── */
 
 interface FieldProps {
-  id: keyof SignupPayload
+  // Form field keys, plus standalone inputs (e.g. the promo code) not in SignupPayload.
+  id: keyof SignupPayload | 'promoCode'
   label: string
   type?: string
   placeholder?: string
@@ -173,6 +175,31 @@ export default function SignupPage() {
   const [submitting, setSubmitting] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null)
+  const [promoCode, setPromoCode] = useState('')
+  const [promo, setPromo] = useState<Promo | null>(null)
+  const [promoChecking, setPromoChecking] = useState(false)
+
+  // Validate a code against the public promo list (debounced on change / on mount).
+  useEffect(() => {
+    const code = promoCode.trim()
+    if (!code) { setPromo(null); return }
+    let live = true
+    setPromoChecking(true)
+    const t = setTimeout(() => {
+      fetch(`/api/public/promo?code=${encodeURIComponent(code)}`)
+        .then((r) => r.json()).then((d) => { if (live) setPromo(d?.valid ? d.promo : null) })
+        .catch(() => { if (live) setPromo(null) })
+        .finally(() => { if (live) setPromoChecking(false) })
+    }, 300)
+    return () => { live = false; clearTimeout(t) }
+  }, [promoCode])
+
+  // Prefill from ?code= (or ?plan=founder → FORGE50) so founding CTAs land pre-filled.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search)
+    const code = q.get('code') || (q.get('plan') === 'founder' ? 'FORGE50' : '')
+    if (code) setPromoCode(code.toUpperCase())
+  }, [])
 
   const set = (k: keyof SignupPayload, v: string | boolean) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -194,7 +221,7 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, promoCode }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -322,6 +349,18 @@ export default function SignupPage() {
               )}
 
               <Field id="referralCode" label="Referral Code (Optional)" placeholder="Enter referral code" icon={<TagIcon />} value={form.referralCode || ''} error={errors.referralCode} onChange={(v) => set('referralCode', v)} />
+
+              <div>
+                <Field id="promoCode" label="Promo Code (Optional)" placeholder="e.g. FORGE50" icon={<TagIcon />} value={promoCode} onChange={(v) => setPromoCode(v.toUpperCase())} />
+                {promo ? (
+                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-emerald-700/40 bg-emerald-950/25 px-3 py-2 text-xs text-emerald-300">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 h-4 w-4 shrink-0"><path d="M20 6 9 17l-5-5" /></svg>
+                    <span><b>Founding rate locked</b> — {promo.headline}. {promo.terms} Applied when your account is activated.</span>
+                  </div>
+                ) : promoCode.trim() && !promoChecking ? (
+                  <div className="mt-2 text-xs text-gray-500">That code isn&apos;t recognised — you can still continue without it.</div>
+                ) : null}
+              </div>
 
               {/* Consent checkboxes */}
               <div className="space-y-3 pt-1">

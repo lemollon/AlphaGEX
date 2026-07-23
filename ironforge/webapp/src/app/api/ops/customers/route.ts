@@ -32,6 +32,7 @@ interface UserRow {
   account_status: string
   email_verified: boolean
   created_at: string
+  promo_code: string | null
 }
 
 function isLiveBot(v: unknown): v is LiveBot {
@@ -54,7 +55,7 @@ export async function GET() {
   }
 
   const users = await customerQuery<UserRow>(
-    `SELECT id, email, first_name, last_name, account_status, email_verified, created_at
+    `SELECT id, email, first_name, last_name, account_status, email_verified, created_at, promo_code
        FROM users ORDER BY created_at DESC LIMIT 200`,
   )
   // Bot mappings live in the bot DB, keyed by customers-DB users.id (as text).
@@ -78,6 +79,7 @@ export async function GET() {
       status: u.account_status,
       emailVerified: u.email_verified,
       createdAt: u.created_at,
+      promoCode: u.promo_code ?? null,
       bots: (byCustomer.get(u.id) ?? []).sort(),
     })),
   })
