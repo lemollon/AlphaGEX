@@ -135,10 +135,10 @@ const TIERS: Tier[] = [
 ]
 
 const FOUNDER_ITEMS = [
-  { glyph: <LockGlyph />, title: '$50/month for life', body: 'Locked pricing while subscription remains active' },
-  { glyph: <BotGlyph />, title: '1 Bot Included', body: 'Start automating immediately' },
+  { glyph: <LockGlyph />, title: '$50/month for life', body: 'Locked while your subscription stays active' },
+  { glyph: <BotGlyph />, title: '2 Active Bots', body: 'Forge Pro value at the Starter price' },
   { glyph: <StarGlyph />, title: 'Priority Access', body: 'To new features & roadmap' },
-  { glyph: <MedalGlyph />, title: 'Limited to First 100', body: 'Approved members only' },
+  { glyph: <MedalGlyph />, title: 'Limited to First 100', body: 'Use code FORGE50 at signup' },
 ]
 
 /* ── Page ───────────────────────────────────────────────────────────── */
@@ -245,7 +245,7 @@ export default function PricingPage() {
               </div>
             </div>
             <Link
-              href="/signup?plan=founder"
+              href="/signup?code=FORGE50"
               className="shrink-0 rounded-md bg-amber-600 px-6 py-3 text-center text-sm font-bold text-white transition hover:bg-amber-500"
             >
               JOIN AS A FOUNDER

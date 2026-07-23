@@ -22,6 +22,7 @@ interface Customer {
   emailVerified: boolean
   createdAt: string
   bots: string[]
+  promoCode: string | null
 }
 interface ListResp {
   ok: boolean
@@ -138,6 +139,11 @@ export default function OpsCustomersPage() {
                           {c.status}
                           {!c.emailVerified && ' · email not verified'}
                         </div>
+                        {c.promoCode && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded border border-amber-600/40 bg-amber-950/30 px-1.5 py-0.5 text-[11px] font-semibold text-amber-400">
+                            PROMO {c.promoCode} · honour 2 bots @ $50/mo
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {c.bots.length === 0 && <span className="text-xs text-gray-500">no bot mapped</span>}
