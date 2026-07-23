@@ -6,7 +6,9 @@ import {
   isStripeConfigured,
   findPriceIdByLookupKey,
   getOrCreateCustomer,
+  createCustomer,
   createSubscriptionCheckout,
+  isMissingCustomerError,
 } from '@/lib/billing/stripe'
 import { getBotPlan, TRIAL_DAYS } from '@/lib/billing/plans'
 
@@ -64,28 +66,42 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const customerId = await getOrCreateCustomer({
-      existingId: user.stripe_customer_id,
-      email: user.email,
-      userId: user.id,
-    })
-    if (customerId !== user.stripe_customer_id) {
-      await customerExecute(`UPDATE users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`, [
-        user.id,
-        customerId,
-      ])
-    }
-
     const origin = publicOrigin(req)
-    const { url } = await createSubscriptionCheckout({
-      customerId,
+    const checkoutArgs = {
       priceId,
       userId: user.id,
       bot: plan.slug,
       trialDays: TRIAL_DAYS,
       successUrl: `${origin}${plan.liveHref}?welcome=${plan.slug}&session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${origin}/live/${plan.slug}/open?canceled=1`,
+    }
+
+    // Persist the resolved Stripe customer id when it changes (new or self-healed).
+    const persistCustomer = async (id: string) => {
+      if (id !== user.stripe_customer_id) {
+        await customerExecute(`UPDATE users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`, [user.id, id])
+      }
+    }
+
+    let customerId = await getOrCreateCustomer({
+      existingId: user.stripe_customer_id,
+      email: user.email,
+      userId: user.id,
     })
+    await persistCustomer(customerId)
+
+    let url: string
+    try {
+      ;({ url } = await createSubscriptionCheckout({ customerId, ...checkoutArgs }))
+    } catch (e) {
+      // Self-heal a stale stored customer id (wrong Stripe mode, or deleted in the dashboard):
+      // mint a fresh customer, persist it, and retry once.
+      if (!isMissingCustomerError(e)) throw e
+      console.warn('[billing/checkout] stale customer', customerId, '- recreating for user', user.id)
+      customerId = await createCustomer({ email: user.email, userId: user.id })
+      await persistCustomer(customerId)
+      ;({ url } = await createSubscriptionCheckout({ customerId, ...checkoutArgs }))
+    }
 
     await customerExecute(
       `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
