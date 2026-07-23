@@ -73,9 +73,10 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
   const mainItems: NavItem[] = [
     // "Dashboard" not "Home" — the wordmark above already goes to the marketing
     // home (/), so a second "Home" pointing at /home read as a collision.
+    // Performance ahead of the Home dashboard (operator, 2026-07-23).
+    { label: 'Performance', href: '/performance', icon: <Icon d={ICONS.performance} /> },
     { label: 'Dashboard', href: '/home', icon: <Icon d={ICONS.home} /> },
     { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} /> },
-    { label: 'Performance', href: '/performance', icon: <Icon d={ICONS.performance} /> },
     { label: 'Community', href: '/community', icon: <Icon d={ICONS.community} /> },
   ]
   const secondaryItems: NavItem[] = [
