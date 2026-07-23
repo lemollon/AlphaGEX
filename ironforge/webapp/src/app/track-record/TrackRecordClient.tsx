@@ -360,8 +360,8 @@ export default function TrackRecordClient() {
 
         {/* DISCLOSURE */}
         <p className="mt-12 border-t border-white/5 pt-6 text-[11px] leading-relaxed text-gray-600">
-          SPARK figures are from a live production account; FLAME figures are simulated (paper) on
-          live market data — no real money is at risk in FLAME. All figures are realised profit and
+          SPARK and FLAME figures are simulated results — the strategies run on live market data in
+          paper accounts, so no real money is at risk. All figures are realised profit and
           loss on closed positions and exclude commissions unless stated. Options trading involves
           substantial risk, including the possible loss of principal, and is not suitable for every
           investor. Past performance is not indicative of future results. Nothing on this page is
