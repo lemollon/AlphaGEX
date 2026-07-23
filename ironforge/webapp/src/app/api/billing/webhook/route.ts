@@ -53,7 +53,7 @@ async function upsertSubscription(opts: {
 }
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim()
   const raw = await req.text()
   const sig = req.headers.get('stripe-signature')
 

@@ -19,8 +19,14 @@ export class StripeNotConfiguredError extends Error {
   }
 }
 
+/** The secret key, trimmed of stray whitespace/newlines that break the Authorization header. */
+function secretKey(): string | undefined {
+  const k = process.env.STRIPE_SECRET_KEY?.trim()
+  return k || undefined
+}
+
 export function isStripeConfigured(): boolean {
-  return !!process.env.STRIPE_SECRET_KEY
+  return !!secretKey()
 }
 
 // Flattens a nested object into Stripe's bracketed form-encoding, e.g.
@@ -52,7 +58,7 @@ async function stripeRequest<T = any>(
   path: string,
   params?: Record<string, unknown>,
 ): Promise<T> {
-  const key = process.env.STRIPE_SECRET_KEY
+  const key = secretKey()
   if (!key) throw new StripeNotConfiguredError()
 
   const headers: Record<string, string> = {
