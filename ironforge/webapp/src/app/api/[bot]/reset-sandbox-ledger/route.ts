@@ -74,9 +74,19 @@ async function inspect(bot: string, dte: string) {
     `SELECT COUNT(*) AS n FROM ${botTable(bot, 'daily_perf')}`,
   )
 
-  // The scanner keeps the sandbox seed synced to the config knob; the reset base
-  // is that knob (falling back to whatever the row already carries).
-  const startingCapital = active ? num(active.starting_capital) : 0
+  // Reset base = the SANDBOX config knob ({bot}_config.starting_capital), NOT the
+  // paper_account row. The row can still hold a stale, broker-contaminated value
+  // (e.g. $41,992 tracking a co-tenant's sandbox equity) until the post-#2583
+  // scanner next syncs it; the config knob is the intended base ($63,100 for
+  // SPARK). Fall back to the row, then to a plain $10k, only if the knob is absent.
+  const cfgRows = await dbQuery(
+    `SELECT starting_capital FROM ${botTable(bot, 'config')}
+      WHERE dte_mode = '${escapeSql(dte)}' AND ${SANDBOX}
+      ORDER BY id LIMIT 1`,
+  )
+  const knob = cfgRows.length ? num(cfgRows[0].starting_capital) : 0
+  const rowSeed = active ? num(active.starting_capital) : 0
+  const startingCapital = knob > 0 ? knob : (rowSeed > 0 ? rowSeed : 10000)
   const openCollateral = num(open[0]?.collateral)
 
   return {
@@ -85,6 +95,8 @@ async function inspect(bot: string, dte: string) {
     openCollateral,
     closedToArchive: int(closed[0]?.n),
     closedPnl: num(closed[0]?.pnl),
+    configKnob: knob,
+    rowSeed,
     openKept: int(open[0]?.n),
     snapshotsToClear: int(snaps[0]?.n),
     dailyRowsToClear: int(daily[0]?.n),
@@ -112,6 +124,9 @@ export async function GET(req: NextRequest, { params }: { params: { bot: string 
         clear_equity_snapshots: s.snapshotsToClear,
         clear_daily_perf_rows: s.dailyRowsToClear,
         reset_starting_capital_to: s.startingCapital,
+        reset_base_source: s.configKnob > 0 ? 'config knob' : 'paper_account row (config knob absent)',
+        config_knob: s.configKnob,
+        current_row_seed_possibly_contaminated: s.rowSeed,
         reset_balance_to: s.startingCapital,
         reset_collateral_to_open_only: s.openCollateral,
       },
