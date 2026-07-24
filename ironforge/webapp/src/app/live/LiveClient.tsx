@@ -4,7 +4,7 @@ import useSWR, { mutate } from 'swr'
 import { useEffect, useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
-import { LIVE_BOTS, type LiveBot } from '@/lib/live/bots'
+import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { accentFor } from './components/accent'
 import LiveSidebar from './components/LiveSidebar'
 import LiveHeader from './components/LiveHeader'
@@ -71,7 +71,7 @@ export default function LiveClient() {
   // The whole surface takes the active bot's identity colour (Spark blue / Flame orange).
   const accent = accentFor(account)
 
-  async function handlePauseToggle(nextPaused: boolean, password: string) {
+  async function handlePauseToggle(nextPaused: boolean) {
     setPausePending(true)
     try {
       const res = await fetch(`/api/${account}/production-pause`, {
@@ -81,10 +81,8 @@ export default function LiveClient() {
           paused: nextPaused,
           reason: nextPaused ? 'customer_pause' : 'customer_resume',
           by: 'live_page',
-          password,
         }),
       })
-      if (res.status === 403) throw new Error('password_required')
       if (!res.ok) throw new Error(`${res.status}`)
       await Promise.all([mutate(summaryKey), mutate(tradeKey)])
     } finally {
@@ -176,14 +174,21 @@ export default function LiveClient() {
               <div className="order-3 lg:order-4">
                 <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
-              <div className="order-5">
-                <PauseTradingPanel
-                  state={summary?.state ?? null}
-                  pending={pausePending}
-                  onToggle={handlePauseToggle}
-                  accent={accent}
-                />
-              </div>
+              {/* Pause is a PRODUCTION control. /api/{bot}/production-pause answers
+                  400 for any paper bot, so rendering this on Flame or Spark paper
+                  gave the owner a button whose only outcome was a generic failure.
+                  There is nothing to pause on a simulated account. */}
+              {summary?.account.mode === 'paper' ? null : (
+                <div className="order-5">
+                  <PauseTradingPanel
+                    state={summary?.state ?? null}
+                    pending={pausePending}
+                    onToggle={handlePauseToggle}
+                    accent={accent}
+                    botLabel={LIVE_BOT_LABEL[account]}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>

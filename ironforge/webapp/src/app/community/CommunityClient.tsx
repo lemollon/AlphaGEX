@@ -110,12 +110,21 @@ function MessageRow({ msg, canReact, onReact }: {
   )
 }
 
+/** Composer emoji set — small, trader-flavoured, no external picker dependency. */
+const EMOJI_CHOICES = ['🔥','👍','👌','📈','📉','💰','👀','🧠',
+  '😂','😅','🤔','👏','✅','⚡','🚀','🚨']
+
 export default function CommunityClient() {
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [welcomeDismissed, setWelcomeDismissed] = useState(true)
+  // Members rail starts collapsed at 6; "View All Members" used to be an
+  // amber div with no handler, so the only thing it did was look clickable.
+  const [showAllMembers, setShowAllMembers] = useState(false)
+  // Emoji picker. The button used to append a single hardcoded flame.
+  const [emojiOpen, setEmojiOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const lastMsgIdRef = useRef<string | null>(null)
 
@@ -227,19 +236,9 @@ export default function CommunityClient() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               {feed ? `${feed.online_count.toLocaleString()} member${feed.online_count === 1 ? '' : 's'} online` : '…'}
             </span>
-            <div className="ml-auto flex items-center gap-3 text-gray-500">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 cursor-default">
-                <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-              </svg>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-                strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 cursor-default">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M11 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0" />
-              </svg>
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 cursor-default">
-                <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" />
-              </svg>
-            </div>
+            {/* Search / members / kebab icons removed. They were cursor-default
+                decorations with no handlers — three affordances in the channel
+                header that did nothing. The members list lives in the right rail. */}
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col px-4">
@@ -303,12 +302,8 @@ export default function CommunityClient() {
             <div className="border-t border-forge-border py-3">
               {sendError && <div className="mb-2 text-xs text-red-400">{sendError}</div>}
               <div className="flex items-center gap-2">
-                <button className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-forge-border text-gray-400 transition-colors hover:text-white" aria-label="Add attachment">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                    strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </button>
+                {/* Attachment "+" removed: it had no onClick and there is no upload
+                    endpoint behind it. Restore alongside a real upload handler. */}
                 <input
                   value={draft}
                   onChange={(e) => { setDraft(e.target.value); setSendError(null) }}
@@ -318,13 +313,28 @@ export default function CommunityClient() {
                   maxLength={2000}
                   className="h-9 min-w-0 flex-1 rounded-lg border border-forge-border bg-forge-bg px-3 text-sm text-white placeholder-gray-500 outline-none transition-colors focus:border-amber-500/50 disabled:opacity-60"
                 />
-                <button className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-forge-border text-gray-400 transition-colors hover:text-white sm:flex" aria-label="Emoji"
-                  onClick={() => setDraft((d) => `${d}🔥`)}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-                    strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
-                    <circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" />
-                  </svg>
-                </button>
+                <div className="relative hidden sm:block">
+                  <button type="button"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-forge-border text-gray-400 transition-colors hover:text-white"
+                    aria-label="Emoji" aria-haspopup="true" aria-expanded={emojiOpen}
+                    onClick={() => setEmojiOpen((o) => !o)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                      strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" />
+                    </svg>
+                  </button>
+                  {emojiOpen && (
+                    <div className="absolute bottom-11 right-0 z-40 grid w-56 grid-cols-8 gap-1 rounded-xl border border-forge-border bg-forge-card p-2 shadow-xl">
+                      {EMOJI_CHOICES.map((e) => (
+                        <button key={e} type="button"
+                          className="rounded p-1 text-base leading-none transition-colors hover:bg-white/10"
+                          onClick={() => { setDraft((d) => `${d}${e}`); setEmojiOpen(false) }}>
+                          {e}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button onClick={() => void handleSend()} disabled={sending || (!draft.trim() && loggedIn)}
                   className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white transition-colors hover:bg-amber-400 disabled:opacity-50"
                   aria-label="Send">
@@ -379,7 +389,7 @@ export default function CommunityClient() {
             <RailHeader>Online Members {feed ? `(${feed.online_count.toLocaleString()})` : ''}</RailHeader>
             <div className="mt-3 space-y-2.5">
               {feed && feed.members.length > 0 ? (
-                feed.members.slice(0, 6).map((m, i) => (
+                feed.members.slice(0, showAllMembers ? undefined : 6).map((m, i) => (
                   <div key={i} className="flex items-center gap-2.5">
                     <div className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold ${avatarStyle(m.name)}`}>
                       {initialsOf(m.name)}
@@ -394,7 +404,10 @@ export default function CommunityClient() {
               )}
             </div>
             {feed && feed.members.length > 6 && (
-              <div className="mt-3 text-xs font-medium text-amber-500">View All Members</div>
+              <button type="button" onClick={() => setShowAllMembers((v) => !v)}
+                className="mt-3 text-xs font-medium text-amber-500 transition-colors hover:text-amber-400">
+                {showAllMembers ? 'Show fewer' : `View All Members (${feed.members.length})`}
+              </button>
             )}
           </div>
 

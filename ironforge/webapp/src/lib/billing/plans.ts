@@ -62,6 +62,29 @@ export const BOTH_PLAN = {
 /** Free-trial length granted at checkout (matches the trial card in the dashboard). */
 export const TRIAL_DAYS = 5
 
+/**
+ * Marketing tier prices — THE single source of truth for every price rendered on the
+ * public site (homepage, /pricing, /terms, founding offer).
+ *
+ * Before this existed the site quoted itself two different numbers: the homepage said
+ * Community $10 + "Forge Automate" $50, while /pricing said Community $15 + Starter $50
+ * + Pro $100. Two Community prices and two tier vocabularies on the same site is a trust
+ * problem, so all copy now reads from here.
+ *
+ * STARTER/PRO are derived from the Stripe-backed plans above so a marketing number can
+ * never drift from what checkout actually bills. COMMUNITY has no Stripe product yet
+ * (it is not sellable through checkout) — $15 is the /pricing figure, which is the page
+ * that was reconciled against real billing on 2026-07-23.
+ */
+export const MARKETING_TIERS = {
+  /** Community/education tier — no bot execution, not yet wired to Stripe. */
+  community: { name: 'Forge Community', priceMonthly: 15 },
+  /** One automated bot. Same price checkout bills for a single bot. */
+  starter: { name: 'Forge Starter', priceMonthly: BOT_PLANS.spark.priceMonthly },
+  /** Both bots. Same price checkout bills for the bundle. */
+  pro: { name: 'Forge Pro', priceMonthly: BOTH_PLAN.priceMonthly },
+} as const
+
 export function getBotPlan(slug: string | undefined | null): BotPlan | null {
   if (slug === 'spark' || slug === 'flame') return BOT_PLANS[slug]
   return null

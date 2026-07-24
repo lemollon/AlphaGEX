@@ -76,12 +76,6 @@ const ACCOUNT_BOTS = new Set(['spark', 'kindle', 'spark2'])
 const ACCOUNT_ONLY_TABS = new Set<Tab>(['Production', 'Broker Equity', 'Reconcile'])
 
 /**
- * Tabs hidden per-bot. Currently empty — FLAME replaces the IC Chart
- * body with FlamePutSpreadTab below rather than hiding the tab.
- */
-const HIDDEN_TABS_BY_BOT: Record<string, Set<Tab>> = {}
-
-/**
  * Per-bot display labels for ALL_TABS internal keys. FLAME renames
  * "IC Chart" → "Spread Chart" since it renders a 2-leg put credit
  * spread, not a 4-leg Iron Condor. SPARK/INFERNO keep the default.
@@ -91,10 +85,6 @@ const TAB_LABEL_OVERRIDES: Record<string, Partial<Record<Tab, string>>> = {
   blaze: { 'IC Chart': 'Directional Chart' },
   flare: { 'IC Chart': 'Directional Chart' },
 }
-
-/** Reserved for future per-bot tab gating. Empty for now — Market Pulse
- *  was originally SPARK-only and is now available for all three bots. */
-const SPARK_ONLY_TABS = new Set<Tab>()
 
 /**
  * Bots gated by PDT. Empty for now: SPARK trades on a > $25K production
@@ -554,11 +544,12 @@ export default function BotDashboard({
 
       {/* Tabs — horizontal scroll on mobile so the strip never overflows the viewport */}
       <div className="flex gap-1 border-b border-forge-border overflow-x-auto whitespace-nowrap -mx-4 px-4 sm:mx-0 sm:px-0">
+        {/* HIDDEN_TABS_BY_BOT and SPARK_ONLY_TABS were both permanently-empty sets
+            whose only effect was two always-true clauses here. Removed as dead
+            scaffolding; per-bot tab bodies are already switched further down. */}
         {ALL_TABS.filter(t =>
           (!ACCOUNT_ONLY_TABS.has(t) || hasAccounts)
           && (t !== 'PDT' || PDT_BOTS.has(bot))
-          && (!SPARK_ONLY_TABS.has(t) || bot === 'spark')
-          && !(HIDDEN_TABS_BY_BOT[bot]?.has(t) ?? false)
         ).map((t) => (
           <button
             key={t}
