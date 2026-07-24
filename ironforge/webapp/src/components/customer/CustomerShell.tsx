@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import { Wordmark } from '@/components/Brand'
@@ -37,7 +37,9 @@ const NAV_SECONDARY = [
   { label: 'Manage Membership', href: '/pricing', icon: 'M12 2l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 14.24l-4.8 2.52.92-5.34L4.24 7.64l5.36-.78z' },
   { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11' },
   { label: 'Trade History', href: '/account/trades', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
-  { label: 'Pause Trading', href: '/live', icon: 'M10 15V9m4 6V9m7 3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
+  // Labelled like an action but it only navigates — the actual Pause control lives
+  // on /live. "Pause Trading" in a nav reads as a kill switch; it is a link.
+  { label: 'Live Controls', href: '/live', icon: 'M10 15V9m4 6V9m7 3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
 ]
 
 function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: string }) {
@@ -197,6 +199,30 @@ function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
   const name = email ? email.split('@')[0] : 'Trader'
   const initials = name.slice(0, 2).toUpperCase()
 
+  // Real account menu, matching LiveHeader. The avatar carried a chevron that
+  // implied a dropdown which did not exist, so the only affordance that looked
+  // like "account settings" did nothing at all.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDocClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
+    }
+    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [menuOpen])
+
+  async function handleLogout() {
+    try { await fetch('/api/auth/customer-logout', { method: 'POST' }) } catch { /* navigate anyway */ }
+    window.location.href = '/'
+  }
+
   return (
     <header className="fixed inset-x-0 top-0 z-30 border-b border-forge-border bg-forge-bg">
       <div className="flex h-14 items-center gap-4 px-4 md:gap-8">
@@ -221,22 +247,54 @@ function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
           })}
         </nav>
         <div className="ml-auto flex items-center gap-4">
-          <div className="relative">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-            <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-500" />
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-xs font-semibold text-amber-500">
-              {initials}
-            </div>
-            <span className="hidden text-sm capitalize text-gray-300 sm:block">{name}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-              strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-gray-500">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
+          {/* The notification bell that used to sit here had no handler and a
+              permanently-lit unread dot — it promised alerts that never existed
+              and could not be dismissed. Removed rather than faked. */}
+          <div className="relative" ref={menuRef}>
+            <button
+              type="button"
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="flex items-center gap-2 rounded-lg px-1 py-1 transition-colors hover:bg-white/5"
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-xs font-semibold text-amber-500">
+                {initials}
+              </div>
+              <span className="hidden text-sm capitalize text-gray-300 sm:block">{name}</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round"
+                className={`h-4 w-4 text-gray-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`}>
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </button>
+            {menuOpen ? (
+              <div role="menu"
+                className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-forge-border bg-forge-card shadow-xl">
+                {email ? (
+                  <div className="border-b border-forge-border px-4 py-3">
+                    <div className="truncate text-xs text-gray-400">Signed in as</div>
+                    <div className="truncate text-sm font-medium text-white">{email}</div>
+                  </div>
+                ) : null}
+                <a href="/" role="menuitem"
+                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                  Back to site
+                </a>
+                <a href="/account/trades" role="menuitem"
+                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                  Trade History
+                </a>
+                <a href="/change-password" role="menuitem"
+                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                  Change password
+                </a>
+                <button type="button" role="menuitem" onClick={handleLogout}
+                  className="block w-full border-t border-forge-border px-4 py-2.5 text-left text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                  Log Out
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

@@ -3,24 +3,30 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
-import { ArrowRightIcon, XSocialIcon, DiscordIcon, YouTubeIcon } from './icons'
+import { ArrowRightIcon } from './icons'
 
 /* Newsletter has no backend yet — same approach as the previous landing page:
- * open a pre-filled email so signups actually reach the inbox. */
-const NEWSLETTER_EMAIL = 'shairan2016@gmail.com'
+ * open a pre-filled email so signups actually reach the inbox.
+ * Goes to the BUSINESS address: this was a personal Gmail while every other
+ * contact point on the site is @ironforge.trade. */
+const NEWSLETTER_EMAIL = 'leron@ironforge.trade'
 
+/* Every label points at a page that exists and matches the label. Previously
+ * About Us / Our Mission / Careers all collapsed onto /contact (three names for
+ * one page, and no careers page exists), and "Blog" pointed at /community, which
+ * walls logged-out visitors behind /login. */
 const COMPANY_LINKS = [
-  { label: 'About Us', href: '/contact' },
-  { label: 'Our Mission', href: '/contact' },
-  { label: 'Careers', href: '/contact' },
+  { label: 'How It Works', href: '/how-it-works' },
+  { label: 'Track Record', href: '/track-record' },
+  { label: 'Pricing', href: '/pricing' },
   { label: 'Contact', href: '/contact' },
 ]
 
 const RESOURCE_LINKS = [
-  { label: 'Blog', href: '/community' },
-  { label: 'Help Center', href: '/contact' },
   { label: 'FAQ', href: '/how-it-works' },
   { label: 'Risk Disclosure', href: '/terms' },
+  { label: 'Terms of Service', href: '/terms' },
+  { label: 'Privacy Policy', href: '/privacy' },
 ]
 
 export default function HomeFooter() {
@@ -41,17 +47,10 @@ export default function HomeFooter() {
           <div className="flex flex-col items-center md:items-start">
             <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
             <p className="mt-2 text-sm text-gray-400">Discipline. Execution. Edge.</p>
-            <div className="mt-4 hidden items-center gap-4 text-gray-400 md:flex">
-              <a href="#" aria-label="IronForge on X" className="transition-colors hover:text-white">
-                <XSocialIcon className="h-[18px] w-[18px]" />
-              </a>
-              <a href="#" aria-label="IronForge on Discord" className="transition-colors hover:text-white">
-                <DiscordIcon className="h-[18px] w-[18px]" />
-              </a>
-              <a href="#" aria-label="IronForge on YouTube" className="transition-colors hover:text-white">
-                <YouTubeIcon className="h-[18px] w-[18px]" />
-              </a>
-            </div>
+            {/* Social row removed: all three icons were href="#", so they looked
+                like live profiles and went nowhere. Restore by putting the real
+                profile URLs in SOCIAL_LINKS below and rendering it — do not ship
+                placeholder hrefs. */}
           </div>
 
           {/* Company */}

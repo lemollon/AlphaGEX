@@ -79,7 +79,8 @@ type NavLink = { href: string; label: string; className?: string; external?: boo
 const primaryLinks: NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/spark', label: 'SPARK', className: 'text-gray-300 hover:text-white' },
-  { href: '/live', label: 'SPARK V2', className: 'text-gray-300 hover:text-white' },
+  // '/live' was listed here as "SPARK V2" — a CUSTOMER route that 404s on the
+  // operator deployment, under a label for a bot that is really SPARK2 below it.
   { href: '/spark2', label: 'SPARK2', className: 'text-gray-300 hover:text-white' },
   { href: '/flame', label: 'FLAME', className: 'text-gray-300 hover:text-white' },
   { href: '/inferno', label: 'INFERNO', className: 'text-gray-300 hover:text-white' },
@@ -95,7 +96,7 @@ const moreLinks: NavLink[] = [
   { href: '/calendar', label: 'Calendar', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/briefings', label: 'Briefings', className: 'text-gray-300 hover:text-gray-100' },
   { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
-  { href: '/pricing', label: 'Pricing', className: 'text-amber-400 hover:text-amber-300' },
+  // '/pricing' removed: customer marketing route, 404s on the operator surface.
   { href: '/ember', label: 'EMBER', className: 'text-amber-400 hover:text-amber-300' },
 ]
 
