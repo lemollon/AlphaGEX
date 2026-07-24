@@ -16,6 +16,17 @@ const AccountsContent = dynamic(() => import('@/components/AccountsContent'), {
   ),
 })
 
+/* EMERGENCY CLOSE ALL. The component and POST /api/sandbox/emergency-close were
+ * both fully built, but the panel was mounted on NO page — the panic button could
+ * not be reached from anywhere in the console. /accounts is where the broker
+ * accounts it acts on are already listed. */
+const SandboxKillSwitch = dynamic(() => import('@/components/SandboxKillSwitch'), { ssr: false })
+
 export default function AccountsPage() {
-  return <AccountsContent />
+  return (
+    <div className="space-y-6">
+      <AccountsContent />
+      <SandboxKillSwitch />
+    </div>
+  )
 }

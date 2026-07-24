@@ -88,14 +88,18 @@ export default function RiskForm() {
               This recommendation is a starting point. You&apos;ll confirm your strategy before anything is activated.
             </p>
 
+            {/* Continues to the brokerage step, which is the next stage of the
+                canonical resolver. This button used to jump straight to /home,
+                so a new customer silently skipped brokerage connect AND the
+                completion screen — the funnel dead-ended on its own dashboard. */}
             <Link
-              href="/home"
+              href="/onboarding/brokerage"
               className="mt-6 flex w-full items-center justify-center rounded-md bg-amber-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-500"
             >
-              Finish
+              Continue to brokerage
             </Link>
             <p className="mt-4 text-center text-xs text-gray-500">
-              Billing, brokerage connection, and deployment are coming soon — we&apos;ll email you when they&apos;re ready.
+              Next you&apos;ll connect a brokerage. You can skip it and come back later.
             </p>
           </div>
         </div>

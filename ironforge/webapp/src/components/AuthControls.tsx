@@ -26,14 +26,11 @@ export default function AuthControls() {
 
   if (!me?.name) {
     return (
+      // Operator chrome: the door is /ops/login. This used to offer the CUSTOMER
+      // "Sign in" (/login) and "Create account" (/signup) — both 404 on the
+      // operator deployment, and an operator console should not sell signups.
       <div className="ml-auto flex items-center gap-3 shrink-0 text-sm">
-        <a href="/login" className="text-gray-300 hover:text-white transition-colors">Sign in</a>
-        <a
-          href="/signup"
-          className="rounded bg-amber-600 hover:bg-amber-500 text-white font-medium px-3 py-1 transition-colors"
-        >
-          Create account
-        </a>
+        <a href="/ops/login" className="text-gray-300 hover:text-white transition-colors">Sign in</a>
       </div>
     )
   }

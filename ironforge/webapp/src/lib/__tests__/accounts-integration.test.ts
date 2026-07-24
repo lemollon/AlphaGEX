@@ -421,35 +421,48 @@ describe('Scanner Capital Flow (Code Structure)', () => {
     expect(scannerSource).toMatch(/import[\s\S]*?getAccountsForBotAsync[\s\S]*?from\s+['"]\.\/tradier['"]/)
   })
 
-  it('getStartingCapitalForBot calls getAllocatedCapitalForAccount', () => {
-    const fnMatch = scannerSource.match(
-      /async function getStartingCapitalForBot[\s\S]*?^}/m,
-    )
-    expect(fnMatch).toBeTruthy()
-    const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/getAccountsForBotAsync/)
-    expect(fnBody).toMatch(/getAllocatedCapitalForAccount/)
+  /* PAPER CAPITAL IS A KNOB, NOT A BROKER READING.
+   *
+   * These four tests used to pin getStartingCapitalForBot(), which resolved a
+   * paper bot's starting capital from the live Tradier SANDBOX balance. That
+   * function WAS the bug: sandbox accounts are co-tenanted, so a paper ledger's
+   * base — and its sizing, return %, HWM and drawdown — moved with unrelated
+   * systems' activity. Observed 2026-07-24: spark's sandbox paper_account held
+   * starting_capital $41,995.33, exactly the BlackSmitH sandbox total_equity.
+   * FLAME was fixed the same way in #2563/#2564. The tests now assert the
+   * invariant instead of the defect. */
+
+  it('getStartingCapitalForBot is GONE — paper capital never reads a broker balance', () => {
+    expect(scannerSource).not.toMatch(/function getStartingCapitalForBot/)
   })
 
-  it('getStartingCapitalForBot falls back to DEFAULT_CONFIG when no accounts', () => {
-    const fnMatch = scannerSource.match(
-      /async function getStartingCapitalForBot[\s\S]*?^}/m,
-    )
-    expect(fnMatch).toBeTruthy()
-    const fnBody = fnMatch![0]
-    // Must have fallback to DEFAULT_CONFIG
-    expect(fnBody).toMatch(/DEFAULT_CONFIG/)
-    // Must have try/catch for graceful fallback
-    expect(fnBody).toMatch(/catch/)
-  })
-
-  it('loadConfigOverrides calls getStartingCapitalForBot', () => {
+  it('loadConfigOverrides does NOT source starting_capital from a broker balance', () => {
     const fnMatch = scannerSource.match(
       /async function loadConfigOverrides[\s\S]*?^}/m,
     )
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/getStartingCapitalForBot/)
+    expect(fnBody).not.toMatch(/getStartingCapitalForBot/)
+    expect(fnBody).not.toMatch(/getAllocatedCapitalForAccount/)
+  })
+
+  it('PRODUCTION accounts still track the real broker balance', () => {
+    // The fix must not touch real money: production paper_account rows are
+    // still synced from the actual production account equity.
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    expect(fnMatch![0]).toMatch(/getAllocatedCapitalForAccount\(\s*pa\.person,\s*'production'\s*\)/)
+  })
+
+  it('SANDBOX paper_account syncs from the config knob, not a broker call', () => {
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    // The sandbox branch targets botCfg.starting_capital.
+    expect(fnMatch![0]).toMatch(/const target = botCfg\.starting_capital/)
   })
 
   it('loadConfigOverrides calls syncPaperAccountCapital', () => {
@@ -461,19 +474,6 @@ describe('Scanner Capital Flow (Code Structure)', () => {
     expect(fnBody).toMatch(/syncPaperAccountCapital/)
   })
 
-  it('getStartingCapitalForBot uses persons[0] — first person only', () => {
-    // When multiple accounts are assigned to a bot, only the first person's
-    // allocated capital is used. This is by design (documented behavior).
-    const fnMatch = scannerSource.match(
-      /async function getStartingCapitalForBot[\s\S]*?^}/m,
-    )
-    expect(fnMatch).toBeTruthy()
-    const fnBody = fnMatch![0]
-    // Uses persons[0], not a loop over all persons
-    expect(fnBody).toMatch(/persons\[0\]/)
-    // Does NOT iterate over all persons
-    expect(fnBody).not.toMatch(/for\s*\(.*persons/)
-  })
 })
 
 /* ── Group 6: Paper Account Capital Sync (Code Structure) ───── */

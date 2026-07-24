@@ -31,7 +31,13 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     pathname === '/reset-password' ||
     pathname === '/account/trades' ||
     pathname === '/live' ||
+    // Per-bot "Open Account" pages carry the customer chrome, not the operator
+    // nav — they are a subscribe surface, and Nav.tsx links 404 on this deployment.
+    pathname.startsWith('/live/') ||
     pathname === '/home' ||
+    // Signed-in password change is a customer screen; without this it rendered
+    // the operator nav (SPARK/INFERNO/Compare) over a customer's account page.
+    pathname === '/change-password' ||
     pathname === '/performance' ||
     pathname === '/community' ||
     pathname.startsWith('/onboarding')

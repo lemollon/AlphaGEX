@@ -44,8 +44,19 @@ const DISCLOSURES: { key: keyof AckState; body: React.ReactNode }[] = [
     key: 'termsAccepted',
     body: (
       <>
-        I agree to the IronForge <span className="font-medium text-amber-500">Terms of Service</span> and{' '}
-        <span className="font-medium text-amber-500">Privacy Policy</span>.
+        {/* Real links. These were styled-but-inert spans, so a customer was asked to
+            accept two documents the page gave them no way to open. New tab, because
+            navigating away mid-consent loses the other two acknowledgements. */}
+        I agree to the IronForge{' '}
+        <a href="/terms" target="_blank" rel="noopener noreferrer"
+          className="font-medium text-amber-500 underline underline-offset-2 hover:text-amber-400">
+          Terms of Service
+        </a>{' '}
+        and{' '}
+        <a href="/privacy" target="_blank" rel="noopener noreferrer"
+          className="font-medium text-amber-500 underline underline-offset-2 hover:text-amber-400">
+          Privacy Policy
+        </a>.
       </>
     ),
   },

@@ -1,14 +1,21 @@
 import { WalletIcon, CoinsIcon, CalendarCashIcon, TrendIcon, ChartCircleIcon, CheckCircleIcon } from './icons'
 
 /* Illustrative hero dashboard preview (desktop only per the handoff spec — the
- * mobile IA drops it entirely). All figures are the approved static copy from
- * the rendering, not live data. */
+ * mobile IA drops it entirely). It shows the SHAPE of the product only. */
+
+/* NO INVENTED FIGURES. These tiles used to read "$26,384.12" and "+18.74%" —
+ * the same fabricated numbers /how-it-works was corrected to drop. They were the
+ * first performance figures a prospect saw and no account ever produced them; an
+ * "Example" badge does not make an invented return honest. The layout is the
+ * product illustration so it stays, the numbers are placeholders, and the real
+ * record lives on /track-record (built from closed trades). */
+const PLACEHOLDER = '—'
 
 const WEALTH_TILES = [
-  { icon: WalletIcon, label: 'Portfolio Value', value: '$26,384.12', sub: ' ', green: false },
-  { icon: CoinsIcon, label: 'Weekly Income', value: '$214.36', sub: 'This Week', green: false },
-  { icon: CalendarCashIcon, label: 'Monthly Income', value: '$842.50', sub: 'This Month', green: false },
-  { icon: TrendIcon, label: 'Lifetime Return', value: '+18.74%', sub: 'All Time', green: true },
+  { icon: WalletIcon, label: 'Portfolio Value', value: PLACEHOLDER, sub: ' ', green: false },
+  { icon: CoinsIcon, label: 'Weekly Income', value: PLACEHOLDER, sub: 'This Week', green: false },
+  { icon: CalendarCashIcon, label: 'Monthly Income', value: PLACEHOLDER, sub: 'This Month', green: false },
+  { icon: TrendIcon, label: 'Lifetime Return', value: PLACEHOLDER, sub: 'All Time', green: false },
 ]
 
 export const DAILY_BRIEF_ITEMS = [
@@ -16,7 +23,8 @@ export const DAILY_BRIEF_ITEMS = [
   <>Market conditions are favorable for your strategy.</>,
   <>IronForge executed 2 trades yesterday.</>,
   <>
-    Next execution window: <span className="text-[#FD5301]">Tomorrow 9:30 AM ET</span>
+    {/* Platform runs on Central Time everywhere else — ET here was drift. */}
+    Next execution window: <span className="text-[#FD5301]">Tomorrow 8:30 AM CT</span>
   </>,
 ]
 
@@ -36,10 +44,10 @@ export function DailyBriefList({ compact = false }: { compact?: boolean }) {
 export default function DashboardPreview() {
   return (
     <div className="relative rounded-2xl border border-white/10 bg-[#0A0B0C] p-3 shadow-2xl shadow-black/60">
-      {/* Figures are illustrative static copy, not a live account — label it so a
-          first-time visitor never reads the sample numbers as real. */}
+      {/* Interface illustration, not an account. The badge says so explicitly now
+          that the invented figures are gone — real numbers live on /track-record. */}
       <span className="absolute right-3 top-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
-        Example
+        Example layout · not performance data
       </span>
       {/* Top strip: agent status / account value / P&L / outlook */}
       <div className="grid grid-cols-4 divide-x divide-white/10 rounded-xl border border-white/10 bg-[#0C0D0E]">
@@ -56,13 +64,13 @@ export default function DashboardPreview() {
         </div>
         <div className="p-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Account Value</div>
-          <div className="mt-1.5 text-lg font-bold text-white">$26,384.12</div>
+          <div className="mt-1.5 text-lg font-bold text-white">{PLACEHOLDER}</div>
           <div className="mt-1 text-[10px] text-gray-500">All Accounts</div>
         </div>
         <div className="p-3.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Today&apos;s P&amp;L</div>
-          <div className="mt-1.5 text-lg font-bold text-[#63C132]">+$214.36</div>
-          <div className="text-[11px] font-semibold text-[#63C132]">(+0.82%)</div>
+          <div className="mt-1.5 text-lg font-bold text-white">{PLACEHOLDER}</div>
+          <div className="text-[11px] font-semibold text-gray-500">{PLACEHOLDER}</div>
           <div className="mt-1 text-[10px] text-gray-500">Since market open</div>
         </div>
         <div className="p-3.5">

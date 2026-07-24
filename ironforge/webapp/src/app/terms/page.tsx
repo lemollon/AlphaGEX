@@ -1,4 +1,5 @@
 import LegalPage, { LegalSection } from '@/components/LegalPage'
+import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
 
 export const metadata = {
   title: 'Terms of Service — IronForge',
@@ -63,9 +64,14 @@ export default function TermsPage() {
 
       <LegalSection heading="Subscriptions, trials, and billing">
         <p>
-          Paid plans are billed monthly through Stripe. Forge Community is billed at $10 per month upon
-          activation. Forge Automate includes a 5 trading-day free trial; unless you cancel before the
-          trial ends, it converts to $50 per month. You authorize us to charge your selected payment
+          {/* Prices read from MARKETING_TIERS so the terms can never quote a number the
+              site or Stripe no longer charges. This paragraph said Community $10 +
+              "Forge Automate" $50 while /pricing said $15 / Starter / Pro. */}
+          Paid plans are billed monthly through Stripe. {MARKETING_TIERS.community.name} is billed at $
+          {MARKETING_TIERS.community.priceMonthly} per month upon activation. {MARKETING_TIERS.starter.name} (one
+          bot, ${MARKETING_TIERS.starter.priceMonthly} per month) and {MARKETING_TIERS.pro.name} (two bots, $
+          {MARKETING_TIERS.pro.priceMonthly} per month) each include a {TRIAL_DAYS} trading-day free trial; unless
+          you cancel before the trial ends, the plan converts to its monthly price. You authorize us to charge your selected payment
           method on a recurring basis until you cancel. You may cancel at any time, effective at the end
           of the current billing period; except where required by law, payments are non-refundable.
         </p>

@@ -5,6 +5,7 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary } from '@/lib/live/types'
 import type { HomeData } from '@/lib/live/home'
+import { LIVE_BOT_LABEL } from '@/lib/live/bots'
 import CustomerShell from '@/components/customer/CustomerShell'
 import EmptyState from './EmptyState'
 
@@ -142,7 +143,21 @@ function WealthSnapshot({ summary, home }: { summary: LiveSummary | undefined; h
 
 function MembershipCard({ summary }: { summary: LiveSummary | undefined }) {
   const membership = summary?.membership
-  const features = ['Spark Agent', 'Automated Execution', 'Risk Management', 'Community Access']
+  // These four rows used to be hardcoded "Active" for every viewer — including a
+  // customer with no subscription at all. The plan card now carries real billing
+  // state (see lib/live/membership.ts), so the feature rows follow it instead of
+  // asserting entitlements nobody had checked.
+  const badge = membership?.badge ?? null
+  const entitled = badge != null && badge !== 'No plan' && badge !== 'Inactive'
+  const agentLabel = summary?.viewer?.allowedBots?.length
+    ? summary.viewer.allowedBots.map((b) => (LIVE_BOT_LABEL as Record<string, string>)[b] ?? b).join(' + ')
+    : 'Trading Agent'
+  const features: Array<{ label: string; on: boolean }> = [
+    { label: `${agentLabel} Agent`, on: (summary?.viewer?.allowedBots?.length ?? 0) > 0 },
+    { label: 'Automated Execution', on: entitled && !(summary?.state?.paused ?? false) },
+    { label: 'Risk Management', on: entitled },
+    { label: 'Community Access', on: true },
+  ]
   return (
     <div className="rounded-xl border border-forge-border bg-forge-card p-5">
       <div className="text-xs font-semibold uppercase tracking-wider text-white">Your Membership</div>
@@ -158,10 +173,12 @@ function MembershipCard({ summary }: { summary: LiveSummary | undefined }) {
       </div>
       <div className="mt-4 space-y-2.5 border-t border-forge-border pt-4">
         {features.map((f) => (
-          <div key={f} className="flex items-center gap-2.5">
+          <div key={f.label} className="flex items-center gap-2.5">
             <CheckIcon />
-            <span className="text-sm text-gray-200">{f}</span>
-            <span className="ml-auto text-xs text-emerald-500">Active</span>
+            <span className={`text-sm ${f.on ? 'text-gray-200' : 'text-gray-500'}`}>{f.label}</span>
+            <span className={`ml-auto text-xs ${f.on ? 'text-emerald-500' : 'text-gray-500'}`}>
+              {f.on ? 'Active' : 'Inactive'}
+            </span>
           </div>
         ))}
       </div>

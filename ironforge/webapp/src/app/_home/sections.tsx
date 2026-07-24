@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { IFMark } from '@/components/Brand'
+import { MARKETING_TIERS } from '@/lib/billing/plans'
 import DashboardPreview, { DailyBriefList } from './DashboardPreview'
 import {
   ShieldIcon,
@@ -144,7 +145,7 @@ export function MembershipSection() {
 
           <div className="mt-6 flex items-center justify-between gap-4 border-t border-white/10 pt-5">
             <div className="text-white">
-              <span className="text-[30px] font-extrabold">$10</span>
+              <span className="text-[30px] font-extrabold">${MARKETING_TIERS.community.priceMonthly}</span>
               <span className="ml-1 text-sm text-gray-400">/month</span>
             </div>
             <Link
@@ -156,7 +157,8 @@ export function MembershipSection() {
           </div>
         </div>
 
-        {/* Forge Automate */}
+        {/* Forge Starter — same tier vocabulary as /pricing. This card used to be
+            "Forge Automate", a name that existed nowhere else on the site. */}
         <div className="relative flex flex-col rounded-2xl border border-[#FD5301] bg-[#0A0B0C] p-6 md:p-7">
           <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#4C7A22] bg-[#1E3B14] px-4 py-1 text-[11px] font-bold tracking-wide text-[#8FD14F]">
             5 TRADING DAY FREE TRIAL
@@ -169,7 +171,7 @@ export function MembershipSection() {
             </div>
             <div>
               <h3 className="text-[22px] font-bold text-white">
-                Forge <span className="text-[#FD5301]">Automate</span>
+                Forge <span className="text-[#FD5301]">Starter</span>
               </h3>
               <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
             </div>
@@ -182,7 +184,7 @@ export function MembershipSection() {
           <div className="mt-6 border-t border-white/10 pt-5">
             <div className="flex items-center justify-between gap-4">
               <div className="text-white">
-                <span className="text-[30px] font-extrabold">$50</span>
+                <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
                 <span className="ml-1 text-sm text-gray-400">/month</span>
               </div>
               <Link
@@ -294,8 +296,11 @@ function DesktopFeatureCards() {
       <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-5">
         <div className="flex-1 rounded-xl border border-white/10 bg-[#0C0D0E] p-4">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-300">Lifetime Return</div>
-          <div className="mt-2 text-xl font-bold text-[#63C132]">+18.74%</div>
-          <div className="text-[10px] text-gray-500">All Time</div>
+          {/* Was a hardcoded "+18.74%" — an invented return, and the first number a
+              prospect saw. The card illustrates the dashboard; the real figures are
+              on /track-record, built from closed trades. */}
+          <div className="mt-2 text-xl font-bold text-white">&mdash;</div>
+          <div className="text-[10px] text-gray-500">See /track-record</div>
           <div className="mt-2 flex gap-2">
             <div className="flex flex-col justify-between py-1 text-right text-[8px] text-gray-500">
               <span>20%</span>

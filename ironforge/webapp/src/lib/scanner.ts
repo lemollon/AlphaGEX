@@ -279,32 +279,13 @@ function cfg(bot: BotDef): BotConfig {
   return _botConfig[bot.name] ?? DEFAULT_CONFIG[bot.name]
 }
 
-/**
- * Look up the allocated capital for this bot from ironforge_accounts.
- * Uses the primary sandbox account (from BOT_ACCOUNTS hardcoded config,
- * typically 'User') to determine starting capital for the shared paper account.
- * Falls back to DEFAULT_CONFIG starting_capital if no accounts found.
- */
-async function getStartingCapitalForBot(botName: string): Promise<number> {
-  try {
-    // Only fetch Tradier balance for bots that actually have sandbox accounts (FLAME).
-    // Paper-only bots (SPARK, INFERNO) have no accounts — use configured default.
-    const primaryAccounts = getAccountsForBot(botName)
-    if (primaryAccounts.length === 0) {
-      // Paper-only bot — no Tradier account, use config starting_capital
-      return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
-    }
-    const primaryPerson = primaryAccounts[0]
-    const allocated = await getAllocatedCapitalForAccount(primaryPerson, 'sandbox')
-    if (allocated > 0) {
-      console.log(
-        `[scanner] ${botName.toUpperCase()} capital from sandbox account (${primaryPerson}): $${allocated.toLocaleString()}`,
-      )
-      return allocated
-    }
-  } catch { /* fallback */ }
-  return DEFAULT_CONFIG[botName]?.starting_capital ?? 10000
-}
+/* getStartingCapitalForBot() lived here. It resolved a paper bot's starting
+ * capital from the live Tradier SANDBOX balance (capital_pct × total_equity) and
+ * was the mechanism that let a co-tenanted broker account define a paper ledger's
+ * base. Its own comment claimed "paper-only bots (SPARK, INFERNO) have no
+ * accounts", which stopped being true once SPARK was mapped to 'User' in
+ * BOT_ACCOUNTS — so SPARK silently started sizing off someone else's balance.
+ * Removed with its only call site; see the note in loadConfigOverrides(). */
 
 /**
  * Read {bot}_config tables from PostgreSQL and merge into _botConfig.
@@ -370,18 +351,26 @@ async function loadConfigOverrides(): Promise<void> {
         if (!isNaN(t) && t >= 0) merged.trailing_retrace_dollars = t
       }
 
-      // Override starting_capital from ironforge_accounts (capital_pct × real balance)
-      // Only for bots with Tradier accounts (FLAME). Paper-only bots (SPARK, INFERNO)
-      // use the starting_capital from their DB config table — not Tradier.
-      const botAccounts = getAccountsForBot(bot.name)
-      if (botAccounts.length > 0) {
-        try {
-          const allocatedCap = await getStartingCapitalForBot(bot.name)
-          if (allocatedCap > 0) {
-            merged.starting_capital = allocatedCap
-          }
-        } catch { /* keep config default */ }
-      }
+      // PAPER capital is a KNOB, never a broker reading.
+      //
+      // This block used to overwrite merged.starting_capital with
+      // capital_pct × the Tradier SANDBOX account's live total_equity. Those
+      // sandbox accounts are co-tenanted by unrelated systems, so a paper bot's
+      // capital base — and therefore its position sizing, its return %, its
+      // high-water mark and its drawdown — moved with other people's activity.
+      //
+      // Observed 2026-07-24: spark's sandbox paper_account carried
+      // starting_capital $41,995.33, exactly the BlackSmitH sandbox account's
+      // total_equity at that moment, producing a "+48.68%" return on a base that
+      // had never been $41,995 for a single trade, plus a $75,087 max drawdown on
+      // a nominally $42k account. This is the same defect diagnosed on FLAME on
+      // 2026-07-22 and fixed there by #2563/#2564; SPARK was never treated.
+      //
+      // The sandbox seed now comes from {bot}_config.starting_capital (or the
+      // DEFAULT_CONFIG value), which syncPaperAccountCapital() writes down to the
+      // paper_account row. PRODUCTION accounts are unaffected and still track the
+      // real broker balance — see the production branch of that function, which
+      // reads the allocated-capital helper with the 'production' account type.
 
       _botConfig[bot.name] = merged
       console.log(

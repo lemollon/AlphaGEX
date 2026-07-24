@@ -85,13 +85,10 @@ export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
             })}
           </div>
         ) : null}
-        <div className="relative">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-            strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5 text-gray-400">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
-          </svg>
-          <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-spark" />
-        </div>
+        {/* The notification bell lived here with a permanently-lit unread dot and no
+            handler — it advertised alerts that were never delivered and could not be
+            read. Removed rather than faked; if it comes back it wires to the existing
+            /api/vol-alerts feed. */}
         <div className="relative" ref={menuRef}>
           <button
             type="button"
@@ -132,6 +129,10 @@ export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
               <a href="/account/trades" role="menuitem"
                 className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
                 Trade History
+              </a>
+              <a href="/change-password" role="menuitem"
+                className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
+                Change password
               </a>
               <button type="button" role="menuitem" onClick={handleLogout}
                 className="block w-full border-t border-forge-border px-4 py-2.5 text-left text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">

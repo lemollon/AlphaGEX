@@ -116,6 +116,10 @@ export interface LiveViewer {
   /** Subset of allowedBots currently running on simulated money. Drives the
    *  "Paper" badge on the strategy pills/rail without the client needing env. */
   paperBots: LiveBot[]
+  /** users.id of the signed-in customer, for billing/entitlement lookups.
+   *  null for operators, open-review mode and anonymous viewers. Never sent to
+   *  the client as an identifier to act on — it only sources the plan card. */
+  customerId: string | null
 }
 
 /**
@@ -141,6 +145,7 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   let isOperator = false
   // bot -> account owner, from ironforge_customer_bots.person. Empty for operators.
   const personByBot = new Map<string, string>()
+  let customerId: string | null = null
 
   if (isOpenMode()) {
     allowed = [...LIVE_BOTS]
@@ -154,6 +159,7 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
       } else {
         const customer = await getCustomerSession()
         if (customer.customerId) {
+          customerId = customer.customerId
           const rows = await dbQuery<{ bot: string; person: string | null }>(
             `SELECT bot, person FROM ironforge_customer_bots WHERE customer_id = $1`,
             [customer.customerId],
@@ -168,6 +174,7 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
       // Fail closed: no account visibility on any error.
       allowed = []
       isOperator = false
+      customerId = null
     }
   }
 
@@ -178,5 +185,5 @@ export async function resolveLiveViewer(req: NextRequest): Promise<LiveViewer> {
   const person = isOperator || bot == null ? null : (personByBot.get(bot) ?? null)
   const persons: Record<string, string | null> = {}
   for (const b of allowed) persons[b] = isOperator ? null : (personByBot.get(b) ?? null)
-  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed), isOperator, person, persons }
+  return { bot, allowedBots: allowed, paperBots: resolvePaperBots(allowed), isOperator, person, persons, customerId }
 }

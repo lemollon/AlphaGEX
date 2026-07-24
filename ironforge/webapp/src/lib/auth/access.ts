@@ -50,6 +50,10 @@ const CUSTOMER_EXACT = new Set<string>([
   '/performance',
   '/community',
   '/account/trades',
+  // Signed-in password change. Omitting it sent a customer who clicked
+  // "Change password" to /ops/login — the OPERATOR door, which they can
+  // never satisfy. Same class of bug as /home and /live before #2560.
+  '/change-password',
   // The Live page's Pause control. Self-guards ownership in-route; this only
   // establishes that an anonymous caller can never reach it at all.
   '/api/spark/production-pause',

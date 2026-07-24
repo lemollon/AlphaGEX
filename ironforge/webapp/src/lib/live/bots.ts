@@ -58,10 +58,14 @@ export const LIVE_BOT_ACCENT: Record<LiveBot, 'flame' | 'spark'> = {
   flame: 'flame',
 }
 
-/** Strategy one-liner shown under the hero headline. */
+/** Strategy one-liner shown under the hero headline.
+ *  Must describe the strategy the bot ACTUALLY runs: spark2 reports
+ *  "0DTE Paper Iron Condor" (dte 0) from /api/spark2/status, but this said
+ *  "Next-day SPY spreads" — SPARK's 1DTE line — so the customer page made a
+ *  false statement about what Spark paper trades. */
 export const LIVE_BOT_TAGLINE: Record<LiveBot, string> = {
   spark: 'Next-day SPY spreads',
-  spark2: 'Next-day SPY spreads',
+  spark2: 'Same-day SPY iron condors',
   flame: 'Two-day SPY put credit spreads',
 }
 

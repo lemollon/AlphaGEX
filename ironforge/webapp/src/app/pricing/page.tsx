@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
+import { MARKETING_TIERS } from '@/lib/billing/plans'
 
 export const metadata = {
   title: 'Pricing — IronForge',
@@ -101,7 +102,7 @@ const TIERS: Tier[] = [
   {
     name: 'FORGE COMMUNITY',
     tagline: 'LEARN. CONNECT. IMPROVE.',
-    price: 15,
+    price: MARKETING_TIERS.community.priceMonthly,
     glyph: <CommunityGlyph />,
     cta: 'JOIN THE COMMUNITY',
     features: [
@@ -116,7 +117,7 @@ const TIERS: Tier[] = [
   {
     name: 'FORGE STARTER',
     tagline: 'DEPLOY YOUR FIRST AUTOMATED STRATEGY.',
-    price: 50,
+    price: MARKETING_TIERS.starter.priceMonthly,
     glyph: <DeployGlyph />,
     cta: 'GET STARTED',
     highlight: true,
@@ -126,10 +127,10 @@ const TIERS: Tier[] = [
   {
     name: 'FORGE PRO',
     tagline: 'RUN MULTIPLE STRATEGIES WITH MAXIMUM FLEXIBILITY.',
-    // $75 for two bots — matches BOTH_PLAN.priceMonthly in lib/billing/plans.ts,
-    // which is what checkout actually charges. The page had 100 hardcoded, so it
+    // $75 for two bots — reads BOTH_PLAN.priceMonthly via MARKETING_TIERS, which
+    // is what checkout actually charges. The page had 100 hardcoded, so it
     // contradicted the real billed price (corrected 2026-07-23 per operator).
-    price: 75,
+    price: MARKETING_TIERS.pro.priceMonthly,
     glyph: <GridGlyph />,
     cta: 'GO PRO',
     plusLabel: 'Everything in Community, plus:',
@@ -137,8 +138,17 @@ const TIERS: Tier[] = [
   },
 ]
 
+// The founding perk is TWO bots at the one-bot price — i.e. Forge Pro for what
+// Starter costs. Stating "$50/month for life" alone read as no discount at all,
+// because $50 IS the Starter list price; the saving is the tier, not the number.
+const FOUNDER_SAVING = MARKETING_TIERS.pro.priceMonthly - MARKETING_TIERS.starter.priceMonthly
+
 const FOUNDER_ITEMS = [
-  { glyph: <LockGlyph />, title: '$50/month for life', body: 'Locked while your subscription stays active' },
+  {
+    glyph: <LockGlyph />,
+    title: `Forge Pro for $${MARKETING_TIERS.starter.priceMonthly}/month`,
+    body: `Save $${FOUNDER_SAVING}/month, locked while your subscription stays active`,
+  },
   { glyph: <BotGlyph />, title: '2 Active Bots', body: 'Forge Pro value at the Starter price' },
   { glyph: <StarGlyph />, title: 'Priority Access', body: 'To new features & roadmap' },
   { glyph: <MedalGlyph />, title: 'Limited to First 100', body: 'Use code FORGE50 at signup' },
