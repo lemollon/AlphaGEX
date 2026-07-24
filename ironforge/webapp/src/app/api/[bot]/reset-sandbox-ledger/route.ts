@@ -67,8 +67,11 @@ async function inspect(bot: string, dte: string) {
   const snaps = await dbQuery(
     `SELECT COUNT(*) AS n FROM ${botTable(bot, 'equity_snapshots')} WHERE dte_mode = '${escapeSql(dte)}'`,
   )
+  // {bot}_daily_perf has no dte_mode column (keyed by trade_date UNIQUE) and no
+  // account_type — it is the paper bot's daily aggregate — so it is cleared whole,
+  // not filtered. Production daily perf lives on a separate path.
   const daily = await dbQuery(
-    `SELECT COUNT(*) AS n FROM ${botTable(bot, 'daily_perf')} WHERE dte_mode = '${escapeSql(dte)}'`,
+    `SELECT COUNT(*) AS n FROM ${botTable(bot, 'daily_perf')}`,
   )
 
   // The scanner keeps the sandbox seed synced to the config knob; the reset base
@@ -164,7 +167,7 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
       `DELETE FROM ${botTable(bot, 'equity_snapshots')} WHERE dte_mode = '${escapeSql(dte)}'`,
     )
     const daily = await dbExecute(
-      `DELETE FROM ${botTable(bot, 'daily_perf')} WHERE dte_mode = '${escapeSql(dte)}'`,
+      `DELETE FROM ${botTable(bot, 'daily_perf')}`,
     )
 
     // 3. Reset the sandbox paper_account row to a clean start on the config base.
