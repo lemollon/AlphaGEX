@@ -50,8 +50,22 @@ function ctTime(v: unknown): string | null {
   if (isNaN(d.getTime())) return null
   return d.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' })
 }
+/**
+ * Normalise a Postgres date to ISO `YYYY-MM-DD`. The pg driver parses `date` columns into JS Date
+ * objects, and `String(date)` is "Wed May 27 2026 …" — slicing that gave "Wed May 27", which is not
+ * parseable client-side, so the time filter and chronological sort silently broke. Handle both a
+ * Date object (use its local Y/M/D — pg parses a bare date to local midnight) and an ISO string.
+ */
 function ctDate(v: unknown): string {
-  return v ? String(v).slice(0, 10) : ''
+  if (!v) return ''
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return ''
+    const y = v.getFullYear()
+    const m = String(v.getMonth() + 1).padStart(2, '0')
+    const d = String(v.getDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return String(v).slice(0, 10)
 }
 const r2 = (v: number) => Math.round(v * 100) / 100
 
@@ -65,7 +79,7 @@ async function loadBotTrades(bot: LiveBot, person: string | null, paper: boolean
     dbQuery(
       `SELECT position_id, ticker, contracts, total_credit, realized_pnl, close_reason,
               open_time, close_time,
-              (close_time AT TIME ZONE 'America/Chicago')::date AS ct_date
+              to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') AS ct_date
        FROM ${botTable(bot, 'positions')}
        WHERE ${closed}
        ORDER BY close_time DESC
