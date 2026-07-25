@@ -23,7 +23,7 @@ interface Roster {
 }
 
 const DESTINATIONS = [
-  { label: 'Home', next: '/home' },
+  { label: 'Performance', next: '/performance' },
   { label: 'Community', next: '/community' },
   { label: 'Live', next: '/live' },
   { label: 'Trades', next: '/account/trades' },
