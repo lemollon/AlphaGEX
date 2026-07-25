@@ -107,6 +107,11 @@ export default function LiveTradeCard({
                   {pct != null && (
                     <div className={`mt-0.5 text-sm ${pnlPositive ? 'text-emerald-400' : 'text-red-400'}`}>
                       {pct > 0 ? '+' : ''}{pct.toFixed(2)}%
+                      {/* % is measured against the trade's own potential, not buying
+                          power: a gain vs max profit, a loss vs max loss. */}
+                      <span className="ml-1 text-xs font-normal text-gray-500">
+                        of max {pnlPositive ? 'profit' : 'loss'}
+                      </span>
                     </div>
                   )}
                 </div>
