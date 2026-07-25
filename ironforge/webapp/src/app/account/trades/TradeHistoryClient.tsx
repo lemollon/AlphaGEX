@@ -6,7 +6,7 @@ import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveBot } from '@/lib/live/bots'
 import type { HistoryTrade, OutcomeKind } from '@/lib/live/trades-history'
-import LiveSidebar from '../../live/components/LiveSidebar'
+import CustomerShell from '@/components/customer/CustomerShell'
 
 type Resp =
   | { empty?: false; trades: HistoryTrade[]; viewer: { allowedBots: LiveBot[]; paperBots: LiveBot[] } }
@@ -74,10 +74,7 @@ export default function TradeHistoryClient() {
   }, [trades, strategy, range, q])
 
   return (
-    <div className="min-h-screen bg-forge-bg">
-      <LiveSidebar membership={null} bots={allowedBots} paperBots={paperBots} />
-      <div className="lg:pl-60">
-        <div className="mx-auto max-w-[1200px] px-4 py-5">
+    <CustomerShell membership={null} bots={allowedBots} paperBots={paperBots}>
           {/* breadcrumb */}
           <div className="flex items-center gap-2 text-sm">
             <Link href="/live" className="font-semibold text-amber-500 hover:text-amber-400">Live</Link>
@@ -179,8 +176,6 @@ export default function TradeHistoryClient() {
               </p>
             </>
           )}
-        </div>
-      </div>
-    </div>
+    </CustomerShell>
   )
 }

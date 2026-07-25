@@ -8,7 +8,7 @@ import { formatDollarPnl } from '@/lib/format'
 import { BOT_COLORS } from '@/lib/botColors'
 import type { LiveBot } from '@/lib/live/bots'
 import type { PerformanceData } from '@/lib/live/performance'
-import LiveSidebar from '../live/components/LiveSidebar'
+import CustomerShell from '@/components/customer/CustomerShell'
 import SparkMascot from '../live/components/SparkMascot'
 
 type PerfResponse =
@@ -38,10 +38,7 @@ export default function PerformanceClient() {
   const paperBots = (data?.viewer?.paperBots ?? []) as LiveBot[]
 
   return (
-    <div className="min-h-screen bg-forge-bg">
-      <LiveSidebar membership={null} bots={allowedBots} paperBots={paperBots} />
-      <div className="lg:pl-60">
-        <div className="mx-auto max-w-[1200px] px-4 py-5">
+    <CustomerShell membership={null} bots={allowedBots} paperBots={paperBots}>
           <h1 className="text-2xl font-bold text-white">Performance</h1>
           <p className="mt-1 text-sm text-gray-400">Your all-time results across every strategy you own.</p>
 
@@ -61,9 +58,7 @@ export default function PerformanceClient() {
           ) : (
             <PerformanceBody data={data as PerformanceData} />
           )}
-        </div>
-      </div>
-    </div>
+    </CustomerShell>
   )
 }
 
