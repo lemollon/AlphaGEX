@@ -59,6 +59,22 @@ export const BOTH_PLAN = {
   priceMonthly: 75,
 }
 
+/** The other customer bot — spark and flame are the only two, so a "second bot" is the complement. */
+export function otherBotSlug(slug: BotSlug): BotSlug {
+  return slug === 'spark' ? 'flame' : 'spark'
+}
+
+/**
+ * What the SECOND bot adds per month. The bundle is one price ($75) covering both bots, so opening
+ * a second bot is not another full $50 — it lifts a single-bot subscription to the bundle. The
+ * increment is defined off the real prices so it can never drift from what Stripe bills:
+ *   $75 (both) − $50 (single) = $25.
+ * Used for the "add your second bot" copy on the Open Account page.
+ */
+export function secondBotIncrement(firstBotSlug: BotSlug): number {
+  return BOTH_PLAN.priceMonthly - BOT_PLANS[firstBotSlug].priceMonthly
+}
+
 /** Free-trial length granted at checkout (matches the trial card in the dashboard). */
 export const TRIAL_DAYS = 5
 

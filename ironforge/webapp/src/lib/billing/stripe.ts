@@ -173,6 +173,42 @@ export async function retrieveCheckoutSession(id: string): Promise<any> {
   return stripeRequest('GET', `/checkout/sessions/${encodeURIComponent(id)}`)
 }
 
+export interface StripeSubscription {
+  id: string
+  status: string
+  current_period_end?: number
+  items: { data: Array<{ id: string; price?: { id?: string; lookup_key?: string | null } }> }
+}
+
+/** Fetches a subscription (with its single line item) so we can swap that item's price. */
+export async function retrieveSubscription(id: string): Promise<StripeSubscription> {
+  return stripeRequest<StripeSubscription>('GET', `/subscriptions/${encodeURIComponent(id)}`)
+}
+
+/**
+ * Upgrades an existing single-bot subscription to the two-bot bundle in place, rather than opening
+ * a second $50 subscription. It swaps the subscription's line item to the bundle price (so the
+ * customer's total becomes the bundle price, not 2×single), prorating the difference, and stamps
+ * `metadata.bots` so the webhook grants BOTH bot entitlements from the one subscription.
+ *
+ * Trials are preserved: if the first bot is still trialing, Stripe keeps the trial and bills the
+ * bundle price when it ends. No new card entry is needed — the payment method is already on file.
+ */
+export async function upgradeSubscriptionToBundle(opts: {
+  subscriptionId: string
+  itemId: string
+  bundlePriceId: string
+  userId: string
+  bots: string // CSV, e.g. "spark,flame"
+}): Promise<StripeSubscription> {
+  return stripeRequest<StripeSubscription>('POST', `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`, {
+    items: [{ id: opts.itemId, price: opts.bundlePriceId }],
+    proration_behavior: 'create_prorations',
+    // Only the keys sent are changed; metadata.bot from creation is preserved.
+    metadata: { ironforge_user_id: opts.userId, bots: opts.bots },
+  })
+}
+
 /**
  * Verifies a Stripe webhook signature. Header format: `t=<ts>,v1=<sig>,...`. We recompute
  * HMAC-SHA256 of `${t}.${rawBody}` with the endpoint secret and constant-time compare against
