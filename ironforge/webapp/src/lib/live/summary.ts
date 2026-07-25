@@ -302,6 +302,24 @@ export async function getLiveSummary(
   }
 }
 
+/**
+ * P&L as a percentage of the trade's own potential, NOT of buying power.
+ *
+ * A gain is shown against MAX PROFIT (the credit collected) — "you've captured
+ * X% of what this trade can make." A loss is shown against MAX LOSS (the
+ * collateral at risk) — "you're X% of the way to the worst case." Both are
+ * signed and each is naturally bounded near ±100%, so a winner reads as real
+ * profit capture (the old %-of-risk understated it, e.g. +2.10%) while a loser
+ * can't blow up to −770% the way a flat %-of-credit did (2026-07-17).
+ *
+ * Returns null when the relevant basis is unavailable/≤0.
+ */
+function profitBasisPct(pnl: number, maxProfitDollars: number, maxLossDollars: number): number | null {
+  const basis = pnl >= 0 ? maxProfitDollars : maxLossDollars
+  if (!(basis > 0)) return null
+  return Math.round((pnl / basis) * 10000) / 100
+}
+
 export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null = null): Promise<LiveTrade> {
   const dte = dteMode(BOT)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
@@ -356,6 +374,7 @@ export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null
     const todaysClosed = await dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) as pnl,
               COALESCE(SUM(collateral_required), 0) as risk_dollars,
+              COALESCE(SUM(contracts * total_credit * 100), 0) as max_profit_dollars,
               COUNT(*) as cnt
        FROM ${botTable(BOT, 'positions')}
        WHERE status IN ('closed', 'expired')
@@ -365,9 +384,10 @@ export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null
     )
     const closedCount = int(todaysClosed[0]?.cnt)
     const pnl = Math.round(num(todaysClosed[0]?.pnl) * 100) / 100
-    // % of the capital that was at risk (collateral), not % of the credit — a $27-credit
-    // IC that loses $208 is −44% of its $473 risk, not "−770%" (the 2026-07-17 readout).
+    // % of the trade's own potential: gain vs MAX PROFIT (credit), loss vs MAX
+    // LOSS (collateral). collateral_required is the stored max loss per position.
     const riskDollars = num(todaysClosed[0]?.risk_dollars)
+    const maxProfitDollars = num(todaysClosed[0]?.max_profit_dollars)
     return {
       active: false,
       opened_at: null,
@@ -380,7 +400,7 @@ export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null
       today_result: closedCount > 0
         ? {
             pnl,
-            pct: riskDollars > 0 ? Math.round((pnl / riskDollars) * 10000) / 100 : null,
+            pct: profitBasisPct(pnl, maxProfitDollars, riskDollars),
           }
         : null,
     }
@@ -413,11 +433,12 @@ export async function getLiveTrade(BOT: LiveBot = 'spark', person: string | null
         const spreadWidth = num(pos.spread_width) || (num(pos.put_short_strike) - num(pos.put_long_strike))
         const mtmLast = mtm.cost_to_close_last
         unrealizedPnl = calculateIcUnrealizedPnl(entryCredit, mtmLast, contracts, spreadWidth)
-        // % of capital at risk (width − credit), matching today_result.pct — the old
-        // %-of-credit read exploded on losers (a $27-credit IC down $208 showed −770%).
+        // % of the trade's own potential: gain vs MAX PROFIT (credit collected),
+        // loss vs MAX LOSS (width − credit collateral). Matches today_result.pct.
+        const maxProfitDollars = contracts * entryCredit * 100
         const riskDollars = contracts * (spreadWidth - entryCredit) * 100
-        unrealizedPnlPct = riskDollars > 0 && unrealizedPnl != null
-          ? Math.round((unrealizedPnl / riskDollars) * 10000) / 100
+        unrealizedPnlPct = unrealizedPnl != null
+          ? profitBasisPct(unrealizedPnl, maxProfitDollars, riskDollars)
           : null
         pnlSource = 'live'
       }
