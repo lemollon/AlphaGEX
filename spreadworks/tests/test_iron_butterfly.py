@@ -34,9 +34,9 @@ def test_uses_pin_strike_when_no_magnets(fake_chain_0dte):
 
 
 def test_pins_between_two_large_magnets(fake_chain_0dte):
-    # Two comparably-large magnets at 497 and 501 -> price pins BETWEEN them,
-    # at the gamma-weighted midpoint (499). This must WIN over the single
-    # pin_strike (502) and over spot (500), proving the multi-magnet rule.
+    # Two comparably-large magnets BRACKET spot (497 below, 501 above) -> price
+    # pins BETWEEN them, at the gamma-weighted midpoint (499). This must WIN
+    # over the single pin_strike (502) and over spot (500).
     chain = {
         **fake_chain_0dte,
         "gex": {
@@ -96,6 +96,29 @@ def test_single_dominant_magnet_centers_on_top_magnet(fake_chain_0dte):
     )
     assert sig is not None
     assert sig.body_strike == 503  # dominant magnet, not pin_strike 500
+
+
+def test_same_side_magnets_do_not_pin_between(fake_chain_0dte):
+    # Both comparably-large magnets sit on the SAME side of spot (503 and 505,
+    # above 500). There is no corridor to pin inside, so the body must center on
+    # the DOMINANT magnet (503), NOT the midpoint of the two (504). This locks
+    # the tightened "between" rule: a bracketing pair (one above + one below
+    # spot) is required for the between-walls midpoint.
+    chain = {
+        **fake_chain_0dte,
+        "gex": {
+            "pin_strike": 500.0,
+            "magnets": [
+                {"strike": 503.0, "gamma": 1.2e9},  # heavier -> dominant
+                {"strike": 505.0, "gamma": 1.0e9},
+            ],
+        },
+    }
+    sig = build_iron_butterfly_signal(
+        chain=chain, config=_config(), equity=10000.0
+    )
+    assert sig is not None
+    assert sig.body_strike == 503  # dominant magnet, not midpoint 504
 
 
 def test_falls_back_to_spot_when_no_pin(fake_chain_0dte):
