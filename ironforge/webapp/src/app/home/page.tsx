@@ -1,13 +1,13 @@
-import type { Metadata } from 'next'
-import HomeClient from './HomeClient'
+import { redirect } from 'next/navigation'
 
 export const dynamic = 'force-dynamic'
 
-export const metadata: Metadata = {
-  title: 'Home — IronForge',
-  description: 'Your IronForge dashboard: agent status, wealth snapshot, daily brief, and recent trades.',
-}
-
+/**
+ * The Home dashboard was merged into Performance (operator, 2026-07-27): its
+ * weekly/monthly income KPIs already live on /performance, so a standalone Home
+ * page was redundant. This route now redirects there, so old links, bookmarks
+ * and `?next=/home` impersonation targets keep working.
+ */
 export default function HomePage() {
-  return <HomeClient />
+  redirect('/performance')
 }

@@ -74,7 +74,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
           <AdminBotsMenu />
           {isCustomer ? (
             <Link
-              href="/home"
+              href="/performance"
               className="rounded-lg bg-[#FD5301] px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#FF6A1F]"
             >
               My Dashboard
@@ -97,7 +97,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
         {/* Mobile: solid CTA + hamburger */}
         <div className="flex items-center gap-3 md:hidden">
           <Link
-            href={isCustomer ? '/home' : '/signup'}
+            href={isCustomer ? '/performance' : '/signup'}
             className="rounded-lg bg-[#FD5301] px-3.5 py-2 text-sm font-semibold text-white"
           >
             {isCustomer ? 'My Dashboard' : 'Create Account'}
@@ -134,7 +134,7 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
             ))}
             <AdminBotsMobileLinks onNavigate={() => setOpen(false)} />
             {isCustomer ? (
-              <Link href="/home" onClick={() => setOpen(false)} className="text-sm text-gray-300">
+              <Link href="/performance" onClick={() => setOpen(false)} className="text-sm text-gray-300">
                 My Dashboard
               </Link>
             ) : (

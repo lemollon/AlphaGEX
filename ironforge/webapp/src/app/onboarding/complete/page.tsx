@@ -23,7 +23,7 @@ export default async function OnboardingCompletePage() {
           email you the moment they&apos;re ready.
         </p>
         <p className="mt-6 text-xs text-gray-500">
-          <Link href="/home" className="font-semibold text-amber-500 hover:text-amber-400">Go to your dashboard</Link>
+          <Link href="/performance" className="font-semibold text-amber-500 hover:text-amber-400">Go to your dashboard</Link>
         </p>
       </div>
     </div>

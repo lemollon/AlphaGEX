@@ -70,19 +70,19 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
   // Active state follows the real route (usePathname) rather than a hardcoded
   // flag, so Live / Performance / Home each highlight on their own page — the
   // rail no longer shows "Live" active everywhere it's rendered.
+  // Aligned with CustomerShell's nav (operator, 2026-07-27): the standalone Home
+  // dashboard was merged into Performance, so the "Dashboard → /home" entry is
+  // gone. Order matches the rest of the app: Performance · Live · Community ·
+  // Trade History.
   const mainItems: NavItem[] = [
-    // "Dashboard" not "Home" — the wordmark above already goes to the marketing
-    // home (/), so a second "Home" pointing at /home read as a collision.
-    // Performance ahead of the Home dashboard (operator, 2026-07-23).
     { label: 'Performance', href: '/performance', icon: <Icon d={ICONS.performance} /> },
-    { label: 'Dashboard', href: '/home', icon: <Icon d={ICONS.home} /> },
     { label: 'Live', href: '/live', icon: <Icon d={ICONS.live} /> },
     { label: 'Community', href: '/community', icon: <Icon d={ICONS.community} /> },
+    { label: 'Trade History', href: '/account/trades', icon: <Icon d={ICONS.history} /> },
   ]
   const secondaryItems: NavItem[] = [
-    { label: 'My Membership', href: '/pricing', icon: <Icon d={ICONS.membership} /> },
-    { label: 'Trade History', href: '/account/trades', icon: <Icon d={ICONS.history} /> },
-    { label: 'Settings', href: null, icon: <Icon d={ICONS.settings} />, disabled: true },
+    { label: 'Manage Membership', href: '/pricing', icon: <Icon d={ICONS.membership} /> },
+    { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: <Icon d={ICONS.settings} /> },
     { label: 'Help', href: '/contact', icon: <Icon d={ICONS.help} /> },
   ]
 

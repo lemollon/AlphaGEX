@@ -23,23 +23,22 @@ interface CustomerMe {
   customer?: { email?: string }
 }
 
+// Primary nav (operator, 2026-07-27): Performance is the customer's main
+// dashboard now that the standalone Home page was merged into it. Trade History
+// is promoted here per the approved layout. Order: Performance · Live ·
+// Community · Trade History.
 const NAV_MAIN = [
-  { label: 'Home', href: '/home', icon: 'M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z' },
-  { label: 'Live', href: '/live', icon: 'M3 12h4l3-8 4 16 3-8h4' },
-  // /performance — the CUSTOMER's own combined history. This pointed at /spark (the
-  // operator bot console), which filterNavBySurface strips on the customer surface,
-  // leaving /performance with no route into it at all.
   { label: 'Performance', href: '/performance', icon: 'M4 20V10m6 10V4m6 16v-7m-13 7h15' },
+  { label: 'Live', href: '/live', icon: 'M3 12h4l3-8 4 16 3-8h4' },
   { label: 'Community', href: '/community', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M11 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0' },
+  { label: 'Trade History', href: '/account/trades', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
 ]
 
+// Account section: membership + brokerage only. "Live Controls" (a link that
+// just went to /live) and the duplicate Trade History were dropped.
 const NAV_SECONDARY = [
   { label: 'Manage Membership', href: '/pricing', icon: 'M12 2l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 14.24l-4.8 2.52.92-5.34L4.24 7.64l5.36-.78z' },
   { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11' },
-  { label: 'Trade History', href: '/account/trades', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
-  // Labelled like an action but it only navigates — the actual Pause control lives
-  // on /live. "Pause Trading" in a nav reads as a kill switch; it is a link.
-  { label: 'Live Controls', href: '/live', icon: 'M10 15V9m4 6V9m7 3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
 ]
 
 function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: string }) {
@@ -55,7 +54,7 @@ function LogoLockup() {
   // Single shared wordmark — was a different mark image (forge-logo-mark.png) + the
   // wrong amber; now identical to every other nav.
   return (
-    <Link href="/home" aria-label="IronForge home">
+    <Link href="/performance" aria-label="IronForge dashboard">
       <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
     </Link>
   )
