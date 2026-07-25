@@ -170,15 +170,18 @@ export default function LiveSidebar({ membership, bots, activeBot, paperBots, on
 
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="flex items-center justify-between border-b border-forge-border bg-forge-bg px-4 py-3 lg:hidden">
-        <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
-        <button onClick={() => setMenuOpen(true)} className="p-1 text-gray-300 transition-colors hover:text-white" aria-label="Open menu">
+      {/* Mobile top bar. Hamburger sits on the LEFT (before the wordmark) to match
+          CustomerShell's mobile bar — otherwise the menu button jumped from left
+          (Community / Open Account) to right (Live / Performance / Trade History)
+          as you moved between pages. */}
+      <div className="flex items-center gap-4 border-b border-forge-border bg-forge-bg px-4 py-3 lg:hidden">
+        <button onClick={() => setMenuOpen(true)} className="-ml-1 p-1 text-gray-300 transition-colors hover:text-white" aria-label="Open menu">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
             strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
+        <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
       </div>
       <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
         membership={membership} planVariant="active" />
