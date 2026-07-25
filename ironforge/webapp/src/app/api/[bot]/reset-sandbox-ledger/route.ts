@@ -190,7 +190,8 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
     //    so buying power stays honest if a trade is currently live.
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
-          SET cumulative_pnl = 0,
+          SET starting_capital = ${startingCapital},
+              cumulative_pnl = 0,
               current_balance = ${newBalance},
               collateral_in_use = ${openCollateral},
               buying_power = ${newBp},
