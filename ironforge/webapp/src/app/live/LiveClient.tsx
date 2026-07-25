@@ -6,8 +6,8 @@ import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import { LIVE_BOTS, LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
 import { accentFor } from './components/accent'
-import LiveSidebar from './components/LiveSidebar'
 import LiveHeader from './components/LiveHeader'
+import CustomerShell from '@/components/customer/CustomerShell'
 import SparkHeroCard from './components/SparkHeroCard'
 import LiveTradeCard from './components/LiveTradeCard'
 import NowTimelineCard from './components/NowTimelineCard'
@@ -91,16 +91,13 @@ export default function LiveClient() {
   }
 
   return (
-    <div className="min-h-screen bg-forge-bg">
-      <LiveSidebar
-        membership={summary?.membership ?? null}
-        bots={(summary?.viewer?.allowedBots ?? []) as LiveBot[]}
-        activeBot={account}
-        paperBots={summary?.viewer?.paperBots ?? []}
-        onSwitch={switchAccount}
-      />
-      <div className="lg:pl-60">
-        <div className="mx-auto max-w-[1200px] px-4 py-5">
+    <CustomerShell
+      membership={summary?.membership ?? null}
+      bots={(summary?.viewer?.allowedBots ?? []) as LiveBot[]}
+      activeBot={account}
+      paperBots={summary?.viewer?.paperBots ?? []}
+      onSwitch={switchAccount}
+    >
           <LiveHeader viewer={summary?.viewer ?? null} onSwitch={switchAccount} />
           {summary?.empty ? (
             /* Non-customer (anonymous / no bot mapped) — this is a conversion
@@ -191,8 +188,6 @@ export default function LiveClient() {
               )}
             </div>
           )}
-        </div>
-      </div>
-    </div>
+    </CustomerShell>
   )
 }

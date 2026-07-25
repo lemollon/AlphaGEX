@@ -3,42 +3,54 @@
 import Link from 'next/link'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
-import useSWR from 'swr'
-import { fetcher } from '@/lib/fetcher'
+import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
+import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 
 /**
- * Shared chrome for the customer Home + Community pages (per the approved
- * dashboard design): full-width top nav (logo, section links, bell, avatar)
- * plus a left rail (plan card, main nav, account nav). Below lg the rail is
- * replaced by a hamburger-triggered slide-out drawer (MobileNavDrawer, also
- * used by the /live page's mobile bar). The /live page keeps its own desktop
- * shell — do not couple the two.
+ * THE single customer app shell — used by every signed-in page (Live, Performance,
+ * Community, Trade History, Open Account). One left rail + one mobile bar, so the
+ * chrome is identical everywhere: the menu button never jumps sides, the plan card
+ * is always pinned to the bottom, and the nav order is the same on every page.
+ *
+ * Pages that need an in-content header (e.g. /live's strategy pills) render it as
+ * the first child — the shell owns the rail, not the page body.
+ *
+ * (Replaces the old split where /live, /performance and /account/trades used a
+ * separate LiveSidebar with the card at the bottom + a right-side hamburger, while
+ * /community and the Open Account pages used a different shell with a top nav bar,
+ * the card at the top and a left-side hamburger.)
  */
 
-interface CustomerMe {
-  ok: boolean
-  customer?: { email?: string }
+const ICONS = {
+  performance: 'M4 20V10m6 10V4m6 16v-7m-13 7h15',
+  live: 'M3 12h4l3-8 4 16 3-8h4',
+  community: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M11 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0',
+  history: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  membership: 'M12 2l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 14.24l-4.8 2.52.92-5.34L4.24 7.64l5.36-.78z',
+  brokerage: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11',
+  password: 'M7 11V7a5 5 0 0 1 10 0v4M5 11h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z',
+  help: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',
+  menu: 'M4 6h16M4 12h16M4 18h16',
+  close: 'M18 6 6 18M6 6l12 12',
+  ops: 'M13 2 4 14h6l-1 8 9-12h-6l1-8z',
 }
 
-// Primary nav (operator, 2026-07-27): Performance is the customer's main
-// dashboard now that the standalone Home page was merged into it. Trade History
-// is promoted here per the approved layout. Order: Performance · Live ·
-// Community · Trade History.
 const NAV_MAIN = [
-  { label: 'Performance', href: '/performance', icon: 'M4 20V10m6 10V4m6 16v-7m-13 7h15' },
-  { label: 'Live', href: '/live', icon: 'M3 12h4l3-8 4 16 3-8h4' },
-  { label: 'Community', href: '/community', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m20 0v-2a4 4 0 0 0-3-3.87M15 3.13a4 4 0 0 1 0 7.75M11 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0' },
-  { label: 'Trade History', href: '/account/trades', icon: 'M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0' },
+  { label: 'Performance', href: '/performance', icon: ICONS.performance },
+  { label: 'Live', href: '/live', icon: ICONS.live },
+  { label: 'Community', href: '/community', icon: ICONS.community },
+  { label: 'Trade History', href: '/account/trades', icon: ICONS.history },
 ]
 
-// Account section: membership + brokerage only. "Live Controls" (a link that
-// just went to /live) and the duplicate Trade History were dropped.
 const NAV_SECONDARY = [
-  { label: 'Manage Membership', href: '/pricing', icon: 'M12 2l2.4 4.86 5.36.78-3.88 3.78.92 5.34L12 14.24l-4.8 2.52.92-5.34L4.24 7.64l5.36-.78z' },
-  { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11' },
+  { label: 'Manage Membership', href: '/pricing', icon: ICONS.membership },
+  { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: ICONS.brokerage },
+  // Preserved from the old top-bar avatar menu that this shell removed.
+  { label: 'Change Password', href: '/change-password', icon: ICONS.password },
+  { label: 'Help', href: '/contact', icon: ICONS.help },
 ]
 
 function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: string }) {
@@ -51,8 +63,6 @@ function Icon({ d, className = 'h-5 w-5 shrink-0' }: { d: string; className?: st
 }
 
 function LogoLockup() {
-  // Single shared wordmark — was a different mark image (forge-logo-mark.png) + the
-  // wrong amber; now identical to every other nav.
   return (
     <Link href="/performance" aria-label="IronForge dashboard">
       <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
@@ -64,6 +74,14 @@ export interface PlanCardData {
   plan: string
   badge: string
   trial?: { label: string; day: number; total_days: number; ends_label: string } | null
+}
+
+/** Optional strategy switcher shown under "Live" — /live passes bots + onSwitch. */
+export interface StrategyNav {
+  bots?: LiveBot[]
+  activeBot?: LiveBot | null
+  paperBots?: string[]
+  onSwitch?: (bot: LiveBot) => void
 }
 
 function PlanCard({ membership, variant }: { membership: PlanCardData | null; variant: 'trial' | 'active' }) {
@@ -82,7 +100,7 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
           ) : (
             <div className="flex items-center gap-1 text-xs text-emerald-500">
               <Icon className="h-3.5 w-3.5" d="M20 6 9 17l-5-5" />
-              Active
+              {membership?.badge ?? 'Active'}
             </div>
           )}
         </div>
@@ -100,18 +118,48 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
   )
 }
 
-/** Main + secondary nav items + logout, shared by the desktop rail and the mobile drawer. */
-function NavItems({ onNavigate }: { onNavigate?: () => void }) {
+/** Strategy child rows under "Live" (Spark / Flame). Hidden unless >1 strategy + a switch handler. */
+function StrategyChildren({ bots, activeBot, paperBots, onSwitch }: StrategyNav) {
+  const strategyBots = (bots ?? []).filter(isLiveBot)
+  if (strategyBots.length <= 1 || !onSwitch) return null
+  const paperSet = new Set(paperBots ?? [])
+  return (
+    <div className="ml-6 mr-3 space-y-0.5 rounded-lg bg-black/20 py-2">
+      {strategyBots.map((b) => {
+        const active = b === activeBot
+        const flame = LIVE_BOT_ACCENT[b] === 'flame'
+        const accent = flame ? 'text-flame' : 'text-spark'
+        const dot = flame ? 'bg-flame' : 'bg-spark'
+        return (
+          <button key={b} type="button" onClick={() => onSwitch(b)}
+            aria-current={active ? 'true' : undefined}
+            className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 text-sm transition-colors ${
+              active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'
+            }`}>
+            <svg viewBox="0 0 24 24" fill="currentColor" className={`h-4 w-4 shrink-0 ${accent}`}>
+              <path d="M12 2c1.5 3.5-.5 5.5-2 7.5S8 14 9.5 15.5c.5-1.5 1.5-2.5 2.5-3 .5 2 2 3 2 5a4 4 0 1 1-8 0c0-4.5 4-6 4-10 0-2 1-4 2-5.5z" />
+            </svg>
+            <span>{LIVE_BOT_LABEL[b]}</span>
+            {paperSet.has(b) ? (
+              <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
+            ) : null}
+            <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Main + secondary nav + logout — shared by the desktop rail and the mobile drawer. */
+function NavItems({ onNavigate, strategy }: { onNavigate?: () => void; strategy?: StrategyNav }) {
   const pathname = usePathname()
   const router = useRouter()
   const isOperator = useIsOperator()
+  const surface = clientSurface()
 
   async function handleLogout() {
-    try {
-      await fetch('/api/auth/customer-logout', { method: 'POST' })
-    } finally {
-      router.push('/login')
-    }
+    try { await fetch('/api/auth/customer-logout', { method: 'POST' }) } finally { router.push('/login') }
   }
 
   const renderItem = (item: { label: string; href: string; icon: string }) => {
@@ -131,43 +179,50 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <>
-      {/* Operator-only shortcut into the bot console. Hidden entirely on the
-          customer deployment — that surface 404s /spark, so the link would be
-          dead, and operator chrome should not ship to customers at all. */}
-      {isOperator && servesPath(clientSurface(), '/spark') ? (
-        <Link
-          href="/spark"
-          onClick={onNavigate}
-          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400"
-        >
-          <Icon d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />
+      {/* Operator-only shortcut into the bot console. Never ships on the customer
+          surface — /spark 404s there and operator chrome shouldn't reach customers. */}
+      {isOperator && servesPath(surface, '/spark') ? (
+        <Link href="/spark" onClick={onNavigate}
+          className="flex items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm font-semibold text-amber-500 transition-colors hover:text-amber-400">
+          <Icon d={ICONS.ops} />
           <span>Ops</span>
         </Link>
       ) : null}
-      {filterNavBySurface(NAV_MAIN).map(renderItem)}
+      {filterNavBySurface(NAV_MAIN, surface).map((item) =>
+        item.label === 'Live' ? (
+          <div key="live-group">
+            {renderItem(item)}
+            <StrategyChildren {...strategy} />
+          </div>
+        ) : (
+          renderItem(item)
+        ),
+      )}
       <div className="mx-4 my-3 border-t border-forge-border" />
-      {filterNavBySurface(NAV_SECONDARY).map(renderItem)}
+      {filterNavBySurface(NAV_SECONDARY, surface).map(renderItem)}
       <div className="mx-4 my-3 border-t border-forge-border" />
       <button onClick={handleLogout}
         className="flex w-full items-center gap-3 border-l-2 border-transparent px-4 py-2.5 text-sm text-gray-400 transition-colors hover:text-white">
-        <Icon d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" />
+        <Icon d={ICONS.logout} />
         <span>Log Out</span>
       </button>
     </>
   )
 }
 
-/** Slide-out mobile navigation. Also used by the /live page's mobile top bar. */
+/** Slide-out mobile navigation (opens from the mobile bar's hamburger). */
 export function MobileNavDrawer({
   open,
   onClose,
   membership,
   planVariant = 'trial',
+  strategy,
 }: {
   open: boolean
   onClose: () => void
   membership: PlanCardData | null
   planVariant?: 'trial' | 'active'
+  strategy?: StrategyNav
 }) {
   if (!open) return null
   return (
@@ -177,140 +232,17 @@ export function MobileNavDrawer({
         <div className="flex items-center justify-between px-4 py-4">
           <LogoLockup />
           <button onClick={onClose} className="p-1 text-gray-400 transition-colors hover:text-white" aria-label="Close menu">
-            <Icon className="h-5 w-5" d="M18 6 6 18M6 6l12 12" />
+            <Icon className="h-5 w-5" d={ICONS.close} />
           </button>
         </div>
-        <div className="px-4 pb-4">
+        <nav className="flex-1 space-y-0.5 pb-6">
+          <NavItems onNavigate={onClose} strategy={strategy} />
+        </nav>
+        <div className="mt-auto p-4">
           <PlanCard membership={membership} variant={planVariant} />
         </div>
-        <nav className="flex-1 space-y-0.5 pb-6">
-          <NavItems onNavigate={onClose} />
-        </nav>
       </div>
     </div>
-  )
-}
-
-function TopNav({ onMenuClick }: { onMenuClick: () => void }) {
-  const pathname = usePathname()
-  const { data } = useSWR<CustomerMe>('/api/auth/customer-me', fetcher, { shouldRetryOnError: false })
-  const email = data?.customer?.email ?? null
-  const name = email ? email.split('@')[0] : 'Trader'
-  const initials = name.slice(0, 2).toUpperCase()
-
-  // Real account menu, matching LiveHeader. The avatar carried a chevron that
-  // implied a dropdown which did not exist, so the only affordance that looked
-  // like "account settings" did nothing at all.
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDocClick = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
-    const onEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
-    document.addEventListener('mousedown', onDocClick)
-    document.addEventListener('keydown', onEsc)
-    return () => {
-      document.removeEventListener('mousedown', onDocClick)
-      document.removeEventListener('keydown', onEsc)
-    }
-  }, [menuOpen])
-
-  async function handleLogout() {
-    try { await fetch('/api/auth/customer-logout', { method: 'POST' }) } catch { /* navigate anyway */ }
-    window.location.href = '/'
-  }
-
-  return (
-    <header className="fixed inset-x-0 top-0 z-30 border-b border-forge-border bg-forge-bg">
-      <div className="flex h-14 items-center gap-4 px-4 md:gap-8">
-        <button onClick={onMenuClick}
-          className="-ml-1 p-1 text-gray-300 transition-colors hover:text-white lg:hidden"
-          aria-label="Open menu">
-          <Icon className="h-6 w-6" d="M4 6h16M4 12h16M4 18h16" />
-        </button>
-        <LogoLockup />
-        <nav className="hidden h-full items-center gap-6 md:flex">
-          {filterNavBySurface(NAV_MAIN).map((item) => {
-            const active = pathname === item.href
-            return (
-              <Link key={item.href} href={item.href}
-                className={`relative flex h-full items-center px-1 text-sm transition-colors ${
-                  active ? 'font-medium text-white' : 'text-gray-400 hover:text-white'
-                }`}>
-                {item.label}
-                {active && <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-amber-500" />}
-              </Link>
-            )
-          })}
-        </nav>
-        <div className="ml-auto flex items-center gap-4">
-          {/* The notification bell that used to sit here had no handler and a
-              permanently-lit unread dot — it promised alerts that never existed
-              and could not be dismissed. Removed rather than faked. */}
-          <div className="relative" ref={menuRef}>
-            <button
-              type="button"
-              onClick={() => setMenuOpen((o) => !o)}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              className="flex items-center gap-2 rounded-lg px-1 py-1 transition-colors hover:bg-white/5"
-            >
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500/20 text-xs font-semibold text-amber-500">
-                {initials}
-              </div>
-              <span className="hidden text-sm capitalize text-gray-300 sm:block">{name}</span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round"
-                className={`h-4 w-4 text-gray-500 transition-transform ${menuOpen ? 'rotate-180' : ''}`}>
-                <path d="m6 9 6 6 6-6" />
-              </svg>
-            </button>
-            {menuOpen ? (
-              <div role="menu"
-                className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-forge-border bg-forge-card shadow-xl">
-                {email ? (
-                  <div className="border-b border-forge-border px-4 py-3">
-                    <div className="truncate text-xs text-gray-400">Signed in as</div>
-                    <div className="truncate text-sm font-medium text-white">{email}</div>
-                  </div>
-                ) : null}
-                <a href="/" role="menuitem"
-                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
-                  Back to site
-                </a>
-                <a href="/account/trades" role="menuitem"
-                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
-                  Trade History
-                </a>
-                <a href="/change-password" role="menuitem"
-                  className="block px-4 py-2.5 text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
-                  Change password
-                </a>
-                <button type="button" role="menuitem" onClick={handleLogout}
-                  className="block w-full border-t border-forge-border px-4 py-2.5 text-left text-sm text-gray-300 transition-colors hover:bg-white/5 hover:text-white">
-                  Log Out
-                </button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-    </header>
-  )
-}
-
-function Sidebar({ membership, planVariant }: { membership: PlanCardData | null; planVariant: 'trial' | 'active' }) {
-  return (
-    <aside className="fixed bottom-0 left-0 top-14 z-20 hidden w-60 flex-col border-r border-forge-border bg-forge-bg lg:flex">
-      <div className="p-4">
-        <PlanCard membership={membership} variant={planVariant} />
-      </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto pb-4">
-        <NavItems />
-      </nav>
-    </aside>
   )
 }
 
@@ -318,21 +250,45 @@ export default function CustomerShell({
   membership,
   planVariant = 'trial',
   maxWidthClass = 'max-w-[1200px]',
+  bots,
+  activeBot,
+  paperBots,
+  onSwitch,
   children,
 }: {
   membership: PlanCardData | null
   planVariant?: 'trial' | 'active'
   maxWidthClass?: string
   children: React.ReactNode
-}) {
+} & StrategyNav) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const strategy: StrategyNav = { bots, activeBot, paperBots, onSwitch }
+
   return (
     <div className="min-h-screen bg-forge-bg">
-      <TopNav onMenuClick={() => setMenuOpen(true)} />
-      <Sidebar membership={membership} planVariant={planVariant} />
+      {/* Mobile top bar — hamburger on the LEFT, then wordmark (consistent everywhere). */}
+      <div className="flex items-center gap-4 border-b border-forge-border bg-forge-bg px-4 py-3 lg:hidden">
+        <button onClick={() => setMenuOpen(true)} className="-ml-1 p-1 text-gray-300 transition-colors hover:text-white" aria-label="Open menu">
+          <Icon className="h-6 w-6" d={ICONS.menu} />
+        </button>
+        <Link href="/"><Wordmark markClass="h-6 w-auto" textClass="text-lg" /></Link>
+      </div>
       <MobileNavDrawer open={menuOpen} onClose={() => setMenuOpen(false)}
-        membership={membership} planVariant={planVariant} />
-      <div className="pt-14 lg:pl-60">
+        membership={membership} planVariant={planVariant} strategy={strategy} />
+
+      {/* Desktop rail — the whole column scrolls; the plan card sits at the bottom
+          (mt-auto) but is never clipped on short viewports. */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-forge-border bg-forge-bg lg:flex">
+        <div className="shrink-0 px-4 py-5"><LogoLockup /></div>
+        <nav className="shrink-0 space-y-0.5 pb-4">
+          <NavItems strategy={strategy} />
+        </nav>
+        <div className="mt-auto shrink-0 p-4">
+          <PlanCard membership={membership} variant={planVariant} />
+        </div>
+      </aside>
+
+      <div className="lg:pl-60">
         <div className={`mx-auto ${maxWidthClass} px-4 py-5`}>{children}</div>
       </div>
     </div>
