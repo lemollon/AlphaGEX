@@ -5,7 +5,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
-import { BOT_PLANS, type BotSlug } from '@/lib/billing/plans'
+import { BOT_PLANS, BOTH_PLAN, otherBotSlug, secondBotIncrement, type BotSlug } from '@/lib/billing/plans'
 
 interface BrokerageAccount {
   id: string
@@ -19,6 +19,9 @@ interface AccountsResp {
 }
 interface SummaryResp {
   membership?: PlanCardData | null
+}
+interface EntitlementsResp {
+  bots?: string[]
 }
 
 function Chevron() {
@@ -48,7 +51,13 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
 
   const { data: summary } = useSWR<SummaryResp>('/api/live/summary', fetcher, { refreshInterval: 60_000 })
   const { data: accountsData } = useSWR<AccountsResp>('/api/brokerage/accounts', fetcher, { shouldRetryOnError: false })
+  const { data: entitlements } = useSWR<EntitlementsResp>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
   const accounts = accountsData?.accounts ?? []
+
+  // Second-bot bundle pricing: if the customer already runs the OTHER bot, opening this one lifts
+  // their subscription to the $75 bundle — an increment of $25, not another full $50.
+  const ownsOther = (entitlements?.bots ?? []).includes(otherBotSlug(bot))
+  const displayPrice = ownsOther ? secondBotIncrement(otherBotSlug(bot)) : plan.priceMonthly
 
   const [connection, setConnection] = useState('')
   const [busy, setBusy] = useState(false)
@@ -108,10 +117,17 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
                 style={{ borderColor: `${accent}66`, color: accent }}>Simple Setup</span>
               <span className="rounded-full border px-3 py-1 text-xs font-medium"
                 style={{ borderColor: `${accent}66`, color: accent }}>
-                ${plan.priceMonthly} <span className="text-gray-400">/ month</span>
+                ${displayPrice} <span className="text-gray-400">/ month{ownsOther ? ' more' : ''}</span>
               </span>
             </div>
             <p className="mt-2 text-sm text-gray-400">{plan.blurb}</p>
+            {ownsOther && (
+              <p className="mt-2 text-sm text-gray-400">
+                You already run {BOT_PLANS[otherBotSlug(bot)].name}. Adding {plan.name} bundles both
+                strategies for <span className="font-medium" style={{ color: accent }}>${BOTH_PLAN.priceMonthly} / month total</span> —
+                just ${displayPrice} more.
+              </p>
+            )}
           </div>
         </div>
 
@@ -182,7 +198,17 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             ))}
           </ul>
           <p className="mt-3 text-sm text-gray-400">
-            {plan.name} is billed <span className="font-medium" style={{ color: accent }}>${plan.priceMonthly} / month</span> after a 5-day free trial.
+            {ownsOther ? (
+              <>
+                Adding {plan.name} bundles both strategies at{' '}
+                <span className="font-medium" style={{ color: accent }}>${BOTH_PLAN.priceMonthly} / month total</span>{' '}
+                (${displayPrice} more) — billed on your existing subscription, no new trial.
+              </>
+            ) : (
+              <>
+                {plan.name} is billed <span className="font-medium" style={{ color: accent }}>${displayPrice} / month</span> after a 5-day free trial.
+              </>
+            )}
           </p>
         </div>
 
@@ -206,7 +232,11 @@ export default function OpenAccountClient({ bot }: { bot: BotSlug }) {
             style={{ backgroundColor: accent }}
           >
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M13 3L4 14h6l-1 7 9-11h-6l1-7z" strokeLinejoin="round" /></svg>
-            {busy ? 'Starting…' : `Open ${plan.name} Account — $${plan.priceMonthly} / month`}
+            {busy
+              ? 'Starting…'
+              : ownsOther
+                ? `Add ${plan.name} — $${displayPrice} / month more`
+                : `Open ${plan.name} Account — $${displayPrice} / month`}
           </button>
         </div>
         <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-xs text-gray-500">

@@ -9,8 +9,10 @@ import {
   createCustomer,
   createSubscriptionCheckout,
   isMissingCustomerError,
+  retrieveSubscription,
+  upgradeSubscriptionToBundle,
 } from '@/lib/billing/stripe'
-import { getBotPlan, TRIAL_DAYS } from '@/lib/billing/plans'
+import { getBotPlan, otherBotSlug, BOTH_PLAN, TRIAL_DAYS } from '@/lib/billing/plans'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -57,6 +59,82 @@ export async function POST(req: NextRequest) {
     const user = rows[0]
     if (!user) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
+    // ── Second bot = bundle upgrade, not a second $50 subscription ──────────────
+    // If this customer already has an active/trialing subscription to the OTHER bot,
+    // opening this one lifts that subscription to the two-bot bundle ($75) instead of
+    // adding a full second bot ($50). The increment is $25 (both − single), the card is
+    // already on file, so there is no second Checkout — we modify the existing sub and
+    // return straight to the Live page.
+    const LIVE_STATUSES = ['trialing', 'active', 'past_due']
+    const existingSubs = await customerQuery<{
+      bot: string
+      status: string
+      stripe_subscription_id: string | null
+    }>(
+      `SELECT bot, status, stripe_subscription_id FROM customer_bot_subscriptions WHERE user_id = $1`,
+      [user.id],
+    )
+    const activeSubs = existingSubs.filter((s) => LIVE_STATUSES.includes(s.status))
+    const origin = publicOrigin(req)
+
+    // Already own this exact bot → idempotent, just send them to it.
+    if (activeSubs.some((s) => s.bot === plan.slug)) {
+      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+    }
+
+    const other = otherBotSlug(plan.slug)
+    const otherSub = activeSubs.find((s) => s.bot === other && s.stripe_subscription_id)
+    if (otherSub?.stripe_subscription_id) {
+      const bundlePriceId = await findPriceIdByLookupKey(BOTH_PLAN.lookupKey)
+      if (!bundlePriceId) {
+        return NextResponse.json(
+          { ok: false, error: 'The two-bot bundle isn’t available yet. Please try again shortly.' },
+          { status: 503 },
+        )
+      }
+      const sub = await retrieveSubscription(otherSub.stripe_subscription_id)
+      const itemId = sub.items?.data?.[0]?.id
+      if (!itemId) throw new Error('subscription has no line item to upgrade')
+
+      const updated = await upgradeSubscriptionToBundle({
+        subscriptionId: sub.id,
+        itemId,
+        bundlePriceId,
+        userId: user.id,
+        bots: `${plan.slug},${other}`,
+      })
+      const periodEnd =
+        typeof updated.current_period_end === 'number' && updated.current_period_end > 0
+          ? new Date(updated.current_period_end * 1000).toISOString()
+          : null
+      const status = updated.status || otherSub.status
+
+      // Grant BOTH bot entitlements from the one bundle subscription. (The webhook will
+      // reconcile the same rows when the subscription.updated event arrives — this write
+      // makes the Live page correct immediately without waiting on it.)
+      for (const b of [plan.slug, other]) {
+        await customerExecute(
+          `INSERT INTO customer_bot_subscriptions
+             (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, now())
+           ON CONFLICT (user_id, bot) DO UPDATE SET
+             status = EXCLUDED.status,
+             stripe_subscription_id = EXCLUDED.stripe_subscription_id,
+             price_lookup_key = EXCLUDED.price_lookup_key,
+             current_period_end = EXCLUDED.current_period_end,
+             updated_at = now()`,
+          [user.id, b, status, sub.id, BOTH_PLAN.lookupKey, periodEnd],
+        )
+      }
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BUNDLE_UPGRADE', $2)`,
+        [user.id, JSON.stringify({ added: plan.slug, subscription: sub.id })],
+      ).catch(() => {})
+
+      return NextResponse.json({ ok: true, url: `${origin}${plan.liveHref}?welcome=${plan.slug}` })
+    }
+    // ────────────────────────────────────────────────────────────────────────────
+
     const priceId = await findPriceIdByLookupKey(plan.lookupKey)
     if (!priceId) {
       // Keys set but products not created yet — treat as not-yet-available, not a hard error.
@@ -66,7 +144,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const origin = publicOrigin(req)
     const checkoutArgs = {
       priceId,
       userId: user.id,

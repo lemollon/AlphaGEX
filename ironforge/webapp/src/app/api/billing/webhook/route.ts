@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStripeSignature } from '@/lib/billing/stripe'
 import { isCustomersDbConfigured, customerExecute, customerQuery } from '@/lib/customers-db'
-import { getBotPlan } from '@/lib/billing/plans'
+import { getBotPlan, BOTH_PLAN } from '@/lib/billing/plans'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,8 +36,10 @@ async function upsertSubscription(opts: {
   status: string
   subscriptionId: string | null
   currentPeriodEnd: string | null
+  /** Overrides the derived single-bot lookup key — set to 'both_monthly' for bundle rows. */
+  priceLookupKey?: string | null
 }) {
-  const plan = getBotPlan(opts.bot)
+  const lookupKey = opts.priceLookupKey ?? getBotPlan(opts.bot)?.lookupKey ?? null
   await customerExecute(
     `INSERT INTO customer_bot_subscriptions
        (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
@@ -48,8 +50,23 @@ async function upsertSubscription(opts: {
        price_lookup_key = COALESCE(EXCLUDED.price_lookup_key, customer_bot_subscriptions.price_lookup_key),
        current_period_end = COALESCE(EXCLUDED.current_period_end, customer_bot_subscriptions.current_period_end),
        updated_at = now()`,
-    [opts.userId, opts.bot, opts.status, opts.subscriptionId, plan?.lookupKey ?? null, opts.currentPeriodEnd],
+    [opts.userId, opts.bot, opts.status, opts.subscriptionId, lookupKey, opts.currentPeriodEnd],
   )
+}
+
+/**
+ * The bots a subscription grants. A single-bot sub carries `metadata.bot`; a bundle sub (created by
+ * the second-bot upgrade) carries `metadata.bots` as a CSV. The bundle case must fan out to BOTH
+ * bot rows so a subscription.deleted/past_due on the one bundle sub correctly updates both.
+ */
+function botsFor(meta: Record<string, any> | undefined): { bots: string[]; bundle: boolean } {
+  const csv = meta?.bots
+  if (typeof csv === 'string' && csv.includes(',')) {
+    const bots = csv.split(',').map((b) => b.trim()).filter((b) => getBotPlan(b))
+    if (bots.length > 1) return { bots, bundle: true }
+  }
+  const single = meta?.bot
+  return { bots: typeof single === 'string' && getBotPlan(single) ? [single] : [], bundle: false }
 }
 
 export async function POST(req: NextRequest) {
@@ -77,15 +94,18 @@ export async function POST(req: NextRequest) {
     switch (event?.type) {
       case 'checkout.session.completed': {
         const userId = await resolveUserId(obj.metadata, obj.customer)
-        const bot = obj.metadata?.bot
-        if (userId && bot && getBotPlan(bot)) {
-          await upsertSubscription({
-            userId,
-            bot,
-            status: 'trialing',
-            subscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
-            currentPeriodEnd: null,
-          })
+        const { bots, bundle } = botsFor(obj.metadata)
+        if (userId && bots.length) {
+          for (const bot of bots) {
+            await upsertSubscription({
+              userId,
+              bot,
+              status: 'trialing',
+              subscriptionId: typeof obj.subscription === 'string' ? obj.subscription : null,
+              currentPeriodEnd: null,
+              priceLookupKey: bundle ? BOTH_PLAN.lookupKey : undefined,
+            })
+          }
         }
         break
       }
@@ -93,16 +113,19 @@ export async function POST(req: NextRequest) {
       case 'customer.subscription.created':
       case 'customer.subscription.deleted': {
         const userId = await resolveUserId(obj.metadata, obj.customer)
-        const bot = obj.metadata?.bot
-        if (userId && bot && getBotPlan(bot)) {
+        const { bots, bundle } = botsFor(obj.metadata)
+        if (userId && bots.length) {
           const status = event.type === 'customer.subscription.deleted' ? 'canceled' : String(obj.status ?? 'active')
-          await upsertSubscription({
-            userId,
-            bot,
-            status,
-            subscriptionId: typeof obj.id === 'string' ? obj.id : null,
-            currentPeriodEnd: unix(obj.current_period_end),
-          })
+          for (const bot of bots) {
+            await upsertSubscription({
+              userId,
+              bot,
+              status,
+              subscriptionId: typeof obj.id === 'string' ? obj.id : null,
+              currentPeriodEnd: unix(obj.current_period_end),
+              priceLookupKey: bundle ? BOTH_PLAN.lookupKey : undefined,
+            })
+          }
         }
         break
       }
