@@ -46,6 +46,10 @@ const NAV_MAIN = [
 ]
 
 const NAV_SECONDARY = [
+  // Subscribing used to have no front door of its own — you had to know to open
+  // /live and dig for the Open Account button. This makes "add a strategy" a
+  // first-class action.
+  { label: 'Add a Strategy', href: '/live', icon: 'M12 5v14M5 12h14' },
   { label: 'Manage Membership', href: '/pricing', icon: ICONS.membership },
   { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: ICONS.brokerage },
   // Preserved from the old top-bar avatar menu that this shell removed.

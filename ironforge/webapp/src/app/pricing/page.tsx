@@ -134,7 +134,12 @@ const TIERS: Tier[] = [
     glyph: <GridGlyph />,
     cta: 'GO PRO',
     plusLabel: 'Everything in Community, plus:',
-    features: ['Up to 2 Active Bots'],
+    features: [
+      'Up to 2 Active Bots',
+      // Make the bundle math legible instead of a surprise at checkout: the second
+      // strategy is the $25 increment over Starter, not another full $50.
+      `Add the 2nd strategy for +$${MARKETING_TIERS.pro.priceMonthly - MARKETING_TIERS.starter.priceMonthly}/mo`,
+    ],
   },
 ]
 
