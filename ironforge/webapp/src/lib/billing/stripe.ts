@@ -152,15 +152,19 @@ export async function createSubscriptionCheckout(opts: {
   successUrl: string
   cancelUrl: string
 }): Promise<{ id: string; url: string }> {
+  // Stripe rejects trial_period_days below 1, so only include it for a real trial
+  // (bot plans pass 5; Community passes 0 = charge immediately, no trial).
+  const subscription_data: Record<string, unknown> = {
+    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+  }
+  if (opts.trialDays > 0) subscription_data.trial_period_days = opts.trialDays
+
   const session = await stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
     mode: 'subscription',
     customer: opts.customerId,
     client_reference_id: opts.userId,
     line_items: [{ price: opts.priceId, quantity: 1 }],
-    subscription_data: {
-      trial_period_days: opts.trialDays,
-      metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
-    },
+    subscription_data,
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
     allow_promotion_codes: true,
     success_url: opts.successUrl,
