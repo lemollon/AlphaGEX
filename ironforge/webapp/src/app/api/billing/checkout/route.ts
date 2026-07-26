@@ -12,7 +12,15 @@ import {
   retrieveSubscription,
   upgradeSubscriptionToBundle,
 } from '@/lib/billing/stripe'
-import { getBotPlan, otherBotSlug, BOTH_PLAN, TRIAL_DAYS } from '@/lib/billing/plans'
+import {
+  getBotPlan,
+  otherBotSlug,
+  BOTH_PLAN,
+  TRIAL_DAYS,
+  COMMUNITY_KEY,
+  COMMUNITY_PLAN,
+  isCommunityKey,
+} from '@/lib/billing/plans'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -41,8 +49,12 @@ export async function POST(req: NextRequest) {
   } catch {
     /* fall through to validation */
   }
-  const plan = getBotPlan(bot)
-  if (!plan) return NextResponse.json({ ok: false, error: 'Unknown bot.' }, { status: 400 })
+  // Community is a standalone chat/education plan, not a trading bot — it takes its own
+  // simple path (no bundle logic, no trial). Everything else must resolve to a real bot.
+  const isCommunity = isCommunityKey(bot)
+  if (!isCommunity && !getBotPlan(bot)) {
+    return NextResponse.json({ ok: false, error: 'Unknown bot.' }, { status: 400 })
+  }
 
   if (!isStripeConfigured() || !isCustomersDbConfigured()) {
     return NextResponse.json(
@@ -58,6 +70,70 @@ export async function POST(req: NextRequest) {
     )
     const user = rows[0]
     if (!user) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+
+    // Persist the resolved Stripe customer id when it changes (new or self-healed).
+    const persistCustomer = async (id: string) => {
+      if (id !== user.stripe_customer_id) {
+        await customerExecute(`UPDATE users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`, [user.id, id])
+      }
+    }
+
+    // ── Community: standalone $15 chat/education plan, no bot, no bundle, no trial ──
+    if (isCommunity) {
+      const origin = publicOrigin(req)
+      const existing = await customerQuery<{ status: string }>(
+        `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
+        [user.id, COMMUNITY_KEY],
+      )
+      // Already a member → idempotent, just send them into the community.
+      if (existing.some((s) => ['trialing', 'active', 'past_due'].includes(s.status))) {
+        return NextResponse.json({ ok: true, url: `${origin}/community?welcome=community` })
+      }
+
+      const communityPriceId = await findPriceIdByLookupKey(COMMUNITY_PLAN.lookupKey)
+      if (!communityPriceId) {
+        return NextResponse.json(
+          { ok: false, error: 'Community isn’t available yet. Please try again shortly.' },
+          { status: 503 },
+        )
+      }
+
+      const communityArgs = {
+        priceId: communityPriceId,
+        userId: user.id,
+        bot: COMMUNITY_KEY,
+        trialDays: 0, // charge immediately — it's a low-cost access plan, not a strategy trial
+        successUrl: `${origin}/community?welcome=community&session_id={CHECKOUT_SESSION_ID}`,
+        cancelUrl: `${origin}/pricing?canceled=1`,
+      }
+
+      let communityCustomerId = await getOrCreateCustomer({
+        existingId: user.stripe_customer_id,
+        email: user.email,
+        userId: user.id,
+      })
+      await persistCustomer(communityCustomerId)
+
+      let communityUrl: string
+      try {
+        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
+      } catch (e) {
+        if (!isMissingCustomerError(e)) throw e
+        communityCustomerId = await createCustomer({ email: user.email, userId: user.id })
+        await persistCustomer(communityCustomerId)
+        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
+      }
+
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
+        [user.id, JSON.stringify({ bot: COMMUNITY_KEY })],
+      ).catch(() => {})
+
+      return NextResponse.json({ ok: true, url: communityUrl })
+    }
+
+    // Non-community: guaranteed a real bot by the top-of-handler validation.
+    const plan = getBotPlan(bot)!
 
     // ── Second bot = bundle upgrade, not a second $50 subscription ──────────────
     // If this customer already has an active/trialing subscription to the OTHER bot,
@@ -151,13 +227,6 @@ export async function POST(req: NextRequest) {
       trialDays: TRIAL_DAYS,
       successUrl: `${origin}${plan.liveHref}?welcome=${plan.slug}&session_id={CHECKOUT_SESSION_ID}`,
       cancelUrl: `${origin}/live/${plan.slug}/open?canceled=1`,
-    }
-
-    // Persist the resolved Stripe customer id when it changes (new or self-healed).
-    const persistCustomer = async (id: string) => {
-      if (id !== user.stripe_customer_id) {
-        await customerExecute(`UPDATE users SET stripe_customer_id = $2, updated_at = now() WHERE id = $1`, [user.id, id])
-      }
     }
 
     let customerId = await getOrCreateCustomer({

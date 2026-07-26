@@ -14,7 +14,7 @@
  * we return the neutral "IronForge Membership" card rather than claiming a plan.
  */
 import { customerQuery, isCustomersDbConfigured } from '@/lib/customers-db'
-import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
+import { MARKETING_TIERS, TRIAL_DAYS, COMMUNITY_PLAN, isCommunityKey } from '@/lib/billing/plans'
 
 export interface MembershipCard {
   plan: string
@@ -36,7 +36,11 @@ interface SubRow {
 const LIVE_STATUSES = new Set(['trialing', 'active', 'past_due'])
 
 function planNameFor(rows: SubRow[]): string {
-  if (rows.some((r) => r.price_lookup_key === 'both_monthly') || rows.length > 1) {
+  // Community is not a bot — it never counts toward Starter/Pro and only names the
+  // plan when it is the *only* thing active.
+  const botRows = rows.filter((r) => !isCommunityKey(r.bot))
+  if (botRows.length === 0) return COMMUNITY_PLAN.name
+  if (botRows.some((r) => r.price_lookup_key === 'both_monthly') || botRows.length > 1) {
     return MARKETING_TIERS.pro.name
   }
   return MARKETING_TIERS.starter.name
@@ -86,5 +90,24 @@ export async function getMembership(customerId: string | null): Promise<Membersh
     return card
   } catch {
     return NEUTRAL
+  }
+}
+
+/**
+ * True when the customer has any active/trialing/past_due subscription — a bot OR Community.
+ * Used to gate community participation: reading the feed is open (a locked preview), but
+ * posting requires a live membership, which is what the $15 Community plan buys. Fails SOFT
+ * (returns false) so a billing-DB outage never grants access it can't verify.
+ */
+export async function hasActiveMembership(customerId: string | null): Promise<boolean> {
+  if (!customerId || !isCustomersDbConfigured()) return false
+  try {
+    const rows = await customerQuery<{ status: string }>(
+      `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1`,
+      [customerId],
+    )
+    return rows.some((r) => LIVE_STATUSES.has(r.status))
+  } catch {
+    return false
   }
 }

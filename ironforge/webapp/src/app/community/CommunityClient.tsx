@@ -119,6 +119,10 @@ export default function CommunityClient() {
   const [draft, setDraft] = useState('')
   const [sendError, setSendError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  // Set when the server says posting needs a paid membership (402). Turns the composer
+  // into a "Join the Community — $15/mo" checkout CTA instead of a dead error.
+  const [needsMembership, setNeedsMembership] = useState(false)
+  const [joining, setJoining] = useState(false)
   const [welcomeDismissed, setWelcomeDismissed] = useState(true)
   // Members rail starts collapsed at 6; "View All Members" used to be an
   // amber div with no handler, so the only thing it did was look clickable.
@@ -164,6 +168,11 @@ export default function CommunityClient() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channel, message }),
       })
+      if (res.status === 402) {
+        // Needs a paid membership — swap the composer for the join CTA.
+        setNeedsMembership(true)
+        return
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         throw new Error(body.error || 'Failed to send message.')
@@ -174,6 +183,27 @@ export default function CommunityClient() {
       setSendError(e instanceof Error ? e.message : 'Failed to send message.')
     } finally {
       setSending(false)
+    }
+  }
+
+  // Start Stripe Checkout for the standalone $15 Community plan, then redirect to Stripe.
+  async function joinCommunity() {
+    if (joining) return
+    setJoining(true)
+    setSendError(null)
+    try {
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot: 'community' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.url) { window.location.href = data.url; return }
+      setSendError(data.error || 'Could not start checkout. Please try again shortly.')
+    } catch {
+      setSendError('Network error. Please try again.')
+    } finally {
+      setJoining(false)
     }
   }
 
@@ -301,6 +331,21 @@ export default function CommunityClient() {
             {/* Composer */}
             <div className="border-t border-forge-border py-3">
               {sendError && <div className="mb-2 text-xs text-red-400">{sendError}</div>}
+              {needsMembership ? (
+                <div className="flex flex-col gap-2 rounded-lg border border-amber-600/40 bg-amber-950/20 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm text-gray-200">
+                    <span className="font-semibold text-amber-400">Join the Forge Community</span> to post —{' '}
+                    <span className="font-semibold text-white">$15/mo</span>. Every strategy plan includes it.
+                  </div>
+                  <button
+                    onClick={() => void joinCommunity()}
+                    disabled={joining}
+                    className="shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {joining ? 'Opening…' : 'Join for $15/mo'}
+                  </button>
+                </div>
+              ) : (
               <div className="flex items-center gap-2">
                 {/* Attachment "+" removed: it had no onClick and there is no upload
                     endpoint behind it. Restore alongside a real upload handler. */}
@@ -344,6 +389,7 @@ export default function CommunityClient() {
                   </svg>
                 </button>
               </div>
+              )}
             </div>
           </div>
         </div>

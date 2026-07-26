@@ -59,6 +59,23 @@ export const BOTH_PLAN = {
   priceMonthly: 75,
 }
 
+/**
+ * Community — chat + education access, no trading bot. A standalone paid tier: someone can buy it
+ * without a bot, and it's included implicitly for anyone who owns a bot. Tracked as a
+ * customer_bot_subscriptions row with bot = COMMUNITY_KEY (the table's `bot` column is free-text).
+ * No free trial — it's low-cost, immediate access.
+ */
+export const COMMUNITY_KEY = 'community'
+export const COMMUNITY_PLAN = {
+  key: COMMUNITY_KEY,
+  name: 'Forge Community',
+  lookupKey: 'community_monthly',
+  priceMonthly: 15,
+}
+export function isCommunityKey(v: string | null | undefined): boolean {
+  return v === COMMUNITY_KEY
+}
+
 /** The other customer bot — spark and flame are the only two, so a "second bot" is the complement. */
 export function otherBotSlug(slug: BotSlug): BotSlug {
   return slug === 'spark' ? 'flame' : 'spark'
@@ -88,13 +105,12 @@ export const TRIAL_DAYS = 5
  * problem, so all copy now reads from here.
  *
  * STARTER/PRO are derived from the Stripe-backed plans above so a marketing number can
- * never drift from what checkout actually bills. COMMUNITY has no Stripe product yet
- * (it is not sellable through checkout) — $15 is the /pricing figure, which is the page
- * that was reconciled against real billing on 2026-07-23.
+ * never drift from what checkout actually bills. COMMUNITY is now Stripe-backed too
+ * (COMMUNITY_PLAN, lookup key community_monthly) and sellable through checkout.
  */
 export const MARKETING_TIERS = {
-  /** Community/education tier — no bot execution, not yet wired to Stripe. */
-  community: { name: 'Forge Community', priceMonthly: 15 },
+  /** Community/education tier — no bot execution. Billed via COMMUNITY_PLAN ($15/mo). */
+  community: { name: COMMUNITY_PLAN.name, priceMonthly: COMMUNITY_PLAN.priceMonthly },
   /** One automated bot. Same price checkout bills for a single bot. */
   starter: { name: 'Forge Starter', priceMonthly: BOT_PLANS.spark.priceMonthly },
   /** Both bots. Same price checkout bills for the bundle. */

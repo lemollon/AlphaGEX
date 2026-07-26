@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { CustomersDbNotConfiguredError } from '@/lib/customers-db'
+import { hasActiveMembership } from '@/lib/live/membership'
 import { moderateMessage } from '@/lib/community/forge-ai'
 import {
   DEFAULT_CHANNEL,
@@ -52,6 +53,14 @@ export async function POST(req: NextRequest) {
     const session = await getCustomerSession()
     if (!session.customerId) {
       return NextResponse.json({ error: 'Log in to join the conversation.' }, { status: 401 })
+    }
+    // Posting requires a live membership — a bot subscription OR the $15 Community plan.
+    // Reading the feed stays open (a locked preview); this is what makes Community sellable.
+    if (!(await hasActiveMembership(session.customerId))) {
+      return NextResponse.json(
+        { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to post — $15/mo.' },
+        { status: 402 },
+      )
     }
     const body = await req.json().catch(() => ({}))
     const channelSlug = typeof body.channel === 'string' ? body.channel : DEFAULT_CHANNEL

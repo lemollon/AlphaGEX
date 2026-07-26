@@ -5,7 +5,7 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
-import { BOT_PLANS, BOTH_PLAN } from '@/lib/billing/plans'
+import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY } from '@/lib/billing/plans'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
@@ -23,10 +23,34 @@ export default function BillingClient() {
   const [error, setError] = useState<string | null>(null)
 
   const membership = summary?.membership ?? null
-  const ownedBots = entitlements?.bots ?? []
-  const hasPlan = ownedBots.length > 0
+  const owned = entitlements?.bots ?? []
+  // Community is tracked in the same table but is not a trading bot — split it out so it
+  // never counts as a "second strategy" (which would misprice the plan as Pro).
+  const ownedBots = owned.filter((b): b is 'spark' | 'flame' => b === 'spark' || b === 'flame')
+  const communityActive = owned.includes(COMMUNITY_KEY)
+  const hasPlan = ownedBots.length > 0 || communityActive
   const planName = membership?.plan ?? (hasPlan ? 'IronForge Membership' : 'No active plan')
   const badge = membership?.badge ?? (hasPlan ? 'Active' : 'None')
+
+  async function joinCommunity() {
+    if (busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/billing/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot: COMMUNITY_KEY }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.url) { window.location.href = data.url; return }
+      setError(data.error || 'Could not start checkout. Please try again shortly.')
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function openPortal() {
     if (busy) return
@@ -63,10 +87,14 @@ export default function BillingClient() {
               <span className="font-display text-lg text-amber-500">{planName}</span>
               <span className={`rounded-full border px-2 py-0.5 text-[11px] ${hasPlan ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-forge-border text-gray-400'}`}>{badge}</span>
             </div>
-            {hasPlan && (
+            {ownedBots.length > 0 && (
               <div className="mt-1 text-xs text-gray-400">
-                {ownedBots.map((b) => BOT_PLANS[b as 'spark' | 'flame']?.name ?? b).join(' + ')} · {ownedBots.length > 1 ? `$${BOTH_PLAN.priceMonthly}/mo` : `$${BOT_PLANS[ownedBots[0] as 'spark' | 'flame']?.priceMonthly ?? 50}/mo`}
+                {ownedBots.map((b) => BOT_PLANS[b]?.name ?? b).join(' + ')} · {ownedBots.length > 1 ? `$${BOTH_PLAN.priceMonthly}/mo` : `$${BOT_PLANS[ownedBots[0]]?.priceMonthly ?? 50}/mo`}
+                <span className="text-gray-500"> · Community included</span>
               </div>
+            )}
+            {ownedBots.length === 0 && communityActive && (
+              <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · ${COMMUNITY_PLAN.priceMonthly}/mo</div>
             )}
           </div>
           {hasPlan ? (
@@ -104,6 +132,25 @@ export default function BillingClient() {
                 </Link>
               )
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Community-only option — chat + education without a trading bot. Hidden once a bot
+          is owned (Community is bundled in) or already active on its own. */}
+      {ownedBots.length === 0 && !communityActive && (
+        <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-white">Just want the community?</div>
+              <p className="mt-0.5 text-xs text-gray-400">
+                Chat, market insights, and education — no trading bot. ${COMMUNITY_PLAN.priceMonthly}/mo, cancel anytime.
+              </p>
+            </div>
+            <button onClick={joinCommunity} disabled={busy}
+              className="shrink-0 rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60">
+              {busy ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
+            </button>
           </div>
         </div>
       )}

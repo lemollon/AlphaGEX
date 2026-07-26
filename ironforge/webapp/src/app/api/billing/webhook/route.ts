@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyStripeSignature } from '@/lib/billing/stripe'
 import { isCustomersDbConfigured, customerExecute, customerQuery } from '@/lib/customers-db'
-import { getBotPlan, BOTH_PLAN } from '@/lib/billing/plans'
+import { getBotPlan, BOTH_PLAN, COMMUNITY_PLAN, isCommunityKey } from '@/lib/billing/plans'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -39,7 +39,8 @@ async function upsertSubscription(opts: {
   /** Overrides the derived single-bot lookup key — set to 'both_monthly' for bundle rows. */
   priceLookupKey?: string | null
 }) {
-  const lookupKey = opts.priceLookupKey ?? getBotPlan(opts.bot)?.lookupKey ?? null
+  const derivedKey = isCommunityKey(opts.bot) ? COMMUNITY_PLAN.lookupKey : getBotPlan(opts.bot)?.lookupKey
+  const lookupKey = opts.priceLookupKey ?? derivedKey ?? null
   await customerExecute(
     `INSERT INTO customer_bot_subscriptions
        (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
@@ -59,14 +60,19 @@ async function upsertSubscription(opts: {
  * the second-bot upgrade) carries `metadata.bots` as a CSV. The bundle case must fan out to BOTH
  * bot rows so a subscription.deleted/past_due on the one bundle sub correctly updates both.
  */
+function isKnownPlan(v: unknown): v is string {
+  return typeof v === 'string' && (Boolean(getBotPlan(v)) || isCommunityKey(v))
+}
+
 function botsFor(meta: Record<string, any> | undefined): { bots: string[]; bundle: boolean } {
   const csv = meta?.bots
   if (typeof csv === 'string' && csv.includes(',')) {
     const bots = csv.split(',').map((b) => b.trim()).filter((b) => getBotPlan(b))
     if (bots.length > 1) return { bots, bundle: true }
   }
+  // Single entitlement — a bot (spark/flame) or the standalone Community plan.
   const single = meta?.bot
-  return { bots: typeof single === 'string' && getBotPlan(single) ? [single] : [], bundle: false }
+  return { bots: isKnownPlan(single) ? [single] : [], bundle: false }
 }
 
 export async function POST(req: NextRequest) {
