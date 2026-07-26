@@ -50,6 +50,7 @@ const CUSTOMER_EXACT = new Set<string>([
   '/performance',
   '/community',
   '/account/trades',
+  '/account/billing',
   // Signed-in password change. Omitting it sent a customer who clicked
   // "Change password" to /ops/login — the OPERATOR door, which they can
   // never satisfy. Same class of bug as /home and /live before #2560.
