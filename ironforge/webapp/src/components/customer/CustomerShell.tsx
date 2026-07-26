@@ -1,10 +1,12 @@
 'use client'
 
 import Link from 'next/link'
+import useSWR from 'swr'
 import { useIsOperator } from '@/lib/useIsOperator'
 import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
+import { fetcher } from '@/lib/fetcher'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 
@@ -122,33 +124,93 @@ function PlanCard({ membership, variant }: { membership: PlanCardData | null; va
   )
 }
 
-/** Strategy child rows under "Live" (Spark / Flame). Hidden unless >1 strategy + a switch handler. */
+/** The two customer-purchasable strategies. spark2 ("Spark paper") is an operator-only
+ *  paper account, never sold, so it's not offered as an "add" — it only appears as a
+ *  switch row when the /live switcher already grants access to it. */
+const PURCHASABLE_BOTS: LiveBot[] = ['spark', 'flame']
+
+const strategyGlyph = (accent: string) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className={`h-4 w-4 shrink-0 ${accent}`}>
+    <path d="M12 2c1.5 3.5-.5 5.5-2 7.5S8 14 9.5 15.5c.5-1.5 1.5-2.5 2.5-3 .5 2 2 3 2 5a4 4 0 1 1-8 0c0-4.5 4-6 4-10 0-2 1-4 2-5.5z" />
+  </svg>
+)
+
+/**
+ * Strategy child rows under "Live" — always lists BOTH strategies (Spark + Flame).
+ *
+ * The row routes by ownership (read from /api/billing/entitlements):
+ *   - OWNED  → switch the /live view (on /live) or navigate to /live (elsewhere).
+ *   - NOT owned → the Open Account / add screen `/live/{bot}/open`, which subscribes
+ *     to that strategy — a bundle upgrade (+$25/mo) if the other one is already active.
+ * So a Spark-only customer's "Flame" item takes them to add Flame, and vice versa.
+ */
 function StrategyChildren({ bots, activeBot, paperBots, onSwitch }: StrategyNav) {
-  const strategyBots = (bots ?? []).filter(isLiveBot)
-  if (strategyBots.length <= 1 || !onSwitch) return null
+  const pathname = usePathname()
+  const { data: ent } = useSWR<{ bots?: string[] }>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
+
+  // Extra live bots the /live switcher already grants (e.g. operator "Spark paper").
+  const extras = (bots ?? []).filter((b): b is LiveBot => isLiveBot(b) && !PURCHASABLE_BOTS.includes(b))
+  const rows: LiveBot[] = [...PURCHASABLE_BOTS, ...extras]
+
+  // Owned = billing entitlements ∪ whatever the switcher already lets this viewer see.
+  // Anything in `extras` (allowed but not a subscription, i.e. spark2) counts as owned.
+  const owned = new Set<LiveBot>([...(ent?.bots ?? bots ?? []).filter(isLiveBot), ...extras])
+  // Only offer "Add" once we actually know ownership — never invite a paying customer
+  // to re-buy a strategy they already have while entitlements are still loading.
+  const known = ent !== undefined || bots !== undefined
+
   const paperSet = new Set(paperBots ?? [])
+  const onLive = pathname === '/live'
+
   return (
     <div className="ml-6 mr-3 space-y-0.5 rounded-lg bg-black/20 py-2">
-      {strategyBots.map((b) => {
-        const active = b === activeBot
+      {rows.map((b) => {
         const flame = LIVE_BOT_ACCENT[b] === 'flame'
         const accent = flame ? 'text-flame' : 'text-spark'
         const dot = flame ? 'bg-flame' : 'bg-spark'
+        const isOwned = owned.has(b)
+        const rowBase =
+          'flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 text-sm transition-colors'
+
+        // NOT owned → send them to add this strategy (bundle upgrade if they own the other).
+        if (!isOwned && known) {
+          return (
+            <Link key={b} href={`/live/${b}/open`} className={`${rowBase} text-gray-400 hover:text-white`}>
+              {strategyGlyph(accent)}
+              <span>{LIVE_BOT_LABEL[b]}</span>
+              <span className={`ml-auto rounded px-1.5 py-px text-[9px] font-bold uppercase tracking-wider ${flame ? 'bg-flame/15 text-flame' : 'bg-spark/15 text-spark'}`}>
+                Add
+              </span>
+            </Link>
+          )
+        }
+
+        // Owned + on /live with a switch handler → switch the view in place (existing UX).
+        if (isOwned && onLive && onSwitch && (bots ?? []).includes(b)) {
+          const active = b === activeBot
+          return (
+            <button key={b} type="button" onClick={() => onSwitch(b)}
+              aria-current={active ? 'true' : undefined}
+              className={`${rowBase} ${active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'}`}>
+              {strategyGlyph(accent)}
+              <span>{LIVE_BOT_LABEL[b]}</span>
+              {paperSet.has(b) ? (
+                <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
+              ) : null}
+              <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
+            </button>
+          )
+        }
+
+        // Owned, off /live (or ownership not yet known) → go to the Live dashboard.
         return (
-          <button key={b} type="button" onClick={() => onSwitch(b)}
-            aria-current={active ? 'true' : undefined}
-            className={`flex min-h-[44px] w-full items-center gap-2.5 rounded-md px-3 text-sm transition-colors ${
-              active ? `bg-forge-card font-medium ${accent}` : 'text-gray-400 hover:text-white'
-            }`}>
-            <svg viewBox="0 0 24 24" fill="currentColor" className={`h-4 w-4 shrink-0 ${accent}`}>
-              <path d="M12 2c1.5 3.5-.5 5.5-2 7.5S8 14 9.5 15.5c.5-1.5 1.5-2.5 2.5-3 .5 2 2 3 2 5a4 4 0 1 1-8 0c0-4.5 4-6 4-10 0-2 1-4 2-5.5z" />
-            </svg>
+          <Link key={b} href="/live" className={`${rowBase} text-gray-400 hover:text-white`}>
+            {strategyGlyph(accent)}
             <span>{LIVE_BOT_LABEL[b]}</span>
             {paperSet.has(b) ? (
               <span className="rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">Paper</span>
             ) : null}
-            <span className={`ml-auto h-1.5 w-1.5 rounded-full ${active ? dot : 'bg-gray-700'}`} />
-          </button>
+          </Link>
         )
       })}
     </div>
