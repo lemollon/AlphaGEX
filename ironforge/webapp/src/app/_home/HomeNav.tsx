@@ -13,12 +13,19 @@ import { AdminBotsMenu, AdminBotsMobileLinks } from './AdminBotsMenu'
  * "Bots" dropdown, which self-guards on the operator status probe and renders
  * null for everyone else (see AdminBotsMenu). */
 
+// Public marketing links — shown to everyone, signed in or not.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
   // Public proof surface — reachable with no account, unlike /live and /performance.
   { href: '/track-record', label: 'Track Record' },
   { href: '/pricing', label: 'Pricing' },
+]
+
+// App links that live BEHIND the login. Only rendered for signed-in customers;
+// a logged-out visitor never sees them (the pages themselves also require a
+// session — this just stops the public nav from advertising a locked door).
+const APP_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/live', label: 'Live' },
   { href: '/community', label: 'Community' },
 ]
@@ -41,13 +48,8 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href)
 
-  // Live and Community are app pages that require an account. For a logged-out
-  // visitor, sending them there just bounces to a login wall — a dead-end. Point
-  // those two at signup instead, so the click becomes "create an account to see
-  // it" rather than a locked door. Marketing pages (how-it-works, pricing) and
-  // signed-in customers are unaffected.
-  const linkHref = (href: string) =>
-    !isCustomer && (href === '/live' || href === '/community') ? '/signup' : href
+  // The public marketing links, plus the behind-login app links only once signed in.
+  const visibleLinks = isCustomer ? [...NAV_LINKS, ...APP_LINKS] : NAV_LINKS
 
   return (
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
@@ -58,10 +60,10 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
 
         {/* Desktop links */}
         <nav className="hidden items-center gap-8 md:flex">
-          {NAV_LINKS.map((link) => (
+          {visibleLinks.map((link) => (
             <Link
               key={link.href}
-              href={linkHref(link.href)}
+              href={link.href}
               className={
                 isActive(link.href)
                   ? 'border-b-2 border-[#FD5301] pb-0.5 text-sm font-semibold text-white'
@@ -118,10 +120,10 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
       {open ? (
         <nav className="border-t border-white/10 bg-black px-5 py-4 md:hidden">
           <div className="flex flex-col gap-4">
-            {NAV_LINKS.map((link) => (
+            {visibleLinks.map((link) => (
               <Link
                 key={link.href}
-                href={linkHref(link.href)}
+                href={link.href}
                 onClick={() => setOpen(false)}
                 className={
                   isActive(link.href)

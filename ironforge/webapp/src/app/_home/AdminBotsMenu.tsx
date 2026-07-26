@@ -32,15 +32,13 @@ const BOT_LINKS: ReadonlyArray<BotLink> = LIVE_BOTS.map((bot) => ({
   note: LIVE_BOT_MODE[bot] === 'paper' ? 'paper' : 'live money',
 }))
 
-// Open review mode (see lib/live/viewer.ts): show the menu to everyone, since
-// the pages it links to are ungated too. Next inlines NEXT_PUBLIC_* at BUILD
-// time, so this must be set during the build, not just at runtime.
-const OPEN_MODE = process.env.NEXT_PUBLIC_IRONFORGE_LIVE_OPEN === 'true'
-
+// The "Bots" jump menu is ADMIN ONLY — it is never shown to visitors or customers,
+// including under IRONFORGE_LIVE_OPEN review mode. The site is gated: only a real
+// operator session (the god-mode admin login) reveals it. While impersonating a
+// customer it stays hidden, since you're looking at the customer's own site then.
 function useIsOperator(): boolean {
-  const [isOperator, setIsOperator] = useState(OPEN_MODE)
+  const [isOperator, setIsOperator] = useState(false)
   useEffect(() => {
-    if (OPEN_MODE) return
     fetch('/api/ops/impersonate?status=true')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => setIsOperator(Boolean(d?.operator) && !d?.impersonating))
