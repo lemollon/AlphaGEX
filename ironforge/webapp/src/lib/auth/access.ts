@@ -49,6 +49,7 @@ const CUSTOMER_EXACT = new Set<string>([
   '/live/flame/open',
   '/performance',
   '/community',
+  '/support',
   '/account/trades',
   '/account/billing',
   // Signed-in password change. Omitting it sent a customer who clicked
@@ -66,6 +67,8 @@ export function isCustomerPath(pathname: string): boolean {
   // Customer Live/Home/Performance aggregation APIs. resolveLiveViewer() already
   // fails closed, but an anonymous caller should not reach them at all.
   if (pathname.startsWith('/api/live/')) return true
+  // Sparky support chat — customer-session guarded (also self-guards in-route).
+  if (pathname.startsWith('/api/support/')) return true
   return CUSTOMER_EXACT.has(pathname)
 }
 
