@@ -48,6 +48,7 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/track-record',
   '/community',
   '/account/trades',
+  '/account/billing',
   '/login',
   '/signup',
   '/forgot-password',

@@ -173,6 +173,24 @@ export async function retrieveCheckoutSession(id: string): Promise<any> {
   return stripeRequest('GET', `/checkout/sessions/${encodeURIComponent(id)}`)
 }
 
+/**
+ * Opens Stripe's hosted Customer Portal so a subscriber can change plan, update
+ * their card, download receipts, or cancel — self-service, on Stripe, never on us.
+ * The portal must be enabled once in the Stripe dashboard (Settings → Billing →
+ * Customer portal); until then Stripe returns an error and the caller surfaces a
+ * clean "not available yet", same as the checkout gate.
+ */
+export async function createBillingPortalSession(opts: {
+  customerId: string
+  returnUrl: string
+}): Promise<{ url: string }> {
+  const session = await stripeRequest<{ url: string }>('POST', '/billing_portal/sessions', {
+    customer: opts.customerId,
+    return_url: opts.returnUrl,
+  })
+  return { url: session.url }
+}
+
 export interface StripeSubscription {
   id: string
   status: string
