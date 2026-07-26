@@ -7,6 +7,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { Wordmark } from '@/components/Brand'
 import { fetcher } from '@/lib/fetcher'
+import SparkyWidget from '@/components/support/SparkyWidget'
 import { clientSurface, filterNavBySurface, servesPath } from '@/lib/surface'
 import { LIVE_BOT_ACCENT, LIVE_BOT_LABEL, isLiveBot, type LiveBot } from '@/lib/live/bots'
 
@@ -34,6 +35,7 @@ const ICONS = {
   brokerage: 'M3 21h18M3 10h18M5 6l7-3 7 3M5 10v11m4.5-11v11m5-11v11M19 10v11',
   password: 'M7 11V7a5 5 0 0 1 10 0v4M5 11h14a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z',
   help: 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3m.08 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+  support: 'M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   logout: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9',
   menu: 'M4 6h16M4 12h16M4 18h16',
   close: 'M18 6 6 18M6 6l12 12',
@@ -56,6 +58,8 @@ const NAV_SECONDARY = [
   { label: 'Brokerage Settings', href: '/onboarding/brokerage', icon: ICONS.brokerage },
   // Preserved from the old top-bar avatar menu that this shell removed.
   { label: 'Change Password', href: '/change-password', icon: ICONS.password },
+  // Ask Sparky (the AI support assistant); Help stays the human-contact door.
+  { label: 'Ask Sparky', href: '/support', icon: ICONS.support },
   { label: 'Help', href: '/contact', icon: ICONS.help },
 ]
 
@@ -357,6 +361,9 @@ export default function CustomerShell({
       <div className="lg:pl-60">
         <div className={`mx-auto ${maxWidthClass} px-4 py-5`}>{children}</div>
       </div>
+
+      {/* Sparky support — floating, dismissible, on every signed-in page (hides itself on /support). */}
+      <SparkyWidget />
     </div>
   )
 }
