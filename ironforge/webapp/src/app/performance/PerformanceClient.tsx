@@ -6,8 +6,10 @@ import { Area, ComposedChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis
 import { fetcher } from '@/lib/fetcher'
 import { formatDollarPnl } from '@/lib/format'
 import { BOT_COLORS } from '@/lib/botColors'
+import Link from 'next/link'
 import type { LiveBot } from '@/lib/live/bots'
 import type { PerformanceData } from '@/lib/live/performance'
+import { BOT_PLANS } from '@/lib/billing/plans'
 import CustomerShell from '@/components/customer/CustomerShell'
 import SparkMascot from '../live/components/SparkMascot'
 
@@ -43,12 +45,7 @@ export default function PerformanceClient() {
           <p className="mt-1 text-sm text-gray-400">Your all-time results across every strategy you own.</p>
 
           {data && 'empty' in data && data.empty ? (
-            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
-              <h2 className="text-lg font-bold text-white">No performance history yet</h2>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
-                Your performance appears here once a strategy is connected to your membership and starts trading.
-              </p>
-            </div>
+            <ActivateCard />
           ) : error && !data ? (
             <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
               Performance data is temporarily unavailable — try refreshing in a moment.
@@ -59,6 +56,64 @@ export default function PerformanceClient() {
             <PerformanceBody data={data as PerformanceData} />
           )}
     </CustomerShell>
+  )
+}
+
+/**
+ * Empty-state as a guided activation checklist, not a dead end. A new customer
+ * lands here with nothing connected; this gives them the two concrete steps to go
+ * live (connect a broker, open a strategy) plus proof to browse while deciding —
+ * instead of the old "your performance appears here once…" sentence with no action.
+ */
+function ActivateCard() {
+  const strategies = [
+    { ...BOT_PLANS.spark, accent: '#2F80ED' },
+    { ...BOT_PLANS.flame, accent: '#FD5301' },
+  ]
+  return (
+    <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 sm:p-8">
+      <h2 className="text-lg font-bold text-white">Let’s get your first strategy trading</h2>
+      <p className="mt-1 max-w-xl text-sm leading-relaxed text-gray-400">
+        Your results show up here once a strategy is live. Two quick steps:
+      </p>
+
+      <div className="mt-5 grid gap-3">
+        <div className="flex items-start gap-3 rounded-lg border border-forge-border bg-forge-bg/50 p-4">
+          <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-400">1</span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-white">Connect a brokerage</div>
+            <p className="mt-0.5 text-xs text-gray-400">Link the account your strategy will trade through. Takes a minute.</p>
+          </div>
+          <Link href="/onboarding/brokerage" className="shrink-0 self-center rounded-lg border border-forge-border px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-white/5">Connect</Link>
+        </div>
+
+        <div className="rounded-lg border border-forge-border bg-forge-bg/50 p-4">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-xs font-bold text-amber-400">2</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-white">Open a strategy account</div>
+              <p className="mt-0.5 text-xs text-gray-400">Starts a 5-day free trial — no charge today, cancel anytime.</p>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {strategies.map((s) => (
+              <Link key={s.slug} href={`/live/${s.slug}/open`}
+                className="flex items-center justify-between gap-3 rounded-lg border border-forge-border bg-forge-card/60 px-3 py-2.5 transition hover:border-white/25"
+                style={{ borderLeft: `3px solid ${s.accent}` }}>
+                <span className="text-sm font-semibold text-white">Open {s.name}</span>
+                <span className="text-xs font-medium" style={{ color: s.accent }}>${s.priceMonthly}/mo</span>
+              </Link>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-gray-500">Add the second strategy later for +$25/mo ($75 total).</p>
+        </div>
+      </div>
+
+      <p className="mt-5 text-xs text-gray-500">
+        Want to see how they’ve done first? Browse the{' '}
+        <Link href="/track-record" className="font-semibold text-amber-500 hover:text-amber-400">live track record</Link>.
+      </p>
+    </div>
   )
 }
 
