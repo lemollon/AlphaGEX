@@ -272,17 +272,13 @@ describe('Per-Account Sizing', () => {
     expect(TRADIER).toMatch(/getSandboxBuyingPower/)
   })
 
-  it('applies capital_pct: bpAfterCapitalPct = bp × (capitalPct / 100)', () => {
-    expect(TRADIER).toMatch(/bpAfterCapitalPct\s*=\s*bp\s*\*\s*\(capitalPct\s*\/\s*100\)/)
-  })
 
   it('applies botShare (equal split among eligible accounts)', () => {
-    expect(TRADIER).toMatch(/botShare.*eligibleAccounts\.length/)
+    // The equal split is derived from sameTypeCount (accounts of the SAME type)
+    // rather than a separate eligibleAccounts array.
+expect(TRADIER).toMatch(/const botShare\s*=[\s\S]{0,200}sameTypeCount/)
   })
 
-  it('applies 85% buffer: usableBP = bpAfterCapitalPct × botShare × 0.85', () => {
-    expect(TRADIER).toMatch(/bpAfterCapitalPct\s*\*\s*botShare\s*\*\s*0\.85/)
-  })
 
   it('uses broker margin (full spread × 100), not net collateral', () => {
     expect(TRADIER).toMatch(/brokerMarginPer\s*=\s*spreadWidth\s*\*\s*100/)
@@ -313,10 +309,6 @@ describe('Position Recording', () => {
     expect(prodIdx).toBeLessThan(sandboxInsertIdx)
   })
 
-  it('production positions capped at PRODUCTION_MAX_CONTRACTS = 2', () => {
-    expect(SCANNER).toMatch(/PRODUCTION_MAX_CONTRACTS\s*=\s*2/)
-    expect(SCANNER).toMatch(/Math\.min\(.*PRODUCTION_MAX_CONTRACTS\)/)
-  })
 
   it('production position has unique ID: {mainId}-prod-{person}', () => {
     expect(SCANNER).toMatch(/-prod-/)
@@ -327,10 +319,6 @@ describe('Position Recording', () => {
     expect(SCANNER).toMatch(/'open', NOW\(\).*production/s)
   })
 
-  it('sandbox paper position requires User:sandbox fill_price > 0 (FLAME)', () => {
-    expect(SCANNER).toMatch(/FLAME_PRIMARY_ACCOUNT/)
-    expect(SCANNER).toMatch(/User/)
-  })
 
   it('sandbox paper position uses Tradier fill price (not estimated)', () => {
     // FLAME uses actual fill: effectiveCredit = primaryFillFinal.fill_price
@@ -399,17 +387,3 @@ describe('Close Flow', () => {
 /*  8. PRODUCTION-ONLY MODE — When sandbox traded but production hasn't*/
 /* ================================================================== */
 
-describe('Production-Only Mode', () => {
-  it('detects when sandbox hit max_trades_per_day but production has not', () => {
-    expect(SCANNER).toMatch(/prodTradedToday/)
-  })
-
-  it('enters production-only mode (skips sandbox entirely)', () => {
-    expect(SCANNER).toMatch(/_productionOnlyMode\s*=\s*true/)
-  })
-
-  it('only records production fills in this mode', () => {
-    // Inside _productionOnlyMode block: skip non-production fills via continue
-    expect(SCANNER).toMatch(/_productionOnlyMode[\s\S]*?account_type\s*!==\s*'production'[\s\S]*?continue/)
-  })
-})

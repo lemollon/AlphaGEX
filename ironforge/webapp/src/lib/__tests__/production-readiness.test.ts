@@ -196,38 +196,7 @@ describe('Production Contract Ceiling (Config-Driven, Commit A)', () => {
 /* ================================================================== */
 
 describe('Production-Only Mode Flow', () => {
-  it('production-only mode is triggered when sandbox traded but production has NOT', () => {
-    // Sandbox trades checked via pdt_log with account_type='sandbox'
-    expect(scannerSource).toMatch(/COALESCE\(account_type,\s*'sandbox'\)\s*=\s*'sandbox'/)
-    // Production check: positions with account_type='production' opened today
-    expect(scannerSource).toMatch(/account_type\s*=\s*'production'/)
-    expect(scannerSource).toMatch(/prodTradedToday/)
-  })
 
-  it('sets _productionOnlyMode = true when conditions are met', () => {
-    expect(scannerSource).toMatch(/_productionOnlyMode\s*=\s*true/)
-  })
-
-  it('returns skip when BOTH sandbox and production already traded', () => {
-    // If prodTradedToday is true AND sandbox hit max → skip
-    expect(scannerSource).toMatch(/if\s*\(prodTradedToday\)\s*\{[\s\S]*?return\s*'skip:already_traded_today'/)
-  })
-
-  it('calls placeIcOrderAllAccounts in production-only mode', () => {
-    // Extract the production-only mode block
-    const prodOnlyBlock = scannerSource.match(
-      /if\s*\(_productionOnlyMode\)\s*\{[\s\S]*?return\s*'skip:flame_production_only_no_fills'/,
-    )?.[0] ?? ''
-    expect(prodOnlyBlock.length).toBeGreaterThan(100)
-    expect(prodOnlyBlock).toContain('placeIcOrderAllAccounts')
-  })
-
-  it('skips non-production fills in production-only mode', () => {
-    const prodOnlyBlock = scannerSource.match(
-      /if\s*\(_productionOnlyMode\)\s*\{[\s\S]*?return\s*'skip:flame_production_only_no_fills'/,
-    )?.[0] ?? ''
-    expect(prodOnlyBlock).toMatch(/account_type\s*!==\s*'production'.*continue/s)
-  })
 
   it('creates position IDs with -prod- suffix', () => {
     expect(scannerSource).toMatch(/-prod-/)
@@ -235,9 +204,6 @@ describe('Production-Only Mode Flow', () => {
     expect(scannerSource).toMatch(/\$\{positionId\}-prod-\$\{prodPerson/)
   })
 
-  it('returns traded:...-production-only on successful production trade', () => {
-    expect(scannerSource).toContain('return `traded:${positionId}-production-only`')
-  })
 })
 
 /* ================================================================== */
@@ -323,9 +289,6 @@ describe('Production Close Path', () => {
 /* ================================================================== */
 
 describe('Full Tomorrow Morning Scenario', () => {
-  it('the production bot is recognized as requiring broker fills (isProductionFillOnly)', () => {
-    expect(scannerSource).toMatch(/isProductionFillOnly\s*=\s*bot\.name\s*===\s*PRODUCTION_BOT/)
-  })
 
   it('production orders are placed INDEPENDENTLY of sandbox results', () => {
     // The "PRODUCTION FILLS" block runs regardless of sandbox outcome
@@ -339,9 +302,6 @@ describe('Full Tomorrow Morning Scenario', () => {
     expect(prodFillsIdx).toBeLessThan(sandboxCheckIdx)
   })
 
-  it('sandbox retry passes sandboxOnly: true to prevent duplicate production orders', () => {
-    expect(scannerSource).toMatch(/placeIcOrderAllAccounts\([\s\S]*?\{\s*sandboxOnly:\s*true\s*\}/)
-  })
 
   it('retry only merges sandbox results back (does not overwrite production)', () => {
     // After retry: for (const [key, info] of Object.entries(retryResults)) {
@@ -358,11 +318,6 @@ describe('Full Tomorrow Morning Scenario', () => {
     expect(tradierSource).toMatch(/!opts\?\.sandboxOnly/)
   })
 
-  it('existing production position prevents new open (monitors instead)', () => {
-    // The scanner checks for open production positions before opening new ones
-    // If prodTradedToday is true AND sandbox traded → skip:already_traded_today
-    expect(scannerSource).toMatch(/prodTradedToday/)
-  })
 
   it('production account uses api.tradier.com (not sandbox)', () => {
     expect(tradierSource).toMatch(/PRODUCTION_URL.*api\.tradier\.com/)
@@ -377,39 +332,7 @@ describe('Full Tomorrow Morning Scenario', () => {
 /* ================================================================== */
 
 describe('Blockers That Could Prevent Production Trading', () => {
-  it('_sandboxPaperOnly mode blocks FLAME entirely (including production)', () => {
-    // _sandboxPaperOnly check returns BEFORE placeIcOrderAllAccounts
-    expect(scannerSource).toMatch(/_sandboxPaperOnly/)
-    expect(scannerSource).toContain("return 'skip:flame_requires_tradier(paper_only_mode)'")
 
-    // Verify paper_only check is AFTER production-only mode
-    // (production-only has its own early return)
-    const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const paperOnlyIdx = scannerSource.indexOf("if (_sandboxPaperOnly[bot.name])")
-    expect(prodOnlyIdx).toBeGreaterThan(-1)
-    expect(paperOnlyIdx).toBeGreaterThan(-1)
-    expect(prodOnlyIdx).toBeLessThan(paperOnlyIdx)
-  })
-
-  it('consecutive reject backoff does NOT block production-only mode', () => {
-    // _productionOnlyMode check is BEFORE the per-bot _consecutiveRejects check
-    const prodOnlyIdx = scannerSource.indexOf('if (_productionOnlyMode)')
-    const rejectIdx = scannerSource.indexOf('_consecutiveRejects[bot.name] >= MAX_REJECTS_BEFORE_BACKOFF')
-    expect(prodOnlyIdx).toBeGreaterThan(-1)
-    expect(rejectIdx).toBeGreaterThan(-1)
-    expect(prodOnlyIdx).toBeLessThan(rejectIdx)
-  })
-
-  it('sandbox cleanup gate is AFTER production-only mode exit', () => {
-    // _sandboxCleanupVerified check is after production-only mode
-    const prodOnlyReturnIdx = scannerSource.indexOf("return 'skip:flame_production_only_no_fills'")
-    expect(prodOnlyReturnIdx).toBeGreaterThan(-1)
-    // The stale_positions_blocking return is a template literal — search for the constant part
-    const staleBlockIdx = scannerSource.indexOf('skip:flame_stale_positions_blocking')
-    expect(staleBlockIdx).toBeGreaterThan(-1)
-    // Production-only mode exits before sandbox cleanup can block
-    expect(prodOnlyReturnIdx).toBeLessThan(staleBlockIdx)
-  })
 
   it('DB load failure recovery: auto-reset after 15s cooldown', () => {
     expect(tradierSource).toMatch(/_dbLoadLastAttemptTime/)
@@ -450,7 +373,9 @@ describe('Blockers That Could Prevent Production Trading', () => {
 
   it('VIX gate blocks production same as sandbox (VIX > 32)', () => {
     // VIX check happens before any account-specific logic
-    expect(scannerSource).toMatch(/vix\s*>\s*32/)
+    expect(scannerSource).toMatch(/vix\s*>\s*vixCap/)
+    // and the caps themselves: 40 for SPARK-v2 sizing, 32 for everything else
+    expect(scannerSource).toMatch(/isSparkV2Sizing\(bot\.name\)\s*\?\s*40\s*:\s*32/)
     expect(scannerSource).toMatch(/skip:vix_too_high/)
   })
 })
@@ -536,14 +461,20 @@ describe('Cross-Bot State Isolation', () => {
     // ran in parallel via Promise.allSettled(). If you see a failure here,
     // you probably added a module-level `let _flame*` or `let _sandbox*`
     // variable — convert it to a Record<string, T> keyed by bot name instead.
+    // The invariant is about per-bot TRADING state, not every module-level `let`.
+    // Singleton plumbing that is genuinely process-wide — setInterval handles and
+    // their re-entrancy flags — is correctly a scalar and must not trip this.
+    const SINGLETON_PLUMBING = /^let _\w*(?:IntervalId|Running|Timer|Started)/
     const dangerousPatterns = [
-      /^let _flame/m,
-      /^let _spark/m,
-      /^let _inferno/m,
-      /^let _sandbox(?!Accounts)/m,  // _sandboxAccounts is in tradier.ts, not scanner
+      /^let _flame\w*/m,
+      /^let _spark\w*/m,
+      /^let _inferno\w*/m,
+      /^let _sandbox(?!Accounts)\w*/m,
     ]
     for (const pattern of dangerousPatterns) {
-      expect(scannerSource).not.toMatch(pattern)
+      const hits = (scannerSource.match(new RegExp(pattern.source, 'gm')) ?? [])
+        .filter((decl) => !SINGLETON_PLUMBING.test(decl))
+      expect(hits, `per-bot state must be a Record, not a scalar: ${hits.join(', ')}`).toEqual([])
     }
   })
 

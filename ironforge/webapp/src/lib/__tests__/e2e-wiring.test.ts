@@ -177,8 +177,10 @@ describe('Fill Price Wiring by Bot', () => {
     expect(spark).toBeDefined()
     expect(inferno).toBeDefined()
 
-    // Bot names match expected set
-    expect(BOTS.map(b => b.name)).toEqual(['flame', 'spark', 'inferno'])
+    // SPARK2 joined the roster on 2026-07-13 (replaced KINDLE, which is retired
+    // and removed from BOTS entirely). It runs SPARK's full v2 strategy on the
+    // second live account.
+    expect(BOTS.map(b => b.name)).toEqual(['flame', 'spark', 'inferno', 'spark2'])
   })
 
   it('SandboxOrderInfo fill_price flows through to position record', () => {
@@ -328,8 +330,11 @@ describe('Double-Close Guard', () => {
 describe('EOD Cutoff Force-Close', () => {
   it('EOD cutoff triggers force close regardless of P&L', () => {
     // After EOD cutoff, positions must close regardless of win/loss state
+    // The cutoff is per-bot now (configurable via {bot}_config.eod_cutoff_et,
+    // defaulting to 14:45 CT), so the bot is required to resolve its config.
     const ct = makeCT(14, 50, 1) // 2:50 PM CT Monday
-    expect(isAfterEodCutoff(ct)).toBe(true)
+    const flame = BOTS.find((b) => b.name === 'flame')!
+    expect(isAfterEodCutoff(ct, flame)).toBe(true)
   })
 
   it('stale holdover + before EOD still triggers force close', () => {
@@ -343,7 +348,7 @@ describe('EOD Cutoff Force-Close', () => {
 
     // Verify EOD is not the trigger here — it's the stale detection
     const ct = makeCT(9, 0, 1) // 9:00 AM CT
-    expect(isAfterEodCutoff(ct)).toBe(false) // not EOD yet
+    expect(isAfterEodCutoff(ct, BOTS.find((b) => b.name === 'flame')!)).toBe(false) // not EOD yet
     // Either isAfterEodCutoff OR isStaleHoldover triggers force close
   })
 })
@@ -731,8 +736,13 @@ describe('Route SQL safety', () => {
     // eod-close should use $1, $2 parameterized queries (not escapeSql)
     expect(source).toMatch(/\$1/)
     expect(source).toMatch(/\$2/)
-    // Should NOT use escapeSql (fully parameterized)
-    expect(source).not.toMatch(/escapeSql/)
+    // The original assertion was 'the file must not contain escapeSql anywhere',
+    // which failed the moment per-account filtering was added — even though no
+    // value is string-built. escapeSql IS the codebase's escaping helper.
+    //
+    // The real invariant: a VALUE must never be spliced inside SQL quotes
+    // unescaped. `'${escapeSql(x)}'` is safe; `'${x}'` is an injection hole.
+    expect(source).not.toMatch(/'\$\{(?!escapeSql)/)
   })
 
   it('force-trade uses SQL protection', () => {

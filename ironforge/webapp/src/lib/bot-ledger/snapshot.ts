@@ -40,6 +40,18 @@ export function bucketEndMs(nowMs: number): number {
 }
 
 /**
+ * Separators for the canonical form. ASCII unit/record separators, written as
+ * escapes so they are VISIBLE in source: they were literal control characters,
+ * which a reformat could silently drop -- and dropping them would change every
+ * snapshot digest while looking like a pure whitespace diff.
+ *
+ * They matter: joining on '' would let ['ab','c'] and ['a','bc'] serialise
+ * identically, so two different ledgers could collide on one digest.
+ */
+const FIELD_SEP = '\u001f'
+const RECORD_SEP = '\u001e'
+
+/**
  * Canonical digest over the whole universe. Input order is normalised first so
  * the digest depends on content, not on how Postgres happened to return rows.
  */
@@ -55,10 +67,10 @@ export function digestOf(dtos: readonly PublicLedgerTrade[]): string {
         d.net_result,
         d.return_on_bp_pct,
         d.outcome,
-      ].join(''),
+      ].join(FIELD_SEP),
     )
     .sort()
-    .join('')
+    .join(RECORD_SEP)
   return createHash('sha256').update(canonical).digest('hex').slice(0, 8)
 }
 

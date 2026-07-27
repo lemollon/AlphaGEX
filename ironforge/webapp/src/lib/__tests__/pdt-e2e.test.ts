@@ -246,17 +246,24 @@ describe('Day Trade Detection', () => {
       new URL('../scanner.ts', import.meta.url), 'utf-8',
     )
 
-    // The INSERT into pdt_log should NOT be gated behind pdtEnabled
-    // Find the pdt_log INSERT section
-    const openSection = scannerSrc.slice(
-      scannerSrc.indexOf('// PDT log\n  await query(\n    `INSERT INTO'),
-    )
-    const insertLine = openSection.slice(0, openSection.indexOf('Equity snapshot'))
+    // Previously this sliced the file on an exact multi-line literal, so any
+    // reformatting made indexOf return -1 and every assertion below ran against
+    // an EMPTY string -- silently asserting nothing. Assert the invariant directly.
+    const marker = "INSERT INTO ${botTable(bot.name, 'pdt_log')}"
+    const positions = []
+    for (let i = scannerSrc.indexOf(marker); i !== -1; i = scannerSrc.indexOf(marker, i + 1)) {
+      positions.push(i)
+    }
+    expect(positions.length, 'expected at least one pdt_log INSERT').toBeGreaterThan(0)
 
-    // Should contain the INSERT without any pdtEnabled guard
-    expect(insertLine).toContain("INSERT INTO ${botTable(bot.name, 'pdt_log')}")
-    // The INSERT should not be inside an "if (pdtEnabled)" block
-    expect(insertLine).not.toContain('pdtEnabled')
+    // The invariant: logging a day trade must never be conditional on PDT
+    // ENFORCEMENT being switched on, or the rolling count under-reports and the
+    // gate lets a 5th day trade through.
+    for (const idx of positions) {
+      const preceding = scannerSrc.slice(Math.max(0, idx - 600), idx)
+      expect(preceding, 'pdt_log INSERT must not sit inside an if (pdtEnabled) block')
+        .not.toMatch(/if\s*\([^)]*pdtEnabled[^)]*\)\s*\{[^}]*$/)
+    }
   })
 })
 
@@ -328,8 +335,10 @@ describe('Toggle Flow Simulation', () => {
       new URL('../../app/api/[bot]/pdt/route.ts', import.meta.url), 'utf-8',
     )
 
-    // Should call dayTradeCountSql which reads from pdt_log
-    expect(routeSrc).toContain('dayTradeCountSql(bot, dte, lastResetAt)')
+    // Called with whatever the current reset variable is named — the point is
+    // that the count comes from dayTradeCountSql (a live pdt_log query) and not
+    // from a stored counter on the config row.
+    expect(routeSrc).toMatch(/dayTradeCountSql\(bot, dte, \w+/)
     // dayTradeCountSql should query pdt_log (not pdt_config)
     expect(routeSrc).toContain("const table = botTable(bot, 'pdt_log')")
   })
@@ -346,14 +355,11 @@ describe('Scanner Trade Gate', () => {
       new URL('../scanner.ts', import.meta.url), 'utf-8',
     )
 
-    const gateSection = scannerSrc.slice(
-      scannerSrc.indexOf('PDT config check'),
-      scannerSrc.indexOf('Get account'),
-    )
-
-    // Should read from shared table
-    expect(gateSection).toContain('FROM ironforge_pdt_config')
-    // Should NOT read from per-bot table for the gate check
-    expect(gateSection).not.toContain("FROM ${botTable(bot.name, 'pdt_config')}")
+    // Same fragility as above: this sliced between two comment strings that have
+    // since moved, so it was asserting against an empty section.
+    expect(scannerSrc).toContain('FROM ironforge_pdt_config')
+    // The scanner gate must read the SHARED counter, never a per-bot pdt_config
+    // table — a per-bot read would let each bot day-trade its own allowance.
+    expect(scannerSrc).not.toContain("FROM ${botTable(bot.name, 'pdt_config')}")
   })
 })
