@@ -304,3 +304,52 @@ def test_read_rsi_state_end_to_end_against_a_real_engine(tmp_path):
     assert cold.rsi is None
     assert cold.recovery_cross is False
     assert cold.reason is not None
+
+
+def test_rsi_seed_makes_a_COLD_table_immediately_usable(tmp_path):
+    """The whole point of seed_closes: without it a fresh table needs ~2.5
+    sessions of snapshots before RSI(14) is computable, so REVERSAL sits out
+    for days after any reset."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'seed.db'}")
+    flow_store.ensure_table(eng)
+    now = datetime(2026, 7, 27, 15, 30)
+
+    # cold table, no seed -> correctly unavailable
+    cold = flow_store.read_rsi_state(eng, ticker="SPY", now=now)
+    assert cold.rsi is None and cold.recovery_cross is False
+
+    # same cold table, WITH a seeded history -> usable immediately
+    seed = []
+    base = datetime(2026, 7, 24, 9, 0)
+    px = [600.0 - i * 1.2 for i in range(20)] + [576.0 + i * 2.5 for i in range(6)]
+    for i, v in enumerate(px):
+        seed.append(((base + timedelta(hours=i)).strftime("%Y-%m-%dT%H"), v))
+    warm = flow_store.read_rsi_state(eng, ticker="SPY", now=now,
+                                     seed_closes=seed)
+    assert warm.rsi is not None, warm.reason
+    assert warm.bars_used >= 16
+
+
+def test_live_snapshots_win_over_seed_on_overlapping_hours(tmp_path):
+    """Snapshots are the same clock the flow half of the book reads, so on a
+    shared hour they must override the vendor seed."""
+    from sqlalchemy import create_engine
+    from backend.bots import flow_store
+
+    eng = create_engine(f"sqlite:///{tmp_path/'ovl.db'}")
+    flow_store.ensure_table(eng)
+    t = datetime(2026, 7, 27, 11, 5)
+    flow_store.record_snapshot(
+        eng, ticker="SPY", expiration=date(2026, 7, 27), now=t, spot=999.0,
+        options=[{"strike": 999, "type": "call", "volume": 1},
+                 {"strike": 999, "type": "put", "volume": 1}])
+    # seed claims a different close for that same hour
+    seed = [("2026-07-27T11", 111.0)]
+    st = flow_store.read_rsi_state(eng, ticker="SPY",
+                                   now=datetime(2026, 7, 27, 15, 0),
+                                   seed_closes=seed)
+    # not enough bars to produce an RSI, but the merge must have kept 999
+    assert st.bars_used == 1

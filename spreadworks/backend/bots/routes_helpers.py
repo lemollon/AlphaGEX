@@ -196,6 +196,58 @@ class LiveTradierChainProvider:
             logger.warning(f"history fetch error for {ticker}: {e}")
             return []
 
+    def get_hourly_closes(self, *, ticker: str, days: int = 6
+                          ) -> list[tuple[str, float]]:
+        """RTH hourly closes, newest last, as (ISO hour, close) pairs.
+
+        WHY THIS EXISTS: the REVERSAL leg's hourly RSI(14) needs ~16 hourly
+        bars. Rebuilt from `spreadworks_flow_snapshots` alone that takes ~2.5
+        SESSIONS to accumulate after any table reset or a fresh deploy, during
+        which the bot correctly but uselessly reports insufficient_history.
+        Seeding from Tradier makes it usable immediately and survives the
+        10-day purge.
+
+        Tradier has no hourly interval, so 15-minute timesales bars are rolled
+        up and the LAST bar of each clock hour is that hour's close — the same
+        construction `flow_store.read_rsi_state` applies to snapshots, so the
+        two series splice cleanly.
+        """
+        from datetime import datetime as _dt, timedelta as _td
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        now_et = _dt.now(et)
+        start = (now_et - _td(days=days)).strftime("%Y-%m-%d %H:%M")
+        end = (now_et + _td(minutes=5)).strftime("%Y-%m-%d %H:%M")
+        try:
+            resp = self._client.get(
+                f"{TRADIER_BASE}/markets/timesales",
+                params={"symbol": ticker, "interval": "15min",
+                        "start": start, "end": end, "session_filter": "all"},
+                headers=_headers(),
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"timesales fetch failed {resp.status_code} for {ticker}")
+                return []
+            bars = ((resp.json().get("series") or {}).get("data") or [])
+            if isinstance(bars, dict):
+                bars = [bars]
+            # session_filter=open drops today's in-progress session entirely
+            # (see routes.py), so ask for `all` and filter to RTH here.
+            buckets: dict[str, float] = {}
+            for b in bars:
+                t = str(b.get("time") or "")
+                if len(t) < 16 or not ("09:30" <= t[11:16] < "16:00"):
+                    continue
+                c = b.get("close")
+                if c is None:
+                    continue
+                buckets[t[:13]] = float(c)      # YYYY-MM-DDTHH -> last wins
+            return sorted(buckets.items())
+        except Exception as e:                              # noqa: BLE001
+            logger.warning(f"timesales error for {ticker}: {e}")
+            return []
+
     # ---- helpers ----
     def _nearest_expiration_on_or_after(self, ticker: str, target: date) -> str | None:
         resp = self._client.get(
