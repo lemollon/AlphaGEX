@@ -5,13 +5,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { Wordmark } from '@/components/Brand'
 import { MenuIcon, CloseIcon } from './icons'
-import { AdminBotsMenu, AdminBotsMobileLinks } from './AdminBotsMenu'
 
 /* Sticky top navigation for the public homepage: logo, the customer-facing
  * pages, then Login / Create Account (or My Dashboard once signed in). Nothing
- * operator-facing is exposed to customers or visitors: the one exception is the
- * "Bots" dropdown, which self-guards on the operator status probe and renders
- * null for everyone else (see AdminBotsMenu). */
+ * operator-facing is exposed to customers or visitors — including to an
+ * operator. The masthead is a customer surface, so it links customer pages and
+ * nothing else; the ops console is a separate deployment with its own nav. */
 
 // Public marketing links — shown to everyone, signed in or not.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
@@ -74,7 +73,6 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
               {link.label}
             </Link>
           ))}
-          <AdminBotsMenu />
           {isCustomer ? (
             <Link
               href="/performance"
@@ -135,7 +133,6 @@ export default function HomeNav({ active: _active }: { active?: string } = {}) {
                 {link.label}
               </Link>
             ))}
-            <AdminBotsMobileLinks onNavigate={() => setOpen(false)} />
             {isCustomer ? (
               <Link href="/performance" onClick={() => setOpen(false)} className="text-sm text-gray-300">
                 My Dashboard
