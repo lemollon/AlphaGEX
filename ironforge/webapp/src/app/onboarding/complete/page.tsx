@@ -22,8 +22,10 @@ export default async function OnboardingCompletePage() {
   const session = await getCustomerSession()
   if (!claims && !session.customerId) redirect('/login?next=/onboarding/complete')
 
-  // Recommended strategy from the risk step (users.recommended_bot). INFERNO isn't
-  // a customer product, so only SPARK/FLAME map to a highlighted purchasable plan.
+  // Recommended strategy from the risk step (users.recommended_bot). Only SPARK/FLAME
+  // are purchasable, and the risk step no longer produces anything else. Rows written
+  // before that fix can still say INFERNO; those fall through to no highlight rather
+  // than pointing at a plan that cannot be bought.
   const uid = claims?.uid ?? session.customerId ?? null
   let recommended: RecommendedBot | null = null
   if (uid && isCustomersDbConfigured()) {
@@ -33,7 +35,7 @@ export default async function OnboardingCompletePage() {
         [uid],
       )
       const raw = (rows[0]?.recommended_bot ?? '').toString().toUpperCase()
-      if (raw === 'SPARK' || raw === 'FLAME' || raw === 'INFERNO') recommended = raw as RecommendedBot
+      if (raw === 'SPARK' || raw === 'FLAME') recommended = raw as RecommendedBot
     } catch { /* recommendation is a nicety, never block the page */ }
   }
   const recSlug = recommended === 'FLAME' ? 'flame' : recommended === 'SPARK' ? 'spark' : null
