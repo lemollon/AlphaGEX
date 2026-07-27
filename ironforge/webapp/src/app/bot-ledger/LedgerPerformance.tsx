@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { LedgerPeriod } from '@/lib/bot-ledger/constants'
 import type { SummaryResponse } from '@/lib/bot-ledger/types'
-import { track } from '@/lib/analytics'
+import { referrerClass, track, viewportClass } from '@/lib/analytics'
 import { nextSearch, PERIOD_SPOKEN } from '@/lib/botLedger/params'
 import { deriveLedgerView } from '@/lib/botLedger/state'
 import AssumptionsBasis from './AssumptionsBasis'
@@ -54,8 +54,46 @@ export default function LedgerPerformance({
   useEffect(() => {
     if (viewed.current) return
     viewed.current = true
-    track({ name: 'bot_ledger_view', props: { period: initialPeriod, bot: initialBot } })
-  }, [initialPeriod, initialBot])
+    track({
+      name: 'bot_ledger_view',
+      props: {
+        period: initialPeriod,
+        viewport_class: viewportClass(window.innerWidth),
+        referrer_class: referrerClass(document.referrer, window.location.host),
+        // This route is public and holds no session; a signed-in visitor is
+        // indistinguishable here and must stay that way.
+        auth_state: 'anonymous',
+      },
+    })
+  }, [initialPeriod])
+
+  /**
+   * CTA tracking by delegation.
+   *
+   * The hero is a SERVER component (so the H1 and buttons need no JS), which
+   * means it cannot carry an onClick. A single delegated listener keeps the
+   * hero server-rendered and still reports the click.
+   */
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      const el = (e.target as HTMLElement | null)?.closest<HTMLAnchorElement>('[data-ledger-cta]')
+      if (!el) return
+      const cta = el.dataset.ledgerCta === 'start_trial' ? 'start_trial' : 'create_account'
+      track({
+        name: 'cta_click',
+        props: {
+          cta_name: cta,
+          placement: 'hero',
+          // Path only — the query string carries campaign tags, not user data,
+          // but there is no reason to ship it.
+          target_route: new URL(el.href, window.location.origin).pathname,
+          plan: cta === 'start_trial' ? 'automate' : 'none',
+        },
+      })
+    }
+    document.addEventListener('click', onClick)
+    return () => document.removeEventListener('click', onClick)
+  }, [])
 
   // Announce completed updates, never the first load.
   const firstLoad = useRef(true)
@@ -80,12 +118,19 @@ export default function LedgerPerformance({
     const code = resource.error instanceof LedgerHttpError ? resource.error.code : 'network'
     if (reportedErrors.current.has(code)) return
     reportedErrors.current.add(code)
-    track({ name: 'bot_ledger_error', props: { component: 'summary', error_code: code } })
+    track({
+      name: 'ledger_error',
+      props: {
+        component: 'summary',
+        error_code: code,
+        request_id: resource.error instanceof LedgerHttpError ? resource.error.requestId : null,
+      },
+    })
   }, [resource.error])
 
   function changePeriod(next: LedgerPeriod) {
     if (next === period) return
-    track({ name: 'bot_ledger_period_change', props: { from: period, to: next } })
+    track({ name: 'period_change', props: { from_period: period, to_period: next } })
     setPeriod(next)
     // replaceState notifies nothing: no re-render, no RSC round-trip, no scroll
     // jump. Only the `bot` key is left alone, structurally (see nextSearch).
@@ -108,11 +153,7 @@ export default function LedgerPerformance({
   )
 
   return (
-    <section aria-labelledby="ledger-performance-heading">
-      <h2 id="ledger-performance-heading" className="sr-only">
-        Paper-trade performance
-      </h2>
-
+    <section aria-label="Paper-trade performance">
       <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
         {hero}
         <div className="md:pb-1">
@@ -123,6 +164,11 @@ export default function LedgerPerformance({
       <div className="mt-8">
         <AssumptionsBasis />
       </div>
+
+      {/* Sits AFTER the hero so the document outline reads h1 -> h2 -> h3.
+          As a sibling before the hero it made a screen reader navigating by
+          heading land on this label before the page title. */}
+      <h2 className="sr-only">Paper-trade performance</h2>
 
       <p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}

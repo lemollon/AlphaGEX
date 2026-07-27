@@ -8,6 +8,7 @@ import {
 } from '@/lib/bot-ledger/constants'
 import { getLedgerTrades, LedgerRequestError } from '@/lib/bot-ledger/ledger'
 import { LedgerInvariantError } from '@/lib/bot-ledger/assertions'
+import { requestIdFrom } from '@/lib/bot-ledger/request-id'
 
 /**
  * PUBLIC Bot Ledger trade log — the evidence behind the KPI cards.
@@ -19,13 +20,16 @@ import { LedgerInvariantError } from '@/lib/bot-ledger/assertions'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const NO_STORE = { 'Cache-Control': 'no-store' }
-
-function bad(code: string, message: string) {
-  return NextResponse.json({ error: message, error_code: code }, { status: 400, headers: NO_STORE })
-}
-
 export async function GET(req: NextRequest) {
+  const requestId = requestIdFrom(req.headers)
+  const noStore = { 'Cache-Control': 'no-store', 'x-request-id': requestId }
+
+  const bad = (code: string, message: string) =>
+    NextResponse.json(
+      { error: message, error_code: code, request_id: requestId },
+      { status: 400, headers: noStore },
+    )
+
   const sp = req.nextUrl.searchParams
 
   const bot = sp.get('bot') ?? 'all'
@@ -52,25 +56,32 @@ export async function GET(req: NextRequest) {
       now: Date.now(),
     })
     return NextResponse.json(data, {
-      headers: { 'Cache-Control': 'public, max-age=300, stale-while-revalidate=600' },
+      headers: {
+        'Cache-Control': 'public, max-age=300, stale-while-revalidate=600',
+        'x-request-id': requestId,
+      },
     })
   } catch (err: unknown) {
     if (err instanceof LedgerRequestError) {
       return NextResponse.json(
-        { error: err.message, error_code: err.code, ...err.extra },
-        { status: err.status, headers: NO_STORE },
+        { error: err.message, error_code: err.code, request_id: requestId, ...err.extra },
+        { status: err.status, headers: noStore },
       )
     }
     if (err instanceof LedgerInvariantError) {
       return NextResponse.json(
-        { error: 'Recent paper trades are being verified.', error_code: 'LEDGER_INVARIANT_VIOLATION' },
-        { status: 500, headers: NO_STORE },
+        {
+          error: 'Recent paper trades are being verified.',
+          error_code: 'LEDGER_INVARIANT_VIOLATION',
+          request_id: requestId,
+        },
+        { status: 500, headers: noStore },
       )
     }
     const msg = err instanceof Error ? err.message : String(err)
     return NextResponse.json(
-      { error: msg, error_code: 'LEDGER_UNAVAILABLE' },
-      { status: 500, headers: NO_STORE },
+      { error: msg, error_code: 'LEDGER_UNAVAILABLE', request_id: requestId },
+      { status: 500, headers: noStore },
     )
   }
 }

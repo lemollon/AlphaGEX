@@ -8,11 +8,14 @@ import { isAbortError } from '@/lib/botLedger/state'
 export class LedgerHttpError extends Error {
   readonly status: number
   readonly code: string
-  constructor(status: number, code: string, message: string) {
+  /** Server correlation id, so a reported failure can be found in the logs. */
+  readonly requestId: string | null
+  constructor(status: number, code: string, message: string, requestId: string | null) {
     super(message)
     this.name = 'LedgerHttpError'
     this.status = status
     this.code = code
+    this.requestId = requestId
   }
 }
 
@@ -54,14 +57,20 @@ export function useLedgerResource<T>(key: string | null): LedgerResource<T> {
       if (!res.ok) {
         let code = 'LEDGER_UNAVAILABLE'
         let message = `Request failed (${res.status})`
+        let requestId = res.headers.get('x-request-id')
         try {
-          const body = (await res.json()) as { error?: string; error_code?: string }
+          const body = (await res.json()) as {
+            error?: string
+            error_code?: string
+            request_id?: string
+          }
           if (body?.error_code) code = body.error_code
           if (body?.error) message = body.error
+          if (body?.request_id) requestId = body.request_id
         } catch {
           // Non-JSON error body; keep the defaults.
         }
-        throw new LedgerHttpError(res.status, code, message)
+        throw new LedgerHttpError(res.status, code, message, requestId)
       }
       return (await res.json()) as T
     },
