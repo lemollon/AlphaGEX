@@ -102,7 +102,7 @@ export default function LiveClient() {
           {summary?.empty ? (
             /* Non-customer (anonymous / no bot mapped) — this is a conversion
                surface, not a dashboard. Show a signup CTA for each strategy
-               (Spark, then Flame). Live paper results live on /track-record.
+               (Spark, then Flame). Live paper results live on /bot-ledger.
                Customers with a mapped bot never reach this branch. */
             <div className="mt-4">
               <div className="text-center">
@@ -110,7 +110,7 @@ export default function LiveClient() {
                 <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
                   Start a dedicated account for a strategy and it trades the same disciplined
                   rules every session. Watch the live paper track record on{' '}
-                  <a href="/track-record" className="font-semibold text-amber-500 hover:text-amber-400">Track Record</a>.
+                  <a href="/bot-ledger" className="font-semibold text-amber-500 hover:text-amber-400">Track Record</a>.
                 </p>
               </div>
               <div className="mx-auto mt-6 grid max-w-xl gap-4">

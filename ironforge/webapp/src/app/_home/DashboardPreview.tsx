@@ -8,7 +8,7 @@ import { WalletIcon, CoinsIcon, CalendarCashIcon, TrendIcon, ChartCircleIcon, Ch
  * first performance figures a prospect saw and no account ever produced them; an
  * "Example" badge does not make an invented return honest. The layout is the
  * product illustration so it stays, the numbers are placeholders, and the real
- * record lives on /track-record (built from closed trades). */
+ * record lives on /bot-ledger (built from closed trades). */
 const PLACEHOLDER = '—'
 
 const WEALTH_TILES = [
@@ -45,7 +45,7 @@ export default function DashboardPreview() {
   return (
     <div className="relative rounded-2xl border border-white/10 bg-[#0A0B0C] p-3 shadow-2xl shadow-black/60">
       {/* Interface illustration, not an account. The badge says so explicitly now
-          that the invented figures are gone — real numbers live on /track-record. */}
+          that the invented figures are gone — real numbers live on /bot-ledger. */}
       <span className="absolute right-3 top-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
         Example layout · not performance data
       </span>

@@ -18,7 +18,8 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
   // Public proof surface — reachable with no account, unlike /live and /performance.
-  { href: '/track-record', label: 'Track Record' },
+  // Replaced /track-record on 2026-07-27; that URL now 308s here.
+  { href: '/bot-ledger', label: 'Bot Ledger' },
   { href: '/pricing', label: 'Pricing' },
 ]
 

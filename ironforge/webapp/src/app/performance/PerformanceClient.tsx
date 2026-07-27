@@ -111,7 +111,7 @@ function ActivateCard() {
 
       <p className="mt-5 text-xs text-gray-500">
         Want to see how they’ve done first? Browse the{' '}
-        <Link href="/track-record" className="font-semibold text-amber-500 hover:text-amber-400">live track record</Link>.
+        <Link href="/bot-ledger" className="font-semibold text-amber-500 hover:text-amber-400">live track record</Link>.
       </p>
     </div>
   )
