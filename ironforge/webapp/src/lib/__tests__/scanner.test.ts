@@ -235,10 +235,12 @@ describe('Sliding Profit Target', () => {
       expect(pt).toBe(0.30)
     })
 
-    it('MORNING at 10:29: still 30%', () => {
+    it('SPARK MORNING at 10:29: 40% (SPARK tier is 40/35/30, not 30/20/15)', () => {
+      // SPARK-strategy bots moved to a higher-floor 40/35/30 ladder on 2026-07-02;
+      // the DB profit_target_pct override deliberately does NOT apply to them.
       const [pt, tier] = getSlidingProfitTarget(makeCT(10, 29), 0.30, 'spark')
       expect(tier).toBe('MORNING')
-      expect(pt).toBe(0.30)
+      expect(pt).toBe(0.40)
     })
 
     it('MIDDAY (10:30-12:59): 20%', () => {
@@ -261,22 +263,16 @@ describe('Sliding Profit Target', () => {
   })
 
   describe('INFERNO (base=0.50)', () => {
-    it('MORNING: 50%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(9, 0), 0.50, 'inferno')
-      expect(tier).toBe('MORNING')
-      expect(pt).toBe(0.50)
-    })
-
-    it('MIDDAY: 30%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(11, 0), 0.50, 'inferno')
-      expect(tier).toBe('MIDDAY')
-      expect(pt).toBe(0.30)
-    })
-
-    it('AFTERNOON: 10%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(13, 30), 0.50, 'inferno')
-      expect(tier).toBe('AFTERNOON')
-      expect(pt).toBe(0.10)
+    it('INFERNO never slides — always HOLD_TO_EOD at pt 1.0', () => {
+      // INFERNO stopped using the sliding ladder: getSlidingProfitTarget returns
+      // [1.0, 'HOLD_TO_EOD'] for it unconditionally, so the time of day and the
+      // base PT passed in are both irrelevant. pt 1.0 means "never take profit
+      // early" — the position is held to the EOD cutoff.
+      for (const [h, m] of [[9, 0], [11, 30], [14, 0]] as const) {
+        const [pt, tier] = getSlidingProfitTarget(makeCT(h, m), 0.50, 'inferno')
+        expect(tier).toBe('HOLD_TO_EOD')
+        expect(pt).toBe(1.0)
+      }
     })
   })
 
@@ -302,11 +298,13 @@ describe('Sliding Profit Target', () => {
       expect(ptPrice).toBeCloseTo(0.425, 4) // 0.50 * 0.85
     })
 
-    it('INFERNO AFTERNOON: PT price = entry * 0.90', () => {
+    it('INFERNO PT price is 0 — pt 1.0 means the target is never hit early', () => {
       const entryCredit = 0.80
       const [ptFrac] = getSlidingProfitTarget(makeCT(14, 0), 0.50, 'inferno')
-      const ptPrice = entryCredit * (1 - ptFrac)
-      expect(ptPrice).toBeCloseTo(0.72, 4) // 0.80 * 0.90
+      // pt 1.0 -> cost-to-close target of entry * (1 - 1.0) = 0, i.e. unreachable,
+      // which is how HOLD_TO_EOD is expressed through the existing PT plumbing.
+      expect(ptFrac).toBe(1.0)
+      expect(entryCredit * (1 - ptFrac)).toBe(0)
     })
   })
 })
@@ -337,13 +335,14 @@ describe('Per-Bot Config', () => {
     expect(s.max_contracts).toBe(f.max_contracts)
   })
 
-  it('INFERNO defaults: sd=1.0, pt=0.50, sl=3.0, entry_end=1430, max_contracts=20, unlimited trades', () => {
+  it('INFERNO defaults: sd=1.0, pt=1.0 (hold to EOD), sl=10.0, entry_end=1430, unlimited', () => {
     const c = DEFAULT_CONFIG.inferno
     expect(c.sd).toBe(1.0)
-    expect(c.pt_pct).toBe(0.50)
-    expect(c.sl_mult).toBe(3.0)
+    // pt 1.0 = hold to EOD; sl 10.0 = effectively no stop, the EOD cutoff is the exit.
+    expect(c.pt_pct).toBe(1.0)
+    expect(c.sl_mult).toBe(10.0)
     expect(c.entry_end).toBe(1430)
-    expect(c.max_contracts).toBe(20)
+    expect(c.max_contracts).toBe(9999)
     expect(c.max_trades).toBe(0) // 0 = unlimited
   })
 
@@ -560,10 +559,13 @@ describe('Stop Loss Configuration', () => {
     expect(slPrice).toBe(1.00) // 200% of entry
   })
 
-  it('INFERNO stop loss = 3.0x entry credit', () => {
+  it('INFERNO stop loss = 10.0x entry credit (effectively no stop)', () => {
     const entryCredit = 0.80
     const slPrice = entryCredit * DEFAULT_CONFIG.inferno.sl_mult
-    expect(slPrice).toBeCloseTo(2.40, 10) // 300% of entry
+    // 10x is far beyond any realistic cost-to-close on a $5 wing, so the EOD
+    // cutoff is the real exit. Paired with pt 1.0 that makes INFERNO hold-to-EOD
+    // in both directions.
+    expect(slPrice).toBeCloseTo(8.00, 10)
   })
 
   it('INFERNO has wider stop loss than FLAME for same credit', () => {
@@ -880,15 +882,15 @@ describe('Scenario: Full trade lifecycle P&L', () => {
       calculateStrikes(spot, em, 1.2).callShort - calculateStrikes(spot, em, 1.2).putShort,
     )
 
-    // Stop loss at 3.0x (not 2.0x)
+    // Stop loss at 10.0x — wider than FLAME/SPARK, effectively no stop
     const entry = 0.80
     const slPrice = entry * DEFAULT_CONFIG.inferno.sl_mult
-    expect(slPrice).toBeCloseTo(2.40, 10)
+    expect(slPrice).toBeCloseTo(8.00, 10)
+    expect(DEFAULT_CONFIG.inferno.sl_mult).toBeGreaterThan(DEFAULT_CONFIG.flame.sl_mult)
 
-    // INFERNO allows 0 trades/day = unlimited
+    // INFERNO allows 0 trades/day = unlimited, and no contract ceiling
     expect(DEFAULT_CONFIG.inferno.max_trades).toBe(0)
-    // INFERNO max 20 contracts
-    expect(DEFAULT_CONFIG.inferno.max_contracts).toBe(20)
+    expect(DEFAULT_CONFIG.inferno.max_contracts).toBe(9999)
   })
 })
 
@@ -915,14 +917,19 @@ describe('Scanner Safety Gates', () => {
     expect(fnBody).toMatch(/skip:low_bp/)
   })
 
-  it('tryOpenTrade checks VIX > 32 before trade attempt', () => {
-    const fnMatch = scannerSource.match(
-      /async function tryOpenTrade[\s\S]*?^}/m,
-    )
+  it('tryOpenTrade gates on a VIX cap before attempting a trade', () => {
+    // The cap became bot-dependent on the SPARK 1DTE overhaul (SPARK-v2 sizing
+    // raised it to 40; everything else stays at 32), so asserting the literal
+    // `vix > 32` no longer describes the code. What must remain true is that the
+    // gate exists inside tryOpenTrade and short-circuits with skip:vix_too_high.
+    const fnMatch = scannerSource.match(/async function tryOpenTrade[\s\S]*?^}/m)
     expect(fnMatch).toBeTruthy()
     const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/vix\s*>\s*32/)
+    expect(fnBody).toMatch(/vixCap/)
+    expect(fnBody).toMatch(/vix\s*>\s*vixCap/)
     expect(fnBody).toMatch(/skip:vix_too_high/)
+    // And the caps themselves are still the documented pair.
+    expect(scannerSource).toMatch(/isSparkV2Sizing\(bot\.name\)\s*\?\s*40\s*:\s*32/)
   })
 
   it('tryOpenTrade derives BP from live positions, not cached paper_account', () => {

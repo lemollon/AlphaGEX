@@ -74,12 +74,16 @@ describe('FLAME live-arm gate', () => {
   it('never changes the other bots, armed or not', () => {
     setEnv({})
     expect(isProductionBot('spark')).toBe(true)
-    expect(isProductionBot('spark2')).toBe(true)
+    // spark2 was REMOVED from the production allowlist on 2026-07-21: it had been
+    // routing real orders while the customer Live page labelled it PAPER. It is
+    // now a genuine paper bot (see the isProductionBot docblock in scanner.ts).
+    expect(isProductionBot('spark2')).toBe(false)
     expect(isProductionBot('inferno')).toBe(false)
     expect(isProductionBot('blaze')).toBe(false)
 
     setEnv(ARMED)
     expect(isProductionBot('spark')).toBe(true)
+    expect(isProductionBot('spark2')).toBe(false)
     expect(isProductionBot('inferno')).toBe(false)
     expect(isProductionBot('blaze')).toBe(false)
   })

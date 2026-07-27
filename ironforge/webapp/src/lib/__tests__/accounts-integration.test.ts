@@ -96,27 +96,39 @@ describe('Database Schema & Migration', () => {
     // ALTER TABLE ... ADD COLUMN IF NOT EXISTS capital_pct INTEGER DEFAULT 100
     // We verify the default is 100 by checking getCapitalPctForAccount fallback
     mockDbQuery.mockResolvedValueOnce([]) // no rows found
-    return getCapitalPctForAccount('Unknown').then(pct => {
+    return getCapitalPctForAccount('Unknown', 'production').then(pct => {
       expect(pct).toBe(100) // default fallback
     })
   })
 
   it('should read capital_pct from DB when account exists', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 50 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(50)
   })
 
   it('should default to 100 when capital_pct is null in DB', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: null }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
   })
 
   it('should default to 100 when DB query fails', async () => {
     mockDbQuery.mockRejectedValueOnce(new Error('connection refused'))
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
+  })
+})
+
+describe('capital_pct is a production-only safety cap', () => {
+  it('short-circuits to 100 for sandbox without touching the DB', async () => {
+    // getCapitalPctForAccount returns 100 for anything that is not 'production'.
+    // This is why every test below passes 'production' explicitly: on the sandbox
+    // path the DB is never queried, so a mocked row would just be ignored.
+    mockDbQuery.mockResolvedValueOnce([{ capital_pct: 50 }])
+    expect(await getCapitalPctForAccount('User', 'sandbox')).toBe(100)
+    expect(await getCapitalPctForAccount('User')).toBe(100) // default arg
+    expect(mockDbQuery).not.toHaveBeenCalled()
   })
 })
 
@@ -125,55 +137,55 @@ describe('Database Schema & Migration', () => {
 describe('capital_pct CRUD Validation', () => {
   it('should accept capital_pct=50', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 50 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(50)
   })
 
   it('should accept capital_pct=1 (minimum)', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 1 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(1)
   })
 
   it('should accept capital_pct=100 (maximum)', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 100 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
   })
 
   it('should reject capital_pct=0 (below minimum) → defaults to 100', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 0 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100) // 0 is outside 1-100 range
   })
 
   it('should reject capital_pct=-1 → defaults to 100', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: -1 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
   })
 
   it('should reject capital_pct=101 → defaults to 100', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 101 }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
   })
 
   it('should handle non-numeric capital_pct → defaults to 100', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 'abc' }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100)
   })
 
   it('should truncate float string capital_pct="50.5" → 50 (parseInt)', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: '50.5' }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(50) // parseInt truncates, does not round
   })
 
   it('should handle partial numeric string capital_pct="100a" → 100', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: '100a' }])
-    const pct = await getCapitalPctForAccount('User')
+    const pct = await getCapitalPctForAccount('User', 'production')
     expect(pct).toBe(100) // parseInt("100a") = 100, which is in range
   })
 })
@@ -207,7 +219,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ api_key: apiKey }])
     setupTradierMocks(50000, apiKey)
 
-    const allocated = await getAllocatedCapitalForAccount('User')
+    const allocated = await getAllocatedCapitalForAccount('User', 'production')
     expect(allocated).toBe(25000)
   })
 
@@ -218,7 +230,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ api_key: apiKey }])
     setupTradierMocks(50000, apiKey)
 
-    const allocated = await getAllocatedCapitalForAccount('User100')
+    const allocated = await getAllocatedCapitalForAccount('User100', 'production')
     expect(allocated).toBe(50000)
   })
 
@@ -229,7 +241,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ api_key: apiKey }])
     setupTradierMocks(100000, apiKey)
 
-    const allocated = await getAllocatedCapitalForAccount('User1')
+    const allocated = await getAllocatedCapitalForAccount('User1', 'production')
     expect(allocated).toBe(1000)
   })
 
@@ -240,7 +252,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ api_key: apiKey }])
     setupTradierMocks(10000, apiKey)
 
-    const allocated = await getAllocatedCapitalForAccount('User33')
+    const allocated = await getAllocatedCapitalForAccount('User33', 'production')
     expect(allocated).toBe(3300)
   })
 
@@ -250,7 +262,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ api_key: 'unreachable-key' }])
     mockFetch.mockRejectedValue(new Error('network error'))
 
-    const allocated = await getAllocatedCapitalForAccount('UserDown')
+    const allocated = await getAllocatedCapitalForAccount('UserDown', 'production')
     expect(allocated).toBe(5000)
   })
 
@@ -259,7 +271,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ capital_pct: 25 }])
       .mockResolvedValueOnce([]) // no api_key row
 
-    const allocated = await getAllocatedCapitalForAccount('Ghost')
+    const allocated = await getAllocatedCapitalForAccount('Ghost', 'production')
     expect(allocated).toBe(2500)
   })
 
@@ -268,7 +280,7 @@ describe('Allocated Capital Calculation', () => {
       .mockResolvedValueOnce([{ capital_pct: 50 }])
       .mockResolvedValueOnce([{ api_key: '' }]) // empty string, not NULL
 
-    const allocated = await getAllocatedCapitalForAccount('EmptyKey')
+    const allocated = await getAllocatedCapitalForAccount('EmptyKey', 'production')
     // "" is falsy in JS, so `if (rows[0].api_key)` skips → fallback
     expect(allocated).toBe(5000) // $10,000 × 50%
   })
@@ -290,7 +302,7 @@ describe('Allocated Capital Calculation', () => {
       return Promise.resolve(jsonResponse(null, 404))
     })
 
-    const allocated = await getAllocatedCapitalForAccount('RoundUser')
+    const allocated = await getAllocatedCapitalForAccount('RoundUser', 'production')
     // Math.round(10003 * 33 / 100 * 100) / 100 = Math.round(330099) / 100 = 3300.99
     expect(allocated).toBe(3300.99)
     // Verify it's exactly 2 decimal places (no floating point artifacts)
@@ -335,16 +347,18 @@ describe('Bot Assignment Filtering (DB-backed)', () => {
     mockDbQuery.mockRejectedValueOnce(new Error('connection refused'))
 
     const accounts = await getAccountsForBotAsync('flame')
-    // Fallback returns BOT_ACCOUNTS.flame.accounts = ['User']
-    expect(accounts).toEqual(['User'])
+    // BOT_ACCOUNTS.flame.accounts is [] — FLAME has NO sandbox accounts; its live
+    // account is injected from TRADIER_FLAME_* env in getProductionAccountsForBot,
+    // so it is deliberately absent from ironforge_accounts.
+    expect(accounts).toEqual([])
   })
 
   it('should fallback when DB returns empty results', async () => {
     mockDbQuery.mockResolvedValueOnce([])
 
     const accounts = await getAccountsForBotAsync('spark')
-    // Fallback returns BOT_ACCOUNTS.spark.accounts = []
-    expect(accounts).toEqual([])
+    // BOT_ACCOUNTS.spark.accounts = ['User']
+    expect(accounts).toEqual(['User'])
   })
 
   it('should return empty for unknown bot', async () => {
@@ -374,7 +388,7 @@ describe('Edge Cases', () => {
       return Promise.resolve(jsonResponse(null, 404))
     })
 
-    const allocated = await getAllocatedCapitalForAccount('UserZero')
+    const allocated = await getAllocatedCapitalForAccount('UserZero', 'production')
     expect(allocated).toBe(0)
   })
 
@@ -383,7 +397,8 @@ describe('Edge Cases', () => {
     const malicious = "Robert'; DROP TABLE ironforge_accounts;--"
     mockDbQuery.mockResolvedValueOnce([])
 
-    const pct = await getCapitalPctForAccount(malicious)
+    // 'production' so the DB path actually runs — sandbox short-circuits.
+    const pct = await getCapitalPctForAccount(malicious, 'production')
     expect(pct).toBe(100) // defaults gracefully, no crash
     // Verify the query was called with escaped name
     const queryCall = mockDbQuery.mock.calls[0]?.[0]
@@ -394,7 +409,7 @@ describe('Edge Cases', () => {
   it('should handle multiple persons — returns first match', async () => {
     mockDbQuery.mockResolvedValueOnce([{ capital_pct: 75 }])
     // ORDER BY type DESC LIMIT 1 ensures only one row
-    const pct = await getCapitalPctForAccount('Matt')
+    const pct = await getCapitalPctForAccount('Matt', 'production')
     expect(pct).toBe(75)
   })
 
