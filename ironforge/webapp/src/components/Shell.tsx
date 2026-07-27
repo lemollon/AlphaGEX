@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import ClientNav from './ClientNav'
 import ScrollToTop from './ScrollToTop'
 import AdminBadge from './AdminBadge'
+import { clientSurface } from '@/lib/surface'
 
 /**
  * App chrome wrapper. Operator routes get the global nav; standalone
@@ -43,13 +44,26 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     pathname === '/community' ||
     pathname.startsWith('/onboarding')
 
+  // 'both' (mirror unset) keeps today's behaviour for local dev; only the
+  // customer deployment actively suppresses it.
+  const showAdminBadge = clientSurface() !== 'customer'
+
   return (
     <>
       <ScrollToTop />
       {!isStandalone && <ClientNav />}
       {isStandalone ? children : <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>}
-      {/* Operator-only floating admin pill (renders nothing for everyone else). */}
-      <AdminBadge />
+      {/*
+        The floating admin pill belongs to the OPS CONSOLE, not the customer
+        site. On the customer deployment its "Ops" button pointed at /spark,
+        which 404s there by design (see lib/surface.ts) — a dead button sitting
+        on top of every customer page. ironforge.trade is now gated by login
+        alone, with no operator chrome layered over it.
+
+        It still renders on the operator surface, where the links resolve and
+        the impersonation controls are actually usable.
+      */}
+      {showAdminBadge && <AdminBadge />}
     </>
   )
 }
