@@ -1585,6 +1585,27 @@ export async function placeIcOrderAllAccounts(
     } catch { /* pre-migration deploy — fall through to the primary gate below */ }
   }
 
+  // Same defense in depth for the PER-OWNER pause: this path composes
+  // `eligibleAccounts` upstream, so it never went through
+  // getProductionAccountsForBot and would otherwise place an order for an owner
+  // who paused their own account. Fails CLOSED — an unreadable owner-pause table
+  // drops every production account rather than guessing nobody paused.
+  if (productionAccts.length > 0 && botName) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(
+          `[tradier] ${botName.toUpperCase()} owner-paused: ${dropped.join(', ')} — ` +
+          `removing from this order. Other owners unaffected.`,
+        )
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
   // SAFETY: Only production-allowlisted bots (SPARK, KINDLE) may place real-money
   // orders. FLAME and INFERNO are paper-only — they must NEVER place real orders.
   // (KINDLE is additionally gated by its paused kill-switch above, which zeroes
@@ -2992,6 +3013,52 @@ export interface ProductionPauseState {
   updated_at: string | null
 }
 
+export interface OwnerPauseState {
+  /**
+   * FALSE means the read failed and we do NOT know who is paused. Callers on
+   * the trade side must then place no production order at all.
+   */
+  ok: boolean
+  /** ironforge_accounts.person values (= ProductionAccount.name) that are paused. */
+  paused: Set<string>
+}
+
+/**
+ * Which individual account OWNERS have paused a bot (ironforge_owner_pause).
+ *
+ * Separate from the fleet switch: a customer may stop trading on their OWN
+ * account without stopping everyone else's, which is the whole point —
+ * ironforge_production_pause is one row per bot, so before this existed any
+ * customer mapped to SPARK could halt every SPARK owner's trading.
+ *
+ * FAILS CLOSED, unlike getProductionPauseState. That asymmetry is deliberate:
+ * a missed read here would mean placing a real-money order for someone who
+ * explicitly pressed Pause, which is not recoverable. A skipped scan is — the
+ * scanner retries every minute. Cost of a false stop is a missed trade; cost of
+ * a false go is trading against an explicit instruction.
+ */
+export async function getOwnerPauseState(botName: string): Promise<OwnerPauseState> {
+  try {
+    const { query: dbq } = await import('./db')
+    const rows = await dbq(
+      `SELECT person, paused FROM ironforge_owner_pause WHERE bot_name = $1 AND paused = TRUE`,
+      [botName.toUpperCase()],
+    )
+    const paused = new Set<string>()
+    for (const r of rows as Array<{ person: string }>) {
+      if (r.person) paused.add(r.person)
+    }
+    return { ok: true, paused }
+  } catch (e: unknown) {
+    console.error(
+      `[tradier] ${botName.toUpperCase()} owner-pause read FAILED (${e instanceof Error ? e.message : String(e)}) — ` +
+      `failing CLOSED: no production accounts will be returned this cycle. ` +
+      `Paper/sandbox unaffected; the scanner retries next scan.`,
+    )
+    return { ok: false, paused: new Set() }
+  }
+}
+
 /**
  * Read the production-pause flag for a bot from ironforge_production_pause.
  * When `paused=true`, the scanner MUST skip all production order placement
@@ -3053,8 +3120,37 @@ export async function getProductionPauseState(botName: string): Promise<Producti
  * reader is called by the API/UI/preflight to display pause status — so
  * this function staying empty is the single load-bearing behavior of the
  * pause flag on the trade side.
+ *
+ * TWO pause layers, checked in order:
+ *   1. FLEET (ironforge_production_pause) — operator stops the whole bot -> []
+ *   2. PER-OWNER (ironforge_owner_pause)  — one owner stops their own account,
+ *      which DROPS that owner and leaves every other owner trading.
  */
 export async function getProductionAccountsForBot(botName: string): Promise<ProductionAccount[]> {
+  const accounts = await resolveProductionAccounts(botName)
+  if (accounts.length === 0) return accounts
+
+  // Layer 2. Wrapping (rather than filtering at each `return` above) is what
+  // guarantees EVERY path — spark2/flame/kindle env creds and the
+  // ironforge_accounts rows alike — goes through the owner pause. A new bot
+  // branch added later cannot forget it.
+  const owners = await getOwnerPauseState(botName)
+  if (!owners.ok) return []
+  if (owners.paused.size === 0) return accounts
+
+  const allowed = accounts.filter((a) => !owners.paused.has(a.name))
+  if (allowed.length !== accounts.length) {
+    const dropped = accounts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+    console.warn(
+      `[tradier] ${botName.toUpperCase()} owner-paused: ${dropped.join(', ')} — ` +
+      `dropping ${dropped.length} of ${accounts.length} production account(s). ` +
+      `Other owners keep trading; sandbox/paper unaffected.`,
+    )
+  }
+  return allowed
+}
+
+async function resolveProductionAccounts(botName: string): Promise<ProductionAccount[]> {
   if (!isProductionBot(botName)) return []
   const pauseState = await getProductionPauseState(botName)
   if (pauseState.paused) {

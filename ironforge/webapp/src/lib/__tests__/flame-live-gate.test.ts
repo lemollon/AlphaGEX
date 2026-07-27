@@ -100,10 +100,14 @@ describe('FLAME production accounts', () => {
     await expect(getProductionAccountsForBot('flame')).resolves.toEqual([])
   })
 
-  it('returns the FLAME account only when fully armed', async () => {
+  // Being armed is necessary but NO LONGER SUFFICIENT. Since per-owner pause
+  // (ironforge_owner_pause) the gate also has to know who has paused their own
+  // account, and that read fails CLOSED — so with no database reachable, as in
+  // this suite, an armed FLAME still resolves to zero accounts. That is the
+  // safe direction and is asserted deliberately here rather than mocked away.
+  // The armed-and-readable path is covered in owner-pause.test.ts.
+  it('is still blocked when armed but the owner-pause table is unreadable', async () => {
     setEnv(ARMED)
-    const accounts = await getProductionAccountsForBot('flame')
-    expect(accounts).toHaveLength(1)
-    expect(accounts[0]).toMatchObject({ name: 'Flame', accountId: 'test-account' })
+    await expect(getProductionAccountsForBot('flame')).resolves.toEqual([])
   })
 })

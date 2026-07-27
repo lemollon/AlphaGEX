@@ -150,6 +150,23 @@ CREATE TABLE IF NOT EXISTS ironforge_production_pause (
   paused_reason TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- PER-OWNER pause. Deliberately a SEPARATE table from ironforge_production_pause
+-- rather than a person column on it: getProductionPauseState() treats ANY query
+-- error as paused=false (see tradier.ts), so adding a column to that table's
+-- SELECT would mean a failed/late migration silently OPENS the fleet kill switch,
+-- including KINDLE's. This table is additive — the fleet switch keeps its exact
+-- current shape and code path.
+-- person = ironforge_accounts.person, i.e. ProductionAccount.name.
+CREATE TABLE IF NOT EXISTS ironforge_owner_pause (
+  bot_name TEXT NOT NULL,
+  person TEXT NOT NULL,
+  paused BOOLEAN NOT NULL DEFAULT FALSE,
+  paused_at TIMESTAMPTZ,
+  paused_by TEXT,
+  paused_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (bot_name, person)
+);
 -- Customer → live-bot ownership for the account-aware Live page (customer_id =
 -- users.id uuid in the ironforge-customers DB; bots: spark, spark2).
 CREATE TABLE IF NOT EXISTS ironforge_customer_bots (
