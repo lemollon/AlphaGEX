@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getIronSession } from 'iron-session'
 import { sessionOptions, hasValidServiceToken, type SessionData } from '@/lib/auth/session'
-import { decideAccess, isCustomerPath } from '@/lib/auth/access'
+import { decideAccess, isCustomerPath, isPublicMode } from '@/lib/auth/access'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { customerSessionOptions, type CustomerSessionData } from '@/lib/auth/customer-session'
 import { resolveSurface, servesPath, OPERATOR_LANDING } from '@/lib/surface'
@@ -35,11 +35,11 @@ export async function middleware(req: NextRequest) {
     return new NextResponse(null, { status: 404 })
   }
 
-  // Placeholder mode: while public access is on, the login wall is dormant and the
-  // whole site is open (until invite/signup goes live). Fail-secure — ANY value other
-  // than the exact string 'true' leaves the gate enforced, so losing the env var locks
-  // down rather than exposes. Flip IRONFORGE_PUBLIC_MODE off (or remove it) to enforce.
-  if (process.env.IRONFORGE_PUBLIC_MODE === 'true') {
+  // Public mode: the login wall is dormant and this whole deployment is open.
+  // The self-guarding routes (ops admin tools, production-pause) read the same
+  // isPublicMode() helper, so a service running open is open all the way down
+  // instead of serving pages whose APIs still 401. See lib/auth/access.ts.
+  if (isPublicMode()) {
     return NextResponse.next()
   }
 

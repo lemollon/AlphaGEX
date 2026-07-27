@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { isPublicPath, isCustomerPath, decideAccess } from '../access'
+import { describe, it, expect, afterEach } from 'vitest'
+import { isPublicPath, isCustomerPath, decideAccess, isPublicMode } from '../access'
 
 describe('isPublicPath', () => {
   it('treats login, auth endpoints, and health as public', () => {
@@ -104,5 +104,33 @@ describe('decideAccess — customer surface', () => {
   it('leaves the public track record open', () => {
     expect(decideAccess({ ...base, pathname: '/track-record' })).toBe('allow')
     expect(decideAccess({ ...base, pathname: '/api/public/track-record', isApi: true })).toBe('allow')
+  })
+})
+
+describe('isPublicMode', () => {
+  const prev = process.env.IRONFORGE_PUBLIC_MODE
+  afterEach(() => {
+    if (prev === undefined) delete process.env.IRONFORGE_PUBLIC_MODE
+    else process.env.IRONFORGE_PUBLIC_MODE = prev
+  })
+
+  it('is true only for the exact string "true"', () => {
+    process.env.IRONFORGE_PUBLIC_MODE = 'true'
+    expect(isPublicMode()).toBe(true)
+  })
+  // Fail-secure: every other value, including a lost variable, keeps the gate on.
+  it('is false when unset', () => {
+    delete process.env.IRONFORGE_PUBLIC_MODE
+    expect(isPublicMode()).toBe(false)
+  })
+  it.each(['false', 'TRUE', '1', 'yes', ''])('is false for %o', (v) => {
+    process.env.IRONFORGE_PUBLIC_MODE = v
+    expect(isPublicMode()).toBe(false)
+  })
+  it('reads the variable at call time, not at import time', () => {
+    delete process.env.IRONFORGE_PUBLIC_MODE
+    expect(isPublicMode()).toBe(false)
+    process.env.IRONFORGE_PUBLIC_MODE = 'true'
+    expect(isPublicMode()).toBe(true)
   })
 })

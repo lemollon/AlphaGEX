@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
+import { isPublicMode } from '@/lib/auth/access'
 import { hashPassword } from '@/lib/auth/password'
 import { normalizeEmail } from '@/lib/signup-validation'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
@@ -40,6 +41,11 @@ function isLiveBot(v: unknown): v is LiveBot {
 }
 
 async function requireOperator(): Promise<{ ok: true; who: string } | { ok: false; res: NextResponse }> {
+  // A deployment running in public mode has no login wall at all, so no caller
+  // there can ever hold a session. Demanding one would leave /ops/customers
+  // rendering an error on an otherwise fully-open site. Audit rows record
+  // 'public-mode' as the actor so the trail still says who did what.
+  if (isPublicMode()) return { ok: true, who: 'public-mode' }
   const ops = await getSession()
   if (!ops.userId) {
     return { ok: false, res: NextResponse.json({ ok: false, error: 'Operator session required.' }, { status: 401 }) }
