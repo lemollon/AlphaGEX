@@ -54,37 +54,38 @@ export default function LiveHeader({ viewer, onSwitch }: LiveHeaderProps = {}) {
     <div className="flex items-center justify-between">
       <h1 className="font-display text-2xl tracking-wide text-white">Live</h1>
       <div className="flex items-center gap-4">
-        {viewer && viewer.allowedBots.length > 1 && onSwitch ? (
-          <div className="flex items-center overflow-hidden rounded-lg border border-forge-border text-xs font-semibold">
-            {viewer.allowedBots.filter(isLiveBot).map((b) => {
-              const active = b === viewer.bot
-              const isPaper = (viewer.paperBots ?? []).includes(b)
-              // Strategy accent is identity, not mode: Flame is orange whether
-              // it is on paper or live money; Spark accounts are blue.
-              const activeClass = LIVE_BOT_ACCENT[b] === 'flame'
-                ? 'bg-flame/20 px-3 py-1.5 text-flame'
-                : 'bg-spark/20 px-3 py-1.5 text-spark'
-              return (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => onSwitch(b)}
-                  title={isPaper ? 'Paper trading — simulated, no real orders' : undefined}
-                  className={
-                    active ? activeClass : 'px-3 py-1.5 text-gray-400 transition-colors hover:text-white'
-                  }
-                >
-                  {LIVE_BOT_PILL[b]}
-                  {isPaper ? (
-                    <span className="ml-1.5 rounded bg-gray-700 px-1 py-px text-[9px] font-bold uppercase tracking-wider text-gray-300">
-                      Paper
-                    </span>
-                  ) : null}
-                </button>
-              )
-            })}
-          </div>
-        ) : null}
+        {(() => {
+          // Customer surface shows ONLY the two real products (Spark, Flame) — never the
+          // operator-only paper account (spark2) — and never a "paper" badge. The account's
+          // paper/live state is disclosed in the page banner, not the switcher pills.
+          const switchable = (viewer?.allowedBots ?? []).filter(
+            (b): b is LiveBot => isLiveBot(b) && (b === 'spark' || b === 'flame'),
+          )
+          if (!(switchable.length > 1 && onSwitch)) return null
+          return (
+            <div className="flex items-center overflow-hidden rounded-lg border border-forge-border text-xs font-semibold">
+              {switchable.map((b) => {
+                const active = b === viewer?.bot
+                // Strategy accent is identity, not mode: Flame is orange, Spark is blue.
+                const activeClass = LIVE_BOT_ACCENT[b] === 'flame'
+                  ? 'bg-flame/20 px-3 py-1.5 text-flame'
+                  : 'bg-spark/20 px-3 py-1.5 text-spark'
+                return (
+                  <button
+                    key={b}
+                    type="button"
+                    onClick={() => onSwitch(b)}
+                    className={
+                      active ? activeClass : 'px-3 py-1.5 text-gray-400 transition-colors hover:text-white'
+                    }
+                  >
+                    {LIVE_BOT_PILL[b]}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })()}
         {/* The notification bell lived here with a permanently-lit unread dot and no
             handler — it advertised alerts that were never delivered and could not be
             read. Removed rather than faked; if it comes back it wires to the existing
