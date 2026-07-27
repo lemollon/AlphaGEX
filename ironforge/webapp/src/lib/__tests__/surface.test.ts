@@ -113,7 +113,7 @@ describe('operator surface', () => {
   })
 
   it('still serves shared auth + health', () => {
-    for (const p of ['/api/auth/login', '/api/health']) {
+    for (const p of ['/api/auth/customer-login', '/api/health']) {
       expect(servesPath('operator', p)).toBe(true)
     }
   })

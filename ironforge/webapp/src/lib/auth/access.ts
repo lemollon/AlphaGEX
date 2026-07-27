@@ -9,15 +9,16 @@ const PUBLIC_EXACT = new Set<string>([
   '/contact',
   '/privacy',
   '/terms',
+  // Operator sign-in page. Password login was retired 2026-07-27 (see the page);
+  // it stays public because middleware redirects every gated operator route here,
+  // and a gated redirect must not land on a login wall it cannot pass.
   '/ops/login',
   '/forgot-password',
   '/reset-password',
-  '/api/auth/login',
   '/api/auth/signup',
   '/api/auth/verify',
   '/api/auth/resend-verification',
   '/api/auth/logout',
-  '/api/auth/seed',
   '/api/auth/customer-login',
   '/api/auth/customer-logout',
   '/api/auth/customer-me',
