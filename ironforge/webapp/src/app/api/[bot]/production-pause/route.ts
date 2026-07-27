@@ -115,7 +115,7 @@ export async function POST(
   if (!authorized) {
     try {
       const viewer = await resolveLiveViewer(req)
-      // isOperator covers IRONFORGE_LIVE_OPEN review mode, which is defined as
+      // isOperator is granted by an operator session only, which is defined as
       // "see what the owner sees"; ownership still has to include this bot.
       if (viewer.allowedBots.includes(bot as LiveBot)) {
         authorized = true
