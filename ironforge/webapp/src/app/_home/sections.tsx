@@ -33,7 +33,13 @@ export function Hero() {
         >
           Create Account
         </Link>
-        <div className="mt-12">
+
+        {/* Forge Starter sits between the CTA and the value pillars. */}
+        <div className="mt-9">
+          <ForgeStarterCard />
+        </div>
+
+        <div className="mt-10">
           <ValuePillars />
         </div>
       </div>
@@ -84,6 +90,62 @@ function ValuePillars() {
   )
 }
 
+/**
+ * Forge Starter card.
+ *
+ * Defined once and rendered in the HERO, directly under the Create Account
+ * button and above the value pillars — so the paid tier is the first thing a
+ * visitor sees rather than something they have to scroll to.
+ *
+ * Deliberately NOT also rendered in the membership section below. Stating a
+ * price in two places is exactly how /pricing and the homepage drifted apart.
+ *
+ * Tier vocabulary matches the rest of the site; this card used to be called
+ * "Forge Automate", a name that existed nowhere else.
+ */
+export function ForgeStarterCard() {
+  return (
+    <div className="relative flex flex-col rounded-2xl border border-[#FD5301] bg-[#0A0B0C] p-6 md:p-7">
+      <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#4C7A22] bg-[#1E3B14] px-4 py-1 text-[11px] font-bold tracking-wide text-[#8FD14F]">
+        5 TRADING DAY FREE TRIAL
+      </div>
+
+      <div className="flex items-center gap-4">
+        <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
+          <ShieldIcon className="h-12 w-12 text-[#FD5301]" />
+          <IFMark className="absolute h-5 w-auto" />
+        </div>
+        <div>
+          <h3 className="text-[22px] font-bold text-white">
+            Forge <span className="text-[#FD5301]">Starter</span>
+          </h3>
+          <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <FeatureChecklist items={AUTOMATE_FEATURES} />
+      </div>
+
+      <div className="mt-6 border-t border-white/10 pt-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="text-white">
+            <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
+            <span className="ml-1 text-sm text-gray-400">/month</span>
+          </div>
+          <Link
+            href="/signup?plan=automate"
+            className="whitespace-nowrap rounded-lg bg-[#4C9A2A] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#58AC33] md:px-7 md:text-[15px]"
+          >
+            Start 5-Day Free Trial
+          </Link>
+        </div>
+        <p className="mt-3 text-xs text-gray-500">No long-term commitment. Cancel anytime.</p>
+      </div>
+    </div>
+  )
+}
+
 /* ── Membership ────────────────────────────────────────────────────────────── */
 
 /* Row-major order so the rendered 2-col grid reads column-wise like the mock:
@@ -126,7 +188,10 @@ export function MembershipSection() {
         Choose Your Membership
       </h2>
 
-      <div className="mt-10 grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-6">
+      {/* Forge Starter moved into the hero, so this is a single card now.
+          Deliberately NOT duplicated here — two places quoting a price is how
+          they drift apart. */}
+      <div className="mx-auto mt-10 max-w-2xl">
         {/* Forge Community */}
         <div className="flex flex-col rounded-2xl border border-white/10 bg-[#0A0B0C] p-6 md:p-7">
           <div className="flex items-center gap-4">
@@ -157,48 +222,6 @@ export function MembershipSection() {
           </div>
         </div>
 
-        {/* Forge Starter — same tier vocabulary as /pricing. This card used to be
-            "Forge Automate", a name that existed nowhere else on the site. */}
-        <div className="relative flex flex-col rounded-2xl border border-[#FD5301] bg-[#0A0B0C] p-6 md:p-7">
-          <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-[#4C7A22] bg-[#1E3B14] px-4 py-1 text-[11px] font-bold tracking-wide text-[#8FD14F]">
-            5 TRADING DAY FREE TRIAL
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center">
-              <ShieldIcon className="h-12 w-12 text-[#FD5301]" />
-              <IFMark className="absolute h-5 w-auto" />
-            </div>
-            <div>
-              <h3 className="text-[22px] font-bold text-white">
-                Forge <span className="text-[#FD5301]">Starter</span>
-              </h3>
-              <p className="mt-0.5 text-sm text-gray-400">Everything in Forge Community, plus:</p>
-            </div>
-          </div>
-
-          <div className="mt-6">
-            <FeatureChecklist items={AUTOMATE_FEATURES} />
-          </div>
-
-          <div className="mt-6 border-t border-white/10 pt-5">
-            <div className="flex items-center justify-between gap-4">
-              <div className="text-white">
-                <span className="text-[30px] font-extrabold">${MARKETING_TIERS.starter.priceMonthly}</span>
-                <span className="ml-1 text-sm text-gray-400">/month</span>
-              </div>
-              <Link
-                href="/signup?plan=automate"
-                className="whitespace-nowrap rounded-lg bg-[#4C9A2A] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#58AC33] md:px-7 md:text-[15px]"
-              >
-                Start 5-Day Free Trial
-              </Link>
-            </div>
-            <p className="mt-3 text-center text-xs text-gray-500 lg:text-right">
-              No long-term commitment. Cancel anytime.
-            </p>
-          </div>
-        </div>
       </div>
     </section>
   )
