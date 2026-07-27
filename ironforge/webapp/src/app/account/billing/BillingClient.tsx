@@ -60,7 +60,7 @@ export default function BillingClient() {
       const res = await fetch('/api/billing/portal', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.url) { window.location.href = data.url; return }
-      if (res.status === 409) { window.location.href = '/pricing'; return }
+      if (res.status === 409) { window.location.href = '/#memberships'; return }
       setError(data.error && data.error !== 'no_subscription'
         ? data.error
         : 'Billing management isn’t available just yet — please try again shortly.')
