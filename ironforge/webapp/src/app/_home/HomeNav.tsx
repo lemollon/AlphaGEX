@@ -19,7 +19,6 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   // Public proof surface — reachable with no account, unlike /live and /performance.
   // Replaced /track-record on 2026-07-27; that URL now 308s here.
   { href: '/bot-ledger', label: 'Bot Ledger' },
-  { href: '/pricing', label: 'Pricing' },
 ]
 
 // App links that live BEHIND the login. Only rendered for signed-in customers;

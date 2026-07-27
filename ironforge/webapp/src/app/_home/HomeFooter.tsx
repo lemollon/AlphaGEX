@@ -18,7 +18,6 @@ const NEWSLETTER_EMAIL = 'leron@ironforge.trade'
 const COMPANY_LINKS = [
   { label: 'How It Works', href: '/how-it-works' },
   { label: 'Bot Ledger', href: '/bot-ledger' },
-  { label: 'Pricing', href: '/pricing' },
   { label: 'Contact', href: '/contact' },
 ]
 

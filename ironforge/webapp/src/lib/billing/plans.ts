@@ -70,7 +70,10 @@ export const COMMUNITY_PLAN = {
   key: COMMUNITY_KEY,
   name: 'Forge Community',
   lookupKey: 'community_monthly',
-  priceMonthly: 15,
+  // DISPLAY price. The amount actually charged comes from the Stripe price
+  // behind lookupKey 'community_monthly' — if that is still set to 15, the site
+  // will advertise $10 and bill $15. Change both together.
+  priceMonthly: 10,
 }
 export function isCommunityKey(v: string | null | undefined): boolean {
   return v === COMMUNITY_KEY
