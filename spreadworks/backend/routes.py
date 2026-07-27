@@ -584,6 +584,15 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
+                # Per-strike gamma structure. The bots' strike selection runs on
+                # THIS, not on the three scalars above — `long_butterfly.
+                # _pin_center()` centers the body on the gamma-weighted midpoint
+                # of the large magnets and only falls back to spot when they're
+                # missing. Dropping them here (as this proxy used to) is what
+                # made every suggested fly land at the money.
+                "magnets": d.get("magnets") or [],
+                "pin_strike": d.get("likely_pin"),
+                "pin_probability": d.get("pin_probability"),
                 "source": "watchtower",
                 "fetched_at": upstream_fetched_at or now_iso,
                 "stale": False,
@@ -612,6 +621,12 @@ async def get_gex(request: Request, symbol: str = "SPY"):
                 "gamma_regime": d.get("regime") or d.get("gamma_regime"),
                 "spot_price": d.get("spot_price"),
                 "vix": d.get("vix"),
+                # This fallback endpoint has no per-strike structure. Emit the
+                # keys anyway so downstream shape is uniform — callers degrade
+                # on empty magnets rather than on a missing key.
+                "magnets": d.get("magnets") or [],
+                "pin_strike": d.get("pin_strike") or d.get("likely_pin"),
+                "pin_probability": d.get("pin_probability"),
                 "source": "gex",
                 "fetched_at": upstream_fetched_at or now_iso,
                 "stale": False,
@@ -863,103 +878,214 @@ async def _nearest_listed_expiration(request, symbol: str, target_iso: str) -> s
     return target_iso
 
 
+# Which live bot owns each builder strategy, and which config knob carries its
+# backtested strike placement. Placement is expressed as a MULTIPLE OF THE ATM
+# STRADDLE in every bot — never in fixed dollars and never anchored on the GEX
+# walls (all 11 bots ship `use_gex_walls: False`).
+#
+# double_calendar reads `strike_mult`, not `sd_mult`: TIDE's warehouse backtest
+# (2026-06-24) found k=1.0 put the strikes "right where a day's move lands" and
+# widening to 1.5 flipped move days from -$45/trade to +$103/trade. The literal
+# here is only a fallback — the live registry default wins.
+_STRATEGY_BASELINE: dict[str, tuple[str, str, float]] = {
+    "iron_condor":     ("flow",   "sd_mult",     1.2),
+    "double_calendar": ("tide",   "strike_mult", 1.5),
+    "double_diagonal": ("drift",  "sd_mult",     1.0),
+    # No iron-fly bot ships today; the fly family shares RIPPLE/SPLASH geometry.
+    "iron_butterfly":  ("ripple", "sd_mult",     1.5),
+    "butterfly":       ("ripple", "sd_mult",     1.5),
+}
+
+# Long-fly wings are `sd_mult * straddle * 0.85` in long_butterfly.py:240. The
+# 0.85 is part of the swept geometry, so mirror it rather than re-deriving.
+_FLY_WING_HAIRCUT = 0.85
+
+# IC long wings sit this far beyond the shorts (iron_condor.SPREAD_WIDTH).
+_IC_SPREAD_WIDTH = 5.0
+
+
+def _baseline_strike_mult(strategy: str) -> tuple[float, str]:
+    """Resolve the live bot's strike placement multiple for `strategy`.
+
+    Prefers the bot's DB config (what it would ACTUALLY trade right now — DB
+    values silently override file defaults, which has bitten us before), then
+    the registry default, then the literal fallback. Returns (multiple, label).
+    """
+    bot_id, knob, fallback = _STRATEGY_BASELINE.get(
+        strategy, ("flow", "sd_mult", 1.2)
+    )
+    try:
+        from .bots.registry import BOT_REGISTRY as _BR
+        defaults = dict((_BR.get(bot_id) or {}).get("defaults", {}))
+    except Exception:
+        defaults = {}
+
+    cfg = {}
+    try:
+        from .bots.db import load_config as _load_cfg
+        from .db import engine as _engine
+        if _engine is not None:
+            cfg = _load_cfg(_engine, bot_id) or {}
+    except Exception:
+        cfg = {}
+
+    for source in (cfg, defaults):
+        raw = source.get(knob)
+        if raw is not None:
+            try:
+                val = float(raw)
+                if val > 0:
+                    return val, f"{bot_id.upper()}.{knob}"
+            except (TypeError, ValueError):
+                pass
+    return fallback, f"{bot_id.upper()}.{knob} (fallback)"
+
+
+# Variant tiers, expressed as a scale on the bot's own placement multiple, so
+# "Standard" IS the backtested geometry and the other two bracket it.
+_VARIANT_TIERS = (
+    ("Conservative", 1.25),
+    ("Standard",     1.00),
+    ("Aggressive",   0.75),
+)
+
+
 def _variant_specs(strategy: str) -> list[dict]:
-    """Return (name, description, sd_offset, wing_delta) tuples — sd_offset
-    shifts the SHORT distance from walls/flip in units of ATM straddles;
-    wing_delta adjusts the wing width in dollars. Standard = no shift."""
-    if strategy in ("iron_condor", "iron_butterfly", "double_diagonal", "double_calendar"):
-        return [
-            {"name": "Conservative", "sd_offset": 0.40, "wing_delta": 1.0,
-             "description": "Shorts pushed farther OTM, wings $1 wider — lower credit, more cushion"},
-            {"name": "Standard",     "sd_offset": 0.0,  "wing_delta": 0.0,
-             "description": "Shorts anchored at GEX walls — matches the bot baseline"},
-            {"name": "Aggressive",   "sd_offset": -0.30, "wing_delta": -1.0,
-             "description": "Shorts closer to spot, tighter wings — higher credit, tighter R:R"},
-        ]
-    # butterfly: center always at flip, vary wing width
-    return [
-        {"name": "Conservative", "sd_offset": 0.0, "wing_delta": 2.0,
-         "description": "Wider wings — lower max profit, wider profit zone"},
-        {"name": "Standard",     "sd_offset": 0.0, "wing_delta": 0.0,
-         "description": "Standard wings centered on flip"},
-        {"name": "Aggressive",   "sd_offset": 0.0, "wing_delta": -1.5,
-         "description": "Tight wings — higher max profit at the peak, narrower zone"},
-    ]
+    """Three variants scaled off the owning bot's backtested strike placement.
+
+    Replaces the old wall-anchored `sd_offset`/`wing_delta` design, which set
+    shorts at the raw GEX walls (~0.55 straddles on a typical SPY day) and sized
+    wings with a hardcoded $3/$5 constant. No bot places strikes that way.
+    """
+    base, label = _baseline_strike_mult(strategy)
+    is_fly = strategy in ("butterfly", "iron_butterfly")
+    specs = []
+    for name, scale in _VARIANT_TIERS:
+        k = round(base * scale, 4)
+        if name == "Standard":
+            desc = (
+                f"{'Wings' if is_fly else 'Shorts'} at {k:.2f}x the ATM straddle "
+                f"— matches {label}, the live bot's backtested placement"
+            )
+        elif name == "Conservative":
+            desc = (
+                f"{'Wings' if is_fly else 'Shorts'} at {k:.2f}x the ATM straddle "
+                f"(25% wider than {label}) — lower credit, more cushion"
+            )
+        else:
+            desc = (
+                f"{'Wings' if is_fly else 'Shorts'} at {k:.2f}x the ATM straddle "
+                f"(25% tighter than {label}) — higher credit, tighter R:R"
+            )
+        specs.append({"name": name, "strike_mult": k, "baseline_label": label,
+                      "description": desc})
+    return specs
 
 
 def _build_legs_for_variant(
     strategy: str, spec: dict, *,
     spot: float, flip: float, call_wall: float, put_wall: float,
-    atm_straddle: float | None, regime: str | None,
+    atm_straddle: float | None, regime: str | None, gex: dict | None,
     front_strikes_call: list[float], front_strikes_put: list[float],
     front_exp: str, back_exp: str, credit_exp: str,
 ):
-    """Produce a strikes dict (snapped to the actual chain) for one variant."""
-    sd_offset = spec["sd_offset"]
-    wing_delta = spec["wing_delta"]
-    base_wing = 3.0 if regime and "POSITIVE" in str(regime).upper() else 5.0
-    wing = max(1.0, base_wing + wing_delta)
-    # Shift in $ derived from ATM straddle so it's vol-aware. Fall back to a
-    # fixed $2 nudge if we couldn't read the straddle.
-    sd_shift_dollars = (atm_straddle * sd_offset) if atm_straddle else (2.0 * sd_offset)
+    """Produce a strikes dict (snapped to the actual chain) for one variant.
 
+    Geometry mirrors the owning bot module leg-for-leg:
+      * iron_condor / double_diagonal — shorts at `spot +/- k * straddle`
+        (iron_condor.py:123-124), IC longs `_IC_SPREAD_WIDTH` beyond the shorts,
+        DD longs one strike beyond (double_diagonal.py:103-104, skew 0).
+      * double_calendar — strikes at `spot +/- k * straddle`
+        (double_calendar.py:146-147).
+      * flies — body on `_pin_center()`'s gamma-weighted magnet midpoint,
+        wings `k * straddle * 0.85` (long_butterfly.py:229,240).
+
+    The GEX walls are deliberately NOT used as anchors: every bot ships
+    `use_gex_walls: False`. They stay in `context` for the chart and warnings.
+    """
+    k = float(spec["strike_mult"])
+    # Without a straddle the bots hard-reject (`missing_atm_straddle`). We still
+    # render a suggestion, but approximate the straddle from spot so placement
+    # stays vol-shaped rather than a fixed dollar guess. gex_suggest() warns.
+    straddle = float(atm_straddle) if atm_straddle else float(spot) * 0.01
+    offset = k * straddle
+
+    # Snap from the RAW target: _snap_to_strike already picks the nearest listed
+    # strike, so pre-rounding to $0.50 only loses precision — and on a .5 tie it
+    # biased every pin-derived body down a strike (a 740.56 gamma-weighted
+    # midpoint became 740.5, then tie-broke to 740 instead of 741).
+    # _round_half stays as the no-chain fallback, where a $0.50 grid is the best
+    # guess available.
     def snap_put(target):
-        s = _snap_to_strike(_round_half(target), front_strikes_put)
+        s = _snap_to_strike(target, front_strikes_put)
         return float(s) if s is not None else _round_half(target)
 
     def snap_call(target):
-        s = _snap_to_strike(_round_half(target), front_strikes_call)
+        s = _snap_to_strike(target, front_strikes_call)
         return float(s) if s is not None else _round_half(target)
 
-    if strategy == "iron_condor":
-        short_put = snap_put(put_wall - sd_shift_dollars)
-        short_call = snap_call(call_wall + sd_shift_dollars)
-        long_put = snap_put(short_put - wing)
-        long_call = snap_call(short_call + wing)
-        return {
-            "long_put_strike": long_put, "short_put_strike": short_put,
-            "short_call_strike": short_call, "long_call_strike": long_call,
-            "expiration": credit_exp,
-        }
-    if strategy == "double_diagonal":
-        short_put = snap_put(put_wall - sd_shift_dollars)
-        short_call = snap_call(call_wall + sd_shift_dollars)
-        long_put = snap_put(short_put - wing)
-        long_call = snap_call(short_call + wing)
+    if strategy in ("iron_condor", "double_diagonal"):
+        short_put = snap_put(round(spot - offset))
+        short_call = snap_call(round(spot + offset))
+        if strategy == "iron_condor":
+            long_put = snap_put(short_put - _IC_SPREAD_WIDTH)
+            long_call = snap_call(short_call + _IC_SPREAD_WIDTH)
+            return {
+                "long_put_strike": long_put, "short_put_strike": short_put,
+                "short_call_strike": short_call, "long_call_strike": long_call,
+                "expiration": credit_exp,
+            }
+        # DD longs sit one strike beyond the shorts in the back month.
+        long_put = snap_put(short_put - 1.0)
+        long_call = snap_call(short_call + 1.0)
         return {
             "long_put_strike": long_put, "short_put_strike": short_put,
             "short_call_strike": short_call, "long_call_strike": long_call,
             "short_expiration": front_exp, "long_expiration": back_exp,
         }
+
     if strategy == "double_calendar":
-        put_strike = snap_put(put_wall - sd_shift_dollars)
-        call_strike = snap_call(call_wall + sd_shift_dollars)
         return {
-            "put_strike": put_strike, "call_strike": call_strike,
+            "put_strike": snap_put(round(spot - offset)),
+            "call_strike": snap_call(round(spot + offset)),
             "front_expiration": front_exp, "back_expiration": back_exp,
         }
+
+    # --- fly family: body on the gamma structure, wings off the straddle ---
+    center = _pin_center_safe(gex, spot)
+    wing = max(1.0, round(k * straddle * _FLY_WING_HAIRCUT))
+
     if strategy == "iron_butterfly":
-        # Body at flip (current behavior); vary wing width.
-        body_call = snap_call(flip)
-        body_put = snap_put(flip)
-        long_put = snap_put(body_put - wing)
-        long_call = snap_call(body_call + wing)
-        # For IBF the body is a single strike — prefer call's snap (typically
-        # call/put share strikes ATM).
+        body = snap_call(center)
         return {
-            "long_put_strike": long_put,
-            "short_strike": body_call,
-            "long_call_strike": long_call,
+            "long_put_strike": snap_put(body - wing),
+            "short_strike": body,
+            "long_call_strike": snap_call(body + wing),
             "expiration": credit_exp,
         }
-    # butterfly
-    center_call = snap_call(flip)
-    lower = snap_call(center_call - wing)
-    upper = snap_call(center_call + wing)
+
+    body = snap_call(center)
     return {
-        "lower_strike": lower, "middle_strike": center_call, "upper_strike": upper,
+        "lower_strike": snap_call(body - wing),
+        "middle_strike": body,
+        "upper_strike": snap_call(body + wing),
         "option_type": "call", "expiration": front_exp,
     }
+
+
+def _pin_center_safe(gex: dict | None, spot: float) -> float:
+    """The bots' body-placement rule, reused verbatim: gamma-weighted midpoint
+    of the large magnets -> dominant magnet -> predicted pin -> spot.
+
+    Importing the live strategy module keeps this from drifting away from what
+    RIPPLE/SPLASH actually do. Falls back to spot if the import fails so a
+    suggestion is still produced.
+    """
+    try:
+        from .bots.strategies.long_butterfly import _pin_center
+        return float(_pin_center(gex or {}, float(spot)))
+    except Exception:
+        return float(spot)
 
 
 def _estimate_preview(
@@ -1112,6 +1238,7 @@ def _bot_preview(
     spot: float, vix: float | None, atm_straddle: float | None,
     front_options: list[dict], expiration: str,
     flip: float, call_wall: float | None, put_wall: float | None,
+    magnets: list | None = None, pin_strike: float | None = None,
 ) -> dict:
     """Run the live bot's signal builder against an in-memory chain and
     summarize what it would do right now. Returns {would_open, legs, preview,
@@ -1140,6 +1267,11 @@ def _bot_preview(
             "flip_point": flip,
             "call_wall": call_wall,
             "put_wall": put_wall,
+            # Without these, long_butterfly._pin_center() has nothing to weight
+            # and drops straight through to spot — the bot preview would show
+            # an ATM fly that the real bot would never place.
+            "magnets": magnets or [],
+            "pin_strike": pin_strike,
         },
     }
     try:
@@ -1228,6 +1360,7 @@ async def gex_suggest(
             "GEX data incomplete — flip_point and spot_price required for suggestions",
         )
 
+    wall_fallback_used = not call_wall or not put_wall
     if not call_wall:
         call_wall = spot + (spot * 0.01)
     if not put_wall:
@@ -1291,6 +1424,12 @@ async def gex_suggest(
         "atm_straddle_mid": atm_straddle,
         "primary_expiration": primary_exp,
         "back_expiration": back_exp if back_exp != primary_exp else None,
+        # Which bot knob the variants are scaled from, so the panel can show
+        # "Standard = FLOW.sd_mult 1.20x straddle" rather than a bare number.
+        "baseline_strike_mult": _baseline_strike_mult(strategy)[0],
+        "baseline_label": _baseline_strike_mult(strategy)[1],
+        "pin_center": _pin_center_safe(gex, float(spot)),
+        "magnet_count": len(gex.get("magnets") or []),
     }
 
     # 5) Non-blocking warnings — mirror the bots' entry-gate checks so the
@@ -1306,7 +1445,20 @@ async def gex_suggest(
             "bots skip when distance < $1."
         )
     if atm_straddle is None:
-        warnings.append("ATM straddle unavailable — wing sizing is using fixed dollars.")
+        warnings.append(
+            "ATM straddle unavailable — strike placement is approximating it as "
+            "1% of spot. The live bots hard-reject this (missing_atm_straddle)."
+        )
+    if wall_fallback_used:
+        warnings.append(
+            "GEX walls missing — substituted spot ±1%. They are context only "
+            "(no bot anchors on walls), but the levels shown are synthetic."
+        )
+    if strategy in ("butterfly", "iron_butterfly") and not (gex.get("magnets") or gex.get("pin_strike")):
+        warnings.append(
+            "No gamma magnets in the GEX snapshot — the fly body falls back to "
+            "spot (at-the-money) instead of the gamma-weighted pin."
+        )
 
     # 6) Build 3 variants. Each fully snapped to actual chain strikes, with
     #    preview metrics priced from real bid/ask mids.
@@ -1315,7 +1467,7 @@ async def gex_suggest(
         legs_dict = _build_legs_for_variant(
             strategy, spec,
             spot=spot, flip=flip, call_wall=call_wall, put_wall=put_wall,
-            atm_straddle=atm_straddle, regime=regime,
+            atm_straddle=atm_straddle, regime=regime, gex=gex,
             front_strikes_call=front_call_strikes,
             front_strikes_put=front_put_strikes,
             front_exp=front_exp, back_exp=back_exp, credit_exp=credit_exp,
@@ -1324,6 +1476,7 @@ async def gex_suggest(
         variants.append({
             "name": spec["name"],
             "description": spec["description"],
+            "strike_mult": spec["strike_mult"],
             "legs": legs_dict,
             "preview": preview,
         })
@@ -1339,6 +1492,8 @@ async def gex_suggest(
                 flip=float(flip),
                 call_wall=float(call_wall) if call_wall else None,
                 put_wall=float(put_wall) if put_wall else None,
+                magnets=gex.get("magnets") or [],
+                pin_strike=gex.get("pin_strike"),
             )
         except Exception as e:
             bot_preview = {"bot": bot, "would_open": False,
