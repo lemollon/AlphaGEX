@@ -40,7 +40,8 @@ const PUBLIC_EXACT = new Set<string>([
  *
  * These were previously in PUBLIC_EXACT under an "ungated while dark" comment.
  * They render a person's own money, so they are gated on identity — not on the
- * IRONFORGE_LIVE_OPEN review flag, which only scopes WHICH bots a viewer may see.
+ * per-viewer bot scoping in lib/live/viewer.ts, which only decides WHICH bots a
+ * signed-in viewer may see.
  *
  * Unauthenticated page requests go to /login (the CUSTOMER door), never /ops/login.
  */

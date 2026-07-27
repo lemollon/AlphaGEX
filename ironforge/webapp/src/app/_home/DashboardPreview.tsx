@@ -21,7 +21,7 @@ const WEALTH_TILES = [
 export const DAILY_BRIEF_ITEMS = [
   <>No positions require immediate action.</>,
   <>Market conditions are favorable for your strategy.</>,
-  <>IronForge executed 2 trades yesterday.</>,
+  <>Your executed trades appear here each morning.</>,
   <>
     {/* Platform runs on Central Time everywhere else — ET here was drift. */}
     Next execution window: <span className="text-[#FD5301]">Tomorrow 8:30 AM CT</span>
@@ -46,7 +46,7 @@ export default function DashboardPreview() {
     <div className="relative rounded-2xl border border-white/10 bg-[#0A0B0C] p-3 shadow-2xl shadow-black/60">
       {/* Interface illustration, not an account. The badge says so explicitly now
           that the invented figures are gone — real numbers live on /bot-ledger. */}
-      <span className="absolute right-3 top-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
+      <span className="absolute bottom-3 right-3 z-10 rounded-full border border-white/15 bg-black/70 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-gray-400">
         Example layout · not performance data
       </span>
       {/* Top strip: agent status / account value / P&L / outlook */}
@@ -123,24 +123,25 @@ export default function DashboardPreview() {
               </tr>
             </thead>
             <tbody className="text-[9.5px] text-gray-300">
-              <tr className="border-t border-white/5">
-                <td className="py-2">May 20, 3:32 PM</td>
-                <td className="py-2">SPX Iron Condor</td>
-                <td className="py-2">SPX 5,011 PE</td>
-                <td className="py-2 text-white">$210.00</td>
-                <td className="py-2 font-semibold text-[#63C132]">Filled</td>
-              </tr>
-              <tr className="border-t border-white/5">
-                <td className="py-2">May 20, 9:41 AM</td>
-                <td className="py-2">SPX Iron Condor</td>
-                <td className="py-2">SPX 5,010 TE</td>
-                <td className="py-2 text-white">$195.00</td>
-                <td className="py-2 font-semibold text-[#63C132]">Filled</td>
-              </tr>
+              {/* Invented fills ("SPX 5,011 PE  $210.00  Filled") used to sit here.
+                  The wealth tiles and account value were blanked to PLACEHOLDER
+                  when the made-up return was removed, but these rows were missed —
+                  so the card still showed fabricated trades, with prices, on the
+                  homepage. Real closed trades live on /bot-ledger; this is a
+                  layout illustration and must not invent a record. */}
+              {[0, 1].map((i) => (
+                <tr key={i} className="border-t border-white/5">
+                  <td className="py-2">{PLACEHOLDER}</td>
+                  <td className="py-2">SPY Iron Condor</td>
+                  <td className="py-2">{PLACEHOLDER}</td>
+                  <td className="py-2 text-white">{PLACEHOLDER}</td>
+                  <td className="py-2 font-semibold text-gray-500">{PLACEHOLDER}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
           <div className="mt-2 border-t border-white/5 pt-2 text-[9.5px] text-gray-500">
-            All times ET. Updates every 60 seconds.
+            All times CT. Updates every 60 seconds.
           </div>
         </div>
       </div>
