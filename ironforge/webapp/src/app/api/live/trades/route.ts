@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     if (viewer.allowedBots.length === 0) {
       return NextResponse.json({ empty: true, viewer })
     }
-    const trades = await getCustomerTrades(viewer.allowedBots, viewer.persons, viewer.paperBots)
+    const trades = await getCustomerTrades(viewer.allowedBots, viewer.persons, viewer.paperBots, viewer.isOperator)
     return NextResponse.json({ trades, viewer })
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err)

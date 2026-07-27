@@ -69,10 +69,15 @@ function ctDate(v: unknown): string {
 }
 const r2 = (v: number) => Math.round(v * 100) / 100
 
-async function loadBotTrades(bot: LiveBot, person: string | null, paper: boolean): Promise<HistoryTrade[]> {
+async function loadBotTrades(
+  bot: LiveBot,
+  person: string | null,
+  paper: boolean,
+  isOperator = false,
+): Promise<HistoryTrade[]> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const scope = scopeFilter(bot, person)
+  const scope = scopeFilter(bot, person, isOperator)
   const closed = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${scope}`
 
   const [rows, capRows] = await Promise.all([
@@ -121,10 +126,11 @@ export async function getCustomerTrades(
   bots: LiveBot[],
   persons: Record<string, string | null> = {},
   paperBots: LiveBot[] = [],
+  isOperator = false,
 ): Promise<HistoryTrade[]> {
   const paperSet = new Set(paperBots)
   const perBot = await Promise.all(
-    bots.map((b) => loadBotTrades(b, persons[b] ?? null, paperSet.has(b))),
+    bots.map((b) => loadBotTrades(b, persons[b] ?? null, paperSet.has(b), isOperator)),
   )
   return perBot.flat().sort((a, b) => (a.close_date < b.close_date ? 1 : a.close_date > b.close_date ? -1 : 0))
 }

@@ -92,10 +92,14 @@ function ctDate(v: unknown): string {
   return v ? String(v).slice(0, 10) : ''
 }
 
-async function loadBot(bot: LiveBot, person: string | null = null): Promise<RawBot> {
+async function loadBot(
+  bot: LiveBot,
+  person: string | null = null,
+  isOperator = false,
+): Promise<RawBot> {
   const dte = dteMode(bot)
   const dteFilter = dte ? `AND dte_mode = '${escapeSql(dte)}'` : ''
-  const prod = scopeFilter(bot, person)
+  const prod = scopeFilter(bot, person, isOperator)
   const closed = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prod}`
 
   const [statRows, capRows, pointRows] = await Promise.all([
@@ -145,8 +149,9 @@ async function loadBot(bot: LiveBot, person: string | null = null): Promise<RawB
 export async function getPerformance(
   bots: LiveBot[],
   persons: Record<string, string | null> = {},
+  isOperator = false,
 ): Promise<PerformanceData> {
-  const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null)))
+  const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null, isOperator)))
   const nowMs = Date.now()
   // Enrich each bot with its own curve + trailing KPIs so the per-strategy
   // toggle on the Performance page switches the chart and the income tiles.
