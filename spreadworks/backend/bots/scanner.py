@@ -161,12 +161,17 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   ticker: str, front_dte: int, back_dte: int | None,
                   diag: list[str] | None = None,
                   diag_params: dict | None = None,
-                  engine=None, now_ct: datetime | None = None):
+                  engine=None, now_ct: datetime | None = None,
+                  prefetched_chain: dict | None = None):
     """Build a signal. Returns (signal_or_none, chain_or_none).
 
     `diag` (if provided) collects the rejection reason from the strategy
     builder OR from chain-fetch failure, so scan_activity.reason can
     surface a specific cause instead of bare "no signal".
+
+    `prefetched_chain` lets the caller hand in a chain it already fetched
+    this scan (UPDRAFT/BACKDRAFT snapshot the flow tape before the entry
+    gates run) so the same minute is not fetched from Tradier twice.
     """
     if strategy == "iron_butterfly":
         chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
@@ -195,11 +200,15 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
     if strategy == "updraft":
         # UPDRAFT / BACKDRAFT. Both need a 30-MINUTE flow imbalance, and
         # Tradier reports option volume CUMULATIVELY, so the signal cannot
-        # be read from a single chain. Every scan records a snapshot and
-        # differences it against the one ~30 minutes back; the first ~30
-        # minutes of a session (and the first scans after a deploy) return
-        # "warming_up" and simply do not trade.
-        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        # be read from a single chain. Snapshots are recorded from 08:00 CT
+        # by record_flow_snapshot() below — including before the entry
+        # window opens, which is what gives the window a pre-open zero
+        # baseline to truncate against at the 08:30 CT open. Only the first
+        # scans after a mid-session deploy return "warming_up".
+        chain = prefetched_chain
+        if chain is None:
+            chain = chain_provider.get_chain(ticker=ticker, dte=front_dte,
+                                             today=today)
         if chain is None:
             if diag is not None:
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
@@ -217,16 +226,17 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   **{k: config[k] for k in tunable
                      if config.get(k) is not None},
                   **(diag_params or {})}
-        if engine is not None:
-            flow = flow_store.record_snapshot(
-                engine, ticker=ticker, expiration=chain.get("expiration"),
-                now=now_ct or datetime.combine(today, time(0, 0)),
-                spot=float(chain.get("spot") or 0),
-                options=chain.get("options") or [])
-            chain["flow"] = flow.as_dict()
-        else:
-            chain["flow"] = {"flow_imb_30": None, "r30_bp": None,
-                             "reason": "no_engine: cannot read flow history"}
+        if chain.get("flow") is None:
+            if engine is not None:
+                flow = flow_store.record_snapshot(
+                    engine, ticker=ticker, expiration=chain.get("expiration"),
+                    now=now_ct or datetime.combine(today, time(0, 0)),
+                    spot=float(chain.get("spot") or 0),
+                    options=chain.get("options") or [])
+                chain["flow"] = flow.as_dict()
+            else:
+                chain["flow"] = {"flow_imb_30": None, "r30_bp": None,
+                                 "reason": "no_engine: cannot read flow history"}
         sig = build_updraft_signal(
             chain=chain, today=today, params=params,
             mode=str(params.get("mode") or "updraft"),
@@ -280,6 +290,48 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         )
         return sig, front
     raise ValueError(f"unknown strategy {strategy}")
+
+
+def record_flow_snapshot(
+    *, engine: Engine, meta: dict, now_ct: datetime,
+    chain_provider: ChainProvider,
+) -> dict | None:
+    """Snapshot the 0DTE volume tape for UPDRAFT/BACKDRAFT and return the chain.
+
+    Runs on EVERY scan for a flow bot, ahead of and independent of every
+    entry gate. Two reasons it cannot live behind the entry window:
+
+      1. The window opens at 08:31 CT but the signal differences CUMULATIVE
+         volume across ~30 minutes, so the first in-window snapshot is only
+         usable at ~08:53 CT. Research truncates its window at the session
+         open instead (ROWS 29 PRECEDING) and takes BACKDRAFT signals from
+         08:31 CT. Snapshotting from 08:00 CT supplies the pre-open zero
+         baseline that reproduces that truncation exactly.
+      2. Any other blocking gate — max_concurrent, entry_days, blackout —
+         used to stop the snapshot too, punching a hole in the series. A
+         hole wider than WINDOW_TOL_MIN blinds the bot after the block
+         clears, so a bot holding its 3-position cap for 45 minutes came
+         back to a dead signal.
+
+    Returns the chain (with its "flow" block populated) so the caller can
+    hand it to _build_signal instead of re-fetching. Never raises.
+    """
+    try:
+        ticker = meta["ticker"]
+        chain = chain_provider.get_chain(
+            ticker=ticker, dte=int(meta.get("front_dte") or 0),
+            today=now_ct.date())
+        if chain is None:
+            return None
+        flow = flow_store.record_snapshot(
+            engine, ticker=ticker, expiration=chain.get("expiration"),
+            now=now_ct, spot=float(chain.get("spot") or 0),
+            options=chain.get("options") or [])
+        chain["flow"] = flow.as_dict()
+        return chain
+    except Exception as e:
+        logger.warning(f"[{meta.get('display')}] flow snapshot skipped: {e}")
+        return None
 
 
 def _within_earnings_window(ticker: str, now_ct: datetime, exclude_days: int) -> bool:
@@ -496,6 +548,7 @@ def _evaluate_entry(
     *, engine: Engine, bot: str, meta: dict, cfg: dict, now_ct: datetime,
     chain_provider: ChainProvider, event_blackout: bool, allow_stacking: bool,
     open_count: int, opens: list[dict[str, Any]],
+    prefetched_chain: dict | None = None,
 ) -> dict[str, Any]:
     """Evaluate whether to OPEN a new position. Returns a result dict; never
     opens more than the gates allow. Callers decide whether to invoke this
@@ -557,6 +610,7 @@ def _evaluate_entry(
         ticker=meta["ticker"], front_dte=meta["front_dte"],
         back_dte=meta["back_dte"],
         diag=diag,
+        prefetched_chain=prefetched_chain,
     )
     if signal is None:
         return {"outcome": "NO_TRADE", "reason": diag[0] if diag else "no signal"}
@@ -740,6 +794,18 @@ def run_scan_cycle(
             elif monitor_result is None or monitor_result["outcome"] != "TRADE":
                 monitor_result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
 
+        # --- 0DTE flow tape (UPDRAFT / BACKDRAFT) ---
+        # Recorded before ANY entry gate and on every scan of the 08:00-14:59
+        # CT loop, so the 30-minute window has a pre-open zero baseline to
+        # truncate against at the open and no gate can punch a hole in the
+        # series. See record_flow_snapshot for why both matter. The chain it
+        # fetched is reused below rather than fetched twice.
+        flow_chain: dict | None = None
+        if meta.get("strategy") == "updraft":
+            flow_chain = record_flow_snapshot(
+                engine=engine, meta=meta, now_ct=now_ct,
+                chain_provider=chain_provider)
+
         # --- Evaluate a NEW entry ---
         # Legacy (one-at-a-time) bots only open when flat. Stacking bots open
         # on every entry-day even while a position is held (capped to one new
@@ -751,6 +817,7 @@ def run_scan_cycle(
                 engine=engine, bot=bot, meta=meta, cfg=cfg, now_ct=now_ct,
                 chain_provider=chain_provider, event_blackout=event_blackout,
                 allow_stacking=allow_stacking, open_count=len(opens), opens=opens,
+                prefetched_chain=flow_chain,
             )
 
         # --- Headline outcome for logging/return ---

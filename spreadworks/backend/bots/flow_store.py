@@ -28,12 +28,40 @@ edge was measured on.
 The spot leg of the signal (`r30_bp`, the 30-minute return in basis points)
 is derived from the same snapshots so both halves of the signal are read
 from one consistent clock.
+
+THE TWO HALVES TRUNCATE DIFFERENTLY AT THE OPEN
+-----------------------------------------------
+Research builds the two features with different SQL, and they behave
+differently in the first half hour (ingest/build_spy_gex_minute.py):
+
+    flow_imb_30  <- SUM(...) OVER (PARTITION BY trade_date ORDER BY ts
+                                   ROWS 29 PRECEDING)
+    r30_bp       <- 1e4*(spot/LAG(spot,30) OVER (PARTITION BY trade_date) - 1)
+
+A ROWS-PRECEDING window TRUNCATES at the session boundary, so `flow_imb_30`
+is defined from the very first bar (09:31 ET) over however many minutes have
+elapsed. `LAG(spot,30)` does not — it is NULL until bar 31, so `r30_bp` is
+undefined until 10:00 ET. Measured on the warehouse: earliest minute with a
+non-null flow_imb_30 = 09:31, with a non-null r30_bp = 10:00.
+
+That asymmetry is why BACKDRAFT (flow only) takes 12 of its 119 backtested
+entries between 09:31 and 09:36 ET while UPDRAFT (flow AND momentum) has no
+entry before 10:00. To reproduce it live:
+
+  * snapshots are recorded from 08:00 CT, BEFORE the entry window opens, so
+    a pre-open baseline with cumulative volume 0 exists. Differencing against
+    it yields exactly "volume since the open" — the truncated window.
+  * `r30_bp` is withheld whenever the baseline snapshot predates the session
+    open, which makes the first live r30 land at 09:00 CT / 10:00 ET, matching
+    LAG(spot,30). Without that guard the pre-open spot would leak a synthetic
+    30-minute return across the opening gap and let UPDRAFT trade in a window
+    the backtest never traded.
 """
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -49,6 +77,11 @@ TABLE = "spreadworks_flow_snapshots"
 # 5-minute imbalance and call it 30.
 WINDOW_MIN = 30
 WINDOW_TOL_MIN = 8
+
+# Regular-session open in Central Time (scanner clocks are CT throughout).
+# A snapshot taken before this is a valid ZERO baseline for volume — 0DTE
+# contracts do not trade pre-open — but never a valid baseline for a return.
+SESSION_OPEN_CT = time(8, 30)
 
 # The suite runs SQLite and production runs Postgres, so the DDL has to be
 # dialect-aware (SERIAL and DOUBLE PRECISION are Postgres-only spellings).
@@ -83,7 +116,11 @@ class FlowState:
     call_volume_30m: int | None
     put_volume_30m: int | None
     lookback_min: float | None
-    reason: str | None = None      # why the signal is unavailable, if it is
+    reason: str | None = None      # why the flow reading is unavailable
+    # Why r30_bp specifically is unavailable while flow_imb_30 is fine. The
+    # two truncate differently at the open (see module docstring), so
+    # BACKDRAFT can trade on a state that UPDRAFT must decline.
+    r30_reason: str | None = None
 
     def ready(self) -> bool:
         return self.flow_imb_30 is not None and self.r30_bp is not None
@@ -94,6 +131,7 @@ class FlowState:
             "spot": self.spot, "call_volume_30m": self.call_volume_30m,
             "put_volume_30m": self.put_volume_30m,
             "lookback_min": self.lookback_min, "reason": self.reason,
+            "r30_reason": self.r30_reason,
         }
 
 
@@ -131,19 +169,29 @@ def record_snapshot(engine: Engine, *, ticker: str, expiration: Any,
     """Persist this scan's cumulative volumes and return the 30-min state.
 
     Safe to call on every scan for every bot: writes are cheap and the
-    read-back is a single indexed lookup.
+    read-back is a single indexed lookup. The timestamp is floored to the
+    minute and a minute already on file is not rewritten — UPDRAFT and
+    BACKDRAFT scan the same ticker in the same cycle, so without that the
+    table carries two identical rows per minute.
     """
     calls, puts = chain_volume_totals(options)
+    ts = now.replace(second=0, microsecond=0)
     trade_date = now.date()
     try:
         ensure_table(engine)
         with engine.begin() as conn:
-            conn.execute(text(
-                f"INSERT INTO {TABLE} (ticker, expiration, snapshot_time, "
-                "trade_date, spot, call_volume, put_volume) "
-                "VALUES (:tk, :ex, :ts, :td, :sp, :cv, :pv)"
-            ), {"tk": ticker, "ex": expiration, "ts": now, "td": trade_date,
-                "sp": float(spot), "cv": calls, "pv": puts})
+            dup = conn.execute(text(
+                f"SELECT 1 FROM {TABLE} WHERE ticker = :tk AND trade_date = :td "
+                "  AND snapshot_time >= :t0 AND snapshot_time < :t1 LIMIT 1"
+            ), {"tk": ticker, "td": trade_date, "t0": ts,
+                "t1": ts + timedelta(minutes=1)}).first()
+            if dup is None:
+                conn.execute(text(
+                    f"INSERT INTO {TABLE} (ticker, expiration, snapshot_time, "
+                    "trade_date, spot, call_volume, put_volume) "
+                    "VALUES (:tk, :ex, :ts, :td, :sp, :cv, :pv)"
+                ), {"tk": ticker, "ex": expiration, "ts": ts, "td": trade_date,
+                    "sp": float(spot), "cv": calls, "pv": puts})
     except Exception as e:                       # never break a scan on this
         logger.warning(f"flow snapshot write failed for {ticker}: {e}")
         return FlowState(None, None, spot, None, None, None,
@@ -207,7 +255,8 @@ def read_state(engine: Engine, *, ticker: str, now: datetime, spot: float,
     d_call = int(calls_now) - int(row["call_volume"])
     d_put = int(puts_now) - int(row["put_volume"])
     prior_spot = float(row["spot"])
-    lookback = (now - _aware(row["snapshot_time"])).total_seconds() / 60.0
+    base_ts = _aware(row["snapshot_time"])
+    lookback = (now - base_ts).total_seconds() / 60.0
 
     # Cumulative volume must not go backwards within a session. If it does,
     # the chain root changed or the session rolled - do not fabricate a
@@ -219,16 +268,33 @@ def read_state(engine: Engine, *, ticker: str, now: datetime, spot: float,
     if total <= 0:
         return FlowState(None, None, spot, d_call, d_put, lookback,
                          reason="no_volume_in_window")
-    if prior_spot <= 0:
-        return FlowState(None, None, spot, d_call, d_put, lookback,
-                         reason="bad_prior_spot")
+
+    # r30_bp is the STRICTER half. Research derives it from LAG(spot,30)
+    # partitioned by trade_date, which is NULL until 30 minutes into the
+    # session; a pre-open baseline would measure the opening gap instead and
+    # hand UPDRAFT a return the backtest never saw. Withhold it — the volume
+    # window truncates at the open, the return window does not.
+    r30: float | None = None
+    r30_reason: str | None = None
+    # Same tzinfo as `target`, which is what _aware() normalises rows to.
+    session_open = now.replace(hour=SESSION_OPEN_CT.hour,
+                               minute=SESSION_OPEN_CT.minute,
+                               second=0, microsecond=0)
+    if prior_spot <= 0 or float(spot) <= 0:
+        r30_reason = "bad_prior_spot"
+    elif base_ts < session_open:
+        r30_reason = ("pre_open_baseline: r30 undefined until 30m after the "
+                      "open (matches LAG(spot,30) in research)")
+    else:
+        r30 = 1e4 * (float(spot) / prior_spot - 1.0)
 
     return FlowState(
         flow_imb_30=(d_call - d_put) / total,
-        r30_bp=1e4 * (float(spot) / prior_spot - 1.0),
+        r30_bp=r30,
         spot=float(spot),
         call_volume_30m=d_call, put_volume_30m=d_put,
         lookback_min=lookback,
+        r30_reason=r30_reason,
     )
 
 
