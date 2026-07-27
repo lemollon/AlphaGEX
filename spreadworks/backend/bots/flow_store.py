@@ -50,18 +50,26 @@ TABLE = "spreadworks_flow_snapshots"
 WINDOW_MIN = 30
 WINDOW_TOL_MIN = 8
 
-DDL = f"""
+# The suite runs SQLite and production runs Postgres, so the DDL has to be
+# dialect-aware (SERIAL and DOUBLE PRECISION are Postgres-only spellings).
+def _ddl(sqlite: bool) -> str:
+    pk = ("INTEGER PRIMARY KEY AUTOINCREMENT" if sqlite
+          else "SERIAL PRIMARY KEY")
+    dbl = "REAL" if sqlite else "DOUBLE PRECISION"
+    return f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
-    id           SERIAL PRIMARY KEY,
-    ticker       VARCHAR(16)      NOT NULL,
-    expiration   DATE             NOT NULL,
-    snapshot_time TIMESTAMP       NOT NULL,
-    trade_date   DATE             NOT NULL,
-    spot         DOUBLE PRECISION NOT NULL,
-    call_volume  BIGINT           NOT NULL,
-    put_volume   BIGINT           NOT NULL
+    id            {pk},
+    ticker        VARCHAR(16) NOT NULL,
+    expiration    DATE,
+    snapshot_time TIMESTAMP   NOT NULL,
+    trade_date    DATE        NOT NULL,
+    spot          {dbl}       NOT NULL,
+    call_volume   BIGINT      NOT NULL,
+    put_volume    BIGINT      NOT NULL
 )
 """
+
+
 DDL_IDX = (f"CREATE INDEX IF NOT EXISTS {TABLE}_lookup_idx "
            f"ON {TABLE} (ticker, trade_date, snapshot_time)")
 
@@ -90,8 +98,9 @@ class FlowState:
 
 
 def ensure_table(engine: Engine) -> None:
+    sqlite = engine.dialect.name == "sqlite"
     with engine.begin() as conn:
-        conn.execute(text(DDL))
+        conn.execute(text(_ddl(sqlite)))
         conn.execute(text(DDL_IDX))
 
 
@@ -149,22 +158,46 @@ def read_state(engine: Engine, *, ticker: str, now: datetime, spot: float,
     """Difference against the snapshot closest to 30 minutes ago."""
     lo = now - timedelta(minutes=WINDOW_MIN + WINDOW_TOL_MIN)
     hi = now - timedelta(minutes=WINDOW_MIN - WINDOW_TOL_MIN)
+    # Candidates are few (one per 5-minute scan inside a 16-minute band), so
+    # pick the closest to exactly WINDOW_MIN ago in Python. Doing it in SQL
+    # would need EXTRACT(EPOCH ...), which is Postgres-only and breaks the
+    # SQLite test suite.
+    target = now - timedelta(minutes=WINDOW_MIN)
     try:
         with engine.begin() as conn:
-            row = conn.execute(text(
+            rows = conn.execute(text(
                 f"SELECT snapshot_time, spot, call_volume, put_volume "
                 f"FROM {TABLE} "
                 "WHERE ticker = :tk AND trade_date = :td "
                 "  AND snapshot_time BETWEEN :lo AND :hi "
-                # closest to exactly WINDOW_MIN ago
-                "ORDER BY ABS(EXTRACT(EPOCH FROM (snapshot_time - :target))) "
-                "LIMIT 1"
-            ), {"tk": ticker, "td": now.date(), "lo": lo, "hi": hi,
-                "target": now - timedelta(minutes=WINDOW_MIN)}).mappings().first()
+                "ORDER BY snapshot_time"
+            ), {"tk": ticker, "td": now.date(), "lo": lo,
+                "hi": hi}).mappings().all()
     except Exception as e:
         logger.warning(f"flow state read failed for {ticker}: {e}")
         return FlowState(None, None, spot, None, None, None,
                          reason=f"state_read_failed: {e}")
+
+    def _aware(t):
+        """Normalise a stored timestamp so it can be compared to `target`.
+
+        SQLite round-trips a tz-aware datetime as an ISO STRING and hands
+        back naive values for plain TIMESTAMP columns; Postgres returns
+        datetimes. Coerce both shapes, then match awareness.
+        """
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t)
+            except ValueError:
+                return target          # unparseable: treat as exact match
+        if t.tzinfo is None and target.tzinfo is not None:
+            return t.replace(tzinfo=target.tzinfo)
+        if t.tzinfo is not None and target.tzinfo is None:
+            return t.replace(tzinfo=None)
+        return t
+
+    row = min(rows, key=lambda r: abs(_aware(r["snapshot_time"]) - target),
+              default=None)
 
     if row is None:
         # Normal for the first ~30 minutes of a session, or after a restart.
@@ -174,7 +207,7 @@ def read_state(engine: Engine, *, ticker: str, now: datetime, spot: float,
     d_call = int(calls_now) - int(row["call_volume"])
     d_put = int(puts_now) - int(row["put_volume"])
     prior_spot = float(row["spot"])
-    lookback = (now - row["snapshot_time"]).total_seconds() / 60.0
+    lookback = (now - _aware(row["snapshot_time"])).total_seconds() / 60.0
 
     # Cumulative volume must not go backwards within a session. If it does,
     # the chain root changed or the session rolled - do not fabricate a

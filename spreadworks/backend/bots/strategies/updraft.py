@@ -72,11 +72,24 @@ class UpdraftSignal:
     r30_bp: float | None
     put_wall: float | None
     hold_minutes: int
+    # Fields the executor requires of every signal (see executor.open_position):
+    # .debit, .contracts, .max_profit, .max_loss, .pt_target_pnl, .sl_target_pnl
+    debit: float = 0.0            # premium paid per contract (== call_mid)
+    contracts: int = 0
+    max_profit: float = 0.0       # per contract, cosmetic headline
+    max_loss: float = 0.0         # per contract == debit * 100
+    pt_target_pnl: float = 0.0    # $ total — deliberately unreachable
+    sl_target_pnl: float = 0.0    # $ total — the -50% stop
 
     def legs(self) -> list[dict[str, Any]]:
+        # expiration MUST be an ISO string: legs are JSON-serialised into
+        # the positions table and the scanner reads it back with
+        # date.fromisoformat(legs[0]["expiration"]).
+        exp = self.expiration
+        exp_s = exp.isoformat() if hasattr(exp, "isoformat") else str(exp)
         return [{
             "strike": self.strike, "type": SIDE, "action": "buy",
-            "quantity": 1, "expiration": self.expiration,
+            "side": "long", "quantity": 1, "expiration": exp_s,
             "entry_price": self.call_mid,
         }]
 
@@ -110,6 +123,8 @@ def build_updraft_signal(
     today: date,
     params: dict[str, Any],
     mode: str = "updraft",
+    config: dict[str, Any] | None = None,
+    equity: float = 10000.0,
     diag: list[str] | None = None,
 ) -> UpdraftSignal | None:
     """Build a long-call signal, or return None with a reason in `diag`.
@@ -174,6 +189,23 @@ def build_updraft_signal(
         return _reject(f"spread_too_wide: {spread_pct:.3f} "
                        f"max={float(p['max_spread_pct']):.3f}")
 
+    # --- sizing, mirroring dip_buy so the executor sees a familiar shape ---
+    cfg = config or {}
+    debit = round(mid, 4)
+    max_loss_per = debit * 100.0        # long call: max loss IS the premium
+    bp_pct = float(cfg.get("bp_pct", 0.02))
+    raw = int((equity * bp_pct) // max_loss_per) if max_loss_per > 0 else 0
+    cap = int(cfg.get("max_contracts") or 0)
+    contracts = min(raw, cap) if cap > 0 else raw
+    if contracts < 1:
+        return _reject(f"size_zero: equity={equity:.0f} bp={bp_pct:.3f} "
+                       f"max_loss_per={max_loss_per:.0f}")
+
+    # pt_pct is deliberately unreachable (registry sets 99.0) — the timer is
+    # the exit. sl_pct 0.50 gives the researched -50% stop on premium.
+    pt_pct = float(cfg.get("pt_pct", 99.0))
+    sl_pct = float(cfg.get("sl_pct", 0.50))
+
     return UpdraftSignal(
         ticker=chain.get("ticker", "SPY"),
         expiration=chain.get("expiration") or today,
@@ -185,4 +217,10 @@ def build_updraft_signal(
         r30_bp=r30,
         put_wall=float(put_wall) if put_wall is not None else None,
         hold_minutes=int(p["hold_minutes"]),
+        debit=debit,
+        contracts=contracts,
+        max_profit=pt_pct * max_loss_per,
+        max_loss=max_loss_per,
+        pt_target_pnl=pt_pct * max_loss_per * contracts,
+        sl_target_pnl=sl_pct * max_loss_per * contracts,
     )

@@ -34,6 +34,9 @@ from .strategies.double_diagonal import build_double_diagonal_signal
 from .strategies.double_diagonal_credit import build_double_diagonal_credit_signal
 from .strategies.pin_drift_combo import build_pin_drift_combo_signal
 from .strategies.dip_buy import build_dip_buy_signal, DEFAULT_PARAMS
+from .strategies.updraft import (build_updraft_signal,
+                                 DEFAULT_PARAMS as UPDRAFT_PARAMS)
+from . import flow_store
 from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
 from . import ai_rationale
@@ -157,7 +160,8 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                   config: dict, equity: float, today: date,
                   ticker: str, front_dte: int, back_dte: int | None,
                   diag: list[str] | None = None,
-                  diag_params: dict | None = None):
+                  diag_params: dict | None = None,
+                  engine=None, now_ct: datetime | None = None):
     """Build a signal. Returns (signal_or_none, chain_or_none).
 
     `diag` (if provided) collects the rejection reason from the strategy
@@ -187,6 +191,46 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
             return None, None
         sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
+        return sig, chain
+    if strategy == "updraft":
+        # UPDRAFT / BACKDRAFT. Both need a 30-MINUTE flow imbalance, and
+        # Tradier reports option volume CUMULATIVELY, so the signal cannot
+        # be read from a single chain. Every scan records a snapshot and
+        # differences it against the one ~30 minutes back; the first ~30
+        # minutes of a session (and the first scans after a deploy) return
+        # "warming_up" and simply do not trade.
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        # The bot_config TABLE has a fixed column set, so the strategy's own
+        # knobs (mode, flow_max, r30_min, hold_minutes, ...) never round-trip
+        # through it — they live only in the registry. Layer them explicitly:
+        # module defaults < registry defaults < any live config override.
+        reg_defaults = (BOT_REGISTRY.get(bot, {}).get("defaults") or {})
+        tunable = ("mode", "flow_max", "r30_min", "backdraft_flow_max",
+                   "require_put_wall", "strike_offset", "hold_minutes",
+                   "min_option_price", "max_spread_pct", "cooldown_min")
+        params = {**UPDRAFT_PARAMS,
+                  **{k: reg_defaults[k] for k in tunable if k in reg_defaults},
+                  **{k: config[k] for k in tunable
+                     if config.get(k) is not None},
+                  **(diag_params or {})}
+        if engine is not None:
+            flow = flow_store.record_snapshot(
+                engine, ticker=ticker, expiration=chain.get("expiration"),
+                now=now_ct or datetime.combine(today, time(0, 0)),
+                spot=float(chain.get("spot") or 0),
+                options=chain.get("options") or [])
+            chain["flow"] = flow.as_dict()
+        else:
+            chain["flow"] = {"flow_imb_30": None, "r30_bp": None,
+                             "reason": "no_engine: cannot read flow history"}
+        sig = build_updraft_signal(
+            chain=chain, today=today, params=params,
+            mode=str(params.get("mode") or "updraft"),
+            config=config, equity=equity, diag=diag)
         return sig, chain
     if strategy == "dip_buy":
         params = {**DEFAULT_PARAMS, **(diag_params or {})}
@@ -508,6 +552,7 @@ def _evaluate_entry(
     diag: list[str] = []
     signal, _chain = _build_signal(
         bot=bot, strategy=meta["strategy"], chain_provider=chain_provider,
+        engine=engine, now_ct=now_ct,
         config=cfg, equity=equity, today=now_ct.date(),
         ticker=meta["ticker"], front_dte=meta["front_dte"],
         back_dte=meta["back_dte"],
@@ -646,6 +691,16 @@ def run_scan_cycle(
                 dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
                     else datetime.fromisoformat(str(pos["entry_time"]))
 
+            # UPDRAFT/BACKDRAFT are intraday TIMER exits (45m / 30m). The
+            # timer is the real exit — pt_pct is deliberately unreachable
+            # because a profit target cut returns ~6x in research.
+            hold_minutes = None
+            if pos["strategy"] == "updraft":
+                hold_minutes = int(cfg.get("hold_minutes")
+                                   or (meta.get("defaults") or {}).get("hold_minutes", 45))
+                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
+                    else datetime.fromisoformat(str(pos["entry_time"]))
+
             # On a stale mark, disarm PT/SL entirely (targets pushed to ±inf)
             # so only the time-based exits can fire — the position is never
             # stranded past EOD, but it also never closes on a phantom price.
@@ -657,6 +712,7 @@ def run_scan_cycle(
                 eod_close_ct=_parse_time(cfg["eod_close_ct"]),
                 event_blackout=event_blackout,
                 entry_time=dip_entry_time, hold_days=dip_hold_days,
+                hold_minutes=hold_minutes,
                 settle_at_expiry=bool(meta.get("settle_at_expiry")),
             )
             if d.should_close:
