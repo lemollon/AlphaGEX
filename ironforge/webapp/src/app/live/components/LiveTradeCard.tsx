@@ -22,6 +22,7 @@ function formatDuration(min: number | null): string {
 }
 
 function statusLabel(trade: LiveTrade | null, state: CustomerState | null): { title: string; sub: string } {
+  if (state?.key === 'NOT_LINKED') return { title: 'No Account Linked', sub: 'Contact support to get set up' }
   if (state?.key === 'PAUSED') return { title: 'Trading Paused', sub: 'Open positions remain managed' }
   if (trade?.active) {
     return state?.key === 'TRADE_ACTIVE'

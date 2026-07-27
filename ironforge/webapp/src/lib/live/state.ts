@@ -17,7 +17,17 @@ export interface StateInput {
   lastScanReason: string | null
   /** production-pause flag (ironforge_production_pause) */
   paused: boolean
-  /** paper_account.is_active — operator-level bot toggle */
+  /**
+   * Does a `{bot}_paper_account` row exist in THIS viewer's scope at all?
+   *
+   * False means "no account is linked to you", which is not the same thing as
+   * `isActive: false` ("an operator switched the bot off"). Conflating them
+   * told a live customer "trading is temporarily disabled" about a bot that was
+   * running normally — see the NOT_LINKED branch below.
+   */
+  accountLinked: boolean
+  /** paper_account.is_active — operator-level bot toggle. Only meaningful when
+   *  accountLinked is true. */
   isActive: boolean
   openPositions: number
   todayTradesClosed: number
@@ -39,10 +49,27 @@ const BLOCKED_REASON_PREFIXES = ['skip:vix_too_high', 'skip:event_blackout']
 
 export function deriveCustomerState(input: StateInput): CustomerState {
   const {
-    botState, lastScanReason, paused, isActive,
+    botState, lastScanReason, paused, accountLinked, isActive,
     openPositions, todayTradesClosed, sessionOpen, heartbeatAgeMin,
     agent = 'Spark',
   } = input
+
+  // Checked FIRST: with no account in scope every other signal below describes
+  // a bot this viewer cannot see. Saying "paused" here is a false statement
+  // about a live system — the bot may be trading normally for everyone else.
+  // The customer's blocker is the missing link, so that is what we tell them.
+  if (!accountLinked) {
+    return {
+      key: 'NOT_LINKED',
+      headline: `${agent} isn't connected to your account yet`,
+      subtitle: 'We haven’t linked a trading account to your profile. Contact support and we’ll finish setting you up.',
+      check_line: null,
+      dot: 'gray',
+      timeline_step: null,
+      paused: false,
+      can_resume: false,
+    }
+  }
 
   if (paused) {
     return {
