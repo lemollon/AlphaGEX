@@ -360,6 +360,104 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 2,
         },
     },
+    # UPDRAFT — SPY 0DTE long call on put-heavy flow INTO a rising tape.
+    # Research 2026-07-26 (ironforge-data/examples/hf_*.py, ADR 0007):
+    # buy the +1 OTM call when the 30-min 0DTE tape is put-heavy AND spot is
+    # up over the same window — fading a put crowd the tape is running over.
+    # Full sample n=843 (with BACKDRAFT, 3 concurrent): +15.92%/trade,
+    # t=3.30, 248 trades/yr, 4/4 years positive, beats a time-matched
+    # placebo 30/30 (placebo -8.10%). Held-out 2025-26: +12.83%, t=1.55 —
+    # 95% CI [-2.00%, +28.98%] INCLUDES ZERO, so this is an UNCONFIRMED
+    # candidate shipped as PAPER. Do not arm real money on it.
+    # A 5-minute scan cadence was measured to retain 86% of the edge.
+    "updraft": {
+        "display": "UPDRAFT",
+        "strategy": "updraft",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,                  # single expiration, no back leg
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            "bp_pct": 0.02,
+            # Required by the bot_config schema (db.py seeds every column
+            # directly). Unused by this strategy: there is no spread to
+            # width, no skew to apply, and strike choice is a fixed +1 OTM
+            # offset rather than a gamma wall.
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            # Thresholds are quantiles fitted on 2023-24 and FROZEN. They were
+            # never re-tuned on the held-out period; loosening them was tested
+            # and is strictly worse in dollars (qr q90 $2,370/yr per contract
+            # vs q80 $1,491 vs q70 $395).
+            "flow_max": -0.1378,
+            "r30_min": 19.23,
+            "strike_offset": 1,
+            "hold_minutes": 45,
+            # NO profit target — a PT cut returns ~6x in research. 99.0 makes
+            # it unreachable, the same idiom SURGE/TIDE use for "no stop".
+            "pt_pct": 99.0,
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            # 08:31–14:00 CT == 09:31–15:00 ET, the researched entry window.
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            # The book depends on holding up to 3 at once: raising the cap
+            # from 1 to 3 gave 2.5x the trades AND a higher mean (+14.57% ->
+            # +15.92%). The blocked signals were as good as the taken ones.
+            "allow_stacking": True,
+            "max_concurrent_positions": 3,
+            # The edge lives in the FIRST touch of a burst (+15.30% vs +5.01%
+            # across all signal minutes), so stand down after an entry.
+            "cooldown_min": 45,
+            "discord_alerts": False,
+        },
+    },
+    # BACKDRAFT — the same +1 OTM 0DTE call, triggered by flow EXTREMITY plus
+    # dealer-gamma support instead of momentum. Shares zero entry minutes
+    # with UPDRAFT in research (43 shared days of 145/89), so the two are
+    # genuinely separate signals rather than one trade twice. Held-out
+    # +14.32%/trade, t=1.55, ~40 trades/yr. PAPER, same caveat as UPDRAFT.
+    "backdraft": {
+        "display": "BACKDRAFT",
+        "strategy": "updraft",          # same module, mode=backdraft
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "max_contracts": 1,
+            "bp_pct": 0.02,
+            # schema-required, unused here — see UPDRAFT. The put wall IS
+            # part of this signal, but it is read from chain["gex"] inside
+            # the strategy, not through this flag (which drives strike
+            # placement for the spread bots).
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "backdraft",
+            "backdraft_flow_max": -0.35,
+            "require_put_wall": True,
+            "strike_offset": 1,
+            "hold_minutes": 30,
+            "pt_pct": 99.0,
+            "sl_pct": 0.50,
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:00",
+            "eod_close_ct": "14:45",
+            "allow_stacking": True,
+            "max_concurrent_positions": 3,
+            "cooldown_min": 30,
+            "discord_alerts": False,
+        },
+    },
 }
 
 

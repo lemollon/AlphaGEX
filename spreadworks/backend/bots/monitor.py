@@ -76,6 +76,7 @@ def decide_exit(
     event_blackout: bool,
     entry_time: datetime | None = None,
     hold_days: int | None = None,
+    hold_minutes: int | None = None,
     settle_at_expiry: bool = False,
 ) -> ExitDecision:
     if event_blackout:
@@ -85,6 +86,15 @@ def decide_exit(
         return ExitDecision(True, "PT")
     if mtm_pnl <= -abs(sl_target_pnl):
         return ExitDecision(True, "SL")
+
+    # Intraday time-stop, in MINUTES. UPDRAFT (45m) and BACKDRAFT (30m) are
+    # timer exits: the research showed a profit target cut returns roughly
+    # 6x, so the timer IS the exit and pt_target_pnl is set unreachable.
+    # Checked before the strategy branches so it applies to any 0DTE bot.
+    if hold_minutes is not None and entry_time is not None:
+        held_min = (now_ct - entry_time).total_seconds() / 60.0
+        if held_min >= float(hold_minutes):
+            return ExitDecision(True, "TIME_STOP")
 
     if strategy in MULTI_DAY_STRATEGIES:
         # Multi-day long-call hold: no same-day EOD close. Exit on a hard
