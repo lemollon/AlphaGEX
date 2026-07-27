@@ -14,6 +14,9 @@ export type CustomerStateKey =
   | 'PAUSED'
   | 'BLOCKED'
   | 'ACTION_REQUIRED'
+  /** No trading account is linked to this viewer. Distinct from PAUSED: the bot
+   *  may be running perfectly for everyone else. */
+  | 'NOT_LINKED'
 
 export type StateDot = 'green' | 'blue' | 'amber' | 'red' | 'gray'
 

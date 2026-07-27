@@ -5,6 +5,7 @@ const base: StateInput = {
   botState: 'scanning',
   lastScanReason: null,
   paused: false,
+  accountLinked: true,
   isActive: true,
   openPositions: 0,
   todayTradesClosed: 0,
@@ -13,6 +14,39 @@ const base: StateInput = {
 }
 
 describe('deriveCustomerState priority order', () => {
+  // Regression, 2026-07-27. A customer whose ironforge_customer_bots row had
+  // person = NULL matched no paper_account rows, and "no rows" was read as
+  // "the operator switched the bot off". The Live page told them "Spark is
+  // Paused — trading is temporarily disabled" while SPARK was trading normally:
+  // ironforge_production_pause said paused=false and the account row said
+  // is_active=true. An unlinked account and a disabled bot are different facts
+  // and must not collapse onto the same message.
+  it('an unlinked account is NOT_LINKED, not PAUSED', () => {
+    const s = deriveCustomerState({ ...base, accountLinked: false })
+    expect(s.key).toBe('NOT_LINKED')
+    expect(s.paused).toBe(false)
+    expect(s.can_resume).toBe(false)
+    expect(s.subtitle).not.toMatch(/disabled|paused/i)
+  })
+
+  it('NOT_LINKED wins over every other signal — none of them describe a bot this viewer can see', () => {
+    for (const over of [
+      { paused: true },
+      { isActive: false },
+      { botState: 'error' },
+      { openPositions: 1 },
+      { heartbeatAgeMin: 600 },
+    ]) {
+      expect(deriveCustomerState({ ...base, accountLinked: false, ...over }).key).toBe('NOT_LINKED')
+    }
+  })
+
+  it('a linked but switched-off account is still PAUSED', () => {
+    const s = deriveCustomerState({ ...base, accountLinked: true, isActive: false })
+    expect(s.key).toBe('PAUSED')
+    expect(s.can_resume).toBe(false)
+  })
+
   it('customer pause wins over everything and offers Resume', () => {
     const s = deriveCustomerState({ ...base, paused: true, openPositions: 1, botState: 'error' })
     expect(s.key).toBe('PAUSED')

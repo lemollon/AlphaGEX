@@ -82,9 +82,14 @@ export async function getLiveSummary(
        WHERE bot_name = '${escapeSql(heartbeatName(BOT))}'`,
     ),
     dbQuery(
+      // NOT filtered on is_active: the newest row in scope IS this viewer's
+      // account, and whether it is switched on is a separate question we have to
+      // be able to answer. Filtering here made "row exists but inactive" and "no
+      // row at all" indistinguishable — both returned zero rows and both rendered
+      // as "trading is temporarily disabled".
       `SELECT starting_capital, is_active
        FROM ${botTable(BOT, 'paper_account')}
-       WHERE is_active = TRUE ${dteFilter} ${prodFilter}
+       WHERE TRUE ${dteFilter} ${prodFilter}
        ORDER BY id DESC LIMIT 1`,
     ),
     dbQuery(
@@ -155,6 +160,7 @@ export async function getLiveSummary(
     botState,
     lastScanReason: hbDetails.reason || null,
     paused: pauseState.paused,
+    accountLinked: accountRows.length > 0,
     isActive: accountRows[0]?.is_active === true || accountRows[0]?.is_active === 'true',
     openPositions,
     todayTradesClosed,

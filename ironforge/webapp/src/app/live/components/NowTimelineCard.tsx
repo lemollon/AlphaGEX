@@ -25,6 +25,8 @@ function explainer(state: CustomerState | null): string {
       return 'New trades are paused. Any open position keeps following your risk rules.'
     case 'ACTION_REQUIRED':
       return 'Spark is checking its connection. Any open position keeps following your risk rules.'
+    case 'NOT_LINKED':
+      return 'These steps start once a trading account is connected to your profile.'
     default:
       return 'When Spark finds the right setup, the trade moves through these steps automatically.'
   }

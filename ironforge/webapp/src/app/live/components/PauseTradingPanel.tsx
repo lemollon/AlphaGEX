@@ -36,7 +36,11 @@ export default function PauseTradingPanel({
   const [error, setError] = useState<string | null>(null)
   const paused = state?.paused ?? false
   const showResume = paused && (state?.can_resume ?? false)
-  const disabled = pending || !state || (paused && !state.can_resume)
+  // NOT_LINKED has no account behind it, and ironforge_production_pause is a
+  // single row per bot — so this button would stop live trading on an account
+  // the viewer is not connected to. Nothing to pause, so nothing to press.
+  const disabled =
+    pending || !state || state.key === 'NOT_LINKED' || (paused && !state.can_resume)
 
   async function handleConfirm() {
     setError(null)
