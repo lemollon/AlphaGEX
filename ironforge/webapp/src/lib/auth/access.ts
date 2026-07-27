@@ -30,6 +30,9 @@ const PUBLIC_EXACT = new Set<string>([
   // Public proof surface: the paper/live track record shown to prospects. Read-only
   // aggregate of CLOSED trades — no balances, no open positions, no controls.
   '/track-record',
+  // Public proof surface: paper-trade KPI cards and the closed-trade log for
+  // Spark and Flame. Same read-only aggregate basis as /track-record.
+  '/bot-ledger',
 ])
 
 /**

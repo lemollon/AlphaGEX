@@ -69,7 +69,13 @@ class LiveTradierChainProvider:
             "iv_atm": iv_atm, "expiration": exp, "ticker": ticker,
             "options": [
                 {"strike": o["strike"], "type": o["option_type"],
-                 "bid": o.get("bid") or 0, "ask": o.get("ask") or 0}
+                 "bid": o.get("bid") or 0, "ask": o.get("ask") or 0,
+                 # volume is CUMULATIVE for the session, not an interval.
+                 # UPDRAFT/BACKDRAFT difference it across snapshots to get a
+                 # 30-minute call/put imbalance (see bots/flow_store.py).
+                 # Every other strategy ignores the extra key.
+                 "volume": o.get("volume") or 0,
+                 "open_interest": o.get("open_interest") or 0}
                 for o in data
             ],
             # Per-expiration GEX structure (pin / magnets / walls / regime).

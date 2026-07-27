@@ -20,6 +20,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
     // Nav.tsx has no surface filtering, so those links 404 on the customer
     // deployment. It carries its own chrome like every other marketing screen.
     pathname === '/track-record' ||
+    pathname === '/bot-ledger' ||
     pathname === '/signup' ||
     pathname === '/pricing' ||
     pathname === '/contact' ||

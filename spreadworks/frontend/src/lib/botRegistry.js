@@ -11,9 +11,12 @@ export const BOT_REGISTRY = {
   meadow: { display: 'MEADOW', strategy: 'double_diagonal_credit', ticker: 'SPY', version: 'v1.0' },
   undertow: { display: 'UNDERTOW', strategy: 'vertical_debit', ticker: 'multi', version: 'v1.0' },
   delta: { display: 'DELTA', strategy: 'vertical_credit', ticker: 'multi', version: 'v1.0' },
+  updraft: { display: 'UPDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  backdraft: { display: 'BACKDRAFT', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
+  updraft:               '0DTE Long Call (Flow Fade)',
   iron_butterfly:        'Iron Butterfly',
   pin_drift_combo:       'Pin + Drift Combo',
   double_calendar:       'Double Calendar',
@@ -38,6 +41,22 @@ export const COMPARE_WITH = {
 // (see design_handoff_bots/bots-data.jsx BOT_THEMES). The whole bot page
 // tints to these colors — nameplate, equity curve, active tab, nav pill.
 export const BOT_THEME = {
+  updraft: {
+    glyph:       'wave',                       // UPDRAFT = put flow fading into a rising tape
+    primary:     '#fbbf24',                    // amber-400
+    primarySoft: 'rgba(251,191,36,0.10)',
+    primaryRing: 'rgba(251,191,36,0.30)',
+    glow:        'rgba(251,191,36,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(251,191,36,0.22) 0%, rgba(251,191,36,0.03) 100%)',
+  },
+  backdraft: {
+    glyph:       'wave',                       // BACKDRAFT = the same fade, triggered by flow extremity
+    primary:     '#fb7185',                    // rose-400
+    primarySoft: 'rgba(251,113,133,0.10)',
+    primaryRing: 'rgba(251,113,133,0.30)',
+    glow:        'rgba(251,113,133,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(251,113,133,0.22) 0%, rgba(251,113,133,0.03) 100%)',
+  },
   surge: {
     glyph:       'wave',                        // SURGE = where the pin + drift structures meet
     primary:     '#22d3ee',                    // cyan-400
